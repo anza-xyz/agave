@@ -64,6 +64,8 @@ pub use {
         stats::{ProcessShredsStats, ShredFetchStats},
     },
     crate::shredder::{ReedSolomonCache, Shredder},
+    solana_keypair::Keypair,
+    solana_signer::Signer,
 };
 use {
     self::{shred_code::ShredCode, traits::Shred as _},
@@ -75,12 +77,10 @@ use {
     solana_clock::Slot,
     solana_entry::entry::{create_ticks, Entry},
     solana_hash::Hash,
-    solana_keypair::Keypair,
     solana_perf::packet::PacketRef,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::hashv,
     solana_signature::{Signature, SIGNATURE_BYTES},
-    solana_signer::Signer,
     static_assertions::const_assert_eq,
     std::fmt::Debug,
     thiserror::Error,
@@ -398,6 +398,7 @@ use dispatch;
 
 impl Shred {
     dispatch!(fn common_header(&self) -> &ShredCommonHeader);
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     dispatch!(fn set_signature(&mut self, signature: Signature));
     dispatch!(fn signed_data(&self) -> Result<SignedData, Error>);
 
@@ -465,29 +466,6 @@ impl Shred {
         })
     }
 
-    #[deprecated(since = "2.3.0", note = "Legacy shreds are deprecated")]
-    pub fn new_from_parity_shard(
-        slot: Slot,
-        index: u32,
-        parity_shard: &[u8],
-        fec_set_index: u32,
-        num_data_shreds: u16,
-        num_coding_shreds: u16,
-        position: u16,
-        version: u16,
-    ) -> Self {
-        Self::from(ShredCode::new_from_parity_shard(
-            slot,
-            index,
-            parity_shard,
-            fec_set_index,
-            num_data_shreds,
-            num_coding_shreds,
-            position,
-            version,
-        ))
-    }
-
     /// Unique identifier for each shred.
     pub fn id(&self) -> ShredId {
         ShredId(self.slot(), self.index(), self.shred_type())
@@ -541,6 +519,7 @@ impl Shred {
         &self.common_header().signature
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn sign(&mut self, keypair: &Keypair) {
         let data = self.signed_data().unwrap();
         let signature = keypair.sign_message(data.as_ref());
@@ -566,15 +545,6 @@ impl Shred {
         match self {
             Self::ShredCode(_) => false,
             Self::ShredData(shred) => shred.last_in_slot(),
-        }
-    }
-
-    /// This is not a safe function. It only changes the meta information.
-    /// Use this only for test code which doesn't care about actual shred
-    pub fn set_last_in_slot(&mut self) {
-        match self {
-            Self::ShredCode(_) => (),
-            Self::ShredData(shred) => shred.set_last_in_slot(),
         }
     }
 
@@ -947,6 +917,7 @@ pub fn max_entries_per_n_shred(
     (shred_data_size * num_shreds - count_size) / entry_size
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn verify_test_data_shred(
     shred: &Shred,
     index: u32,
@@ -1677,57 +1648,6 @@ mod tests {
         assert_eq!(shred.bytes_to_store(), payload);
         assert_eq!(shred, Shred::new_from_serialized_shred(payload).unwrap());
         verify_shred_layout(&shred, &packet);
-    }
-
-    #[test]
-    fn test_shred_flags() {
-        fn make_shred(is_last_data: bool, is_last_in_slot: bool, reference_tick: u8) -> Shred {
-            let flags = if is_last_in_slot {
-                assert!(is_last_data);
-                ShredFlags::LAST_SHRED_IN_SLOT
-            } else if is_last_data {
-                ShredFlags::DATA_COMPLETE_SHRED
-            } else {
-                ShredFlags::empty()
-            };
-            Shred::new_from_data(
-                0,   // slot
-                0,   // index
-                0,   // parent_offset
-                &[], // data
-                flags,
-                reference_tick,
-                0, // version
-                0, // fec_set_index
-            )
-        }
-        fn check_shred_flags(
-            shred: &Shred,
-            is_last_data: bool,
-            is_last_in_slot: bool,
-            reference_tick: u8,
-        ) {
-            assert_eq!(shred.data_complete(), is_last_data);
-            assert_eq!(shred.last_in_slot(), is_last_in_slot);
-            assert_eq!(shred.reference_tick(), reference_tick.min(63u8));
-            assert_eq!(
-                layout::get_reference_tick(shred.payload()).unwrap(),
-                reference_tick.min(63u8),
-            );
-        }
-        for is_last_data in [false, true] {
-            for is_last_in_slot in [false, true] {
-                // LAST_SHRED_IN_SLOT also implies DATA_COMPLETE_SHRED. So it
-                // cannot be LAST_SHRED_IN_SLOT if not DATA_COMPLETE_SHRED.
-                let is_last_in_slot = is_last_in_slot && is_last_data;
-                for reference_tick in [0, 37, 63, 64, 80, 128, 255] {
-                    let mut shred = make_shred(is_last_data, is_last_in_slot, reference_tick);
-                    check_shred_flags(&shred, is_last_data, is_last_in_slot, reference_tick);
-                    shred.set_last_in_slot();
-                    check_shred_flags(&shred, true, true, reference_tick);
-                }
-            }
-        }
     }
 
     #[test]
