@@ -6859,7 +6859,7 @@ pub mod tests {
 
     #[test]
     fn test_find_missing_data_indexes_timeout() {
-        let slot = 0;
+        let slot = 1;
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
@@ -6872,18 +6872,27 @@ pub mod tests {
 
         // Write entries
         let gap: u64 = 10;
-        let shreds: Vec<_> = (0..64)
+
+        let keypair = Keypair::new();
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let mut stats = ProcessShredsStats::default();
+        let shreds: Vec<_> = (0u64..64)
             .map(|i| {
-                Shred::new_from_data(
-                    slot,
-                    (i * gap) as u32,
-                    0,
-                    &[],
-                    ShredFlags::empty(),
-                    i as u8,
-                    0,
-                    (i * gap) as u32,
-                )
+                let shredder = Shredder::new(slot, slot - 1, i as u8, 42).unwrap();
+
+                let mut shreds = shredder
+                    .make_shreds_from_data_slice(
+                        &keypair,
+                        &[],
+                        false,
+                        None,
+                        (i * gap) as u32,
+                        (i * gap) as u32,
+                        &reed_solomon_cache,
+                        &mut stats,
+                    )
+                    .unwrap();
+                shreds.next().unwrap()
             })
             .collect();
         blockstore.insert_shreds(shreds, None, false).unwrap();
