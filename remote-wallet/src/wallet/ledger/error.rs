@@ -92,3 +92,45 @@ pub enum LedgerError {
     #[error("Ledger received invalid CLA")]
     InvalidCla = 0x6e00,
 }
+
+use crate::wallet::errors::HardwareWalletError;
+
+impl HardwareWalletError for LedgerError {
+    fn code(&self) -> u16 {
+        match self {
+            LedgerError::NoAppResponse => 0x6700,
+            LedgerError::SdkException => 0x6801,
+            LedgerError::SdkInvalidParameter => 0x6802,
+            LedgerError::SdkExceptionOverflow => 0x6803,
+            LedgerError::SdkExceptionSecurity => 0x6804,
+            LedgerError::SdkInvalidCrc => 0x6805,
+            LedgerError::SdkInvalidChecksum => 0x6806,
+            LedgerError::SdkInvalidCounter => 0x6807,
+            LedgerError::SdkNotSupported => 0x6808,
+            LedgerError::SdkInvalidState => 0x6809,
+            LedgerError::SdkTimeout => 0x6810,
+            LedgerError::SdkExceptionPic => 0x6811,
+            LedgerError::SdkExceptionAppExit => 0x6812,
+            LedgerError::SdkExceptionIoOverflow => 0x6813,
+            LedgerError::SdkExceptionIoHeader => 0x6814,
+            LedgerError::SdkExceptionIoState => 0x6815,
+            LedgerError::SdkExceptionIoReset => 0x6816,
+            LedgerError::SdkExceptionCxPort => 0x6817,
+            LedgerError::SdkExceptionSystem => 0x6818,
+            LedgerError::SdkNotEnoughSpace => 0x6819,
+            LedgerError::NoApduReceived => 0x6982,
+            LedgerError::UserCancel => 0x6985,
+            LedgerError::SolanaInvalidMessage => 0x6a80,
+            LedgerError::SolanaInvalidMessageHeader => 0x6a81,
+            LedgerError::SolanaInvalidMessageFormat => 0x6a82,
+            LedgerError::SolanaInvalidMessageSize => 0x6a83,
+            LedgerError::SolanaSummaryFinalizeFailed => 0x6f00,
+            LedgerError::SolanaSummaryUpdateFailed => 0x6f01,
+            LedgerError::UnimplementedInstruction => 0x6d00,
+            LedgerError::InvalidCla => 0x6e00,
+        }
+    }
+    fn description(&self) -> String {
+        self.to_string()
+    }
+}
