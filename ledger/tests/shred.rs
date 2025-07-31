@@ -139,11 +139,7 @@ fn test_multi_fec_block_different_size_coding() {
             .unwrap()
             .filter_map(|s| {
                 let s = s.unwrap();
-                if s.is_data() {
-                    Some(s)
-                } else {
-                    None
-                }
+                s.is_data().then_some(s)
             })
             .collect();
         // Necessary in order to ensure the last shred in the slot
