@@ -4598,8 +4598,18 @@ impl Bank {
                     .spawn(move || {
                         info!("Initial background accounts hash verification has started");
                         let start = Instant::now();
+                        // 1/8 of the available CPU cores, but at least 2 and at
+                        // most 6 threads. This is to avoid overloading the
+                        // system with too many threads that impact transaction
+                        // processing.
+                        let num_threads = (num_cpus::get() / 8).clamp(2, 6);
+                        let thread_pool = rayon::ThreadPoolBuilder::new()
+                            .thread_name(|i| format!("solAcctHash{i:02}"))
+                            .num_threads(num_threads)
+                            .build()
+                            .unwrap();
                         let (calculated_accounts_lt_hash, lattice_verify_time) =
-                            meas_dur!(accounts_db_.thread_pool.install(|| {
+                            meas_dur!(thread_pool.install(|| {
                                 accounts_db_.calculate_accounts_lt_hash_at_startup_from_storages(
                                     snapshot_storages.0.as_slice(),
                                     &duplicates_lt_hash.unwrap(),
