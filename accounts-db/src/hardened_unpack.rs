@@ -53,8 +53,6 @@ const MAX_GENESIS_ARCHIVE_UNPACKED_COUNT: u64 = 100;
 // - Large files: their data may accumulate in backlog buffers while waiting for file open
 //   operations to complete.
 const MAX_UNPACK_WRITE_BUF_SIZE: usize = 512 * 1024 * 1024;
-// Minimum for unpacking small archives - allows ~2-4 write-capacity-sized operations concurrently.
-const MIN_UNPACK_WRITE_BUF_SIZE: usize = 2 * 1024 * 1024;
 
 fn checked_total_size_sum(total_size: u64, entry_size: u64, limit_size: u64) -> Result<u64> {
     trace!("checked_total_size_sum: {total_size} + {entry_size} < {limit_size}");
@@ -116,8 +114,8 @@ where
 
     // Bound the buffer based on provided limit of unpacked data and input archive size
     // (decompression multiplies content size, but buffering more than origin isn't necessary).
-    let buf_size = (input_archive_size.min(actual_limit_size) as usize)
-        .clamp(MIN_UNPACK_WRITE_BUF_SIZE, MAX_UNPACK_WRITE_BUF_SIZE);
+    let buf_size =
+        (input_archive_size.min(actual_limit_size) as usize).min(MAX_UNPACK_WRITE_BUF_SIZE);
     let mut files_creator = file_creator(buf_size, file_path_processor)?;
 
     for entry in archive.entries()? {
