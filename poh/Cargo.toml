@@ -20,6 +20,7 @@ name = "solana_poh"
 dev-context-only-utils = []
 
 [dependencies]
+arc-swap = { workspace = true }
 core_affinity = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
