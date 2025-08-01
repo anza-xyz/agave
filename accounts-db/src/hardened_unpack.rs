@@ -1,17 +1,19 @@
 use {
+    crate::file_io::{file_creator, FileCreator},
     bzip2::bufread::BzDecoder,
+    crossbeam_channel::Sender,
     log::*,
     rand::{thread_rng, Rng},
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
-    solana_perf::packet::bytes::{Buf, Bytes, BytesMut},
     std::{
-        collections::{HashMap, VecDeque},
+        collections::HashMap,
         fs::{self, File},
         io::{self, BufReader, Read},
         path::{
             Component::{self, CurDir, Normal},
             Path, PathBuf,
         },
+        sync::Arc,
         time::Instant,
     },
     tar::{
@@ -46,225 +48,13 @@ const MAX_SNAPSHOT_ARCHIVE_UNPACKED_COUNT: u64 = 5_000_000;
 pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10 MiB
 const MAX_GENESIS_ARCHIVE_UNPACKED_COUNT: u64 = 100;
 
-/// Collection of shareable byte slices forming a chain of bytes to read (using `std::io::Read`)
-pub struct MultiBytes(VecDeque<Bytes>);
-
-impl MultiBytes {
-    pub fn new() -> Self {
-        // Typically we expect 2 entries:
-        // archive spanning until end of decode buffer +
-        // short continuation of last entry from next buffer
-        Self(VecDeque::with_capacity(2))
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub fn push(&mut self, bytes: Bytes) {
-        self.0.push_back(bytes);
-    }
-}
-
-impl Default for MultiBytes {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Read for MultiBytes {
-    fn read(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
-        let mut copied_len = 0;
-        while let Some(bytes) = self.0.front_mut() {
-            let to_copy_len = bytes.len().min(buf.len());
-            let (to_copy_dst_buf, remaining_buf) = buf.split_at_mut(to_copy_len);
-            bytes.copy_to_slice(to_copy_dst_buf);
-            copied_len += to_copy_len;
-            if bytes.is_empty() {
-                self.0.pop_front();
-            }
-            if remaining_buf.is_empty() {
-                break;
-            }
-            buf = remaining_buf;
-        }
-        Ok(copied_len)
-    }
-}
-
-pub struct BytesChannelReader {
-    current_bytes: MultiBytes,
-    receiver: crossbeam_channel::Receiver<MultiBytes>,
-}
-
-impl BytesChannelReader {
-    pub fn new(receiver: crossbeam_channel::Receiver<MultiBytes>) -> Self {
-        Self {
-            current_bytes: MultiBytes::new(),
-            receiver,
-        }
-    }
-}
-
-impl Read for BytesChannelReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        while self.current_bytes.is_empty() {
-            let Ok(new_bytes) = self.receiver.recv() else {
-                return Ok(0);
-            };
-            self.current_bytes = new_bytes;
-        }
-        self.current_bytes.read(buf)
-    }
-}
-
-#[derive(Debug)]
-pub struct ArchiveChunker<R> {
-    input: R,
-    /// Intermediate buffer with tar contents to seek and split on entry boundaries
-    current_decoded: Bytes,
-    /// Number of bytes from last entry that were not available in decoded buffer
-    num_started_entry_bytes: usize,
-    mempool: VecDeque<Bytes>,
-}
-
-impl<R: Read> ArchiveChunker<R> {
-    const TAR_BLOCK_SIZE: usize = size_of::<tar::Header>();
-    // Buffer size will influence typical amount of bytes sent as single work item.
-    // Pick value significantly larger than majority of entries, yet not too large to keep
-    // the work-queue non-empty as much as possible.
-    const DECODE_BUF_SIZE: usize = 64 * 1024 * 1024;
-
-    pub fn new(input: R) -> Self {
-        Self {
-            input,
-            current_decoded: Bytes::new(),
-            num_started_entry_bytes: 0,
-            mempool: VecDeque::new(),
-        }
-    }
-
-    /// Read `self.input`, split it at TAR archive boundaries and send chunks consisting
-    /// of complete, independent tar archives into `chunk_sender`.
-    pub fn decode_and_send_chunks(
-        mut self,
-        chunk_sender: crossbeam_channel::Sender<MultiBytes>,
-    ) -> io::Result<()> {
-        // Bytes for chunk of archive to be sent to workers for unpacking
-        let mut current_chunk = MultiBytes::new();
-        while self.refill_decoded_buf()? {
-            let (new_bytes, was_archive_completion) = if self.has_started_entry() {
-                let started_entry_bytes = self.take_started_entry_bytes();
-                let did_finish_entry = !self.has_started_entry();
-                (started_entry_bytes, did_finish_entry)
-            } else {
-                (self.take_complete_archive()?, true)
-            };
-            if !new_bytes.is_empty() {
-                current_chunk.push(new_bytes);
-                if was_archive_completion {
-                    let chunk = std::mem::take(&mut current_chunk);
-                    if chunk_sender.send(chunk).is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Take as many bytes as possible from decoded data until last entry boundary.
-    fn take_complete_archive(&mut self) -> io::Result<Bytes> {
-        let mut archive = Archive::new(self.current_decoded.as_ref());
-
-        let mut completed_entry_end = 0;
-        let mut entry_end = 0;
-        for entry in archive.entries()? {
-            let entry = entry?;
-            // End of file data
-            assert_ne!(tar::EntryType::GNUSparse, entry.header().entry_type());
-            entry_end = (entry.raw_file_position() + entry.size()) as usize;
-
-            // Padding to block size
-            entry_end = Self::TAR_BLOCK_SIZE * entry_end.div_ceil(Self::TAR_BLOCK_SIZE);
-            if entry_end <= self.current_decoded.len() {
-                // Entry ends within decoded input, we can consume it
-                completed_entry_end = entry_end;
-            }
-            if entry_end + Self::TAR_BLOCK_SIZE > self.current_decoded.len() {
-                // Next entry's header spans beyond input - can't decode it,
-                // so terminate at last completed entry and keep remaining input after it
-                break;
-            }
-        }
-        // Either we run out of entries or last entry crosses input
-        let completed_entry = self.current_decoded.split_to(completed_entry_end);
-        if completed_entry.is_empty() && entry_end == completed_entry_end {
-            // Archive ended, clear any tar footer from remaining input
-            assert!(
-                self.current_decoded.len() <= 1024,
-                "Footer should be at most 1024 len"
-            );
-            self.current_decoded.clear();
-        }
-        self.num_started_entry_bytes = entry_end - completed_entry_end;
-        Ok(completed_entry)
-    }
-
-    fn has_started_entry(&self) -> bool {
-        self.num_started_entry_bytes > 0
-    }
-
-    fn take_started_entry_bytes(&mut self) -> Bytes {
-        let num_bytes = self.num_started_entry_bytes.min(self.current_decoded.len());
-        self.num_started_entry_bytes -= num_bytes;
-        self.current_decoded.split_to(num_bytes)
-    }
-
-    /// Re-fill decoded buffer such that it has minimum bytes to decode TAR header.
-    ///
-    /// Return `false` on EOF
-    fn refill_decoded_buf(&mut self) -> io::Result<bool> {
-        if self.current_decoded.len() < Self::TAR_BLOCK_SIZE {
-            let mut next_buffer = self.get_next_buffer();
-            if !self.current_decoded.is_empty() {
-                next_buffer.extend_from_slice(&self.current_decoded);
-            }
-            self.current_decoded = self.decode_bytes(next_buffer)?;
-        }
-        Ok(!self.current_decoded.is_empty())
-    }
-
-    /// Acquire memory buffer for decoding input reusing already consumed chunks.
-    fn get_next_buffer(&mut self) -> BytesMut {
-        if self.mempool.front().is_some_and(Bytes::is_unique) {
-            let mut reclaimed: BytesMut = self.mempool.pop_front().unwrap().into();
-            reclaimed.clear();
-            reclaimed
-        } else {
-            BytesMut::with_capacity(Self::DECODE_BUF_SIZE)
-        }
-    }
-
-    /// Fill `decode_buf` with data from `self.input`.
-    fn decode_bytes(&mut self, mut decode_buf: BytesMut) -> io::Result<Bytes> {
-        let mut_slice = unsafe {
-            std::slice::from_raw_parts_mut(decode_buf.as_mut_ptr(), decode_buf.capacity())
-        };
-        let mut current_len = decode_buf.len();
-        while current_len < decode_buf.capacity() {
-            let new_bytes = self.input.read(&mut mut_slice[current_len..])?;
-            if new_bytes == 0 {
-                break;
-            }
-            current_len += new_bytes;
-        }
-        unsafe { decode_buf.set_len(current_len) };
-        let bytes: Bytes = decode_buf.into();
-        self.mempool.push_back(bytes.clone());
-        Ok(bytes)
-    }
-}
+// The buffer should be large enough to saturate write I/O bandwidth, while also accommodating:
+// - Many small files: each file consumes at least one write-capacity-sized chunk (0.5-1 MiB).
+// - Large files: their data may accumulate in backlog buffers while waiting for file open
+//   operations to complete.
+const MAX_UNPACK_WRITE_BUF_SIZE: usize = 512 * 1024 * 1024;
+// Minimum for unpacking small archives - allows ~2-4 write-capacity-sized operations concurrently.
+const MIN_UNPACK_WRITE_BUF_SIZE: usize = 2 * 1024 * 1024;
 
 fn checked_total_size_sum(total_size: u64, entry_size: u64, limit_size: u64) -> Result<u64> {
     trace!("checked_total_size_sum: {total_size} + {entry_size} < {limit_size}");
@@ -287,9 +77,11 @@ fn checked_total_count_increment(total_count: u64, limit_count: u64) -> Result<u
     Ok(total_count)
 }
 
-fn check_unpack_result(unpack_result: bool, path: String) -> Result<()> {
-    if !unpack_result {
-        return Err(UnpackError::Archive(format!("failed to unpack: {path:?}")));
+fn check_unpack_result(unpack_result: Result<()>, path: String) -> Result<()> {
+    if let Err(err) = unpack_result {
+        return Err(UnpackError::Archive(format!(
+            "failed to unpack {path:?}: {err}"
+        )));
     }
     Ok(())
 }
@@ -306,23 +98,30 @@ fn unpack_archive<'a, A, C, D>(
     apparent_limit_size: u64,
     actual_limit_size: u64,
     limit_count: u64,
-    mut entry_checker: C, // checks if entry is valid
-    entry_processor: D,   // processes entry after setting permissions
+    mut entry_checker: C,   // checks if entry is valid
+    file_path_processor: D, // processes file paths after writing
 ) -> Result<()>
 where
     A: Read,
     C: FnMut(&[&str], tar::EntryType) -> UnpackPath<'a>,
-    D: Fn(PathBuf),
+    D: FnMut(PathBuf),
 {
     let mut apparent_total_size: u64 = 0;
     let mut actual_total_size: u64 = 0;
     let mut total_count: u64 = 0;
 
     let mut total_entries = 0;
-    let mut sanitized_paths_cache = Vec::new();
+    let mut open_dirs = Vec::new();
+
+    // Bound the buffer based on provided limit of unpacked data (buffering a fraction,
+    // e.g. 25%, of absolute maximum won't be necessary) - this works well for genesis,
+    // while normal case hit the UNPACK_WRITE_BUF_SIZE tuned for it prod snapshot archive.
+    let buf_size = (apparent_limit_size.div_ceil(4) as usize)
+        .clamp(MIN_UNPACK_WRITE_BUF_SIZE, MAX_UNPACK_WRITE_BUF_SIZE);
+    let mut files_creator = file_creator(buf_size, file_path_processor)?;
 
     for entry in archive.entries()? {
-        let mut entry = entry?;
+        let entry = entry?;
         let path = entry.path()?;
         let path_str = path.display().to_string();
 
@@ -385,30 +184,47 @@ where
             // account_paths returned by `entry_checker`. We want to unpack into
             // account_path/<account> instead of account_path/accounts/<account> so we strip the
             // accounts/ prefix.
-            sanitize_path(&account, unpack_dir, &mut sanitized_paths_cache)
+            sanitize_path_and_open_dir(&account, unpack_dir, &mut open_dirs)
         } else {
-            sanitize_path(&path, unpack_dir, &mut sanitized_paths_cache)
+            sanitize_path_and_open_dir(&path, unpack_dir, &mut open_dirs)
         }?; // ? handles file system errors
-        let Some(entry_path) = entry_path else {
+        let Some((entry_path, open_dir)) = entry_path else {
             continue; // skip it
         };
 
-        let unpack = entry.unpack(&entry_path);
-        check_unpack_result(unpack.map(|_unpack| true)?, path_str)?;
-
-        // Sanitize permissions.
-        let mode = match entry.header().entry_type() {
-            GNUSparse | Regular => 0o644,
-            _ => 0o755,
-        };
-        set_perms(&entry_path, mode)?;
-
-        // Process entry after setting permissions
-        entry_processor(entry_path);
+        let unpack = unpack_entry(&mut files_creator, entry, entry_path, open_dir);
+        check_unpack_result(unpack, path_str)?;
 
         total_entries += 1;
     }
+    files_creator.drain()?;
+
     info!("unpacked {total_entries} entries total");
+    Ok(())
+}
+
+fn unpack_entry<'a, R: Read>(
+    files_creator: &mut Box<dyn FileCreator + 'a>,
+    mut entry: tar::Entry<'_, R>,
+    dst: PathBuf,
+    dst_open_dir: Arc<File>,
+) -> Result<()> {
+    let mode = match entry.header().entry_type() {
+        GNUSparse | Regular => 0o644,
+        _ => 0o755,
+    };
+    if should_fallback_to_tar_unpack(&entry) {
+        entry.unpack(&dst)?;
+        // Sanitize permissions.
+        set_perms(&dst, mode)?;
+
+        if !entry.header().entry_type().is_dir() {
+            // Process file after setting permissions
+            files_creator.file_complete(dst);
+        }
+        return Ok(());
+    }
+    files_creator.schedule_create_at_dir(dst, mode, dst_open_dir, &mut entry)?;
 
     return Ok(());
 
@@ -422,28 +238,38 @@ where
 
     #[cfg(windows)]
     fn set_perms(dst: &Path, _mode: u32) -> io::Result<()> {
-        let mut perm = fs::metadata(dst)?.permissions();
-        // This is OK for Windows, but clippy doesn't realize we're doing this
-        // only on Windows.
-        #[allow(clippy::permissions_set_readonly_false)]
-        perm.set_readonly(false);
-        fs::set_permissions(dst, perm)
+        super::file_io::set_file_readonly(dst, false)
     }
 }
 
+fn should_fallback_to_tar_unpack<R: io::Read>(entry: &tar::Entry<'_, R>) -> bool {
+    // Follows cases that are handled as directory or in special way by tar-rs library,
+    // we want to handle just cases where the library would write plain files with entry's content.
+    matches!(
+        entry.header().entry_type(),
+        tar::EntryType::Directory
+            | tar::EntryType::Link
+            | tar::EntryType::Symlink
+            | tar::EntryType::XGlobalHeader
+            | tar::EntryType::XHeader
+            | tar::EntryType::GNULongName
+            | tar::EntryType::GNULongLink
+    ) || entry.header().as_ustar().is_none() && entry.path_bytes().ends_with(b"/")
+}
+
 // return Err on file system error
-// return Some(path) if path is good
+// return Some((path, open_dir)) if path is good
 // return None if we should skip this file
-fn sanitize_path(
+fn sanitize_path_and_open_dir(
     entry_path: &Path,
     dst: &Path,
-    cache: &mut Vec<(PathBuf, PathBuf)>,
-) -> Result<Option<PathBuf>> {
+    open_dirs: &mut Vec<(PathBuf, Arc<File>)>,
+) -> Result<Option<(PathBuf, Arc<File>)>> {
     // We cannot call unpack_in because it errors if we try to use 2 account paths.
     // So, this code is borrowed from unpack_in
     // ref: https://docs.rs/tar/*/tar/struct.Entry.html#method.unpack_in
     let mut file_dst = dst.to_path_buf();
-    const SKIP: Result<Option<PathBuf>> = Ok(None);
+    const SKIP: Result<Option<(PathBuf, Arc<File>)>> = Ok(None);
     {
         let path = entry_path;
         for part in path.components() {
@@ -475,19 +301,22 @@ fn sanitize_path(
         return SKIP;
     };
 
-    if let Err(insert_at) = cache.binary_search_by(|(dst_cached, parent_cached)| {
-        parent.cmp(parent_cached).then_with(|| dst.cmp(dst_cached))
-    }) {
-        fs::create_dir_all(parent)?;
+    let open_dst_dir = match open_dirs.binary_search_by(|(key, _)| parent.cmp(key)) {
+        Err(insert_at) => {
+            fs::create_dir_all(parent)?;
 
-        // Here we are different than untar_in. The code for tar::unpack_in internally calling unpack is a little different.
-        // ignore return value here
-        validate_inside_dst(dst, parent)?;
-        cache.insert(insert_at, (dst.to_path_buf(), parent.to_path_buf()));
-    }
-    let target = parent.join(entry_path.file_name().unwrap());
+            // Here we are different than untar_in. The code for tar::unpack_in internally calling unpack is a little different.
+            // ignore return value here
+            validate_inside_dst(dst, parent)?;
 
-    Ok(Some(target))
+            let opened_dir = Arc::new(File::open(parent)?);
+            open_dirs.insert(insert_at, (parent.to_path_buf(), opened_dir.clone()));
+            opened_dir
+        }
+        Ok(index) => open_dirs[index].1.clone(),
+    };
+
+    Ok(Some((file_dst, open_dst_dir)))
 }
 
 // copied from:
@@ -495,14 +324,10 @@ fn sanitize_path(
 fn validate_inside_dst(dst: &Path, file_dst: &Path) -> Result<PathBuf> {
     // Abort if target (canonical) parent is outside of `dst`
     let canon_parent = file_dst.canonicalize().map_err(|err| {
-        UnpackError::Archive(format!(
-            "{} while canonicalizing {}",
-            err,
-            file_dst.display()
-        ))
+        UnpackError::Archive(format!("{err} while canonicalizing {}", file_dst.display()))
     })?;
     let canon_target = dst.canonicalize().map_err(|err| {
-        UnpackError::Archive(format!("{} while canonicalizing {}", err, dst.display()))
+        UnpackError::Archive(format!("{err} while canonicalizing {}", dst.display()))
     })?;
     if !canon_parent.starts_with(&canon_target) {
         return Err(UnpackError::Archive(format!(
@@ -541,22 +366,20 @@ pub fn streaming_unpack_snapshot<A: Read>(
     archive: Archive<A>,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
-    sender: &crossbeam_channel::Sender<PathBuf>,
+    sender: &Sender<PathBuf>,
 ) -> Result<()> {
     unpack_snapshot_with_processors(
         archive,
         ledger_dir,
         account_paths,
         |_, _| {},
-        |entry_path_buf| {
-            if entry_path_buf.is_file() {
-                let result = sender.send(entry_path_buf);
-                if let Err(err) = result {
-                    panic!(
-                        "failed to send path '{}' from unpacker to rebuilder: {err}",
-                        err.0.display(),
-                    );
-                }
+        |file_path| {
+            let result = sender.send(file_path);
+            if let Err(err) = result {
+                panic!(
+                    "failed to send path '{}' from unpacker to rebuilder: {err}",
+                    err.0.display(),
+                );
             }
         },
     )
@@ -567,12 +390,12 @@ fn unpack_snapshot_with_processors<A, F, G>(
     ledger_dir: &Path,
     account_paths: &[PathBuf],
     mut accounts_path_processor: F,
-    entry_processor: G,
+    file_path_processor: G,
 ) -> Result<()>
 where
     A: Read,
     F: FnMut(&str, &Path),
-    G: Fn(PathBuf),
+    G: FnMut(PathBuf),
 {
     assert!(!account_paths.is_empty());
 
@@ -603,7 +426,7 @@ where
                 UnpackPath::Invalid
             }
         },
-        entry_processor,
+        file_path_processor,
     )
 }
 
@@ -981,7 +804,7 @@ mod tests {
     {
         let data = archive.into_inner().unwrap();
         let reader = BufReader::new(&data[..]);
-        let archive: Archive<std::io::BufReader<&[u8]>> = Archive::new(reader);
+        let archive = Archive::new(reader);
         let temp_dir = tempfile::TempDir::new().unwrap();
 
         checker(archive, temp_dir.path())?;
@@ -1199,8 +1022,11 @@ mod tests {
 
     #[test]
     fn test_archive_unpack_snapshot_bad_unpack() {
-        let result = check_unpack_result(false, "abc".to_string());
-        assert_matches!(result, Err(UnpackError::Archive(ref message)) if message == "failed to unpack: \"abc\"");
+        let result = check_unpack_result(
+            Err(UnpackError::Io(io::ErrorKind::FileTooLarge.into())),
+            "abc".to_string(),
+        );
+        assert_matches!(result, Err(UnpackError::Archive(ref message)) if message == "failed to unpack \"abc\": IO error: file too large");
     }
 
     #[test]

@@ -628,11 +628,10 @@ mod test {
             streamer::{receiver, responder},
         },
         crossbeam_channel::unbounded,
-        solana_net_utils::bind_to_localhost,
+        solana_net_utils::sockets::bind_to_localhost_unique,
         solana_perf::recycler::Recycler,
         std::{
-            io,
-            io::Write,
+            io::{self, Write},
             sync::{
                 atomic::{AtomicBool, Ordering},
                 Arc,
@@ -663,11 +662,10 @@ mod test {
     }
     #[test]
     fn streamer_send_test() {
-        let read = bind_to_localhost().expect("bind");
+        let read = bind_to_localhost_unique().expect("should bind reader");
         read.set_read_timeout(Some(SOCKET_READ_TIMEOUT)).unwrap();
-
         let addr = read.local_addr().unwrap();
-        let send = bind_to_localhost().expect("bind");
+        let send = bind_to_localhost_unique().expect("should bind sender");
         let exit = Arc::new(AtomicBool::new(false));
         let (s_reader, r_reader) = unbounded();
         let stats = Arc::new(StreamerReceiveStats::new("test"));

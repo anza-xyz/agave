@@ -235,10 +235,9 @@ impl Bank {
             1
         } else {
             const MAX_FACTOR_OF_REWARD_BLOCKS_IN_EPOCH: u64 = 10;
-            let num_chunks = solana_accounts_db::accounts_hash::AccountsHasher::div_ceil(
-                total_stake_accounts,
-                self.partitioned_rewards_stake_account_stores_per_block() as usize,
-            ) as u64;
+            let num_chunks = total_stake_accounts
+                .div_ceil(self.partitioned_rewards_stake_account_stores_per_block() as usize)
+                as u64;
 
             // Limit the reward credit interval to 10% of the total number of slots in a epoch
             num_chunks.clamp(

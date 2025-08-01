@@ -302,11 +302,6 @@ impl PubsubClient {
         self.ws.await.unwrap() // WS future should not be cancelled or panicked
     }
 
-    #[deprecated(since = "2.0.2", note = "PubsubClient::node_version is no longer used")]
-    pub async fn set_node_version(&self, _version: semver::Version) -> Result<(), ()> {
-        Ok(())
-    }
-
     async fn subscribe<'a, T>(&self, operation: &str, params: Value) -> SubscribeResult<'a, T>
     where
         T: DeserializeOwned + Send + 'a,
@@ -627,7 +622,7 @@ impl PubsubClient {
                                 }
                             }
                         } else {
-                            error!("Unknown request id: {}", id);
+                            error!("Unknown request id: {id}");
                             break;
                         }
                         continue;

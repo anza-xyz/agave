@@ -187,8 +187,8 @@ impl WorkersCache {
         }
 
         let current_worker = workers.get(peer).expect(
-            "Failed to fetch worker for peer {peer}.\n\
-             Peer existence must be checked before this call using `contains` method.",
+            "Failed to fetch worker for peer {peer}. Peer existence must be checked before this \
+             call using `contains` method.",
         );
         let send_res = current_worker.try_send_transactions(txs_batch);
 
@@ -214,7 +214,8 @@ impl WorkersCache {
     /// is removed from the cache.
     #[allow(
         dead_code,
-        reason = "This method will be used in the upcoming changes to implement optional backpressure on the sender."
+        reason = "This method will be used in the upcoming changes to implement optional \
+                  backpressure on the sender."
     )]
     pub async fn send_transactions_to_address(
         &mut self,
@@ -227,8 +228,8 @@ impl WorkersCache {
 
         let body = async move {
             let current_worker = workers.get(peer).expect(
-                "Failed to fetch worker for peer {peer}.\n\
-                 Peer existence must be checked before this call using `contains` method.",
+                "Failed to fetch worker for peer {peer}. Peer existence must be checked before \
+                 this call using `contains` method.",
             );
             let send_res = current_worker.send_transactions(txs_batch).await;
             if let Err(WorkersCacheError::ReceiverDropped) = send_res {
@@ -280,7 +281,7 @@ impl WorkersCache {
         }
         while let Some(res) = tasks.join_next().await {
             if let Err(err) = res {
-                debug!("A shutdown task failed: {}", err);
+                debug!("A shutdown task failed: {err}");
             }
         }
     }

@@ -4,7 +4,7 @@ use {
     clap::{value_t_or_exit, Arg, ArgMatches},
     solana_accounts_db::{accounts_db, accounts_index},
     solana_clap_utils::{hidden_unless_forced, input_validators::is_within_range},
-    solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
+    solana_rayon_threadlimit::get_thread_count,
     std::{num::NonZeroUsize, ops::RangeInclusive},
 };
 
@@ -197,7 +197,7 @@ pub trait ThreadArg {
     /// The maximum allowed number of threads (inclusive)
     fn max() -> usize {
         // By default, no thread pool should scale over the number of the machine's threads
-        get_max_thread_count()
+        num_cpus::get()
     }
     /// The range of allowed number of threads (inclusive on both ends)
     fn range() -> RangeInclusive<usize> {
@@ -270,7 +270,7 @@ impl ThreadArg for RayonGlobalThreadsArg {
     const HELP: &'static str = "Number of threads to use for the global rayon thread pool";
 
     fn default() -> usize {
-        get_max_thread_count()
+        num_cpus::get()
     }
 }
 
@@ -298,7 +298,7 @@ impl ThreadArg for ReplayTransactionsThreadsArg {
     const HELP: &'static str = "Number of threads to use for transaction replay";
 
     fn default() -> usize {
-        get_max_thread_count()
+        num_cpus::get()
     }
 }
 

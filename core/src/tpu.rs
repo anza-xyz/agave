@@ -327,7 +327,6 @@ impl Tpu {
         let banking_stage = BankingStage::new(
             block_production_method,
             transaction_struct,
-            cluster_info,
             poh_recorder,
             transaction_recorder,
             non_vote_receiver,

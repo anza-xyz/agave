@@ -694,7 +694,7 @@ mod test {
         super::*,
         crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
         crossbeam_channel::unbounded,
-        solana_net_utils::bind_to_localhost,
+        solana_net_utils::sockets::bind_to_localhost_unique,
         std::net::SocketAddr,
     };
 
@@ -711,7 +711,7 @@ mod test {
         crossbeam_channel::Receiver<PacketBatch>,
         SocketAddr,
     ) {
-        let s = bind_to_localhost().unwrap();
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
@@ -766,7 +766,7 @@ mod test {
     #[test]
     fn test_quic_server_multiple_streams() {
         solana_logger::setup();
-        let s = bind_to_localhost().unwrap();
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
@@ -811,7 +811,7 @@ mod test {
     #[test]
     fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();
-        let s = bind_to_localhost().unwrap();
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, _) = unbounded();
         let keypair = Keypair::new();

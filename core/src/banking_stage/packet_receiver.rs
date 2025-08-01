@@ -36,11 +36,7 @@ impl PacketReceiver {
             let recv_timeout = Self::get_receive_timeout(vote_storage);
             let mut recv_and_buffer_measure = Measure::start("recv_and_buffer");
             self.packet_deserializer
-                .receive_packets(recv_timeout, vote_storage.max_receive_size(), |packet| {
-                    packet.check_insufficent_compute_unit_limit()?;
-                    packet.check_excessive_precompiles()?;
-                    Ok(packet)
-                })
+                .receive_packets(recv_timeout, vote_storage.max_receive_size())
                 // Consumes results if Ok, otherwise we keep the Err
                 .map(|receive_packet_results| {
                     self.buffer_packets(

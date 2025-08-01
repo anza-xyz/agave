@@ -424,7 +424,7 @@ mod tests {
             Arc::new(AtomicBool::default()),
         );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-        let decision_maker = DecisionMaker::new(Pubkey::new_unique(), poh_recorder.clone());
+        let decision_maker = DecisionMaker::new(poh_recorder.clone());
 
         let (banking_packet_sender, banking_packet_receiver) = unbounded();
         let receive_and_buffer =

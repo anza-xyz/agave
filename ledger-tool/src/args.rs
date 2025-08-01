@@ -3,10 +3,9 @@ use {
     clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
-        accounts_db::{AccountsDb, AccountsDbConfig},
+        accounts_db::AccountsDbConfig,
         accounts_file::StorageAccess,
         accounts_index::{AccountsIndexConfig, IndexLimitMb, ScanFilter},
-        utils::create_and_canonicalize_directories,
     },
     solana_clap_utils::{
         hidden_unless_forced,
@@ -47,13 +46,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .help(
                 "Persistent accounts-index location. May be specified multiple times. \
                 [default: <LEDGER>/accounts_index]",
-            ),
-        Arg::with_name("accounts_hash_cache_path")
-            .long("accounts-hash-cache-path")
-            .value_name("PATH")
-            .takes_value(true)
-            .help(
-                "Use PATH as accounts hash cache location [default: <LEDGER>/accounts_hash_cache]",
             ),
         Arg::with_name("accounts_index_bins")
             .long("accounts-index-bins")
@@ -275,23 +267,6 @@ pub fn get_accounts_db_config(
         ..AccountsIndexConfig::default()
     };
 
-    let accounts_hash_cache_path = arg_matches
-        .value_of("accounts_hash_cache_path")
-        .map(Into::into)
-        .unwrap_or_else(|| {
-            ledger_tool_ledger_path.join(AccountsDb::DEFAULT_ACCOUNTS_HASH_CACHE_DIR)
-        });
-    let accounts_hash_cache_path = create_and_canonicalize_directories([&accounts_hash_cache_path])
-        .unwrap_or_else(|err| {
-            eprintln!(
-                "Unable to access accounts hash cache path '{}': {err}",
-                accounts_hash_cache_path.display(),
-            );
-            std::process::exit(1);
-        })
-        .pop()
-        .unwrap();
-
     let storage_access = arg_matches
         .value_of("accounts_db_access_storages_method")
         .map(|method| match method {
@@ -324,7 +299,6 @@ pub fn get_accounts_db_config(
     AccountsDbConfig {
         index: Some(accounts_index_config),
         base_working_path: Some(ledger_tool_ledger_path),
-        accounts_hash_cache_path: Some(accounts_hash_cache_path),
         ancient_append_vec_offset: value_t!(arg_matches, "accounts_db_ancient_append_vecs", i64)
             .ok(),
         ancient_storage_ideal_size: value_t!(

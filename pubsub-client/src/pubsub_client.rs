@@ -324,8 +324,8 @@ fn connect_with_retry(
 
                 connection_retries -= 1;
                 debug!(
-                    "Too many requests: server responded with {:?}, {} retries left, pausing for {:?}",
-                    response, connection_retries, duration
+                    "Too many requests: server responded with {response:?}, {connection_retries} \
+                     retries left, pausing for {duration:?}"
                 );
 
                 sleep(duration);
@@ -785,7 +785,7 @@ impl PubsubClient {
         let handler = move |message| match sender.send(message) {
             Ok(_) => (),
             Err(err) => {
-                info!("receive error: {:?}", err);
+                info!("receive error: {err:?}");
             }
         };
         Self::cleanup_with_handler(exit, socket, handler);
@@ -810,7 +810,7 @@ impl PubsubClient {
                     // Nothing useful, means we received a ping message
                 }
                 Err(err) => {
-                    info!("receive error: {:?}", err);
+                    info!("receive error: {err:?}");
                     break;
                 }
             }

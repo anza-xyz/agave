@@ -1575,7 +1575,7 @@ pub mod test {
         crossbeam_channel::{unbounded, Receiver},
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
-        solana_net_utils::bind_to_localhost,
+        solana_net_utils::sockets::bind_to_localhost_unique,
         solana_signer::Signer,
         std::collections::HashMap,
         tokio::time::sleep,
@@ -1830,7 +1830,7 @@ pub mod test {
             },
         );
 
-        let client_socket = bind_to_localhost().unwrap();
+        let client_socket = bind_to_localhost_unique().expect("should bind - client");
         let mut endpoint = quinn::Endpoint::new(
             EndpointConfig::default(),
             None,
@@ -1993,7 +1993,7 @@ pub mod test {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();
-        let s = bind_to_localhost().unwrap();
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, _) = unbounded();
         let keypair = Keypair::new();
@@ -2026,7 +2026,7 @@ pub mod test {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_multiple_streams() {
         solana_logger::setup();
-        let s = bind_to_localhost().unwrap();
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();

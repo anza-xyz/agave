@@ -14,6 +14,7 @@ use {
     solana_accounts_db::{
         accounts_db::{
             stats::PurgeStats, AccountStorageEntry, AccountsDb, GetUniqueAccountsResult,
+            UpdateIndexThreadSelection,
         },
         storable_accounts::StorableAccountsBySlot,
     },
@@ -327,8 +328,11 @@ impl<'a> SnapshotMinimizer<'a> {
             let storable_accounts =
                 StorableAccountsBySlot::new(slot, &accounts, self.accounts_db());
 
-            self.accounts_db()
-                .store_accounts_frozen(storable_accounts, new_storage);
+            self.accounts_db().store_accounts_frozen(
+                storable_accounts,
+                new_storage,
+                UpdateIndexThreadSelection::Inline,
+            );
 
             new_storage.flush().unwrap();
         }
@@ -349,7 +353,7 @@ impl<'a> SnapshotMinimizer<'a> {
     fn purge_dead_slots(&self, dead_slots: Vec<Slot>) {
         let stats = PurgeStats::default();
         self.accounts_db()
-            .purge_slots_from_cache_and_store(dead_slots.iter(), &stats, false);
+            .purge_slots_from_cache_and_store(dead_slots.iter(), &stats);
     }
 
     /// Convenience function for getting accounts_db
@@ -553,7 +557,6 @@ mod tests {
                     minimized_account_set.insert(*pubkey);
                 }
             }
-            accounts.calculate_accounts_delta_hash(current_slot);
             accounts.add_root_and_flush_write_cache(current_slot);
         }
 

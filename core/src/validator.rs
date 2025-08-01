@@ -3,7 +3,6 @@
 pub use solana_perf::report_target_features;
 use {
     crate::{
-        accounts_hash_verifier::AccountsHashVerifier,
         admin_rpc_post_init::{AdminRpcRequestMetadataPostInit, KeyUpdaterType, KeyUpdaters},
         banking_stage::{unified_scheduler::ensure_banking_stage_setup, BankingStage},
         banking_trace::{self, BankingTracer, TraceError},
@@ -22,7 +21,7 @@ use {
         },
         sample_performance_service::SamplePerformanceService,
         sigverify,
-        snapshot_packager_service::{PendingSnapshotPackages, SnapshotPackagerService},
+        snapshot_packager_service::SnapshotPackagerService,
         stats_reporter_service::StatsReporterService,
         system_monitor_service::{
             verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
@@ -39,7 +38,7 @@ use {
         hardened_unpack::{
             open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         },
-        utils::{move_and_async_delete_path, move_and_async_delete_path_contents},
+        utils::move_and_async_delete_path_contents,
     },
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_clock::Slot,
@@ -84,7 +83,7 @@ use {
         transaction_recorder::TransactionRecorder,
     },
     solana_pubkey::Pubkey,
-    solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
+    solana_rayon_threadlimit::get_thread_count,
     solana_rpc::{
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
@@ -102,7 +101,7 @@ use {
     solana_runtime::{
         accounts_background_service::{
             AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
-            PrunedBanksRequestHandler, SnapshotRequestHandler,
+            PendingSnapshotPackages, PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
         bank::Bank,
         bank_forks::BankForks,
@@ -321,8 +320,11 @@ pub struct ValidatorConfig {
     pub repair_handler_type: RepairHandlerType,
 }
 
-impl Default for ValidatorConfig {
-    fn default() -> Self {
+impl ValidatorConfig {
+    pub fn default_for_test() -> Self {
+        let max_thread_count =
+            NonZeroUsize::new(num_cpus::get()).expect("thread count is non-zero");
+
         Self {
             halt_at_slot: None,
             expected_genesis_hash: None,
@@ -330,10 +332,10 @@ impl Default for ValidatorConfig {
             expected_shred_version: None,
             voting_disabled: false,
             max_ledger_shreds: None,
-            blockstore_options: BlockstoreOptions::default(),
+            blockstore_options: BlockstoreOptions::default_for_tests(),
             account_paths: Vec::new(),
             account_snapshot_paths: Vec::new(),
-            rpc_config: JsonRpcConfig::default(),
+            rpc_config: JsonRpcConfig::default_for_test(),
             on_start_geyser_plugin_config_files: None,
             geyser_plugin_always_enabled: false,
             rpc_addrs: None,
@@ -372,49 +374,30 @@ impl Default for ValidatorConfig {
             validator_exit: Arc::new(RwLock::new(Exit::default())),
             validator_exit_backpressure: HashMap::default(),
             no_wait_for_vote_to_start_leader: true,
-            accounts_db_config: None,
+            accounts_db_config: Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             wait_to_vote_slot: None,
             runtime_config: RuntimeConfig::default(),
             banking_trace_dir_byte_limit: 0,
             block_verification_method: BlockVerificationMethod::default(),
             block_production_method: BlockProductionMethod::default(),
             transaction_struct: TransactionStructure::default(),
-            enable_block_production_forwarding: false,
+            // enable forwarding by default for tests
+            enable_block_production_forwarding: true,
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             wen_restart_proto_path: None,
             wen_restart_coordinator: None,
             unified_scheduler_handler_threads: None,
             ip_echo_server_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
-            rayon_global_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
-            replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
-            replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
-            tvu_shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
-            delay_leader_block_for_pending_fork: false,
-            use_tpu_client_next: true,
-            retransmit_xdp: None,
-            repair_handler_type: RepairHandlerType::default(),
-        }
-    }
-}
-
-impl ValidatorConfig {
-    pub fn default_for_test() -> Self {
-        let max_thread_count =
-            NonZeroUsize::new(get_max_thread_count()).expect("thread count is non-zero");
-
-        Self {
-            accounts_db_config: Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
-            blockstore_options: BlockstoreOptions::default_for_tests(),
-            rpc_config: JsonRpcConfig::default_for_test(),
-            block_production_method: BlockProductionMethod::default(),
-            enable_block_production_forwarding: true, // enable forwarding by default for tests
             rayon_global_threads: max_thread_count,
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: max_thread_count,
             tvu_shred_sigverify_threads: NonZeroUsize::new(get_thread_count())
                 .expect("thread count is non-zero"),
-            ..Self::default()
+            delay_leader_block_for_pending_fork: false,
+            use_tpu_client_next: true,
+            retransmit_xdp: None,
+            repair_handler_type: RepairHandlerType::default(),
         }
     }
 
@@ -583,7 +566,6 @@ pub struct Validator {
     geyser_plugin_service: Option<GeyserPluginService>,
     blockstore_metric_report_service: BlockstoreMetricReportService,
     accounts_background_service: AccountsBackgroundService,
-    accounts_hash_verifier: AccountsHashVerifier,
     turbine_quic_endpoint: Option<Endpoint>,
     turbine_quic_endpoint_runtime: Option<TokioRuntime>,
     turbine_quic_endpoint_join_handle: Option<solana_turbine::quic_endpoint::AsyncTryJoinHandle>,
@@ -734,25 +716,6 @@ impl Validator {
         .context("failed to clean orphaned account snapshot directories")?;
         timer.stop();
         info!("Cleaning orphaned account snapshot directories done. {timer}");
-
-        // The accounts hash cache dir was renamed, so cleanup any old dirs that exist.
-        let accounts_hash_cache_path = config
-            .accounts_db_config
-            .as_ref()
-            .and_then(|config| config.accounts_hash_cache_path.as_ref())
-            .map(PathBuf::as_path)
-            .unwrap_or(ledger_path);
-        let old_accounts_hash_cache_dirs = [
-            ledger_path.join("calculate_accounts_hash_cache"),
-            accounts_hash_cache_path.join("full"),
-            accounts_hash_cache_path.join("incremental"),
-            accounts_hash_cache_path.join("transient"),
-        ];
-        for old_accounts_hash_cache_dir in old_accounts_hash_cache_dirs {
-            if old_accounts_hash_cache_dir.exists() {
-                move_and_async_delete_path(old_accounts_hash_cache_dir);
-            }
-        }
 
         // token used to cancel tpu-client-next.
         let cancel_tpu_client_next = CancellationToken::new();
@@ -920,18 +883,10 @@ impl Validator {
             None
         };
 
-        let (accounts_package_sender, accounts_package_receiver) = crossbeam_channel::unbounded();
-        let accounts_hash_verifier = AccountsHashVerifier::new(
-            accounts_package_sender.clone(),
-            accounts_package_receiver,
-            pending_snapshot_packages,
-            exit.clone(),
-            snapshot_controller.clone(),
-        );
         let snapshot_request_handler = SnapshotRequestHandler {
             snapshot_controller: snapshot_controller.clone(),
             snapshot_request_receiver,
-            accounts_package_sender,
+            pending_snapshot_packages,
         };
         let pruned_banks_request_handler = PrunedBanksRequestHandler {
             pruned_banks_receiver,
@@ -1019,7 +974,6 @@ impl Validator {
                     &scheduler_pool,
                     &bank_forks,
                     &channels,
-                    &cluster_info,
                     &poh_recorder,
                     transaction_recorder.clone(),
                     BankingStage::num_threads(),
@@ -1762,7 +1716,6 @@ impl Validator {
             geyser_plugin_service,
             blockstore_metric_report_service,
             accounts_background_service,
-            accounts_hash_verifier,
             turbine_quic_endpoint,
             turbine_quic_endpoint_runtime,
             turbine_quic_endpoint_join_handle,
@@ -1892,9 +1845,6 @@ impl Validator {
         self.accounts_background_service
             .join()
             .expect("accounts_background_service");
-        self.accounts_hash_verifier
-            .join()
-            .expect("accounts_hash_verifier");
         if let Some(turbine_quic_endpoint) = &self.turbine_quic_endpoint {
             solana_turbine::quic_endpoint::close_quic_endpoint(turbine_quic_endpoint);
         }
@@ -2971,7 +2921,6 @@ mod tests {
                 i - 1, // parent_slot
                 true,  // is_full_slot
                 1,     // version
-                true,  // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, true).unwrap();
         }
@@ -3061,7 +3010,6 @@ mod tests {
                 i - 1, // parent_slot
                 true,  // is_full_slot
                 1,     // version
-                true,  // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, true).unwrap();
         }

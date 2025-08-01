@@ -162,7 +162,7 @@ impl LeaderTpuCache {
                     leader_sockets.push(*tpu_socket);
                 } else {
                     // The leader is probably delinquent
-                    trace!("TPU not available for leader {}", leader);
+                    trace!("TPU not available for leader {leader}");
                 }
             } else {
                 // Overran the local leader schedule cache
@@ -227,7 +227,7 @@ impl LeaderTpuCache {
                     cluster_refreshed = true;
                 }
                 Err(err) => {
-                    warn!("Failed to fetch cluster tpu sockets: {}", err);
+                    warn!("Failed to fetch cluster tpu sockets: {err}");
                     has_error = true;
                 }
             }
@@ -247,8 +247,8 @@ impl LeaderTpuCache {
                 }
                 Err(err) => {
                     warn!(
-                        "Failed to fetch slot leaders (current estimated slot: {}): {}",
-                        estimated_current_slot, err
+                        "Failed to fetch slot leaders (current estimated slot: \
+                         {estimated_current_slot}): {err}"
                     );
                     has_error = true;
                 }
@@ -778,8 +778,8 @@ impl LeaderTpuService {
         .await
         .map_err(|_| {
             TpuSenderError::Custom(format!(
-                "Failed to get slot leaders connecting to: {}, timeout: {:?}. Invalid slot range",
-                websocket_url, tpu_leader_service_creation_timeout
+                "Failed to get slot leaders connecting to: {websocket_url}, timeout: \
+                 {tpu_leader_service_creation_timeout:?}. Invalid slot range"
             ))
         })??;
 
@@ -800,8 +800,8 @@ impl LeaderTpuService {
         .await
         .map_err(|_| {
             TpuSenderError::Custom(format!(
-                "Failed find any cluster node info for upcoming leaders, timeout: {:?}.",
-                tpu_leader_service_creation_timeout
+                "Failed find any cluster node info for upcoming leaders, timeout: \
+                 {tpu_leader_service_creation_timeout:?}."
             ))
         })??;
         let leader_tpu_cache = Arc::new(RwLock::new(LeaderTpuCache::new(

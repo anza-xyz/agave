@@ -12,7 +12,7 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
-    crate::syscalls::mem_ops::is_nonoverlapping,
+    crate::mem_ops::is_nonoverlapping,
     solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
@@ -50,7 +50,7 @@ use {
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
-    solana_transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_transaction_context::IndexOfAccount,
     solana_type_overrides::sync::Arc,
     std::{
         alloc::Layout,
@@ -294,28 +294,6 @@ macro_rules! register_feature_gated_function {
     };
 }
 
-pub(crate) fn morph_into_deployment_environment_v1(
-    from: Arc<BuiltinProgram<InvokeContext>>,
-) -> Result<BuiltinProgram<InvokeContext>, Error> {
-    let mut config = from.get_config().clone();
-    config.reject_broken_elfs = true;
-    // Once the tests are being build using a toolchain which supports the newer SBPF versions,
-    // the deployment of older versions will be disabled:
-    // config.enabled_sbpf_versions =
-    //     *config.enabled_sbpf_versions.end()..=*config.enabled_sbpf_versions.end();
-
-    let mut result = BuiltinProgram::new_loader(config);
-
-    for (_key, (name, value)) in from.get_function_registry().iter() {
-        // Deployment of programs with sol_alloc_free is disabled. So do not register the syscall.
-        if name != *b"sol_alloc_free_" {
-            result.register_function(unsafe { std::str::from_utf8_unchecked(name) }, value)?;
-        }
-    }
-
-    Ok(result)
-}
-
 pub fn create_program_runtime_environment_v1<'a>(
     feature_set: &SVMFeatureSet,
     compute_budget: &SVMTransactionExecutionBudget,
@@ -357,7 +335,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
         enable_address_translation: true,
-        enable_stack_frame_gaps: !feature_set.bpf_account_data_direct_mapping,
+        enable_stack_frame_gaps: true,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
         enable_instruction_tracing: debugging_features,
@@ -2180,7 +2158,6 @@ mod tests {
     use solana_sysvar::fees::Fees;
     use {
         super::*,
-        crate::mock_create_vm,
         assert_matches::assert_matches,
         core::slice,
         solana_account::{create_account_shared_data_for_test, AccountSharedData},
@@ -2192,15 +2169,25 @@ mod tests {
         solana_instruction::Instruction,
         solana_last_restart_slot::LastRestartSlot,
         solana_program::program::check_type_assumptions,
-        solana_program_runtime::{invoke_context::InvokeContext, with_mock_invoke_context},
+        solana_program_runtime::{
+            execution_budget::MAX_HEAP_FRAME_BYTES,
+            invoke_context::{BpfAllocator, InvokeContext, SyscallContext},
+            with_mock_invoke_context,
+        },
         solana_sbpf::{
-            error::EbpfError, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
+            aligned_memory::AlignedMemory,
+            ebpf::{self, HOST_ALIGN},
+            error::EbpfError,
+            memory_region::{MemoryMapping, MemoryRegion},
+            program::SBPFVersion,
+            vm::Config,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, sysvar},
         solana_sha256_hasher::hashv,
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,
         solana_sysvar::stake_history::{self, StakeHistory, StakeHistoryEntry},
+        solana_transaction_context::InstructionAccount,
         std::{
             hash::{DefaultHasher, Hash, Hasher},
             mem,
@@ -2234,9 +2221,9 @@ mod tests {
             with_mock_invoke_context!($invoke_context, transaction_context, transaction_accounts);
             $invoke_context
                 .transaction_context
-                .get_next_instruction_context()
+                .get_next_instruction_context_mut()
                 .unwrap()
-                .configure(&[0, 1], &[], &[]);
+                .configure(vec![0, 1], vec![], &[]);
             $invoke_context.push().unwrap();
         };
     }
@@ -2633,82 +2620,104 @@ mod tests {
         );
     }
 
+    macro_rules! setup_alloc_test {
+        ($invoke_context:ident, $memory_mapping:ident, $heap:ident) => {
+            prepare_mockup!($invoke_context, program_id, bpf_loader::id());
+            $invoke_context
+                .set_syscall_context(SyscallContext {
+                    allocator: BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
+                    accounts_metadata: Vec::new(),
+                    trace_log: Vec::new(),
+                })
+                .unwrap();
+            let config = Config {
+                aligned_memory_mapping: false,
+                ..Config::default()
+            };
+            let mut $heap =
+                AlignedMemory::<{ HOST_ALIGN }>::zero_filled(MAX_HEAP_FRAME_BYTES as usize);
+            let regions = vec![MemoryRegion::new_writable(
+                $heap.as_slice_mut(),
+                ebpf::MM_HEAP_START,
+            )];
+            let mut $memory_mapping =
+                MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap();
+        };
+    }
+
     #[test]
     fn test_syscall_sol_alloc_free() {
         // large alloc
         {
-            prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-            mock_create_vm!(vm, Vec::new(), Vec::new(), &mut invoke_context);
-            let mut vm = vm.unwrap();
-            let invoke_context = &mut vm.context_object_pointer;
-            let memory_mapping = &mut vm.memory_mapping;
+            setup_alloc_test!(invoke_context, memory_mapping, heap);
             let result = SyscallAllocFree::rust(
-                invoke_context,
+                &mut invoke_context,
                 solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
                 0,
-                memory_mapping,
+                &mut memory_mapping,
             );
             assert_ne!(result.unwrap(), 0);
             let result = SyscallAllocFree::rust(
-                invoke_context,
+                &mut invoke_context,
                 solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
                 0,
-                memory_mapping,
+                &mut memory_mapping,
             );
             assert_eq!(result.unwrap(), 0);
-            let result =
-                SyscallAllocFree::rust(invoke_context, u64::MAX, 0, 0, 0, 0, memory_mapping);
+            let result = SyscallAllocFree::rust(
+                &mut invoke_context,
+                u64::MAX,
+                0,
+                0,
+                0,
+                0,
+                &mut memory_mapping,
+            );
             assert_eq!(result.unwrap(), 0);
         }
 
         // many small unaligned allocs
         {
-            prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-            mock_create_vm!(vm, Vec::new(), Vec::new(), &mut invoke_context);
-            let mut vm = vm.unwrap();
-            let invoke_context = &mut vm.context_object_pointer;
-            let memory_mapping = &mut vm.memory_mapping;
+            setup_alloc_test!(invoke_context, memory_mapping, heap);
             for _ in 0..100 {
-                let result = SyscallAllocFree::rust(invoke_context, 1, 0, 0, 0, 0, memory_mapping);
+                let result =
+                    SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0, &mut memory_mapping);
                 assert_ne!(result.unwrap(), 0);
             }
             let result = SyscallAllocFree::rust(
-                invoke_context,
+                &mut invoke_context,
                 solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
                 0,
-                memory_mapping,
+                &mut memory_mapping,
             );
             assert_eq!(result.unwrap(), 0);
         }
 
         // many small aligned allocs
         {
-            prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-            mock_create_vm!(vm, Vec::new(), Vec::new(), &mut invoke_context);
-            let mut vm = vm.unwrap();
-            let invoke_context = &mut vm.context_object_pointer;
-            let memory_mapping = &mut vm.memory_mapping;
+            setup_alloc_test!(invoke_context, memory_mapping, heap);
             for _ in 0..12 {
-                let result = SyscallAllocFree::rust(invoke_context, 1, 0, 0, 0, 0, memory_mapping);
+                let result =
+                    SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0, &mut memory_mapping);
                 assert_ne!(result.unwrap(), 0);
             }
             let result = SyscallAllocFree::rust(
-                invoke_context,
+                &mut invoke_context,
                 solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
                 0,
-                memory_mapping,
+                &mut memory_mapping,
             );
             assert_eq!(result.unwrap(), 0);
         }
@@ -2716,19 +2725,15 @@ mod tests {
         // aligned allocs
 
         fn aligned<T>() {
-            prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-            mock_create_vm!(vm, Vec::new(), Vec::new(), &mut invoke_context);
-            let mut vm = vm.unwrap();
-            let invoke_context = &mut vm.context_object_pointer;
-            let memory_mapping = &mut vm.memory_mapping;
+            setup_alloc_test!(invoke_context, memory_mapping, heap);
             let result = SyscallAllocFree::rust(
-                invoke_context,
+                &mut invoke_context,
                 size_of::<T>() as u64,
                 0,
                 0,
                 0,
                 0,
-                memory_mapping,
+                &mut memory_mapping,
             );
             let address = result.unwrap();
             assert_ne!(address, 0);
@@ -4441,7 +4446,7 @@ mod tests {
                     .transaction_context
                     .get_instruction_context_stack_height()
             {
-                let instruction_accounts = [InstructionAccount::new(
+                let instruction_accounts = vec![InstructionAccount::new(
                     index_in_trace.saturating_add(1) as IndexOfAccount,
                     0, // This is incorrect / inconsistent but not required
                     0,
@@ -4450,9 +4455,9 @@ mod tests {
                 )];
                 invoke_context
                     .transaction_context
-                    .get_next_instruction_context()
+                    .get_next_instruction_context_mut()
                     .unwrap()
-                    .configure(&[0], &instruction_accounts, &[index_in_trace as u8]);
+                    .configure(vec![0], instruction_accounts, &[index_in_trace as u8]);
                 invoke_context.transaction_context.push().unwrap();
             }
         }

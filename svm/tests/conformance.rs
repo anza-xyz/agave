@@ -4,9 +4,9 @@ use {
         transaction_builder::SanitizedTransactionBuilder,
     },
     agave_feature_set::{FeatureSet, FEATURE_NAMES},
+    agave_syscalls::create_program_runtime_environment_v1,
     prost::Message,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_clock::Clock,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -24,6 +24,7 @@ use {
     solana_svm::{program_loader, transaction_processor::TransactionBatchProcessor},
     solana_svm_callback::TransactionProcessingCallback,
     solana_svm_conformance::proto::{AcctState, InstrEffects, InstrFixture},
+    solana_svm_transaction::instruction::SVMInstruction,
     solana_sysvar::last_restart_slot,
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
@@ -112,9 +113,30 @@ fn execute_fixtures() {
     run_from_folder(&base_dir);
     base_dir.pop();
 
+    // bpf-loader-v2 tests
+    base_dir.push("bpf-loader-v2");
+    run_from_folder(&base_dir);
+    base_dir.pop();
+
+    // bpf-loader-v3 tests
+    base_dir.push("bpf-loader-v3");
+    run_from_folder(&base_dir);
+    base_dir.pop();
+
+    // bpf-loader-v3 tests
+    base_dir.push("bpf-loader-v3-programs");
+    run_from_folder(&base_dir);
+    base_dir.pop();
+
     // System program tests
     base_dir.push("system");
     run_from_folder(&base_dir);
+    base_dir.pop();
+
+    // non-builtin-programs tests
+    base_dir.push("unknown");
+    run_from_folder(&base_dir);
+    base_dir.pop();
 
     cleanup();
 }
@@ -392,15 +414,16 @@ fn execute_fixture_as_instr(
         ));
     }
 
+    invoke_context
+        .prepare_next_top_level_instruction(
+            sanitized_message,
+            &SVMInstruction::from(&sanitized_message.instructions()[0]),
+            vec![program_idx as IndexOfAccount],
+        )
+        .expect("Failed to configure instruction");
     let mut compute_units_consumed = 0u64;
     let mut timings = ExecuteTimings::default();
-    let result = invoke_context.process_instruction(
-        &sanitized_message.instructions()[0].data,
-        &instruction_accounts,
-        &[program_idx as IndexOfAccount],
-        &mut compute_units_consumed,
-        &mut timings,
-    );
+    let result = invoke_context.process_instruction(&mut compute_units_consumed, &mut timings);
 
     if output.result == 0 {
         assert!(

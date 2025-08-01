@@ -17,7 +17,6 @@ use {
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
         validator::{BlockProductionMethod, TransactionStructure},
     },
-    solana_gossip::cluster_info::{ClusterInfo, Node},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
@@ -36,7 +35,6 @@ use {
     },
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::instruction as system_instruction,
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
@@ -454,12 +452,6 @@ fn main() {
         )))
         .unwrap();
     let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-    let cluster_info = {
-        let keypair = Arc::new(Keypair::new());
-        let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
-        ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
-    };
-    let cluster_info = Arc::new(cluster_info);
     let banking_tracer_channels = if matches!(
         block_production_method,
         BlockProductionMethod::UnifiedScheduler
@@ -477,7 +469,6 @@ fn main() {
             &pool,
             &bank_forks,
             &channels,
-            &cluster_info,
             &poh_recorder,
             transaction_recorder.clone(),
             num_banking_threads - NUM_VOTE_PROCESSING_THREADS,
@@ -498,7 +489,6 @@ fn main() {
     let banking_stage = BankingStage::new_num_threads(
         block_production_method.clone(),
         transaction_struct,
-        &cluster_info,
         &poh_recorder,
         transaction_recorder,
         non_vote_receiver,

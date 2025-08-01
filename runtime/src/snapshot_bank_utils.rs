@@ -1907,7 +1907,7 @@ mod tests {
         let bank_test_config = BankTestConfig {
             accounts_db_config: AccountsDbConfig {
                 storage_access,
-                ..AccountsDbConfig::default()
+                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
             },
         };
 

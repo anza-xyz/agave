@@ -46,7 +46,6 @@ use {
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         rent_collector::RentCollectorWithMetrics,
         runtime_config::RuntimeConfig,
-        serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_hash::SnapshotHash,
         stake_account::StakeAccount,
         stake_weighted_timestamp::{
@@ -61,6 +60,9 @@ use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
+    agave_syscalls::{
+        create_program_runtime_environment_v1, create_program_runtime_environment_v2,
+    },
     ahash::{AHashSet, RandomState},
     dashmap::DashMap,
     log::*,
@@ -74,23 +76,13 @@ use {
     solana_accounts_db::{
         account_locks::validate_account_locks,
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
-        accounts_db::{
-            AccountStorageEntry, AccountsDb, AccountsDbConfig, CalcAccountsHashDataSource,
-            DuplicatesLtHash, PubkeyHashAccount,
-        },
-        accounts_hash::{
-            AccountsHash, AccountsLtHash, CalcAccountsHashConfig, HashStats,
-            IncrementalAccountsHash,
-        },
+        accounts_db::{AccountStorageEntry, AccountsDb, AccountsDbConfig, DuplicatesLtHash},
+        accounts_hash::AccountsLtHash,
         accounts_index::{IndexKey, ScanConfig, ScanResult},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::{Ancestors, AncestorsForSerialization},
         blockhash_queue::BlockhashQueue,
-        sorted_storages::SortedStorages,
         storable_accounts::StorableAccounts,
-    },
-    solana_bpf_loader_program::syscalls::{
-        create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
     solana_builtins::{prototype::BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
     solana_clock::{
@@ -99,7 +91,7 @@ use {
     },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_cost_model::{block_cost_limits::simd_0256_block_limits, cost_tracker::CostTracker},
+    solana_cost_model::{block_cost_limits::simd_0286_block_limits, cost_tracker::CostTracker},
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface as feature,
@@ -247,7 +239,7 @@ impl AddAssign for SquashTiming {
     }
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CollectorFeeDetails {
     transaction_fee: u64,
     priority_fee: u64,
@@ -263,8 +255,12 @@ impl CollectorFeeDetails {
             .saturating_add(fee_details.prioritization_fee());
     }
 
-    pub(crate) fn total(&self) -> u64 {
+    pub fn total_transaction_fee(&self) -> u64 {
         self.transaction_fee.saturating_add(self.priority_fee)
+    }
+
+    pub fn total_priority_fee(&self) -> u64 {
+        self.priority_fee
     }
 }
 
@@ -403,7 +399,7 @@ impl TransactionLogCollector {
 /// Since it is difficult to insert fields to serialize/deserialize against existing code already deployed,
 /// new fields can be optionally serialized and optionally deserialized. At some point, the serialization and
 /// deserialization will use a new mechanism or otherwise be in sync more clearly.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct BankFieldsToDeserialize {
     pub(crate) blockhash_queue: BlockhashQueue,
@@ -435,9 +431,7 @@ pub struct BankFieldsToDeserialize {
     pub(crate) versioned_epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) accounts_data_len: u64,
-    pub(crate) incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
-    // When removing the accounts lt hash featurization code, also remove this Option wrapper
-    pub(crate) accounts_lt_hash: Option<AccountsLtHash>,
+    pub(crate) accounts_lt_hash: AccountsLtHash,
     pub(crate) bank_hash_stats: BankHashStats,
 }
 
@@ -1111,8 +1105,7 @@ impl Bank {
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
 
-        let accounts_data_size_initial = bank.get_total_accounts_stats().unwrap().data_len as u64;
-        bank.accounts_data_size_initial = accounts_data_size_initial;
+        bank.accounts_data_size_initial = bank.calculate_accounts_data_size().unwrap();
 
         bank
     }
@@ -1804,11 +1797,7 @@ impl Bank {
             fee_structure: FeeStructure::default(),
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
-            accounts_lt_hash: Mutex::new(
-                fields
-                    .accounts_lt_hash
-                    .expect("accounts_lt_hash must exist in snapshot"),
-            ),
+            accounts_lt_hash: Mutex::new(fields.accounts_lt_hash),
             cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
@@ -3713,18 +3702,17 @@ impl Bank {
         }
     }
 
-    /// Returns the accounts, sorted by pubkey, that were part of accounts delta hash calculation
+    /// Returns the accounts, sorted by pubkey, that were part of accounts lt hash calculation
     /// This is used when writing a bank hash details file.
-    pub(crate) fn get_accounts_for_bank_hash_details(&self) -> Vec<PubkeyHashAccount> {
-        let accounts_db = &self.rc.accounts.accounts_db;
-
-        let mut accounts_written_this_slot =
-            accounts_db.get_pubkey_hash_account_for_slot(self.slot());
-
-        // Sort the accounts by pubkey to match the order of the accounts delta hash.
-        // This also makes comparison of files from different nodes deterministic.
-        accounts_written_this_slot.sort_unstable_by_key(|account| account.pubkey);
-        accounts_written_this_slot
+    pub(crate) fn get_accounts_for_bank_hash_details(&self) -> Vec<(Pubkey, AccountSharedData)> {
+        let mut accounts = self
+            .rc
+            .accounts
+            .accounts_db
+            .get_pubkey_account_for_slot(self.slot());
+        // Sort the accounts by pubkey to make diff deterministic.
+        accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        accounts
     }
 
     pub fn cluster_type(&self) -> ClusterType {
@@ -4031,6 +4019,15 @@ impl Bank {
         self.rc.accounts.clone()
     }
 
+    fn apply_simd_0306_cost_tracker_changes(&mut self) {
+        let mut cost_tracker = self.write_cost_tracker().unwrap();
+        let block_cost_limit = cost_tracker.get_block_limit();
+        let vote_cost_limit = cost_tracker.get_vote_limit();
+        // SIMD-0306 makes account cost limit 40% of the block cost limit.
+        let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
+        cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
+    }
+
     fn finish_init(
         &mut self,
         genesis_config: &GenesisConfig,
@@ -4056,14 +4053,20 @@ impl Bank {
         // Cost-tracker limits are propagated through children banks.
         if self
             .feature_set
-            .is_active(&feature_set::raise_block_limits_to_60m::id())
+            .is_active(&feature_set::raise_block_limits_to_100m::id())
         {
-            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0256_block_limits();
-            self.write_cost_tracker().unwrap().set_limits(
-                account_cost_limit,
-                block_cost_limit,
-                vote_cost_limit,
-            );
+            let block_cost_limit = simd_0286_block_limits();
+            let mut cost_tracker = self.write_cost_tracker().unwrap();
+            let account_cost_limit = cost_tracker.get_account_limit();
+            let vote_cost_limit = cost_tracker.get_vote_limit();
+            cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
+        }
+
+        if self
+            .feature_set
+            .is_active(&feature_set::raise_account_cu_limit::id())
+        {
+            self.apply_simd_0306_cost_tracker_changes();
         }
 
         if !debug_do_not_add_builtins {
@@ -4781,35 +4784,11 @@ impl Bank {
         self.capitalization.store(capitalization, Relaxed);
     }
 
-    /// Returns the `AccountsHash` that was calculated for this bank's slot
-    ///
-    /// This fn is used when creating a snapshot with ledger-tool, or when
-    /// packaging a snapshot into an archive (used to get the `SnapshotHash`).
-    pub fn get_accounts_hash(&self) -> Option<AccountsHash> {
-        self.rc
-            .accounts
-            .accounts_db
-            .get_accounts_hash(self.slot())
-            .map(|(accounts_hash, _)| accounts_hash)
-    }
-
-    /// Returns the `IncrementalAccountsHash` that was calculated for this bank's slot
-    ///
-    /// This fn is used when creating an incremental snapshot with ledger-tool, or when
-    /// packaging a snapshot into an archive (used to get the `SnapshotHash`).
-    pub fn get_incremental_accounts_hash(&self) -> Option<IncrementalAccountsHash> {
-        self.rc
-            .accounts
-            .accounts_db
-            .get_incremental_accounts_hash(self.slot())
-            .map(|(incremental_accounts_hash, _)| incremental_accounts_hash)
-    }
-
     /// Returns the `SnapshotHash` for this bank's slot
     ///
     /// This fn is used at startup to verify the bank was rebuilt correctly.
     pub fn get_snapshot_hash(&self) -> SnapshotHash {
-        SnapshotHash::new(Some(self.accounts_lt_hash.lock().unwrap().0.checksum()))
+        SnapshotHash::new(self.accounts_lt_hash.lock().unwrap().0.checksum())
     }
 
     pub fn load_account_into_read_cache(&self, key: &Pubkey) {
@@ -4817,81 +4796,6 @@ impl Bank {
             .accounts
             .accounts_db
             .load_account_into_read_cache(&self.ancestors, key);
-    }
-
-    pub fn update_accounts_hash(
-        &self,
-        data_source: CalcAccountsHashDataSource,
-        is_startup: bool,
-    ) -> AccountsHash {
-        let (accounts_hash, total_lamports) = self
-            .rc
-            .accounts
-            .accounts_db
-            .update_accounts_hash_with_verify_from(
-                data_source,
-                false, // debug_verify
-                self.slot(),
-                &self.ancestors,
-                Some(self.capitalization()),
-                self.epoch_schedule(),
-                is_startup,
-            );
-        if total_lamports != self.capitalization() {
-            datapoint_info!(
-                "capitalization_mismatch",
-                ("slot", self.slot(), i64),
-                ("calculated_lamports", total_lamports, i64),
-                ("capitalization", self.capitalization(), i64),
-            );
-
-            // cap mismatch detected. It has been logged to metrics above.
-            // Run both versions of the calculation to attempt to get more info.
-            let debug_verify = true;
-            self.rc
-                .accounts
-                .accounts_db
-                .update_accounts_hash_with_verify_from(
-                    data_source,
-                    debug_verify,
-                    self.slot(),
-                    &self.ancestors,
-                    Some(self.capitalization()),
-                    self.epoch_schedule(),
-                    is_startup,
-                );
-
-            panic!(
-                "capitalization_mismatch. slot: {}, calculated_lamports: {}, capitalization: {}",
-                self.slot(),
-                total_lamports,
-                self.capitalization()
-            );
-        }
-        accounts_hash
-    }
-
-    /// Calculate the incremental accounts hash from `base_slot` to `self`
-    pub fn update_incremental_accounts_hash(&self, base_slot: Slot) -> IncrementalAccountsHash {
-        let config = CalcAccountsHashConfig {
-            use_bg_thread_pool: true,
-            ancestors: None, // does not matter, will not be used
-            epoch_schedule: &self.epoch_schedule,
-            epoch: self.epoch,
-            store_detailed_debug_info_on_failure: false,
-        };
-        let storages = self.get_snapshot_storages(Some(base_slot));
-        let sorted_storages = SortedStorages::new(&storages);
-        self.rc
-            .accounts
-            .accounts_db
-            .update_incremental_accounts_hash(
-                &config,
-                &sorted_storages,
-                self.slot(),
-                HashStats::default(),
-            )
-            .0
     }
 
     /// A snapshot bank should be purged of 0 lamport accounts which are not part of the hash
@@ -5419,13 +5323,24 @@ impl Bank {
             );
         }
 
-        if new_feature_activations.contains(&feature_set::raise_block_limits_to_60m::id()) {
-            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0256_block_limits();
-            self.write_cost_tracker().unwrap().set_limits(
-                account_cost_limit,
-                block_cost_limit,
-                vote_cost_limit,
-            );
+        if new_feature_activations.contains(&feature_set::raise_block_limits_to_100m::id()) {
+            let block_cost_limit = simd_0286_block_limits();
+            let mut cost_tracker = self.write_cost_tracker().unwrap();
+            let account_cost_limit = cost_tracker.get_account_limit();
+            let vote_cost_limit = cost_tracker.get_vote_limit();
+            cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
+            drop(cost_tracker);
+
+            if self
+                .feature_set
+                .is_active(&feature_set::raise_account_cu_limit::id())
+            {
+                self.apply_simd_0306_cost_tracker_changes();
+            }
+        }
+
+        if new_feature_activations.contains(&feature_set::raise_account_cu_limit::id()) {
+            self.apply_simd_0306_cost_tracker_changes();
         }
     }
 
@@ -5612,28 +5527,22 @@ impl Bank {
         }
     }
 
-    /// Get all the accounts for this bank and calculate stats
-    pub fn get_total_accounts_stats(&self) -> ScanResult<TotalAccountsStats> {
+    /// Calculates the accounts data size of all accounts
+    ///
+    /// Panics if total overflows a u64.
+    ///
+    /// Note, this may be *very* expensive, as *all* accounts are collected
+    /// into a Vec before summing each account's data size.
+    ///
+    /// Only intended to be called by tests or when the number of accounts is small.
+    pub fn calculate_accounts_data_size(&self) -> ScanResult<u64> {
         let accounts = self.get_all_accounts(false)?;
-        Ok(self.calculate_total_accounts_stats(
-            accounts
-                .iter()
-                .map(|(pubkey, account, _slot)| (pubkey, account)),
-        ))
-    }
-
-    /// Given all the accounts for a bank, calculate stats
-    pub fn calculate_total_accounts_stats<'a>(
-        &self,
-        accounts: impl Iterator<Item = (&'a Pubkey, &'a AccountSharedData)>,
-    ) -> TotalAccountsStats {
-        let rent_collector = self.rent_collector();
-        let mut total_accounts_stats = TotalAccountsStats::default();
-        accounts.for_each(|(pubkey, account)| {
-            total_accounts_stats.accumulate_account(pubkey, account, rent_collector);
-        });
-
-        total_accounts_stats
+        let accounts_data_size = accounts
+            .into_iter()
+            .map(|(_pubkey, account, _slot)| account.data().len() as u64)
+            .try_fold(0, u64::checked_add)
+            .expect("accounts data size cannot overflow");
+        Ok(accounts_data_size)
     }
 
     pub fn is_in_slot_hashes_history(&self, slot: &Slot) -> bool {
@@ -5685,6 +5594,11 @@ impl Bank {
     /// Sets the accounts lt hash, only to be used by SnapshotMinimizer
     pub fn set_accounts_lt_hash_for_snapshot_minimizer(&self, accounts_lt_hash: AccountsLtHash) {
         *self.accounts_lt_hash.lock().unwrap() = accounts_lt_hash;
+    }
+
+    /// Return total transaction fee collected
+    pub fn get_collector_fee_details(&self) -> CollectorFeeDetails {
+        self.collector_fee_details.read().unwrap().clone()
     }
 }
 
@@ -5974,8 +5888,11 @@ impl Bank {
         self.transaction_processor.get_sysvar_cache_for_tests()
     }
 
-    pub fn update_accounts_hash_for_tests(&self) -> AccountsHash {
-        self.update_accounts_hash(CalcAccountsHashDataSource::IndexForTests, false)
+    pub fn calculate_accounts_lt_hash_for_tests(&self) -> AccountsLtHash {
+        self.rc
+            .accounts
+            .accounts_db
+            .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, self.slot)
     }
 
     pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> ProgramCacheForTxBatch {
@@ -6081,65 +5998,6 @@ enum ApplyFeatureActivationsCaller {
     FinishInit,
     NewFromParent,
     WarpFromParent,
-}
-
-/// Struct to collect stats when scanning all accounts in `get_total_accounts_stats()`
-#[derive(Debug, Default, Copy, Clone, Serialize)]
-pub struct TotalAccountsStats {
-    /// Total number of accounts
-    pub num_accounts: usize,
-    /// Total data size of all accounts
-    pub data_len: usize,
-
-    /// Total number of executable accounts
-    pub num_executable_accounts: usize,
-    /// Total data size of executable accounts
-    pub executable_data_len: usize,
-
-    /// Total number of rent exempt accounts
-    pub num_rent_exempt_accounts: usize,
-    /// Total number of rent paying accounts
-    pub num_rent_paying_accounts: usize,
-    /// Total number of rent paying accounts without data
-    pub num_rent_paying_accounts_without_data: usize,
-    /// Total amount of lamports in rent paying accounts
-    pub lamports_in_rent_paying_accounts: u64,
-}
-
-impl TotalAccountsStats {
-    pub fn accumulate_account(
-        &mut self,
-        address: &Pubkey,
-        account: &AccountSharedData,
-        rent_collector: &RentCollector,
-    ) {
-        let data_len = account.data().len();
-        self.num_accounts += 1;
-        self.data_len += data_len;
-
-        if account.executable() {
-            self.num_executable_accounts += 1;
-            self.executable_data_len += data_len;
-        }
-
-        if !rent_collector.should_collect_rent(address, account.executable())
-            || rent_collector
-                .get_rent_due(
-                    account.lamports(),
-                    account.data().len(),
-                    account.rent_epoch(),
-                )
-                .is_exempt()
-        {
-            self.num_rent_exempt_accounts += 1;
-        } else {
-            self.num_rent_paying_accounts += 1;
-            self.lamports_in_rent_paying_accounts += account.lamports();
-            if data_len == 0 {
-                self.num_rent_paying_accounts_without_data += 1;
-            }
-        }
-    }
 }
 
 impl Drop for Bank {

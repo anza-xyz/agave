@@ -25,8 +25,7 @@ use {
         account_storage_reader::AccountStorageReader,
         accounts_db::{AccountStorageEntry, AtomicAccountsFileId},
         accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
-        accounts_hash::{AccountsDeltaHash, AccountsHash},
-        hardened_unpack::{self, ArchiveChunker, BytesChannelReader, MultiBytes, UnpackError},
+        hardened_unpack::{self, UnpackError},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
     },
     solana_clock::{Epoch, Slot},
@@ -36,10 +35,10 @@ use {
         cmp::Ordering,
         collections::{HashMap, HashSet},
         fmt, fs,
-        io::{self, BufReader, BufWriter, Error as IoError, Read, Seek, Write},
+        io::{self, BufRead, BufReader, BufWriter, Error as IoError, Read, Seek, Write},
         mem,
         num::{NonZeroU64, NonZeroUsize},
-        ops::RangeInclusive,
+        ops::{Range, RangeInclusive},
         path::{Path, PathBuf},
         process::ExitStatus,
         str::FromStr,
@@ -52,7 +51,7 @@ use {
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    hardened_unpack::UnpackedAppendVecMap, rayon::prelude::*,
+    hardened_unpack::UnpackedAppendVecMap,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
 };
 
@@ -84,6 +83,11 @@ pub const DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN: NonZeroUsize =
 pub const FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str =
     r"^snapshot-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar\.zst|tar\.lz4)$";
 pub const INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str = r"^incremental-snapshot-(?P<base>[[:digit:]]+)-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar\.zst|tar\.lz4)$";
+
+// Balance large and small files order in snapshot tar with bias towards small (4 small + 1 large),
+// such that during unpacking large writes are mixed with file metadata operations
+// and towards the end of archive (sizes equalize) writes are >256KiB / file.
+const INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO: (usize, usize) = (4, 1);
 
 #[derive(Copy, Clone, Default, Eq, PartialEq, Debug)]
 pub enum SnapshotVersion {
@@ -828,8 +832,6 @@ pub fn serialize_and_archive_snapshot_package(
         status_cache_slot_deltas,
         bank_fields_to_serialize,
         bank_hash_stats,
-        accounts_delta_hash,
-        accounts_hash,
         write_version,
         enqueued: _,
     } = snapshot_package;
@@ -841,8 +843,6 @@ pub fn serialize_and_archive_snapshot_package(
         status_cache_slot_deltas.as_slice(),
         bank_fields_to_serialize,
         bank_hash_stats,
-        accounts_delta_hash,
-        accounts_hash,
         write_version,
         should_flush_and_hard_link_storages,
     )?;
@@ -902,8 +902,6 @@ fn serialize_snapshot(
     slot_deltas: &[BankSlotDelta],
     mut bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
-    accounts_delta_hash: AccountsDeltaHash,
-    accounts_hash: AccountsHash,
     write_version: u64,
     should_flush_and_hard_link_storages: bool,
 ) -> Result<BankSnapshotInfo> {
@@ -956,7 +954,7 @@ fn serialize_snapshot(
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
             let extra_fields = ExtraFieldsToSerialize {
                 lamports_per_signature: bank_fields.fee_rate_governor.lamports_per_signature,
-                incremental_snapshot_persistence: None,
+                obsolete_incremental_snapshot_persistence: None,
                 obsolete_epoch_accounts_hash: None,
                 versioned_epoch_stakes,
                 accounts_lt_hash: Some(bank_fields.accounts_lt_hash.clone().into()),
@@ -965,8 +963,6 @@ fn serialize_snapshot(
                 stream,
                 bank_fields,
                 bank_hash_stats,
-                accounts_delta_hash,
-                accounts_hash,
                 &get_storages_to_serialize(snapshot_storages),
                 extra_fields,
                 write_version,
@@ -1129,7 +1125,15 @@ fn archive_snapshot(
                 .append_dir_all(SNAPSHOTS_DIR, &staging_snapshots_dir)
                 .map_err(E::ArchiveSnapshotsDir)?;
 
-            for storage in snapshot_storages {
+            let mut sorted_storage_indices = (0..snapshot_storages.len()).collect::<Vec<_>>();
+            sorted_storage_indices.sort_by_key(|&i| snapshot_storages[i].accounts.len());
+            for i in 0..sorted_storage_indices.len() {
+                let index = select_from_range_with_start_end_rates(
+                    0..sorted_storage_indices.len(),
+                    i,
+                    INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO,
+                );
+                let storage = &snapshot_storages[sorted_storage_indices[index]];
                 let path_in_archive = Path::new(ACCOUNTS_DIR)
                     .join(AccountsFile::file_name(storage.slot(), storage.id()));
 
@@ -1209,6 +1213,31 @@ fn archive_snapshot(
         hash: snapshot_hash,
         archive_format,
     })
+}
+
+/// Select the `nth` (`0 <= nth < range.len()`) value from a `range`, choosing values alternately
+/// from its start or end according to a `start_rate : end_rate` ratio.
+///
+/// For every `start_rate` values selected from the start, `end_rate` values are selected from the end.
+/// The resulting sequence alternates in a balanced and interleaved fashion between the range's start and end.
+/// ```
+fn select_from_range_with_start_end_rates(
+    range: Range<usize>,
+    nth: usize,
+    (start_rate, end_rate): (usize, usize),
+) -> usize {
+    let range_len = range.len();
+    let cycle = start_rate + end_rate;
+    let cycle_index = nth % cycle;
+    let cycle_num = nth.checked_div(cycle).expect("rates sum must be positive");
+
+    let index = if cycle_index < start_rate {
+        cycle_num * start_rate + cycle_index
+    } else {
+        let end_index = cycle_num * end_rate + cycle_index - start_rate;
+        range_len - end_index - 1
+    };
+    range.start + index
 }
 
 /// Get the bank snapshots in a directory
@@ -1573,9 +1602,6 @@ pub(crate) fn get_storages_to_serialize(
         .collect::<Vec<_>>()
 }
 
-// From testing, 4 seems to be a sweet spot for ranges of 60M-360M accounts and 16-64 cores. This may need to be tuned later.
-const PARALLEL_UNTAR_READERS_DEFAULT: usize = 4;
-
 /// Unarchives the given full and incremental snapshot archives, as long as they are compatible.
 pub fn verify_and_unarchive_snapshots(
     bank_snapshots_dir: impl AsRef<Path>,
@@ -1588,8 +1614,6 @@ pub fn verify_and_unarchive_snapshots(
         full_snapshot_archive_info,
         incremental_snapshot_archive_info,
     )?;
-
-    let num_worker_threads = (num_cpus::get() / 4).clamp(1, PARALLEL_UNTAR_READERS_DEFAULT);
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
     let UnarchivedSnapshot {
@@ -1606,7 +1630,6 @@ pub fn verify_and_unarchive_snapshots(
         "snapshot untar",
         account_paths,
         full_snapshot_archive_info.archive_format(),
-        num_worker_threads,
         next_append_vec_id.clone(),
         storage_access,
     )?;
@@ -1633,7 +1656,6 @@ pub fn verify_and_unarchive_snapshots(
             "incremental snapshot untar",
             account_paths,
             incremental_snapshot_archive_info.archive_format(),
-            num_worker_threads,
             next_append_vec_id.clone(),
             storage_access,
         )?;
@@ -1673,19 +1695,20 @@ pub fn verify_and_unarchive_snapshots(
     ))
 }
 
-/// Spawns a thread for unpacking a snapshot
-fn spawn_unpack_snapshot_thread(
-    chunks_receiver: crossbeam_channel::Receiver<MultiBytes>,
+/// Streams unpacked files across channel
+fn streaming_unarchive_snapshot(
     file_sender: Sender<PathBuf>,
-    account_paths: Arc<Vec<PathBuf>>,
-    ledger_dir: Arc<PathBuf>,
-    thread_index: usize,
+    account_paths: Vec<PathBuf>,
+    ledger_dir: PathBuf,
+    snapshot_archive_path: PathBuf,
+    archive_format: ArchiveFormat,
 ) -> JoinHandle<Result<()>> {
     Builder::new()
-        .name(format!("solUnpkSnpsht{thread_index:02}"))
+        .name("solTarUnpack".to_string())
         .spawn(move || {
+            let decompressor = decompressed_tar_reader(archive_format, snapshot_archive_path)?;
             hardened_unpack::streaming_unpack_snapshot(
-                Archive::new(BytesChannelReader::new(chunks_receiver)),
+                Archive::new(decompressor),
                 ledger_dir.as_path(),
                 &account_paths,
                 &file_sender,
@@ -1695,70 +1718,20 @@ fn spawn_unpack_snapshot_thread(
         .unwrap()
 }
 
-/// Streams unpacked files across channel
-fn streaming_unarchive_snapshot(
-    file_sender: Sender<PathBuf>,
-    account_paths: Vec<PathBuf>,
-    ledger_dir: PathBuf,
-    snapshot_archive_path: PathBuf,
+fn decompressed_tar_reader(
     archive_format: ArchiveFormat,
-    num_threads: usize,
-) -> Vec<JoinHandle<Result<()>>> {
-    let account_paths = Arc::new(account_paths);
-    let ledger_dir = Arc::new(ledger_dir);
-
-    let mut handles = vec![];
-
-    let (chunk_sender, chunk_receiver) = crossbeam_channel::bounded(num_threads * 2);
-    handles.push(spawn_archive_chunker_thread(
-        snapshot_archive_path,
-        archive_format,
-        chunk_sender,
-    ));
-
-    for thread_index in 0..num_threads {
-        handles.push(spawn_unpack_snapshot_thread(
-            chunk_receiver.clone(),
-            file_sender.clone(),
-            account_paths.clone(),
-            ledger_dir.clone(),
-            thread_index,
-        ))
-    }
-
-    handles
-}
-
-fn archive_chunker_from_path(
-    archive_path: &Path,
-    archive_format: ArchiveFormat,
-) -> io::Result<ArchiveChunker<ArchiveFormatDecompressor<Box<dyn std::io::BufRead>>>> {
-    const INPUT_READER_BUF_SIZE: usize = 128 * 1024 * 1024;
-    let buf_reader = solana_accounts_db::large_file_buf_reader(archive_path, INPUT_READER_BUF_SIZE)
-        .map_err(|err| {
-            IoError::other(format!(
-                "failed to open snapshot archive '{}': {err}",
-                archive_path.display(),
-            ))
-        })?;
-    let decompressor = ArchiveFormatDecompressor::new(archive_format, buf_reader)?;
-    Ok(ArchiveChunker::new(decompressor))
-}
-
-fn spawn_archive_chunker_thread(
     archive_path: impl AsRef<Path>,
-    archive_format: ArchiveFormat,
-    chunk_sender: Sender<MultiBytes>,
-) -> JoinHandle<Result<()>> {
-    let archive_path = archive_path.as_ref().to_path_buf();
-    Builder::new()
-        .name("solTarDecompr".to_string())
-        .spawn(move || {
-            let chunker = archive_chunker_from_path(&archive_path, archive_format)?;
-            chunker.decode_and_send_chunks(chunk_sender)?;
-            Ok(())
-        })
-        .unwrap()
+) -> Result<ArchiveFormatDecompressor<Box<dyn BufRead + 'static>>> {
+    const INPUT_READER_BUF_SIZE: usize = 128 * 1024 * 1024;
+    let buf_reader =
+        solana_accounts_db::large_file_buf_reader(archive_path.as_ref(), INPUT_READER_BUF_SIZE)
+            .map_err(|err| {
+                io::Error::other(format!(
+                    "failed to open snapshot archive '{}': {err}",
+                    archive_path.as_ref().display(),
+                ))
+            })?;
+    Ok(ArchiveFormatDecompressor::new(archive_format, buf_reader)?)
 }
 
 /// Used to determine if a filename is structured like a version file, bank file, or storage file
@@ -1910,7 +1883,6 @@ fn unarchive_snapshot(
     measure_name: &'static str,
     account_paths: &[PathBuf],
     archive_format: ArchiveFormat,
-    num_untar_threads: usize,
     next_append_vec_id: Arc<AtomicAccountsFileId>,
     storage_access: StorageAccess,
 ) -> Result<UnarchivedSnapshot> {
@@ -1920,18 +1892,15 @@ fn unarchive_snapshot(
     let unpacked_snapshots_dir = unpack_dir.path().join("snapshots");
 
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
-    let unarchive_handles = streaming_unarchive_snapshot(
+    let unarchive_handle = streaming_unarchive_snapshot(
         file_sender,
         account_paths.to_vec(),
         unpack_dir.path().to_path_buf(),
         snapshot_archive_path.as_ref().to_path_buf(),
         archive_format,
-        num_untar_threads,
     );
 
-    let num_rebuilder_threads = num_cpus::get_physical()
-        .saturating_sub(num_untar_threads)
-        .max(1);
+    let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
     let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
         |SnapshotFieldsBundle {
              snapshot_version,
@@ -1968,9 +1937,7 @@ fn unarchive_snapshot(
             })
         },
     );
-    for handle in unarchive_handles {
-        handle.join().unwrap()?;
-    }
+    unarchive_handle.join().unwrap()?;
     snapshot_result
 }
 
@@ -2474,24 +2441,9 @@ fn unpack_snapshot_local(
     num_threads: usize,
 ) -> Result<UnpackedAppendVecMap> {
     assert!(num_threads > 0);
-
-    let (chunk_sender, chunk_receiver) = crossbeam_channel::bounded(num_threads);
-    let handle = spawn_archive_chunker_thread(snapshot_path, archive_format, chunk_sender);
-
-    // create 'num_threads' # of parallel workers, each receiving chunks of archive to extract.
-    let all_unpacked_append_vec_map = (0..num_threads)
-        .into_par_iter()
-        .map(|_| {
-            let archive_subset = Archive::new(BytesChannelReader::new(chunk_receiver.clone()));
-            hardened_unpack::unpack_snapshot(archive_subset, ledger_dir, account_paths)
-        })
-        .collect::<Vec<_>>();
-    handle.join().unwrap()?;
-
-    let mut unpacked_append_vec_map = UnpackedAppendVecMap::new();
-    for h in all_unpacked_append_vec_map {
-        unpacked_append_vec_map.extend(h?);
-    }
+    let archive = Archive::new(decompressed_tar_reader(archive_format, snapshot_path)?);
+    let unpacked_append_vec_map =
+        hardened_unpack::unpack_snapshot(archive, ledger_dir, account_paths)?;
 
     Ok(unpacked_append_vec_map)
 }
@@ -3746,5 +3698,33 @@ mod tests {
                 .to_string()
                 .starts_with("invalid full snapshot slot file size"));
         }
+    }
+
+    #[test]
+    fn test_select_from_start_or_end_index_by_ratio() {
+        let interleaved: Vec<_> = (0..10)
+            .map(|i| select_from_range_with_start_end_rates(1..11, i, (2, 1)))
+            .collect();
+        assert_eq!(interleaved, vec![1, 2, 10, 3, 4, 9, 5, 6, 8, 7]);
+
+        let interleaved: Vec<_> = (0..10)
+            .map(|i| select_from_range_with_start_end_rates(1..11, i, (1, 1)))
+            .collect();
+        assert_eq!(interleaved, vec![1, 10, 2, 9, 3, 8, 4, 7, 5, 6]);
+
+        let interleaved: Vec<_> = (0..9)
+            .map(|i| select_from_range_with_start_end_rates(1..10, i, (2, 1)))
+            .collect();
+        assert_eq!(interleaved, vec![1, 2, 9, 3, 4, 8, 5, 6, 7]);
+
+        let interleaved: Vec<_> = (0..9)
+            .map(|i| select_from_range_with_start_end_rates(1..10, i, (1, 2)))
+            .collect();
+        assert_eq!(interleaved, vec![1, 9, 8, 2, 7, 6, 3, 5, 4]);
+
+        let interleaved: Vec<_> = (0..13)
+            .map(|i| select_from_range_with_start_end_rates(1..14, i, (2, 3)))
+            .collect();
+        assert_eq!(interleaved, vec![1, 2, 13, 12, 11, 3, 4, 10, 9, 8, 5, 6, 7]);
     }
 }

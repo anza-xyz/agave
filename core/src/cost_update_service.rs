@@ -51,6 +51,13 @@ impl CostUpdateService {
                     bank,
                     is_leader_block,
                 } => {
+                    let (total_transaction_fee, total_priority_fee) = {
+                        let collector_fee_details = bank.get_collector_fee_details();
+                        (
+                            collector_fee_details.total_transaction_fee(),
+                            collector_fee_details.total_priority_fee(),
+                        )
+                    };
                     for loop_count in 1..=MAX_LOOP_COUNT {
                         {
                             // Release the lock so that the thread that will
@@ -67,7 +74,12 @@ impl CostUpdateService {
                                     "inflight transaction count is {in_flight_transaction_count} \
                                      for slot {slot} after {loop_count} iteration(s)"
                                 );
-                                cost_tracker.report_stats(slot, is_leader_block);
+                                cost_tracker.report_stats(
+                                    slot,
+                                    is_leader_block,
+                                    total_transaction_fee,
+                                    total_priority_fee,
+                                );
                                 break;
                             }
                         }

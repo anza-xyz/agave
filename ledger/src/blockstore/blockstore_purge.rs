@@ -608,7 +608,6 @@ pub mod tests {
                 x.saturating_sub(1), // parent_slot
                 true,                // is_full_slot
                 0,                   // version
-                true,                // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
             let signature = entries
@@ -649,7 +648,6 @@ pub mod tests {
                 x.saturating_sub(1), // parent_slot
                 true,                // is_full_slot
                 0,                   // version
-                true,                // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
             let signature = entries
@@ -691,7 +689,6 @@ pub mod tests {
                 slot.saturating_sub(1),
                 true, // is_full_slot
                 0,    // version
-                true, // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
 
@@ -941,7 +938,6 @@ pub mod tests {
             slot - 1, // parent_slot
             true,     // is_full_slot
             0,        // version
-            true,     // merkle_variant
         );
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
@@ -1094,9 +1090,9 @@ pub mod tests {
 
         let (shreds, _) = make_many_slot_entries(0, 10, 5);
         blockstore.insert_shreds(shreds, None, false).unwrap();
-        let (slot_11, _) = make_slot_entries(11, 4, 5, true);
+        let (slot_11, _) = make_slot_entries(11, 4, 5);
         blockstore.insert_shreds(slot_11, None, false).unwrap();
-        let (slot_12, _) = make_slot_entries(12, 5, 5, true);
+        let (slot_12, _) = make_slot_entries(12, 5, 5);
         blockstore.insert_shreds(slot_12, None, false).unwrap();
 
         blockstore.purge_slot_cleanup_chaining(5).unwrap();

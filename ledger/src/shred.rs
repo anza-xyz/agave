@@ -71,7 +71,6 @@ use {
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
     num_enum::{IntoPrimitive, TryFromPrimitive},
-    rayon::ThreadPool,
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_entry::entry::{create_ticks, Entry},
@@ -83,13 +82,13 @@ use {
     solana_signature::{Signature, SIGNATURE_BYTES},
     solana_signer::Signer,
     static_assertions::const_assert_eq,
-    std::{fmt::Debug, time::Instant},
+    std::fmt::Debug,
     thiserror::Error,
 };
 
 mod common;
 mod legacy;
-mod merkle;
+pub(crate) mod merkle;
 mod merkle_tree;
 mod payload;
 pub mod shred_code;
@@ -411,11 +410,6 @@ impl Shred {
     dispatch!(pub fn merkle_root(&self) -> Result<Hash, Error>);
     dispatch!(pub fn payload(&self) -> &Payload);
     dispatch!(pub fn sanitize(&self) -> Result<(), Error>);
-
-    #[deprecated(since = "2.3.0")]
-    pub fn set_index(&mut self, _index: u32) {}
-    #[deprecated(since = "2.3.0")]
-    pub fn set_slot(&mut self, _slot: Slot) {}
 
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn copy_to_packet(&self, packet: &mut Packet) {
@@ -840,43 +834,6 @@ pub fn recover(
     Ok(shreds.map(|shred| shred.map(Shred::from)))
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn make_merkle_shreds_from_entries(
-    thread_pool: &ThreadPool,
-    keypair: &Keypair,
-    entries: &[Entry],
-    slot: Slot,
-    parent_slot: Slot,
-    shred_version: u16,
-    reference_tick: u8,
-    is_last_in_slot: bool,
-    chained_merkle_root: Option<Hash>,
-    next_shred_index: u32,
-    next_code_index: u32,
-    reed_solomon_cache: &ReedSolomonCache,
-    stats: &mut ProcessShredsStats,
-) -> Result<impl Iterator<Item = Shred>, Error> {
-    let now = Instant::now();
-    let entries = bincode::serialize(entries)?;
-    stats.serialize_elapsed += now.elapsed().as_micros() as u64;
-    let shreds = merkle::make_shreds_from_data(
-        thread_pool,
-        keypair,
-        chained_merkle_root,
-        &entries[..],
-        slot,
-        parent_slot,
-        shred_version,
-        reference_tick,
-        is_last_in_slot,
-        next_shred_index,
-        next_code_index,
-        reed_solomon_cache,
-        stats,
-    )?;
-    Ok(shreds.into_iter().map(Shred::from))
-}
-
 // Accepts shreds in the slot range [root + 1, max_slot].
 #[must_use]
 pub fn should_discard_shred<'a, P>(
@@ -884,7 +841,6 @@ pub fn should_discard_shred<'a, P>(
     root: Slot,
     max_slot: Slot,
     shred_version: u16,
-    drop_unchained_merkle_shreds: impl Fn(Slot) -> bool,
     stats: &mut ShredFetchStats,
 ) -> bool
 where
@@ -962,24 +918,15 @@ where
         }
     }
     match shred_variant {
-        ShredVariant::LegacyCode | ShredVariant::LegacyData => {
+        ShredVariant::LegacyCode
+        | ShredVariant::LegacyData
+        | ShredVariant::MerkleCode { chained: false, .. }
+        | ShredVariant::MerkleData { chained: false, .. } => {
             return true;
-        }
-        ShredVariant::MerkleCode { chained: false, .. } => {
-            if drop_unchained_merkle_shreds(slot) {
-                return true;
-            }
-            stats.num_shreds_merkle_code = stats.num_shreds_merkle_code.saturating_add(1);
         }
         ShredVariant::MerkleCode { chained: true, .. } => {
             stats.num_shreds_merkle_code_chained =
                 stats.num_shreds_merkle_code_chained.saturating_add(1);
-        }
-        ShredVariant::MerkleData { chained: false, .. } => {
-            if drop_unchained_merkle_shreds(slot) {
-                return true;
-            }
-            stats.num_shreds_merkle_data = stats.num_shreds_merkle_data.saturating_add(1);
         }
         ShredVariant::MerkleData { chained: true, .. } => {
             stats.num_shreds_merkle_data_chained =
@@ -1215,11 +1162,9 @@ mod tests {
         );
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_should_discard_shred(chained: bool, is_last_in_slot: bool) {
+    #[test_case(true ; "last_in_slot")]
+    #[test_case(false ; "not_last_in_slot")]
+    fn test_should_discard_shred(is_last_in_slot: bool) {
         solana_logger::setup();
         let mut rng = rand::thread_rng();
         let slot = 18_291;
@@ -1227,7 +1172,7 @@ mod tests {
             &mut rng,
             slot,
             1200 * 5, // data_size
-            chained,
+            true,     // chained
             is_last_in_slot,
         )
         .unwrap();
@@ -1253,7 +1198,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
         }
@@ -1266,7 +1210,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 1);
@@ -1277,7 +1220,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 2);
@@ -1288,7 +1230,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 3);
@@ -1299,7 +1240,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 4);
@@ -1310,7 +1250,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 5);
@@ -1322,7 +1261,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version.wrapping_add(1),
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.shred_version_mismatch, 1);
@@ -1334,7 +1272,6 @@ mod tests {
                 parent_slot + 1, // root
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.slot_out_of_range, 1);
@@ -1356,7 +1293,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.slot_out_of_range, 1);
@@ -1378,7 +1314,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.bad_parent_offset, 1);
@@ -1399,7 +1334,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_out_of_bounds, 1);
@@ -1416,7 +1350,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
         }
@@ -1427,7 +1360,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version.wrapping_add(1),
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.shred_version_mismatch, 1);
@@ -1439,7 +1371,6 @@ mod tests {
                 slot, // root
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.slot_out_of_range, 1);
@@ -1460,7 +1391,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_out_of_bounds, 1);

@@ -17,7 +17,10 @@ crate-type = ["lib"]
 name = "solana_rpc"
 
 [features]
-dev-context-only-utils = ["solana-rpc/dev-context-only-utils"]
+dev-context-only-utils = [
+    "solana-ledger/dev-context-only-utils",
+    "solana-rpc/dev-context-only-utils",
+]
 
 [dependencies]
 agave-feature-set = { workspace = true }

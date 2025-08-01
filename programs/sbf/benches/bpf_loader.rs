@@ -12,9 +12,10 @@ use {solana_keypair::Keypair, std::slice};
 extern crate test;
 
 use {
+    agave_syscalls::create_program_runtime_environment_v1,
     byteorder::{ByteOrder, LittleEndian, WriteBytesExt},
     solana_account::AccountSharedData,
-    solana_bpf_loader_program::{create_vm, syscalls::create_program_runtime_environment_v1},
+    solana_bpf_loader_program::create_vm,
     solana_client_traits::SyncClient,
     solana_instruction::{AccountMeta, Instruction},
     solana_measure::measure::Measure,
@@ -68,9 +69,9 @@ macro_rules! with_mock_invoke_context {
         );
         $invoke_context
             .transaction_context
-            .get_next_instruction_context()
+            .get_next_instruction_context_mut()
             .unwrap()
-            .configure(&[0, 1], &instruction_accounts, &[]);
+            .configure(vec![0, 1], instruction_accounts, &[]);
         $invoke_context.push().unwrap();
     };
 }

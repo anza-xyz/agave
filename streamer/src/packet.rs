@@ -297,8 +297,11 @@ pub fn send_to(
 mod tests {
     use {
         super::{recv_from as recv_from_impl, *},
-        solana_net_utils::bind_to_localhost,
-        std::{io, io::Write, net::SocketAddr},
+        solana_net_utils::sockets::bind_to_localhost_unique,
+        std::{
+            io::{self, Write},
+            net::SocketAddr,
+        },
     };
 
     #[test]
@@ -332,9 +335,9 @@ mod tests {
     #[test]
     pub fn packet_send_recv() {
         solana_logger::setup();
-        let recv_socket = bind_to_localhost().expect("bind");
+        let recv_socket = bind_to_localhost_unique().expect("should bind - receiver");
         let addr = recv_socket.local_addr().unwrap();
-        let send_socket = bind_to_localhost().expect("bind");
+        let send_socket = bind_to_localhost_unique().expect("should bind - sender");
         let saddr = send_socket.local_addr().unwrap();
 
         let mut batch = PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH);
@@ -389,9 +392,9 @@ mod tests {
     #[test]
     fn test_packet_resize() {
         solana_logger::setup();
-        let recv_socket = bind_to_localhost().expect("bind");
+        let recv_socket = bind_to_localhost_unique().expect("should bind - receiver");
         let addr = recv_socket.local_addr().unwrap();
-        let send_socket = bind_to_localhost().expect("bind");
+        let send_socket = bind_to_localhost_unique().expect("should bind - sender");
         let mut batch = PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH);
         batch.resize(PACKETS_PER_BATCH, Packet::default());
 

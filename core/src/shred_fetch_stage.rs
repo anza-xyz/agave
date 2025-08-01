@@ -2,7 +2,7 @@
 
 use {
     crate::repair::{repair_service::OutstandingShredRepairs, serve_repair::ServeRepair},
-    agave_feature_set::{self as feature_set, FeatureSet},
+    agave_feature_set::FeatureSet,
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     itertools::Itertools,
@@ -83,8 +83,8 @@ impl ShredFetchStage {
         let (
             mut last_root,
             mut slots_per_epoch,
-            mut feature_set,
-            mut epoch_schedule,
+            mut _feature_set,
+            mut _epoch_schedule,
             mut last_slot,
         ) = {
             let bank_forks_r = bank_forks.read().unwrap();
@@ -107,8 +107,8 @@ impl ShredFetchStage {
                     last_slot = bank_forks_r.highest_slot();
                     bank_forks_r.root_bank()
                 };
-                feature_set = root_bank.feature_set.clone();
-                epoch_schedule = root_bank.epoch_schedule().clone();
+                _feature_set = root_bank.feature_set.clone();
+                _epoch_schedule = root_bank.epoch_schedule().clone();
                 last_root = root_bank.slot();
                 slots_per_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
                 keypair = repair_context.as_ref().copied().map(RepairContext::keypair);
@@ -150,14 +150,6 @@ impl ShredFetchStage {
             // Filter out shreds that are way too far in the future to avoid the
             // overhead of having to hold onto them.
             let max_slot = last_slot + MAX_SHRED_DISTANCE_MINIMUM.max(2 * slots_per_epoch);
-            let drop_unchained_merkle_shreds = |shred_slot| {
-                check_feature_activation(
-                    &feature_set::drop_unchained_merkle_shreds::id(),
-                    shred_slot,
-                    &feature_set,
-                    &epoch_schedule,
-                )
-            };
             let turbine_disabled = turbine_disabled.load(Ordering::Relaxed);
             for mut packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
                 if turbine_disabled
@@ -166,7 +158,6 @@ impl ShredFetchStage {
                         last_root,
                         max_slot,
                         shred_version,
-                        drop_unchained_merkle_shreds,
                         &mut stats,
                     )
                 {
@@ -462,6 +453,7 @@ pub(crate) fn receive_quic_datagrams(
 
 // Returns true if the feature is effective for the shred slot.
 #[must_use]
+#[allow(dead_code)]
 fn check_feature_activation(
     feature: &Pubkey,
     shred_slot: Slot,
