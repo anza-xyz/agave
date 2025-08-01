@@ -177,7 +177,7 @@ pub struct PohRecorder {
     tick_cache: Vec<(Entry, u64)>, // cache of entry and its tick_height
     working_bank: Option<WorkingBank>,
     working_bank_sender: Sender<WorkingBankEntry>,
-    shared_working_bank: Arc<ArcSwapOption<Bank>>,
+    shared_working_bank: SharedWorkingBank,
     leader_first_tick_height: Option<u64>,
     leader_last_tick_height: u64, // zero if none
     grace_ticks: u64,
@@ -261,7 +261,7 @@ impl PohRecorder {
                 tick_cache: vec![],
                 working_bank: None,
                 working_bank_sender,
-                shared_working_bank: Arc::new(ArcSwapOption::empty()),
+                shared_working_bank: SharedWorkingBank::default(),
                 clear_bank_signal,
                 start_bank,
                 start_bank_active_descendants: vec![],
@@ -432,7 +432,7 @@ impl PohRecorder {
 
     pub fn set_bank(&mut self, bank: BankWithScheduler) {
         assert!(self.working_bank.is_none());
-        self.shared_working_bank.store(Some(bank.clone()));
+        self.shared_working_bank.store(bank.clone());
         let working_bank = WorkingBank {
             min_tick_height: bank.tick_height(),
             max_tick_height: bank.max_tick_height(),
@@ -464,7 +464,7 @@ impl PohRecorder {
 
     fn clear_bank(&mut self) {
         if let Some(WorkingBank { bank, start, .. }) = self.working_bank.take() {
-            self.shared_working_bank.store(None);
+            self.shared_working_bank.clear();
             let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
                 bank.collector_id(),
                 bank.slot(),
@@ -661,7 +661,7 @@ impl PohRecorder {
     /// Returns a shared reference to the working bank, if it exists.
     /// This allows for other threads to access the working bank
     /// without needing to lock poh recorder.
-    pub fn shared_working_bank(&self) -> Arc<ArcSwapOption<Bank>> {
+    pub fn shared_working_bank(&self) -> SharedWorkingBank {
         self.shared_working_bank.clone()
     }
 
@@ -971,6 +971,25 @@ pub fn create_test_recorder_with_index_tracking(
     Receiver<WorkingBankEntry>,
 ) {
     do_create_test_recorder(bank, blockstore, poh_config, leader_schedule_cache, true)
+}
+
+/// Wrapper around an arc-swapped bank that prevents modifying outside
+/// of `PohRecorder`.
+#[derive(Clone, Default)]
+pub struct SharedWorkingBank(Arc<ArcSwapOption<Bank>>);
+
+impl SharedWorkingBank {
+    pub fn load(&self) -> Option<Arc<Bank>> {
+        self.0.load_full()
+    }
+
+    fn store(&self, bank: Arc<Bank>) {
+        self.0.store(Some(bank));
+    }
+
+    fn clear(&self) {
+        self.0.store(None);
+    }
 }
 
 #[cfg(test)]

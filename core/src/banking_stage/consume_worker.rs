@@ -4,9 +4,9 @@ use {
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
-    arc_swap::ArcSwapOption,
     crossbeam_channel::{Receiver, RecvError, SendError, Sender},
     solana_measure::measure_us,
+    solana_poh::poh_recorder::SharedWorkingBank,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
@@ -34,7 +34,7 @@ pub(crate) struct ConsumeWorker<Tx> {
     consumer: Consumer,
     consumed_sender: Sender<FinishedConsumeWork<Tx>>,
 
-    shared_working_bank: Arc<ArcSwapOption<Bank>>,
+    shared_working_bank: SharedWorkingBank,
     metrics: Arc<ConsumeWorkerMetrics>,
 }
 
@@ -44,7 +44,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         consume_receiver: Receiver<ConsumeWork<Tx>>,
         consumer: Consumer,
         consumed_sender: Sender<FinishedConsumeWork<Tx>>,
-        shared_working_bank: Arc<ArcSwapOption<Bank>>,
+        shared_working_bank: SharedWorkingBank,
     ) -> Self {
         Self {
             consume_receiver,
@@ -138,7 +138,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         const TIMEOUT: Duration = Duration::from_millis(50);
         let now = Instant::now();
         while now.elapsed() < TIMEOUT {
-            if let Some(bank) = self.shared_working_bank.load_full() {
+            if let Some(bank) = self.shared_working_bank.load() {
                 return Some(bank);
             }
         }
@@ -148,7 +148,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 
     /// Get the current poh working bank without a timeout.
     fn get_working_bank(&self) -> Option<Arc<Bank>> {
-        self.shared_working_bank.load_full()
+        self.shared_working_bank.load()
     }
 
     /// Retry current batch and all outstanding batches.
