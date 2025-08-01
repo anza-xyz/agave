@@ -684,6 +684,17 @@ pub fn execute(
         }
         BlockVerificationMethod::UnifiedScheduler => {}
     }
+    if matches!(
+        validator_config.block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) && !matches.is_present("enable_experimental_block_production_method")
+    {
+        Err(
+            "Currently, the unified-scheduler method is experimental for block-production. \
+            Explicitly pass --enable-experimental-block-production-method to use it."
+                .to_string(),
+        )?;
+    }
 
     let public_rpc_addr = matches
         .value_of("public_rpc_addr")

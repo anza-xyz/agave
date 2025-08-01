@@ -60,7 +60,6 @@ use {
     },
 };
 
-#[allow(dead_code)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn ensure_banking_stage_setup(
     pool: &DefaultSchedulerPool,
@@ -70,6 +69,10 @@ pub(crate) fn ensure_banking_stage_setup(
     transaction_recorder: TransactionRecorder,
     num_threads: NonZeroUsize,
 ) {
+    if !pool.block_production_supported() {
+        return;
+    }
+
     let sharable_banks = bank_forks.read().unwrap().sharable_banks();
     let unified_receiver = channels.unified_receiver().clone();
 
