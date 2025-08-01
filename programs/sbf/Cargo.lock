@@ -10154,7 +10154,6 @@ dependencies = [
  "derive_more 2.0.1",
  "dyn-clone",
  "log",
- "qualifier_attr",
  "scopeguard",
  "solana-clock",
  "solana-cost-model",
