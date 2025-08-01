@@ -44,6 +44,5 @@ solana-system-transaction = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-transaction = { workspace = true }
-solana-unified-scheduler-logic = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
 solana-version = { workspace = true }

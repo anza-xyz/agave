@@ -7002,7 +7002,6 @@ dependencies = [
  "solana-time-utils",
  "solana-tpu-client",
  "solana-transaction",
- "solana-unified-scheduler-logic",
  "solana-unified-scheduler-pool",
  "solana-version",
 ]
