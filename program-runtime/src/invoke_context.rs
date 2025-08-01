@@ -248,7 +248,7 @@ impl<'a> InvokeContext<'a> {
                 self.transaction_context.get_instruction_trace_length(),
             )?;
         let program_id = instruction_context
-            .get_last_program_key(self.transaction_context)
+            .get_program_key(self.transaction_context)
             .map_err(|_| InstructionError::UnsupportedProgramId)?;
         if self
             .transaction_context
@@ -262,8 +262,7 @@ impl<'a> InvokeContext<'a> {
                     self.transaction_context
                         .get_instruction_context_at_nesting_level(level)
                         .and_then(|instruction_context| {
-                            instruction_context
-                                .try_borrow_last_program_account(self.transaction_context)
+                            instruction_context.try_borrow_program_account(self.transaction_context)
                         })
                         .map(|program_account| program_account.get_key() == program_id)
                         .unwrap_or(false)
@@ -272,7 +271,7 @@ impl<'a> InvokeContext<'a> {
                 .transaction_context
                 .get_current_instruction_context()
                 .and_then(|instruction_context| {
-                    instruction_context.try_borrow_last_program_account(self.transaction_context)
+                    instruction_context.try_borrow_program_account(self.transaction_context)
                 })
                 .map(|program_account| program_account.get_key() == program_id)
                 .unwrap_or(false);
@@ -550,9 +549,8 @@ impl<'a> InvokeContext<'a> {
         let process_executable_chain_time = Measure::start("process_executable_chain_time");
 
         let builtin_id = {
-            debug_assert!(instruction_context.get_number_of_program_accounts() <= 1);
             let borrowed_root_account = instruction_context
-                .try_borrow_last_program_account(self.transaction_context)
+                .try_borrow_program_account(self.transaction_context)
                 .map_err(|_| InstructionError::UnsupportedProgramId)?;
             let owner_id = borrowed_root_account.get_owner();
             if native_loader::check_id(owner_id) {
@@ -591,7 +589,7 @@ impl<'a> InvokeContext<'a> {
         .ok_or(InstructionError::UnsupportedProgramId)?;
         entry.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
 
-        let program_id = *instruction_context.get_last_program_key(self.transaction_context)?;
+        let program_id = *instruction_context.get_program_key(self.transaction_context)?;
         self.transaction_context
             .set_return_data(program_id, Vec::new())?;
         let logger = self.get_log_collector();
@@ -731,7 +729,7 @@ impl<'a> InvokeContext<'a> {
             .get_current_instruction_context()
             .and_then(|instruction_context| {
                 let program_account =
-                    instruction_context.try_borrow_last_program_account(self.transaction_context);
+                    instruction_context.try_borrow_program_account(self.transaction_context);
                 debug_assert!(program_account.is_ok());
                 program_account
             })
@@ -1007,7 +1005,7 @@ mod tests {
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
             let instruction_data = instruction_context.get_instruction_data();
-            let program_id = instruction_context.get_last_program_key(transaction_context)?;
+            let program_id = instruction_context.get_program_key(transaction_context)?;
             let instruction_accounts = (0..4)
                 .map(|instruction_account_index| {
                     InstructionAccount::new(

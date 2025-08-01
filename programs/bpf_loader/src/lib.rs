@@ -376,13 +376,12 @@ pub(crate) fn process_instruction_inner(
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let program_account =
-        instruction_context.try_borrow_last_program_account(transaction_context)?;
+    let program_account = instruction_context.try_borrow_program_account(transaction_context)?;
 
     // Program Management Instruction
     if native_loader::check_id(program_account.get_owner()) {
         drop(program_account);
-        let program_id = instruction_context.get_last_program_key(transaction_context)?;
+        let program_id = instruction_context.get_program_key(transaction_context)?;
         return if bpf_loader_upgradeable::check_id(program_id) {
             invoke_context.consume_checked(UPGRADEABLE_LOADER_COMPUTE_UNITS)?;
             process_loader_upgradeable_instruction(invoke_context)
@@ -483,7 +482,7 @@ fn process_loader_upgradeable_instruction(
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
-    let program_id = instruction_context.get_last_program_key(transaction_context)?;
+    let program_id = instruction_context.get_program_key(transaction_context)?;
 
     match limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)? {
         UpgradeableLoaderInstruction::InitializeBuffer => {
@@ -646,8 +645,7 @@ fn process_loader_upgradeable_instruction(
 
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
-            let caller_program_id =
-                instruction_context.get_last_program_key(transaction_context)?;
+            let caller_program_id = instruction_context.get_program_key(transaction_context)?;
             let signers = [[new_program_id.as_ref(), &[bump_seed]]]
                 .iter()
                 .map(|seeds| Pubkey::create_program_address(seeds, caller_program_id))
@@ -1351,7 +1349,7 @@ fn common_extend_program(
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let program_id = instruction_context.get_last_program_key(transaction_context)?;
+    let program_id = instruction_context.get_program_key(transaction_context)?;
 
     const PROGRAM_DATA_ACCOUNT_INDEX: IndexOfAccount = 0;
     const PROGRAM_ACCOUNT_INDEX: IndexOfAccount = 1;
@@ -1577,7 +1575,7 @@ fn execute<'a, 'b: 'a>(
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let (program_id, is_loader_deprecated) = {
         let program_account =
-            instruction_context.try_borrow_last_program_account(transaction_context)?;
+            instruction_context.try_borrow_program_account(transaction_context)?;
         (
             *program_account.get_key(),
             *program_account.get_owner() == bpf_loader_deprecated::id(),
