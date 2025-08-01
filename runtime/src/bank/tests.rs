@@ -5203,7 +5203,7 @@ fn test_same_program_id_uses_unique_executable_accounts() {
         let transaction_context = &invoke_context.transaction_context;
         let instruction_context = transaction_context.get_current_instruction_context()?;
         instruction_context
-            .try_borrow_program_account(transaction_context, 0)?
+            .try_borrow_last_program_account(transaction_context)?
             .set_data_length(2)
     });
 

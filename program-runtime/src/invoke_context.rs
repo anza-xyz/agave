@@ -558,7 +558,7 @@ vec![program_account_index],
         let builtin_id = {
             debug_assert!(instruction_context.get_number_of_program_accounts() <= 1);
             let borrowed_root_account = instruction_context
-                .try_borrow_program_account(self.transaction_context, 0)
+                .try_borrow_last_program_account(self.transaction_context)
                 .map_err(|_| InstructionError::UnsupportedProgramId)?;
             let owner_id = borrowed_root_account.get_owner();
             if native_loader::check_id(owner_id) {

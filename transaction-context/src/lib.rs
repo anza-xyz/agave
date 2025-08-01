@@ -845,23 +845,12 @@ impl InstructionContext {
         &'a self,
         transaction_context: &'b TransactionContext,
     ) -> Result<BorrowedAccount<'a>, InstructionError> {
-        let result = self.try_borrow_program_account(
-            transaction_context,
+        let index_in_transaction = self.get_index_of_program_account_in_transaction(
             self.get_number_of_program_accounts().saturating_sub(1),
-        );
+        )?;
+        let result = self.try_borrow_account(transaction_context, index_in_transaction, None);
         debug_assert!(result.is_ok());
         result
-    }
-
-    /// Tries to borrow a program account from this Instruction
-    pub fn try_borrow_program_account<'a, 'b: 'a>(
-        &'a self,
-        transaction_context: &'b TransactionContext,
-        program_account_index: IndexOfAccount,
-    ) -> Result<BorrowedAccount<'a>, InstructionError> {
-        let index_in_transaction =
-            self.get_index_of_program_account_in_transaction(program_account_index)?;
-        self.try_borrow_account(transaction_context, index_in_transaction, None)
     }
 
     /// Gets an instruction account of this Instruction
