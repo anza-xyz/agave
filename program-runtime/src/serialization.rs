@@ -243,7 +243,7 @@ pub fn serialize_parameters(
 
     let (program_id, is_loader_deprecated) = {
         let program_account =
-            instruction_context.try_borrow_last_program_account(transaction_context)?;
+            instruction_context.try_borrow_program_account(transaction_context)?;
         (
             *program_account.get_key(),
             *program_account.get_owner() == bpf_loader_deprecated::id(),
@@ -300,7 +300,7 @@ pub fn deserialize_parameters(
     accounts_metadata: &[SerializedAccountMetadata],
 ) -> Result<(), InstructionError> {
     let is_loader_deprecated = *instruction_context
-        .try_borrow_last_program_account(transaction_context)?
+        .try_borrow_program_account(transaction_context)?
         .get_owner()
         == bpf_loader_deprecated::id();
     let account_lengths = accounts_metadata.iter().map(|a| a.original_data_len);

@@ -1035,7 +1035,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
     )?;
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let caller_program_id = instruction_context.get_last_program_key(transaction_context)?;
+    let caller_program_id = instruction_context.get_program_key(transaction_context)?;
     let signers = S::translate_signers(
         caller_program_id,
         signers_seeds_addr,

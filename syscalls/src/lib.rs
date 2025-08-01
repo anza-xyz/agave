@@ -1462,7 +1462,7 @@ declare_builtin_function!(
         let program_id = *transaction_context
             .get_current_instruction_context()
             .and_then(|instruction_context| {
-                instruction_context.get_last_program_key(transaction_context)
+                instruction_context.get_program_key(transaction_context)
             })?;
 
         transaction_context.set_return_data(program_id, return_data)?;
@@ -1582,7 +1582,7 @@ declare_builtin_function!(
                 let _ = result_header;
 
                 *program_id = *instruction_context
-                    .get_last_program_key(invoke_context.transaction_context)?;
+                    .get_program_key(invoke_context.transaction_context)?;
                 data.clone_from_slice(instruction_context.get_instruction_data());
                 let account_metas = (0..instruction_context.get_number_of_instruction_accounts())
                     .map(|instruction_account_index| {
@@ -2223,7 +2223,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure_for_tests(vec![0, 1], vec![], &[]);
+                .configure_for_tests(vec![1], vec![], &[]);
             $invoke_context.push().unwrap();
         };
     }

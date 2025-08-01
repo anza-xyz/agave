@@ -116,7 +116,7 @@ pub fn invoke_builtin_function(
     invoke_context.consume_checked(1)?;
 
     let log_collector = invoke_context.get_log_collector();
-    let program_id = instruction_context.get_last_program_key(transaction_context)?;
+    let program_id = instruction_context.get_program_key(transaction_context)?;
     stable_log::program_invoke(
         &log_collector,
         program_id,
@@ -257,7 +257,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             .get_current_instruction_context()
             .unwrap();
         let caller = instruction_context
-            .get_last_program_key(transaction_context)
+            .get_program_key(transaction_context)
             .unwrap();
 
         stable_log::program_invoke(
@@ -426,7 +426,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             .get_current_instruction_context()
             .unwrap();
         let caller = *instruction_context
-            .get_last_program_key(transaction_context)
+            .get_program_key(transaction_context)
             .unwrap();
         transaction_context
             .set_return_data(caller, data.to_vec())

@@ -990,11 +990,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     let stack_height = u8::try_from(stack_height).unwrap_or(u8::MAX);
                     let instruction = CompiledInstruction::new_from_raw_parts(
                         instruction_context
-                            .get_index_of_program_account_in_transaction(
-                                instruction_context
-                                    .get_number_of_program_accounts()
-                                    .saturating_sub(1),
-                            )
+                            .get_index_of_program_account_in_transaction()
                             .unwrap_or_default() as u8,
                         instruction_context.get_instruction_data().to_vec(),
                         (0..instruction_context.get_number_of_instruction_accounts())
