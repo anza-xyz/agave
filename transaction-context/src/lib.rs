@@ -628,11 +628,11 @@ impl InstructionContext {
     #[cfg(not(target_os = "solana"))]
     pub fn configure(
         &mut self,
-        program_accounts: Vec<IndexOfAccount>,
+        program_index: IndexOfAccount,
         instruction_accounts: Vec<InstructionAccount>,
         instruction_data: &[u8],
     ) {
-        self.program_account_index_in_tx = *program_accounts.first().unwrap();
+        self.program_account_index_in_tx = program_index;
         self.instruction_accounts = instruction_accounts;
         self.instruction_data = instruction_data.to_vec();
     }
