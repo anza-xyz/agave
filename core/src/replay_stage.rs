@@ -2836,7 +2836,12 @@ impl ReplayStage {
             GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
         );
 
-        poh_recorder.write().unwrap().reset(bank, next_leader_slot);
+        let cleared_bank = poh_recorder.write().unwrap().reset(bank, next_leader_slot);
+        if let Some(cleared_bank) = cleared_bank {
+            // This must be done without poh_recorder lock being held; otherwise deadlock would
+            // occur. So, we can't nicely hide this impl detail inside PohRecorder::reset()..
+            cleared_bank.ensure_return_abandoned_bp_scheduler_to_scheduler_pool();
+        }
 
         let next_leader_msg = if let Some(next_leader_slot) = next_leader_slot {
             format!("My next leader slot is {}", next_leader_slot.0)
