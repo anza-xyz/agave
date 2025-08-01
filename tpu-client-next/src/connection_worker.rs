@@ -138,7 +138,7 @@ impl ConnectionWorker {
                     }
                     ConnectionState::Active(connection) => {
                         let Some(transactions) = self.transactions_receiver.recv().await else {
-                            debug!("Transactions sender has been dropped.");
+                            debug!("Transactions sender has been dropped for peer: {}", self.peer);
                             self.connection = ConnectionState::Closing;
                             continue;
                         };
@@ -147,7 +147,7 @@ impl ConnectionWorker {
                     }
                     ConnectionState::Retry(num_reconnects) => {
                         if *num_reconnects > self.max_reconnect_attempts {
-                            error!("Failed to establish connection: reach max reconnect attempts.");
+                            error!("Failed to establish connection to {}: reached max reconnect attempts", self.peer);
                             self.connection = ConnectionState::Closing;
                             continue;
                         }
@@ -178,7 +178,7 @@ impl ConnectionWorker {
         if !self.skip_check_transaction_age
             && now.saturating_sub(transactions.timestamp()) > MAX_PROCESSING_AGE_MS
         {
-            debug!("Drop outdated transaction batch.");
+            debug!("Drop outdated transaction batch for peer: {}", self.peer);
             return;
         }
         let mut measure_send = Measure::start("send transaction batch");
@@ -186,7 +186,7 @@ impl ConnectionWorker {
             let result = send_data_over_stream(&connection, &data).await;
 
             if let Err(error) = result {
-                trace!("Failed to send transaction over stream with error: {error}.");
+                trace!("Failed to send transaction to {} over stream with error: {error}", self.peer);
                 record_error(error, &self.send_txs_stats);
                 self.connection = ConnectionState::Retry(0);
             } else {
@@ -197,7 +197,8 @@ impl ConnectionWorker {
         }
         measure_send.stop();
         debug!(
-            "Time to send transactions batch: {} us",
+            "Time to send transactions batch to {}: {} us",
+            self.peer,
             measure_send.as_us()
         );
     }
@@ -243,15 +244,15 @@ impl ConnectionWorker {
                 record_error(connecting_error.clone().into(), &self.send_txs_stats);
                 match connecting_error {
                     ConnectError::EndpointStopping => {
-                        debug!("Endpoint stopping, exit connection worker.");
+                        debug!("Endpoint stopping, exit connection worker for peer: {}", self.peer);
                         self.connection = ConnectionState::Closing;
                     }
                     ConnectError::InvalidRemoteAddress(_) => {
-                        warn!("Invalid remote address.");
+                        warn!("Invalid remote address for peer: {}", self.peer);
                         self.connection = ConnectionState::Closing;
                     }
                     e => {
-                        error!("Unexpected error has happen while trying to create connection {e}");
+                        error!("Unexpected error has happened while trying to create connection to {}: {e}", self.peer);
                         self.connection = ConnectionState::Closing;
                     }
                 }
@@ -261,7 +262,7 @@ impl ConnectionWorker {
 
     /// Attempts to reconnect to the peer after a connection failure.
     async fn reconnect(&mut self, num_reconnects: usize) {
-        debug!("Trying to reconnect. Reopen connection, 0rtt is not implemented yet.");
+        debug!("Trying to reconnect to {}. Reopen connection, 0rtt is not implemented yet.", self.peer);
         // We can reconnect using 0rtt, but not a priority for now. Check if we
         // need to call config.enable_0rtt() on the client side and where
         // session tickets are stored.
