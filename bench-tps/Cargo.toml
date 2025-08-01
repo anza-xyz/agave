@@ -67,7 +67,7 @@ solana-tpu-client = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
-spl-instruction-padding = { version = "=0.3.0", features = ["no-entrypoint"] }
+spl-instruction-padding-interface = { version = "=0.1.0" }
 thiserror = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
