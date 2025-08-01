@@ -39,7 +39,7 @@ use {
     solana_unified_scheduler_logic::{SchedulingMode, Task},
     solana_unified_scheduler_pool::{
         DefaultSchedulerPool, DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool,
-        SupportedSchedulingMode, TaskHandler,
+        TaskHandler,
     },
     std::{
         collections::HashMap,
@@ -228,8 +228,7 @@ fn test_scheduler_producing_blocks() {
             None,
             Some(leader_schedule_cache),
         );
-    let pool = DefaultSchedulerPool::new(
-        SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
+    let pool = DefaultSchedulerPool::new_for_production(
         None,
         None,
         None,
