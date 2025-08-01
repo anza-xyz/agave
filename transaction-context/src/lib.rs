@@ -1367,4 +1367,33 @@ mod tests {
         );
         assert_eq!(build_transaction_context(account).push(), Ok(()),);
     }
+
+    #[test]
+    fn test_invalid_native_loader_index() {
+        let mut instruction_context = InstructionContext::default();
+        instruction_context.configure(
+            u16::MAX,
+            vec![InstructionAccount::new(0, 0, false, false)],
+            &[],
+        );
+
+        let result = instruction_context.get_index_of_program_account_in_transaction();
+        assert_eq!(result, Err(InstructionError::MissingAccount));
+
+        let transaction_context = TransactionContext::new(
+            vec![(
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+            )],
+            Rent::default(),
+            20,
+            20,
+        );
+        let result = instruction_context.get_program_key(&transaction_context);
+
+        assert_eq!(result, Err(InstructionError::MissingAccount));
+
+        let result = instruction_context.try_borrow_program_account(&transaction_context);
+        assert_eq!(result.err(), Some(InstructionError::MissingAccount));
+    }
 }
