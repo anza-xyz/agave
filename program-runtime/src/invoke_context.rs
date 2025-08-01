@@ -942,7 +942,7 @@ pub fn mock_process_instruction_with_feature_set<
 
 pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut InvokeContext)>(
     loader_id: &Pubkey,
-    program_indices: Vec<IndexOfAccount>,
+    program_index: Option<IndexOfAccount>,
     instruction_data: &[u8],
     transaction_accounts: Vec<TransactionAccount>,
     instruction_account_metas: Vec<AccountMeta>,
@@ -951,6 +951,12 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
     pre_adjustments: F,
     post_adjustments: G,
 ) -> Vec<AccountSharedData> {
+    let program_indices = if let Some(index) = program_index {
+        vec![index]
+    } else {
+        vec![]
+    };
+
     mock_process_instruction_with_feature_set(
         loader_id,
         program_indices,

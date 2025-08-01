@@ -552,15 +552,10 @@ mod tests {
                 },
             )
             .collect::<Vec<_>>();
-        let program_indices = if let Some(index) = program_index {
-            vec![index]
-        } else {
-            vec![]
-        };
 
         mock_process_instruction(
             &loader_v4::id(),
-            program_indices,
+            program_index,
             instruction_data,
             transaction_accounts,
             instruction_accounts,

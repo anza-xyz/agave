@@ -1904,14 +1904,9 @@ mod tests {
         instruction_accounts: Vec<AccountMeta>,
         expected_result: Result<(), InstructionError>,
     ) -> Vec<AccountSharedData> {
-        let program_indices = if let Some(index) = program_index {
-            vec![index]
-        } else {
-            vec![]
-        };
         mock_process_instruction(
             loader_id,
-            program_indices,
+            program_index,
             instruction_data,
             transaction_accounts,
             instruction_accounts,
@@ -1999,7 +1994,7 @@ mod tests {
         // Case: limited budget
         mock_process_instruction(
             &loader_id,
-            vec![0],
+            Some(0),
             &[],
             vec![(program_id, program_account)],
             Vec::new(),
@@ -2561,7 +2556,7 @@ mod tests {
                 bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
             mock_process_instruction(
                 &bpf_loader_upgradeable::id(),
-                Vec::new(),
+                None,
                 &instruction_data,
                 transaction_accounts,
                 instruction_accounts,
