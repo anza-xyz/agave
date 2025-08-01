@@ -49,8 +49,6 @@
 //! So, given a) - c), we must restrict data shred's payload length such that the entire coding
 //! payload can fit into one coding shred / packet.
 
-#[cfg(test)]
-pub(crate) use self::shred_code::MAX_CODE_SHREDS_PER_SLOT;
 pub(crate) use self::{
     merkle_tree::{PROOF_ENTRIES_FOR_32_32_BATCH, SIZE_OF_MERKLE_ROOT},
     payload::serde_bytes_payload,
@@ -89,7 +87,7 @@ mod legacy;
 pub(crate) mod merkle;
 mod merkle_tree;
 mod payload;
-pub mod shred_code;
+mod shred_code;
 mod shred_data;
 mod stats;
 mod traits;
@@ -813,7 +811,7 @@ where
     };
     match ShredType::from(shred_variant) {
         ShredType::Code => {
-            if index >= shred_code::MAX_CODE_SHREDS_PER_SLOT as u32 {
+            if index >= MAX_DATA_SHREDS_PER_SLOT as u32 {
                 stats.index_out_of_bounds += 1;
                 return true;
             }
@@ -1292,7 +1290,7 @@ mod tests {
             assert_eq!(stats.slot_out_of_range, 1);
         }
         {
-            let index = u32::try_from(MAX_CODE_SHREDS_PER_SLOT).unwrap();
+            let index = u32::try_from(MAX_DATA_SHREDS_PER_SLOT).unwrap();
             {
                 let mut cursor = Cursor::new(packet.buffer_mut());
                 cursor

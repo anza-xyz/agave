@@ -13,9 +13,6 @@ use {
     static_assertions::const_assert_eq,
 };
 
-const_assert_eq!(MAX_CODE_SHREDS_PER_SLOT, 32_768);
-pub const MAX_CODE_SHREDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT;
-
 const_assert_eq!(ShredCode::SIZE_OF_PAYLOAD, 1228);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -118,7 +115,7 @@ pub(super) fn erasure_shard_index<T: ShredCodeTrait>(shred: &T) -> Option<usize>
     if shred
         .first_coding_index()?
         .checked_add(u32::from(coding_header.num_coding_shreds.checked_sub(1)?))? as usize
-        >= MAX_CODE_SHREDS_PER_SLOT
+        >= MAX_DATA_SHREDS_PER_SLOT
     {
         return None;
     }
@@ -136,7 +133,7 @@ pub(super) fn sanitize<T: ShredCodeTrait>(shred: &T) -> Result<(), Error> {
     }
     let common_header = shred.common_header();
     let coding_header = shred.coding_header();
-    if common_header.index as usize >= MAX_CODE_SHREDS_PER_SLOT {
+    if common_header.index as usize >= MAX_DATA_SHREDS_PER_SLOT {
         return Err(Error::InvalidShredIndex(
             ShredType::Code,
             common_header.index,

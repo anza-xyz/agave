@@ -11,7 +11,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore,
-        shred::{shred_code, ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder},
+        shred::{ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder},
     },
     solana_time_utils::AtomicInterval,
     std::{borrow::Cow, sync::RwLock},
@@ -275,7 +275,7 @@ impl StandardBroadcastRun {
                 is_last_in_slot,
                 process_stats,
                 blockstore::MAX_DATA_SHREDS_PER_SLOT as u32,
-                shred_code::MAX_CODE_SHREDS_PER_SLOT as u32,
+                blockstore::MAX_DATA_SHREDS_PER_SLOT as u32,
             )
             .unwrap();
         // Insert the first data shred synchronously so that blockstore stores
