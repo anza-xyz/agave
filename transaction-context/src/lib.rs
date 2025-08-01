@@ -294,14 +294,6 @@ impl TransactionContext {
             .map(|index| index as IndexOfAccount)
     }
 
-    /// Searches for a program account by its key
-    pub fn find_index_of_program_account(&self, pubkey: &Pubkey) -> Option<IndexOfAccount> {
-        self.account_keys
-            .iter()
-            .rposition(|key| key == pubkey)
-            .map(|index| index as IndexOfAccount)
-    }
-
     /// Gets the max length of the InstructionContext trace
     pub fn get_instruction_trace_capacity(&self) -> usize {
         self.instruction_trace_capacity
