@@ -518,9 +518,9 @@ fn main() {
         .arg(
             Arg::new("quiet")
                 .short('q')
-                .long("quite")
+                .long("quiet")
                 .takes_value(false)
-                .help("Use quiet output"),
+                .help("Do not print cargo log messages"),
         )
         .arg(
             Arg::new("workspace")
