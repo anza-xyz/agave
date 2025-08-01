@@ -462,7 +462,7 @@ impl Default for SchedulingDetails {
             min_starting_queue_size: usize::MAX,
             max_starting_queue_size: 0,
             sum_starting_queue_size: 0,
-            min_starting_buffer_size: 0,
+            min_starting_buffer_size: usize::MAX,
             max_starting_buffer_size: 0,
             sum_starting_buffer_size: 0,
             sum_num_scheduled: 0,
