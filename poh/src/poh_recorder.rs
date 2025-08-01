@@ -13,10 +13,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
-    crate::{
-        leader_bank_notifier::LeaderBankNotifier, poh_service::PohService,
-        transaction_recorder::TransactionRecorder,
-    },
+    crate::{poh_service::PohService, transaction_recorder::TransactionRecorder},
     arc_swap::ArcSwapOption,
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TrySendError},
     log::*,
@@ -189,7 +186,6 @@ pub struct PohRecorder {
     ticks_per_slot: u64,
     target_ns_per_tick: u64,
     metrics: PohRecorderMetrics,
-    leader_bank_notifier: Arc<LeaderBankNotifier>,
     delay_leader_block_for_pending_fork: bool,
     last_reported_slot_for_pending_fork: Arc<Mutex<Slot>>,
     pub is_exited: Arc<AtomicBool>,
@@ -278,7 +274,6 @@ impl PohRecorder {
                 ticks_per_slot,
                 target_ns_per_tick,
                 metrics: PohRecorderMetrics::default(),
-                leader_bank_notifier: Arc::default(),
                 delay_leader_block_for_pending_fork,
                 last_reported_slot_for_pending_fork: Arc::default(),
                 is_exited,
@@ -437,7 +432,6 @@ impl PohRecorder {
 
     pub fn set_bank(&mut self, bank: BankWithScheduler) {
         assert!(self.working_bank.is_none());
-        self.leader_bank_notifier.set_in_progress(&bank);
         self.shared_working_bank.store(Some(bank.clone()));
         let working_bank = WorkingBank {
             min_tick_height: bank.tick_height(),
@@ -471,7 +465,6 @@ impl PohRecorder {
     fn clear_bank(&mut self) {
         if let Some(WorkingBank { bank, start, .. }) = self.working_bank.take() {
             self.shared_working_bank.store(None);
-            self.leader_bank_notifier.set_completed(bank.slot());
             let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
                 bank.collector_id(),
                 bank.slot(),
@@ -663,10 +656,6 @@ impl PohRecorder {
 
     pub fn ticks_per_slot(&self) -> u64 {
         self.ticks_per_slot
-    }
-
-    pub fn new_leader_bank_notifier(&self) -> Arc<LeaderBankNotifier> {
-        self.leader_bank_notifier.clone()
     }
 
     /// Returns a shared reference to the working bank, if it exists.
