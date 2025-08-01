@@ -791,7 +791,7 @@ impl BankingSimulator {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = retracer.create_channels(false);
+        } = retracer.create_channels();
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
