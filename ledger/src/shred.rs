@@ -55,8 +55,6 @@ pub(crate) use self::{
     merkle_tree::{PROOF_ENTRIES_FOR_32_32_BATCH, SIZE_OF_MERKLE_ROOT},
     payload::serde_bytes_payload,
 };
-#[cfg(any(test, feature = "dev-context-only-utils"))]
-use solana_perf::packet::Packet;
 pub use {
     self::{
         payload::Payload,
@@ -64,8 +62,6 @@ pub use {
         stats::{ProcessShredsStats, ShredFetchStats},
     },
     crate::shredder::{ReedSolomonCache, Shredder},
-    solana_keypair::Keypair,
-    solana_signer::Signer,
 };
 use {
     self::{shred_code::ShredCode, traits::Shred as _},
@@ -85,6 +81,8 @@ use {
     std::fmt::Debug,
     thiserror::Error,
 };
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer};
 
 mod common;
 mod legacy;
