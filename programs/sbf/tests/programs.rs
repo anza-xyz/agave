@@ -1344,7 +1344,7 @@ fn assert_instruction_count() {
         print!("  {:36} {:8}", program_name, *expected_consumption);
         mock_process_instruction(
             &loader_id,
-            vec![0],
+            Some(0),
             &[],
             transaction_accounts,
             instruction_accounts,
