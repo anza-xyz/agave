@@ -36,6 +36,7 @@ use {
         collections::{HashMap, HashSet},
         fs, io,
         net::{IpAddr, Ipv4Addr, SocketAddr},
+        num::NonZeroUsize,
         path::{Path, PathBuf},
         process::exit,
         sync::{Arc, Mutex, RwLock},
@@ -157,6 +158,17 @@ fn main() {
     let rpc_port = value_t_or_exit!(matches, "rpc_port", u16);
     let enable_vote_subscription = matches.is_present("rpc_pubsub_enable_vote_subscription");
     let enable_block_subscription = matches.is_present("rpc_pubsub_enable_block_subscription");
+    let max_active_subscriptions = value_of(&matches, "rpc_pubsub_max_active_subscriptions")
+        .unwrap_or(PubSubConfig::default().max_active_subscriptions);
+    let queue_capacity_items = value_of(&matches, "rpc_pubsub_queue_capacity_items")
+        .unwrap_or(PubSubConfig::default().queue_capacity_items);
+    let queue_capacity_bytes = value_of(&matches, "rpc_pubsub_queue_capacity_bytes")
+        .unwrap_or(PubSubConfig::default().queue_capacity_bytes);
+    let worker_threads = value_of(&matches, "rpc_pubsub_worker_threads")
+        .unwrap_or(PubSubConfig::default().worker_threads);
+    let notification_threads = value_of(&matches, "rpc_pubsub_notification_threads")
+        .map(NonZeroUsize::new)
+        .unwrap_or(PubSubConfig::default().notification_threads);
     let faucet_port = value_t_or_exit!(matches, "faucet_port", u16);
     let ticks_per_slot = value_t!(matches, "ticks_per_slot", u64).ok();
     let slots_per_epoch = value_t!(matches, "slots_per_epoch", Slot).ok();
@@ -477,7 +489,11 @@ fn main() {
         .pubsub_config(PubSubConfig {
             enable_vote_subscription,
             enable_block_subscription,
-            ..PubSubConfig::default()
+            max_active_subscriptions,
+            queue_capacity_items,
+            queue_capacity_bytes,
+            worker_threads,
+            notification_threads,
         })
         .rpc_port(rpc_port)
         .add_upgradeable_programs_with_path(&upgradeable_programs_to_load)
