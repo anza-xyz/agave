@@ -17,6 +17,7 @@ use {
         leader_bank_notifier::LeaderBankNotifier, poh_service::PohService,
         transaction_recorder::TransactionRecorder,
     },
+    arc_swap::ArcSwapOption,
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TrySendError},
     log::*,
     solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
@@ -179,6 +180,7 @@ pub struct PohRecorder {
     tick_cache: Vec<(Entry, u64)>, // cache of entry and its tick_height
     working_bank: Option<WorkingBank>,
     working_bank_sender: Sender<WorkingBankEntry>,
+    shared_working_bank: Arc<ArcSwapOption<Bank>>,
     leader_first_tick_height: Option<u64>,
     leader_last_tick_height: u64, // zero if none
     grace_ticks: u64,
@@ -263,6 +265,7 @@ impl PohRecorder {
                 tick_cache: vec![],
                 working_bank: None,
                 working_bank_sender,
+                shared_working_bank: Arc::new(ArcSwapOption::empty()),
                 clear_bank_signal,
                 start_bank,
                 start_bank_active_descendants: vec![],
@@ -435,6 +438,7 @@ impl PohRecorder {
     pub fn set_bank(&mut self, bank: BankWithScheduler) {
         assert!(self.working_bank.is_none());
         self.leader_bank_notifier.set_in_progress(&bank);
+        self.shared_working_bank.store(Some(bank.clone()));
         let working_bank = WorkingBank {
             min_tick_height: bank.tick_height(),
             max_tick_height: bank.max_tick_height(),
@@ -466,6 +470,7 @@ impl PohRecorder {
 
     fn clear_bank(&mut self) {
         if let Some(WorkingBank { bank, start, .. }) = self.working_bank.take() {
+            self.shared_working_bank.store(None);
             self.leader_bank_notifier.set_completed(bank.slot());
             let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
                 bank.collector_id(),
@@ -662,6 +667,13 @@ impl PohRecorder {
 
     pub fn new_leader_bank_notifier(&self) -> Arc<LeaderBankNotifier> {
         self.leader_bank_notifier.clone()
+    }
+
+    /// Returns a shared reference to the working bank, if it exists.
+    /// This allows for other threads to access the working bank
+    /// without needing to lock poh recorder.
+    pub fn shared_working_bank(&self) -> Arc<ArcSwapOption<Bank>> {
+        self.shared_working_bank.clone()
     }
 
     pub fn start_slot(&self) -> Slot {
