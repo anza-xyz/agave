@@ -7915,6 +7915,7 @@ dependencies = [
  "agave-verified-packet-receiver",
  "ahash 0.8.11",
  "anyhow",
+ "arc-swap",
  "arrayvec",
  "assert_matches",
  "async-trait",
