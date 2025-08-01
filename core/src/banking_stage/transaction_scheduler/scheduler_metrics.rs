@@ -459,7 +459,7 @@ impl Default for SchedulingDetails {
         Self {
             last_report: Instant::now(),
             num_schedule_calls: 0,
-            min_starting_queue_size: 0,
+            min_starting_queue_size: usize::MAX,
             max_starting_queue_size: 0,
             sum_starting_queue_size: 0,
             min_starting_buffer_size: 0,
