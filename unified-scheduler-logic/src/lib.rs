@@ -422,6 +422,9 @@ const_assert_eq!(mem::size_of::<LockResult>(), 1);
 pub type Task = Arc<TaskInner>;
 const_assert_eq!(mem::size_of::<Task>(), 8);
 
+pub type BlockSize = usize;
+pub const NO_CONSUMED_BLOCK_SIZE: BlockSize = 0;
+
 /// [`Token`] for [`UsageQueue`].
 type UsageQueueToken = Token<UsageQueueInner>;
 const_assert_eq!(mem::size_of::<UsageQueueToken>(), 0);
@@ -440,11 +443,16 @@ pub struct TaskInner {
     index: usize,
     lock_contexts: Vec<LockContext>,
     blocked_usage_count: TokenCell<ShortCounter>,
+    consumed_block_size: BlockSize,
 }
 
 impl TaskInner {
     pub fn task_index(&self) -> usize {
         self.index
+    }
+
+    pub fn consumed_block_size(&self) -> BlockSize {
+        self.consumed_block_size
     }
 
     pub fn transaction(&self) -> &RuntimeTransaction<SanitizedTransaction> {
@@ -871,6 +879,29 @@ impl SchedulingStateMachine {
         index: usize,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
+        Self::do_create_task(
+            transaction,
+            index,
+            NO_CONSUMED_BLOCK_SIZE,
+            usage_queue_loader,
+        )
+    }
+
+    pub fn create_block_production_task(
+        transaction: RuntimeTransaction<SanitizedTransaction>,
+        index: usize,
+        consumed_block_size: BlockSize,
+        usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
+    ) -> Task {
+        Self::do_create_task(transaction, index, consumed_block_size, usage_queue_loader)
+    }
+
+    fn do_create_task(
+        transaction: RuntimeTransaction<SanitizedTransaction>,
+        index: usize,
+        consumed_block_size: BlockSize,
+        usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
+    ) -> Task {
         // It's crucial for tasks to be validated with
         // `account_locks::validate_account_locks()` prior to the creation.
         // That's because it's part of protocol consensus regarding the
@@ -924,6 +955,7 @@ impl SchedulingStateMachine {
             index,
             lock_contexts,
             blocked_usage_count: TokenCell::new(ShortCounter::zero()),
+            consumed_block_size,
         })
     }
 

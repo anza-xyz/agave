@@ -28,6 +28,7 @@ use {
     solana_ledger::blockstore_processor::{
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
     },
+    solana_metrics::datapoint_info,
     solana_poh::transaction_recorder::{RecordTransactionsSummary, TransactionRecorder},
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -46,6 +47,7 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
+        BlockSize,
         SchedulingMode::{self, BlockProduction, BlockVerification},
         SchedulingStateMachine, Task, UsageQueue,
     },
@@ -66,6 +68,10 @@ use {
     unwrap_none::UnwrapNone,
     vec_extract_if_polyfill::MakeExtractIf,
 };
+
+// For now, cap bandwidth use to just half of 1 Gbps link, which should be pretty conservative
+// assumption these days...
+const MAX_BLOCK_SIZE_THRESHOLD: BlockSize = 20 * 1024 * 1024;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
@@ -398,16 +404,21 @@ impl BankingStageHelper {
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
         index: usize,
+        consumed_block_size: BlockSize,
     ) -> Task {
-        SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
-            self.usage_queue_loader.load(pubkey)
-        })
+        SchedulingStateMachine::create_block_production_task(
+            transaction,
+            index,
+            consumed_block_size,
+            &mut |pubkey| self.usage_queue_loader.load(pubkey),
+        )
     }
 
     fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
         let new_index = self.generate_task_ids(1);
+        let consumed_block_size = executed_task.consumed_block_size();
         let transaction = executed_task.into_transaction();
-        self.create_new_task(transaction, new_index)
+        self.create_new_task(transaction, new_index, consumed_block_size)
     }
 
     pub fn send_new_task(&self, task: Task) {
@@ -1224,6 +1235,10 @@ impl ExecutedTask {
         })
     }
 
+    fn consumed_block_size(&self) -> BlockSize {
+        self.task.consumed_block_size()
+    }
+
     fn into_transaction(self) -> RuntimeTransaction<SanitizedTransaction> {
         self.task.into_transaction()
     }
@@ -1786,6 +1801,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         (result, timings): &mut ResultWithTimings,
         executed_task: Box<ExecutedTask>,
         state_machine: &mut SchedulingStateMachine,
+        block_size_estimate: &mut usize,
         session_ending: &mut bool,
         handler_context: &HandlerContext,
     ) -> bool {
@@ -1799,6 +1815,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             BlockVerification => match executed_task.result_with_timings.0 {
                 Ok(()) => {
                     // The most normal case
+                    // This is only for block production.
+                    assert_eq!(executed_task.consumed_block_size(), 0);
+
                     false
                 }
                 // This should never be observed because the scheduler thread makes all running
@@ -1821,6 +1840,20 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 match executed_task.result_with_timings.0 {
                     Ok(()) => {
                         // The most normal case
+                        *block_size_estimate = block_size_estimate
+                            .checked_add(executed_task.consumed_block_size())
+                            .unwrap();
+
+                        // Avoid too large blocks in byte wise, which could destabilize the
+                        // cluster.
+                        //
+                        // While this check is very light-weight, it isn't rigid nor deterministic.
+                        // That's why it's called an estimate-based _threshold_, not _limit_ to
+                        // indicate these implications. This lenient behavior is acceptable.
+                        if *block_size_estimate > MAX_BLOCK_SIZE_THRESHOLD {
+                            sleepless_testing::at(CheckPoint::SessionEnding);
+                            *session_ending = true;
+                        }
                     }
                     Err(TransactionError::CommitCancelled)
                     | Err(TransactionError::WouldExceedMaxBlockCostLimit)
@@ -1896,6 +1929,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     ) {
         let scheduling_mode = context.mode();
         let mut current_slot = context.slot();
+        let mut block_size_estimate = 0;
         let (mut is_finished, mut session_ending) = match scheduling_mode {
             BlockVerification => (false, false),
             BlockProduction => {
@@ -2107,6 +2141,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     &mut result_with_timings,
                                     executed_task,
                                     &mut state_machine,
+                                    &mut block_size_estimate,
                                     &mut session_ending,
                                     &handler_context,
                                 ) {
@@ -2165,6 +2200,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     &mut result_with_timings,
                                     executed_task,
                                     &mut state_machine,
+                                    &mut block_size_estimate,
                                     &mut session_ending,
                                     &handler_context,
                                 ) {
@@ -2187,6 +2223,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     session_result_sender
                         .send(result_with_timings)
                         .expect("always outlived receiver");
+
+                    if matches!(scheduling_mode, BlockProduction) {
+                        datapoint_info!(
+                            "unified_scheduler-bp_session_stats",
+                            ("slot", current_slot.unwrap_or_default(), i64),
+                            ("block_size_estimate", block_size_estimate, i64),
+                        );
+                    }
                     if matches!(scheduling_mode, BlockVerification) {
                         state_machine.reinitialize();
                     }
@@ -2233,6 +2277,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 assert_eq!(scheduling_mode, new_context.mode());
                                 assert!(!new_context.is_preallocated());
                                 current_slot = new_context.slot();
+                                block_size_estimate = 0;
                                 runnable_task_sender
                                     .send_chained_channel(
                                         &new_context,
@@ -2781,6 +2826,7 @@ mod tests {
         solana_timings::ExecuteTimingType,
         solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
+        solana_unified_scheduler_logic::NO_CONSUMED_BLOCK_SIZE,
         std::{
             num::Saturating,
             sync::{atomic::Ordering, Arc, RwLock},
@@ -4813,6 +4859,16 @@ mod tests {
         poh_service.join().unwrap();
     }
 
+    impl BankingStageHelper {
+        fn create_new_unconstrained_task(
+            &self,
+            transaction: RuntimeTransaction<SanitizedTransaction>,
+            index: usize,
+        ) -> Task {
+            self.create_new_task(transaction, index, NO_CONSUMED_BLOCK_SIZE)
+        }
+    }
+
     #[test]
     fn test_block_production_scheduler_buffering_on_spawn() {
         solana_logger::setup();
@@ -4866,7 +4922,7 @@ mod tests {
         ));
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
-                helper.send_new_task(helper.create_new_task(tx0.clone(), 17))
+                helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), 17))
             });
         pool.register_banking_stage(
             None,
@@ -4938,7 +4994,7 @@ mod tests {
         ));
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
-                helper.send_new_task(helper.create_new_task(tx0.clone(), 18))
+                helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), 18))
             });
 
         let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
@@ -5316,7 +5372,7 @@ mod tests {
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
                 for index in 0..DISCARDED_TASK_COUNT {
-                    helper.send_new_task(helper.create_new_task(tx0.clone(), index))
+                    helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), index))
                 }
             });
 

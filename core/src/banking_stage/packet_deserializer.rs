@@ -145,13 +145,14 @@ impl PacketDeserializer {
         Ok((num_packets_received, messages))
     }
 
-    pub(crate) fn deserialize_packets_with_indexes(
+    pub(crate) fn deserialize_packets_for_unified_scheduler(
         packet_batch: &PacketBatch,
-    ) -> impl Iterator<Item = (ImmutableDeserializedPacket, usize)> + '_ {
+    ) -> impl Iterator<Item = (ImmutableDeserializedPacket, usize, usize)> + '_ {
         packet_batch.iter().enumerate().filter_map(|(index, pkt)| {
             if !pkt.meta().discard() {
+                let pkt_size = pkt.meta().size;
                 let pkt = ImmutableDeserializedPacket::new(pkt).ok()?;
-                Some((pkt, index))
+                Some((pkt, index, pkt_size))
             } else {
                 None
             }
