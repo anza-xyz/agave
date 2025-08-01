@@ -314,11 +314,7 @@ fn test_slots_to_snapshot() {
             .unwrap()
             .root_bank()
             .status_cache
-            .read()
-            .unwrap()
             .roots()
-            .iter()
-            .cloned()
             .sorted();
         assert!(slots_to_snapshot.into_iter().eq(expected_slots_to_snapshot));
     }
