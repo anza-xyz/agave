@@ -341,7 +341,6 @@ pub fn load_and_process_ledger(
             exit.clone(),
         )
         .map_err(LoadAndProcessLedgerError::LoadBankForks)?;
-    let leader_schedule_cache = Arc::new(leader_schedule_cache);
     let block_verification_method = value_t_or_exit!(
         arg_matches,
         "block_verification_method",
