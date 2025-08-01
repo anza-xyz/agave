@@ -47,7 +47,6 @@ agave-transaction-view = { workspace = true }
 agave-verified-packet-receiver = { workspace = true }
 ahash = { workspace = true }
 anyhow = { workspace = true }
-arc-swap = { workspace = true }
 arrayvec = { workspace = true }
 assert_matches = { workspace = true }
 async-trait = { workspace = true }
