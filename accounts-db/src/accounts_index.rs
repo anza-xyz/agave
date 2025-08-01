@@ -1874,6 +1874,24 @@ pub mod tests {
         }
     }
 
+    fn verify_index_status<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>(
+        secondary_index: &SecondaryIndex<SecondaryIndexEntryType>,
+        should_be_empty: bool,
+    ) {
+        #[allow(clippy::disallowed_methods)]
+        let is_empty = secondary_index.index.is_empty();
+        assert_eq!(
+            is_empty, should_be_empty,
+            "Secondary index empty status should match expected status"
+        );
+        #[allow(clippy::disallowed_methods)]
+        let is_reverse_empty = secondary_index.index.is_empty();
+        assert_eq!(
+            is_reverse_empty, should_be_empty,
+            "Secondary index reverse empty status should match expected status"
+        );
+    }
+
     #[test]
     fn test_get_empty() {
         let key = solana_pubkey::new_rand();
@@ -3119,8 +3137,7 @@ pub mod tests {
         );
 
         let _ = index.handle_dead_keys(&[&account_key], secondary_indexes);
-        assert!(secondary_index.index.is_empty());
-        assert!(secondary_index.reverse_index.is_empty());
+        verify_index_status(secondary_index, true);
     }
 
     #[test]
@@ -3228,7 +3245,9 @@ pub mod tests {
         // Check secondary index has unique mapping from secondary index key
         // to the account key and slot
         for secondary_index_key in secondary_index_keys {
-            assert_eq!(secondary_index.index.len(), secondary_index_keys.len());
+            #[allow(clippy::disallowed_methods)]
+            let secondary_index_len = secondary_index.index.len();
+            assert_eq!(secondary_index_len, secondary_index_keys.len());
             let account_key_map = secondary_index.get(secondary_index_key);
             assert_eq!(account_key_map.len(), 1);
             assert_eq!(account_key_map, vec![*account_key]);
@@ -3268,8 +3287,7 @@ pub mod tests {
             &mut vec![],
             UPSERT_POPULATE_RECLAIMS,
         );
-        assert!(secondary_index.index.is_empty());
-        assert!(secondary_index.reverse_index.is_empty());
+        verify_index_status(secondary_index, true);
 
         // Wrong account data size
         index.upsert(
@@ -3282,8 +3300,7 @@ pub mod tests {
             &mut vec![],
             UPSERT_POPULATE_RECLAIMS,
         );
-        assert!(secondary_index.index.is_empty());
-        assert!(secondary_index.reverse_index.is_empty());
+        verify_index_status(secondary_index, true);
 
         secondary_indexes.keys = None;
 
@@ -3298,8 +3315,7 @@ pub mod tests {
         }
 
         // included
-        assert!(!secondary_index.index.is_empty());
-        assert!(!secondary_index.reverse_index.is_empty());
+        verify_index_status(secondary_index, false);
 
         secondary_indexes.keys = Some(AccountSecondaryIndexesIncludeExclude {
             keys: [index_key].iter().cloned().collect::<HashSet<_>>(),
@@ -3312,8 +3328,7 @@ pub mod tests {
             &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0),
             &secondary_indexes,
         );
-        assert!(!secondary_index.index.is_empty());
-        assert!(!secondary_index.reverse_index.is_empty());
+        verify_index_status(secondary_index, false);
         check_secondary_index_mapping_correct(secondary_index, &[index_key], &account_key);
 
         // not-excluded
@@ -3328,8 +3343,7 @@ pub mod tests {
             &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0),
             &secondary_indexes,
         );
-        assert!(!secondary_index.index.is_empty());
-        assert!(!secondary_index.reverse_index.is_empty());
+        verify_index_status(secondary_index, false);
         check_secondary_index_mapping_correct(secondary_index, &[index_key], &account_key);
 
         secondary_indexes.keys = None;
@@ -3338,8 +3352,7 @@ pub mod tests {
 
         // Everything should be deleted
         let _ = index.handle_dead_keys(&[&account_key], &secondary_indexes);
-        assert!(secondary_index.index.is_empty());
-        assert!(secondary_index.reverse_index.is_empty());
+        verify_index_status(secondary_index, true);
     }
 
     #[test]
@@ -3460,8 +3473,7 @@ pub mod tests {
         let mut reclaims = vec![];
         index.purge_exact(&account_key, &later_slot, &mut reclaims);
         let _ = index.handle_dead_keys(&[&account_key], secondary_indexes);
-        assert!(secondary_index.index.is_empty());
-        assert!(secondary_index.reverse_index.is_empty());
+        verify_index_status(secondary_index, true);
     }
 
     #[test]

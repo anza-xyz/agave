@@ -2352,6 +2352,7 @@ impl Bank {
     ///   can compare the expected results with the current code path
     /// - we want to be able to batch store the vote accounts later for improved performance/cache updating
     fn calc_vote_accounts_to_store(vote_account_rewards: VoteRewards) -> VoteRewardsAccounts {
+        #[allow(clippy::disallowed_methods)]
         let len = vote_account_rewards.len();
         let mut result = VoteRewardsAccounts {
             rewards: Vec::with_capacity(len),

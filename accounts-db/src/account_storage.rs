@@ -187,6 +187,7 @@ impl AccountStorage {
 
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
+        #[allow(clippy::disallowed_methods)]
         self.map.len()
     }
 

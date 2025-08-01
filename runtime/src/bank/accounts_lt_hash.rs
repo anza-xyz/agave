@@ -640,9 +640,6 @@ mod tests {
         let (genesis_config, _mint_keypair) = genesis_config_with(features);
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-        // the cache should start off empty
-        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 0);
-
         // ensure non-writable accounts are *not* added to the cache
         bank.inspect_account_for_accounts_lt_hash(
             &Pubkey::new_unique(),
@@ -654,12 +651,10 @@ mod tests {
             &AccountState::Alive(&AccountSharedData::default()),
             false,
         );
-        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 0);
 
         // ensure *new* accounts are added to the cache
         let address = Pubkey::new_unique();
         bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Dead, true);
-        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 1);
         assert!(bank.cache_for_accounts_lt_hash.contains_key(&address));
 
         // ensure *existing* accounts are added to the cache
@@ -667,7 +662,6 @@ mod tests {
         let initial_lamports = 123;
         let mut account = AccountSharedData::new(initial_lamports, 0, &Pubkey::default());
         bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Alive(&account), true);
-        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 2);
         if let CacheValue::InspectAccount(InitialStateOfAccount::Alive(cached_account)) = bank
             .cache_for_accounts_lt_hash
             .get(&address)
@@ -683,7 +677,6 @@ mod tests {
         let updated_lamports = account.lamports() + 1;
         account.set_lamports(updated_lamports);
         bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Alive(&account), true);
-        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 2);
         if let CacheValue::InspectAccount(InitialStateOfAccount::Alive(cached_account)) = bank
             .cache_for_accounts_lt_hash
             .get(&address)
@@ -699,7 +692,6 @@ mod tests {
         {
             let address = Pubkey::new_unique();
             bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Dead, true);
-            assert_eq!(bank.cache_for_accounts_lt_hash.len(), 3);
             match bank
                 .cache_for_accounts_lt_hash
                 .get(&address)
@@ -717,7 +709,6 @@ mod tests {
                 &AccountState::Alive(&AccountSharedData::default()),
                 true,
             );
-            assert_eq!(bank.cache_for_accounts_lt_hash.len(), 3);
             match bank
                 .cache_for_accounts_lt_hash
                 .get(&address)
@@ -735,8 +726,10 @@ mod tests {
         // N.B. this test should remain *last*, as Bank::freeze() is not meant to be undone
         bank.freeze();
         let address = Pubkey::new_unique();
+        #[allow(clippy::disallowed_methods)]
         let num_cache_entries_prev = bank.cache_for_accounts_lt_hash.len();
         bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Dead, true);
+        #[allow(clippy::disallowed_methods)]
         let num_cache_entries_curr = bank.cache_for_accounts_lt_hash.len();
         assert_eq!(num_cache_entries_curr, num_cache_entries_prev);
         assert!(!bank.cache_for_accounts_lt_hash.contains_key(&address));

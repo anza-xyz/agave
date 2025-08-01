@@ -401,6 +401,7 @@ async fn confirm_transactions_till_block_height_and_resend_unexpired_transaction
     let unconfirmed_transaction_map = context.unconfirmed_transaction_map.clone();
     let current_block_height = context.current_block_height.clone();
 
+    #[allow(clippy::disallowed_methods)]
     let transactions_to_confirm = unconfirmed_transaction_map.len();
     let max_valid_block_height = unconfirmed_transaction_map
         .iter()

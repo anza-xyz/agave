@@ -6,6 +6,7 @@ disallowed-methods = [
     { path = "tokio::net::UdpSocket::bind", reason = "Use solana_net_utils::bind_to_async or bind_to_with_config_non_blocking instead for proper socket configuration." },
     { path = "lazy_static::initialize", reason = "Deprecated. Use std::{cell::{LazyCell, OnceCell}, sync::{LazyLock, OnceLock}} as appropriate." },
     { path = "dashmap::DashMap::is_empty", reason = "Performance. Never call is_empty on a dashmap as it has to iterate all shards." },
+    { path = "dashmap::DashMap::len", reason = "Performance. Never call len on a dashmap as it has to iterate all shards." },
 ]
 
 disallowed-macros = [
