@@ -77,7 +77,7 @@ pub(crate) enum LoadAndProcessLedgerError {
     #[error("failed to create all run and snapshot directories: {0}")]
     CreateAllAccountsRunAndSnapshotDirectories(#[source] std::io::Error),
 
-    #[error("custom accounts path is not supported with seconday blockstore access")]
+    #[error("custom accounts path is not supported with secondary blockstore access")]
     CustomAccountsPathUnsupported(#[source] BlockstoreError),
 
     #[error(
