@@ -37,6 +37,7 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_time_utils::AtomicInterval,
+    solana_unified_scheduler_logic::SchedulingMode,
     std::{
         num::{NonZeroUsize, Saturating},
         ops::Deref,
@@ -399,18 +400,26 @@ impl BankingStage {
         let mut thread_hdls = Vec::with_capacity(num_workers.get() + 2);
         thread_hdls.push(Self::spawn_vote_worker(&context));
 
-        let use_greedy_scheduler = matches!(
-            block_production_method,
-            BlockProductionMethod::CentralSchedulerGreedy
-        );
+        match block_production_method {
+            BlockProductionMethod::CentralScheduler
+            | BlockProductionMethod::CentralSchedulerGreedy => {
+                let use_greedy_scheduler = matches!(
+                    block_production_method,
+                    BlockProductionMethod::CentralSchedulerGreedy
+                );
 
-        Self::new_central_scheduler(
-            &mut thread_hdls,
-            transaction_struct,
-            use_greedy_scheduler,
-            num_workers,
-            &context,
-        );
+                Self::new_central_scheduler(
+                    &mut thread_hdls,
+                    transaction_struct,
+                    use_greedy_scheduler,
+                    num_workers,
+                    &context,
+                );
+            }
+            BlockProductionMethod::UnifiedScheduler => {
+                // no op
+            }
+        }
 
         Self {
             context: Some(context),
@@ -660,10 +669,17 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     poh_controller: &mut PohController,
     tpu_bank: Bank,
 ) {
-    let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
-    if poh_controller.set_bank(tpu_bank).is_err() {
+    let tpu_bank = bank_forks
+        .write()
+        .unwrap()
+        .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
+    if poh_controller
+        .set_bank(tpu_bank.clone_with_scheduler())
+        .is_err()
+    {
         warn!("Failed to set poh bank, poh service is disconnected");
     }
+    tpu_bank.unpause_new_block_production_scheduler();
 }
 
 #[cfg(test)]

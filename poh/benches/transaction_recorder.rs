@@ -75,7 +75,7 @@ fn bench_record_transactions(c: &mut Criterion) {
         .collect();
 
     let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-    let (_poh_controller, poh_service_message_receiver) = PohController::new();
+    let (_poh_controller, poh_service_message_receiver) = PohController::new_for_test();
     let poh_service = PohService::new(
         poh_recorder.clone(),
         &genesis_config_info.genesis_config.poh_config,

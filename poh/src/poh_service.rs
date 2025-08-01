@@ -562,7 +562,7 @@ mod tests {
             .map(|x| x.parse().unwrap())
             .unwrap_or(DEFAULT_HASHES_PER_BATCH);
         let (_record_sender, record_receiver) = unbounded();
-        let (_poh_controller, poh_service_message_receiver) = PohController::new();
+        let (_poh_controller, poh_service_message_receiver) = PohController::new_for_test();
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &poh_config,
