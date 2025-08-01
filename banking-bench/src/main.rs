@@ -39,8 +39,7 @@ use {
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
-    solana_unified_scheduler_logic::SchedulingMode,
-    solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         sync::{atomic::Ordering, Arc, RwLock},
         thread::sleep,
@@ -456,8 +455,7 @@ fn main() {
         block_production_method,
         BlockProductionMethod::UnifiedScheduler
     ) {
-        let pool = DefaultSchedulerPool::new(
-            SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
+        let pool = DefaultSchedulerPool::new_for_production(
             None,
             None,
             None,
