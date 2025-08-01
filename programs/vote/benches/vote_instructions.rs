@@ -159,7 +159,7 @@ fn process_instruction(
 ) -> Vec<AccountSharedData> {
     mock_process_instruction(
         &id(),
-        Vec::new(),
+        None,
         instruction_data,
         transaction_accounts,
         instruction_accounts,
