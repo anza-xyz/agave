@@ -135,11 +135,11 @@ impl NetworkDevice {
     }
 
     pub fn open_queue(&self, queue_id: QueueId) -> Result<DeviceQueue, io::Error> {
-        let (rx_size, tx_size) = Self::ring_sizes(&self.if_name)?;
-        Ok(DeviceQueue::new(self.if_index, queue_id, rx_size, tx_size))
+        let ring_sizes = Self::ring_sizes(&self.if_name).ok();
+        Ok(DeviceQueue::new(self.if_index, queue_id, ring_sizes))
     }
 
-    pub fn ring_sizes(if_name: &str) -> Result<(usize, usize), io::Error> {
+    pub fn ring_sizes(if_name: &str) -> Result<RingSizes, io::Error> {
         const ETHTOOL_GRINGPARAM: u32 = 0x00000010;
 
         #[repr(C)]
@@ -180,25 +180,40 @@ impl NetworkDevice {
             return Err(io::Error::last_os_error());
         }
 
-        Ok((rp.rx_pending as usize, rp.tx_pending as usize))
+        Ok(RingSizes {
+            rx: rp.rx_pending as usize,
+            tx: rp.tx_pending as usize,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingSizes {
+    pub rx: usize,
+    pub tx: usize,
+}
+
+impl Default for RingSizes {
+    fn default() -> Self {
+        // These are reasonable defaults for devices which don't have a set ring size. Values must
+        // be a power of two.
+        Self { rx: 1024, tx: 1024 }
     }
 }
 
 pub struct DeviceQueue {
     if_index: u32,
     queue_id: QueueId,
-    rx_size: usize,
-    tx_size: usize,
+    ring_sizes: Option<RingSizes>,
     completion: Option<TxCompletionRing>,
 }
 
 impl DeviceQueue {
-    pub fn new(if_index: u32, queue_id: QueueId, rx_size: usize, tx_size: usize) -> Self {
+    pub fn new(if_index: u32, queue_id: QueueId, ring_sizes: Option<RingSizes>) -> Self {
         Self {
             if_index,
             queue_id,
-            rx_size,
-            tx_size,
+            ring_sizes,
             completion: None,
         }
     }
@@ -215,12 +230,8 @@ impl DeviceQueue {
         self.completion.as_ref()
     }
 
-    pub fn tx_size(&self) -> usize {
-        self.tx_size
-    }
-
-    pub fn rx_size(&self) -> usize {
-        self.rx_size
+    pub fn ring_sizes(&self) -> Option<RingSizes> {
+        self.ring_sizes
     }
 }
 

@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        device::{NetworkDevice, QueueId},
+        device::{NetworkDevice, QueueId, RingSizes},
         netlink::MacAddress,
         packet::{
             write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
@@ -52,8 +52,17 @@ pub fn tx_loop<T: AsRef<[u8]>>(
     let queue = dev
         .open_queue(queue_id)
         .expect("failed to open queue for AF_XDP socket");
-    let rx_size = queue.rx_size();
-    let tx_size = queue.tx_size();
+    let RingSizes {
+        rx: rx_size,
+        tx: tx_size,
+    } = queue.ring_sizes().unwrap_or_else(|| {
+        log::info!(
+            "using default ring sizes for {} queue {queue_id:?}",
+            dev.name()
+        );
+        RingSizes::default()
+    });
+
     let frame_count = (rx_size + tx_size) * 2;
 
     // try to allocate huge pages first, then fall back to regular pages
