@@ -870,7 +870,7 @@ pub fn mock_process_instruction_with_feature_set<
     G: FnMut(&mut InvokeContext),
 >(
     loader_id: &Pubkey,
-    mut program_indices: Vec<IndexOfAccount>,
+    program_index: Option<IndexOfAccount>,
     instruction_data: &[u8],
     mut transaction_accounts: Vec<TransactionAccount>,
     instruction_account_metas: Vec<AccountMeta>,
@@ -894,11 +894,14 @@ pub fn mock_process_instruction_with_feature_set<
             account_meta.is_writable,
         ));
     }
-    if program_indices.is_empty() {
-        program_indices.insert(0, transaction_accounts.len() as IndexOfAccount);
+
+    let program_index = if let Some(index) = program_index {
+        index
+    } else {
         let processor_account = AccountSharedData::new(0, 0, &native_loader::id());
         transaction_accounts.push((*loader_id, processor_account));
-    }
+        transaction_accounts.len().saturating_sub(1) as IndexOfAccount
+    };
     let pop_epoch_schedule_account = if !transaction_accounts
         .iter()
         .any(|(key, _)| *key == sysvar::epoch_schedule::id())
@@ -928,7 +931,7 @@ pub fn mock_process_instruction_with_feature_set<
         .transaction_context
         .get_next_instruction_context_mut()
         .unwrap()
-        .configure_for_tests(program_indices, instruction_accounts, instruction_data);
+        .configure_for_tests(vec![program_index], instruction_accounts, instruction_data);
     let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
     assert_eq!(result, expected_result);
     post_adjustments(&mut invoke_context);
@@ -951,15 +954,9 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
     pre_adjustments: F,
     post_adjustments: G,
 ) -> Vec<AccountSharedData> {
-    let program_indices = if let Some(index) = program_index {
-        vec![index]
-    } else {
-        vec![]
-    };
-
     mock_process_instruction_with_feature_set(
         loader_id,
-        program_indices,
+        program_index,
         instruction_data,
         transaction_accounts,
         instruction_account_metas,

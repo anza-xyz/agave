@@ -126,7 +126,7 @@ impl TestSetup {
 
         let accounts = mock_process_instruction_with_feature_set(
             &solana_stake_program::id(),
-            Vec::new(),
+            None,
             &instruction.data,
             transaction_accounts,
             instruction.accounts.clone(),
@@ -166,7 +166,7 @@ impl TestSetup {
 
         let accounts = mock_process_instruction_with_feature_set(
             &solana_stake_program::id(),
-            Vec::new(),
+            None,
             &instruction.data,
             transaction_accounts,
             instruction.accounts.clone(),
@@ -184,7 +184,7 @@ impl TestSetup {
     fn run(&self, instruction_data: &[u8]) {
         mock_process_instruction_with_feature_set(
             &solana_stake_program::id(),
-            Vec::new(),
+            None,
             instruction_data,
             self.transaction_accounts.clone(),
             self.instruction_accounts.clone(),

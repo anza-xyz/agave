@@ -2013,7 +2013,7 @@ mod tests {
         // Case: Account not a program
         mock_process_instruction_with_feature_set(
             &loader_id,
-            vec![0],
+            Some(0),
             &[],
             vec![(program_id, parameter_account.clone())],
             Vec::new(),
@@ -2709,7 +2709,7 @@ mod tests {
 
         mock_process_instruction_with_feature_set(
             &bpf_loader_upgradeable::id(),
-            Vec::new(),
+            None,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
