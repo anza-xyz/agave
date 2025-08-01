@@ -1265,8 +1265,15 @@ mod tests {
     #[test]
     fn test_inner_instructions_list_from_instruction_trace() {
         let instruction_trace = [1, 2, 1, 1, 2, 3, 2];
-        let mut transaction_context =
-            TransactionContext::new(vec![], Rent::default(), 3, instruction_trace.len());
+        let mut transaction_context = TransactionContext::new(
+            vec![(
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, 1, &bpf_loader::ID),
+            )],
+            Rent::default(),
+            3,
+            instruction_trace.len(),
+        );
         for (index_in_trace, stack_height) in instruction_trace.into_iter().enumerate() {
             while stack_height <= transaction_context.get_instruction_context_stack_height() {
                 transaction_context.pop().unwrap();
@@ -1275,7 +1282,7 @@ mod tests {
                 transaction_context
                     .get_next_instruction_context_mut()
                     .unwrap()
-                    .configure_for_tests(vec![], vec![], &[index_in_trace as u8]);
+                    .configure_for_tests(0, vec![], &[index_in_trace as u8]);
                 transaction_context.push().unwrap();
             }
         }

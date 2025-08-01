@@ -71,7 +71,7 @@ macro_rules! with_mock_invoke_context {
             .transaction_context
             .get_next_instruction_context_mut()
             .unwrap()
-            .configure_for_tests(vec![0, 1], instruction_accounts, &[]);
+            .configure_for_tests(1, instruction_accounts, &[]);
         $invoke_context.push().unwrap();
     };
 }

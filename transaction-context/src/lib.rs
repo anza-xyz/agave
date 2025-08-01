@@ -637,13 +637,13 @@ impl InstructionContext {
     #[cfg(not(target_os = "solana"))]
     pub fn configure(
         &mut self,
-        program_accounts: Vec<IndexOfAccount>,
+        program_index: IndexOfAccount,
         instruction_accounts: Vec<InstructionAccount>,
         deduplication_map: Vec<u8>,
         instruction_data: &[u8],
     ) {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
-        self.program_account_index_in_tx = *program_accounts.first().unwrap();
+        self.program_account_index_in_tx = program_index;
         self.instruction_accounts = instruction_accounts;
         self.instruction_data = instruction_data.to_vec();
         self.dedup_map = deduplication_map;
@@ -653,7 +653,7 @@ impl InstructionContext {
     #[cfg(not(target_os = "solana"))]
     pub fn configure_for_tests(
         &mut self,
-        program_accounts: Vec<IndexOfAccount>,
+        program_index: IndexOfAccount,
         instruction_accounts: Vec<InstructionAccount>,
         instruction_data: &[u8],
     ) {
@@ -669,7 +669,7 @@ impl InstructionContext {
         }
 
         self.configure(
-            program_accounts,
+            program_index,
             instruction_accounts,
             dedup_map,
             instruction_data,
