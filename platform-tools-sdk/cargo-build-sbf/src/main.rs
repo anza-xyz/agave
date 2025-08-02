@@ -42,6 +42,7 @@ pub struct Config<'a> {
     remap_cwd: bool,
     debug: bool,
     verbose: bool,
+    quiet: bool,
     workspace: bool,
     jobs: Option<String>,
     arch: &'a str,
@@ -74,6 +75,7 @@ impl Default for Config<'_> {
             remap_cwd: true,
             debug: false,
             verbose: false,
+            quiet: false,
             workspace: false,
             jobs: None,
             arch: "v0",
@@ -245,6 +247,9 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
     }
     if config.verbose {
         cargo_build_args.push("--verbose");
+    }
+    if config.quiet {
+        cargo_build_args.push("--quiet");
     }
     if let Some(jobs) = &config.jobs {
         cargo_build_args.push("--jobs");
@@ -511,6 +516,13 @@ fn main() {
                 .help("Use verbose output"),
         )
         .arg(
+            Arg::new("quiet")
+                .short('q')
+                .long("quiet")
+                .takes_value(false)
+                .help("Do not print cargo log messages"),
+        )
+        .arg(
             Arg::new("workspace")
                 .long("workspace")
                 .takes_value(false)
@@ -613,6 +625,7 @@ fn main() {
         debug: matches.is_present("debug"),
         offline: matches.is_present("offline"),
         verbose: matches.is_present("verbose"),
+        quiet: matches.is_present("quiet"),
         workspace: matches.is_present("workspace"),
         jobs: matches.value_of_t("jobs").ok(),
         arch: matches.value_of("arch").unwrap(),
