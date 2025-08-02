@@ -1,0 +1,166 @@
+use {
+    crate::{
+        banking_stage::{committer::Committer, vote_storage::VoteStorage, BankingStage},
+        validator::{BlockProductionMethod, TransactionStructure},
+    },
+    agave_banking_stage_ingress_types::BankingPacketReceiver,
+    solana_ledger::blockstore_processor::TransactionStatusSender,
+    solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
+    solana_runtime::{
+        bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
+        vote_sender_types::ReplayVoteSender,
+    },
+    std::{
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, RwLock,
+        },
+        thread::{self, JoinHandle},
+    },
+};
+
+/// Handle to manage block production.
+pub struct BlockProductionManager {
+    /// Signal to shutdown vote thread.
+    vote_shutdown_signal: Arc<AtomicBool>,
+    /// Vote thread handle - wrapped in an `Option` to allow for shutdown
+    /// without taking ownership.
+    vote_thread_handle: Option<JoinHandle<()>>,
+
+    /// Signal to shutdown non-vote thread(s).
+    non_vote_shutdown_signal: Arc<AtomicBool>,
+    /// Non-vote thread handle(s).
+    non_vote_thread_handles: Vec<JoinHandle<()>>,
+
+    // becomes None only during final shutdown.
+    // this is so channels are dropped and other threads
+    // can exit gracefully on detecting the disconnect.
+    context: Option<BlockProductionContext>,
+}
+
+impl BlockProductionManager {
+    /// Create a new `BlockProductionManager` with the provided context.
+    ///
+    /// This will spawn the vote thread immediately.
+    /// Non-vote threads can be spawned later.
+    pub fn with_context(context: BlockProductionContext) -> Self {
+        let vote_shutdown_signal = Arc::new(AtomicBool::new(false));
+        let non_vote_shutdown_signal = Arc::new(AtomicBool::new(false));
+
+        let vote_thread_handle = Self::spawn_vote_thread(vote_shutdown_signal.clone(), &context);
+
+        Self {
+            vote_shutdown_signal,
+            vote_thread_handle: Some(vote_thread_handle),
+            non_vote_shutdown_signal,
+            non_vote_thread_handles: vec![],
+            context: Some(context),
+        }
+    }
+
+    /// Spawn non-vote threads with specified block production method and
+    /// transaction structure.
+    pub fn spawn_non_vote_threads(
+        &mut self,
+        block_production_method: BlockProductionMethod,
+        transaction_structure: TransactionStructure,
+    ) -> thread::Result<()> {
+        if !self.non_vote_thread_handles.is_empty() {
+            self.shutdown_non_vote_threads()?;
+        }
+
+        let Some(context) = self.context.as_ref() else {
+            error!("block production context is not set. Cannot spawn non-vote threads.");
+            return Ok(());
+        };
+        info!(
+            "spawning non-vote block-production threads with method: {}, transaction structure: {}",
+            block_production_method, transaction_structure
+        );
+        self.non_vote_shutdown_signal
+            .store(false, Ordering::Relaxed);
+        BankingStage::spawn_scheduler_and_workers_with_structure(
+            self.non_vote_shutdown_signal.clone(),
+            &mut self.non_vote_thread_handles,
+            block_production_method,
+            transaction_structure,
+            context.poh_recorder.clone(),
+            Committer::new(
+                context.transaction_status_sender.clone(),
+                context.replay_vote_sender.clone(),
+                context.prioritization_fee_cache.clone(),
+            ),
+            context.transaction_recorder.clone(),
+            context.non_vote_receiver.clone(),
+            BankingStage::num_threads(),
+            context.log_messages_bytes_limit,
+            context.bank_forks.clone(),
+        );
+
+        Ok(())
+    }
+
+    /// Perform final shutdown.
+    pub fn shutdown(&mut self) -> thread::Result<()> {
+        self.context = None; // Clear context to prevent further use.
+        self.shutdown_non_vote_threads()?;
+
+        // Signal and wait for vote thread shutdown.
+        {
+            info!("shutting down vote block-production thread");
+            self.vote_shutdown_signal.store(true, Ordering::Relaxed);
+            if let Some(hdl) = self.vote_thread_handle.take() {
+                hdl.join()?;
+            }
+        }
+        info!("block-production threads shutdown complete");
+
+        Ok(())
+    }
+
+    /// Shtudown and wait for non-vote threads.
+    fn shutdown_non_vote_threads(&mut self) -> thread::Result<()> {
+        info!("shutting down non-vote block-production threads");
+        self.non_vote_shutdown_signal.store(true, Ordering::Relaxed);
+        for handle in self.non_vote_thread_handles.drain(..) {
+            handle.join()?;
+        }
+
+        Ok(())
+    }
+
+    fn spawn_vote_thread(
+        vote_shutdown_signal: Arc<AtomicBool>,
+        context: &BlockProductionContext,
+    ) -> JoinHandle<()> {
+        BankingStage::spawn_vote_worker(
+            vote_shutdown_signal.clone(),
+            context.tpu_vote_receiver.clone(),
+            context.gossip_vote_receiver.clone(),
+            context.poh_recorder.clone(),
+            context.bank_forks.clone(),
+            Committer::new(
+                context.transaction_status_sender.clone(),
+                context.replay_vote_sender.clone(),
+                context.prioritization_fee_cache.clone(),
+            ),
+            context.transaction_recorder.clone(),
+            context.log_messages_bytes_limit,
+            VoteStorage::new(context.bank_forks.read().unwrap().working_bank().as_ref()),
+        )
+    }
+}
+
+/// Context for creating block-production threads.
+pub struct BlockProductionContext {
+    pub poh_recorder: Arc<RwLock<PohRecorder>>,
+    pub transaction_recorder: TransactionRecorder,
+    pub non_vote_receiver: BankingPacketReceiver,
+    pub tpu_vote_receiver: BankingPacketReceiver,
+    pub gossip_vote_receiver: BankingPacketReceiver,
+    pub transaction_status_sender: Option<TransactionStatusSender>,
+    pub replay_vote_sender: ReplayVoteSender,
+    pub log_messages_bytes_limit: Option<usize>,
+    pub bank_forks: Arc<RwLock<BankForks>>,
+    pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+}

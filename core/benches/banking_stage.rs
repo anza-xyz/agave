@@ -238,7 +238,7 @@ fn bench_banking(
     let _banking_stage = BankingStage::new(
         block_production_method,
         transaction_struct,
-        &poh_recorder,
+        poh_recorder,
         transaction_recorder,
         non_vote_receiver,
         tpu_vote_receiver,

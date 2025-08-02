@@ -39,7 +39,7 @@ use {
         num::Saturating,
         ops::Deref,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
         },
         thread::{self, Builder, JoinHandle},
@@ -365,7 +365,7 @@ impl BankingStage {
     pub fn new(
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
-        poh_recorder: &Arc<RwLock<PohRecorder>>,
+        poh_recorder: Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
@@ -397,44 +397,7 @@ impl BankingStage {
     pub fn new_num_threads(
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
-        poh_recorder: &Arc<RwLock<PohRecorder>>,
-        transaction_recorder: TransactionRecorder,
-        non_vote_receiver: BankingPacketReceiver,
-        tpu_vote_receiver: BankingPacketReceiver,
-        gossip_vote_receiver: BankingPacketReceiver,
-        num_threads: u32,
-        transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: ReplayVoteSender,
-        log_messages_bytes_limit: Option<usize>,
-        bank_forks: Arc<RwLock<BankForks>>,
-        prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
-    ) -> Self {
-        let use_greedy_scheduler = matches!(
-            block_production_method,
-            BlockProductionMethod::CentralSchedulerGreedy
-        );
-        Self::new_central_scheduler(
-            transaction_struct,
-            use_greedy_scheduler,
-            poh_recorder,
-            transaction_recorder,
-            non_vote_receiver,
-            tpu_vote_receiver,
-            gossip_vote_receiver,
-            num_threads,
-            transaction_status_sender,
-            replay_vote_sender,
-            log_messages_bytes_limit,
-            bank_forks,
-            prioritization_fee_cache,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_central_scheduler(
-        transaction_struct: TransactionStructure,
-        use_greedy_scheduler: bool,
-        poh_recorder: &Arc<RwLock<PohRecorder>>,
+        poh_recorder: Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
@@ -452,7 +415,6 @@ impl BankingStage {
             VoteStorage::new(&bank)
         };
 
-        let decision_maker = DecisionMaker::new(poh_recorder.clone());
         let committer = Committer::new(
             transaction_status_sender.clone(),
             replay_vote_sender.clone(),
@@ -464,9 +426,10 @@ impl BankingStage {
 
         // Spawn legacy voting thread
         bank_thread_hdls.push(Self::spawn_vote_worker(
+            Arc::new(AtomicBool::new(false)),
             tpu_vote_receiver,
             gossip_vote_receiver,
-            decision_maker.clone(),
+            poh_recorder.clone(),
             bank_forks.clone(),
             committer.clone(),
             transaction_recorder.clone(),
@@ -474,6 +437,37 @@ impl BankingStage {
             vote_storage,
         ));
 
+        Self::spawn_scheduler_and_workers_with_structure(
+            Arc::new(AtomicBool::new(false)),
+            &mut bank_thread_hdls,
+            block_production_method,
+            transaction_struct,
+            poh_recorder,
+            committer,
+            transaction_recorder,
+            non_vote_receiver,
+            num_threads,
+            log_messages_bytes_limit,
+            bank_forks,
+        );
+
+        Self { bank_thread_hdls }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn spawn_scheduler_and_workers_with_structure(
+        exit_signal: Arc<AtomicBool>,
+        bank_thread_hdls: &mut Vec<JoinHandle<()>>,
+        block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
+        poh_recorder: Arc<RwLock<PohRecorder>>,
+        committer: Committer,
+        transaction_recorder: TransactionRecorder,
+        non_vote_receiver: BankingPacketReceiver,
+        num_threads: u32,
+        log_messages_bytes_limit: Option<usize>,
+        bank_forks: Arc<RwLock<BankForks>>,
+    ) {
         match transaction_struct {
             TransactionStructure::Sdk => {
                 let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
@@ -481,12 +475,12 @@ impl BankingStage {
                     bank_forks.clone(),
                 );
                 Self::spawn_scheduler_and_workers(
-                    &mut bank_thread_hdls,
+                    exit_signal,
+                    bank_thread_hdls,
                     receive_and_buffer,
-                    use_greedy_scheduler,
-                    decision_maker,
-                    committer,
+                    block_production_method,
                     poh_recorder,
+                    committer,
                     transaction_recorder,
                     num_threads,
                     log_messages_bytes_limit,
@@ -499,12 +493,12 @@ impl BankingStage {
                     bank_forks: bank_forks.clone(),
                 };
                 Self::spawn_scheduler_and_workers(
-                    &mut bank_thread_hdls,
+                    exit_signal,
+                    bank_thread_hdls,
                     receive_and_buffer,
-                    use_greedy_scheduler,
-                    decision_maker,
-                    committer,
+                    block_production_method,
                     poh_recorder,
+                    committer,
                     transaction_recorder,
                     num_threads,
                     log_messages_bytes_limit,
@@ -512,23 +506,26 @@ impl BankingStage {
                 );
             }
         }
-
-        Self { bank_thread_hdls }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn spawn_scheduler_and_workers<R: ReceiveAndBuffer + Send + Sync + 'static>(
+        exit_signal: Arc<AtomicBool>,
         bank_thread_hdls: &mut Vec<JoinHandle<()>>,
         receive_and_buffer: R,
-        use_greedy_scheduler: bool,
-        decision_maker: DecisionMaker,
+        block_production_method: BlockProductionMethod,
+        poh_recorder: Arc<RwLock<PohRecorder>>,
         committer: Committer,
-        poh_recorder: &Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
         num_threads: u32,
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
     ) {
+        assert!(num_threads >= MIN_TOTAL_THREADS);
+        let use_greedy_scheduler = match block_production_method {
+            BlockProductionMethod::CentralScheduler => false,
+            BlockProductionMethod::CentralSchedulerGreedy => true,
+        };
         // Create channels for communication between scheduler and workers
         let num_workers = (num_threads).saturating_sub(NUM_VOTE_PROCESSING_THREADS);
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
@@ -573,7 +570,8 @@ impl BankingStage {
                         .name("solBnkTxSched".to_string())
                         .spawn(move || {
                             let scheduler_controller = SchedulerController::new(
-                                decision_maker.clone(),
+                                exit_signal,
+                                DecisionMaker::new(poh_recorder),
                                 receive_and_buffer,
                                 bank_forks,
                                 $scheduler,
@@ -611,10 +609,11 @@ impl BankingStage {
         }
     }
 
-    fn spawn_vote_worker(
+    pub(crate) fn spawn_vote_worker(
+        exit_signal: Arc<AtomicBool>,
         tpu_receiver: BankingPacketReceiver,
         gossip_receiver: BankingPacketReceiver,
-        decision_maker: DecisionMaker,
+        poh_recorder: Arc<RwLock<PohRecorder>>,
         bank_forks: Arc<RwLock<BankForks>>,
         committer: Committer,
         transaction_recorder: TransactionRecorder,
@@ -634,7 +633,8 @@ impl BankingStage {
             .name("solBanknStgVote".to_string())
             .spawn(move || {
                 VoteWorker::new(
-                    decision_maker,
+                    exit_signal,
+                    DecisionMaker::new(poh_recorder),
                     tpu_receiver,
                     gossip_receiver,
                     vote_storage,
@@ -749,7 +749,7 @@ mod tests {
         let banking_stage = BankingStage::new(
             BlockProductionMethod::CentralScheduler,
             transaction_struct,
-            &poh_recorder,
+            poh_recorder,
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
@@ -804,7 +804,7 @@ mod tests {
         let banking_stage = BankingStage::new(
             BlockProductionMethod::CentralScheduler,
             transaction_struct,
-            &poh_recorder,
+            poh_recorder,
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
@@ -821,7 +821,6 @@ mod tests {
         drop(gossip_vote_sender);
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
-        drop(poh_recorder);
 
         trace!("getting entries");
         let entries: Vec<_> = entry_receiver
@@ -868,7 +867,7 @@ mod tests {
         let banking_stage = BankingStage::new(
             block_production_method,
             transaction_struct,
-            &poh_recorder,
+            poh_recorder,
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
@@ -921,7 +920,6 @@ mod tests {
 
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
-        drop(poh_recorder);
 
         let mut blockhash = start_hash;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
@@ -1020,7 +1018,7 @@ mod tests {
             let _banking_stage = BankingStage::new(
                 BlockProductionMethod::CentralScheduler,
                 transaction_struct,
-                &poh_recorder,
+                poh_recorder,
                 transaction_recorder,
                 non_vote_receiver,
                 tpu_vote_receiver,
@@ -1206,7 +1204,7 @@ mod tests {
         let banking_stage = BankingStage::new(
             BlockProductionMethod::CentralScheduler,
             transaction_struct,
-            &poh_recorder,
+            poh_recorder,
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,

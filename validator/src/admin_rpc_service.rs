@@ -13,7 +13,7 @@ use {
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
         consensus::{tower_storage::TowerStorage, Tower},
         repair::repair_service,
-        validator::ValidatorStartProgress,
+        validator::{BlockProductionMethod, TransactionStructure, ValidatorStartProgress},
     },
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
@@ -259,6 +259,14 @@ pub trait AdminRpc {
         &self,
         meta: Self::Metadata,
         public_tpu_forwards_addr: SocketAddr,
+    ) -> Result<()>;
+
+    #[rpc(meta, name = "manageBlockProduction")]
+    fn manage_block_production(
+        &self,
+        meta: Self::Metadata,
+        block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
     ) -> Result<()>;
 }
 
@@ -754,6 +762,33 @@ impl AdminRpc for AdminRpcImpl {
             Ok(())
         })
     }
+
+    fn manage_block_production(
+        &self,
+        meta: Self::Metadata,
+        block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
+    ) -> Result<()> {
+        debug!("manage_block_production rpc request received");
+
+        meta.with_post_init(|post_init| {
+            let Some(block_production_manager) = post_init.block_production_manager.as_ref() else {
+                error!("block production manager is not initialized");
+                return Err(jsonrpc_core::error::Error::internal_error());
+            };
+
+            block_production_manager
+                .lock()
+                .unwrap()
+                .spawn_non_vote_threads(block_production_method, transaction_struct)
+                .map_err(|err| {
+                    error!("Failed to spawn new non-vote threads: {err:?}");
+                    jsonrpc_core::error::Error::internal_error()
+                })?;
+
+            Ok(())
+        })
+    }
 }
 
 impl AdminRpcImpl {
@@ -1038,6 +1073,7 @@ mod tests {
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
                     gossip_socket: None,
+                    block_production_manager: None,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,

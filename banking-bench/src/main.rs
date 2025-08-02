@@ -457,7 +457,7 @@ fn main() {
     let banking_stage = BankingStage::new_num_threads(
         block_production_method,
         transaction_struct,
-        &poh_recorder,
+        poh_recorder.clone(),
         transaction_recorder,
         non_vote_receiver,
         tpu_vote_receiver,
