@@ -194,6 +194,24 @@ impl Shredder {
             Ok(data)
         }
     }
+    /// Produce a single shred with no payload
+    /// for use in tests and such
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn single_shred_for_tests(slot: Slot, keypair: &Keypair) -> Shred {
+        let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 42).unwrap();
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
+            keypair,
+            &[],
+            true,
+            Some(Hash::default()),
+            0,
+            0,
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        );
+        shreds.pop().unwrap()
+    }
 }
 
 impl ReedSolomonCache {

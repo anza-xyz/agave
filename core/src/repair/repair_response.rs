@@ -48,7 +48,7 @@ mod test {
         super::*,
         solana_keypair::Keypair,
         solana_ledger::{
-            shred::{Shred, ShredFlags},
+            shred::Shredder,
             sigverify_shreds::{verify_shred_cpu, LruCache},
         },
         solana_packet::PacketFlags,
@@ -63,19 +63,9 @@ mod test {
     fn run_test_sigverify_shred_cpu_repair(slot: Slot) {
         solana_logger::setup();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-        let mut shred = Shred::new_from_data(
-            slot,
-            0xc0de,
-            0xdead,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            0xc0de,
-        );
-        assert_eq!(shred.slot(), slot);
         let keypair = Keypair::new();
-        shred.sign(&keypair);
+        let shred = Shredder::single_shred_for_tests(slot, &keypair);
+
         trace!("signature {}", shred.signature());
         let nonce = 9;
         let mut packet = repair_response_packet_from_bytes(
