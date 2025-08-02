@@ -3217,7 +3217,7 @@ mod balance_collector {
 
                         vec![instruction]
                     }
-                    // use a non-existant program to fail loading
+                    // use a non-existent program to fail loading
                     // token22 is very convenient because its presence ensures token bals are recorded
                     // if we had to use a random program id we would need to push a token program onto account keys
                     ExecutionStatus::ProcessedFailed => {
@@ -3227,7 +3227,7 @@ mod balance_collector {
 
                         vec![instruction]
                     }
-                    // use a non-existant fee-payer to trigger a discard
+                    // use a non-existent fee-payer to trigger a discard
                     ExecutionStatus::Discarded => {
                         let mut instruction = transfer.to_instruction(&fee_payer, use_tokens);
                         if use_tokens {
