@@ -914,8 +914,9 @@ mod test {
             vote_simulator::VoteSimulator,
         },
         solana_gossip::{
-            cluster_info::{ClusterInfo, Node},
+            cluster_info::ClusterInfo,
             contact_info::{ContactInfo, Protocol},
+            node::Node,
         },
         solana_hash::Hash,
         solana_keypair::Keypair,

@@ -198,7 +198,7 @@ impl ClusterSlotsService {
 mod test {
     use {
         super::*,
-        solana_gossip::{cluster_info::Node, crds_data::LowestSlot},
+        solana_gossip::{crds_data::LowestSlot, node::Node},
         solana_keypair::Keypair,
         solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,

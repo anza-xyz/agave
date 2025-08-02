@@ -31,6 +31,7 @@ pub mod epoch_slots;
 pub mod epoch_specs;
 pub mod gossip_error;
 pub mod gossip_service;
+pub mod node;
 #[macro_use]
 mod tlv;
 #[macro_use]

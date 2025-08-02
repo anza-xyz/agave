@@ -459,7 +459,7 @@ pub mod tests {
             repair::quic_endpoint::RepairQuicAsyncSenders,
         },
         serial_test::serial,
-        solana_gossip::cluster_info::{ClusterInfo, Node},
+        solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::BlockstoreSignals,

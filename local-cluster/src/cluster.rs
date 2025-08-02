@@ -1,7 +1,7 @@
 use {
     solana_commitment_config::CommitmentConfig,
     solana_core::validator::{Validator, ValidatorConfig},
-    solana_gossip::{cluster_info::Node, contact_info::ContactInfo},
+    solana_gossip::{contact_info::ContactInfo, node::Node},
     solana_keypair::Keypair,
     solana_ledger::shred::Shred,
     solana_pubkey::Pubkey,
