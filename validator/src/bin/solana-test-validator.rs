@@ -8,7 +8,10 @@ use {
     itertools::Itertools,
     log::*,
     solana_account::AccountSharedData,
-    solana_accounts_db::accounts_index::{AccountIndex, AccountSecondaryIndexes},
+    solana_accounts_db::{
+        accounts_index::{AccountIndex, AccountSecondaryIndexes},
+        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+    },
     solana_clap_utils::{
         input_parsers::{pubkey_of, pubkeys_of, value_of},
         input_validators::normalize_to_url_if_moniker,
@@ -399,7 +402,8 @@ fn main() {
 
     let mut genesis = TestValidatorGenesis::default();
     genesis.max_ledger_shreds = value_of(&matches, "limit_ledger_size");
-    genesis.max_genesis_archive_unpacked_size = Some(u64::MAX);
+    // Bump genesis size limit in case --clone is used for existing larger ledger
+    genesis.max_genesis_archive_unpacked_size = Some(MAX_GENESIS_ARCHIVE_UNPACKED_SIZE * 2);
     genesis.log_messages_bytes_limit = value_t!(matches, "log_messages_bytes_limit", usize).ok();
     genesis.transaction_account_lock_limit =
         value_t!(matches, "transaction_account_lock_limit", usize).ok();
