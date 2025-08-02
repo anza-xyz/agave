@@ -17,7 +17,6 @@ use {
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
     },
     rand::{thread_rng, Rng},
-    rayon::prelude::{IntoParallelRefIterator, ParallelIterator},
     solana_clock::Slot,
     solana_measure::measure_us,
     std::{
@@ -655,22 +654,16 @@ impl AccountsDb {
                 Ordering::Relaxed,
             );
 
-        self.thread_pool_clean.install(|| {
-            packer.par_iter().for_each(|(target_slot, pack)| {
-                let mut write_ancient_accounts_local = WriteAncientAccounts::default();
-                self.write_one_packed_storage(
-                    pack,
-                    **target_slot,
-                    &mut write_ancient_accounts_local,
-                );
-                let mut write = write_ancient_accounts.lock().unwrap();
-                write
-                    .shrinks_in_progress
-                    .extend(write_ancient_accounts_local.shrinks_in_progress);
-                write
-                    .metrics
-                    .accumulate(&write_ancient_accounts_local.metrics);
-            });
+        packer.iter().for_each(|(target_slot, pack)| {
+            let mut write_ancient_accounts_local = WriteAncientAccounts::default();
+            self.write_one_packed_storage(pack, **target_slot, &mut write_ancient_accounts_local);
+            let mut write = write_ancient_accounts.lock().unwrap();
+            write
+                .shrinks_in_progress
+                .extend(write_ancient_accounts_local.shrinks_in_progress);
+            write
+                .metrics
+                .accumulate(&write_ancient_accounts_local.metrics);
         });
 
         let mut write_ancient_accounts = write_ancient_accounts.into_inner().unwrap();
