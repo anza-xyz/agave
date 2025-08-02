@@ -18,7 +18,8 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
     solana_tls_utils::{
-        new_dummy_x509_certificate, tls_client_config_builder, tls_server_config_builder,
+        new_dummy_x509_certificate, socket_addr_to_quic_server_name, tls_client_config_builder,
+        tls_server_config_builder,
     },
     std::{
         cmp::Reverse,
@@ -73,7 +74,6 @@ const CLIENT_CHANNEL_BUFFER: usize = 1 << 14;
 const ROUTER_CHANNEL_BUFFER: usize = 64;
 const CONNECTION_CACHE_CAPACITY: usize = 3072;
 const ALPN_REPAIR_PROTOCOL_ID: &[u8] = b"solana-repair";
-const CONNECT_SERVER_NAME: &str = "solana-repair";
 
 // Transport config.
 const DATAGRAM_RECEIVE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
@@ -672,9 +672,8 @@ async fn make_connection<T>(
 where
     T: 'static + From<(Pubkey, SocketAddr, Bytes)> + Send,
 {
-    let connection = endpoint
-        .connect(remote_address, CONNECT_SERVER_NAME)?
-        .await?;
+    let server_name = socket_addr_to_quic_server_name(remote_address);
+    let connection = endpoint.connect(remote_address, &server_name)?.await?;
     handle_connection(
         endpoint,
         connection.remote_address(),
