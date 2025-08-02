@@ -115,8 +115,6 @@ pub enum ScanFilter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// how accounts index 'upsert' should handle reclaims
 pub enum UpsertReclaim {
-    /// previous entry for this slot in the index is expected to be cached, so irrelevant to reclaims
-    PreviousSlotEntryWasCached,
     /// previous entry for this slot in the index may need to be reclaimed, so return it.
     /// reclaims is the only output of upsert, requiring a synchronous execution
     PopulateReclaims,
@@ -1459,6 +1457,31 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 }
             })
             .for_each(f);
+    }
+    /// Updates the account index when an account for pubkey to tracck an entry added to the write cache
+    pub fn index_cached_pubkey(
+        &self,
+        new_slot: Slot,
+        pubkey: &Pubkey,
+        account: &impl ReadableAccount,
+        account_indexes: &AccountSecondaryIndexes,
+        account_info: T,
+    ) {
+        // We don't atomically update both primary index and secondary index together.
+        // This certainly creates a small time window with inconsistent state across the two indexes.
+        // However, this is acceptable because:
+        //
+        //  - A strict consistent view at any given moment of time is not necessary, because the only
+        //  use case for the secondary index is `scan`, and `scans` are only supported/require consistency
+        //  on frozen banks, and this inconsistency is only possible on working banks.
+        //
+        //  - The secondary index is never consulted as primary source of truth for gets/stores.
+        //  So, what the accounts_index sees alone is sufficient as a source of truth for other non-scan
+        //  account operations.
+        let map = self.get_bin(pubkey);
+
+        map.cache(pubkey, new_slot, account_info);
+        self.update_secondary_indexes(pubkey, account, account_indexes);
     }
 
     /// Updates the given pubkey at the given slot with the new account information.
