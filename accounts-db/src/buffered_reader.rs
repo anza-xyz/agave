@@ -375,9 +375,9 @@ pub fn large_file_buf_reader(
     if agave_io_uring::io_uring_supported() {
         use crate::io_uring::sequential_file_reader::SequentialFileReader;
 
-        return Ok(Box::new(SequentialFileReader::with_capacity(
-            buf_size, path,
-        )?));
+        let mut reader = SequentialFileReader::with_capacity(buf_size)?;
+        reader.add_path(path)?;
+        return Ok(Box::new(reader));
     }
     let file = File::open(path)?;
     Ok(Box::new(BufReader::with_capacity(buf_size, file)))
