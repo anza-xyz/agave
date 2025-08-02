@@ -133,6 +133,10 @@ pub const fn get_data_shred_bytes_per_batch_typical() -> u64 {
     (DATA_SHREDS_PER_FEC_BLOCK * capacity) as u64
 }
 
+// For legacy tests and benchmarks.
+const_assert_eq!(LEGACY_SHRED_DATA_CAPACITY, 1051);
+pub const LEGACY_SHRED_DATA_CAPACITY: usize = legacy::ShredData::CAPACITY;
+
 // LAST_SHRED_IN_SLOT also implies DATA_COMPLETE_SHRED.
 // So it cannot be LAST_SHRED_IN_SLOT if not also DATA_COMPLETE_SHRED.
 bitflags! {
