@@ -28,7 +28,7 @@ use {
     solana_time_utils::timestamp,
     solana_tps_client::*,
     solana_transaction::Transaction,
-    spl_instruction_padding::instruction::wrap_instruction,
+    spl_instruction_padding_interface::instruction::wrap_instruction,
     std::{
         collections::{HashSet, VecDeque},
         process::exit,

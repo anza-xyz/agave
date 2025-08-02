@@ -7155,7 +7155,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-status",
  "solana-version",
- "spl-instruction-padding",
+ "spl-instruction-padding-interface",
  "tempfile",
  "thiserror 2.0.12",
  "tikv-jemallocator",
@@ -12166,16 +12166,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "spl-instruction-padding"
-version = "0.3.0"
+name = "spl-instruction-padding-interface"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5352d4c4a6d455fc96320342aeab9f522f057e2666ebe40b2e079d054339ab8f"
+checksum = "0f738b75144edbb32c01de832632eecad71113b62a48ef8e55e60c5a692bae4e"
 dependencies = [
  "num_enum",
- "solana-account-info",
- "solana-cpi",
  "solana-instruction",
- "solana-program-entrypoint",
  "solana-program-error",
  "solana-pubkey",
 ]

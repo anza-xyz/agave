@@ -599,7 +599,7 @@ pub fn parse_args(matches: &ArgMatches) -> Result<Config, &'static str> {
         let program_id = matches
             .value_of("instruction_padding_program_id")
             .map(|target_str| target_str.parse().unwrap())
-            .unwrap_or_else(|| spl_instruction_padding::ID);
+            .unwrap_or_else(|| spl_instruction_padding_interface::ID);
         let data_size = data_size
             .parse()
             .map_err(|_| "Can't parse padded instruction data size")?;
