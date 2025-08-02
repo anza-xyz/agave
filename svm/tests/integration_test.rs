@@ -49,7 +49,7 @@ use {
     solana_transaction_context::TransactionReturnData,
     solana_transaction_error::TransactionError,
     solana_type_overrides::sync::{Arc, RwLock},
-    std::collections::HashMap,
+    std::{collections::HashMap, sync::atomic::Ordering},
     test_case::test_case,
 };
 
@@ -2639,6 +2639,151 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
     env.test_entry = test_entry;
     env.execute();
     assert!(env.is_program_blocked(&target));
+}
+
+#[test]
+fn program_cache_stats() {
+    let mut test_entry = SvmTestEntry::default();
+
+    let program_name = "hello-solana";
+    let noop_program = program_address(program_name);
+    test_entry.add_initial_program(program_name);
+
+    let fee_payer_keypair = Keypair::new();
+    let fee_payer = fee_payer_keypair.pubkey();
+
+    let mut fee_payer_data = AccountSharedData::default();
+    fee_payer_data.set_lamports(LAMPORTS_PER_SOL * 100);
+    test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+    let missing_program = Pubkey::new_unique();
+
+    let make_transaction = |instructions: &[Instruction]| {
+        Transaction::new_signed_with_payer(
+            instructions,
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        )
+    };
+
+    let succesful_noop_instruction = Instruction::new_with_bytes(noop_program, &[], vec![]);
+    let succesful_transfer_instruction =
+        system_instruction::transfer(&fee_payer, &Pubkey::new_unique(), LAMPORTS_PER_SOL);
+    let failing_transfer_instruction =
+        system_instruction::transfer(&fee_payer, &Pubkey::new_unique(), LAMPORTS_PER_SOL * 1000);
+    let fee_only_noop_instruction = Instruction::new_with_bytes(missing_program, &[], vec![]);
+
+    let mut noop_tx_usage = 0;
+    let mut noop_ix_usage = 0;
+    let mut system_tx_usage = 0;
+    let mut system_ix_usage = 0;
+    let mut successful_transfers = 0;
+
+    test_entry.push_transaction(make_transaction(&[succesful_noop_instruction.clone()]));
+    noop_tx_usage += 1;
+    noop_ix_usage += 1;
+
+    test_entry.push_transaction(make_transaction(&[succesful_transfer_instruction.clone()]));
+    system_tx_usage += 1;
+    system_ix_usage += 1;
+    successful_transfers += 1;
+
+    test_entry.push_transaction_with_status(
+        make_transaction(&[failing_transfer_instruction.clone()]),
+        ExecutionStatus::ExecutedFailed,
+    );
+    system_tx_usage += 1;
+    system_ix_usage += 1;
+
+    // load failure/fee-only does not update the program cache in any way
+    test_entry.push_transaction_with_status(
+        make_transaction(&[fee_only_noop_instruction.clone()]),
+        ExecutionStatus::ProcessedFailed,
+    );
+
+    test_entry.push_transaction(make_transaction(&[
+        succesful_noop_instruction.clone(),
+        succesful_noop_instruction.clone(),
+        succesful_transfer_instruction.clone(),
+        succesful_transfer_instruction.clone(),
+        succesful_noop_instruction.clone(),
+    ]));
+    noop_tx_usage += 1;
+    system_tx_usage += 1;
+    noop_ix_usage += 3;
+    system_ix_usage += 2;
+    successful_transfers += 2;
+
+    test_entry.push_transaction_with_status(
+        make_transaction(&[
+            failing_transfer_instruction.clone(),
+            succesful_noop_instruction.clone(),
+            succesful_transfer_instruction.clone(),
+        ]),
+        ExecutionStatus::ExecutedFailed,
+    );
+    noop_tx_usage += 1;
+    system_tx_usage += 1;
+    system_ix_usage += 1;
+
+    test_entry.decrease_expected_lamports(
+        &fee_payer,
+        LAMPORTS_PER_SIGNATURE * test_entry.transaction_batch.len() as u64
+            + LAMPORTS_PER_SOL * successful_transfers,
+    );
+
+    let env = SvmTestEnvironment::create(test_entry);
+    env.execute();
+
+    let program_cache = env
+        .batch_processor
+        .program_cache
+        .read()
+        .unwrap()
+        .get_flattened_entries_for_tests()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>();
+
+    let (_, noop_entry) = program_cache
+        .iter()
+        .find(|(pubkey, _)| *pubkey == noop_program)
+        .unwrap();
+
+    assert_eq!(
+        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_tx_usage,
+        "noop_tx_usage matches"
+    );
+    assert_eq!(
+        noop_entry.ix_usage_counter.load(Ordering::Relaxed),
+        noop_ix_usage,
+        "noop_ix_usage matches"
+    );
+
+    let (_, system_entry) = program_cache
+        .iter()
+        .find(|(pubkey, _)| *pubkey == system_program::id())
+        .unwrap();
+
+    assert_eq!(
+        system_entry.tx_usage_counter.load(Ordering::Relaxed),
+        system_tx_usage,
+        "system_tx_usage matches"
+    );
+    assert_eq!(
+        system_entry.ix_usage_counter.load(Ordering::Relaxed),
+        system_ix_usage,
+        "system_ix_usage matches"
+    );
+
+    assert!(
+        !program_cache
+            .iter()
+            .any(|(pubkey, _)| *pubkey == missing_program),
+        "missing_program is missing"
+    );
 }
 
 #[derive(Clone, PartialEq, Eq)]
