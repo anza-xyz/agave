@@ -110,6 +110,8 @@ impl SvmTestEnvironment<'_> {
                 enable_return_data_recording: true,
                 enable_cpi_recording: false,
                 enable_transaction_balance_recording: false,
+                enable_geyser_pre_accounts_states: false,
+                enable_geyser_post_accounts_states: false,
             },
             ..Default::default()
         };

@@ -140,6 +140,9 @@ pub struct LoadedTransaction {
     pub rollback_accounts: RollbackAccounts,
     pub(crate) compute_budget: SVMTransactionExecutionBudget,
     pub loaded_accounts_data_size: u32,
+    /// Account states before transaction execution
+    /// collected if geyser is enabled.
+    pub pre_accounts_states: Option<Vec<TransactionAccount>>,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -421,6 +424,7 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
     validation_result: TransactionValidationResult,
     error_metrics: &mut TransactionErrorMetrics,
     rent_collector: &dyn SVMRentCollector,
+    is_geyser_enabled: bool,
 ) -> TransactionLoadResult {
     match validation_result {
         Err(e) => TransactionLoadResult::NotLoaded(e),
@@ -436,6 +440,11 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
 
             match load_result {
                 Ok(loaded_tx_accounts) => TransactionLoadResult::Loaded(LoadedTransaction {
+                    pre_accounts_states: if is_geyser_enabled {
+                        Some(loaded_tx_accounts.accounts.clone())
+                    } else {
+                        None
+                    },
                     accounts: loaded_tx_accounts.accounts,
                     program_indices: loaded_tx_accounts.program_indices,
                     fee_details: tx_details.fee_details,
@@ -975,6 +984,7 @@ mod tests {
             }),
             error_metrics,
             rent_collector,
+            false,
         )
     }
 
@@ -1290,6 +1300,7 @@ mod tests {
             Ok(ValidatedTransactionDetails::default()),
             &mut error_metrics,
             &RentCollector::default(),
+            false,
         )
     }
 
@@ -2170,6 +2181,7 @@ mod tests {
             Ok(ValidatedTransactionDetails::default()),
             &mut error_metrics,
             &RentCollector::default(),
+            false,
         );
 
         let TransactionLoadResult::Loaded(loaded_transaction) = load_result else {
@@ -2277,6 +2289,7 @@ mod tests {
             validation_result,
             &mut error_metrics,
             &RentCollector::default(),
+            false,
         );
 
         let loaded_accounts_data_size = base_account_size as u32 * 2;
@@ -2306,6 +2319,7 @@ mod tests {
                 rollback_accounts: RollbackAccounts::default(),
                 compute_budget: SVMTransactionExecutionBudget::default(),
                 loaded_accounts_data_size,
+                pre_accounts_states: None,
             }
         );
     }
@@ -2341,6 +2355,7 @@ mod tests {
             validation_result.clone(),
             &mut TransactionErrorMetrics::default(),
             &rent_collector,
+            false,
         );
 
         assert!(matches!(
@@ -2359,6 +2374,7 @@ mod tests {
             validation_result,
             &mut TransactionErrorMetrics::default(),
             &rent_collector,
+            false,
         );
 
         assert!(matches!(
@@ -2470,6 +2486,7 @@ mod tests {
             validation_result,
             &mut TransactionErrorMetrics::default(),
             &RentCollector::default(),
+            false,
         );
 
         // ensure the loaded accounts are inspected

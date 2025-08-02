@@ -173,6 +173,8 @@ impl TransactionStatusService {
                         return_data,
                         executed_units,
                         fee_details,
+                        pre_accounts_states,
+                        post_accounts_states,
                         ..
                     } = committed_tx;
 
@@ -214,6 +216,8 @@ impl TransactionStatusService {
                             is_vote,
                             &transaction_status_meta,
                             &transaction,
+                            &pre_accounts_states.unwrap_or_default(),
+                            &post_accounts_states.unwrap_or_default(),
                         );
                     }
 
@@ -336,7 +340,7 @@ pub(crate) mod tests {
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::unbounded,
         dashmap::DashMap,
-        solana_account::state_traits::StateMut,
+        solana_account::{state_traits::StateMut, AccountSharedData, WritableAccount},
         solana_account_decoder::{
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
@@ -376,6 +380,8 @@ pub(crate) mod tests {
     struct TestNotification {
         _meta: TransactionStatusMeta,
         transaction: VersionedTransaction,
+        pre_accounts_states: Vec<(Pubkey, AccountSharedData)>,
+        post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
     }
 
     struct TestTransactionNotifier {
@@ -400,6 +406,8 @@ pub(crate) mod tests {
             _is_vote: bool,
             transaction_status_meta: &TransactionStatusMeta,
             transaction: &VersionedTransaction,
+            pre_accounts_states: &[(Pubkey, AccountSharedData)],
+            post_accounts_states: &[(Pubkey, AccountSharedData)],
         ) {
             self.notifications.insert(
                 TestNotifierKey {
@@ -409,6 +417,8 @@ pub(crate) mod tests {
                 },
                 TestNotification {
                     _meta: transaction_status_meta.clone(),
+                    pre_accounts_states: pre_accounts_states.to_vec(),
+                    post_accounts_states: post_accounts_states.to_vec(),
                     transaction: transaction.clone(),
                 },
             );
@@ -446,7 +456,7 @@ pub(crate) mod tests {
 
         let expected_transaction = transaction.clone();
 
-        let mut nonce_account = nonce_account::create_account(1).into_inner();
+        let mut nonce_account = nonce_account::create_account(529).into_inner();
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_from_array([42u8; 32]));
         let data = nonce::state::Data::new(Pubkey::from([1u8; 32]), durable_nonce, 42);
         nonce_account
@@ -454,6 +464,12 @@ pub(crate) mod tests {
                 nonce::state::State::Initialized(data),
             ))
             .unwrap();
+
+        let pubkey = Pubkey::new_unique();
+
+        let pre_accounts_states = vec![(pubkey, nonce_account.clone())];
+        nonce_account.set_lamports(456);
+        let post_accounts_states: Vec<(Pubkey, AccountSharedData)> = vec![(pubkey, nonce_account)];
 
         let commit_result = Ok(CommittedTransaction {
             status: Ok(()),
@@ -463,6 +479,8 @@ pub(crate) mod tests {
             executed_units: 0,
             fee_details: FeeDetails::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
+            pre_accounts_states: Some(pre_accounts_states.clone()),
+            post_accounts_states: Some(post_accounts_states.clone()),
         });
 
         let balances = TransactionBalancesSet {
@@ -547,6 +565,8 @@ pub(crate) mod tests {
             expected_transaction.signature(),
             result.transaction.signatures.first().unwrap()
         );
+        assert_eq!(pre_accounts_states, result.pre_accounts_states);
+        assert_eq!(post_accounts_states, result.post_accounts_states);
     }
 
     #[test]
@@ -593,6 +613,8 @@ pub(crate) mod tests {
             executed_units: 0,
             fee_details: FeeDetails::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
+            post_accounts_states: Some(vec![]),
+            pre_accounts_states: Some(vec![]),
         });
 
         let balances = TransactionBalancesSet {

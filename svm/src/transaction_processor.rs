@@ -89,6 +89,8 @@ pub struct ExecutionRecordingConfig {
     pub enable_log_recording: bool,
     pub enable_return_data_recording: bool,
     pub enable_transaction_balance_recording: bool,
+    pub enable_geyser_pre_accounts_states: bool,
+    pub enable_geyser_post_accounts_states: bool,
 }
 
 impl ExecutionRecordingConfig {
@@ -98,6 +100,8 @@ impl ExecutionRecordingConfig {
             enable_log_recording: option,
             enable_cpi_recording: option,
             enable_transaction_balance_recording: option,
+            enable_geyser_pre_accounts_states: option,
+            enable_geyser_post_accounts_states: option,
         }
     }
 }
@@ -427,6 +431,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 environment
                     .rent_collector
                     .unwrap_or(&RentCollector::default()),
+                config.recording_config.enable_transaction_balance_recording,
             ));
             load_us = load_us.saturating_add(single_load_us);
 
@@ -1358,6 +1363,7 @@ mod tests {
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 32,
+            pre_accounts_states: None,
         };
 
         let processing_environment = TransactionProcessingEnvironment::default();
@@ -1453,6 +1459,7 @@ mod tests {
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
+            pre_accounts_states: None,
         };
 
         let processing_config = TransactionProcessingConfig {
