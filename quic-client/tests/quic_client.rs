@@ -8,8 +8,7 @@ mod tests {
         },
         solana_keypair::Keypair,
         solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
-        solana_packet::PACKET_DATA_SIZE,
-        solana_perf::packet::PacketBatch,
+        solana_perf::packet::{PacketBatch, QUIC_MAX_STREAM_SIZE},
         solana_quic_client::nonblocking::quic_client::{QuicClient, QuicLazyInitializedEndpoint},
         solana_streamer::{
             quic::{QuicServerParams, SpawnServerResult},
@@ -98,9 +97,9 @@ mod tests {
         );
 
         // Send a full size packet with single byte writes.
-        let num_bytes = PACKET_DATA_SIZE;
+        let num_bytes = QUIC_MAX_STREAM_SIZE;
         let num_expected_packets: usize = 3000;
-        let packets = vec![vec![0u8; PACKET_DATA_SIZE]; num_expected_packets];
+        let packets = vec![vec![0u8; QUIC_MAX_STREAM_SIZE]; num_expected_packets];
 
         assert!(client.send_data_batch_async(packets).is_ok());
 
@@ -178,9 +177,9 @@ mod tests {
         );
 
         // Send a full size packet with single byte writes.
-        let num_bytes = PACKET_DATA_SIZE;
+        let num_bytes = QUIC_MAX_STREAM_SIZE;
         let num_expected_packets: usize = 3000;
-        let packets = vec![vec![0u8; PACKET_DATA_SIZE]; num_expected_packets];
+        let packets = vec![vec![0u8; QUIC_MAX_STREAM_SIZE]; num_expected_packets];
         for packet in packets {
             let _ = client.send_data(&packet).await;
         }
@@ -270,9 +269,9 @@ mod tests {
         let request_sender =
             QuicClientConnection::new(Arc::new(endpoint), tpu_addr, connection_cache_stats);
         // Send a full size packet with single byte writes as a request.
-        let num_bytes = PACKET_DATA_SIZE;
+        let num_bytes = QUIC_MAX_STREAM_SIZE;
         let num_expected_packets: usize = 3000;
-        let packets = vec![vec![0u8; PACKET_DATA_SIZE]; num_expected_packets];
+        let packets = vec![vec![0u8; QUIC_MAX_STREAM_SIZE]; num_expected_packets];
 
         assert!(request_sender.send_data_batch_async(packets).is_ok());
         check_packets(receiver, num_bytes, num_expected_packets);
@@ -292,9 +291,9 @@ mod tests {
             QuicClientConnection::new(Arc::new(endpoint2), server_addr, connection_cache_stats2);
 
         // Send a full size packet with single byte writes.
-        let num_bytes = PACKET_DATA_SIZE;
+        let num_bytes = QUIC_MAX_STREAM_SIZE;
         let num_expected_packets: usize = 3000;
-        let packets = vec![vec![0u8; PACKET_DATA_SIZE]; num_expected_packets];
+        let packets = vec![vec![0u8; QUIC_MAX_STREAM_SIZE]; num_expected_packets];
 
         assert!(response_sender.send_data_batch_async(packets).is_ok());
         check_packets(receiver2, num_bytes, num_expected_packets);
@@ -342,9 +341,9 @@ mod tests {
         let client = QuicClient::new(Arc::new(QuicLazyInitializedEndpoint::default()), tpu_addr);
 
         // Send a full size packet with single byte writes.
-        let num_bytes = PACKET_DATA_SIZE;
+        let num_bytes = QUIC_MAX_STREAM_SIZE;
         let num_expected_packets: usize = 3;
-        let packets = vec![vec![0u8; PACKET_DATA_SIZE]; num_expected_packets];
+        let packets = vec![vec![0u8; QUIC_MAX_STREAM_SIZE]; num_expected_packets];
         let client_stats = ClientStats::default();
         for packet in packets {
             let _ = client

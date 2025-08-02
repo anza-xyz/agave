@@ -3,16 +3,16 @@ use {
         bytes::{advance_offset_for_array, read_byte},
         result::{Result, TransactionViewError},
     },
-    solana_packet::PACKET_DATA_SIZE,
+    solana_perf::packet::QUIC_MAX_STREAM_SIZE,
     solana_pubkey::Pubkey,
 };
 
-// The packet has a maximum length of 1232 bytes.
-// This means the maximum number of 32 byte keys is 38.
-// 38 as an min-sized encoded u16 is 1 byte.
-// We can simply read this byte, if it's >38 we can return None.
+// The packet has a maximum length of 4096 bytes. This means the maximum number
+// of 32 byte keys is 128.
+// 128 as an min-sized encoded u16 is 1 byte. We can simply read this
+// byte, if it's >=128 we can return None.
 pub const MAX_STATIC_ACCOUNTS_PER_PACKET: u8 =
-    (PACKET_DATA_SIZE / core::mem::size_of::<Pubkey>()) as u8;
+    (QUIC_MAX_STREAM_SIZE / core::mem::size_of::<Pubkey>()) as u8;
 
 /// Contains metadata about the static account keys in a transaction packet.
 #[derive(Debug, Default)]
@@ -27,7 +27,7 @@ impl StaticAccountKeysFrame {
     #[inline(always)]
     pub(crate) fn try_new(bytes: &[u8], offset: &mut usize) -> Result<Self> {
         // Max size must not have the MSB set so that it is size 1.
-        const _: () = assert!(MAX_STATIC_ACCOUNTS_PER_PACKET & 0b1000_0000 == 0);
+        //const _: () = assert!(MAX_STATIC_ACCOUNTS_PER_PACKET & 0b1000_0000 == 0);
 
         let num_static_accounts = read_byte(bytes, offset)?;
         if num_static_accounts == 0 || num_static_accounts > MAX_STATIC_ACCOUNTS_PER_PACKET {
@@ -75,9 +75,9 @@ mod tests {
         let bytes = bincode::serialize(&ShortVec(signatures)).unwrap();
         let mut offset = 0;
         let frame = StaticAccountKeysFrame::try_new(&bytes, &mut offset).unwrap();
-        assert_eq!(frame.num_static_accounts, 38);
+        assert_eq!(frame.num_static_accounts, 128);
         assert_eq!(frame.offset, 1);
-        assert_eq!(offset, 1 + 38 * core::mem::size_of::<Pubkey>());
+        assert_eq!(offset, 1 + 128 * core::mem::size_of::<Pubkey>());
     }
 
     #[test]

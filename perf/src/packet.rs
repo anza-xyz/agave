@@ -20,8 +20,10 @@ use {
 };
 pub use {
     bytes,
-    solana_packet::{self, Meta, Packet, PacketFlags, PACKET_DATA_SIZE},
+    solana_packet::{self, Meta, Packet, PacketFlags},
 };
+
+pub const QUIC_MAX_STREAM_SIZE: usize = 4096;
 
 pub const NUM_PACKETS: usize = 1024 * 8;
 
@@ -68,7 +70,7 @@ impl BytesPacket {
     where
         T: solana_packet::Encode,
     {
-        let buffer = BytesMut::with_capacity(PACKET_DATA_SIZE);
+        let buffer = BytesMut::with_capacity(QUIC_MAX_STREAM_SIZE);
         let mut writer = buffer.writer();
         data.encode(&mut writer)?;
         let buffer = writer.into_inner();
@@ -890,7 +892,10 @@ impl<'a> IntoParallelIterator for &'a mut BytesPacketBatch {
     }
 }
 
-pub fn deserialize_from_with_limit<R, T>(reader: R) -> bincode::Result<T>
+pub fn deserialize_from_with_limit<R, T>(
+    reader: R,
+    max_packet_data_size: usize,
+) -> bincode::Result<T>
 where
     R: Read,
     T: DeserializeOwned,
@@ -898,7 +903,7 @@ where
     // with_limit causes pre-allocation size to be limited
     // to prevent against memory exhaustion attacks.
     bincode::options()
-        .with_limit(PACKET_DATA_SIZE as u64)
+        .with_limit(max_packet_data_size as u64)
         .with_fixint_encoding()
         .allow_trailing_bytes()
         .deserialize_from(reader)
