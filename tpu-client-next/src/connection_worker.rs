@@ -7,7 +7,7 @@ use {
         quic_networking::send_data_over_stream, send_transaction_stats::record_error,
         transaction_batch::TransactionBatch, QuicError,
     },
-    log::*,
+    crate::logging::{debug, error, trace, warn},
     quinn::{ConnectError, Connection, Endpoint},
     solana_clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_measure::measure::Measure,

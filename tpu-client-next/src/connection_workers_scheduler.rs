@@ -13,7 +13,7 @@ use {
         SendTransactionStats,
     },
     async_trait::async_trait,
-    log::*,
+    crate::logging::{debug, warn},
     quinn::{ClientConfig, Endpoint},
     solana_keypair::Keypair,
     std::{

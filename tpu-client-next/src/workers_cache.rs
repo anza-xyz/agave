@@ -7,7 +7,7 @@ use {
         connection_worker::ConnectionWorker, transaction_batch::TransactionBatch,
         SendTransactionStats,
     },
-    log::*,
+    crate::logging::debug,
     lru::LruCache,
     quinn::Endpoint,
     std::{net::SocketAddr, sync::Arc, time::Duration},

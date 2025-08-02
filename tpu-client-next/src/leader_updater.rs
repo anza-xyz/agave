@@ -10,7 +10,7 @@
 
 use {
     async_trait::async_trait,
-    log::*,
+    crate::logging::error,
     solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_connection_cache::connection_cache::Protocol,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,

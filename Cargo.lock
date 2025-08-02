@@ -11345,6 +11345,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tokio-util 0.7.15",
+ "tracing",
 ]
 
 [[package]]
