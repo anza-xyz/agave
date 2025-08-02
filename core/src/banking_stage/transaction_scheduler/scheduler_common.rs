@@ -27,14 +27,35 @@ pub struct Batches<Tx> {
 
 impl<Tx> Batches<Tx> {
     pub fn new(num_threads: usize, target_num_transactions_per_batch: usize) -> Self {
-        Self {
-            ids: vec![Vec::with_capacity(target_num_transactions_per_batch); num_threads],
-
-            transactions: (0..num_threads)
+        fn make_vecs<T>(
+            num_threads: usize,
+            target_num_transactions_per_batch: usize,
+        ) -> Vec<Vec<T>> {
+            (0..num_threads)
                 .map(|_| Vec::with_capacity(target_num_transactions_per_batch))
-                .collect(),
-            max_ages: vec![Vec::with_capacity(target_num_transactions_per_batch); num_threads],
+                .collect()
+        }
+
+        Self {
+            ids: make_vecs(num_threads, target_num_transactions_per_batch),
+            transactions: make_vecs(num_threads, target_num_transactions_per_batch),
+            max_ages: make_vecs(num_threads, target_num_transactions_per_batch),
             total_cus: vec![0; num_threads],
+        }
+    }
+
+    pub fn clear(&mut self) {
+        for ids in &mut self.ids {
+            ids.clear();
+        }
+        for transactions in &mut self.transactions {
+            transactions.clear();
+        }
+        for max_ages in &mut self.max_ages {
+            max_ages.clear();
+        }
+        for total_cus in &mut self.total_cus {
+            *total_cus = 0;
         }
     }
 
