@@ -2,7 +2,7 @@
 
 use {
     crate::{counter::CounterPoint, datapoint::DataPoint},
-    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender, TryRecvError},
     gethostname::gethostname,
     log::*,
     solana_cluster_type::ClusterType,
@@ -313,31 +313,35 @@ impl MetricsAgent {
         };
 
         loop {
-            match receiver.recv_timeout(write_frequency / 2) {
-                Ok(cmd) => match cmd {
-                    MetricsCommand::Flush(barrier) => {
-                        debug!("metrics_thread: flush");
-                        last_write_time = write(last_write_time, &mut points, &mut counters);
-                        barrier.wait();
-                    }
-                    MetricsCommand::Submit(point, level) => {
-                        log!(level, "{}", point);
-                        points.push(point);
-                    }
-                    MetricsCommand::SubmitCounter(counter, _level, bucket) => {
-                        debug!("{:?}", counter);
-                        let key = (counter.name, bucket);
-                        if let Some(value) = counters.get_mut(&key) {
-                            value.count += counter.count;
-                        } else {
-                            counters.insert(key, counter);
-                        }
-                    }
-                },
-                Err(RecvTimeoutError::Timeout) => (),
-                Err(RecvTimeoutError::Disconnected) => {
+            let cmd = match receiver.try_recv() {
+                Ok(cmd) => cmd,
+                Err(TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(TryRecvError::Disconnected) => {
                     debug!("run: sender disconnected");
                     break;
+                }
+            };
+            match cmd {
+                MetricsCommand::Flush(barrier) => {
+                    debug!("metrics_thread: flush");
+                    last_write_time = write(last_write_time, &mut points, &mut counters);
+                    barrier.wait();
+                }
+                MetricsCommand::Submit(point, level) => {
+                    log!(level, "{}", point);
+                    points.push(point);
+                }
+                MetricsCommand::SubmitCounter(counter, _level, bucket) => {
+                    debug!("{:?}", counter);
+                    let key = (counter.name, bucket);
+                    if let Some(value) = counters.get_mut(&key) {
+                        value.count += counter.count;
+                    } else {
+                        counters.insert(key, counter);
+                    }
                 }
             }
 
