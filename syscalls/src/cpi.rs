@@ -1008,7 +1008,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
     )?;
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let caller_program_id = instruction_context.get_last_program_key(transaction_context)?;
+    let caller_program_id = instruction_context.get_program_key(transaction_context)?;
     let signers = S::translate_signers(
         caller_program_id,
         signers_seeds_addr,
@@ -1302,7 +1302,7 @@ mod tests {
          $transaction_context:ident,
          $instruction_data:expr,
          $transaction_accounts:expr,
-         $program_accounts:expr,
+         $program_account:expr,
          $instruction_accounts:expr) => {
             let instruction_data = $instruction_data;
             let instruction_accounts = $instruction_accounts
@@ -1334,7 +1334,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure($program_accounts, instruction_accounts, instruction_data);
+                .configure($program_account, instruction_accounts, instruction_data);
             $invoke_context.push().unwrap();
         };
     }
@@ -1360,7 +1360,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            vec![0],
+            0,
             &[1]
         );
 
@@ -1406,7 +1406,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            vec![0],
+            0,
             &[1]
         );
 
@@ -1443,7 +1443,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            vec![0],
+            0,
             &[1]
         );
 
@@ -1488,7 +1488,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            vec![0],
+            0,
             &[1]
         );
 
@@ -1541,7 +1541,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            vec![0],
+            0,
             &[1]
         );
 
@@ -1659,7 +1659,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            vec![0],
+            0,
             &[1]
         );
 
@@ -1691,7 +1691,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            vec![0],
+            0,
             &[1]
         );
 
@@ -1761,7 +1761,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            vec![0],
+            0,
             &[1]
         );
 
@@ -1836,7 +1836,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            vec![0],
+            0,
             &[1, 1]
         );
 
@@ -1853,7 +1853,7 @@ mod tests {
             .get_next_instruction_context_mut()
             .unwrap()
             .configure(
-                vec![0],
+                0,
                 vec![
                     InstructionAccount::new(1, 0, false, true),
                     InstructionAccount::new(1, 0, false, true),

@@ -107,7 +107,7 @@ fn bench_process_deprecated_vote_instruction(
     bencher.iter(|| {
         mock_process_instruction_with_feature_set(
             &solana_vote_program::id(),
-            Vec::new(),
+            None,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_account_metas.clone(),
@@ -129,7 +129,7 @@ fn bench_process_vote_instruction(
     bencher.iter(|| {
         mock_process_instruction(
             &solana_vote_program::id(),
-            Vec::new(),
+            None,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_account_metas.clone(),

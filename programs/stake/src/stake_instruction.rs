@@ -460,7 +460,7 @@ mod tests {
     ) -> Vec<AccountSharedData> {
         mock_process_instruction_with_feature_set(
             &id(),
-            Vec::new(),
+            None,
             instruction_data,
             transaction_accounts,
             instruction_accounts,
@@ -6977,7 +6977,7 @@ mod tests {
 
         mock_process_instruction_with_feature_set(
             &id(),
-            Vec::new(),
+            None,
             &instruction_data,
             transaction_accounts,
             instruction_accounts,

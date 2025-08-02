@@ -393,7 +393,7 @@ fn execute_fixture_as_instr(
         .prepare_next_top_level_instruction(
             sanitized_message,
             &SVMInstruction::from(&sanitized_message.instructions()[0]),
-            vec![program_idx as IndexOfAccount],
+            program_idx as IndexOfAccount,
         )
         .expect("Failed to configure instruction");
     let mut compute_units_consumed = 0u64;

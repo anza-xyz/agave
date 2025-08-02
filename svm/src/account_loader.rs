@@ -46,7 +46,6 @@ pub(crate) const TRANSACTION_ACCOUNT_BASE_SIZE: usize = 64;
 const ADDRESS_LOOKUP_TABLE_BASE_SIZE: usize = 8248;
 
 // for the load instructions
-pub(crate) type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
 type TransactionValidationResult = Result<ValidatedTransactionDetails>;
 
@@ -135,7 +134,7 @@ pub(crate) struct LoadedTransactionAccount {
 )]
 pub struct LoadedTransaction {
     pub accounts: Vec<TransactionAccount>,
-    pub(crate) program_indices: TransactionProgramIndices,
+    pub(crate) program_indices: Vec<IndexOfAccount>,
     pub fee_details: FeeDetails,
     pub rollback_accounts: RollbackAccounts,
     pub(crate) compute_budget: SVMTransactionExecutionBudget,
@@ -456,7 +455,7 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
 #[derive(PartialEq, Eq, Debug, Clone)]
 struct LoadedTransactionAccounts {
     pub(crate) accounts: Vec<TransactionAccount>,
-    pub(crate) program_indices: TransactionProgramIndices,
+    pub(crate) program_indices: Vec<IndexOfAccount>,
     pub(crate) loaded_accounts_data_size: u32,
 }
 
@@ -641,7 +640,7 @@ fn load_transaction_accounts_simd186<CB: TransactionProcessingCallback>(
 
         loaded_transaction_accounts
             .program_indices
-            .push(vec![instruction.program_id_index as IndexOfAccount]);
+            .push(instruction.program_id_index as IndexOfAccount);
     }
 
     Ok(loaded_transaction_accounts)
@@ -696,9 +695,10 @@ fn load_transaction_accounts_old<CB: TransactionProcessingCallback>(
     let program_indices = message
         .program_instructions_iter()
         .map(|(program_id, instruction)| {
-            let mut account_indices = Vec::with_capacity(2);
             if native_loader::check_id(program_id) {
-                return Ok(account_indices);
+                // Just as with an empty vector, trying to borrow the program account will fail
+                // with a u16::MAX
+                return Ok(u16::MAX as IndexOfAccount);
             }
 
             let program_index = instruction.program_id_index as usize;
@@ -716,11 +716,10 @@ fn load_transaction_accounts_old<CB: TransactionProcessingCallback>(
                 error_metrics.invalid_program_for_execution += 1;
                 return Err(TransactionError::InvalidProgramForExecution);
             }
-            account_indices.insert(0, program_index as IndexOfAccount);
 
             let owner_id = program_account.owner();
             if native_loader::check_id(owner_id) {
-                return Ok(account_indices);
+                return Ok(program_index as IndexOfAccount);
             }
 
             if !validated_loaders.contains(owner_id) {
@@ -746,9 +745,9 @@ fn load_transaction_accounts_old<CB: TransactionProcessingCallback>(
                     return Err(TransactionError::ProgramAccountNotFound);
                 }
             }
-            Ok(account_indices)
+            Ok(program_index as IndexOfAccount)
         })
-        .collect::<Result<Vec<Vec<IndexOfAccount>>>>()?;
+        .collect::<Result<Vec<IndexOfAccount>>>()?;
 
     Ok(LoadedTransactionAccounts {
         accounts,
@@ -1077,7 +1076,7 @@ mod tests {
                 assert_eq!(loaded_transaction.accounts.len(), 3);
                 assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
                 assert_eq!(loaded_transaction.program_indices.len(), 1);
-                assert_eq!(loaded_transaction.program_indices[0].len(), 0);
+                assert_eq!(loaded_transaction.program_indices[0], u16::MAX);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx)
                 if formalize_loaded_transaction_data_size =>
@@ -1253,8 +1252,8 @@ mod tests {
                 assert_eq!(loaded_transaction.accounts.len(), 3);
                 assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
                 assert_eq!(loaded_transaction.program_indices.len(), 2);
-                assert_eq!(loaded_transaction.program_indices[0], &[1]);
-                assert_eq!(loaded_transaction.program_indices[1], &[2]);
+                assert_eq!(loaded_transaction.program_indices[0], 1);
+                assert_eq!(loaded_transaction.program_indices[1], 2);
             }
             TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
             TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
@@ -1672,7 +1671,7 @@ mod tests {
                             mock_bank.accounts_map[&native_loader::id()].clone()
                         )
                     ],
-                    program_indices: vec![vec![]],
+                    program_indices: vec![u16::MAX],
                     loaded_accounts_data_size,
                 }
             );
@@ -1840,7 +1839,7 @@ mod tests {
                         mock_bank.accounts_map[&key1.pubkey()].clone()
                     ),
                 ],
-                program_indices: vec![vec![1]],
+                program_indices: vec![1],
                 loaded_accounts_data_size,
             }
         );
@@ -2029,7 +2028,7 @@ mod tests {
                         mock_bank.accounts_map[&key1.pubkey()].clone()
                     ),
                 ],
-                program_indices: vec![vec![1]],
+                program_indices: vec![1],
                 loaded_accounts_data_size,
             }
         );
@@ -2128,7 +2127,7 @@ mod tests {
                     ),
                     (key3.pubkey(), account_data),
                 ],
-                program_indices: vec![vec![1], vec![1]],
+                program_indices: vec![1, 1],
                 loaded_accounts_data_size,
             }
         );
@@ -2301,7 +2300,7 @@ mod tests {
                     ),
                     (key3.pubkey(), account_data),
                 ],
-                program_indices: vec![vec![1], vec![1]],
+                program_indices: vec![1, 1],
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::default(),
                 compute_budget: SVMTransactionExecutionBudget::default(),

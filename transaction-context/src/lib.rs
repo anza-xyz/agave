@@ -295,14 +295,6 @@ impl TransactionContext {
             .map(|index| index as IndexOfAccount)
     }
 
-    /// Searches for a program account by its key
-    pub fn find_index_of_program_account(&self, pubkey: &Pubkey) -> Option<IndexOfAccount> {
-        self.account_keys
-            .iter()
-            .rposition(|key| key == pubkey)
-            .map(|index| index as IndexOfAccount)
-    }
-
     /// Gets the max length of the InstructionContext trace
     pub fn get_instruction_trace_capacity(&self) -> usize {
         self.instruction_trace_capacity
@@ -446,13 +438,11 @@ impl TransactionContext {
             self.get_current_instruction_context()
                 .and_then(|instruction_context| {
                     // Verify all executable accounts have no outstanding refs
-                    for index_in_transaction in instruction_context.program_accounts.iter() {
-                        self.accounts
-                            .get(*index_in_transaction)
-                            .ok_or(InstructionError::NotEnoughAccountKeys)?
-                            .try_borrow_mut()
-                            .map_err(|_| InstructionError::AccountBorrowOutstanding)?;
-                    }
+                    self.accounts
+                        .get(instruction_context.get_index_of_program_account_in_transaction()?)
+                        .ok_or(InstructionError::NotEnoughAccountKeys)?
+                        .try_borrow_mut()
+                        .map_err(|_| InstructionError::AccountBorrowOutstanding)?;
                     self.instruction_accounts_lamport_sum(instruction_context)
                         .map(|instruction_accounts_lamport_sum| {
                             instruction_context.instruction_accounts_lamport_sum
@@ -620,7 +610,7 @@ pub struct TransactionReturnData {
 pub struct InstructionContext {
     nesting_level: usize,
     instruction_accounts_lamport_sum: u128,
-    program_accounts: Vec<IndexOfAccount>,
+    program_account_index_in_tx: IndexOfAccount,
     instruction_accounts: Vec<InstructionAccount>,
     instruction_data: Vec<u8>,
 }
@@ -630,11 +620,11 @@ impl InstructionContext {
     #[cfg(not(target_os = "solana"))]
     pub fn configure(
         &mut self,
-        program_accounts: Vec<IndexOfAccount>,
+        program_index: IndexOfAccount,
         instruction_accounts: Vec<InstructionAccount>,
         instruction_data: &[u8],
     ) {
-        self.program_accounts = program_accounts;
+        self.program_account_index_in_tx = program_index;
         self.instruction_accounts = instruction_accounts;
         self.instruction_data = instruction_data.to_vec();
     }
@@ -644,11 +634,6 @@ impl InstructionContext {
     /// That is the number of nested parent Instructions plus one (itself).
     pub fn get_stack_height(&self) -> usize {
         self.nesting_level.saturating_add(1)
-    }
-
-    /// Number of program accounts
-    pub fn get_number_of_program_accounts(&self) -> IndexOfAccount {
-        self.program_accounts.len() as IndexOfAccount
     }
 
     /// Number of accounts in this Instruction (without program accounts)
@@ -673,23 +658,6 @@ impl InstructionContext {
         &self.instruction_data
     }
 
-    /// Searches for a program account by its key
-    pub fn find_index_of_program_account(
-        &self,
-        transaction_context: &TransactionContext,
-        pubkey: &Pubkey,
-    ) -> Option<IndexOfAccount> {
-        self.program_accounts
-            .iter()
-            .position(|index_in_transaction| {
-                transaction_context
-                    .account_keys
-                    .get(*index_in_transaction as usize)
-                    == Some(pubkey)
-            })
-            .map(|index| index as IndexOfAccount)
-    }
-
     /// Searches for an instruction account by its key
     pub fn find_index_of_instruction_account(
         &self,
@@ -710,12 +678,12 @@ impl InstructionContext {
     /// Translates the given instruction wide program_account_index into a transaction wide index
     pub fn get_index_of_program_account_in_transaction(
         &self,
-        program_account_index: IndexOfAccount,
     ) -> Result<IndexOfAccount, InstructionError> {
-        Ok(*self
-            .program_accounts
-            .get(program_account_index as usize)
-            .ok_or(InstructionError::NotEnoughAccountKeys)?)
+        if self.program_account_index_in_tx == u16::MAX {
+            Err(InstructionError::MissingAccount)
+        } else {
+            Ok(self.program_account_index_in_tx)
+        }
     }
 
     /// Translates the given instruction wide instruction_account_index into a transaction wide index
@@ -761,16 +729,14 @@ impl InstructionContext {
     }
 
     /// Gets the key of the last program account of this Instruction
-    pub fn get_last_program_key<'a, 'b: 'a>(
+    pub fn get_program_key<'a, 'b: 'a>(
         &'a self,
         transaction_context: &'b TransactionContext,
     ) -> Result<&'b Pubkey, InstructionError> {
-        self.get_index_of_program_account_in_transaction(
-            self.get_number_of_program_accounts().saturating_sub(1),
-        )
-        .and_then(|index_in_transaction| {
-            transaction_context.get_key_of_account_at_index(index_in_transaction)
-        })
+        self.get_index_of_program_account_in_transaction()
+            .and_then(|index_in_transaction| {
+                transaction_context.get_key_of_account_at_index(index_in_transaction)
+            })
     }
 
     fn try_borrow_account<'a, 'b: 'a>(
@@ -795,27 +761,14 @@ impl InstructionContext {
     }
 
     /// Gets the last program account of this Instruction
-    pub fn try_borrow_last_program_account<'a, 'b: 'a>(
-        &'a self,
-        transaction_context: &'b TransactionContext,
-    ) -> Result<BorrowedAccount<'a>, InstructionError> {
-        let result = self.try_borrow_program_account(
-            transaction_context,
-            self.get_number_of_program_accounts().saturating_sub(1),
-        );
-        debug_assert!(result.is_ok());
-        result
-    }
-
-    /// Tries to borrow a program account from this Instruction
     pub fn try_borrow_program_account<'a, 'b: 'a>(
         &'a self,
         transaction_context: &'b TransactionContext,
-        program_account_index: IndexOfAccount,
     ) -> Result<BorrowedAccount<'a>, InstructionError> {
-        let index_in_transaction =
-            self.get_index_of_program_account_in_transaction(program_account_index)?;
-        self.try_borrow_account(transaction_context, index_in_transaction, None)
+        let index_in_transaction = self.get_index_of_program_account_in_transaction()?;
+        let result = self.try_borrow_account(transaction_context, index_in_transaction, None);
+        debug_assert!(result.is_ok());
+        result
     }
 
     /// Gets an instruction account of this Instruction
@@ -1220,7 +1173,7 @@ impl BorrowedAccount<'_> {
     /// Returns true if the owner of this account is the current `InstructionContext`s last program (instruction wide)
     pub fn is_owned_by_current_program(&self) -> bool {
         self.instruction_context
-            .get_last_program_key(self.transaction_context)
+            .get_program_key(self.transaction_context)
             .map(|key| key == self.get_owner())
             .unwrap_or_default()
     }
@@ -1367,5 +1320,34 @@ mod tests {
             &solana_sdk_ids::sysvar::id(),
         );
         assert_eq!(build_transaction_context(account).push(), Ok(()),);
+    }
+
+    #[test]
+    fn test_invalid_native_loader_index() {
+        let mut instruction_context = InstructionContext::default();
+        instruction_context.configure(
+            u16::MAX,
+            vec![InstructionAccount::new(0, 0, false, false)],
+            &[],
+        );
+
+        let result = instruction_context.get_index_of_program_account_in_transaction();
+        assert_eq!(result, Err(InstructionError::MissingAccount));
+
+        let transaction_context = TransactionContext::new(
+            vec![(
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+            )],
+            Rent::default(),
+            20,
+            20,
+        );
+        let result = instruction_context.get_program_key(&transaction_context);
+
+        assert_eq!(result, Err(InstructionError::MissingAccount));
+
+        let result = instruction_context.try_borrow_program_account(&transaction_context);
+        assert_eq!(result.err(), Some(InstructionError::MissingAccount));
     }
 }

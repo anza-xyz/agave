@@ -1001,11 +1001,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     let stack_height = u8::try_from(stack_height).unwrap_or(u8::MAX);
                     let instruction = CompiledInstruction::new_from_raw_parts(
                         instruction_context
-                            .get_index_of_program_account_in_transaction(
-                                instruction_context
-                                    .get_number_of_program_accounts()
-                                    .saturating_sub(1),
-                            )
+                            .get_index_of_program_account_in_transaction()
                             .unwrap_or_default() as u8,
                         instruction_context.get_instruction_data().to_vec(),
                         (0..instruction_context.get_number_of_instruction_accounts())
@@ -1280,8 +1276,15 @@ mod tests {
     #[test]
     fn test_inner_instructions_list_from_instruction_trace() {
         let instruction_trace = [1, 2, 1, 1, 2, 3, 2];
-        let mut transaction_context =
-            TransactionContext::new(vec![], Rent::default(), 3, instruction_trace.len());
+        let mut transaction_context = TransactionContext::new(
+            vec![(
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, 1, &bpf_loader::ID),
+            )],
+            Rent::default(),
+            3,
+            instruction_trace.len(),
+        );
         for (index_in_trace, stack_height) in instruction_trace.into_iter().enumerate() {
             while stack_height <= transaction_context.get_instruction_context_stack_height() {
                 transaction_context.pop().unwrap();
@@ -1290,7 +1293,7 @@ mod tests {
                 transaction_context
                     .get_next_instruction_context_mut()
                     .unwrap()
-                    .configure(vec![], vec![], &[index_in_trace as u8]);
+                    .configure(0, vec![], &[index_in_trace as u8]);
                 transaction_context.push().unwrap();
             }
         }
@@ -1353,7 +1356,7 @@ mod tests {
 
         let loaded_transaction = LoadedTransaction {
             accounts: vec![(Pubkey::new_unique(), AccountSharedData::default())],
-            program_indices: vec![vec![0]],
+            program_indices: vec![0],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
@@ -1448,7 +1451,7 @@ mod tests {
                 (key1, AccountSharedData::default()),
                 (key2, AccountSharedData::default()),
             ],
-            program_indices: vec![vec![0]],
+            program_indices: vec![0],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
