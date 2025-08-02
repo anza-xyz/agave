@@ -9379,6 +9379,7 @@ dependencies = [
 name = "solana-poh"
 version = "3.0.0"
 dependencies = [
+ "arc-swap",
  "assert_matches",
  "bincode",
  "core_affinity",
