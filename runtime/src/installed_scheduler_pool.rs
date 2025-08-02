@@ -49,7 +49,7 @@ pub fn initialized_result_with_timings() -> ResultWithTimings {
 pub trait InstalledSchedulerPool: Send + Sync + Debug {
     /// A very thin wrapper of [`Self::take_resumed_scheduler`] to take a scheduler from this pool
     /// for a brand-new bank.
-    fn take_scheduler(&self, context: SchedulingContext) -> InstalledSchedulerBox {
+    fn take_scheduler(&self, context: SchedulingContext) -> Option<InstalledSchedulerBox> {
         self.take_resumed_scheduler(context, initialized_result_with_timings())
     }
 
@@ -57,7 +57,7 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
         &self,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-    ) -> InstalledSchedulerBox;
+    ) -> Option<InstalledSchedulerBox>;
 
     /// Registers an opaque timeout listener.
     ///
@@ -504,6 +504,14 @@ impl BankWithScheduler {
         )
     }
 
+    fn has_installed_active_bp_scheduler(&self) -> bool {
+        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
+            matches!(scheduler.context().mode(), SchedulingMode::BlockProduction)
+        } else {
+            false
+        }
+    }
+
     /// Schedule the transaction as long as the scheduler hasn't been aborted.
     ///
     /// If the scheduler has been aborted, this doesn't schedule the transaction, instead just
@@ -583,6 +591,18 @@ impl BankWithScheduler {
         )
     }
 
+    pub fn ensure_return_abandoned_bp_scheduler_to_scheduler_pool(&self) {
+        if self.has_installed_active_bp_scheduler() {
+            if let Some((result, _timings)) = self.wait_for_completed_scheduler() {
+                info!(
+                    "Reaped cleared tpu_bank and returned abandoned bp scheduler: {} {:?}",
+                    self.slot(),
+                    result
+                );
+            }
+        }
+    }
+
     pub const fn no_scheduler_available() -> InstalledSchedulerRwLock {
         RwLock::new(SchedulerStatus::Unavailable)
     }
@@ -616,7 +636,9 @@ impl BankWithSchedulerInner {
                 let mut scheduler = self.scheduler.write().unwrap();
                 trace!("with_active_scheduler: {:?}", scheduler);
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
-                    let scheduler = pool.take_resumed_scheduler(context, result_with_timings);
+                    let scheduler = pool
+                        .take_resumed_scheduler(context, result_with_timings)
+                        .expect("successful retaking");
                     info!(
                         "with_active_scheduler: bank (slot: {}) got active, taking scheduler (id: {})",
                         self.bank.slot(),
@@ -657,24 +679,25 @@ impl BankWithSchedulerInner {
             // the pool and yet it has yet to be `wait_for_termination()`-ed. To avoid unbounded
             // thread creation under forky condition, return the scheduler for now, even if the
             // bank could process more transactions later.
+            let mut id = None;
             scheduler.maybe_transition_from_active_to_stale(|scheduler| {
                 // Return the installed scheduler back to the scheduler pool as soon as the
                 // scheduler indicates the completion of all currently-scheduled transaction
                 // executions by `solana_unified_scheduler_pool::ThreadManager::end_session()`
                 // internally.
 
-                let id = scheduler.id();
+                id = Some(scheduler.id());
                 let (result_with_timings, uninstalled_scheduler) =
                     scheduler.wait_for_termination(false);
                 uninstalled_scheduler.return_to_pool();
                 info!(
-                    "timeout_listener: bank (slot: {}) got stale, returning scheduler (id: {})",
+                    "timeout_listener: bank (slot: {}) got stale, returned scheduler (id: {:?})",
                     bank.bank.slot(),
                     id,
                 );
                 (pool, result_with_timings)
             });
-            trace!("timeout_listener: {:?}", scheduler);
+            trace!("timeout_listener: {:?}", id);
         })
     }
 
