@@ -300,6 +300,7 @@ async fn run_server(
         Arc::new(Mutex::new(ConnectionTable::new()));
     let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
         stats.clone(),
+        max_staked_connections,
         max_unstaked_connections,
         max_streams_per_ms,
     ));
