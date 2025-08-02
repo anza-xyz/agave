@@ -56,7 +56,11 @@ pub struct SigVerifyStage {
 
 pub trait SigVerifier {
     type SendType: std::fmt::Debug;
-    fn verify_batches(&self, batches: Vec<PacketBatch>, valid_packets: usize) -> Vec<PacketBatch>;
+    fn verify_batches(
+        &mut self,
+        batches: Vec<PacketBatch>,
+        valid_packets: usize,
+    ) -> Vec<PacketBatch>;
     fn send_packets(&mut self, packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType>;
 }
 
@@ -217,7 +221,7 @@ impl SigVerifierStats {
 impl SigVerifier for DisabledSigVerifier {
     type SendType = ();
     fn verify_batches(
-        &self,
+        &mut self,
         mut batches: Vec<PacketBatch>,
         _valid_packets: usize,
     ) -> Vec<PacketBatch> {
@@ -502,7 +506,7 @@ mod tests {
         trace!("start");
         let (packet_s, packet_r) = unbounded();
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
-        let verifier = TransactionSigVerifier::new(verified_s, None);
+        let verifier = TransactionSigVerifier::new(verified_s, None, None);
         let stage = SigVerifyStage::new(packet_r, verifier, "solSigVerTest", "test");
 
         let now = Instant::now();

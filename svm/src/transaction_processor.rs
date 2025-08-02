@@ -3,9 +3,10 @@ use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_loader::{
-            load_transaction, update_rent_exempt_status_for_account, validate_fee_payer,
-            AccountLoader, CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
-            TransactionLoadResult, ValidatedTransactionDetails,
+            load_transaction, update_rent_exempt_status_for_account,
+            validate_fee_payer_with_error_counters, AccountLoader, CheckedTransactionDetails,
+            LoadedTransaction, TransactionCheckResult, TransactionLoadResult,
+            ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
         message_processor::process_message,
@@ -584,7 +585,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         update_rent_exempt_status_for_account(rent_collector, &mut loaded_fee_payer.account);
 
         let fee_payer_index = 0;
-        validate_fee_payer(
+        validate_fee_payer_with_error_counters(
             fee_payer_address,
             &mut loaded_fee_payer.account,
             fee_payer_index,

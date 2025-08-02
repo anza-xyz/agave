@@ -565,6 +565,7 @@ fn start_verify_transactions_gpu<Tx: TransactionWithMeta + Send + Sync + 'static
                 &out_recycler,
                 false,
                 num_packets,
+                |_| true,
             );
             let verified = packet_batches
                 .iter()
