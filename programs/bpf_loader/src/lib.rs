@@ -269,6 +269,10 @@ fn create_vm<'a, 'b>(
         heap,
         regions,
         invoke_context.transaction_context,
+        invoke_context
+            .get_feature_set()
+            .stricter_abi_and_runtime_constraints,
+        invoke_context.account_data_direct_mapping,
     )?;
     invoke_context.set_syscall_context(SyscallContext {
         allocator: BpfAllocator::new(heap_size as u64),
@@ -322,6 +326,8 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
     heap: &'b mut [u8],
     additional_regions: Vec<MemoryRegion>,
     transaction_context: &TransactionContext,
+    stricter_abi_and_runtime_constraints: bool,
+    account_data_direct_mapping: bool,
 ) -> Result<MemoryMapping<'a>, Box<dyn std::error::Error>> {
     let config = executable.get_config();
     let sbpf_version = executable.get_sbpf_version();
@@ -346,7 +352,10 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
         regions,
         config,
         sbpf_version,
-        transaction_context.access_violation_handler(),
+        transaction_context.access_violation_handler(
+            stricter_abi_and_runtime_constraints,
+            account_data_direct_mapping,
+        ),
     )?)
 }
 
@@ -1587,9 +1596,9 @@ fn execute<'a, 'b: 'a>(
     let use_jit = false;
     #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
     let use_jit = executable.get_compiled_program().is_some();
-    let direct_mapping = invoke_context
+    let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping;
+        .stricter_abi_and_runtime_constraints;
     let mask_out_rent_epoch_in_vm_serialization = invoke_context
         .get_feature_set()
         .mask_out_rent_epoch_in_vm_serialization;
@@ -1598,7 +1607,8 @@ fn execute<'a, 'b: 'a>(
     let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(
         invoke_context.transaction_context,
         instruction_context,
-        direct_mapping,
+        stricter_abi_and_runtime_constraints,
+        invoke_context.account_data_direct_mapping,
         mask_out_rent_epoch_in_vm_serialization,
     )?;
     serialize_time.stop();
@@ -1679,7 +1689,7 @@ fn execute<'a, 'b: 'a>(
                     invoke_context.consume(invoke_context.get_remaining());
                 }
 
-                if direct_mapping {
+                if stricter_abi_and_runtime_constraints {
                     if let EbpfError::SyscallError(err) = error {
                         error = err
                             .downcast::<EbpfError>()
@@ -1689,7 +1699,7 @@ fn execute<'a, 'b: 'a>(
                     if let EbpfError::AccessViolation(access_type, vm_addr, len, _section_name) =
                         error
                     {
-                        // If direct_mapping is enabled and a program tries to write to a readonly
+                        // If stricter_abi_and_runtime_constraints is enabled and a program tries to write to a readonly
                         // region we'll get a memory access violation. Map it to a more specific
                         // error so it's easier for developers to see what happened.
                         if let Some((instruction_account_index, vm_addr_range)) =
@@ -1757,14 +1767,15 @@ fn execute<'a, 'b: 'a>(
     fn deserialize_parameters(
         invoke_context: &mut InvokeContext,
         parameter_bytes: &[u8],
-        direct_mapping: bool,
+        stricter_abi_and_runtime_constraints: bool,
     ) -> Result<(), InstructionError> {
         serialization::deserialize_parameters(
             invoke_context.transaction_context,
             invoke_context
                 .transaction_context
                 .get_current_instruction_context()?,
-            direct_mapping,
+            stricter_abi_and_runtime_constraints,
+            invoke_context.account_data_direct_mapping,
             parameter_bytes,
             &invoke_context.get_syscall_context()?.accounts_metadata,
         )
@@ -1772,8 +1783,12 @@ fn execute<'a, 'b: 'a>(
 
     let mut deserialize_time = Measure::start("deserialize");
     let execute_or_deserialize_result = execution_result.and_then(|_| {
-        deserialize_parameters(invoke_context, parameter_bytes.as_slice(), direct_mapping)
-            .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
+        deserialize_parameters(
+            invoke_context,
+            parameter_bytes.as_slice(),
+            stricter_abi_and_runtime_constraints,
+        )
+        .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
     });
     deserialize_time.stop();
 

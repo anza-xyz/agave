@@ -133,7 +133,8 @@ pub fn invoke_builtin_function(
     let (mut parameter_bytes, _regions, _account_lengths) = serialize_parameters(
         transaction_context,
         instruction_context,
-        false, // direct_mapping // There is no VM so direct mapping can not be implemented here
+        false, // There is no VM so stricter_abi_and_runtime_constraints can not be implemented here
+        false, // There is no VM so account_data_direct_mapping can not be implemented here
         mask_out_rent_epoch_in_vm_serialization,
     )?;
 

@@ -31,7 +31,7 @@ static_assertions::const_assert_eq!(
 #[cfg(not(target_os = "solana"))]
 const MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION: i64 =
     MAX_PERMITTED_DATA_LENGTH as i64 * 2;
-// Note: With direct mapping programs can grow accounts faster than they intend to,
+// Note: With stricter_abi_and_runtime_constraints programs can grow accounts faster than they intend to,
 // because the AccessViolationHandler might grow an account up to
 // MAX_PERMITTED_DATA_LENGTH at once.
 #[cfg(test)]
@@ -526,7 +526,11 @@ impl TransactionContext {
     }
 
     /// Returns a new account data write access handler
-    pub fn access_violation_handler(&self) -> AccessViolationHandler {
+    pub fn access_violation_handler(
+        &self,
+        stricter_abi_and_runtime_constraints: bool,
+        account_data_direct_mapping: bool,
+    ) -> AccessViolationHandler {
         let accounts = Rc::clone(&self.accounts);
         Box::new(
             move |region: &mut MemoryRegion,
@@ -595,8 +599,10 @@ impl TransactionContext {
                 }
 
                 // Potentially unshare / make the account shared data unique (CoW logic).
-                region.host_addr = account.data_as_mut_slice().as_mut_ptr() as u64;
-                region.writable = true;
+                if stricter_abi_and_runtime_constraints && account_data_direct_mapping {
+                    region.host_addr = account.data_as_mut_slice().as_mut_ptr() as u64;
+                    region.writable = true;
+                }
             },
         )
     }
