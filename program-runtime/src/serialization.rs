@@ -624,15 +624,8 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(index_in_instruction, index_in_transaction)| {
-                let index_in_callee = transaction_indexes
-                    .get(0..index_in_instruction)
-                    .unwrap()
-                    .iter()
-                    .position(|account_index| account_index == index_in_transaction)
-                    .unwrap_or(index_in_instruction);
                 InstructionAccount::new(
                     *index_in_transaction,
-                    index_in_callee as IndexOfAccount,
                     false,
                     is_writable(index_in_instruction),
                 )
@@ -700,7 +693,7 @@ mod tests {
                 }
 
                 let transaction_accounts_indexes: Vec<IndexOfAccount> =
-                    (1..(num_ix_accounts + 1) as u16).collect();
+                    (0..num_ix_accounts as u16).collect();
                 let mut instruction_accounts =
                     deduplicated_instruction_accounts(&transaction_accounts_indexes, |_| false);
                 if append_dup_account {
@@ -718,7 +711,7 @@ mod tests {
                     .transaction_context
                     .get_next_instruction_context_mut()
                     .unwrap()
-                    .configure(program_indices, instruction_accounts, &instruction_data);
+                    .configure_for_tests(program_indices, instruction_accounts, &instruction_data);
                 invoke_context.push().unwrap();
                 let instruction_context = invoke_context
                     .transaction_context
@@ -861,7 +854,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure(program_indices, instruction_accounts, &instruction_data);
+                .configure_for_tests(program_indices, instruction_accounts, &instruction_data);
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1107,7 +1100,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure(program_indices, instruction_accounts, &instruction_data);
+                .configure_for_tests(program_indices, instruction_accounts, &instruction_data);
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1376,7 +1369,7 @@ mod tests {
         transaction_context
             .get_next_instruction_context_mut()
             .unwrap()
-            .configure(program_indices, instruction_accounts, &instruction_data);
+            .configure_for_tests(program_indices, instruction_accounts, &instruction_data);
         transaction_context.push().unwrap();
         let instruction_context = transaction_context
             .get_current_instruction_context()

@@ -9622,7 +9622,6 @@ dependencies = [
  "assert_matches",
  "base64 0.22.1",
  "bincode",
- "enum-iterator",
  "itertools 0.12.1",
  "log",
  "percentage",
@@ -9638,6 +9637,7 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-hash",
  "solana-instruction",
+ "solana-keypair",
  "solana-last-restart-slot",
  "solana-log-collector",
  "solana-measure",
@@ -9648,8 +9648,8 @@ dependencies = [
  "solana-rent",
  "solana-sbpf",
  "solana-sdk-ids",
+ "solana-signer",
  "solana-slot-hashes",
- "solana-stable-layout",
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-transaction",
@@ -9657,10 +9657,10 @@ dependencies = [
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-timings",
+ "solana-transaction",
  "solana-transaction-context",
  "solana-type-overrides",
  "test-case",
- "thiserror 2.0.12",
 ]
 
 [[package]]

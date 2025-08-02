@@ -49,21 +49,22 @@ static_assertions::const_assert_eq!(
     solana_account_info::MAX_PERMITTED_DATA_INCREASE
 );
 
+pub const MAX_ACCOUNTS_PER_TRANSACTION: usize = 256;
+
 /// Index of an account inside of the TransactionContext or an InstructionContext.
 pub type IndexOfAccount = u16;
 
 /// Contains account meta data which varies between instruction.
 ///
 /// It also contains indices to other structures for faster lookup.
+///
+/// This data structure is supposed to be shared with programs in ABIv2, so do not modify it
+/// without consulting SIMD-0177.
 #[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstructionAccount {
     /// Points to the account and its key in the `TransactionContext`
     pub index_in_transaction: IndexOfAccount,
-    /// Points to the first occurrence in the current `InstructionContext`
-    ///
-    /// This excludes the program accounts.
-    pub index_in_callee: IndexOfAccount,
     /// Is this account supposed to sign
     is_signer: u8,
     /// Is this account allowed to become writable
@@ -73,13 +74,11 @@ pub struct InstructionAccount {
 impl InstructionAccount {
     pub fn new(
         index_in_transaction: IndexOfAccount,
-        index_in_callee: IndexOfAccount,
         is_signer: bool,
         is_writable: bool,
     ) -> InstructionAccount {
         InstructionAccount {
             index_in_transaction,
-            index_in_callee,
             is_signer: is_signer as u8,
             is_writable: is_writable as u8,
         }
@@ -622,6 +621,10 @@ pub struct InstructionContext {
     instruction_accounts_lamport_sum: u128,
     program_accounts: Vec<IndexOfAccount>,
     instruction_accounts: Vec<InstructionAccount>,
+    /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
+    /// Usage: dedup_map[index_in_transaction] = index_in_instruction
+    /// This is a vector of u8s to save memory, since many entries may be unused.
+    dedup_map: Vec<u8>,
     instruction_data: Vec<u8>,
 }
 
@@ -632,11 +635,41 @@ impl InstructionContext {
         &mut self,
         program_accounts: Vec<IndexOfAccount>,
         instruction_accounts: Vec<InstructionAccount>,
+        deduplication_map: Vec<u8>,
         instruction_data: &[u8],
     ) {
+        debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
         self.program_accounts = program_accounts;
         self.instruction_accounts = instruction_accounts;
         self.instruction_data = instruction_data.to_vec();
+        self.dedup_map = deduplication_map;
+    }
+
+    /// A version of `fn configure` to help creating the deduplication map in tests
+    #[cfg(not(target_os = "solana"))]
+    pub fn configure_for_tests(
+        &mut self,
+        program_accounts: Vec<IndexOfAccount>,
+        instruction_accounts: Vec<InstructionAccount>,
+        instruction_data: &[u8],
+    ) {
+        debug_assert!(instruction_accounts.len() <= MAX_ACCOUNTS_PER_TRANSACTION);
+        let mut dedup_map = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
+        for (idx, account) in instruction_accounts.iter().enumerate() {
+            let index_in_instruction = dedup_map
+                .get_mut(account.index_in_transaction as usize)
+                .unwrap();
+            if *index_in_instruction == u8::MAX {
+                *index_in_instruction = idx as u8;
+            }
+        }
+
+        self.configure(
+            program_accounts,
+            instruction_accounts,
+            dedup_map,
+            instruction_data,
+        );
     }
 
     /// How many Instructions were on the stack after this one was pushed
@@ -735,10 +768,15 @@ impl InstructionContext {
         &self,
         index_in_transaction: IndexOfAccount,
     ) -> Result<IndexOfAccount, InstructionError> {
-        self.instruction_accounts
-            .iter()
-            .position(|account| account.index_in_transaction == index_in_transaction)
-            .map(|idx| idx as IndexOfAccount)
+        self.dedup_map
+            .get(index_in_transaction as usize)
+            .and_then(|idx| {
+                if *idx as usize >= self.instruction_accounts.len() {
+                    None
+                } else {
+                    Some(*idx as IndexOfAccount)
+                }
+            })
             .ok_or(InstructionError::MissingAccount)
     }
 
@@ -748,16 +786,18 @@ impl InstructionContext {
         &self,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Option<IndexOfAccount>, InstructionError> {
-        let index_in_callee = self
-            .instruction_accounts
-            .get(instruction_account_index as usize)
-            .ok_or(InstructionError::NotEnoughAccountKeys)?
-            .index_in_callee;
-        Ok(if index_in_callee == instruction_account_index {
-            None
-        } else {
-            Some(index_in_callee)
-        })
+        let index_in_transaction =
+            self.get_index_of_instruction_account_in_transaction(instruction_account_index)?;
+        let first_instruction_account_index =
+            self.get_index_of_account_in_instruction(index_in_transaction)?;
+
+        Ok(
+            if first_instruction_account_index == instruction_account_index {
+                None
+            } else {
+                Some(first_instruction_account_index)
+            },
+        )
     }
 
     /// Gets the key of the last program account of this Instruction

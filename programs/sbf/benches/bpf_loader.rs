@@ -61,7 +61,7 @@ macro_rules! with_mock_invoke_context {
                 AccountSharedData::new(2, $account_size, &program_key),
             ),
         ];
-        let instruction_accounts = vec![InstructionAccount::new(2, 0, false, true)];
+        let instruction_accounts = vec![InstructionAccount::new(2, false, true)];
         solana_program_runtime::with_mock_invoke_context!(
             $invoke_context,
             transaction_context,
@@ -71,7 +71,7 @@ macro_rules! with_mock_invoke_context {
             .transaction_context
             .get_next_instruction_context_mut()
             .unwrap()
-            .configure(vec![0, 1], instruction_accounts, &[]);
+            .configure_for_tests(vec![0, 1], instruction_accounts, &[]);
         $invoke_context.push().unwrap();
     };
 }

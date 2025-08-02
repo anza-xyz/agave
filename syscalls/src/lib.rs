@@ -2223,7 +2223,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure(vec![0, 1], vec![], &[]);
+                .configure_for_tests(vec![0, 1], vec![], &[]);
             $invoke_context.push().unwrap();
         };
     }
@@ -4448,7 +4448,6 @@ mod tests {
             {
                 let instruction_accounts = vec![InstructionAccount::new(
                     index_in_trace.saturating_add(1) as IndexOfAccount,
-                    0,
                     false,
                     false,
                 )];
@@ -4456,7 +4455,7 @@ mod tests {
                     .transaction_context
                     .get_next_instruction_context_mut()
                     .unwrap()
-                    .configure(vec![0], instruction_accounts, &[index_in_trace as u8]);
+                    .configure_for_tests(vec![0], instruction_accounts, &[index_in_trace as u8]);
                 invoke_context.transaction_context.push().unwrap();
             }
         }

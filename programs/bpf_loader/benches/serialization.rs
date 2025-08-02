@@ -5,7 +5,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated},
-    solana_transaction_context::{IndexOfAccount, InstructionAccount, TransactionContext},
+    solana_transaction_context::{InstructionAccount, TransactionContext},
 };
 
 fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionContext {
@@ -89,13 +89,8 @@ fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionC
         .take(num_instruction_accounts)
         .enumerate()
     {
-        let index_in_callee = instruction_accounts
-            .iter()
-            .position(|account| account.index_in_transaction == index_in_transaction)
-            .unwrap_or(instruction_account_index) as IndexOfAccount;
         instruction_accounts.push(InstructionAccount::new(
             index_in_transaction,
-            index_in_callee,
             false,
             instruction_account_index >= 4,
         ));
@@ -107,7 +102,7 @@ fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionC
     transaction_context
         .get_next_instruction_context_mut()
         .unwrap()
-        .configure(vec![0], instruction_accounts, &instruction_data);
+        .configure_for_tests(vec![0], instruction_accounts, &instruction_data);
     transaction_context.push().unwrap();
     transaction_context
 }

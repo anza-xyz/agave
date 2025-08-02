@@ -773,9 +773,8 @@ where
     ) -> Result<CallerAccount<'a>, Error>,
 {
     let transaction_context = &invoke_context.transaction_context;
-    let next_instruction_accounts = transaction_context
-        .get_next_instruction_context()?
-        .instruction_accounts();
+    let next_instruction_context = transaction_context.get_next_instruction_context()?;
+    let next_instruction_accounts = next_instruction_context.instruction_accounts();
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let mut accounts = Vec::with_capacity(next_instruction_accounts.len());
 
@@ -793,7 +792,10 @@ where
     for (instruction_account_index, instruction_account) in
         next_instruction_accounts.iter().enumerate()
     {
-        if instruction_account_index as IndexOfAccount != instruction_account.index_in_callee {
+        if next_instruction_context
+            .is_instruction_account_duplicate(instruction_account_index as IndexOfAccount)?
+            .is_some()
+        {
             continue; // Skip duplicate account
         }
 
@@ -1307,11 +1309,9 @@ mod tests {
             let instruction_data = $instruction_data;
             let instruction_accounts = $instruction_accounts
                 .iter()
-                .enumerate()
-                .map(|(index_in_callee, index_in_transaction)| {
+                .map(|index_in_transaction| {
                     InstructionAccount::new(
                         *index_in_transaction as IndexOfAccount,
-                        index_in_callee as IndexOfAccount,
                         false,
                         $transaction_accounts[*index_in_transaction as usize].2,
                     )
@@ -1334,7 +1334,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure($program_accounts, instruction_accounts, instruction_data);
+                .configure_for_tests($program_accounts, instruction_accounts, instruction_data);
             $invoke_context.push().unwrap();
         };
     }
@@ -1852,11 +1852,11 @@ mod tests {
             .transaction_context
             .get_next_instruction_context_mut()
             .unwrap()
-            .configure(
+            .configure_for_tests(
                 vec![0],
                 vec![
-                    InstructionAccount::new(1, 0, false, true),
-                    InstructionAccount::new(1, 0, false, true),
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(1, false, true),
                 ],
                 &[],
             );

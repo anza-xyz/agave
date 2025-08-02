@@ -26,7 +26,6 @@ shuttle-test = ["solana-type-overrides/shuttle-test", "solana-sbpf/shuttle-test"
 [dependencies]
 base64 = { workspace = true }
 bincode = { workspace = true }
-enum-iterator = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 percentage = { workspace = true }
@@ -55,7 +54,6 @@ solana-rent = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
-solana-stable-layout = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-transaction = { workspace = true }
@@ -65,14 +63,16 @@ solana-sysvar-id = { workspace = true }
 solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-type-overrides = { workspace = true }
-thiserror = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
 solana-account-info = { workspace = true }
 solana-instruction = { workspace = true, features = ["bincode"] }
+solana-keypair = { workspace = true }
 solana-program-runtime = { path = ".", features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
