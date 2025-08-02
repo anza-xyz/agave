@@ -5929,7 +5929,6 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-streamer",
- "solana-thin-client",
  "solana-time-utils",
  "solana-tpu-client",
  "solana-transaction",
@@ -9369,33 +9368,6 @@ dependencies = [
  "solana-transaction",
  "solana-validator-exit",
  "tokio",
-]
-
-[[package]]
-name = "solana-thin-client"
-version = "3.0.0"
-dependencies = [
- "bincode",
- "log",
- "rayon",
- "solana-account",
- "solana-client-traits",
- "solana-clock",
- "solana-commitment-config",
- "solana-connection-cache",
- "solana-epoch-info",
- "solana-hash",
- "solana-instruction",
- "solana-keypair",
- "solana-message",
- "solana-pubkey",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-signature",
- "solana-signer",
- "solana-system-interface",
- "solana-transaction",
- "solana-transaction-error",
 ]
 
 [[package]]
