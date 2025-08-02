@@ -211,10 +211,7 @@ impl SubscriptionControl {
     }
 
     pub fn subscribe(&self, params: SubscriptionParams) -> Result<SubscriptionToken, Error> {
-        debug!(
-            "Total existing subscriptions: {}",
-            self.0.subscriptions.len()
-        );
+        #[allow(clippy::disallowed_methods)]
         let count = self.0.subscriptions.len();
         let create_token_and_weak_ref = |id, params| {
             let token = SubscriptionToken(
@@ -254,16 +251,13 @@ impl SubscriptionControl {
                     .sender
                     .send(NotificationEntry::Subscribed(token.0.params.clone(), id).into());
                 entry.insert(weak_ref);
-                datapoint_info!(
-                    "rpc-subscription",
-                    ("total", self.0.subscriptions.len(), i64)
-                );
                 Ok(token)
             }
         }
     }
 
     pub fn total(&self) -> usize {
+        #[allow(clippy::disallowed_methods)]
         self.0.subscriptions.len()
     }
 
@@ -564,10 +558,6 @@ impl Drop for SubscriptionTokenInner {
                     .sender
                     .send(NotificationEntry::Unsubscribed(self.params.clone(), self.id).into());
                 entry.remove();
-                datapoint_info!(
-                    "rpc-subscription",
-                    ("total", self.control.subscriptions.len(), i64)
-                );
             }
             // This branch handles the case in which this entry got recreated
             // while we were waiting for the lock (inside the `DashMap::entry` method).

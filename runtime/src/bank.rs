@@ -2359,6 +2359,7 @@ impl Bank {
     /// by combining previously separate rewards and accounts vectors into a
     /// single accounts_with_rewards vector.
     fn calc_vote_accounts_to_store(vote_account_rewards: VoteRewards) -> VoteRewardsAccounts {
+        #[allow(clippy::disallowed_methods)]
         let len = vote_account_rewards.len();
         let mut result = VoteRewardsAccounts {
             accounts_with_rewards: Vec::with_capacity(len),

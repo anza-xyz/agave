@@ -4178,7 +4178,7 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     // And now, slot 1 should be marked complete dead, which will be added
     // to uncleaned slots, which handle dropping dead storage. And it WON'T
     // be participating shrinking in the next round.
-    assert!(db.dirty_stores.contains_key(&1));
+    assert!(db.dirty_stores.read().unwrap().contains_key(&1));
     assert!(!db.shrink_candidate_slots.lock().unwrap().contains(&1));
 
     // Now, make slot 0 dead by updating the remaining key
@@ -4226,8 +4226,12 @@ define_accounts_db_test!(test_partial_clean, |db| {
     db.print_accounts_stats("post-clean1");
 
     // Assert that cache entries are still present
-    assert!(!db.accounts_cache.slot_cache(0).unwrap().is_empty());
-    assert!(!db.accounts_cache.slot_cache(1).unwrap().is_empty());
+    #[allow(clippy::disallowed_methods)]
+    let slot_cache_0_empty = db.accounts_cache.slot_cache(0).unwrap().is_empty();
+    #[allow(clippy::disallowed_methods)]
+    let slot_cache_1_empty = db.accounts_cache.slot_cache(0).unwrap().is_empty();
+    assert!(!slot_cache_0_empty, "slot 0 should not be empty");
+    assert!(!slot_cache_1_empty, "slot 1 should not be empty");
 
     // root slot 0
     db.add_root_and_flush_write_cache(0);
@@ -4249,7 +4253,12 @@ define_accounts_db_test!(test_partial_clean, |db| {
     // Check that we can clean where max_root=3 and slot=2 is not rooted
     db.clean_accounts_for_tests();
 
-    assert!(db.uncleaned_pubkeys.is_empty());
+    #[allow(clippy::disallowed_methods)]
+    let uncleaned_pubkeys_is_empty = db.uncleaned_pubkeys.is_empty();
+    assert!(
+        uncleaned_pubkeys_is_empty,
+        "uncleaned_pubkeys should be empty"
+    );
 
     db.print_accounts_stats("post-clean4");
 
@@ -4791,8 +4800,8 @@ define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
     let storage_info = StorageSizeAndCountMap::default();
     accounts.generate_index_for_slot(&storage, slot0, 0, &storage_info);
-    assert_eq!(storage_info.len(), 1);
-    for entry in storage_info.iter() {
+    assert_eq!(storage_info.read().unwrap().len(), 1);
+    for (key, value) in storage_info.read().unwrap().iter() {
         let expected_stored_size =
             if accounts.accounts_file_provider == AccountsFileProvider::HotStorage {
                 33
@@ -4800,7 +4809,7 @@ define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts
                 144
             };
         assert_eq!(
-            (entry.key(), entry.value().count, entry.value().stored_size),
+            (key, value.count, value.stored_size),
             (&0, 1, expected_stored_size)
         );
     }
@@ -4814,7 +4823,7 @@ define_accounts_db_test!(
         let storage = accounts.create_and_insert_store(0, 1, "test");
         let storage_info = StorageSizeAndCountMap::default();
         accounts.generate_index_for_slot(&storage, 0, 0, &storage_info);
-        assert!(storage_info.is_empty());
+        assert!(storage_info.read().unwrap().is_empty());
     }
 );
 
@@ -4850,8 +4859,8 @@ define_accounts_db_test!(
 
         let storage_info = StorageSizeAndCountMap::default();
         accounts.generate_index_for_slot(&storage, 0, 0, &storage_info);
-        assert_eq!(storage_info.len(), 1);
-        for entry in storage_info.iter() {
+        assert_eq!(storage_info.read().unwrap().len(), 1);
+        for (key, value) in storage_info.read().unwrap().iter() {
             let expected_stored_size =
                 if accounts.accounts_file_provider == AccountsFileProvider::HotStorage {
                     1065
@@ -4859,7 +4868,7 @@ define_accounts_db_test!(
                     1280
                 };
             assert_eq!(
-                (entry.key(), entry.value().count, entry.value().stored_size),
+                (key, value.count, value.stored_size),
                 (&0, 2, expected_stored_size)
             );
         }
@@ -4887,8 +4896,8 @@ define_accounts_db_test!(test_set_storage_count_and_alive_bytes, |accounts| {
     let count = 1;
 
     // populate based on made up hash data
-    let dashmap = DashMap::default();
-    dashmap.insert(
+    let hashmap = RwLock::<HashMap<u32, StorageSizeAndCount, BuildNoHashHasher<u32>>>::default();
+    hashmap.write().unwrap().insert(
         0,
         StorageSizeAndCount {
             stored_size: 2,
@@ -4900,7 +4909,7 @@ define_accounts_db_test!(test_set_storage_count_and_alive_bytes, |accounts| {
         assert_eq!(store.count_and_status.read().0, 0);
         assert_eq!(store.alive_bytes(), 0);
     }
-    accounts.set_storage_count_and_alive_bytes(dashmap, &mut GenerateIndexTimings::default());
+    accounts.set_storage_count_and_alive_bytes(hashmap, &mut GenerateIndexTimings::default());
     assert_eq!(accounts.storage.len(), 1);
     for (_, store) in accounts.storage.iter() {
         assert_eq!(store.id(), 0);
@@ -5335,7 +5344,7 @@ define_accounts_db_test!(test_mark_dirty_dead_stores_empty, |db| {
     for add_dirty_stores in [false, true] {
         let dead_storages = db.mark_dirty_dead_stores(slot, add_dirty_stores, None, false);
         assert!(dead_storages.is_empty());
-        assert!(db.dirty_stores.is_empty());
+        assert!(db.dirty_stores.read().unwrap().is_empty());
     }
 });
 
@@ -5356,11 +5365,11 @@ fn test_mark_dirty_dead_stores_no_shrink_in_progress() {
         assert_eq!(dead_storages.len(), 1);
         assert_eq!(dead_storages.first().unwrap().id(), old_id);
         if add_dirty_stores {
-            assert_eq!(1, db.dirty_stores.len());
-            let dirty_store = db.dirty_stores.get(&slot).unwrap();
-            assert_eq!(dirty_store.id(), old_id);
+            assert_eq!(1, db.dirty_stores.read().unwrap().len());
+            let dirty_store_id = db.dirty_stores.read().unwrap().get(&slot).unwrap().id();
+            assert_eq!(dirty_store_id, old_id);
         } else {
-            assert!(db.dirty_stores.is_empty());
+            assert!(db.dirty_stores.read().unwrap().is_empty());
         }
         assert!(db.storage.is_empty_entry(slot));
     }
@@ -5383,11 +5392,11 @@ fn test_mark_dirty_dead_stores() {
         assert_eq!(dead_storages.len(), 1);
         assert_eq!(dead_storages.first().unwrap().id(), old_id);
         if add_dirty_stores {
-            assert_eq!(1, db.dirty_stores.len());
-            let dirty_store = db.dirty_stores.get(&slot).unwrap();
-            assert_eq!(dirty_store.id(), old_id);
+            assert_eq!(1, db.dirty_stores.read().unwrap().len());
+            let dirty_store_id = db.dirty_stores.read().unwrap().get(&slot).unwrap().id();
+            assert_eq!(dirty_store_id, old_id);
         } else {
-            assert!(db.dirty_stores.is_empty());
+            assert!(db.dirty_stores.read().unwrap().is_empty());
         }
         assert!(db.storage.get_slot_storage_entry(slot).is_some());
     }
@@ -6409,7 +6418,7 @@ fn test_clean_old_storages_with_reclaims_rooted() {
         accounts_db.uncleaned_pubkeys.remove(&slot);
         // ensure this slot is *not* in the dirty_stores nor uncleaned_pubkeys, because we want to
         // test cleaning *old* storages, i.e. when they aren't explicitly marked for cleaning
-        assert!(!accounts_db.dirty_stores.contains_key(&slot));
+        assert!(!accounts_db.dirty_stores.read().unwrap().contains_key(&slot));
         assert!(!accounts_db.uncleaned_pubkeys.contains_key(&slot));
     }
 
@@ -6418,7 +6427,11 @@ fn test_clean_old_storages_with_reclaims_rooted() {
         .storage
         .get_slot_storage_entry_shrinking_in_progress_ok(old_slot)
         .unwrap();
-    accounts_db.dirty_stores.insert(old_slot, old_storage);
+    accounts_db
+        .dirty_stores
+        .write()
+        .unwrap()
+        .insert(old_slot, old_storage);
 
     // ensure the slot list for `pubkey` has both the old and new slots
     let slot_list = accounts_db
@@ -6474,10 +6487,18 @@ fn test_clean_old_storages_with_reclaims_unrooted() {
 
     // ensure `old_slot` is in uncleaned_pubkeys (but not dirty_stores) so it'll be cleaned
     assert!(accounts_db.uncleaned_pubkeys.contains_key(&old_slot));
-    assert!(!accounts_db.dirty_stores.contains_key(&old_slot));
+    assert!(!accounts_db
+        .dirty_stores
+        .read()
+        .unwrap()
+        .contains_key(&old_slot));
     // and `new_slot` should be in neither
     assert!(!accounts_db.uncleaned_pubkeys.contains_key(&new_slot));
-    assert!(!accounts_db.dirty_stores.contains_key(&new_slot));
+    assert!(!accounts_db
+        .dirty_stores
+        .read()
+        .unwrap()
+        .contains_key(&new_slot));
 
     // ensure the slot list for `pubkey` has both the old and new slots
     let slot_list = accounts_db

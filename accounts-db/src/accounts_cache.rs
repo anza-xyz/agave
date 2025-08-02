@@ -184,7 +184,7 @@ impl AccountsCache {
                 self.maybe_unflushed_roots.read().unwrap().len(),
                 i64
             ),
-            ("num_slots", self.cache.len(), i64),
+            ("num_slots", self.num_slots(), i64),
             ("total_size", self.size(), i64),
             (
                 "total_accounts_count",
@@ -265,6 +265,7 @@ impl AccountsCache {
     }
 
     pub fn num_slots(&self) -> usize {
+        #[allow(clippy::disallowed_methods)]
         self.cache.len()
     }
 

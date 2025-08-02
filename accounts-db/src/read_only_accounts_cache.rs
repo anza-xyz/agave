@@ -238,6 +238,7 @@ impl ReadOnlyAccountsCache {
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn cache_len(&self) -> usize {
+        #[allow(clippy::disallowed_methods)]
         self.cache.len()
     }
 
