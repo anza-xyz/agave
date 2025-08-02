@@ -83,6 +83,14 @@ impl AccountStorage {
         self.get_slot_storage_entry_shrinking_in_progress_ok(slot)
     }
 
+    pub(super) fn all_storages(&self) -> Vec<Arc<AccountStorageEntry>> {
+        assert!(self.no_shrink_in_progress());
+        self.map
+            .iter()
+            .map(|item| Arc::clone(item.value()))
+            .collect()
+    }
+
     pub(crate) fn replace_storage_with_equivalent(
         &self,
         slot: Slot,
