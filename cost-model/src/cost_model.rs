@@ -11,6 +11,7 @@ use {
     solana_bincode::limited_deserialize,
     solana_compute_budget::compute_budget_limits::DEFAULT_HEAP_COST,
     solana_fee_structure::FeeStructure,
+    solana_perf::packet::QUIC_MAX_STREAM_SIZE,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::{
         transaction_meta::StaticMeta, transaction_with_meta::TransactionWithMeta,
@@ -243,7 +244,7 @@ impl CostModel {
     ) -> SystemProgramAccountAllocation {
         if program_id == &system_program::id() {
             if let Ok(instruction) =
-                limited_deserialize(instruction.data, solana_packet::PACKET_DATA_SIZE as u64)
+                limited_deserialize(instruction.data, QUIC_MAX_STREAM_SIZE as u64)
             {
                 Self::calculate_account_data_size_on_deserialized_system_instruction(instruction)
             } else {

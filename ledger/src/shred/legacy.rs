@@ -10,6 +10,7 @@ use {
     },
     assert_matches::debug_assert_matches,
     solana_clock::Slot,
+    solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::deserialize_from_with_limit,
     solana_signature::Signature,
     static_assertions::const_assert_eq,
@@ -66,11 +67,12 @@ impl<'a> Shred<'a> for ShredData {
     {
         let mut payload = Payload::from(payload);
         let mut cursor = Cursor::new(&payload[..]);
-        let common_header: ShredCommonHeader = deserialize_from_with_limit(&mut cursor)?;
+        let common_header: ShredCommonHeader =
+            deserialize_from_with_limit(&mut cursor, PACKET_DATA_SIZE)?;
         if common_header.shred_variant != ShredVariant::LegacyData {
             return Err(Error::InvalidShredVariant);
         }
-        let data_header = deserialize_from_with_limit(&mut cursor)?;
+        let data_header = deserialize_from_with_limit(&mut cursor, PACKET_DATA_SIZE)?;
         // Shreds stored to blockstore may have trailing zeros trimmed.
         // Repair packets have nonce at the end of packet payload; see:
         // https://github.com/solana-labs/solana/pull/10109
@@ -128,11 +130,12 @@ impl<'a> Shred<'a> for ShredCode {
     {
         let mut payload = Payload::from(payload);
         let mut cursor = Cursor::new(&payload[..]);
-        let common_header: ShredCommonHeader = deserialize_from_with_limit(&mut cursor)?;
+        let common_header: ShredCommonHeader =
+            deserialize_from_with_limit(&mut cursor, PACKET_DATA_SIZE)?;
         if common_header.shred_variant != ShredVariant::LegacyCode {
             return Err(Error::InvalidShredVariant);
         }
-        let coding_header = deserialize_from_with_limit(&mut cursor)?;
+        let coding_header = deserialize_from_with_limit(&mut cursor, PACKET_DATA_SIZE)?;
         // Repair packets have nonce at the end of packet payload:
         // https://github.com/solana-labs/solana/pull/10109
         payload.truncate(Self::SIZE_OF_PAYLOAD);

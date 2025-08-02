@@ -36,6 +36,7 @@ solana-loader-v4-interface = { workspace = true, features = ["serde"] }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-packet = { workspace = true }
+solana-perf = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sbpf = { workspace = true }
