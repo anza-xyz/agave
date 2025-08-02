@@ -23,6 +23,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_svm::{
+        transaction_balances::BalanceCollector,
         transaction_processing_result::TransactionProcessingResult,
         transaction_processor::TransactionBatchProcessor,
     },
@@ -121,6 +122,7 @@ pub struct LoadAndExecuteTransactionsOutput {
     // Vector of results indicating whether a transaction was executed or could not
     // be executed. Note executed transactions can still have failed!
     pub processing_results: Vec<TransactionProcessingResult>,
+    pub balance_collector: Option<BalanceCollector>,
 }
 
 pub struct TransactionBatch<'a> {
