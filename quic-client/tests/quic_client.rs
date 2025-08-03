@@ -156,7 +156,7 @@ mod tests {
             stats: _,
             thread: t,
             max_concurrent_connections: _,
-        } = solana_streamer::nonblocking::quic::spawn_server(
+        } = solana_streamer::nonblocking::quic::spawn_server_for_testing(
             "quic_streamer_test",
             s.try_clone().unwrap(),
             &keypair,
