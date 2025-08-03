@@ -77,6 +77,7 @@ pub fn tx_loop<T: AsRef<[u8]>>(
     };
 
     let umem = socket.umem();
+    let umem_tx_capacity = umem.available();
     let Tx {
         // this is where we'll queue frames
         ring,
@@ -271,11 +272,11 @@ pub fn tx_loop<T: AsRef<[u8]>>(
     assert_eq!(batched_packets, 0);
 
     // drain the ring
-    while umem.available() < umem.capacity() || ring.available() < ring.capacity() {
+    while umem.available() < umem_tx_capacity || ring.available() < ring.capacity() {
         log::debug!(
             "draining xdp ring umem {}/{} ring {}/{}",
             umem.available(),
-            umem.capacity(),
+            umem_tx_capacity,
             ring.available(),
             ring.capacity()
         );
