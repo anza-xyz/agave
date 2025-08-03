@@ -26,14 +26,14 @@ use {
     },
 };
 
-pub fn tx_loop<T: AsRef<[u8]>>(
+pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
     dev: &NetworkDevice,
     src_port: u16,
     queue_id: QueueId,
     zero_copy: bool,
     cpu_id: usize,
-    receiver: Receiver<(Vec<SocketAddr>, T)>,
-    drop_sender: Sender<(Vec<SocketAddr>, T)>,
+    receiver: Receiver<(A, T)>,
+    drop_sender: Sender<(A, T)>,
 ) {
     log::info!(
         "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
@@ -149,7 +149,7 @@ pub fn tx_loop<T: AsRef<[u8]>>(
     loop {
         match receiver.try_recv() {
             Ok((addrs, payload)) => {
-                batched_packets += addrs.len();
+                batched_packets += addrs.as_ref().len();
                 batched_items.push((addrs, payload));
                 timeouts = 0;
                 if batched_packets < BATCH_SIZE {
@@ -180,7 +180,7 @@ pub fn tx_loop<T: AsRef<[u8]>>(
         let mut chunk_remaining = BATCH_SIZE.min(batched_packets);
 
         for (addrs, payload) in batched_items.drain(..) {
-            for addr in &addrs {
+            for addr in addrs.as_ref() {
                 // loop until we have space for the next packet
                 loop {
                     completion.sync(true);
