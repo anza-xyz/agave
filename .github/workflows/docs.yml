@@ -1,4 +1,4 @@
-name: docs
+name: Docs
 
 on:
   push:
@@ -89,15 +89,11 @@ jobs:
         run: |
           npm install
           ./build.sh
+
+      - name: Deploy
+        working-directory: docs
+        run: |
+          ./publish-docs.sh
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_SCOPE: ${{ secrets.VERCEL_SCOPE }}
-
-  error_reporting:
-    needs:
-      - check
-      - build_and_deploy
-    if: failure() && github.event_name == 'push'
-    uses: ./.github/workflows/error-reporting.yml
-    secrets:
-      WEBHOOK: ${{ secrets.SLACK_ERROR_REPORTING_WEBHOOK }}
