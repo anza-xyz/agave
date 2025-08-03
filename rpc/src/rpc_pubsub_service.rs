@@ -63,7 +63,18 @@ impl Default for PubSubConfig {
 }
 
 impl PubSubConfig {
-    pub fn default_for_tests() -> Self {
+    pub const fn default_for_test_validator() -> Self {
+        Self {
+            enable_block_subscription: false,
+            enable_vote_subscription: false,
+            max_active_subscriptions: 128,
+            queue_capacity_items: 1000,
+            queue_capacity_bytes: 16*1024*1024,
+            worker_threads: 2,
+            notification_threads: NonZeroUsize::new(2),
+        }
+    }
+    pub const fn default_for_tests() -> Self {
         Self {
             enable_block_subscription: false,
             enable_vote_subscription: false,

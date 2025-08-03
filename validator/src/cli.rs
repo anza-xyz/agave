@@ -1,5 +1,5 @@
 use {
-    crate::commands,
+    crate::{commands, commands::run::args::pub_sub_config},
     agave_snapshots::{
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, SnapshotVersion,
         DEFAULT_ARCHIVE_COMPRESSION,
@@ -590,18 +590,6 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Application profile id to use in Bigtable requests"),
         )
         .arg(
-            Arg::with_name("rpc_pubsub_enable_vote_subscription")
-                .long("rpc-pubsub-enable-vote-subscription")
-                .takes_value(false)
-                .help("Enable the unstable RPC PubSub `voteSubscribe` subscription"),
-        )
-        .arg(
-            Arg::with_name("rpc_pubsub_enable_block_subscription")
-                .long("rpc-pubsub-enable-block-subscription")
-                .takes_value(false)
-                .help("Enable the unstable RPC PubSub `blockSubscribe` subscription"),
-        )
-        .arg(
             Arg::with_name("bpf_program")
                 .long("bpf-program")
                 .value_names(&["ADDRESS_OR_KEYPAIR", "SBF_PROGRAM.SO"])
@@ -954,59 +942,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                      silently ignored",
                 ),
         )
-        .arg(
-            Arg::with_name("rpc_pubsub_max_active_subscriptions")
-            .long("rpc-pubsub-max-active-subscriptions")
-            .takes_value(true)
-            .value_name("NUMBER")
-            .validator(is_parsable::<usize>)
-            .help(
-                "The maximum number of active subscriptions that RPC PubSub will accept \
-                 across all connections.",
-            )
-        )
-        .arg(
-            Arg::with_name("rpc_pubsub_queue_capacity_items")
-                .long("rpc-pubsub-queue-capacity-items")
-                .takes_value(true)
-                .value_name("NUMBER")
-                .validator(is_parsable::<usize>)
-                .help(
-                    "The maximum number of notifications that RPC PubSub will store across all \
-                     connections.",
-                ),
-        )
-        .arg(
-            Arg::with_name("rpc_pubsub_queue_capacity_bytes")
-                .long("rpc-pubsub-queue-capacity-bytes")
-                .takes_value(true)
-                .value_name("BYTES")
-                .validator(is_parsable::<usize>)
-                .help(
-                    "The maximum total size of notifications that RPC PubSub will store across \
-                     all connections.",
-                ),
-        )
-        .arg(
-            Arg::with_name("rpc_pubsub_worker_threads")
-                .long("rpc-pubsub-worker-threads")
-                .takes_value(true)
-                .value_name("NUMBER")
-                .validator(is_parsable::<usize>)
-                .help("PubSub worker threads"),
-        )
-        .arg(
-            Arg::with_name("rpc_pubsub_notification_threads")
-                .long("rpc-pubsub-notification-threads")
-                .requires("full_rpc_api")
-                .takes_value(true)
-                .value_name("NUM_THREADS")
-                .validator(is_parsable::<usize>)
-                .help(
-                    "The maximum number of threads that RPC PubSub will use for generating \
-                     notifications. 0 will disable RPC PubSub notifications",
-                ),
-        )
+        .args(&pub_sub_config::args::<true>())
 }
 
 pub struct DefaultTestArgs {
