@@ -1,5 +1,6 @@
 use {
     crate::{
+        netlink::MacAddress,
         route::Router,
         umem::{Frame, FrameOffset},
     },
@@ -69,7 +70,7 @@ impl NetworkDevice {
         self.if_index
     }
 
-    pub fn mac_addr(&self) -> Result<[u8; 6], io::Error> {
+    pub fn mac_addr(&self) -> Result<MacAddress, io::Error> {
         let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
@@ -94,11 +95,13 @@ impl NetworkDevice {
             return Err(io::Error::last_os_error());
         }
 
-        Ok(unsafe {
-            slice::from_raw_parts(req.ifr_ifru.ifru_hwaddr.sa_data.as_ptr() as *const u8, 6)
-        }
-        .try_into()
-        .unwrap())
+        Ok(MacAddress(
+            unsafe {
+                slice::from_raw_parts(req.ifr_ifru.ifru_hwaddr.sa_data.as_ptr() as *const u8, 6)
+            }
+            .try_into()
+            .unwrap(),
+        ))
     }
 
     pub fn ipv4_addr(&self) -> Result<Ipv4Addr, io::Error> {
