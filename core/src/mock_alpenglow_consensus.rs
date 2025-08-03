@@ -36,13 +36,26 @@ use {
     trees::TupleTree,
 };
 
+// each mock voting round takes 3 slots to complete:
+// 1. prep & enable reception
+// 2. initiate voting by sending Notarize
+// 3. closing vote window and reporting stats
+//
+// This is done to ensure we can capture votes coming earlier or later than
+// our own slot start/end times.
+//
+// If the test is configured to vote every slot, it will be running at most 3
+// concurrent processes at once in a staggered fashion. Thus we need 3 worker
+// threads and 3 "state" slots at the most.
+const NUM_WORKERS: usize = 3;
+
 /// This is a placeholder that is only used for load-testing.
 /// This is not representative of the actual alpenglow implementation.
 pub(crate) struct MockAlpenglowConsensus {
     sender_thread: JoinHandle<()>,
     listener_thread: JoinHandle<()>,
-    state: Arc<[Mutex<SharedState>; 3]>, // internal state of the test
-    highest_slot: Slot,                  // highest slot we have observed so far
+    state: Arc<[Mutex<SharedState>; NUM_WORKERS]>, // internal state of the test
+    highest_slot: Slot,                            // highest slot we have observed so far
     safety_latch_engaged: bool, // will be set to true if root bank is too far behind the slot we are voting for
     should_exit: Arc<AtomicBool>,
     verify_signatures: Arc<AtomicBool>,
@@ -52,14 +65,14 @@ pub(crate) struct MockAlpenglowConsensus {
     cluster_info: Arc<ClusterInfo>,
     // control of internal threadpool that handles test timings
     slot_sender: Option<Sender<Slot>>,
-    thread_pool: [JoinHandle<()>; 3],
+    thread_pool: [JoinHandle<()>; NUM_WORKERS],
 }
 
 /// Information we hold for individual peers in the test
 struct PeerData {
     stake: Stake,
     address: SocketAddr,
-    relative_toa: [Option<Duration>; 4],
+    relative_toa: [Option<Duration>; NUM_VOTOR_TYPES],
 }
 
 /// State machine internal state for the mock alpenglow
@@ -105,7 +118,7 @@ impl SharedState {
 }
 
 fn get_state_for_slot(states: &[Mutex<SharedState>], slot: Slot) -> &Mutex<SharedState> {
-    &states[(slot % 3) as usize]
+    &states[(slot % NUM_WORKERS as u64) as usize]
 }
 
 /// This is just for test, and does not represent actual alpenglow
@@ -289,7 +302,7 @@ impl MockAlpenglowConsensus {
 
     /// Collects votes and changes states
     fn listener_thread(
-        self_state: Arc<[Mutex<SharedState>; 3]>,
+        self_state: Arc<[Mutex<SharedState>; NUM_WORKERS]>,
         should_exit: Arc<AtomicBool>,
         verify_signatures: Arc<AtomicBool>,
         my_id: Pubkey,
@@ -479,7 +492,7 @@ impl MockAlpenglowConsensus {
 
     /// Sends mock packets to everyone in the cluster
     fn sender_thread(
-        state: Arc<[Mutex<SharedState>; 3]>,
+        state: Arc<[Mutex<SharedState>; NUM_WORKERS]>,
         packet_size: Arc<AtomicU16>,
         cluster_info: Arc<ClusterInfo>,
         mut epoch_specs: EpochSpecs,
@@ -531,16 +544,7 @@ impl MockAlpenglowConsensus {
         }
     }
 
-    pub(crate) fn signal_new_slot(&mut self, slot: Slot, root_bank: &Bank) {
-        let Some(config) = get_test_config_from_account::<TestConfig>(root_bank) else {
-            return; // no config is available => test can not run
-        };
-        // copy basic parameters from the config
-        self.packet_size
-            .store(config.packet_size, Ordering::Relaxed);
-        self.verify_signatures
-            .store(config.verify_signatures, Ordering::Relaxed);
-        let interval = config.test_interval_slots as u64;
+    fn check_conditions_to_vote(&mut self, interval: u64, slot: Slot, root_slot: Slot) -> bool {
         if interval > 0 {
             if self.safety_latch_engaged {
                 datapoint_info!(
@@ -549,27 +553,27 @@ impl MockAlpenglowConsensus {
                     ("slot", slot, i64),
                 );
                 debug!("Alpenglow test disabled due to safety latch");
-                return;
+                return false;
             }
             debug!("Alpenglow test interval set to {} slots", interval);
         } else {
             self.safety_latch_engaged = false;
             debug!("Alpenglow test disabled by on-chain config");
-            return;
+            return false;
         }
 
-        // ensure we do not start process at inappropriate time
-        if slot <= self.highest_slot || slot < 3 {
+        // ensure we do not start process for a slot which is "in the past"
+        if slot <= self.highest_slot {
             trace!(
                 "Skipping AG logic for slot {slot}, current highest slot is {}",
                 self.highest_slot
             );
-            return;
+            return false;
         }
 
         // If we fall too far behind and can not root banks, engage safety latch to stop the test
         // and keep it stopped no matter what the config says
-        if root_bank.slot() < slot - MAX_TOWER_HEIGHT {
+        if root_slot + MAX_TOWER_HEIGHT < slot {
             error!(
                 "root bank is too far behind ({} vs {slot}). safety latch triggered, test is disabled",
                 self.highest_slot
@@ -581,19 +585,26 @@ impl MockAlpenglowConsensus {
                 ("safety_latch", 1, i64),
                 ("slot", slot, i64),
             );
+            return false;
+        }
+        true
+    }
+
+    pub(crate) fn signal_new_slot(&mut self, slot: Slot, root_bank: &Bank) {
+        let Some(config) = get_test_config_from_account::<TestConfig>(root_bank) else {
+            return; // no config is available => test can not run
+        };
+        // copy basic parameters from the config
+        self.packet_size
+            .store(config.packet_size, Ordering::Relaxed);
+        self.verify_signatures
+            .store(config.verify_signatures, Ordering::Relaxed);
+        let interval = config.test_interval_slots as u64;
+
+        if !self.check_conditions_to_vote(interval, slot, root_bank.slot()) {
             return;
         }
         self.highest_slot = slot;
-
-        // each test takes 3 slots to complete:
-        // 1. prep
-        // 2. initiate voting notarize
-        // 3. closing vote window and reporting stats.
-        //
-        // If we are set to vote every slot, we will be running at most 3
-        // concurrent processes at once to ensure we are voting every slot.
-        // Generally we'd be trigering some phase of the test for a slot
-        // that divides by interval.
         debug_assert_ne!(interval, 0, "we should have checked for this earlier");
         if slot % interval == 0 {
             // prep to receive next slot's votes
@@ -629,7 +640,7 @@ impl MockAlpenglowConsensus {
     fn runner(
         slot_receiver: Receiver<Slot>,
         command_sender: Sender<Command>,
-        state: Arc<[Mutex<SharedState>; 3]>,
+        state: Arc<[Mutex<SharedState>; NUM_WORKERS]>,
     ) {
         for slot in slot_receiver.iter() {
             // we get activated 1 slot in advance to capture votes coming
