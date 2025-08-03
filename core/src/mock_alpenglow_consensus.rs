@@ -33,6 +33,7 @@ use {
         thread::{self, JoinHandle},
         time::{Duration, Instant},
     },
+    trees::TupleTree,
 };
 
 /// This is a placeholder that is only used for load-testing.
@@ -116,6 +117,7 @@ enum VotorMessageType {
     Finalize,
     // In this mockup, this acts as both Finalize and FastFinalize certificate
     FinalizeCertificate,
+    // Update NUM_VOTOR_TYPES if changing this
 }
 
 impl TryFrom<u64> for VotorMessageType {
@@ -131,6 +133,7 @@ impl TryFrom<u64> for VotorMessageType {
         }
     }
 }
+const NUM_VOTOR_TYPES: usize = 4;
 
 /// Header of the mock vote packet.
 /// Actual frames on the wire may be longer as
@@ -272,7 +275,7 @@ impl MockAlpenglowConsensus {
                 PeerData {
                     stake: stake,
                     address: ag_addr,
-                    relative_toa: [None; 4],
+                    relative_toa: [None; NUM_VOTOR_TYPES],
                 },
             );
             state.total_staked += stake;
@@ -507,7 +510,7 @@ impl MockAlpenglowConsensus {
             );
 
             // prepare addresses to send the packets
-            let mut send_instructions = Vec::with_capacity(2000);
+            let mut send_instructions = Vec::with_capacity(3072); // we have ~2500 validators in testnet
             {
                 let mut state = get_state_for_slot(state.as_slice(), slot).lock().unwrap();
                 // check if our task was aborted, avoid sending if it was.
@@ -613,7 +616,7 @@ impl MockAlpenglowConsensus {
                     error!("Can not initiate mock voting, all slots are busy");
                     datapoint_info!(
                         "mock_alpenglow",
-                        ("runner_stuck", 1, i64),
+                        ("runner_stuck", 2, i64),
                         ("slot", slot, i64)
                     );
                 }
@@ -629,11 +632,13 @@ impl MockAlpenglowConsensus {
         state: Arc<[Mutex<SharedState>; 3]>,
     ) {
         for slot in slot_receiver.iter() {
+            // we get activated 1 slot in advance to capture votes coming
+            // earlier than we have finished replay
             std::thread::sleep(Duration::from_millis(400));
             trace!("Starting voting in slot {slot}");
             command_sender.send(Command::SendNotarize(slot));
-            // collect stuff from previous slot
             std::thread::sleep(Duration::from_millis(400));
+            // collect stats from the previous slot's voting
             let (peers, total_staked) = {
                 let mut lockguard = get_state_for_slot(state.as_slice(), slot).lock().unwrap();
                 // check if tasks have been aborted and do not report garbage
@@ -755,32 +760,39 @@ fn report_collected_votes(peers: HashMap<Pubkey, PeerData>, total_staked: Stake,
     );
 }
 
-/// computes stake-weighted means of interesting KPIs
-///
-/// returns: (total_voted_nodes, stake_weighted_delay, percent_collected)
+/// Computes the vote transmission KPIs for a given slot split
+/// out by votor message type. These returned KPIs are:
+/// (total messages received, stake-weighted vote delays,
+/// percent of stake we received a message from)
 fn compute_stake_weighted_means(
     peers: &HashMap<Pubkey, PeerData>,
     total_staked: u64,
-) -> ([usize; 4], [f64; 4], [f64; 4]) {
-    let mut total_voted_stake: [Stake; 4] = [0; 4];
-    let mut total_voted_nodes: [usize; 4] = [0; 4];
-    let mut total_delay_ms = [0u128; 4];
+) -> (
+    [usize; NUM_VOTOR_TYPES],
+    [f64; NUM_VOTOR_TYPES],
+    [f64; NUM_VOTOR_TYPES],
+) {
+    let mut total_voted_stake: [Stake; NUM_VOTOR_TYPES] = [0; NUM_VOTOR_TYPES];
+    let mut total_voted_nodes: [usize; NUM_VOTOR_TYPES] = [0; NUM_VOTOR_TYPES];
+    let mut total_delay_ms = [0u128; NUM_VOTOR_TYPES];
     for (pubkey, peer_data) in peers.iter() {
-        for i in 0..4 {
+        for i in 0..NUM_VOTOR_TYPES {
             let Some(rel_toa) = peer_data.relative_toa[i] else {
                 continue;
             };
             total_voted_stake[i] += peer_data.stake;
             total_voted_nodes[i] += 1;
+            // clamping the actual observed ToA to 800 ms to prevent outliers from
+            // skewing the dataset too much.
             total_delay_ms[i] +=
                 (rel_toa.as_millis().clamp(0, 800) as u128) * peer_data.stake as u128;
         }
     }
 
-    let mut stake_weighted_delay = [0f64; 4];
-    let mut percent_collected = [0f64; 4];
+    let mut stake_weighted_delay = [0f64; NUM_VOTOR_TYPES];
+    let mut percent_collected = [0f64; NUM_VOTOR_TYPES];
 
-    for i in 0..4 {
+    for i in 0..NUM_VOTOR_TYPES {
         if total_voted_stake[i] > 0 {
             stake_weighted_delay[i] = total_delay_ms[i] as f64 / total_voted_stake[i] as f64;
         }
