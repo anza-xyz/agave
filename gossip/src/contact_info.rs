@@ -1,3 +1,4 @@
+use arrayvec::ArrayVec;
 pub use solana_client::connection_cache::Protocol;
 use {
     crate::{
@@ -28,8 +29,8 @@ const DEFAULT_RPC_PUBSUB_PORT: u16 = 8900;
 
 pub const SOCKET_ADDR_UNSPECIFIED: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), /*port:*/ 0u16);
-const EMPTY_SOCKET_ADDR_CACHE: [SocketAddr; SOCKET_CACHE_SIZE] =
-    [SOCKET_ADDR_UNSPECIFIED; SOCKET_CACHE_SIZE];
+const EMPTY_SOCKET_ADDR_CACHE: [ArrayVec<SocketAddr, MAX_IP_ADDRS>; SOCKET_CACHE_SIZE] =
+    [const { ArrayVec::new_const() }; SOCKET_CACHE_SIZE];
 
 const SOCKET_TAG_GOSSIP: u8 = 0;
 const SOCKET_TAG_RPC: u8 = 2;
@@ -47,6 +48,9 @@ const SOCKET_TAG_TVU_QUIC: u8 = 11;
 const SOCKET_TAG_ALPENGLOW: u8 = 13;
 const_assert_eq!(SOCKET_CACHE_SIZE, 14);
 const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_ALPENGLOW as usize + 1usize;
+
+/// The maximum amount of IP addresses the node can advertise
+const MAX_IP_ADDRS: usize = 2;
 
 // An alias for a function that reads data from a ContactInfo entry stored in
 // the gossip CRDS table.
@@ -99,7 +103,7 @@ pub struct ContactInfo {
     extensions: Vec<Extension>,
     // Only sanitized socket-addrs can be cached!
     #[serde(skip_serializing)]
-    cache: [SocketAddr; SOCKET_CACHE_SIZE],
+    cache: [ArrayVec<SocketAddr, MAX_IP_ADDRS>; SOCKET_CACHE_SIZE],
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -150,10 +154,8 @@ macro_rules! get_socket {
     ($name:ident, $key:ident) => {
         #[inline]
         pub fn $name(&self) -> Option<SocketAddr> {
-            let socket = &self.cache[usize::from($key)];
-            (socket != &SOCKET_ADDR_UNSPECIFIED)
-                .then_some(socket)
-                .copied()
+            let socket = *self.cache[usize::from($key)].first()?;
+            (socket != SOCKET_ADDR_UNSPECIFIED).then_some(socket)
         }
     };
     ($name:ident, $udp:ident, $quic:ident) => {
@@ -163,10 +165,8 @@ macro_rules! get_socket {
                 Protocol::QUIC => $quic,
                 Protocol::UDP => $udp,
             };
-            let socket = &self.cache[usize::from(key)];
-            (socket != &SOCKET_ADDR_UNSPECIFIED)
-                .then_some(socket)
-                .copied()
+            let socket = *self.cache[usize::from(key)].first()?;
+            (socket != SOCKET_ADDR_UNSPECIFIED).then_some(socket)
         }
     };
 }
@@ -349,11 +349,16 @@ impl ContactInfo {
     }
 
     pub fn set_socket(&mut self, key: u8, socket: SocketAddr) -> Result<(), Error> {
-        sanitize_socket(&socket)?;
         self.set_sockets_internal(key, &[socket])
     }
 
     fn set_sockets_internal(&mut self, key: u8, sockets: &[SocketAddr]) -> Result<(), Error> {
+        if sockets.len() > MAX_IP_ADDRS {
+            return Err(Error::IpAddrsSaturated);
+        }
+        for socket in sockets {
+            sanitize_socket(socket)?;
+        }
         // Remove the old entry associated with this key (if any).
         self.remove_socket(key);
         for socket in sockets {
@@ -384,7 +389,7 @@ impl ContactInfo {
                 }
             }
             if let Some(entry) = self.cache.get_mut(usize::from(key)) {
-                *entry = *socket;
+                entry.push(*socket);
             }
         }
         debug_assert_matches!(sanitize_entries(&self.addrs, &self.sockets), Ok(()));
@@ -400,7 +405,7 @@ impl ContactInfo {
             }
             self.maybe_remove_addr(entry.index);
             if let Some(entry) = self.cache.get_mut(usize::from(key)) {
-                *entry = SOCKET_ADDR_UNSPECIFIED;
+                entry.clear();
             }
         }
     }
@@ -585,7 +590,9 @@ impl TryFrom<ContactInfoLite> for ContactInfo {
             };
             let socket = SocketAddr::new(addr, port);
             if sanitize_socket(&socket).is_ok() {
-                *entry = socket;
+                entry
+                    .try_push(socket)
+                    .map_err(|_| Error::IpAddrsSaturated)?;
             }
         }
         Ok(node)
@@ -858,11 +865,8 @@ mod tests {
                 assert_eq!(node.get_socket(key).ok().as_ref(), socket);
                 if usize::from(key) < SOCKET_CACHE_SIZE {
                     assert_eq!(
-                        node.cache[usize::from(key)],
-                        socket
-                            .filter(|socket| sanitize_socket(socket).is_ok())
-                            .copied()
-                            .unwrap_or(SOCKET_ADDR_UNSPECIFIED),
+                        node.cache[usize::from(key)].first(),
+                        socket.filter(|socket| sanitize_socket(socket).is_ok())
                     );
                 }
             }
