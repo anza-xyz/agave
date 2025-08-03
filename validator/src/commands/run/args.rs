@@ -1655,7 +1655,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  set,tpu-client-next is used by default.",
             ),
     )
-    .args(&pub_sub_config::args())
+    .args(&pub_sub_config::args::<false>())
 }
 
 fn validators_set(
