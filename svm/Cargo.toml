@@ -122,7 +122,7 @@ solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
-spl-token = { workspace = true }
+spl-token-interface = { workspace = true }
 test-case = { workspace = true }
 
 [lints]

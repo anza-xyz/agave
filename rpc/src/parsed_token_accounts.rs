@@ -94,10 +94,10 @@ pub(crate) fn get_mint_owner_and_additional_data(
     bank: &Bank,
     mint: &Pubkey,
 ) -> Result<(Pubkey, SplTokenAdditionalDataV2)> {
-    if mint == &spl_token::native_mint::id() {
+    if mint == &spl_token_interface::native_mint::id() {
         Ok((
-            spl_token::id(),
-            SplTokenAdditionalDataV2::with_decimals(spl_token::native_mint::DECIMALS),
+            spl_token_interface::id(),
+            SplTokenAdditionalDataV2::with_decimals(spl_token_interface::native_mint::DECIMALS),
         ))
     } else {
         let mint_account = bank.get_account(mint).ok_or_else(|| {

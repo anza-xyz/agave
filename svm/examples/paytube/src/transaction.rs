@@ -40,8 +40,8 @@ impl From<&PayTubeTransaction> for SolanaInstruction {
         if let Some(mint) = mint {
             let source_pubkey = get_associated_token_address(from, mint);
             let destination_pubkey = get_associated_token_address(to, mint);
-            return spl_token::instruction::transfer(
-                &spl_token::id(),
+            return spl_token_interface::instruction::transfer(
+                &spl_token_interface::id(),
                 &source_pubkey,
                 &destination_pubkey,
                 from,

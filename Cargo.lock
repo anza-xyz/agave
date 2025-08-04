@@ -6772,9 +6772,9 @@ dependencies = [
  "solana-vote-interface",
  "spl-generic-token",
  "spl-pod",
- "spl-token",
  "spl-token-2022",
  "spl-token-group-interface",
+ "spl-token-interface",
  "spl-token-metadata-interface",
  "thiserror 2.0.12",
  "zstd",
@@ -6849,7 +6849,7 @@ dependencies = [
  "solana-transaction-status",
  "solana-version",
  "spl-generic-token",
- "spl-token",
+ "spl-token-interface",
  "tikv-jemallocator",
 ]
 
@@ -9997,8 +9997,8 @@ dependencies = [
  "solana-vote-program",
  "spl-generic-token",
  "spl-pod",
- "spl-token",
  "spl-token-2022",
+ "spl-token-interface",
  "stream-cancel",
  "symlink",
  "test-case",
@@ -10930,7 +10930,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-type-overrides",
  "spl-generic-token",
- "spl-token",
+ "spl-token-interface",
  "test-case",
  "thiserror 2.0.12",
 ]
@@ -11215,6 +11215,8 @@ dependencies = [
  "solana-logger",
  "solana-message",
  "solana-native-token",
+ "solana-program-error",
+ "solana-program-pack",
  "solana-pubkey",
  "solana-remote-wallet",
  "solana-rpc-client",
@@ -11230,7 +11232,7 @@ dependencies = [
  "solana-transaction-status",
  "solana-version",
  "spl-associated-token-account-interface",
- "spl-token",
+ "spl-token-interface",
  "tempfile",
  "thiserror 2.0.12",
 ]
@@ -11484,10 +11486,10 @@ dependencies = [
  "solana-vote-interface",
  "spl-associated-token-account-interface",
  "spl-memo-interface",
- "spl-token",
  "spl-token-2022",
  "spl-token-confidential-transfer-proof-extraction",
  "spl-token-group-interface",
+ "spl-token-interface",
  "spl-token-metadata-interface",
  "thiserror 2.0.12",
 ]
@@ -12383,6 +12385,26 @@ dependencies = [
  "solana-program-error",
  "solana-pubkey",
  "spl-discriminator",
+ "spl-pod",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "spl-token-interface"
+version = "1.0.0"
+source = "git+https://github.com/rustopian/token?branch=split-spl-token-interface#3126dc2b4f04d7c38265ee18114c5231a5958478"
+dependencies = [
+ "arrayref",
+ "bytemuck",
+ "num-derive",
+ "num-traits",
+ "num_enum",
+ "solana-instruction",
+ "solana-program-error",
+ "solana-program-option",
+ "solana-program-pack",
+ "solana-pubkey",
+ "solana-sdk-ids",
  "spl-pod",
  "thiserror 2.0.12",
 ]

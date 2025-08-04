@@ -42,7 +42,7 @@ solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 spl-generic-token = { workspace = true }
-spl-token = { workspace = true, features = ["no-entrypoint"] }
+spl-token-interface = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }

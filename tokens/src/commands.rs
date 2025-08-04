@@ -4,7 +4,6 @@ use {
             BalancesArgs, DistributeTokensArgs, SenderStakeArgs, StakeArgs, TransactionLogArgs,
         },
         db::{self, TransactionInfo},
-        spl_token::*,
         token_display::Token,
     },
     chrono::prelude::*,
@@ -21,6 +20,7 @@ use {
     solana_instruction::Instruction,
     solana_message::Message,
     solana_native_token::{lamports_to_sol, sol_to_lamports},
+    solana_program_error::ProgramError,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
         client_error::{Error as ClientError, Result as ClientResult},
@@ -37,7 +37,7 @@ use {
     solana_transaction::Transaction,
     solana_transaction_status::TransactionStatus,
     spl_associated_token_account_interface::address::get_associated_token_address,
-    spl_token::solana_program::program_error::ProgramError,
+    spl_token_interface::build_spl_token_instructions,
     std::{
         cmp::{self},
         io,

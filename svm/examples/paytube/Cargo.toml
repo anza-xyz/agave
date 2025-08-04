@@ -38,7 +38,7 @@ solana-system-program = { workspace = true }
 solana-transaction = { workspace = true, features = ["blake3"] }
 solana-transaction-error = { workspace = true }
 spl-associated-token-account-interface = { workspace = true }
-spl-token = { workspace = true }
+spl-token-interface = { workspace = true }
 termcolor = { workspace = true }
 
 [dev-dependencies]

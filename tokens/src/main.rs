@@ -42,12 +42,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match command_args.command {
         Command::DistributeTokens(mut args) => {
-            spl_token::update_token_args(&client, &mut args.spl_token_args)?;
+            spl_token_interface::update_token_args(&client, &mut args.spl_token_args)?;
             stake::update_stake_args(&client, &mut args.stake_args)?;
             commands::process_allocations(&client, &args, exit)?;
         }
         Command::Balances(mut args) => {
-            spl_token::update_decimals(&client, &mut args.spl_token_args)?;
+            spl_token_interface::update_decimals(&client, &mut args.spl_token_args)?;
             commands::process_balances(&client, &args, exit)?;
         }
         Command::TransactionLog(args) => {

@@ -33,7 +33,7 @@ pub static PARSABLE_PROGRAM_IDS: std::sync::LazyLock<HashMap<Pubkey, ParsableAcc
         );
         m.insert(config::id(), ParsableAccount::Config);
         m.insert(system_program::id(), ParsableAccount::Nonce);
-        m.insert(spl_token::id(), ParsableAccount::SplToken);
+        m.insert(spl_token_interface::id(), ParsableAccount::SplToken);
         m.insert(spl_token_2022::id(), ParsableAccount::SplToken2022);
         m.insert(stake::id(), ParsableAccount::Stake);
         m.insert(sysvar::id(), ParsableAccount::Sysvar);

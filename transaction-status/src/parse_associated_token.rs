@@ -105,7 +105,7 @@ mod test {
         let wallet_address = Pubkey::new_unique();
         let mint = Pubkey::new_unique();
         let associated_account_address = get_associated_token_address(&wallet_address, &mint);
-        let token_program_id = spl_token::id();
+        let token_program_id = spl_token_interface::id();
         // mimic the deprecated instruction
         let mut create_ix =
             create_associated_token_account(&funder, &wallet_address, &mint, &token_program_id);
