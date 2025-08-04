@@ -8730,11 +8730,7 @@ fn test_compute_budget_program_noop() {
                     execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
                 ),
                 heap_size: 48 * 1024,
-                ..ComputeBudget::new_with_defaults(
-                    invoke_context
-                        .get_feature_set()
-                        .raise_cpi_nesting_limit_to_8
-                )
+                ..ComputeBudget::default()
             }
         );
         Ok(())
@@ -8782,11 +8778,7 @@ fn test_compute_request_instruction() {
                     execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
                 ),
                 heap_size: 48 * 1024,
-                ..ComputeBudget::new_with_defaults(
-                    invoke_context
-                        .get_feature_set()
-                        .raise_cpi_nesting_limit_to_8
-                )
+                ..ComputeBudget::default()
             }
         );
         Ok(())
@@ -8841,11 +8833,7 @@ fn test_failed_compute_request_instruction() {
             ComputeBudget {
                 compute_unit_limit: u64::from(TEST_COMPUTE_UNIT_LIMIT),
                 heap_size: 48 * 1024,
-                ..ComputeBudget::new_with_defaults(
-                    invoke_context
-                        .get_feature_set()
-                        .raise_cpi_nesting_limit_to_8
-                )
+                ..ComputeBudget::default()
             }
         );
         Ok(())

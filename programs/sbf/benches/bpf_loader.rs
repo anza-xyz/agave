@@ -80,10 +80,9 @@ macro_rules! with_mock_invoke_context {
 fn bench_program_create_executable(bencher: &mut Bencher) {
     let elf = load_program_from_file("bench_alu");
 
-    let feature_set = SVMFeatureSet::default();
     let program_runtime_environment = create_program_runtime_environment_v1(
-        &feature_set,
-        &SVMTransactionExecutionBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8),
+        &SVMFeatureSet::default(),
+        &SVMTransactionExecutionBudget::default(),
         true,
         false,
     );
@@ -107,10 +106,9 @@ fn bench_program_alu(bencher: &mut Bencher) {
     let elf = load_program_from_file("bench_alu");
     with_mock_invoke_context!(invoke_context, bpf_loader::id(), 10000001);
 
-    let feature_set = invoke_context.get_feature_set();
     let program_runtime_environment = create_program_runtime_environment_v1(
-        feature_set,
-        &SVMTransactionExecutionBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8),
+        invoke_context.get_feature_set(),
+        &SVMTransactionExecutionBudget::default(),
         true,
         false,
     );
@@ -227,12 +225,9 @@ fn bench_create_vm(bencher: &mut Bencher) {
     let direct_mapping = invoke_context
         .get_feature_set()
         .bpf_account_data_direct_mapping;
-    let raise_cpi_nesting_limit_to_8 = invoke_context
-        .get_feature_set()
-        .raise_cpi_nesting_limit_to_8;
     let program_runtime_environment = create_program_runtime_environment_v1(
         invoke_context.get_feature_set(),
-        &SVMTransactionExecutionBudget::new_with_defaults(raise_cpi_nesting_limit_to_8),
+        &SVMTransactionExecutionBudget::default(),
         true,
         false,
     );
@@ -289,10 +284,9 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
     )
     .unwrap();
 
-    let feature_set = invoke_context.get_feature_set();
     let program_runtime_environment = create_program_runtime_environment_v1(
-        feature_set,
-        &SVMTransactionExecutionBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8),
+        invoke_context.get_feature_set(),
+        &SVMTransactionExecutionBudget::default(),
         true,
         false,
     );

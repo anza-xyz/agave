@@ -792,9 +792,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         struct MockInvokeContextCallback {}
         impl InvokeContextCallback for MockInvokeContextCallback {}
 
-        let compute_budget = SVMTransactionExecutionBudget::new_with_defaults(
-            $feature_set.raise_cpi_nesting_limit_to_8,
-        );
+        let compute_budget = SVMTransactionExecutionBudget::default();
         let mut $transaction_context = TransactionContext::new(
             $transaction_accounts,
             Rent::default(),
@@ -1099,13 +1097,11 @@ mod tests {
         }
     );
 
-    #[test_case(false; "SIMD-0296 disabled")]
-    #[test_case(true; "SIMD-0296 enabled")]
-    fn test_instruction_stack_height(simd_0296_active: bool) {
-        let one_more_than_max_depth =
-            SVMTransactionExecutionBudget::new_with_defaults(simd_0296_active)
-                .max_instruction_stack_depth
-                .saturating_add(1);
+    #[test]
+    fn test_instruction_stack_height() {
+        let one_more_than_max_depth = SVMTransactionExecutionBudget::default()
+            .max_instruction_stack_depth
+            .saturating_add(1);
         let mut invoke_stack = vec![];
         let mut transaction_accounts = vec![];
         let mut instruction_accounts = vec![];

@@ -56,7 +56,7 @@ use {
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
-    agave_feature_set::{self as feature_set, raise_cpi_nesting_limit_to_8, FeatureSet},
+    agave_feature_set::{self as feature_set, FeatureSet},
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_syscalls::{
@@ -1478,13 +1478,8 @@ impl Bank {
     fn prepare_program_cache_for_upcoming_feature_set(&self) {
         let (_epoch, slot_index) = self.epoch_schedule.get_epoch_and_slot_index(self.slot);
         let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(self.epoch);
+        let compute_budget = self.compute_budget.unwrap_or_default().to_budget();
         let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
-        let compute_budget = self
-            .compute_budget
-            .unwrap_or(ComputeBudget::new_with_defaults(
-                upcoming_feature_set.is_active(&raise_cpi_nesting_limit_to_8::id()),
-            ))
-            .to_budget();
 
         // Recompile loaded programs one at a time before the next epoch hits
         let slots_in_recompilation_phase =
@@ -4106,29 +4101,19 @@ impl Bank {
             }
         }
 
-        let simd_0296_active = self
-            .feature_set
-            .is_active(&raise_cpi_nesting_limit_to_8::id());
-
         self.transaction_processor
             .configure_program_runtime_environments(
                 Some(Arc::new(
                     create_program_runtime_environment_v1(
                         &self.feature_set.runtime_features(),
-                        &self
-                            .compute_budget()
-                            .unwrap_or(ComputeBudget::new_with_defaults(simd_0296_active))
-                            .to_budget(),
+                        &self.compute_budget().unwrap_or_default().to_budget(),
                         false, /* deployment */
                         false, /* debugging_features */
                     )
                     .unwrap(),
                 )),
                 Some(Arc::new(create_program_runtime_environment_v2(
-                    &self
-                        .compute_budget()
-                        .unwrap_or(ComputeBudget::new_with_defaults(simd_0296_active))
-                        .to_budget(),
+                    &self.compute_budget().unwrap_or_default().to_budget(),
                     false, /* debugging_features */
                 ))),
             );
