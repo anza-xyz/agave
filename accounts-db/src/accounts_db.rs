@@ -255,7 +255,7 @@ pub enum StoreReclaims {
 }
 
 /// specifies how to return zero lamport accounts from a load
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoadZeroLamports {
     /// return None if loaded account has zero lamports
     None,
@@ -4573,9 +4573,7 @@ impl AccountsDb {
             if !in_write_cache {
                 let result = self.read_only_accounts_cache.load(*pubkey, slot);
                 if let Some(account) = result {
-                    if matches!(load_zero_lamports, LoadZeroLamports::None)
-                        && account.is_zero_lamport()
-                    {
+                    if load_zero_lamports == LoadZeroLamports::None && account.is_zero_lamport() {
                         return None;
                     }
                     return Some((account, slot));
@@ -4605,7 +4603,7 @@ impl AccountsDb {
         // since the cache could be flushed in between the 2 calls.
         let in_write_cache = matches!(account_accessor, LoadedAccountAccessor::Cached(_));
         let account = account_accessor.check_and_get_loaded_account_shared_data();
-        if matches!(load_zero_lamports, LoadZeroLamports::None) && account.is_zero_lamport() {
+        if load_zero_lamports == LoadZeroLamports::None && account.is_zero_lamport() {
             return None;
         }
 
