@@ -724,7 +724,7 @@ mod tests {
             name: &'static str,
         }
 
-        for stricter_abi_and_runtime_constraints in [false] {
+        for stricter_abi_and_runtime_constraints in [false, true] {
             for TestCase {
                 num_ix_accounts,
                 append_dup_account,
