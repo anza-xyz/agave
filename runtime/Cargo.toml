@@ -53,6 +53,7 @@ agave-reserved-account-keys = { workspace = true }
 agave-syscalls = { workspace = true }
 ahash = { workspace = true }
 aquamarine = { workspace = true }
+arc-swap = { workspace = true }
 arrayref = { workspace = true }
 assert_matches = { workspace = true }
 base64 = { workspace = true }
@@ -199,7 +200,9 @@ solana-runtime-transaction = { workspace = true, features = [
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true, features = ["std"] }
 solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
-solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+solana-transaction-context = { workspace = true, features = [
+    "dev-context-only-utils",
+] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 

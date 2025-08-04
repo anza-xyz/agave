@@ -7629,6 +7629,7 @@ dependencies = [
  "agave-syscalls",
  "ahash 0.8.11",
  "aquamarine",
+ "arc-swap",
  "arrayref",
  "assert_matches",
  "base64 0.22.1",
