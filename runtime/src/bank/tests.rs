@@ -1890,14 +1890,12 @@ fn test_load_and_execute_commit_transactions_fees_only() {
     // Use rent-paying fee payer to show that rent is not collected for fees
     // only transactions even when they use a rent-paying account.
     let rent_paying_fee_payer = Pubkey::new_unique();
-    bank.store_account(
-        &rent_paying_fee_payer,
-        &AccountSharedData::new(
-            genesis_config.rent.minimum_balance(0) - 1,
-            0,
-            &system_program::id(),
-        ),
+    let rent_paying_fee_payer_account = AccountSharedData::new(
+        genesis_config.rent.minimum_balance(0) - 1,
+        0,
+        &system_program::id(),
     );
+    bank.store_account(&rent_paying_fee_payer, &rent_paying_fee_payer_account);
 
     // Use nonce to show that loaded account stats also included loaded
     // nonce account size
@@ -1951,6 +1949,17 @@ fn test_load_and_execute_commit_transactions_fees_only() {
                 loaded_accounts_count: 2,
                 loaded_accounts_data_size: nonce_size as u32,
             },
+            post_accounts_states: Some(vec![
+                (
+                    rent_paying_fee_payer,
+                    bank.get_account(&rent_paying_fee_payer).unwrap()
+                ),
+                (nonce_pubkey, bank.get_account(&nonce_pubkey).unwrap())
+            ]),
+            pre_accounts_states: Some(vec![
+                (rent_paying_fee_payer, rent_paying_fee_payer_account),
+                (nonce_pubkey, nonce_account)
+            ])
         })]
     );
 }
@@ -4622,6 +4631,8 @@ fn test_pre_post_transaction_balances() {
             enable_log_recording: false,
             enable_return_data_recording: false,
             enable_transaction_balance_recording: true,
+            enable_geyser_post_accounts_states: true,
+            enable_geyser_pre_accounts_states: true,
         },
         &mut ExecuteTimings::default(),
         None,
@@ -8263,6 +8274,8 @@ fn test_tx_log_order(relax_intrabatch_account_locks: bool) {
                 enable_log_recording: true,
                 enable_return_data_recording: false,
                 enable_transaction_balance_recording: false,
+                enable_geyser_post_accounts_states: false,
+                enable_geyser_pre_accounts_states: false,
             },
             &mut ExecuteTimings::default(),
             None,
@@ -8375,6 +8388,8 @@ fn test_tx_return_data() {
                     enable_log_recording: false,
                     enable_return_data_recording: true,
                     enable_transaction_balance_recording: false,
+                    enable_geyser_pre_accounts_states: false,
+                    enable_geyser_post_accounts_states: false,
                 },
                 &mut ExecuteTimings::default(),
                 None,

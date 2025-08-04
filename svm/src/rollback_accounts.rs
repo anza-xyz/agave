@@ -134,6 +134,18 @@ impl RollbackAccounts {
         }
         total_size
     }
+    /// Fee payer account address
+    pub fn fee_payer_address(&self) -> &Pubkey {
+        match self {
+            RollbackAccounts::FeePayerOnly { fee_payer }
+            | RollbackAccounts::SameNonceAndFeePayer { nonce: fee_payer } => &fee_payer.0,
+
+            RollbackAccounts::SeparateNonceAndFeePayer {
+                nonce: _,
+                fee_payer,
+            } => &fee_payer.0,
+        }
+    }
 }
 
 #[cfg(test)]

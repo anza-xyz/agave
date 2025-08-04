@@ -131,6 +131,7 @@ use {
         account_loader::LoadedTransaction,
         account_overrides::AccountOverrides,
         program_loader::load_program_with_pubkey,
+        rollback_accounts::RollbackAccounts,
         transaction_balances::BalanceCollector,
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
@@ -3126,6 +3127,8 @@ impl Bank {
                     enable_log_recording: true,
                     enable_return_data_recording: true,
                     enable_transaction_balance_recording: false,
+                    enable_geyser_pre_accounts_states: false,
+                    enable_geyser_post_accounts_states: false,
                 },
             },
         );
@@ -3539,6 +3542,8 @@ impl Bank {
         processing_results: Vec<TransactionProcessingResult>,
         processed_counts: &ProcessedTransactionCounts,
         timings: &mut ExecuteTimings,
+        fetch_pre_accounts_states: bool,
+        fetch_post_accounts_states: bool,
     ) -> Vec<TransactionCommitResult> {
         assert!(
             !self.freeze_started(),
@@ -3650,11 +3655,17 @@ impl Bank {
             update_transaction_statuses_us,
         );
 
-        Self::create_commit_results(processing_results)
+        Self::create_commit_results(
+            processing_results,
+            fetch_pre_accounts_states,
+            fetch_post_accounts_states,
+        )
     }
 
     fn create_commit_results(
         processing_results: Vec<TransactionProcessingResult>,
+        fetch_pre_accounts_states: bool,
+        fetch_post_accounts_states: bool,
     ) -> Vec<TransactionCommitResult> {
         processing_results
             .into_iter()
@@ -3662,16 +3673,26 @@ impl Bank {
                 let processing_result = processing_result?;
                 let executed_units = processing_result.executed_units();
                 let loaded_accounts_data_size = processing_result.loaded_accounts_data_size();
-
                 match processing_result {
                     ProcessedTransaction::Executed(executed_tx) => {
                         let execution_details = executed_tx.execution_details;
                         let LoadedTransaction {
-                            accounts: loaded_accounts,
+                            accounts: mut loaded_accounts,
+                            mut pre_accounts_states,
+                            rollback_accounts,
                             fee_details,
                             ..
                         } = executed_tx.loaded_transaction;
-
+                        if let Some(x) = pre_accounts_states.as_mut() {
+                            x.iter_mut()
+                                .find(|x| &x.0 == rollback_accounts.fee_payer_address())
+                                //Safe because fee payer should always be in loaded accounts
+                                .unwrap()
+                                .1
+                                //Safe because we’re just adding back what we subtracted before.
+                                .checked_add_lamports(fee_details.total_fee())
+                                .unwrap()
+                        }
                         Ok(CommittedTransaction {
                             status: execution_details.status,
                             log_messages: execution_details.log_messages,
@@ -3683,20 +3704,71 @@ impl Bank {
                                 loaded_accounts_count: loaded_accounts.len(),
                                 loaded_accounts_data_size,
                             },
+                            pre_accounts_states,
+                            post_accounts_states: if fetch_post_accounts_states {
+                                //Mutate zero lamports accounts to default state to be in line with current Geyser Account Notification implementation
+                                //TODO! We should not touch read-only accounts here
+                                loaded_accounts.iter_mut().for_each(|(_, acc)| {
+                                    if acc.lamports() == 0 {
+                                        let epoch = acc.rent_epoch();
+                                        *acc = AccountSharedData::default();
+                                        acc.set_rent_epoch(epoch);
+                                    }
+                                });
+                                Some(loaded_accounts)
+                            } else {
+                                None
+                            },
                         })
                     }
-                    ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
-                        status: Err(fees_only_tx.load_error),
-                        log_messages: None,
-                        inner_instructions: None,
-                        return_data: None,
-                        executed_units,
-                        fee_details: fees_only_tx.fee_details,
-                        loaded_account_stats: TransactionLoadedAccountsStats {
-                            loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
-                            loaded_accounts_data_size,
-                        },
-                    }),
+                    ProcessedTransaction::FeesOnly(fees_only_tx) => {
+                        let loaded_accounts_count = fees_only_tx.rollback_accounts.count();
+                        let (pre_accounts_states, post_accounts_states) = match fees_only_tx
+                            .rollback_accounts
+                        {
+                            RollbackAccounts::FeePayerOnly { fee_payer }
+                            | RollbackAccounts::SameNonceAndFeePayer { nonce: fee_payer } => (
+                                fetch_pre_accounts_states.then(|| {
+                                    let mut pre_fee_payer = fee_payer.clone();
+                                    pre_fee_payer
+                                        .1
+                                        .checked_add_lamports(fees_only_tx.fee_details.total_fee())
+                                        //Safe because we’re just adding back what we subtracted before.
+                                        .unwrap();
+                                    vec![pre_fee_payer]
+                                }),
+                                fetch_post_accounts_states.then(|| vec![fee_payer]),
+                            ),
+
+                            RollbackAccounts::SeparateNonceAndFeePayer { nonce, fee_payer } => (
+                                fetch_pre_accounts_states.then(|| {
+                                    let mut pre_fee_payer = fee_payer.clone();
+                                    pre_fee_payer
+                                        .1
+                                        .checked_add_lamports(fees_only_tx.fee_details.total_fee())
+                                        //Safe because we’re just adding back what we subtracted before.
+                                        .unwrap();
+                                    vec![pre_fee_payer, nonce.clone()]
+                                }),
+                                fetch_post_accounts_states.then(|| vec![fee_payer, nonce]),
+                            ),
+                        };
+
+                        Ok(CommittedTransaction {
+                            status: Err(fees_only_tx.load_error),
+                            log_messages: None,
+                            inner_instructions: None,
+                            return_data: None,
+                            executed_units,
+                            fee_details: fees_only_tx.fee_details,
+                            loaded_account_stats: TransactionLoadedAccountsStats {
+                                loaded_accounts_count,
+                                loaded_accounts_data_size,
+                            },
+                            post_accounts_states,
+                            pre_accounts_states,
+                        })
+                    }
                 }
             })
             .collect()
@@ -3816,6 +3888,8 @@ impl Bank {
             processing_results,
             &processed_counts,
             timings,
+            recording_config.enable_geyser_pre_accounts_states,
+            recording_config.enable_geyser_post_accounts_states,
         );
         drop(freeze_lock);
         Ok((commit_results, balance_collector))
@@ -3844,6 +3918,8 @@ impl Bank {
                 enable_log_recording: true,
                 enable_return_data_recording: true,
                 enable_transaction_balance_recording: false,
+                enable_geyser_pre_accounts_states: false,
+                enable_geyser_post_accounts_states: false,
             },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),

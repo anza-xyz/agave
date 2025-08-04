@@ -3,8 +3,10 @@
 /// In addition, the dynamic library must export a "C" function _create_plugin which
 /// creates the implementation of the plugin.
 use {
+    solana_account::AccountSharedData,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
+    solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
@@ -179,6 +181,12 @@ pub struct ReplicaTransactionInfoV3<'a> {
 
     /// The transaction's index in the block
     pub index: usize,
+
+    /// States of accounts that were involved in the transaction before transaction execution
+    pub pre_accounts_states: &'a [(Pubkey, AccountSharedData)],
+
+    /// States of accounts that were involved in the transaction after transaction execution
+    pub post_accounts_states: &'a [(Pubkey, AccountSharedData)],
 }
 
 /// A wrapper to future-proof ReplicaTransactionInfo handling.

@@ -1,7 +1,9 @@
 use {
     crate::transaction_execution_result::TransactionLoadedAccountsStats,
-    solana_fee_structure::FeeDetails, solana_message::inner_instruction::InnerInstructionsList,
-    solana_transaction_context::TransactionReturnData, solana_transaction_error::TransactionResult,
+    solana_fee_structure::FeeDetails,
+    solana_message::inner_instruction::InnerInstructionsList,
+    solana_transaction_context::{TransactionAccount, TransactionReturnData},
+    solana_transaction_error::TransactionResult,
 };
 
 pub type TransactionCommitResult = TransactionResult<CommittedTransaction>;
@@ -16,6 +18,10 @@ pub struct CommittedTransaction {
     pub executed_units: u64,
     pub fee_details: FeeDetails,
     pub loaded_account_stats: TransactionLoadedAccountsStats,
+    ///This is None only if no Geyser plugins are detected.
+    pub pre_accounts_states: Option<Vec<TransactionAccount>>,
+    ///This is None only if no Geyser plugins are detected.
+    pub post_accounts_states: Option<Vec<TransactionAccount>>,
 }
 
 pub trait TransactionCommitResultExtensions {

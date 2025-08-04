@@ -73,6 +73,8 @@ impl Committer {
             processing_results,
             processed_counts,
             &mut execute_and_commit_timings.execute_timings,
+            self.transaction_status_sender_enabled(),
+            self.transaction_status_sender_enabled(),
         ));
         execute_and_commit_timings.commit_us = commit_time_us;
 
