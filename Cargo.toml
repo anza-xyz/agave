@@ -140,7 +140,7 @@ members = [
     "zk-token-sdk",
 ]
 
-exclude = ["programs/sbf", "svm/examples", "svm/tests/example-programs"]
+exclude = ["programs/sbf", "svm/tests/example-programs"]
 
 resolver = "2"
 
