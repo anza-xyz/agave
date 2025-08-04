@@ -4203,19 +4203,20 @@ impl Bank {
         &self,
         pubkey: &Pubkey,
     ) -> Option<AccountSharedData> {
-        self.load_account_with(pubkey, |_| false)
+        self.load_account_with(pubkey, false)
             .map(|(acc, _slot)| acc)
     }
 
     fn load_account_with(
         &self,
         pubkey: &Pubkey,
-        callback: impl for<'local> Fn(&'local AccountSharedData) -> bool,
+        should_put_in_read_cache: bool,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.rc
-            .accounts
-            .accounts_db
-            .load_account_with(&self.ancestors, pubkey, callback)
+        self.rc.accounts.accounts_db.load_account_with(
+            &self.ancestors,
+            pubkey,
+            should_put_in_read_cache,
+        )
     }
 
     // Hi! leaky abstraction here....

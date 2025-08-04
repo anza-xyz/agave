@@ -4408,16 +4408,13 @@ impl AccountsDb {
 
     /// Load account with `pubkey` and maybe put into read cache.
     ///
-    /// If the account is not already cached, invoke `should_put_in_read_cache_fn`.
-    /// The caller can inspect the account and indicate if it should be put into the read cache or not.
-    ///
     /// Return the account and the slot when the account was last stored.
     /// Return None for ZeroLamport accounts.
     pub fn load_account_with(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
-        should_put_in_read_cache_fn: impl Fn(&AccountSharedData) -> bool,
+        should_put_in_read_cache: bool,
     ) -> Option<(AccountSharedData, Slot)> {
         let (slot, storage_location, _maybe_account_accessor) =
             self.read_index_for_accessor_or_load_slow(ancestors, pubkey, None, false)?;
@@ -4451,7 +4448,7 @@ impl AccountsDb {
             return None;
         }
 
-        if !in_write_cache && should_put_in_read_cache_fn(&account) {
+        if !in_write_cache && should_put_in_read_cache {
             /*
             We show this store into the read-only cache for account 'A' and future loads of 'A' from the read-only cache are
             safe/reflect 'A''s latest state on this fork.
