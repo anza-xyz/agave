@@ -3,6 +3,7 @@ use solana_hash::Hash;
 use {
     crate::{
         bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
+        rent_collector::RentCollector,
         snapshot_hash::SnapshotHash,
     },
     solana_accounts_db::accounts_db::AccountStorageEntry,

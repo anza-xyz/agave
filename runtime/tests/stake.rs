@@ -150,7 +150,7 @@ fn test_stake_create_and_split_single_signature() {
     let authorized = Authorized::auto(&staker_pubkey);
 
     let lamports = {
-        let rent = bank.rent();
+        let rent = &bank.rent_collector().rent;
         let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
         let minimum_delegation = solana_stake_program::get_minimum_delegation(
             bank.feature_set
@@ -225,7 +225,7 @@ fn test_stake_create_and_split_to_existing_system_account() {
     let authorized = Authorized::auto(&staker_pubkey);
 
     let lamports = {
-        let rent = bank.rent();
+        let rent = &bank.rent_collector().rent;
         let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
         let minimum_delegation = solana_stake_program::get_minimum_delegation(
             bank.feature_set
@@ -311,7 +311,7 @@ fn test_stake_account_lifetime() {
     let bank_client = BankClient::new_shared(bank.clone());
 
     let (vote_balance, stake_rent_exempt_reserve, stake_minimum_delegation) = {
-        let rent = bank.rent();
+        let rent = &bank.rent_collector().rent;
         (
             rent.minimum_balance(VoteStateV3::size_of()),
             rent.minimum_balance(StakeStateV2::size_of()),
@@ -631,7 +631,7 @@ fn test_create_stake_account_from_seed() {
 
     let authorized = Authorized::auto(&mint_pubkey);
     let (balance, delegation) = {
-        let rent = bank.rent();
+        let rent = &bank.rent_collector().rent;
         let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
         let minimum_delegation = solana_stake_program::get_minimum_delegation(
             bank.feature_set

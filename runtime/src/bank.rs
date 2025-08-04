@@ -113,7 +113,6 @@ use {
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
     },
     solana_pubkey::Pubkey,
-    solana_rent::Rent,
     solana_reward_info::RewardInfo,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
@@ -467,7 +466,7 @@ pub struct BankFieldsToSerialize {
     pub collector_id: Pubkey,
     pub collector_fees: u64,
     pub fee_rate_governor: FeeRateGovernor,
-    pub(crate) rent_collector: RentCollector,
+    pub rent_collector: RentCollector,
     pub epoch_schedule: EpochSchedule,
     pub inflation: Inflation,
     pub stakes: Stakes<StakeAccount<Delegation>>,
@@ -4950,9 +4949,9 @@ impl Bank {
         *self.inflation.read().unwrap()
     }
 
-    /// Return the rent for this Bank
-    pub fn rent(&self) -> &Rent {
-        &self.rent_collector.rent
+    /// Return the rent collector for this Bank
+    pub fn rent_collector(&self) -> &RentCollector {
+        &self.rent_collector
     }
 
     /// Return the total capitalization of the Bank

@@ -854,7 +854,7 @@ where
         reconstructed_accounts_db_info.accounts_data_len,
     );
 
-    info!("rent: {:?}", bank.rent());
+    info!("rent_collector: {:?}", bank.rent_collector());
     Ok((
         bank,
         ReconstructedBankInfo {

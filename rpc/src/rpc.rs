@@ -6407,7 +6407,7 @@ pub mod tests {
         let to_pubkey = to.pubkey();
 
         let space = 0;
-        let lamports = bank.rent().minimum_balance(space);
+        let lamports = bank.rent_collector().rent.minimum_balance(space);
         let owner_pubkey = Pubkey::new_unique();
 
         let instruction = TestBuiltinEntrypoint::instruction(

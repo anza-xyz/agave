@@ -5,7 +5,7 @@ use {
 
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Clone, Debug, PartialEq, serde_derive::Deserialize, serde_derive::Serialize)]
-pub(crate) struct RentCollector {
+pub struct RentCollector {
     pub epoch: Epoch,
     pub epoch_schedule: EpochSchedule,
     pub slots_per_year: f64,
