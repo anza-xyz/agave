@@ -915,7 +915,7 @@ mod tests {
 
         let balance = {
             let bank = bank_forks.read().unwrap().working_bank();
-            let rent = &bank.rent_collector().rent;
+            let rent = bank.rent();
             rent.minimum_balance(StakeStateV2::size_of())
         };
 
@@ -969,7 +969,7 @@ mod tests {
 
         let balance = {
             let bank = bank_forks.read().unwrap().working_bank();
-            let rent = &bank.rent_collector().rent;
+            let rent = bank.rent();
             rent.minimum_balance(0)
         };
         let tx =

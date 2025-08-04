@@ -3101,7 +3101,7 @@ fn test_bank_cloned_stake_delegations() {
                                             // to have a stake delegation
 
     let (vote_balance, stake_balance) = {
-        let rent = &bank.rent_collector().rent;
+        let rent = bank.rent();
         let vote_rent_exempt_reserve = rent.minimum_balance(VoteState::size_of());
         let stake_rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
         let minimum_delegation = solana_stake_program::get_minimum_delegation(
@@ -10635,8 +10635,7 @@ fn test_cap_accounts_data_allocations_per_transaction() {
         let instruction = system_instruction::create_account(
             &mint_keypair.pubkey(),
             &keypair.pubkey(),
-            bank.rent_collector()
-                .rent
+            bank.rent()
                 .minimum_balance(MAX_PERMITTED_DATA_LENGTH as usize),
             MAX_PERMITTED_DATA_LENGTH,
             &solana_system_interface::program::id(),

@@ -16,7 +16,6 @@ use {
 mod compare;
 pub use compare::*;
 
-/// This struct packages up fields to send to SnapshotPackagerService
 pub struct SnapshotPackage {
     pub snapshot_kind: SnapshotKind,
     pub slot: Slot,
