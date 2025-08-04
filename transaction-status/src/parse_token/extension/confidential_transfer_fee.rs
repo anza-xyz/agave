@@ -1,6 +1,6 @@
 use {
     super::*,
-    spl_token_2022::{
+    spl_token_2022_interface::{
         extension::confidential_transfer_fee::instruction::*,
         instruction::{decode_instruction_data, decode_instruction_type},
         solana_zk_sdk::encryption::pod::elgamal::PodElGamalPubkey,
@@ -212,7 +212,7 @@ mod test {
         solana_instruction::{AccountMeta, Instruction},
         solana_message::Message,
         solana_pubkey::Pubkey,
-        spl_token_2022::{
+        spl_token_2022_interface::{
             extension::confidential_transfer_fee::instruction::{
                 inner_withdraw_withheld_tokens_from_accounts,
                 inner_withdraw_withheld_tokens_from_mint,
@@ -222,7 +222,7 @@ mod test {
                 zk_elgamal_proof_program::proof_data::CiphertextCiphertextEqualityProofData,
             },
         },
-        spl_token_confidential_transfer_proof_extraction::instruction::{ProofData, ProofLocation},
+        spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation,
         std::num::NonZero,
     };
 
@@ -244,16 +244,12 @@ mod test {
         for location in [
             ProofLocation::InstructionOffset(
                 NonZero::new(1).unwrap(),
-                ProofData::InstructionData(&CiphertextCiphertextEqualityProofData::zeroed()),
-            ),
-            ProofLocation::InstructionOffset(
-                NonZero::new(1).unwrap(),
-                ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                &CiphertextCiphertextEqualityProofData::zeroed(),
             ),
             ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
         ] {
             let instruction = inner_withdraw_withheld_tokens_from_accounts(
-                &spl_token_2022::id(),
+                &spl_token_2022_interface::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 &PodAeCiphertext::default(),
@@ -272,16 +268,12 @@ mod test {
         for location in [
             ProofLocation::InstructionOffset(
                 NonZero::new(1).unwrap(),
-                ProofData::InstructionData(&CiphertextCiphertextEqualityProofData::zeroed()),
-            ),
-            ProofLocation::InstructionOffset(
-                NonZero::new(1).unwrap(),
-                ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                &CiphertextCiphertextEqualityProofData::zeroed(),
             ),
             ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
         ] {
             let instruction = inner_withdraw_withheld_tokens_from_mint(
-                &spl_token_2022::id(),
+                &spl_token_2022_interface::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 &PodAeCiphertext::default(),

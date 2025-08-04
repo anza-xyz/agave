@@ -55,6 +55,6 @@ solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
-spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
+spl-token-2022-interface = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["codec", "compat"] }

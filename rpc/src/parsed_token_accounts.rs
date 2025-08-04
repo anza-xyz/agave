@@ -11,7 +11,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc_client_api::response::RpcKeyedAccount,
     solana_runtime::bank::Bank,
-    spl_token_2022::{
+    spl_token_2022_interface::{
         extension::{
             interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,
             BaseStateWithExtensions, StateWithExtensions,

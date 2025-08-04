@@ -567,8 +567,8 @@ spl-generic-token = "1.0.1"
 spl-memo = "6.0.0"
 spl-pod = "0.5.1"
 spl-token = "8.0.0"
-spl-token-2022 = "8.0.1"
-spl-token-confidential-transfer-proof-extraction = "0.3.0"
+spl-token-2022-interface = "1.0.0"
+spl-token-confidential-transfer-proof-extraction = "0.4.0"
 spl-token-group-interface = "0.6.0"
 spl-token-metadata-interface = "0.7.0"
 static_assertions = "1.1.0"
@@ -648,7 +648,7 @@ crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d
 #  * spl-memo
 #  * spl-pod
 #  * spl-token
-#  * spl-token-2022
+#  * spl-token-2022-interface
 #  * spl-token-metadata-interface
 #
 # They, in turn, depend on a number of crates that we also include directly
