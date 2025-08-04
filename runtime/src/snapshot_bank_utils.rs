@@ -24,7 +24,7 @@ use {
         },
         snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
-        snapshot_package::{AccountsPackage, AccountsPackageKind, SnapshotKind, SnapshotPackage},
+        snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::{
             self, deserialize_snapshot_data_file, get_highest_bank_snapshot_post,
             get_highest_full_snapshot_archive_info, get_highest_incremental_snapshot_archive_info,
@@ -788,15 +788,12 @@ fn bank_to_full_snapshot_archive_with(
     bank.force_flush_accounts_cache();
     bank.clean_accounts();
 
-    let snapshot_storages = bank.get_snapshot_storages(None);
-    let status_cache_slot_deltas = bank.status_cache.read().unwrap().root_slot_deltas();
-    let accounts_package = AccountsPackage::new_for_snapshot(
-        AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
+    let snapshot_package = SnapshotPackage::new(
+        SnapshotKind::FullSnapshot,
         bank,
-        snapshot_storages,
-        status_cache_slot_deltas,
+        bank.get_snapshot_storages(None),
+        bank.status_cache.read().unwrap().root_slot_deltas(),
     );
-    let snapshot_package = SnapshotPackage::new(accounts_package);
 
     let snapshot_config = SnapshotConfig {
         full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
@@ -846,15 +843,12 @@ pub fn bank_to_incremental_snapshot_archive(
     bank.force_flush_accounts_cache();
     bank.clean_accounts();
 
-    let snapshot_storages = bank.get_snapshot_storages(Some(full_snapshot_slot));
-    let status_cache_slot_deltas = bank.status_cache.read().unwrap().root_slot_deltas();
-    let accounts_package = AccountsPackage::new_for_snapshot(
-        AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(full_snapshot_slot)),
+    let snapshot_package = SnapshotPackage::new(
+        SnapshotKind::IncrementalSnapshot(full_snapshot_slot),
         bank,
-        snapshot_storages,
-        status_cache_slot_deltas,
+        bank.get_snapshot_storages(Some(full_snapshot_slot)),
+        bank.status_cache.read().unwrap().root_slot_deltas(),
     );
-    let snapshot_package = SnapshotPackage::new(accounts_package);
 
     // Note: Since the snapshot_storages above are *only* the incremental storages,
     // this bank snapshot *cannot* be used by fastboot.
