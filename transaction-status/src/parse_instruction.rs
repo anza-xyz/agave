@@ -33,8 +33,8 @@ static PARSABLE_PROGRAM_IDS: std::sync::LazyLock<HashMap<Pubkey, ParsableProgram
                 spl_associated_token_account_interface::program::id(),
                 ParsableProgram::SplAssociatedTokenAccount,
             ),
-            (spl_memo::v1::id(), ParsableProgram::SplMemo),
-            (spl_memo::id(), ParsableProgram::SplMemo),
+            (spl_memo_interface::v1::id(), ParsableProgram::SplMemo),
+            (spl_memo_interface::v3::id(), ParsableProgram::SplMemo),
             (solana_sdk_ids::bpf_loader::id(), ParsableProgram::BpfLoader),
             (
                 solana_sdk_ids::bpf_loader_upgradeable::id(),
@@ -164,19 +164,31 @@ mod test {
             data: vec![240, 159, 166, 150],
         };
         assert_eq!(
-            parse(&spl_memo::v1::id(), &memo_instruction, &no_keys, None).unwrap(),
+            parse(
+                &spl_memo_interface::v1::id(),
+                &memo_instruction,
+                &no_keys,
+                None
+            )
+            .unwrap(),
             ParsedInstruction {
                 program: "spl-memo".to_string(),
-                program_id: spl_memo::v1::id().to_string(),
+                program_id: spl_memo_interface::v1::id().to_string(),
                 parsed: json!("🦖"),
                 stack_height: None,
             }
         );
         assert_eq!(
-            parse(&spl_memo::id(), &memo_instruction, &no_keys, Some(1)).unwrap(),
+            parse(
+                &spl_memo_interface::v3::id(),
+                &memo_instruction,
+                &no_keys,
+                Some(1)
+            )
+            .unwrap(),
             ParsedInstruction {
                 program: "spl-memo".to_string(),
-                program_id: spl_memo::id().to_string(),
+                program_id: spl_memo_interface::v3::id().to_string(),
                 parsed: json!("🦖"),
                 stack_height: Some(1),
             }

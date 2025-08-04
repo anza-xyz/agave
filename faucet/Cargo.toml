@@ -43,6 +43,6 @@ solana-system-interface = "=1.0"
 solana-system-transaction = "=2.2.1"
 solana-transaction = "=2.2.3"
 solana-version = { workspace = true }
-spl-memo = { version = "=6.0.0", features = ["no-entrypoint"] }
+spl-memo-interface = { version = "=1.0.0" }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

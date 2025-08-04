@@ -48,7 +48,7 @@ solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
 solana-vote-program = { workspace = true }
-spl-memo = { workspace = true, features = ["no-entrypoint"] }
+spl-memo-interface = { workspace = true }
 
 [dev-dependencies]
 ed25519-dalek = { workspace = true }

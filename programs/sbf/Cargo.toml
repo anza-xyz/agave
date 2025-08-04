@@ -261,9 +261,9 @@ name = "bpf_loader"
 [patch.crates-io]
 # We include the following crates as our dependencies from crates.io:
 #
-#  * spl-associated-token-account
+#  * spl-associated-token-account-interface
 #  * spl-instruction-padding
-#  * spl-memo
+#  * spl-memo-interface
 #  * spl-pod
 #  * spl-token
 #  * spl-token-2022

@@ -5892,7 +5892,7 @@ dependencies = [
  "solana-transaction-status",
  "solana-transaction-status-client-types",
  "solana-vote-program",
- "spl-memo",
+ "spl-memo-interface",
 ]
 
 [[package]]
@@ -6463,7 +6463,7 @@ dependencies = [
  "solana-system-transaction",
  "solana-transaction",
  "solana-version",
- "spl-memo",
+ "spl-memo-interface",
  "thiserror 2.0.12",
  "tokio",
 ]
@@ -9566,7 +9566,7 @@ dependencies = [
  "solana-transaction-status-client-types",
  "solana-vote-interface",
  "spl-associated-token-account-interface",
- "spl-memo",
+ "spl-memo-interface",
  "spl-token",
  "spl-token-2022",
  "spl-token-group-interface",
@@ -10086,6 +10086,16 @@ dependencies = [
  "solana-msg",
  "solana-program-entrypoint",
  "solana-program-error",
+ "solana-pubkey",
+]
+
+[[package]]
+name = "spl-memo-interface"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24af0730130fea732616be9425fe8eb77782e2aab2f0e76837b6a66aaba96c6b"
+dependencies = [
+ "solana-instruction",
  "solana-pubkey",
 ]
 

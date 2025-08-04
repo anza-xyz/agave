@@ -207,7 +207,7 @@ solana-unified-scheduler-pool = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
 solana-vote = { workspace = true, features = ["dev-context-only-utils"] }
-spl-memo = { workspace = true, features = ["no-entrypoint"] }
+spl-memo-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 

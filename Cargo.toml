@@ -564,7 +564,7 @@ solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=
 solana-zk-token-sdk = { path = "zk-token-sdk", version = "=3.0.0" }
 spl-associated-token-account-interface = "1.0.0"
 spl-generic-token = "1.0.1"
-spl-memo = "6.0.0"
+spl-memo-interface = "1.0.0"
 spl-pod = "0.5.1"
 spl-token = "8.0.0"
 spl-token-2022 = "8.0.1"
@@ -643,9 +643,9 @@ crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d
 
 # We include the following crates as our dependencies above from crates.io:
 #
-#  * spl-associated-token-account
+#  * spl-associated-token-account-interface
 #  * spl-instruction-padding
-#  * spl-memo
+#  * spl-memo-interface
 #  * spl-pod
 #  * spl-token
 #  * spl-token-2022
