@@ -70,6 +70,7 @@ solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+static_assertions = { workspace = true }
 test-case = { workspace = true }
 
 [lints]

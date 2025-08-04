@@ -15,6 +15,13 @@ use {
 
 const MAX_CPI_INSTRUCTION_DATA_LEN: u64 = 10 * 1024;
 const MAX_CPI_INSTRUCTION_ACCOUNTS: u8 = u8::MAX;
+
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    (MAX_CPI_INSTRUCTION_ACCOUNTS as usize).saturating_add(1),
+    solana_transaction_context::MAX_ACCOUNTS_PER_TRANSACTION,
+);
+
 const MAX_CPI_ACCOUNT_INFOS: usize = 128;
 
 fn check_account_info_pointer(

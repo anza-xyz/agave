@@ -385,6 +385,7 @@ dependencies = [
  "solana-timings",
  "solana-transaction-context",
  "solana-type-overrides",
+ "static_assertions",
  "test-case",
  "thiserror 2.0.12",
 ]
