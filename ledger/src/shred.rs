@@ -955,7 +955,6 @@ mod tests {
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
         rayon::ThreadPoolBuilder,
         solana_keypair::keypair_from_seed,
-        solana_signer::Signer,
         std::io::{Cursor, Seek, SeekFrom, Write},
         test_case::{test_case, test_matrix},
     };
@@ -967,10 +966,6 @@ mod tests {
     const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_VARIANT;
     const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
     const OFFSET_OF_SHRED_VARIANT: usize = SIZE_OF_SIGNATURE;
-
-    fn bs58_decode<T: AsRef<[u8]>>(data: T) -> Vec<u8> {
-        bs58::decode(data).into_vec().unwrap()
-    }
 
     pub(super) fn make_merkle_shreds_for_tests<R: Rng>(
         rng: &mut R,
@@ -1099,17 +1094,13 @@ mod tests {
 
     #[test]
     fn test_invalid_parent_offset() {
-        let shred = Shred::new_from_data(10, 0, 1000, &[1, 2, 3], ShredFlags::empty(), 0, 1, 0);
+        let keypair = Keypair::new();
+        let shred = Shredder::single_shred_for_tests(10, &keypair);
+        assert_matches!(shred.parent(), Ok(9));
         let mut packet = Packet::default();
         shred.copy_to_packet(&mut packet);
+        wire::corrupt_and_set_parent_offset(&mut packet.buffer_mut(), 1000);
         let shred_res = Shred::new_from_serialized_shred(packet.data(..).unwrap().to_vec());
-        assert_matches!(
-            shred.parent(),
-            Err(Error::InvalidParentOffset {
-                slot: 10,
-                parent_offset: 1000
-            })
-        );
         assert_matches!(
             shred_res,
             Err(Error::InvalidParentOffset {
@@ -1571,80 +1562,52 @@ mod tests {
     }
 
     #[test]
-    fn test_serde_compat_shred_data() {
-        const SEED: &str = "6qG9NGWEtoTugS4Zgs46u8zTccEJuRHtrNMiUayLHCxt";
-        const PAYLOAD: &str = "hNX8YgJCQwSFGJkZ6qZLiepwPjpctC9UCsMD1SNNQurBXv\
-        rm7KKfLmPRMM9CpWHt6MsJuEWpDXLGwH9qdziJzGKhBMfYH63avcchjdaUiMqzVip7cUD\
-        kqZ9zZJMrHCCUDnxxKMupsJWKroUSjKeo7hrug2KfHah85VckXpRna4R9QpH7tf2WVBTD\
-        M4m3EerctsEQs8eZaTRxzTVkhtJYdNf74KZbH58dc3Yn2qUxF1mexWoPS6L5oZBatx";
-        let mut rng = {
-            let seed = <[u8; 32]>::try_from(bs58_decode(SEED)).unwrap();
-            ChaChaRng::from_seed(seed)
-        };
-        let mut data = [0u8; legacy::ShredData::CAPACITY];
-        rng.fill(&mut data[..]);
-
-        let mut seed = [0u8; Keypair::SECRET_KEY_LENGTH];
-        rng.fill(&mut seed[..]);
-        let keypair = keypair_from_seed(&seed).unwrap();
-        let mut shred = Shred::new_from_data(
-            141939602, // slot
-            28685,     // index
-            36390,     // parent_offset
-            &data,     // data
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            37,    // reference_tick
-            45189, // version
-            28657, // fec_set_index
-        );
-        shred.sign(&keypair);
-        assert!(shred.verify(&keypair.pubkey()));
-        assert_matches!(shred.sanitize(), Ok(()));
-        let mut payload = bs58_decode(PAYLOAD);
-        payload.extend({
-            let skip = payload.len() - SIZE_OF_DATA_SHRED_HEADERS;
-            data.iter().skip(skip).copied()
-        });
-        let mut packet = Packet::default();
-        packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
-        packet.meta_mut().size = payload.len();
-        assert_eq!(shred.bytes_to_store(), payload);
-        assert_eq!(shred, Shred::new_from_serialized_shred(payload).unwrap());
-        verify_shred_layout(&shred, &packet);
-    }
-
-    #[test]
     fn test_serde_compat_shred_data_empty() {
-        const SEED: &str = "E3M5hm8yAEB7iPhQxFypAkLqxNeZCTuGBDMa8Jdrghoo";
-        const PAYLOAD: &str = "nRNFVBEsV9FEM5KfmsCXJsgELRSkCV55drTavdy5aZPnsp\
-        B8WvsgY99ZuNHDnwkrqe6Lx7ARVmercwugR5HwDcLA9ivKMypk9PNucDPLs67TXWy6k9R\
-        ozKmy";
+        // bytes of a serialized merkle data shred
+        const PAYLOAD: &str = "HV7qJBe3jCM8aRd4HAXJnJzyDvNYDYsPjjaaK2tTFTxJU2Qj\
+        7i87e45TzCg2Vv4rrcBznfs8212svH8aXsM2WYDPst43KyDz99FesBZ8aasxhkUgHGg3Smc\
+        Pa7opSARcYBpQAG2UHRYFmoPsj3hXADsX5C8JBM3jyHLtbQ78CH11J2dh7J4ps8JxCcUsq7\
+        E7PVs7NgFku54c8gBuhBuAMykvvSyhGRjyXCL17feubvA8WQyMJz27eXk8hE6LGs98ucsV9\
+        pScMuXVbAL4rT2cW9gN77QP4mBohJ8miWbMYbi7eLxiXJ9nA6i7XZd32GKscf3Ln8PK7NFT\
+        JpKxinptw2vd3MuVQRQjNuyZLTEjJSiaxoR1mhSKet27PCTkPWRAxPfMCvLNY2mtdixnFfk\
+        BdKj1nrwHcQYqNnKHjg3axRhx58QQ7VX5LSNGRtLByZRFMq9wCy7zz7HiMKvMZzddqixHcx\
+        EFeaM6YFh2sfmW3AKz4pS9s6XL3mAD9MtFvRJUXupNK9P3XtA7BGU8Z8AyYnVi4wxfaWoSd\
+        22nhDmMuHTRNHgUDxCEPHfE5enuR3PG4q1DGpVyV9rM6678qFG3cUKdTbJw85uFAkedEhAn\
+        RsU5u7H2DUTMrZ3AsLGuRmRoLZdxcFGe9GJmWY3WYEBJsdrJUVTnQVDsgvcc7HiFCoGBmGG\
+        KPS19ncA7Ynie1iokXCjwZNaQf3fpUMksGzkqjfYiFfGQDMNTsPUdcHFAae5Nmh3p8bduG6\
+        TNHn3A4LoSMX8wwM6Sn4XL3fFLHrkWTV8CJfg67AoqpzgGiWQNdeK2HRABGRbamUxXSzWhA\
+        tJ7yEPrh9tKTX851mpPjrFHxpu68xDL3t5nd18mtALJ5n5gmTsXMwUxpt9GfGrZyHXteZfH\
+        jaMLmSqvmDAFH1xADU2SZucRDbAWsuaWUMwaPXCNtiozgJ6uRnyxmwBhikChgtxDSZmRALA\
+        uYwEnCE8uj4NWvryeVpzfy6m9tqYutCkRsbNodaGmBZ2KGtg4iaQjj4iCK9jKKAxpYVnxbr\
+        n2jtFezUTsR9dqFh94c9Aa4NdPgkr19hcqabqBZyzan3xP3Jvs78Z5uqkSUVtXP3t3b5ozd\
+        qjYRMkgwsgGpNqcmBLGANiPXrQ8SseoNsCs3Xtv6Vf7oGg1St3teXSrtWMbsouK3uF8DPgn\
+        S14yUtrs8cyXX53QMCEuY1wKcoQZwSWqL86FTvZUA3vT6SYvjVKYxAXwNP1ouKdwtePfwdH\
+        wdM37RT9SMht4BLEXutSCcBys1K3pTWWwqGB87A26apuG1TiqeEugv1FrjprEKyt84S3FgM\
+        5eJfdN5NDArvw9bBR81UoYmyZgX5pEY6gNg2xw28Gd7gH9TVe5Y31iggni2oJ3GuBj3R7Ma\
+        umdo8rE1S4tBWVGsXikv9KFDtMmT2sMmeFuAwDbUZEGsBCAfK7EQpKcYSv7KajtgLpqi6JW\
+        RP8nBR7FkKR9qv5khhiBLuRzfSxwtADXZknFRU6bh8Ba6JmLhjhqkCYETizXmZVrjvy4gLZ\
+        we5YHZW5uhbthAzfcLRxuTxnPbyW7LehgwkYde64b8PzqYepYUtxqFHuJSwddis1VuoA2Lb\
+        M3SeyTe262Q7gUiPEjwQdRXKwUAgGrxVu";
         let mut rng = {
-            let seed = <[u8; 32]>::try_from(bs58_decode(SEED)).unwrap();
+            let seed = [1u8; 32];
             ChaChaRng::from_seed(seed)
         };
         let mut seed = [0u8; Keypair::SECRET_KEY_LENGTH];
         rng.fill(&mut seed[..]);
         let keypair = keypair_from_seed(&seed).unwrap();
-        let mut shred = Shred::new_from_data(
-            142076266, // slot
-            21443,     // index
-            51279,     // parent_offset
-            &[],       // data
-            ShredFlags::DATA_COMPLETE_SHRED,
-            49,    // reference_tick
-            59445, // version
-            21414, // fec_set_index
-        );
+        let mut shred = Shredder::single_shred_for_tests(142076266, &keypair);
         shred.sign(&keypair);
         assert!(shred.verify(&keypair.pubkey()));
         assert_matches!(shred.sanitize(), Ok(()));
-        let payload = bs58_decode(PAYLOAD);
+        let payload = bs58::decode(PAYLOAD).into_vec().unwrap();
         let mut packet = Packet::default();
         packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
         packet.meta_mut().size = payload.len();
         assert_eq!(shred.bytes_to_store(), payload);
-        assert_eq!(shred, Shred::new_from_serialized_shred(payload).unwrap());
+        assert_eq!(
+            shred,
+            Shred::new_from_serialized_shred(payload.to_vec()).unwrap()
+        );
         verify_shred_layout(&shred, &packet);
     }
 
