@@ -84,6 +84,8 @@ pub struct BankForks {
     descendants: HashMap<Slot, HashSet<Slot>>,
     root: Arc<AtomicSlot>,
     root_bank: SharableBank,
+    working_slot: Slot,
+    working_bank: SharableBank,
     in_vote_only_mode: Arc<AtomicBool>,
     highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
@@ -131,6 +133,8 @@ impl BankForks {
         let bank_forks = Arc::new(RwLock::new(Self {
             root: Arc::new(AtomicSlot::new(root_slot)),
             root_bank: SharableBank(Arc::new(ArcSwap::from(Arc::clone(&root_bank)))),
+            working_slot: root_slot,
+            working_bank: SharableBank(Arc::new(ArcSwap::from(Arc::clone(&root_bank)))),
             banks,
             descendants,
             in_vote_only_mode: Arc::new(AtomicBool::new(false)),
@@ -219,6 +223,10 @@ impl BankForks {
         self.root_bank.clone()
     }
 
+    pub fn sharable_working_bank(&self) -> SharableBank {
+        self.working_bank.clone()
+    }
+
     pub fn root_bank(&self) -> Arc<Bank> {
         self.root_bank.load()
     }
@@ -257,6 +265,11 @@ impl BankForks {
         for parent in bank.proper_ancestors() {
             self.descendants.entry(parent).or_default().insert(slot);
         }
+
+        // Update sharable working bank and cached slot.
+        self.working_slot = self.find_highest_slot();
+        self.working_bank.store(self.working_bank());
+
         bank
     }
 
@@ -300,15 +313,25 @@ impl BankForks {
         if entry.get().is_empty() {
             entry.remove_entry();
         }
+
+        // Update sharable working bank and cached slot.
+        // The previous working bank (highest slot) may have been removed.
+        self.working_slot = self.find_highest_slot();
+        self.working_bank.store(self.working_bank());
+
         Some(bank)
     }
 
     pub fn highest_slot(&self) -> Slot {
+        self.working_slot
+    }
+
+    fn find_highest_slot(&self) -> Slot {
         self.banks.values().map(|bank| bank.slot()).max().unwrap()
     }
 
     pub fn working_bank(&self) -> Arc<Bank> {
-        self[self.highest_slot()].clone()
+        self.banks[&self.highest_slot()].clone_without_scheduler()
     }
 
     pub fn working_bank_with_scheduler(&self) -> BankWithScheduler {
