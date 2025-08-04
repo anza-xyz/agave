@@ -7868,16 +7868,25 @@ pub mod tests {
         );
 
         // Insert an empty shred that won't deshred into entries
-        let shreds = vec![Shred::new_from_data(
-            slot,
-            next_shred_index as u32,
-            1,
-            &[1, 1, 1],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            next_shred_index as u32,
-        )];
+
+        let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
+        let keypair = Keypair::new();
+        let reed_solomon_cache = ReedSolomonCache::default();
+
+        let shreds: Vec<Shred> = shredder
+            .make_shreds_from_data_slice(
+                &keypair,
+                &[1, 1, 1],
+                true,
+                Some(Hash::default()),
+                next_shred_index as u32,
+                next_shred_index as u32,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap()
+            .take(DATA_SHREDS_PER_FEC_BLOCK)
+            .collect();
 
         // With the corruption, nothing should be returned, even though an
         // earlier data block was valid
