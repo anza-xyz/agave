@@ -2905,12 +2905,9 @@ mod tests {
             Vec<(SocketAddr, Protocol)>, // Pull requests
         ) {
             self.new_pull_requests(thread_pool, gossip_validators, stakes)
-                .partition_map(|(addr, protocol)| {
-                    if let Protocol::PingMessage(ping) = protocol {
-                        Either::Left((addr, ping))
-                    } else {
-                        Either::Right((addr, protocol))
-                    }
+                .partition_map(|(addr, protocol)| match protocol {
+                    Protocol::PingMessage(ping) => Either::Left((addr, ping)),
+                    _ => Either::Right((addr, protocol)),
                 })
         }
     }

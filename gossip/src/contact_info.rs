@@ -1,4 +1,3 @@
-use arrayvec::ArrayVec;
 pub use solana_client::connection_cache::Protocol;
 use {
     crate::{
@@ -7,6 +6,7 @@ use {
         legacy_contact_info::LegacyContactInfo,
         tlv::{self, TlvDecodeError, TlvRecord},
     },
+    arrayvec::ArrayVec,
     assert_matches::{assert_matches, debug_assert_matches},
     serde::{Deserialize, Deserializer, Serialize},
     solana_pubkey::Pubkey,
