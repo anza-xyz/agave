@@ -1,5 +1,5 @@
 use {
-    super::{AccountsPackage, AccountsPackageKind, SnapshotKind, SnapshotPackage},
+    super::{AccountsPackageKind, SnapshotKind, SnapshotPackage},
     std::cmp::Ordering::{self, Equal, Greater, Less},
 };
 
@@ -7,13 +7,6 @@ use {
 #[must_use]
 pub fn cmp_snapshot_packages_by_priority(a: &SnapshotPackage, b: &SnapshotPackage) -> Ordering {
     cmp_snapshot_kinds_by_priority(&a.snapshot_kind, &b.snapshot_kind).then(a.slot.cmp(&b.slot))
-}
-
-/// Compare accounts packages by priority; first by type, then by slot
-#[must_use]
-pub fn cmp_accounts_packages_by_priority(a: &AccountsPackage, b: &AccountsPackage) -> Ordering {
-    cmp_accounts_package_kinds_by_priority(&a.package_kind, &b.package_kind)
-        .then(a.slot.cmp(&b.slot))
 }
 
 /// Compare accounts package kinds by priority
@@ -122,135 +115,6 @@ mod tests {
         ] {
             let actual_result =
                 cmp_snapshot_packages_by_priority(&snapshot_package_a, &snapshot_package_b);
-            assert_eq!(expected_result, actual_result);
-        }
-    }
-
-    #[test]
-    fn test_cmp_accounts_packages_by_priority() {
-        fn new(package_kind: AccountsPackageKind, slot: Slot) -> AccountsPackage {
-            AccountsPackage {
-                package_kind,
-                slot,
-                block_height: slot,
-                ..AccountsPackage::default_for_tests()
-            }
-        }
-
-        for (accounts_package_a, accounts_package_b, expected_result) in [
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                    11,
-                ),
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                    22,
-                ),
-                Less,
-            ),
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                    22,
-                ),
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                    22,
-                ),
-                Equal,
-            ),
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                    33,
-                ),
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                    22,
-                ),
-                Greater,
-            ),
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                    123,
-                ),
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                    123,
-                ),
-                Greater,
-            ),
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                    123,
-                ),
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                    123,
-                ),
-                Less,
-            ),
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                    123,
-                ),
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(6)),
-                    123,
-                ),
-                Less,
-            ),
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                    11,
-                ),
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                    22,
-                ),
-                Less,
-            ),
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                    22,
-                ),
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                    22,
-                ),
-                Equal,
-            ),
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                    33,
-                ),
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                    22,
-                ),
-                Greater,
-            ),
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                    123,
-                ),
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(4)),
-                    123,
-                ),
-                Greater,
-            ),
-        ] {
-            let actual_result =
-                cmp_accounts_packages_by_priority(&accounts_package_a, &accounts_package_b);
             assert_eq!(expected_result, actual_result);
         }
     }

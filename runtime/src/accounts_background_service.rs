@@ -13,7 +13,7 @@ use {
         bank_forks::BankForks,
         snapshot_bank_utils,
         snapshot_controller::SnapshotController,
-        snapshot_package::{AccountsPackage, AccountsPackageKind, SnapshotKind, SnapshotPackage},
+        snapshot_package::{AccountsPackageKind, SnapshotKind, SnapshotPackage},
         snapshot_utils::SnapshotError,
     },
     crossbeam_channel::{Receiver, SendError, Sender},
@@ -235,7 +235,7 @@ impl SnapshotRequestHandler {
         let SnapshotRequest {
             snapshot_root_bank,
             status_cache_slot_deltas,
-            request_kind,
+            request_kind: _,
             enqueued: _,
         } = snapshot_request;
 
@@ -283,29 +283,22 @@ impl SnapshotRequestHandler {
         snapshot_root_bank.shrink_candidate_slots();
         shrink_time.stop();
 
-        // Snapshot the bank and send over an accounts package
+        // Snapshot the bank and send over a snapshot package
         let mut snapshot_time = Measure::start("snapshot_time");
-        let snapshot_storages = snapshot_bank_utils::get_snapshot_storages(&snapshot_root_bank);
-        let accounts_package = match request_kind {
-            SnapshotRequestKind::FullSnapshot | SnapshotRequestKind::IncrementalSnapshot => {
-                match &accounts_package_kind {
-                    AccountsPackageKind::Snapshot(_) => AccountsPackage::new_for_snapshot(
-                        accounts_package_kind,
-                        &snapshot_root_bank,
-                        snapshot_storages,
-                        status_cache_slot_deltas,
-                    ),
-                }
-            }
-        };
-        let snapshot_package = SnapshotPackage::new(accounts_package);
+        let AccountsPackageKind::Snapshot(snapshot_kind) = accounts_package_kind;
+        let snapshot_package = SnapshotPackage::new(
+            snapshot_kind,
+            &snapshot_root_bank,
+            snapshot_bank_utils::get_snapshot_storages(&snapshot_root_bank),
+            status_cache_slot_deltas,
+        );
         self.pending_snapshot_packages
             .lock()
             .unwrap()
             .push(snapshot_package);
         snapshot_time.stop();
         info!(
-            "Handled snapshot request. accounts package kind: {:?}, slot: {}, bank hash: {}",
+            "Handled snapshot request. snapshot package kind: {:?}, slot: {}, bank hash: {}",
             accounts_package_kind,
             snapshot_root_bank.slot(),
             snapshot_root_bank.hash(),
