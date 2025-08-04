@@ -167,29 +167,29 @@ pub mod test {
         let steps: Vec<_> = weighted_traversal.collect();
 
         // When every node has a weight of zero, visit
-        // smallest children first
+        // largest children first
         assert_eq!(
             steps,
             vec![
                 Visit::Unvisited(0),
                 Visit::Unvisited(1),
-                Visit::Unvisited(2),
-                Visit::Unvisited(4),
-                Visit::Visited(4),
-                Visit::Visited(2),
                 Visit::Unvisited(3),
                 Visit::Unvisited(5),
                 Visit::Visited(5),
                 Visit::Visited(3),
+                Visit::Unvisited(2),
+                Visit::Unvisited(4),
+                Visit::Visited(4),
+                Visit::Visited(2),
                 Visit::Visited(1),
                 Visit::Visited(0)
             ]
         );
 
-        // Add a vote to branch with slot 5,
+        // Add a vote to branch with slot 4,
         // should prioritize that branch
         heaviest_subtree_fork_choice.add_votes(
-            [(vote_pubkeys[0], (5, Hash::default()))].iter(),
+            [(vote_pubkeys[0], (4, Hash::default()))].iter(),
             bank.epoch_stakes_map(),
             bank.epoch_schedule(),
         );
@@ -201,15 +201,15 @@ pub mod test {
             vec![
                 Visit::Unvisited(0),
                 Visit::Unvisited(1),
-                Visit::Unvisited(3),
-                Visit::Unvisited(5),
-                Visit::Visited(5),
-                // Prioritizes heavier child 3 over 2
-                Visit::Visited(3),
                 Visit::Unvisited(2),
                 Visit::Unvisited(4),
                 Visit::Visited(4),
+                // Prioritizes heavier child 2 over 3
                 Visit::Visited(2),
+                Visit::Unvisited(3),
+                Visit::Unvisited(5),
+                Visit::Visited(5),
+                Visit::Visited(3),
                 Visit::Visited(1),
                 Visit::Visited(0)
             ]
@@ -238,7 +238,7 @@ pub mod test {
         );
         assert_eq!(
             repairs,
-            [0, 1, 2, 4, 3, 5]
+            [0, 1, 3, 5, 2, 4]
                 .iter()
                 .map(|slot| ShredRepairType::HighestShred(*slot, last_shred))
                 .collect::<Vec<_>>()
@@ -251,7 +251,7 @@ pub mod test {
         outstanding_repairs = HashMap::new();
         slot_meta_cache = HashMap::default();
         let best_overall_slot = heaviest_subtree_fork_choice.best_overall_slot().0;
-        assert_eq!(best_overall_slot, 4);
+        assert_eq!(best_overall_slot, 5);
         blockstore.add_tree(
             tr(best_overall_slot) / (tr(6) / tr(7)),
             true,
@@ -270,7 +270,7 @@ pub mod test {
         );
         assert_eq!(
             repairs,
-            [0, 1, 2, 4, 6, 7]
+            [0, 1, 3, 5, 6, 7]
                 .iter()
                 .map(|slot| ShredRepairType::HighestShred(*slot, last_shred))
                 .collect::<Vec<_>>()
@@ -281,7 +281,7 @@ pub mod test {
         repairs = vec![];
         outstanding_repairs = HashMap::new();
         slot_meta_cache = HashMap::default();
-        let completed_shreds: Vec<Shred> = [0, 2, 4, 6]
+        let completed_shreds: Vec<Shred> = [0, 3, 5, 6]
             .iter()
             .map(|slot| {
                 let parent_offset = u16::from(*slot != 0);
@@ -313,7 +313,7 @@ pub mod test {
         );
         assert_eq!(
             repairs,
-            [1, 7, 3, 5]
+            [1, 7, 2, 4]
                 .iter()
                 .map(|slot| ShredRepairType::HighestShred(*slot, last_shred))
                 .collect::<Vec<_>>()
@@ -325,7 +325,7 @@ pub mod test {
         repairs = vec![];
         outstanding_repairs = HashMap::new();
         slot_meta_cache = HashMap::default();
-        blockstore.add_tree(tr(2) / (tr(8)), true, false, 2, Hash::default());
+        blockstore.add_tree(tr(3) / (tr(8)), true, false, 2, Hash::default());
         sleep_shred_deferment_period();
         get_best_repair_shreds(
             &heaviest_subtree_fork_choice,
@@ -335,7 +335,7 @@ pub mod test {
             5,
             &mut outstanding_repairs,
         );
-        let expected_repairs = [1, 7, 8, 3, 5]
+        let expected_repairs = [1, 7, 8, 2, 4]
             .iter()
             .map(|slot| ShredRepairType::HighestShred(*slot, last_shred))
             .collect::<Vec<_>>();
@@ -377,7 +377,7 @@ pub mod test {
         let last_shred = blockstore.meta(0).unwrap().unwrap().received;
         assert_eq!(
             repairs,
-            [0, 1, 2, 4, 6, 7, 3, 5]
+            [0, 1, 3, 5, 2, 4, 6, 7]
                 .iter()
                 .map(|slot| ShredRepairType::HighestShred(*slot, last_shred))
                 .collect::<Vec<_>>()
