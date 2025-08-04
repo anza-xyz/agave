@@ -8,7 +8,7 @@ use {
     solana_pubkey::Pubkey,
     solana_reward_info::{RewardInfo, RewardType},
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_svm_rent_calculator::svm_rent_calculator::{get_account_rent_state, transition_allowed},
+    solana_svm::rent_calculator::{get_account_rent_state, transition_allowed},
     solana_system_interface::program as system_program,
     std::{result::Result, sync::atomic::Ordering::Relaxed},
     thiserror::Error,

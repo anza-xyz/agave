@@ -106,7 +106,6 @@ members = [
     "svm-callback",
     "svm-conformance",
     "svm-feature-set",
-    "svm-rent-calculator",
     "svm-transaction",
     "syscalls",
     "syscalls/gen-syscall-list",
@@ -527,7 +526,6 @@ solana-svm = { path = "svm", version = "=3.0.0" }
 solana-svm-callback = { path = "svm-callback", version = "=3.0.0" }
 solana-svm-conformance = { path = "svm-conformance", version = "=3.0.0" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.0.0" }
-solana-svm-rent-calculator = { path = "svm-rent-calculator", version = "=3.0.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.0.0" }
 solana-system-interface = "1.0"
 solana-system-program = { path = "programs/system", version = "=3.0.0" }

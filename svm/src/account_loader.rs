@@ -2,8 +2,11 @@
 use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
-        account_overrides::AccountOverrides, nonce_info::NonceInfo,
-        rollback_accounts::RollbackAccounts, transaction_error_metrics::TransactionErrorMetrics,
+        account_overrides::AccountOverrides,
+        nonce_info::NonceInfo,
+        rent_calculator::{check_rent_state_with_account, get_account_rent_state},
+        rollback_accounts::RollbackAccounts,
+        transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::ExecutedTransaction,
     },
     ahash::{AHashMap, AHashSet},
@@ -29,9 +32,6 @@ use {
     },
     solana_svm_callback::{AccountState, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
-    solana_svm_rent_calculator::svm_rent_calculator::{
-        check_rent_state_with_account, get_account_rent_state,
-    },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::{IndexOfAccount, TransactionAccount},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
