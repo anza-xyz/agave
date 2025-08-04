@@ -1,11 +1,18 @@
 [package]
 name = "solana-low-pass-filter"
-version = "3.0.0"
-edition = "2021"
+description = "Low Pass Filter for Gossip Peer Weighting"
+version = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[lib]
+path = "src/lib.rs"
 
 [features]
 default = []
 agave-unstable-api = []
 
-[lib]
-path = "src/lib.rs"
+[dependencies]

@@ -73,18 +73,8 @@ pub struct CrdsGossipPush {
 
 impl Default for CrdsGossipPush {
     fn default() -> Self {
-        let active_set = {
-            #[cfg(not(feature = "agave-unstable-api"))]
-            {
-                RwLock::new(PushActiveSet::new_static())
-            }
-            #[cfg(feature = "agave-unstable-api")]
-            {
-                RwLock::new(PushActiveSet::new_dynamic())
-            }
-        };
         Self {
-            active_set,
+            active_set: RwLock::new(PushActiveSet::new_dynamic()),
             crds_cursor: Mutex::default(),
             received_cache: Mutex::new(ReceivedCache::new(2 * CRDS_UNIQUE_PUBKEY_CAPACITY)),
             push_fanout: CRDS_GOSSIP_PUSH_FANOUT,
