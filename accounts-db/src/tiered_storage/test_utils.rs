@@ -2,10 +2,12 @@
 //! Helper functions for TieredStorage tests
 use {
     super::footer::TieredStorageFooter,
-    crate::{account_storage::stored_account_info::StoredAccountInfo, append_vec::StoredMeta},
+    crate::{
+        account_storage::stored_account_info::StoredAccountInfo, append_vec::StoredMeta,
+        tiered_storage::hot::RENT_EXEMPT_RENT_EPOCH,
+    },
     solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
-    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
 };
 
 /// Create a test account based on the specified seed.

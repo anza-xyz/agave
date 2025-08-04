@@ -7,12 +7,11 @@ use {
         append_vec::{self, AppendVec},
         tiered_storage::{
             file::TieredReadableFile,
-            hot::{HotStorageReader, HotStorageWriter},
+            hot::{HotStorageReader, HotStorageWriter, RENT_EXEMPT_RENT_EPOCH},
         },
     },
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::mem::ManuallyDrop,
 };

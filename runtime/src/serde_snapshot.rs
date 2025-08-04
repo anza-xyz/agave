@@ -4,6 +4,7 @@ use {
     crate::{
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
         epoch_stakes::VersionedEpochStakes,
+        rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
         snapshot_utils::{SnapshotError, StorageAndNextAccountsFileId},
         stake_account::StakeAccount,
@@ -35,7 +36,6 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_rent_collector::RentCollector,
     solana_serde::default_on_eof,
     solana_stake_interface::state::Delegation,
     std::{
