@@ -33,7 +33,10 @@ use {
     },
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::BankForks, root_bank_cache::RootBankCache},
+    solana_runtime::{
+        bank::Bank,
+        bank_forks::{BankForks, SharableBank},
+    },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
     solana_time_utils::timestamp,
     std::{
@@ -417,7 +420,7 @@ impl RepairServiceChannels {
 }
 
 struct RepairTracker {
-    root_bank_cache: RootBankCache,
+    root_bank: SharableBank,
     repair_weight: RepairWeight,
     serve_repair: ServeRepair,
     repair_metrics: RepairMetrics,
@@ -690,7 +693,7 @@ impl RepairService {
             popular_pruned_forks_sender,
         } = repair_channels;
         let RepairTracker {
-            root_bank_cache,
+            root_bank,
             repair_weight,
             serve_repair,
             repair_metrics,
@@ -698,7 +701,7 @@ impl RepairService {
             popular_pruned_forks_requests,
             outstanding_repairs,
         } = repair_tracker;
-        let root_bank = root_bank_cache.root_bank();
+        let root_bank = root_bank.load();
 
         Self::update_weighting_heuristic(
             blockstore,
@@ -748,15 +751,15 @@ impl RepairService {
         repair_info: RepairInfo,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
     ) {
-        let mut root_bank_cache = RootBankCache::new(repair_info.bank_forks.clone());
-        let root_bank_slot = root_bank_cache.root_bank().slot();
+        let root_bank = repair_info.bank_forks.read().unwrap().sharable_root_bank();
+        let root_bank_slot = root_bank.load().slot();
         let mut repair_tracker = RepairTracker {
-            root_bank_cache,
+            root_bank,
             repair_weight: RepairWeight::new(root_bank_slot),
             serve_repair: {
                 ServeRepair::new(
                     repair_info.cluster_info.clone(),
-                    repair_info.bank_forks.clone(),
+                    repair_info.bank_forks.read().unwrap().sharable_root_bank(),
                     repair_info.repair_whitelist.clone(),
                     Box::new(StandardRepairHandler::new(blockstore.clone())),
                 )
@@ -1644,7 +1647,7 @@ mod test {
         let serve_repair = {
             ServeRepair::new(
                 cluster_info,
-                bank_forks,
+                bank_forks.read().unwrap().sharable_root_bank(),
                 Arc::new(RwLock::new(HashSet::default())),
                 Box::new(StandardRepairHandler::new(blockstore.clone())),
             )
@@ -1746,7 +1749,7 @@ mod test {
         let serve_repair = {
             ServeRepair::new(
                 cluster_info.clone(),
-                bank_forks,
+                bank_forks.read().unwrap().sharable_root_bank(),
                 Arc::new(RwLock::new(HashSet::default())),
                 Box::new(StandardRepairHandler::new(blockstore)),
             )
