@@ -1099,7 +1099,7 @@ mod tests {
         assert_matches!(shred.parent(), Ok(9));
         let mut packet = Packet::default();
         shred.copy_to_packet(&mut packet);
-        wire::corrupt_and_set_parent_offset(&mut packet.buffer_mut(), 1000);
+        wire::corrupt_and_set_parent_offset(packet.buffer_mut(), 1000);
         let shred_res = Shred::new_from_serialized_shred(packet.data(..).unwrap().to_vec());
         assert_matches!(
             shred_res,
