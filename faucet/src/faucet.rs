@@ -432,7 +432,7 @@ async fn process(
                         }
                         Err(e) => {
                             info!("Error in request: {}", e);
-                            ERROR_RESPONSE.to_vec()
+                            Ok(ERROR_RESPONSE.to_vec())
                         }
                     }
                 }
