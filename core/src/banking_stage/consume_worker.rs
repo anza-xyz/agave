@@ -100,7 +100,12 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
                     return self.retry_drain(work);
                 }
             }
-            self.consume(&bank, work)?;
+
+            if work.slot == bank.slot() {
+                self.consume(&bank, work)?;
+            } else {
+                self.retry(work)?;
+            }
         }
 
         Ok(())
@@ -894,6 +899,57 @@ mod tests {
             alt_invalidation_slot: bank.slot(),
         };
         let work = ConsumeWork {
+            slot: 0,
+            batch_id: bid,
+            ids: vec![id],
+            transactions,
+            max_ages: vec![max_age],
+        };
+        consume_sender.send(work).unwrap();
+        let consumed = consumed_receiver.recv().unwrap();
+        assert_eq!(consumed.work.batch_id, bid);
+        assert_eq!(consumed.work.ids, vec![id]);
+        assert_eq!(consumed.work.max_ages, vec![max_age]);
+        assert_eq!(consumed.retryable_indexes, vec![0]);
+
+        drop(test_frame);
+        let _ = worker_thread.join().unwrap();
+    }
+
+    #[test]
+    fn test_worker_consume_mismatch_slot() {
+        let (test_frame, worker) = setup_test_frame(true);
+        let TestFrame {
+            mint_keypair,
+            genesis_config,
+            bank,
+            poh_recorder,
+            consume_sender,
+            consumed_receiver,
+            ..
+        } = &test_frame;
+        let worker_thread = std::thread::spawn(move || worker.run());
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank_for_test(bank.clone());
+
+        let pubkey1 = Pubkey::new_unique();
+
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            mint_keypair,
+            &pubkey1,
+            1,
+            genesis_config.hash(),
+        )]);
+        let bid = TransactionBatchId::new(0);
+        let id = 0;
+        let max_age = MaxAge {
+            sanitized_epoch: bank.epoch(),
+            alt_invalidation_slot: bank.slot(),
+        };
+        let work = ConsumeWork {
+            slot: bank.slot() + 1, // Mismatch slot
             batch_id: bid,
             ids: vec![id],
             transactions,
@@ -943,6 +999,7 @@ mod tests {
             alt_invalidation_slot: bank.slot(),
         };
         let work = ConsumeWork {
+            slot: bank.slot(),
             batch_id: bid,
             ids: vec![id],
             transactions,
@@ -995,6 +1052,7 @@ mod tests {
         };
         consume_sender
             .send(ConsumeWork {
+                slot: bank.slot(),
                 batch_id: bid,
                 ids: vec![id1, id2],
                 transactions: txs,
@@ -1065,6 +1123,7 @@ mod tests {
         };
         consume_sender
             .send(ConsumeWork {
+                slot: bank.slot(),
                 batch_id: bid1,
                 ids: vec![id1],
                 transactions: txs1,
@@ -1074,6 +1133,7 @@ mod tests {
 
         consume_sender
             .send(ConsumeWork {
+                slot: bank.slot(),
                 batch_id: bid2,
                 ids: vec![id2],
                 transactions: txs2,
@@ -1187,6 +1247,7 @@ mod tests {
 
         consume_sender
             .send(ConsumeWork {
+                slot: bank.slot(),
                 batch_id: TransactionBatchId::new(1),
                 ids: vec![0, 1, 2, 3, 4, 5],
                 transactions: txs,
