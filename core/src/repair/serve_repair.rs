@@ -2264,7 +2264,7 @@ mod tests {
     #[test]
     fn test_verify_shred_response() {
         fn new_test_data_shred(slot: Slot, index: u32) -> Shred {
-            let shredder = Shredder::new(slot, slot - 1, 0, 0).unwrap();
+            let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
             let keypair = Keypair::new();
             let reed_solomon_cache = ReedSolomonCache::default();
             let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
