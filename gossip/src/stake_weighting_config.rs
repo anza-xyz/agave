@@ -18,7 +18,7 @@ pub enum WeightingConfig {
 }
 
 mod weighting_config_control_pubkey {
-    solana_pubkey::declare_id!("maCwV5aXW6srR4kppBWTeNdizYhyEwVcVh6mSWnFZxo");
+    solana_pubkey::declare_id!("gosWyfqaAmMhdrSM9srCsV6DihYg7Ze56SvJLwZbNSP");
 }
 
 pub(crate) fn get_gossip_config_from_account(bank: &Bank) -> Option<WeightingConfig> {
