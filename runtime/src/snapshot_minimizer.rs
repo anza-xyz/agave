@@ -46,7 +46,12 @@ impl<'a> SnapshotMinimizer<'a> {
     ///
     /// This function will modify accounts_db by removing accounts not needed to replay [starting_slot, ending_slot],
     /// and update the bank's capitalization.
-    pub fn minimize(bank: &'a Bank, starting_slot: Slot, transaction_account_set: DashSet<Pubkey>) {
+    pub fn minimize(
+        bank: &'a Bank,
+        starting_slot: Slot,
+        transaction_account_set: DashSet<Pubkey>,
+        should_recalculate_accounts_lt_hash: bool,
+    ) {
         let minimizer = SnapshotMinimizer {
             bank,
             starting_slot,
@@ -71,14 +76,16 @@ impl<'a> SnapshotMinimizer<'a> {
             .bank
             .set_capitalization_for_tests(minimizer.bank.calculate_capitalization_for_tests());
 
-        // Since the account state has changed, the accounts lt hash must be recalculated
-        let new_accounts_lt_hash = minimizer
-            .accounts_db()
-            .calculate_accounts_lt_hash_at_startup_from_index(
-                &minimizer.bank.ancestors,
-                minimizer.bank.slot(),
-            );
-        bank.set_accounts_lt_hash_for_snapshot_minimizer(new_accounts_lt_hash);
+        if should_recalculate_accounts_lt_hash {
+            // Since the account state has changed, the accounts lt hash must be recalculated
+            let new_accounts_lt_hash = minimizer
+                .accounts_db()
+                .calculate_accounts_lt_hash_at_startup_from_index(
+                    &minimizer.bank.ancestors,
+                    minimizer.bank.slot(),
+                );
+            bank.set_accounts_lt_hash_for_snapshot_minimizer(new_accounts_lt_hash);
+        }
     }
 
     /// Helper function to measure time and number of accounts added
@@ -622,7 +629,12 @@ mod tests {
         bank.force_flush_accounts_cache();
 
         // do the minimization
-        SnapshotMinimizer::minimize(&bank, bank.slot(), DashSet::from_iter([pubkey_to_keep]));
+        SnapshotMinimizer::minimize(
+            &bank,
+            bank.slot(),
+            DashSet::from_iter([pubkey_to_keep]),
+            true,
+        );
 
         // take a snapshot of the minimized bank, then load it
         let snapshot_config = SnapshotConfig::default();
