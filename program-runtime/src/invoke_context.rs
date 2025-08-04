@@ -333,7 +333,7 @@ impl<'a> InvokeContext<'a> {
         // function, we must borrow it again as mutable.
         let program_account_index = {
             let instruction_context = self.transaction_context.get_current_instruction_context()?;
-            debug_assert!(instruction.accounts.len() <= MAX_ACCOUNTS_PER_TRANSACTION);
+            debug_assert!(instruction.accounts.len() <= transaction_callee_map.len());
 
             for account_meta in instruction.accounts.iter() {
                 let index_in_transaction = self
@@ -479,7 +479,7 @@ impl<'a> InvokeContext<'a> {
         // On AArch64 in release mode, this function only consumes 464 bytes of stack (when it is
         // not inlined).
         let mut transaction_callee_map: Vec<u8> = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
-        debug_assert!(instruction.accounts.len() <= MAX_ACCOUNTS_PER_TRANSACTION);
+        debug_assert!(instruction.accounts.len() <= transaction_callee_map.len());
 
         let mut instruction_accounts: Vec<InstructionAccount> =
             Vec::with_capacity(instruction.accounts.len());
