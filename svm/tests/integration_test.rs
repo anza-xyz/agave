@@ -3020,7 +3020,9 @@ mod balance_collector {
         solana_program_pack::Pack,
         solana_sdk_ids::bpf_loader,
         spl_generic_token::token_2022,
-        spl_token_interface::state::{Account as TokenAccount, AccountState as TokenAccountState, Mint},
+        spl_token_interface::state::{
+            Account as TokenAccount, AccountState as TokenAccountState, Mint,
+        },
         test_case::test_case,
     };
 
@@ -3121,8 +3123,13 @@ mod balance_collector {
         }
         .pack_into_slice(&mut mint_buf);
 
-        let mint_state =
-            AccountSharedData::create(LAMPORTS_PER_SOL, mint_buf, spl_token_interface::id(), false, u64::MAX);
+        let mint_state = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            mint_buf,
+            spl_token_interface::id(),
+            false,
+            u64::MAX,
+        );
 
         let token_account_for_tests = || TokenAccount {
             mint,

@@ -4,6 +4,7 @@ use {
             BalancesArgs, DistributeTokensArgs, SenderStakeArgs, StakeArgs, TransactionLogArgs,
         },
         db::{self, TransactionInfo},
+        spl_token::{build_spl_token_instructions, check_spl_token_balances, print_token_balances},
         token_display::Token,
     },
     chrono::prelude::*,
@@ -37,7 +38,6 @@ use {
     solana_transaction::Transaction,
     solana_transaction_status::TransactionStatus,
     spl_associated_token_account_interface::address::get_associated_token_address,
-    spl_token_interface::build_spl_token_instructions,
     std::{
         cmp::{self},
         io,

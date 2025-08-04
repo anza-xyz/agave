@@ -13,9 +13,7 @@ use {
     spl_associated_token_account_interface::{
         address::get_associated_token_address, instruction::create_associated_token_account,
     },
-    spl_token_interface::{
-        state::{Account as SplTokenAccount, Mint},
-    },
+    spl_token_interface::state::{Account as SplTokenAccount, Mint},
 };
 
 pub fn update_token_args(client: &RpcClient, args: &mut Option<SplTokenArgs>) -> Result<(), Error> {
