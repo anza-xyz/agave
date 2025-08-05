@@ -187,11 +187,14 @@ impl XdpRetransmitter {
                     .name(format!("solRetransmIO{i:02}"))
                     .spawn(move || {
                         tx_loop(
+                            cpu_id,
                             &dev,
-                            src_port,
                             QueueId(i as u64),
                             config.zero_copy,
-                            cpu_id,
+                            None,
+                            None,
+                            src_port,
+                            None,
                             receiver,
                             drop_sender,
                         )

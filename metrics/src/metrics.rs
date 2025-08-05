@@ -680,14 +680,11 @@ mod test {
             );
         }
 
-        thread::sleep(Duration::from_secs(2));
-
         agent.flush();
 
-        // We are expecting `max_points_per_sec - 1` data points from `submit()` and two more metric
-        // stats data points.  One from the timeout when all the `submit()`ed values are sent when 1
-        // second is elapsed, and then one more from the explicit `flush()`.
-        assert_eq!(writer.points_written(), max_points_per_sec + 1);
+        // We are expecting `max_points_per_sec - 1` data points from `submit()` and one more metric
+        // stats data points.
+        assert_eq!(writer.points_written(), max_points_per_sec);
     }
 
     #[test]

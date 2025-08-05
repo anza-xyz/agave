@@ -13,7 +13,7 @@ use {
         bank_forks::BankForks,
         snapshot_bank_utils,
         snapshot_controller::SnapshotController,
-        snapshot_package::{AccountsPackageKind, SnapshotKind, SnapshotPackage},
+        snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::SnapshotError,
     },
     crossbeam_channel::{Receiver, SendError, Sender},
@@ -157,12 +157,8 @@ impl SnapshotRequestHandler {
             ),
         );
 
-        let accounts_package_kind = new_accounts_package_kind(&snapshot_request)?;
-        Some(self.handle_snapshot_request(
-            non_snapshot_time_us,
-            snapshot_request,
-            accounts_package_kind,
-        ))
+        let snapshot_kind = new_snapshot_kind(&snapshot_request)?;
+        Some(self.handle_snapshot_request(non_snapshot_time_us, snapshot_request, snapshot_kind))
     }
 
     /// Get the next snapshot request to handle
@@ -228,9 +224,9 @@ impl SnapshotRequestHandler {
         &self,
         non_snapshot_time_us: u128,
         snapshot_request: SnapshotRequest,
-        accounts_package_kind: AccountsPackageKind,
+        snapshot_kind: SnapshotKind,
     ) -> Result<Slot, SnapshotError> {
-        info!("handling snapshot request: {snapshot_request:?}, {accounts_package_kind:?}");
+        info!("handling snapshot request: {snapshot_request:?}, {snapshot_kind:?}");
         let mut total_time = Measure::start("snapshot_request_receiver_total_time");
         let SnapshotRequest {
             snapshot_root_bank,
@@ -242,7 +238,7 @@ impl SnapshotRequestHandler {
         // we should not rely on the state of this validator until startup verification is complete
         assert!(snapshot_root_bank.has_initial_accounts_hash_verification_completed());
 
-        if accounts_package_kind == AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot) {
+        if snapshot_kind.is_full_snapshot() {
             // The latest full snapshot slot is what accounts-db uses to properly handle
             // zero lamport accounts.  We are handling a full snapshot request here, and
             // since taking a snapshot is not allowed to fail, we can update accounts-db now.
@@ -285,7 +281,6 @@ impl SnapshotRequestHandler {
 
         // Snapshot the bank and send over a snapshot package
         let mut snapshot_time = Measure::start("snapshot_time");
-        let AccountsPackageKind::Snapshot(snapshot_kind) = accounts_package_kind;
         let snapshot_package = SnapshotPackage::new(
             snapshot_kind,
             &snapshot_root_bank,
@@ -298,8 +293,8 @@ impl SnapshotRequestHandler {
             .push(snapshot_package);
         snapshot_time.stop();
         info!(
-            "Handled snapshot request. snapshot package kind: {:?}, slot: {}, bank hash: {}",
-            accounts_package_kind,
+            "Handled snapshot request. snapshot kind: {:?}, slot: {}, bank hash: {}",
+            snapshot_kind,
             snapshot_root_bank.slot(),
             snapshot_root_bank.hash(),
         );
@@ -666,13 +661,11 @@ impl AbsStatus {
     }
 }
 
-/// Get the AccountsPackageKind from a given SnapshotRequest
+/// Get the SnapshotKind from a given SnapshotRequest
 #[must_use]
-fn new_accounts_package_kind(snapshot_request: &SnapshotRequest) -> Option<AccountsPackageKind> {
+fn new_snapshot_kind(snapshot_request: &SnapshotRequest) -> Option<SnapshotKind> {
     match snapshot_request.request_kind {
-        SnapshotRequestKind::FullSnapshot => {
-            Some(AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot))
-        }
+        SnapshotRequestKind::FullSnapshot => Some(SnapshotKind::FullSnapshot),
         SnapshotRequestKind::IncrementalSnapshot => {
             if let Some(latest_full_snapshot_slot) = snapshot_request
                 .snapshot_root_bank
@@ -681,9 +674,7 @@ fn new_accounts_package_kind(snapshot_request: &SnapshotRequest) -> Option<Accou
                 .accounts_db
                 .latest_full_snapshot_slot()
             {
-                Some(AccountsPackageKind::Snapshot(
-                    SnapshotKind::IncrementalSnapshot(latest_full_snapshot_slot),
-                ))
+                Some(SnapshotKind::IncrementalSnapshot(latest_full_snapshot_slot))
             } else {
                 warn!(
                     "Ignoring IncrementalSnapshot request for slot {} because there is no latest \

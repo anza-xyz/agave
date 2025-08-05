@@ -1,5 +1,5 @@
 use {
-    super::{AccountsPackageKind, SnapshotKind, SnapshotPackage},
+    super::{SnapshotKind, SnapshotPackage},
     std::cmp::Ordering::{self, Equal, Greater, Less},
 };
 
@@ -7,26 +7,6 @@ use {
 #[must_use]
 pub fn cmp_snapshot_packages_by_priority(a: &SnapshotPackage, b: &SnapshotPackage) -> Ordering {
     cmp_snapshot_kinds_by_priority(&a.snapshot_kind, &b.snapshot_kind).then(a.slot.cmp(&b.slot))
-}
-
-/// Compare accounts package kinds by priority
-///
-/// Priority, from highest to lowest:
-/// - Full Snapshot
-/// - Incremental Snapshot
-///
-/// If two `Snapshot`s are compared, their snapshot kinds are the tiebreaker.
-#[must_use]
-pub fn cmp_accounts_package_kinds_by_priority(
-    a: &AccountsPackageKind,
-    b: &AccountsPackageKind,
-) -> Ordering {
-    use AccountsPackageKind as Kind;
-    match (a, b) {
-        (Kind::Snapshot(snapshot_kind_a), Kind::Snapshot(snapshot_kind_b)) => {
-            cmp_snapshot_kinds_by_priority(snapshot_kind_a, snapshot_kind_b)
-        }
-    }
 }
 
 /// Compare snapshot kinds by priority
@@ -115,48 +95,6 @@ mod tests {
         ] {
             let actual_result =
                 cmp_snapshot_packages_by_priority(&snapshot_package_a, &snapshot_package_b);
-            assert_eq!(expected_result, actual_result);
-        }
-    }
-
-    #[test]
-    fn test_cmp_accounts_package_kinds_by_priority() {
-        for (accounts_package_kind_a, accounts_package_kind_b, expected_result) in [
-            (
-                AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                Equal,
-            ),
-            (
-                AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                Greater,
-            ),
-            (
-                AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                Less,
-            ),
-            (
-                AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(6)),
-                Less,
-            ),
-            (
-                AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                Equal,
-            ),
-            (
-                AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(4)),
-                Greater,
-            ),
-        ] {
-            let actual_result = cmp_accounts_package_kinds_by_priority(
-                &accounts_package_kind_a,
-                &accounts_package_kind_b,
-            );
             assert_eq!(expected_result, actual_result);
         }
     }

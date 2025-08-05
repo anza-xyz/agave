@@ -867,7 +867,11 @@ mod tests {
             .rc
             .accounts
             .accounts_db
-            .calculate_accounts_lt_hash_at_startup_from_storages(&storages, &duplicates_lt_hash);
+            .calculate_accounts_lt_hash_at_startup_from_storages(
+                &storages,
+                &duplicates_lt_hash,
+                bank.slot(),
+            );
         assert_eq!(
             expected_accounts_lt_hash,
             calculated_accounts_lt_hash_from_storages
@@ -1095,5 +1099,87 @@ mod tests {
         // Wait for the startup verification to complete.  If we don't panic, then we're good!
         roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
         assert_eq!(roundtrip_bank, *bank);
+    }
+
+    /// Obsolete accounts add metadata to storage entries that can effect the accounts_lt_hash
+    /// calculation. This test ensures that the accounts_lt_hash is not effected by updates in
+    /// storages that are not being considered for the accounts_lt_hash calculation.
+    #[test]
+    fn test_accounts_lt_hash_with_obsolete_accounts() {
+        let key1 = Pubkey::new_unique();
+        let key2 = Pubkey::new_unique();
+        let key3 = Pubkey::new_unique();
+
+        // Create a few accounts
+        let (genesis_config, mint_keypair) =
+            solana_genesis_config::create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+        let (bank, _forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        bank.transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1)
+            .unwrap();
+        bank.transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2)
+            .unwrap();
+        bank.transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3)
+            .unwrap();
+        bank.fill_bank_with_ticks_for_tests();
+
+        // Force flush the bank to create the account storage entry
+        bank.squash();
+        bank.force_flush_accounts_cache();
+
+        let (storages, _slots) = bank.rc.accounts.accounts_db.get_storages(RangeFull);
+
+        // Calculate the current accounts_lt_hash
+        let expected_accounts_lt_hash = bank.accounts_lt_hash.lock().unwrap().clone();
+        // Find the account storage entry for slot 0
+        assert_eq!(storages.len(), 1);
+        let account_storage_entry = storages.first().unwrap();
+        assert_eq!(account_storage_entry.slot(), bank.slot());
+
+        // Find all the accounts in slot 0
+        let accounts = bank
+            .accounts()
+            .accounts_db
+            .get_unique_accounts_from_storage(account_storage_entry);
+
+        // Find the offset of pubkey `key1` in the accounts db slot0 and save the offset.
+        let offset = accounts
+            .stored_accounts
+            .iter()
+            .find(|account| key1 == *account.pubkey())
+            .map(|account| account.index_info.offset())
+            .expect("Pubkey1 is present in Slot0");
+
+        // Mark pubkey1 as obsolete in slot 1
+        // This is a valid scenario that the accounts_lt_hash verification could see if slot1
+        // transfers the balance of pubkey1 to a new pubkey.
+        account_storage_entry
+            .mark_accounts_obsolete(vec![(offset, 0)].into_iter(), bank.slot() + 1);
+
+        // Recalculate the hash from storages, calculating the hash as of slot 0 like before
+        let calculated_accounts_lt_hash = bank
+            .accounts()
+            .accounts_db
+            .calculate_accounts_lt_hash_at_startup_from_storages(
+                storages.as_slice(),
+                &DuplicatesLtHash::default(),
+                bank.slot(),
+            );
+
+        // Ensure that the hash is the same as before since the obsolete account updates in slot0
+        // marked at slot1 should be ignored
+        assert_eq!(calculated_accounts_lt_hash, expected_accounts_lt_hash);
+
+        // Recalculate the hash from storages, but include obsolete account updates marked in slot1
+        let recalculated_accounts_lt_hash = bank
+            .accounts()
+            .accounts_db
+            .calculate_accounts_lt_hash_at_startup_from_storages(
+                storages.as_slice(),
+                &DuplicatesLtHash::default(),
+                bank.slot() + 1,
+            );
+
+        // The hashes should be different now as pubkey1 account will not be included in the hash
+        assert_ne!(recalculated_accounts_lt_hash, expected_accounts_lt_hash);
     }
 }

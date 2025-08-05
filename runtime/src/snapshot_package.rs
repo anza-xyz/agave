@@ -16,14 +16,6 @@ use {
 mod compare;
 pub use compare::*;
 
-/// Accounts packages are sent to the Accounts Hash Verifier for processing.  There are multiple
-/// types of accounts packages, which are specified as variants in this enum.  All accounts
-/// packages do share some processing: such as calculating the accounts hash.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum AccountsPackageKind {
-    Snapshot(SnapshotKind),
-}
-
 /// This struct packages up fields to send to SnapshotPackagerService
 pub struct SnapshotPackage {
     pub snapshot_kind: SnapshotKind,

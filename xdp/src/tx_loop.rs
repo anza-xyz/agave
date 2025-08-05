@@ -20,20 +20,24 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{sysconf, _SC_PAGESIZE},
     std::{
-        net::{IpAddr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         thread,
         time::Duration,
     },
 };
 
-pub fn tx_loop<T: AsRef<[u8]>>(
+#[allow(clippy::too_many_arguments)]
+pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
+    cpu_id: usize,
     dev: &NetworkDevice,
-    src_port: u16,
     queue_id: QueueId,
     zero_copy: bool,
-    cpu_id: usize,
-    receiver: Receiver<(Vec<SocketAddr>, T)>,
-    drop_sender: Sender<(Vec<SocketAddr>, T)>,
+    src_mac: Option<MacAddress>,
+    src_ip: Option<Ipv4Addr>,
+    src_port: u16,
+    dest_mac: Option<MacAddress>,
+    receiver: Receiver<(A, T)>,
+    drop_sender: Sender<(A, T)>,
 ) {
     log::info!(
         "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
@@ -43,8 +47,16 @@ pub fn tx_loop<T: AsRef<[u8]>>(
     // each queue is bound to its own CPU core
     set_cpu_affinity([cpu_id]).unwrap();
 
-    let src_mac = dev.mac_addr().unwrap();
-    let src_ip = dev.ipv4_addr().unwrap();
+    let src_mac = src_mac.unwrap_or_else(|| {
+        // if no source MAC is provided, use the device's MAC address
+        dev.mac_addr()
+            .expect("no src_mac provided, device must have a MAC address")
+    });
+    let src_ip = src_ip.unwrap_or_else(|| {
+        // if no source IP is provided, use the device's IPv4 address
+        dev.ipv4_addr()
+            .expect("no src_ip provided, device must have an IPv4 address")
+    });
 
     // some drivers require frame_size=page_size
     let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
@@ -149,7 +161,7 @@ pub fn tx_loop<T: AsRef<[u8]>>(
     loop {
         match receiver.try_recv() {
             Ok((addrs, payload)) => {
-                batched_packets += addrs.len();
+                batched_packets += addrs.as_ref().len();
                 batched_items.push((addrs, payload));
                 timeouts = 0;
                 if batched_packets < BATCH_SIZE {
@@ -180,7 +192,7 @@ pub fn tx_loop<T: AsRef<[u8]>>(
         let mut chunk_remaining = BATCH_SIZE.min(batched_packets);
 
         for (addrs, payload) in batched_items.drain(..) {
-            for addr in &addrs {
+            for addr in addrs.as_ref() {
                 // loop until we have space for the next packet
                 loop {
                     completion.sync(true);
@@ -209,19 +221,38 @@ pub fn tx_loop<T: AsRef<[u8]>>(
                     panic!("IPv6 not supported");
                 };
 
-                let next_hop = router.route(addr.ip()).unwrap();
-                // sanity check that the address is routable through our NIC
-                if next_hop.if_index != dev.if_index() {
-                    log::warn!(
-                        "turbine peer {} must be routed through if_index: {} our if_index: {}",
-                        addr,
-                        next_hop.if_index,
-                        dev.if_index()
-                    );
-                    batched_packets -= 1;
-                    umem.release(frame.offset());
-                    continue;
-                }
+                let dest_mac = if let Some(mac) = dest_mac {
+                    mac
+                } else {
+                    let next_hop = router.route(addr.ip()).unwrap();
+
+                    let mut skip = false;
+
+                    // sanity check that the address is routable through our NIC
+                    if next_hop.if_index != dev.if_index() {
+                        log::warn!(
+                            "dropping packet: turbine peer {addr} must be routed through if_index: {} our if_index: {}",
+                            next_hop.if_index,
+                            dev.if_index()
+                        );
+                        skip = true;
+                    }
+
+                    // we need the MAC address to send the packet
+                    if next_hop.mac_addr.is_none() {
+                        log::warn!("dropping packet: turbine peer {addr} must be routed through {} which has no known MAC address", next_hop.ip_addr);
+                        skip = true;
+                    };
+
+                    if skip {
+                        batched_packets -= 1;
+                        umem.release(frame.offset());
+                        continue;
+                    }
+
+                    next_hop.mac_addr.unwrap()
+                };
+
                 const PACKET_HEADER_SIZE: usize =
                     ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
                 let len = payload.as_ref().len();
@@ -231,12 +262,7 @@ pub fn tx_loop<T: AsRef<[u8]>>(
                 // write the payload first as it's needed for checksum calculation (if enabled)
                 packet[PACKET_HEADER_SIZE..][..len].copy_from_slice(payload.as_ref());
 
-                write_eth_header(
-                    packet,
-                    &src_mac,
-                    // the unwrap case is for loopback interfaces which don't have a mac address
-                    &next_hop.mac_addr.unwrap_or(MacAddress([0u8; 6])).0,
-                );
+                write_eth_header(packet, &src_mac.0, &dest_mac.0);
 
                 write_ip_header(
                     &mut packet[ETH_HEADER_SIZE..],

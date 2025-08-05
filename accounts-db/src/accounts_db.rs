@@ -5692,10 +5692,12 @@ impl AccountsDb {
     ///
     /// The `duplicates_lt_hash` is the old/duplicate accounts to mix *out* of the storages.
     /// This value comes from index generation.
+    /// The 'startup_slot' is the slot for which the accounts_lt_hash is calculated.
     pub fn calculate_accounts_lt_hash_at_startup_from_storages(
         &self,
         storages: &[Arc<AccountStorageEntry>],
         duplicates_lt_hash: &DuplicatesLtHash,
+        startup_slot: Slot,
     ) -> AccountsLtHash {
         // Randomized order works well with rayon work splitting, since we only care about
         // uniform distribution of total work size per batch (other ordering strategies might be
@@ -5704,7 +5706,10 @@ impl AccountsDb {
         let mut lt_hash = storages
             .par_iter()
             .fold(LtHash::identity, |mut accum, storage| {
-                let obsolete_accounts = storage.get_obsolete_accounts(None);
+                // Function is calculating the accounts_lt_hash from all accounts in the
+                // storages as of startup_slot. This means that any accounts marked obsolete at a
+                // slot newer than startup_slot should be included in the accounts_lt_hash
+                let obsolete_accounts = storage.get_obsolete_accounts(Some(startup_slot));
                 storage
                     .accounts
                     .scan_accounts(|offset, account| {

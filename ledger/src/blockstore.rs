@@ -5315,7 +5315,7 @@ pub mod tests {
         crate::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
-            shred::{max_ticks_per_n_shreds, ShredFlags},
+            shred::max_ticks_per_n_shreds,
         },
         assert_matches::assert_matches,
         bincode::{serialize, Options},
@@ -7542,18 +7542,25 @@ pub mod tests {
             index
         );
 
-        // Add a shred from different fec set
+        let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
+        let keypair = Keypair::new();
+        let reed_solomon_cache = ReedSolomonCache::default();
         let new_index = fec_set_index + 31;
-        let new_data_shred = Shred::new_from_data(
-            slot,
-            new_index,
-            1,          // parent_offset
-            &[3, 3, 3], // data
-            ShredFlags::empty(),
-            0, // reference_tick,
-            0, // version
-            fec_set_index + 30,
-        );
+        // Add a shred from different fec set
+        let new_data_shred = shredder
+            .make_shreds_from_data_slice(
+                &keypair,
+                &[3, 3, 3],
+                false,
+                Some(Hash::default()),
+                new_index,
+                new_index,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap()
+            .next()
+            .unwrap();
 
         let mut shred_insertion_tracker =
             ShredInsertionTracker::new(data_shreds.len(), blockstore.db.batch().unwrap());
@@ -7868,16 +7875,25 @@ pub mod tests {
         );
 
         // Insert an empty shred that won't deshred into entries
-        let shreds = vec![Shred::new_from_data(
-            slot,
-            next_shred_index as u32,
-            1,
-            &[1, 1, 1],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            next_shred_index as u32,
-        )];
+
+        let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
+        let keypair = Keypair::new();
+        let reed_solomon_cache = ReedSolomonCache::default();
+
+        let shreds: Vec<Shred> = shredder
+            .make_shreds_from_data_slice(
+                &keypair,
+                &[1, 1, 1],
+                true,
+                Some(Hash::default()),
+                next_shred_index as u32,
+                next_shred_index as u32,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap()
+            .take(DATA_SHREDS_PER_FEC_BLOCK)
+            .collect();
 
         // With the corruption, nothing should be returned, even though an
         // earlier data block was valid
