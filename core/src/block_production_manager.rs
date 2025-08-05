@@ -79,7 +79,7 @@ impl BlockProductionManager {
         );
         self.non_vote_shutdown_signal
             .store(false, Ordering::Relaxed);
-        BankingStage::spawn_scheduler_and_workers_with_structure(
+        BankingStage::spawn_scheduler_and_workers_with_transaction_structure(
             self.non_vote_shutdown_signal.clone(),
             &mut self.non_vote_thread_handles,
             block_production_method,

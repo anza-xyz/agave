@@ -437,7 +437,7 @@ impl BankingStage {
             vote_storage,
         ));
 
-        Self::spawn_scheduler_and_workers_with_structure(
+        Self::spawn_scheduler_and_workers_with_transaction_structure(
             Arc::new(AtomicBool::new(false)),
             &mut bank_thread_hdls,
             block_production_method,
@@ -455,7 +455,7 @@ impl BankingStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn spawn_scheduler_and_workers_with_structure(
+    pub(crate) fn spawn_scheduler_and_workers_with_transaction_structure(
         exit_signal: Arc<AtomicBool>,
         bank_thread_hdls: &mut Vec<JoinHandle<()>>,
         block_production_method: BlockProductionMethod,
