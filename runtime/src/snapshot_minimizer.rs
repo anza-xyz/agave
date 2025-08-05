@@ -383,7 +383,7 @@ mod tests {
         },
         dashmap::DashSet,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_genesis_config::create_genesis_config,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_pubkey::Pubkey,
@@ -392,6 +392,7 @@ mod tests {
         solana_stake_interface as stake,
         std::sync::Arc,
         tempfile::TempDir,
+        test_case::test_case,
     };
 
     #[test]
@@ -594,10 +595,11 @@ mod tests {
         ); // snapshot slot is untouched, so still has all 300 accounts
     }
 
-    /// Ensure that minimization recalculates the accounts lt hash correctly
-    /// so the minimized snapshot is loadable.
-    #[test]
-    fn test_minimize_and_accounts_lt_hash() {
+    /// Ensure that minimized snapshots are loadable with and without
+    /// recalculating the accounts lt hash.
+    #[test_case(false)]
+    #[test_case(true)]
+    fn test_minimize_and_recalculate_accounts_lt_hash(should_recalculate_accounts_lt_hash: bool) {
         let genesis_config_info = genesis_utils::create_genesis_config(123_456_789_000_000_000);
         let (bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
@@ -633,7 +635,7 @@ mod tests {
             &bank,
             bank.slot(),
             DashSet::from_iter([pubkey_to_keep]),
-            true,
+            should_recalculate_accounts_lt_hash,
         );
 
         // take a snapshot of the minimized bank, then load it
@@ -650,6 +652,11 @@ mod tests {
         )
         .unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
+        let accounts_db_config = AccountsDbConfig {
+            // must skip accounts verification if we did not recalculate the accounts lt hash
+            skip_initial_hash_calc: !should_recalculate_accounts_lt_hash,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
         let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
             &bank_snapshots_dir,
@@ -663,7 +670,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            Some(accounts_db_config),
             None,
             Arc::default(),
         )
