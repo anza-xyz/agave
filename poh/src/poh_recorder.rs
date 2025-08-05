@@ -261,7 +261,7 @@ impl PohRecorder {
                 tick_cache: vec![],
                 working_bank: None,
                 working_bank_sender,
-                shared_working_bank: SharedWorkingBank::default(),
+                shared_working_bank: SharedWorkingBank::empty(),
                 clear_bank_signal,
                 start_bank,
                 start_bank_active_descendants: vec![],
@@ -975,7 +975,7 @@ pub fn create_test_recorder_with_index_tracking(
 
 /// Wrapper around an arc-swapped bank that prevents modifying outside
 /// of `PohRecorder`.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SharedWorkingBank(Arc<ArcSwapOption<Bank>>);
 
 impl SharedWorkingBank {
@@ -989,6 +989,10 @@ impl SharedWorkingBank {
 
     fn clear(&self) {
         self.0.store(None);
+    }
+
+    fn empty() -> Self {
+        Self(Arc::new(ArcSwapOption::empty()))
     }
 }
 
