@@ -1159,10 +1159,21 @@ mod tests {
     #[test]
     fn test_max_instruction_trace_length() {
         const MAX_INSTRUCTIONS: usize = 8;
-        let mut transaction_context =
-            TransactionContext::new(Vec::new(), Rent::default(), 1, MAX_INSTRUCTIONS);
+        let mut transaction_context = TransactionContext::new(
+            vec![(
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+            )],
+            Rent::default(),
+            1,
+            MAX_INSTRUCTIONS,
+        );
         for _ in 0..MAX_INSTRUCTIONS {
             transaction_context.push().unwrap();
+            transaction_context
+                .get_next_instruction_context_mut()
+                .unwrap()
+                .configure(0, vec![InstructionAccount::new(0, 0, false, false)], &[]);
             transaction_context.pop().unwrap();
         }
         assert_eq!(
