@@ -167,7 +167,7 @@ pub fn get_migration_feature_position(feature_id: &Pubkey) -> usize {
 
 #[cfg(test)]
 mod test {
-    use {super::*, agave_feature_set as feature_set, solana_sdk_ids::stake};
+    use super::*;
 
     #[test]
     fn test_const_builtin_cost_arrays() {
@@ -181,32 +181,6 @@ mod test {
         assert!(NON_MIGRATING_BUILTINS_COSTS
             .iter()
             .all(|(_, c)| c.core_bpf_migration_feature().is_none()));
-    }
-
-    #[test]
-    fn test_get_builtin_migration_feature_index() {
-        assert!(matches!(
-            get_builtin_migration_feature_index(&Pubkey::new_unique()),
-            BuiltinMigrationFeatureIndex::NotBuiltin
-        ));
-        assert!(matches!(
-            get_builtin_migration_feature_index(&compute_budget::id()),
-            BuiltinMigrationFeatureIndex::BuiltinNoMigrationFeature,
-        ));
-        let feature_index = get_builtin_migration_feature_index(&stake::id());
-        assert!(matches!(
-            feature_index,
-            BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(_)
-        ));
-        let BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(feature_index) =
-            feature_index
-        else {
-            panic!("expect migrating builtin")
-        };
-        assert_eq!(
-            get_migration_feature_id(feature_index),
-            &feature_set::migrate_stake_program_to_core_bpf::id()
-        );
     }
 
     #[test]
