@@ -1447,7 +1447,7 @@ impl Bank {
         report_loaded_programs_stats(
             &parent
                 .transaction_processor
-                .program_cache
+                .global_program_cache
                 .read()
                 .unwrap()
                 .stats,
@@ -1455,7 +1455,7 @@ impl Bank {
         );
 
         new.transaction_processor
-            .program_cache
+            .global_program_cache
             .write()
             .unwrap()
             .stats
@@ -1466,7 +1466,7 @@ impl Bank {
 
     pub fn set_fork_graph_in_program_cache(&self, fork_graph: Weak<RwLock<BankForks>>) {
         self.transaction_processor
-            .program_cache
+            .global_program_cache
             .write()
             .unwrap()
             .set_fork_graph(fork_graph);
@@ -1490,7 +1490,11 @@ impl Bank {
                 .checked_div(2)
                 .unwrap();
 
-        let mut program_cache = self.transaction_processor.program_cache.write().unwrap();
+        let mut program_cache = self
+            .transaction_processor
+            .global_program_cache
+            .write()
+            .unwrap();
 
         if program_cache.upcoming_environments.is_some() {
             if let Some((key, program_to_recompile)) = program_cache.programs_to_recompile.pop() {
@@ -1498,7 +1502,7 @@ impl Bank {
                 drop(program_cache);
                 let environments_for_epoch = self
                     .transaction_processor
-                    .program_cache
+                    .global_program_cache
                     .read()
                     .unwrap()
                     .get_environments_for_epoch(effective_epoch);
@@ -1516,8 +1520,11 @@ impl Bank {
                             .load(Ordering::Relaxed),
                         Ordering::Relaxed,
                     );
-                    let mut program_cache =
-                        self.transaction_processor.program_cache.write().unwrap();
+                    let mut program_cache = self
+                        .transaction_processor
+                        .global_program_cache
+                        .write()
+                        .unwrap();
                     program_cache.assign_program(key, recompiled);
                 }
             }
@@ -1527,7 +1534,11 @@ impl Bank {
             // Anticipate the upcoming program runtime environment for the next epoch,
             // so we can try to recompile loaded programs before the feature transition hits.
             drop(program_cache);
-            let mut program_cache = self.transaction_processor.program_cache.write().unwrap();
+            let mut program_cache = self
+                .transaction_processor
+                .global_program_cache
+                .write()
+                .unwrap();
             let program_runtime_environment_v1 = create_program_runtime_environment_v1(
                 &upcoming_feature_set.runtime_features(),
                 &compute_budget,
@@ -1561,7 +1572,7 @@ impl Bank {
 
     pub fn prune_program_cache(&self, new_root_slot: Slot, new_root_epoch: Epoch) {
         self.transaction_processor
-            .program_cache
+            .global_program_cache
             .write()
             .unwrap()
             .prune(new_root_slot, new_root_epoch);
@@ -1569,7 +1580,7 @@ impl Bank {
 
     pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
         self.transaction_processor
-            .program_cache
+            .global_program_cache
             .write()
             .unwrap()
             .prune_by_deployment_slot(deployment_slot);
@@ -3601,7 +3612,10 @@ impl Bank {
                     if executed_tx.was_successful() && !programs_modified_by_tx.is_empty() {
                         cache
                             .get_or_insert_with(|| {
-                                self.transaction_processor.program_cache.write().unwrap()
+                                self.transaction_processor
+                                    .global_program_cache
+                                    .write()
+                                    .unwrap()
                             })
                             .merge(programs_modified_by_tx);
                     }
@@ -5536,7 +5550,7 @@ impl Bank {
 
                 // Unload a program from the bank's cache
                 self.transaction_processor
-                    .program_cache
+                    .global_program_cache
                     .write()
                     .unwrap()
                     .remove_programs([*old_address].into_iter());
@@ -5921,7 +5935,11 @@ impl Bank {
         ProgramCacheForTxBatch::new_from_cache(
             slot,
             self.epoch_schedule.get_epoch(slot),
-            &self.transaction_processor.program_cache.read().unwrap(),
+            &self
+                .transaction_processor
+                .global_program_cache
+                .read()
+                .unwrap(),
         )
     }
 

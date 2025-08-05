@@ -66,11 +66,11 @@ fn program_cache_execution(threads: usize) {
                     0,
                 );
                 let mut result = {
-                    let program_cache = processor.program_cache.read().unwrap();
+                    let global_program_cache = processor.global_program_cache.read().unwrap();
                     ProgramCacheForTxBatch::new_from_cache(
                         processor.slot,
                         processor.epoch,
-                        &program_cache,
+                        &global_program_cache,
                     )
                 };
                 processor.replenish_program_cache(

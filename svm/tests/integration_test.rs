@@ -264,7 +264,7 @@ impl SvmTestEnvironment<'_> {
                 let programs_modified_by_tx = &executed_tx.programs_modified_by_tx;
                 if executed_tx.was_successful() && !programs_modified_by_tx.is_empty() {
                     self.batch_processor
-                        .program_cache
+                        .global_program_cache
                         .write()
                         .unwrap()
                         .merge(programs_modified_by_tx);
@@ -278,7 +278,7 @@ impl SvmTestEnvironment<'_> {
     pub fn is_program_blocked(&self, program_id: &Pubkey) -> bool {
         let (_, program_cache_entry) = self
             .batch_processor
-            .program_cache
+            .global_program_cache
             .read()
             .unwrap()
             .get_flattened_entries_for_tests()
@@ -2750,9 +2750,9 @@ fn program_cache_stats() {
     env.execute();
 
     // check all usage stats are as we expect
-    let program_cache = env
+    let global_program_cache = env
         .batch_processor
-        .program_cache
+        .global_program_cache
         .read()
         .unwrap()
         .get_flattened_entries_for_tests()
@@ -2760,7 +2760,7 @@ fn program_cache_stats() {
         .rev()
         .collect::<Vec<_>>();
 
-    let (_, noop_entry) = program_cache
+    let (_, noop_entry) = global_program_cache
         .iter()
         .find(|(pubkey, _)| *pubkey == noop_program)
         .unwrap();
@@ -2771,7 +2771,7 @@ fn program_cache_stats() {
         "noop_tx_usage matches"
     );
 
-    let (_, system_entry) = program_cache
+    let (_, system_entry) = global_program_cache
         .iter()
         .find(|(pubkey, _)| *pubkey == system_program::id())
         .unwrap();
@@ -2783,7 +2783,7 @@ fn program_cache_stats() {
     );
 
     assert!(
-        !program_cache
+        !global_program_cache
             .iter()
             .any(|(pubkey, _)| *pubkey == missing_program),
         "missing_program is missing"
@@ -2829,7 +2829,7 @@ fn program_cache_stats() {
 
     let (_, noop_entry) = env
         .batch_processor
-        .program_cache
+        .global_program_cache
         .read()
         .unwrap()
         .get_flattened_entries_for_tests()
@@ -2864,7 +2864,7 @@ fn program_cache_stats() {
 
     let (_, noop_entry) = env
         .batch_processor
-        .program_cache
+        .global_program_cache
         .read()
         .unwrap()
         .get_flattened_entries_for_tests()
