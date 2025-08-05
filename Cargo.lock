@@ -10857,12 +10857,10 @@ dependencies = [
  "assert_matches",
  "bincode",
  "ed25519-dalek",
- "itertools 0.12.1",
  "libsecp256k1",
  "log",
  "openssl",
  "percentage",
- "prost",
  "qualifier_attr",
  "rand 0.7.3",
  "serde",
@@ -10907,10 +10905,8 @@ dependencies = [
  "solana-secp256r1-program",
  "solana-signature",
  "solana-signer",
- "solana-slot-hashes",
  "solana-svm",
  "solana-svm-callback",
- "solana-svm-conformance",
  "solana-svm-feature-set",
  "solana-svm-transaction",
  "solana-system-interface",
@@ -10936,15 +10932,6 @@ dependencies = [
  "solana-account",
  "solana-precompile-error",
  "solana-pubkey",
-]
-
-[[package]]
-name = "solana-svm-conformance"
-version = "3.0.0"
-dependencies = [
- "prost",
- "prost-build",
- "prost-types",
 ]
 
 [[package]]

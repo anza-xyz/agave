@@ -104,7 +104,6 @@ members = [
     "streamer",
     "svm",
     "svm-callback",
-    "svm-conformance",
     "svm-feature-set",
     "svm-transaction",
     "syscalls",
@@ -524,7 +523,6 @@ solana-storage-proto = { path = "storage-proto", version = "=3.0.0" }
 solana-streamer = { path = "streamer", version = "=3.0.0" }
 solana-svm = { path = "svm", version = "=3.0.0" }
 solana-svm-callback = { path = "svm-callback", version = "=3.0.0" }
-solana-svm-conformance = { path = "svm-conformance", version = "=3.0.0" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.0.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.0.0" }
 solana-system-interface = "1.0"
