@@ -773,7 +773,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         false,
                     )
                     .expect("called load_program_with_pubkey() with nonexistent account");
-                    program.tx_usage_counter.store(0, Ordering::Relaxed);
                     (key, program)
                 });
 
