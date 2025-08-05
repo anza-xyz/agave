@@ -107,6 +107,7 @@ if [[ $CI_OS_NAME = windows ]]; then
 else
   ./fetch-perf-libs.sh
 
+  DCOU_BINS=()
   BINS=(
     solana
     solana-faucet
@@ -122,7 +123,7 @@ else
       solana-gossip
     )
 
-    DCOU_BINS=(
+    DCOU_BINS+=(
       agave-ledger-tool
     )
   fi
