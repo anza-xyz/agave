@@ -435,7 +435,7 @@ fn prune_unstaked_connection_table(
     }
 }
 
-fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
+pub fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
     // Use the client cert only if it is self signed and the chain length is 1.
     connection
         .peer_identity()?
