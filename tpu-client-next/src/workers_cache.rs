@@ -140,11 +140,7 @@ impl WorkersCache {
         self.workers.contains(peer)
     }
 
-    pub fn push(
-        &mut self,
-        leader: SocketAddr,
-        peer_worker: WorkerInfo,
-    ) -> Option<ShutdownWorker> {
+    pub fn push(&mut self, leader: SocketAddr, peer_worker: WorkerInfo) -> Option<ShutdownWorker> {
         if let Some((leader, popped_worker)) = self.workers.push(leader, peer_worker) {
             return Some(ShutdownWorker {
                 leader,
