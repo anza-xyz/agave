@@ -78,7 +78,7 @@ mod tests {
         } = solana_streamer::quic::spawn_server(
             "solQuicTest",
             "quic_streamer_test",
-            s.try_clone().unwrap(),
+            vec![s.try_clone().unwrap()],
             &keypair,
             sender,
             exit.clone(),
@@ -158,7 +158,7 @@ mod tests {
             max_concurrent_connections: _,
         } = solana_streamer::nonblocking::quic::spawn_server(
             "quic_streamer_test",
-            s.try_clone().unwrap(),
+            vec![s.try_clone().unwrap()],
             &keypair,
             sender,
             exit.clone(),
@@ -216,7 +216,7 @@ mod tests {
         } = solana_streamer::quic::spawn_server(
             "solQuicTest",
             "quic_streamer_test",
-            request_recv_socket.try_clone().unwrap(),
+            [request_recv_socket.try_clone().unwrap()],
             &keypair,
             sender,
             request_recv_exit.clone(),
@@ -240,7 +240,7 @@ mod tests {
         } = solana_streamer::quic::spawn_server(
             "solQuicTest",
             "quic_streamer_test",
-            response_recv_socket,
+            [response_recv_socket],
             &keypair2,
             sender2,
             response_recv_exit.clone(),
@@ -326,7 +326,7 @@ mod tests {
             max_concurrent_connections: _,
         } = solana_streamer::nonblocking::quic::spawn_server(
             "quic_streamer_test",
-            s.try_clone().unwrap(),
+            vec![s.try_clone().unwrap()],
             &keypair,
             sender,
             exit.clone(),
