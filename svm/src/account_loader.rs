@@ -808,7 +808,6 @@ mod tests {
     use {
         super::*,
         crate::transaction_account_state_info::TransactionAccountStateInfo,
-        agave_reserved_account_keys::ReservedAccountKeys,
         rand0_7::prelude::*,
         solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         solana_hash::Hash,
@@ -838,7 +837,13 @@ mod tests {
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_transaction_context::{TransactionAccount, TransactionContext},
         solana_transaction_error::{TransactionError, TransactionResult as Result},
-        std::{borrow::Cow, cell::RefCell, collections::HashMap, fs::File, io::Read},
+        std::{
+            borrow::Cow,
+            cell::RefCell,
+            collections::{HashMap, HashSet},
+            fs::File,
+            io::Read,
+        },
         test_case::test_case,
     };
 
@@ -934,10 +939,7 @@ mod tests {
     }
 
     fn new_unchecked_sanitized_message(message: Message) -> SanitizedMessage {
-        SanitizedMessage::Legacy(LegacyMessage::new(
-            message,
-            &ReservedAccountKeys::empty_key_set(),
-        ))
+        SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()))
     }
 
     #[test_case(false; "informal_loaded_size")]
