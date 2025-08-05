@@ -269,9 +269,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                         if self.common.batches.transactions()[thread_id].len()
                             >= self.config.target_transactions_per_batch
                         {
-                            num_sent += self
-                                .common
-                                .send_batch(thread_id, self.config.target_transactions_per_batch)?;
+                            num_sent += self.common.send_batch(thread_id)?;
                         }
 
                         // if the thread is at max_cu_per_thread, remove it from the schedulable threads
@@ -294,9 +292,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
             }
 
             // Send all non-empty batches
-            num_sent += self
-                .common
-                .send_batches(self.config.target_transactions_per_batch)?;
+            num_sent += self.common.send_batches()?;
 
             // Refresh window budget and do chunked pops
             window_budget += unblock_this_batch.len();
@@ -309,9 +305,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         }
 
         // Send batches for any remaining transactions
-        num_sent += self
-            .common
-            .send_batches(self.config.target_transactions_per_batch)?;
+        num_sent += self.common.send_batches()?;
 
         // Push unschedulable ids back into the container
         container.push_ids_into_queue(unschedulable_ids.into_iter());

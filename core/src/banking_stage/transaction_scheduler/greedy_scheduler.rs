@@ -134,9 +134,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                 .check_locks(transaction_state.transaction())
             {
                 self.working_account_set.clear();
-                num_sent += self
-                    .common
-                    .send_batches(self.config.target_transactions_per_batch)?;
+                num_sent += self.common.send_batches()?;
             }
 
             // Now check if the transaction can actually be scheduled.
@@ -187,9 +185,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                         >= self.config.target_transactions_per_batch
                     {
                         self.working_account_set.clear();
-                        num_sent += self
-                            .common
-                            .send_batches(self.config.target_transactions_per_batch)?;
+                        num_sent += self.common.send_batches()?;
                     }
 
                     // if the thread is at target_cu_per_thread, remove it from the schedulable threads
@@ -208,9 +204,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         }
 
         self.working_account_set.clear();
-        num_sent += self
-            .common
-            .send_batches(self.config.target_transactions_per_batch)?;
+        num_sent += self.common.send_batches()?;
         let Saturating(num_scheduled) = num_scheduled;
         assert_eq!(
             num_scheduled, num_sent,
