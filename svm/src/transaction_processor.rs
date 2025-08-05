@@ -354,10 +354,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         // Create the batch-local program cache.
         let mut program_cache_for_tx_batch = {
-            let program_cache = self.program_cache.read().unwrap();
-            let mut program_cache_for_tx_batch =
-                ProgramCacheForTxBatch::new_from_cache(self.slot, self.epoch, &program_cache);
-            drop(program_cache);
+            let global_program_cache = self.program_cache.read().unwrap();
+            let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
+                self.slot,
+                self.epoch,
+                &global_program_cache,
+            );
+            drop(global_program_cache);
 
             let builtins = self.builtin_program_ids.read().unwrap().clone();
 
@@ -749,9 +752,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         loop {
             let (program_to_store, task_cookie, task_waiter) = {
                 // Lock the global cache.
-                let program_cache = self.program_cache.read().unwrap();
+                let global_program_cache = self.program_cache.read().unwrap();
                 // Figure out which program needs to be loaded next.
-                let program_to_load = program_cache.extract(
+                let program_to_load = global_program_cache.extract(
                     &mut missing_programs,
                     program_cache_for_tx_batch,
                     increment_usage_counter,
@@ -763,7 +766,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // Load, verify and compile one program.
                     let program = load_program_with_pubkey(
                         account_loader,
-                        &program_cache.get_environments_for_epoch(self.epoch),
+                        &global_program_cache.get_environments_for_epoch(self.epoch),
                         &key,
                         self.slot,
                         execute_timings,
@@ -774,16 +777,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     (key, program)
                 });
 
-                let task_waiter = Arc::clone(&program_cache.loading_task_waiter);
+                let task_waiter = Arc::clone(&global_program_cache.loading_task_waiter);
                 (program_to_store, task_waiter.cookie(), task_waiter)
                 // Unlock the global cache again.
             };
 
             if let Some((key, program)) = program_to_store {
                 program_cache_for_tx_batch.loaded_missing = true;
-                let mut program_cache = self.program_cache.write().unwrap();
+                let mut global_program_cache = self.program_cache.write().unwrap();
                 // Submit our last completed loading task.
-                if program_cache.finish_cooperative_loading_task(self.slot, key, program)
+                if global_program_cache.finish_cooperative_loading_task(self.slot, key, program)
                     && limit_to_load_programs
                 {
                     // This branch is taken when there is an error in assigning a program to a
@@ -792,7 +795,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     *program_cache_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
                         self.slot,
                         self.epoch,
-                        &program_cache,
+                        &global_program_cache,
                     );
                     program_cache_for_tx_batch.hit_max_limit = true;
                     return;
