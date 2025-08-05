@@ -12,8 +12,6 @@
 //! Refer to [`PooledScheduler`] doc comment for general overview of scheduler state transitions
 //! regarding to pooling and the actual use.
 
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     assert_matches::assert_matches,
@@ -36,9 +34,9 @@ use {
     solana_runtime::{
         installed_scheduler_pool::{
             initialized_result_with_timings, InstalledScheduler, InstalledSchedulerBox,
-            InstalledSchedulerPool, InstalledSchedulerPoolArc, ResultWithTimings, ScheduleResult,
-            SchedulerAborted, SchedulerId, SchedulingContext, TimeoutListener,
-            UninstalledScheduler, UninstalledSchedulerBox,
+            InstalledSchedulerPool, ResultWithTimings, ScheduleResult, SchedulerAborted,
+            SchedulerId, SchedulingContext, TimeoutListener, UninstalledScheduler,
+            UninstalledSchedulerBox,
         },
         prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
@@ -102,6 +100,32 @@ enum CheckPoint<'a> {
 type CountOrDefault = Option<usize>;
 type AtomicSchedulerId = AtomicU64;
 
+#[derive(Debug)]
+pub enum SupportedSchedulingMode {
+    Either(SchedulingMode),
+    Both,
+}
+
+impl SupportedSchedulingMode {
+    fn is_supported(&self, requested_mode: SchedulingMode) -> bool {
+        match (self, requested_mode) {
+            (Self::Both, _requested) => true,
+            (Self::Either(ref supported), ref requested) if supported == requested => true,
+            _ => false,
+        }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    fn with_verification() -> Self {
+        Self::Either(BlockVerification)
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    fn with_production() -> Self {
+        Self::Either(BlockProduction)
+    }
+}
+
 /// A pool of idling schedulers (usually [`PooledScheduler`]), ready to be taken by bank.
 ///
 /// Also, the pool runs a _cleaner_ thread named as `solScCleaner`. its jobs include:
@@ -118,6 +142,7 @@ type AtomicSchedulerId = AtomicU64;
 /// explanation of this rather complex dyn trait/type hierarchy.
 #[derive(Debug)]
 pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
+    supported_scheduling_mode: SupportedSchedulingMode,
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
     block_production_scheduler_inner: Mutex<BlockProductionSchedulerInner<S, TH>>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
@@ -138,6 +163,8 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     weak_self: Weak<Self>,
     next_scheduler_id: AtomicSchedulerId,
     max_usage_queue_count: usize,
+    /// Used to send self to the cleaner thread on pool creation; also used to promptly terminate
+    /// it on pool destruction.
     scheduler_pool_sender: Sender<Weak<Self>>,
     cleaner_thread: JoinHandle<()>,
     _phantom: PhantomData<TH>,
@@ -307,7 +334,7 @@ struct BankingStageHandlerContext {
 
 trait_set! {
     pub trait BankingPacketHandler =
-        DynClone + FnMut(&BankingStageHelper, BankingPacketBatch) + Send + 'static;
+        DynClone + Send + 'static + FnMut(&BankingStageHelper, BankingPacketBatch);
 }
 // Make this `Clone`-able so that it can easily propagated to all the handler threads.
 clone_trait_object!(BankingPacketHandler);
@@ -404,9 +431,9 @@ impl BankingStageHelper {
 pub type DefaultSchedulerPool =
     SchedulerPool<PooledScheduler<DefaultTaskHandler>, DefaultTaskHandler>;
 
-const DEFAULT_POOL_CLEANER_INTERVAL: Duration = Duration::from_secs(10);
+const DEFAULT_POOL_CLEANER_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_MAX_POOLING_DURATION: Duration = Duration::from_secs(180);
-const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
+const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 // Rough estimate of max UsageQueueLoader size in bytes:
 //   UsageFromTask * UsageQueue's capacity * DEFAULT_MAX_USAGE_QUEUE_COUNT
 //   16 bytes      * 128 items             * 262_144 entries               == 512 MiB
@@ -428,10 +455,8 @@ where
     S: SpawnableScheduler<TH>,
     TH: TaskHandler,
 {
-    // Some internal impl and test code want an actual concrete type, NOT the
-    // `dyn InstalledSchedulerPool`. So don't merge this into `Self::new_dyn()`.
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn new(
+    pub fn new(
+        supported_scheduling_mode: SupportedSchedulingMode,
         block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
@@ -439,6 +464,7 @@ where
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     ) -> Arc<Self> {
         Self::do_new(
+            supported_scheduling_mode,
             block_verification_handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
@@ -451,7 +477,45 @@ where
         )
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_for_verification(
+        block_verification_handler_count: CountOrDefault,
+        log_messages_bytes_limit: Option<usize>,
+        transaction_status_sender: Option<TransactionStatusSender>,
+        replay_vote_sender: Option<ReplayVoteSender>,
+        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    ) -> Arc<Self> {
+        Self::new(
+            SupportedSchedulingMode::with_verification(),
+            block_verification_handler_count,
+            log_messages_bytes_limit,
+            transaction_status_sender,
+            replay_vote_sender,
+            prioritization_fee_cache,
+        )
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_for_production(
+        block_verification_handler_count: CountOrDefault,
+        log_messages_bytes_limit: Option<usize>,
+        transaction_status_sender: Option<TransactionStatusSender>,
+        replay_vote_sender: Option<ReplayVoteSender>,
+        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    ) -> Arc<Self> {
+        Self::new(
+            SupportedSchedulingMode::with_production(),
+            block_verification_handler_count,
+            log_messages_bytes_limit,
+            transaction_status_sender,
+            replay_vote_sender,
+            prioritization_fee_cache,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn do_new(
+        supported_scheduling_mode: SupportedSchedulingMode,
         block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
@@ -470,12 +534,22 @@ where
 
             let weak_scheduler_pool: Weak<Self> = scheduler_pool_receiver.recv().unwrap();
             loop {
-                match scheduler_pool_receiver.recv_timeout(pool_cleaner_interval) {
-                    Ok(_) => unreachable!(),
-                    Err(RecvTimeoutError::Disconnected | RecvTimeoutError::Timeout) => (),
-                }
+                let scheduler_pool =
+                    match scheduler_pool_receiver.recv_timeout(pool_cleaner_interval) {
+                        Err(RecvTimeoutError::Timeout) => {
+                            // Most usual case: it's time to do some cleanup work after interval if
+                            // scheduler_pool is still live.
+                            weak_scheduler_pool.upgrade()
+                        }
+                        Err(RecvTimeoutError::Disconnected) => {
+                            // Disconnection should happen only after Arc has gone
+                            weak_scheduler_pool.upgrade().unwrap_none();
+                            None
+                        }
+                        Ok(_) => unreachable!("no second scheduler_pool should ever be sent"),
+                    };
 
-                let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
+                let Some(scheduler_pool) = scheduler_pool else {
                     // this is the only safe termination point of cleaner_main_loop while all other
                     // `break`s being due to poisoned locks.
                     break;
@@ -627,6 +701,7 @@ where
             .unwrap();
 
         let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
+            supported_scheduling_mode,
             scheduler_inners: Mutex::default(),
             block_production_scheduler_inner: Mutex::default(),
             trashed_scheduler_inners: Mutex::default(),
@@ -642,34 +717,17 @@ where
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
             max_usage_queue_count,
-            scheduler_pool_sender: scheduler_pool_sender.clone(),
+            scheduler_pool_sender,
             cleaner_thread,
             _phantom: PhantomData,
         });
 
-        scheduler_pool_sender
+        scheduler_pool
+            .scheduler_pool_sender
             .send(Arc::downgrade(&scheduler_pool))
             .unwrap();
 
         scheduler_pool
-    }
-
-    // This apparently-meaningless wrapper is handy, because some callers explicitly want
-    // `dyn InstalledSchedulerPool` to be returned for type inference convenience.
-    pub fn new_dyn(
-        handler_count: Option<usize>,
-        log_messages_bytes_limit: Option<usize>,
-        transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: Option<ReplayVoteSender>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-    ) -> InstalledSchedulerPoolArc {
-        Self::new(
-            handler_count,
-            log_messages_bytes_limit,
-            transaction_status_sender,
-            replay_vote_sender,
-            prioritization_fee_cache,
-        )
     }
 
     // See a comment at the weak_self field for justification of this method's existence.
@@ -689,6 +747,11 @@ where
         // Refer to the comment in is_aborted() as to the exact definition of the concept of
         // _trashed_ and the interaction among different parts of unified scheduler.
         let should_trash = scheduler.is_trashed();
+        let id = scheduler.id();
+        if should_trash {
+            info!("trashing scheduler (id: {})...", scheduler.id());
+        }
+        debug!("return_scheduler(): id: {id} should_trash: {should_trash}");
         let mut block_production_scheduler_inner =
             self.block_production_scheduler_inner.lock().unwrap();
 
@@ -699,6 +762,8 @@ where
             // Maintain the runtime invariant established in register_banking_stage() about
             // the availability of pooled block production scheduler by re-spawning one.
             if block_production_scheduler_inner.can_put(&scheduler) {
+                // TODO: signal scheduler immdiatety not to receive from banking_packet_receiver,
+                // maybe by just disconnecting new_task_sender??
                 block_production_scheduler_inner.trash_taken();
                 // To prevent block-production scheduler from being taken in
                 // do_take_resumed_scheduler() by different thread at this very moment, the
@@ -775,6 +840,10 @@ where
     #[cfg(feature = "dev-context-only-utils")]
     pub fn pooled_scheduler_count(&self) -> usize {
         self.scheduler_inners.lock().expect("not poisoned").len()
+    }
+
+    pub fn block_production_supported(&self) -> bool {
+        self.supported_scheduling_mode.is_supported(BlockProduction)
     }
 
     pub fn register_banking_stage(
@@ -878,6 +947,7 @@ where
         &self,
         block_production_scheduler_inner: &mut MutexGuard<'_, BlockProductionSchedulerInner<S, TH>>,
     ) {
+        trace!("spawn block production scheduler: start!");
         let scheduler = S::spawn(
             self.self_arc(),
             SchedulingContext::for_preallocation(),
@@ -886,6 +956,7 @@ where
         let ((result, _timings), inner) = scheduler.into_inner();
         assert_matches!(result, Ok(_));
         block_production_scheduler_inner.put_spawned(inner);
+        trace!("spawn block production scheduler: end!");
     }
 
     #[cfg(test)]
@@ -937,8 +1008,14 @@ where
         &self,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-    ) -> InstalledSchedulerBox {
-        Box::new(self.do_take_resumed_scheduler(context, result_with_timings))
+    ) -> Option<InstalledSchedulerBox> {
+        if !self.supported_scheduling_mode.is_supported(context.mode()) {
+            return None;
+        }
+
+        Some(Box::new(
+            self.do_take_resumed_scheduler(context, result_with_timings),
+        ))
     }
 
     fn register_timeout_listener(&self, timeout_listener: TimeoutListener) {
@@ -967,8 +1044,8 @@ where
         // So, wait a bit to unwrap the pool out of the sinful Arc finally here. Note that we can't resort to the
         // Drop impl, because of the need to take the ownership of the join handle of the cleaner
         // thread...
-        let mut this = self;
-        let mut this: Self = loop {
+        let mut this: Arc<Self> = self;
+        let this: Self = loop {
             match Arc::try_unwrap(this) {
                 Ok(pool) => {
                     break pool;
@@ -983,8 +1060,8 @@ where
                 }
             }
         };
-        // Accelerate cleaner thread joining by disconnection
-        this.scheduler_pool_sender = crossbeam_channel::bounded(1).0;
+        // Accelerate cleaner thread joining by channel-disconnection via drop
+        drop(this.scheduler_pool_sender);
         this.cleaner_thread.join().unwrap();
 
         info!("SchedulerPool::uninstalled_from_bank_forks(): ...finished");
@@ -1119,6 +1196,7 @@ impl TaskHandler for DefaultTaskHandler {
                     .as_ref()
                     .unwrap()
                     .record_transactions(bank.slot(), vec![transaction.to_versioned_transaction()]);
+                trace!("pre_commit_callback: poh: {result:?}");
                 match result {
                     Ok(()) => Ok(starting_transaction_index),
                     Err(_) => {
@@ -1172,6 +1250,7 @@ impl ExecutedTask {
 // Note that the above properties can be upheld only when this is used inside MPSC or SPSC channels
 // (i.e. the consumer side needs to be single threaded). For the multiple consumer cases,
 // ChainedChannel can be used instead.
+#[derive(Debug)]
 enum SubchanneledPayload<P1, P2> {
     Payload(P1),
     OpenSubchannel(P2),
@@ -2164,10 +2243,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     // session_result_sender just above
                     let mut new_result_with_timings = None;
 
-                    let mut discard_on_reset = false;
+                    let mut discard_on_session_resettting = false;
                     loop {
-                        if discard_on_reset {
-                            discard_on_reset = false;
+                        if discard_on_session_resettting {
+                            discard_on_session_resettting = false;
                             // Gracefully clear all buffered tasks to discard all outstanding stale
                             // tasks; we're not aborting scheduler here. So, `state_machine` needs
                             // to be reusable after this.
@@ -2219,13 +2298,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             Ok(NewTaskPayload::CloseSubchannel) => {
                                 assert_matches!(scheduling_mode, BlockProduction);
+                                info!("ignoring duplicate CloseSubchannel...");
                                 // This match arm can be hit if context.is_preallocated()
                                 // or abort is hinted from task results, before explicit
                                 // session ending is sent from the poh or the replay thread.
                             }
                             Ok(NewTaskPayload::Reset) => {
                                 assert_matches!(scheduling_mode, BlockProduction);
-                                discard_on_reset = true;
+                                discard_on_session_resettting = true;
                             }
                             Ok(NewTaskPayload::Disconnect) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
@@ -2416,17 +2496,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         };
     }
 
-    fn ensure_join_threads_after_abort(
-        &mut self,
-        should_receive_aborted_session_result: bool,
-    ) -> TransactionError {
+    fn ensure_join_threads_after_abort(&mut self, should_receive_aborted_session_result: bool) {
         self.ensure_join_threads(should_receive_aborted_session_result);
-        self.session_result_with_timings
-            .as_mut()
-            .unwrap()
-            .0
-            .clone()
-            .unwrap_err()
     }
 
     fn are_threads_joined(&self) -> bool {
@@ -2588,6 +2659,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
     ) -> Self {
+        info!("spawning new scheduler for slot: {:?}", context.slot());
         let mut thread_manager = ThreadManager::new(pool.clone());
         let handler_context =
             pool.create_handler_context(context.mode(), &thread_manager.new_task_sender);
@@ -2635,6 +2707,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         transaction: RuntimeTransaction<SanitizedTransaction>,
         index: usize,
     ) -> ScheduleResult {
+        //assert_matches!(self.context().mode(), BlockVerification);
         let task = SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
             self.inner.usage_queue_loader.load(pubkey)
         });
@@ -2644,7 +2717,15 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
     fn recover_error_after_abort(&mut self) -> TransactionError {
         self.inner
             .thread_manager
-            .ensure_join_threads_after_abort(true)
+            .ensure_join_threads_after_abort(true);
+        self.inner
+            .thread_manager
+            .session_result_with_timings
+            .as_mut()
+            .unwrap()
+            .0
+            .clone()
+            .unwrap_err()
     }
 
     fn wait_for_termination(
@@ -2736,7 +2817,9 @@ mod tests {
             bank::Bank,
             bank_forks::BankForks,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
-            installed_scheduler_pool::{BankWithScheduler, SchedulingContext},
+            installed_scheduler_pool::{
+                BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
+            },
             prioritization_fee_cache::PrioritizationFeeCache,
         },
         solana_system_transaction as system_transaction,
@@ -2751,6 +2834,56 @@ mod tests {
         },
         test_case::test_matrix,
     };
+
+    impl<S, TH> SchedulerPool<S, TH>
+    where
+        S: SpawnableScheduler<TH>,
+        TH: TaskHandler,
+    {
+        fn do_new_for_verification(
+            block_verification_handler_count: CountOrDefault,
+            log_messages_bytes_limit: Option<usize>,
+            transaction_status_sender: Option<TransactionStatusSender>,
+            replay_vote_sender: Option<ReplayVoteSender>,
+            prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+            pool_cleaner_interval: Duration,
+            max_pooling_duration: Duration,
+            max_usage_queue_count: usize,
+            timeout_duration: Duration,
+        ) -> Arc<Self> {
+            Self::do_new(
+                SupportedSchedulingMode::with_verification(),
+                block_verification_handler_count,
+                log_messages_bytes_limit,
+                transaction_status_sender,
+                replay_vote_sender,
+                prioritization_fee_cache,
+                pool_cleaner_interval,
+                max_pooling_duration,
+                max_usage_queue_count,
+                timeout_duration,
+            )
+        }
+
+        // This apparently-meaningless wrapper is handy, because some callers explicitly want
+        // `dyn InstalledSchedulerPool` to be returned for type inference convenience.
+        fn new_dyn_for_verification(
+            block_verification_handler_count: CountOrDefault,
+            log_messages_bytes_limit: Option<usize>,
+            transaction_status_sender: Option<TransactionStatusSender>,
+            replay_vote_sender: Option<ReplayVoteSender>,
+            prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        ) -> InstalledSchedulerPoolArc {
+            Self::new(
+                SupportedSchedulingMode::with_verification(),
+                block_verification_handler_count,
+                log_messages_bytes_limit,
+                transaction_status_sender,
+                replay_vote_sender,
+                prioritization_fee_cache,
+            )
+        }
+    }
 
     #[derive(Debug)]
     enum TestCheckPoint {
@@ -2779,8 +2912,13 @@ mod tests {
         solana_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_dyn(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         // this indirectly proves that there should be circular link because there's only one Arc
         // at this moment now
@@ -2795,11 +2933,16 @@ mod tests {
         solana_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_dyn(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         let bank = Arc::new(Bank::default_for_tests());
         let context = SchedulingContext::for_verification(bank);
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
 
         let debug = format!("{scheduler:#?}");
         assert!(!debug.is_empty());
@@ -2820,7 +2963,7 @@ mod tests {
         ]);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool_raw = DefaultSchedulerPool::do_new(
+        let pool_raw = DefaultSchedulerPool::do_new_for_verification(
             None,
             None,
             None,
@@ -2885,7 +3028,7 @@ mod tests {
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         const REDUCED_MAX_USAGE_QUEUE_COUNT: usize = 1;
-        let pool_raw = DefaultSchedulerPool::do_new(
+        let pool_raw = DefaultSchedulerPool::do_new_for_verification(
             None,
             None,
             None,
@@ -2960,7 +3103,7 @@ mod tests {
         ]);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool_raw = DefaultSchedulerPool::do_new(
+        let pool_raw = DefaultSchedulerPool::do_new_for_verification(
             None,
             None,
             None,
@@ -2974,7 +3117,7 @@ mod tests {
         let pool = pool_raw.clone();
         let bank = Arc::new(Bank::default_for_tests());
         let context = SchedulingContext::for_verification(bank.clone());
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         pool.register_timeout_listener(bank.create_timeout_listener());
         assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 0);
@@ -3008,17 +3151,18 @@ mod tests {
         ]);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool_raw = SchedulerPool::<PooledScheduler<ExecuteTimingCounter>, _>::do_new(
-            None,
-            None,
-            None,
-            None,
-            ignored_prioritization_fee_cache,
-            SHORTENED_POOL_CLEANER_INTERVAL,
-            DEFAULT_MAX_POOLING_DURATION,
-            DEFAULT_MAX_USAGE_QUEUE_COUNT,
-            SHORTENED_TIMEOUT_DURATION,
-        );
+        let pool_raw =
+            SchedulerPool::<PooledScheduler<ExecuteTimingCounter>, _>::do_new_for_verification(
+                None,
+                None,
+                None,
+                None,
+                ignored_prioritization_fee_cache,
+                SHORTENED_POOL_CLEANER_INTERVAL,
+                DEFAULT_MAX_POOLING_DURATION,
+                DEFAULT_MAX_USAGE_QUEUE_COUNT,
+                SHORTENED_TIMEOUT_DURATION,
+            );
 
         #[derive(Debug)]
         struct ExecuteTimingCounter;
@@ -3045,7 +3189,7 @@ mod tests {
 
         let context = SchedulingContext::for_verification(bank.clone());
 
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         pool.register_timeout_listener(bank.create_timeout_listener());
 
@@ -3094,7 +3238,7 @@ mod tests {
         ]);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool_raw = DefaultSchedulerPool::do_new(
+        let pool_raw = DefaultSchedulerPool::do_new_for_verification(
             None,
             None,
             None,
@@ -3113,7 +3257,7 @@ mod tests {
 
         let context = SchedulingContext::for_verification(bank.clone());
 
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         pool.register_timeout_listener(bank.create_timeout_listener());
 
@@ -3141,7 +3285,7 @@ mod tests {
         ]);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool_raw = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::do_new(
+        let pool_raw = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::do_new_for_verification(
             None,
             None,
             None,
@@ -3165,7 +3309,7 @@ mod tests {
 
         let context = SchedulingContext::for_verification(bank.clone());
 
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         pool.register_timeout_listener(bank.create_timeout_listener());
 
@@ -3243,7 +3387,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::new(
+        let pool = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::new_for_verification(
             None,
             None,
             None,
@@ -3335,7 +3479,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = SchedulerPool::<PooledScheduler<CountingHandler>, _>::new(
+        let pool = SchedulerPool::<PooledScheduler<CountingHandler>, _>::new_for_verification(
             None,
             None,
             None,
@@ -3375,8 +3519,13 @@ mod tests {
         solana_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         let bank = Arc::new(Bank::default_for_tests());
         let context = &SchedulingContext::for_verification(bank);
 
@@ -3404,8 +3553,13 @@ mod tests {
         solana_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         let bank = Arc::new(Bank::default_for_tests());
         let context = &SchedulingContext::for_verification(bank);
         let mut scheduler = pool.do_take_scheduler(context.clone());
@@ -3423,8 +3577,13 @@ mod tests {
         solana_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         let old_bank = &Arc::new(Bank::default_for_tests());
         let new_bank = &Arc::new(Bank::default_for_tests());
         assert!(!Arc::ptr_eq(old_bank, new_bank));
@@ -3436,7 +3595,7 @@ mod tests {
         let scheduler_id = scheduler.id();
         pool.return_scheduler(scheduler.into_inner().1);
 
-        let scheduler = pool.take_scheduler(new_context.clone());
+        let scheduler = pool.take_scheduler(new_context.clone()).unwrap();
         assert_eq!(scheduler_id, scheduler.id());
         assert!(Arc::ptr_eq(scheduler.context().bank().unwrap(), new_bank));
     }
@@ -3449,8 +3608,13 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut bank_forks = bank_forks.write().unwrap();
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_dyn(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         bank_forks.install_scheduler_pool(pool);
     }
 
@@ -3463,8 +3627,13 @@ mod tests {
         let child_bank = Bank::new_from_parent(bank, &Pubkey::default(), 1);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_dyn(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -3513,12 +3682,17 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_dyn(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         let context = SchedulingContext::for_verification(bank.clone());
 
         assert_eq!(bank.transaction_count(), 0);
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
         scheduler.schedule_execution(tx0, 0).unwrap();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
@@ -3548,7 +3722,7 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool_raw = DefaultSchedulerPool::do_new(
+        let pool_raw = DefaultSchedulerPool::do_new_for_verification(
             None,
             None,
             None,
@@ -3561,7 +3735,7 @@ mod tests {
         );
         let pool = pool_raw.clone();
         let context = SchedulingContext::for_verification(bank.clone());
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
 
         let unfunded_keypair = Keypair::new();
         let bad_tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -3681,7 +3855,7 @@ mod tests {
         const TX_COUNT: usize = 2;
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = SchedulerPool::<PooledScheduler<PanickingHandler>, _>::new_dyn(
+        let pool = SchedulerPool::<PooledScheduler<PanickingHandler>, _>::new_dyn_for_verification(
             Some(TX_COUNT), // fix to use exactly 2 handlers
             None,
             None,
@@ -3690,7 +3864,7 @@ mod tests {
         );
         let context = SchedulingContext::for_verification(bank.clone());
 
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
 
         for index in 0..TX_COUNT {
             // Use 2 non-conflicting txes to exercise the channel disconnected case as well.
@@ -3756,7 +3930,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = SchedulerPool::<PooledScheduler<CountingFaultyHandler>, _>::new(
+        let pool = SchedulerPool::<PooledScheduler<CountingFaultyHandler>, _>::new_for_verification(
             None,
             None,
             None,
@@ -3870,7 +4044,12 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let supported_scheduling_mode = match scheduling_mode {
+            BlockVerification => SupportedSchedulingMode::with_verification(),
+            BlockProduction => SupportedSchedulingMode::with_production(),
+        };
         let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
+            supported_scheduling_mode,
             None,
             None,
             None,
@@ -3912,7 +4091,7 @@ mod tests {
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
         let old_scheduler_id = scheduler.id();
         if matches!(scheduling_mode, BlockProduction) {
             scheduler.unpause_after_taken();
@@ -3948,7 +4127,7 @@ mod tests {
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         let context = SchedulingContext::new_with_mode(scheduling_mode, bank.clone());
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
         // make sure the same scheduler is used to test its internal cross-session behavior
         // regardless scheduling_mode.
         assert_eq!(scheduler.id(), old_scheduler_id);
@@ -4006,8 +4185,13 @@ mod tests {
 
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
@@ -4042,7 +4226,7 @@ mod tests {
         bank.write_cost_tracker().unwrap().set_limits(0, 0, 0);
 
         let context = SchedulingContext::for_production(bank.clone());
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
         let old_scheduler_id = scheduler.id();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         poh_recorder
@@ -4077,7 +4261,7 @@ mod tests {
             .set_limits(u64::MAX, u64::MAX, u64::MAX);
 
         let context = SchedulingContext::for_production(bank.clone());
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
         // Make sure the same scheduler is used to test its internal cross-session behavior
         assert_eq!(scheduler.id(), old_scheduler_id);
         let bank = BankWithScheduler::new(bank, Some(scheduler));
@@ -4137,7 +4321,7 @@ mod tests {
         ));
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = SchedulerPool::<PooledScheduler<TaskAndContextChecker>, _>::new(
+        let pool = SchedulerPool::<PooledScheduler<TaskAndContextChecker>, _>::new_for_verification(
             Some(4), // spawn 4 threads
             None,
             None,
@@ -4162,7 +4346,7 @@ mod tests {
             .cycle()
             .take(10000)
         {
-            let scheduler = pool.take_scheduler(context.clone());
+            let scheduler = pool.take_scheduler(context.clone()).unwrap();
             scheduler
                 .schedule_execution(dummy_tx.clone(), index)
                 .unwrap();
@@ -4366,14 +4550,14 @@ mod tests {
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
-            SchedulerPool::<AsyncScheduler<TRIGGER_RACE_CONDITION>, DefaultTaskHandler>::new_dyn(
+            SchedulerPool::<AsyncScheduler<TRIGGER_RACE_CONDITION>, DefaultTaskHandler>::new_dyn_for_verification(
                 None,
                 None,
                 None,
                 None,
                 ignored_prioritization_fee_cache,
             );
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
 
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_eq!(bank.transaction_count(), 0);
@@ -4632,8 +4816,13 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
@@ -4657,7 +4846,7 @@ mod tests {
 
         assert_eq!(bank.transaction_count(), 0);
         let context = SchedulingContext::for_production(bank.clone());
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
         scheduler.unpause_after_taken();
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &mint_keypair,
@@ -4702,8 +4891,13 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
@@ -4748,7 +4942,7 @@ mod tests {
 
         assert_eq!(bank.transaction_count(), 0);
         let context = SchedulingContext::for_production(bank.clone());
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
         scheduler.unpause_after_taken();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
@@ -4776,8 +4970,13 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
@@ -4814,7 +5013,7 @@ mod tests {
         // Quickly take and return the scheduler so that this test can test the behavior while
         // waiting for new session...
         let context = SchedulingContext::for_production(bank.clone());
-        let scheduler = pool.take_scheduler(context.clone());
+        let scheduler = pool.take_scheduler(context.clone()).unwrap();
         scheduler.unpause_after_taken();
         let bank_tmp = BankWithScheduler::new(bank.clone(), Some(scheduler));
         assert_matches!(bank_tmp.wait_for_completed_scheduler(), Some((Ok(()), _)));
@@ -4830,7 +5029,7 @@ mod tests {
         assert_eq!(banking_packet_sender.len(), 0);
 
         assert_eq!(bank.transaction_count(), 0);
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
         scheduler.unpause_after_taken();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
@@ -4846,8 +5045,13 @@ mod tests {
         solana_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         let bank = Arc::new(Bank::default_for_tests());
         let context = &SchedulingContext::for_production(bank);
         let scheduler = pool.do_take_scheduler(context.clone());
@@ -4865,8 +5069,13 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
@@ -4917,6 +5126,7 @@ mod tests {
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         const REDUCED_MAX_USAGE_QUEUE_COUNT: usize = 0;
         let pool = DefaultSchedulerPool::do_new(
+            SupportedSchedulingMode::with_production(),
             None,
             None,
             None,
@@ -5003,6 +5213,7 @@ mod tests {
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool = DefaultSchedulerPool::do_new(
+            SupportedSchedulingMode::with_production(),
             None,
             None,
             None,
@@ -5067,8 +5278,15 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new(
+            // Both block verification and production scheduler are needed for this test.
+            SupportedSchedulingMode::Both,
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
@@ -5092,7 +5310,7 @@ mod tests {
         // Make sure the assertion in BlockProductionSchedulerInner::can_put() doesn't cause false
         // positives...
         let context = SchedulingContext::for_verification(bank.clone());
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
         let bank_tmp = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank_tmp.wait_for_completed_scheduler(), Some((Ok(()), _)));
 
@@ -5101,7 +5319,7 @@ mod tests {
     }
 
     #[test]
-    fn test_block_production_scheduler_discard_on_reset() {
+    fn test_block_production_scheduler_discard_on_session_resetting() {
         #[derive(Debug)]
         struct SimpleBankingMinitor;
         static START_DISCARD: Mutex<bool> = Mutex::new(false);
@@ -5137,6 +5355,7 @@ mod tests {
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool = DefaultSchedulerPool::do_new(
+            SupportedSchedulingMode::with_production(),
             None,
             None,
             None,
