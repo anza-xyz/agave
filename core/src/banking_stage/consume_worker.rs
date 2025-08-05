@@ -67,7 +67,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 
     fn consume_loop(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
-        let (maybe_consume_bank, get_bank_us) = measure_us!(self.get_working_bank_with_timeout());
+        let (maybe_consume_bank, get_bank_us) = measure_us!(self.working_bank_with_timeout());
         let Some(mut bank) = maybe_consume_bank else {
             self.metrics
                 .timing_metrics
@@ -83,12 +83,11 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         for work in try_drain_iter(work, &self.consume_receiver) {
             if bank.is_complete() || {
                 // if working bank has changed, then try to get a new bank.
-                self.get_working_bank()
+                self.working_bank()
                     .map(|working_bank| Arc::ptr_eq(&working_bank, &bank))
                     .unwrap_or(true)
             } {
-                let (maybe_new_bank, get_bank_us) =
-                    measure_us!(self.get_working_bank_with_timeout());
+                let (maybe_new_bank, get_bank_us) = measure_us!(self.working_bank_with_timeout());
                 if let Some(new_bank) = maybe_new_bank {
                     self.metrics
                         .timing_metrics
@@ -133,12 +132,13 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         Ok(())
     }
 
-    /// Get the current poh working bank with a timeout.
-    fn get_working_bank_with_timeout(&self) -> Option<Arc<Bank>> {
+    /// Get the current poh working bank with a timeout - if the Bank is
+    /// not available within the timeout, return None.
+    fn working_bank_with_timeout(&self) -> Option<Arc<Bank>> {
         const TIMEOUT: Duration = Duration::from_millis(50);
         let now = Instant::now();
         while now.elapsed() < TIMEOUT {
-            if let Some(bank) = self.shared_working_bank.load() {
+            if let Some(bank) = self.working_bank() {
                 return Some(bank);
             }
         }
@@ -147,7 +147,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 
     /// Get the current poh working bank without a timeout.
-    fn get_working_bank(&self) -> Option<Arc<Bank>> {
+    fn working_bank(&self) -> Option<Arc<Bank>> {
         self.shared_working_bank.load()
     }
 
