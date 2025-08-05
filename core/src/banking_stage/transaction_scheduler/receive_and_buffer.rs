@@ -650,13 +650,16 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::tests::create_slow_genesis_config,
+        bytes::BytesMut,
         crossbeam_channel::{unbounded, Receiver},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::{v0, AddressLookupTableAccount, VersionedMessage},
-        solana_packet::{Meta, PACKET_DATA_SIZE},
-        solana_perf::packet::{to_packet_batches, Packet, PacketBatch, PinnedPacketBatch},
+        solana_packet::Meta,
+        solana_perf::packet::{
+            to_packet_batches, BytesPacket, BytesPacketBatch, PacketBatch, QUIC_MAX_STREAM_SIZE,
+        },
         solana_pubkey::Pubkey,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
@@ -877,9 +880,15 @@ mod tests {
         let mut timing_metrics = SchedulerTimingMetrics::default();
         let mut count_metrics = SchedulerCountMetrics::default();
 
-        let packet_batches = Arc::new(vec![PacketBatch::from(PinnedPacketBatch::new(vec![
-            Packet::new([1u8; PACKET_DATA_SIZE], Meta::default()),
-        ]))]);
+        let mut buf = BytesMut::with_capacity(QUIC_MAX_STREAM_SIZE);
+        buf.resize(QUIC_MAX_STREAM_SIZE, 1u8);
+        let frozen_buf = buf.freeze();
+        let packet_batch = PacketBatch::from(
+            std::iter::once(BytesPacket::new(frozen_buf, Meta::default()))
+                .collect::<BytesPacketBatch>(),
+        );
+        let packet_batches = Arc::new(vec![packet_batch]);
+
         sender.send(packet_batches).unwrap();
 
         let num_received = receive_and_buffer
