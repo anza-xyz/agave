@@ -500,9 +500,11 @@ mod tests {
         let mut shreds =
             make_merkle_shreds_for_tests(&mut rng, slot, data_size, chained, is_last_in_slot)
                 .unwrap();
-        for shred in &mut shreds {
+        let shreds_len = shreds.len();
+        for (index, shred) in shreds.iter_mut().enumerate() {
             let signature = make_dummy_signature(&mut rng);
-            if chained && is_last_in_slot {
+            let is_last_batch = index >= shreds_len - 64;
+            if chained && is_last_in_slot && is_last_batch {
                 shred.set_retransmitter_signature(&signature).unwrap();
             } else {
                 assert_matches!(
@@ -511,9 +513,16 @@ mod tests {
                 );
             }
         }
+<<<<<<< HEAD
         for shred in &shreds {
             let nonce = repaired.then(|| rng.gen::<Nonce>());
             let mut packet = shred.payload().to_packet(nonce);
+=======
+
+        for (index, shred) in shreds.iter().enumerate() {
+            let is_last_batch = index >= shreds_len - 64;
+            let mut packet = Packet::default();
+>>>>>>> 9c70346375 (unit tests pass. local validator not working yet)
             if repaired {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
             }
@@ -571,9 +580,9 @@ mod tests {
             }
             assert_eq!(
                 is_retransmitter_signed_variant(bytes).unwrap(),
-                chained && is_last_in_slot
+                chained && is_last_in_slot && is_last_batch,
             );
-            if chained && is_last_in_slot {
+            if chained && is_last_in_slot && is_last_batch{
                 assert_eq!(
                     get_retransmitter_signature_offset(bytes).unwrap(),
                     shred.retransmitter_signature_offset().unwrap(),
