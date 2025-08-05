@@ -42,6 +42,7 @@ installDir=
 buildProfileArg='--profile release'
 buildProfile='release'
 validatorOnly=
+publicRelease=
 
 while [[ -n $1 ]]; do
   if [[ ${1:0:1} = - ]]; then
@@ -59,6 +60,9 @@ while [[ -n $1 ]]; do
       shift
     elif [[ $1 = --validator-only ]]; then
       validatorOnly=true
+      shift
+    elif [[ $1 = --release-public ]]; then
+      publicRelease=true
       shift
     else
       usage "Unknown option: $1"
@@ -107,14 +111,22 @@ else
     solana
     solana-faucet
     solana-genesis
-    solana-gossip
     agave-install
     solana-keygen
-    agave-validator
   )
-  DCOU_BINS=(
-    agave-ledger-tool
-  )
+
+  if [[ -z "$publicRelease" ]]; then
+    BINS+=(
+      agave-validator
+      agave-watchtower
+      solana-gossip
+    )
+
+    DCOU_BINS=(
+      agave-ledger-tool
+    )
+  fi
+
 
   # Speed up net.sh deploys by excluding unused binaries
   if [[ -z "$validatorOnly" ]]; then
@@ -124,10 +136,11 @@ else
       agave-install-init
       solana-stake-accounts
       solana-test-validator
-      agave-watchtower
     )
   fi
 fi
+
+echo "Building binaries for: ${BINS[*]}"
 
 binArgs=()
 for bin in "${BINS[@]}"; do
