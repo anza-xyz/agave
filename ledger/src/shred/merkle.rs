@@ -1100,7 +1100,14 @@ pub(crate) fn make_shreds_from_data(
     let mut shreds = {
         let number_of_batches = if sign_last_batch {
             if data.len() > data_buffer_total_size_signed {
-                (data, sig_data) = data.split_at(data.len() - data_buffer_total_size_signed);
+                let remainder_to_be_signed = data.len() % data_buffer_total_size;
+                if remainder_to_be_signed <= data_buffer_total_size_signed {
+                    (data, sig_data) = data.split_at(data.len() - remainder_to_be_signed);
+                }
+                else {
+                    (data, sig_data) = data.split_at(data.len());
+                    assert_eq!(sig_data.len(), 0);
+                }
                 data.len().div_ceil(data_buffer_total_size) + 1
             } else {
                 sig_data = data;
