@@ -69,8 +69,8 @@ solana-transaction-status = { path = "../../transaction-status" }
 solana-validator-exit = "2.2.1"
 solana-version = { path = "../../version" }
 spl-associated-token-account-interface = "1.0.0"
-spl-token-interface = "1.0.0"
 spl-token-2022 = "8.0.0"
+spl-token-interface = "1.0.0"
 termcolor = "1.4.1"
 thiserror = "1.0.68"
 tokio = "1.29.1"
