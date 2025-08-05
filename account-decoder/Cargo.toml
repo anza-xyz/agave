@@ -45,7 +45,7 @@ solana-stake-interface = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
 spl-generic-token = { workspace = true }
-spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
+spl-token-2022-interface = { workspace = true }
 spl-token-group-interface = { workspace = true }
 spl-token-interface = { workspace = true }
 spl-token-metadata-interface = { workspace = true }

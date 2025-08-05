@@ -63,7 +63,7 @@ use {
         UiTransactionEncoding,
     },
     solana_validator_exit::Exit,
-    spl_token_2022::{
+    spl_token_2022_interface::{
         extension::{
             interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,
             BaseStateWithExtensions, StateWithExtensions,
