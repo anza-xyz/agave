@@ -44,7 +44,7 @@ solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 spl-associated-token-account-interface = { version = "=1.0.0" }
-spl-token-interface = { version = "=1.0.0", git = "https://github.com/rustopian/token", branch = "split-spl-token-interface" }
+spl-token-interface = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 

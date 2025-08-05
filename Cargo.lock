@@ -1368,7 +1368,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4114279215a005bc675e386011e594e1d9b800918cea18fcadadcce864a2046b"
 dependencies = [
  "borsh-derive 0.10.3",
- "hashbrown 0.13.2",
+ "hashbrown 0.12.3",
 ]
 
 [[package]]
@@ -12392,7 +12392,8 @@ dependencies = [
 [[package]]
 name = "spl-token-interface"
 version = "1.0.0"
-source = "git+https://github.com/rustopian/token?branch=split-spl-token-interface#3126dc2b4f04d7c38265ee18114c5231a5958478"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06e0c2d4e38ef5834cf7fb1b592b8a8c6eab8485f5ac7a04a151b502c63a0aaa"
 dependencies = [
  "arrayref",
  "bytemuck",
@@ -12405,7 +12406,6 @@ dependencies = [
  "solana-program-pack",
  "solana-pubkey",
  "solana-sdk-ids",
- "spl-pod",
  "thiserror 2.0.12",
 ]
 

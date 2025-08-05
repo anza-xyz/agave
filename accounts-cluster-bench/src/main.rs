@@ -1422,11 +1422,9 @@ pub mod test {
         solana_measure::measure::Measure,
         solana_native_token::sol_to_lamports,
         solana_poh_config::PohConfig,
+        solana_program_pack::Pack,
         solana_test_validator::TestValidator,
-        spl_token_interface::{
-            solana_program::program_pack::Pack,
-            state::{Account, Mint},
-        },
+        spl_token_interface::state::{Account, Mint},
     };
 
     fn initialize_and_add_secondary_indexes(validator_config: &mut ValidatorConfig) {

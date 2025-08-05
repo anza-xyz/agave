@@ -38,8 +38,8 @@ update_spl_dependencies() {
     sed -i -e "s#\(spl-associated-token-account = { version = \"\)[^\"]*\(\"\)#\1$spl_associated_token_account_version\2#g" "${tomls[@]}" || return $?
     sed -i -e "s#\(spl-pod = \"\)[^\"]*\(\"\)#\1$spl_pod_version\2#g" "${tomls[@]}" || return $?
     sed -i -e "s#\(spl-pod = { version = \"\)[^\"]*\(\"\)#\1$spl_pod_version\2#g" "${tomls[@]}" || return $?
-    sed -i -e "s#\(spl-token-interface = \"\)[^\"]*\(\"\)#\1$spl_token_version\2#g" "${tomls[@]}" || return $?
-    sed -i -e "s#\(spl-token-interface = { version = \"\)[^\"]*\(\"\)#\1$spl_token_version\2#g" "${tomls[@]}" || return $?
+    sed -i -e "s#\(spl-token = \"\)[^\"]*\(\"\)#\1$spl_token_version\2#g" "${tomls[@]}" || return $?
+    sed -i -e "s#\(spl-token = { version = \"\)[^\"]*\(\"\)#\1$spl_token_version\2#g" "${tomls[@]}" || return $?
     sed -i -e "s#\(spl-token-2022 = \"\).*\(\"\)#\1$spl_token_2022_version\2#g" "${tomls[@]}" || return $?
     sed -i -e "s#\(spl-token-2022 = { version = \"\)[^\"]*\(\"\)#\1$spl_token_2022_version\2#g" "${tomls[@]}" || return $?
     sed -i -e "s#\(spl-token-group-interface = \"\)[^\"]*\(\"\)#\1=$spl_token_group_interface_version\2#g" "${tomls[@]}" || return $?
@@ -64,7 +64,7 @@ patch_crates_io() {
     cat >> "$Cargo_toml" <<EOF
     spl-associated-token-account = { path = "$spl_dir/associated-token-account/program" }
     spl-pod = { path = "$spl_dir/libraries/pod" }
-    spl-token-interface = { path = "$spl_dir/token/program" }
+    spl-token = { path = "$spl_dir/token/program" }
     # Avoid patching spl-token-2022 to avoid forcing anchor to use 4.0.1, which
     # doesn't work with the monorepo forcing 4.0.0. Allow the patching again once
     # the monorepo is on 4.0.1, or relax the dependency in the monorepo.
