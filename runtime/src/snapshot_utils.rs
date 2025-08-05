@@ -449,8 +449,18 @@ pub enum VerifySlotDeltasError {
     #[error("slot {0} was in history but missing from slot deltas")]
     SlotNotFoundInDeltas(Slot),
 
-    #[error("slot history is bad and cannot be used to verify slot deltas")]
-    BadSlotHistory,
+    #[error("snapshot slot history is invalid: {0}")]
+    VerifySlotHistory(#[from] VerifySlotHistoryError),
+}
+
+/// Errors that can happen in `verify_slot_history()`
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum VerifySlotHistoryError {
+    #[error("newest slot does not match snapshot")]
+    InvalidNewestSlot,
+
+    #[error("invalid number of entries")]
+    InvalidNumEntries,
 }
 
 /// Errors that can happen in `verify_epoch_stakes()`
