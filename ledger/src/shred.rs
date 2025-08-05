@@ -838,6 +838,41 @@ pub fn max_ticks_per_n_shreds(num_shreds: u64, shred_data_size: Option<usize>) -
     max_entries_per_n_shred(&ticks[0], num_shreds, shred_data_size)
 }
 
+// created this to use in lieu of `max_entries_per_n_shred`
+// in test_multi_fec_block_coding
+pub fn max_entries_per_n_shred_last_or_not(
+    entry: &Entry,
+    num_shreds: u64,
+    is_last_in_slot: bool,
+) -> u64 {
+    // Default 32:32 erasure batches yields 64 shreds; log2(64) = 6.
+    let merkle_variant_unsigned = Some((
+        /*proof_size:*/ 6, /*chained:*/ true, /*resigned:*/ false,
+    ));
+    let merkle_variant_signed = Some((
+        /*proof_size:*/ 6, /*chained:*/ true, /*resigned:*/ true,
+    ));
+
+    let vec_size = bincode::serialized_size(&vec![entry]).unwrap();
+    let entry_size = bincode::serialized_size(entry).unwrap();
+    let count_size = vec_size - entry_size;
+
+    if !is_last_in_slot {
+        // all shreds are unsigned
+        let shred_data_size = ShredData::capacity(merkle_variant_unsigned).unwrap() as u64;
+        (shred_data_size * num_shreds - count_size) / entry_size
+    } else {
+        // last FEC SET is signed, all others are unsigned
+        let shred_data_size_unsigned = ShredData::capacity(merkle_variant_unsigned).unwrap() as u64;
+        let shred_data_size_signed = ShredData::capacity(merkle_variant_signed).unwrap() as u64;
+        let shreds_per_fec_block = SHREDS_PER_FEC_BLOCK as u64;
+        (shred_data_size_unsigned * (num_shreds - shreds_per_fec_block)
+            + shred_data_size_signed * shreds_per_fec_block
+            - count_size)
+            / entry_size
+    }
+}
+
 pub fn max_entries_per_n_shred(
     entry: &Entry,
     num_shreds: u64,
