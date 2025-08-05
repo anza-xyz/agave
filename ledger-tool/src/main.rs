@@ -1470,17 +1470,17 @@ fn main() {
                         .help("Ending slot for minimized snapshot creation"),
                 )
                 .arg(
-                    Arg::with_name("no_recalculate_accounts_lt_hash")
-                        .long("no-recalculate-accounts-lt-hash")
+                    Arg::with_name("recalculate_accounts_lt_hash")
+                        .long("recalculate-accounts-lt-hash")
                         .takes_value(false)
-                        .help("Do not recalculate the accounts lt hash for minimized snapshots")
+                        .help("Recalculate the accounts lt hash for minimized snapshots")
                         .long_help(
-                            "When creating a minimized snapshot, the accounts lt hash is \
-                             recalculated because the account state has changed due to accounts \
-                             being pruned. However, this behavior may be undesirable for \
-                             replay/regression testing, where the original accounts lt hash is \
-                             required. This flag bypasses recalculating the accounts lt hash for \
-                             minimized snapshots.",
+                            "Recalculate the accounts lt hash for minimized snapshots. \
+                             Without this flag, loading the minimized snapshot will fail \
+                             startup accounts verification because the accounts lt hash will not \
+                             match due to the pruned account state. If not recalculating the \
+                             accounts lt hash, pass `--accounts-db-skip-initial-hash-calculation` \
+                             to `leder-tool verify` in order to bypass this check.",
                         )
                         .requires("minimized"),
                 )
@@ -2431,7 +2431,7 @@ fn main() {
                             &bank,
                             snapshot_slot,
                             ending_slot.unwrap(),
-                            !arg_matches.is_present("no_recalculate_accounts_lt_hash"),
+                            arg_matches.is_present("recalculate_accounts_lt_hash"),
                         )
                     } else {
                         false
