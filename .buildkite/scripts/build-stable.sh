@@ -16,7 +16,7 @@ for i in $(seq 1 $parallelism); do
 {
   "name": "partition-$i",
   "command": "ci/docker-run-default-image.sh ci/stable/run-partition.sh $i $parallelism",
-  "timeout_in_minutes": 25,
+  "timeout_in_minutes": 40,
   "agent": "$agent",
   "retry": 3
 }
