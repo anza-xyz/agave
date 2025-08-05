@@ -874,6 +874,19 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                      already exists then this parameter is silently ignored",
                 ),
         )
+        .arg(
+            Arg::with_name("max_genesis_archive_size")
+                .long("max-genesis-archive-size")
+                .value_name("BYTES")
+                .validator(is_parsable::<u64>)
+                .takes_value(true)
+                .help(
+                    "Set the maximum allowed size of an unpacked genesis archive \
+                     to enable --clone of a large number of accounts. For values \
+                     exceeding the production default of 10MiB, it may be necessary \
+                     to set a higher OS-level memory lock limit.",
+                ),
+        )
 }
 
 pub struct DefaultTestArgs {
