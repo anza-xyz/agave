@@ -13,7 +13,7 @@ use {
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_hash::Hash,
     solana_instruction::error::InstructionError,
-    solana_loader_v3_interface::{get_program_data_address, state::UpgradeableLoaderState},
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::ProgramCacheForTxBatch,
@@ -45,10 +45,10 @@ impl Bank {
     /// account address.
     fn new_target_program_account(
         &self,
-        program_id: &Pubkey,
+        program_data_address: &Pubkey,
     ) -> Result<AccountSharedData, CoreBpfMigrationError> {
         let state = UpgradeableLoaderState::Program {
-            programdata_address: get_program_data_address(program_id),
+            programdata_address: *program_data_address,
         };
         let lamports =
             self.get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program());
@@ -230,7 +230,8 @@ impl Bank {
         };
 
         // Attempt serialization first before modifying the bank.
-        let new_target_program_account = self.new_target_program_account(builtin_program_id)?;
+        let new_target_program_account =
+            self.new_target_program_account(&target.program_data_address)?;
         let new_target_program_data_account =
             self.new_target_program_data_account(&source, config.upgrade_authority_address)?;
 
@@ -395,7 +396,7 @@ impl Bank {
 
         // Attempt serialization first before modifying the bank.
         let new_target_program_account =
-            self.new_target_program_account(loader_v2_bpf_program_address)?;
+            self.new_target_program_account(&target.program_data_address)?;
         // Loader v2 programs do not have an upgrade authority, so pass `None` when
         // creating the new program data account.
         let new_target_program_data_account =

@@ -1189,7 +1189,7 @@ pub mod fix_alt_bn128_pairing_length_check {
 }
 
 pub mod replace_spl_token_with_p_token {
-    use solana_pubkey::Pubkey;
+    use super::Pubkey;
 
     solana_pubkey::declare_id!("ptokSWRqZz5u2xdqMdstkMKpFurauUpVen7TZXgDpkQ");
 
