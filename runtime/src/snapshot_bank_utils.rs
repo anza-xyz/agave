@@ -38,7 +38,7 @@ use {
     bincode::{config::Options, serialize_into},
     log::*,
     solana_accounts_db::{
-        accounts_db::{AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId},
+        accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::remove_dir_contents,
     },
@@ -717,23 +717,6 @@ fn _verify_epoch_stakes(
     }
 
     Ok(())
-}
-
-/// Get the snapshot storages for this bank
-pub fn get_snapshot_storages(bank: &Bank) -> Vec<Arc<AccountStorageEntry>> {
-    let mut measure_snapshot_storages = Measure::start("snapshot-storages");
-    let snapshot_storages = bank.get_snapshot_storages(None);
-    measure_snapshot_storages.stop();
-    datapoint_info!(
-        "get_snapshot_storages",
-        (
-            "snapshot-storages-time-ms",
-            measure_snapshot_storages.as_ms(),
-            i64
-        ),
-    );
-
-    snapshot_storages
 }
 
 /// Convenience function to create a full snapshot archive out of any Bank, regardless of state.
