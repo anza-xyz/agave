@@ -175,9 +175,15 @@ pub struct PohRecorder {
     start_bank_active_descendants: Vec<Slot>,
     start_tick_height: u64, // first tick_height this recorder will observe
     tick_cache: Vec<(Entry, u64)>, // cache of entry and its tick_height
+    /// This stores the current working bank + scheduler and other metadata,
+    /// if they exist.
+    /// This field MUST be kept consistent with the `shared_working_bank` field.
     working_bank: Option<WorkingBank>,
-    working_bank_sender: Sender<WorkingBankEntry>,
+    /// This is used to store the current working bank - just the Arc<Bank> without
+    /// schduler or any other metadata. It MUST be kept consistent with
+    /// the `working_bank` field of this struct.
     shared_working_bank: SharedWorkingBank,
+    working_bank_sender: Sender<WorkingBankEntry>,
     leader_first_tick_height: Option<u64>,
     leader_last_tick_height: u64, // zero if none
     grace_ticks: u64,
@@ -260,8 +266,8 @@ impl PohRecorder {
                 tick_height,
                 tick_cache: vec![],
                 working_bank: None,
-                working_bank_sender,
                 shared_working_bank: SharedWorkingBank::empty(),
+                working_bank_sender,
                 clear_bank_signal,
                 start_bank,
                 start_bank_active_descendants: vec![],
@@ -432,7 +438,6 @@ impl PohRecorder {
 
     pub fn set_bank(&mut self, bank: BankWithScheduler) {
         assert!(self.working_bank.is_none());
-        self.shared_working_bank.store(bank.clone());
         let working_bank = WorkingBank {
             min_tick_height: bank.tick_height(),
             max_tick_height: bank.max_tick_height(),
@@ -455,6 +460,9 @@ impl PohRecorder {
                 self.reset_poh(working_bank.bank.clone(), false);
             }
         }
+
+        // `shared_working_bank` and `working_bank` must be kept consistent.
+        self.shared_working_bank.store(working_bank.bank.clone());
         self.working_bank = Some(working_bank);
 
         // TODO: adjust the working_bank.start time based on number of ticks
@@ -464,7 +472,9 @@ impl PohRecorder {
 
     fn clear_bank(&mut self) {
         if let Some(WorkingBank { bank, start, .. }) = self.working_bank.take() {
+            // clear `shared_working_bank` to keep it consistent with `working_bank`
             self.shared_working_bank.clear();
+
             let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
                 bank.collector_id(),
                 bank.slot(),
