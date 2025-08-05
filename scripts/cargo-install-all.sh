@@ -96,7 +96,6 @@ if [[ $CI_OS_NAME = windows ]]; then
     agave-install
     agave-install-init
     solana-keygen
-    solana-stake-accounts
     solana-test-validator
     solana-tokens
   )
@@ -111,14 +110,10 @@ else
     solana-gossip
     agave-install
     solana-keygen
-    solana-log-analyzer
-    solana-net-shaper
     agave-validator
-    rbpf-cli
   )
   DCOU_BINS=(
     agave-ledger-tool
-    solana-bench-tps
   )
 
   # Speed up net.sh deploys by excluding unused binaries
@@ -129,11 +124,7 @@ else
       agave-install-init
       solana-stake-accounts
       solana-test-validator
-      solana-tokens
       agave-watchtower
-    )
-    DCOU_BINS+=(
-      solana-dos
     )
   fi
 fi
