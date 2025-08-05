@@ -259,16 +259,4 @@ strip = true
 name = "bpf_loader"
 
 [patch.crates-io]
-# We include the following crates as our dependencies from crates.io:
-#
-#  * spl-associated-token-account-interface
-#  * spl-instruction-padding
-#  * spl-memo-interface
-#  * spl-pod
-#  * spl-token-interface
-#  * spl-token-2022
-#  * spl-token-metadata-interface
-#
-# There is a similar override in `../../Cargo.toml`.  Please keep both comments
-# and the overrides in sync.
 solana-curve25519 = { path = "../../curves/curve25519" }
