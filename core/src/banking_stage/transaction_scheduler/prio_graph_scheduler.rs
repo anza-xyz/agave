@@ -196,6 +196,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         // Check transactions against filter, remove from container if it fails.
         chunked_pops(container, &mut self.prio_graph, &mut window_budget);
 
+        #[cfg(debug_assertions)]
         debug_assert!(
             self.common.batches.is_empty(),
             "batches must start empty for scheduling"
