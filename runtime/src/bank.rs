@@ -75,10 +75,7 @@ use {
     solana_accounts_db::{
         account_locks::validate_account_locks,
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
-        accounts_db::{
-            make_hash_thread_pool, AccountStorageEntry, AccountsDb, AccountsDbConfig,
-            DuplicatesLtHash,
-        },
+        accounts_db::{self, AccountStorageEntry, AccountsDb, AccountsDbConfig, DuplicatesLtHash},
         accounts_hash::AccountsLtHash,
         accounts_index::{IndexKey, ScanConfig, ScanResult},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -4606,16 +4603,25 @@ impl Bank {
         let expected_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap().clone();
         if config.run_in_background {
             let accounts_db_ = Arc::clone(accounts_db);
-            let num_hash_threads = accounts_db.num_hash_threads;
             accounts_db.verify_accounts_hash_in_bg.start(|| {
                 Builder::new()
                     .name("solBgHashVerify".into())
                     .spawn(move || {
                         info!("Initial background accounts hash verification has started");
                         let start = Instant::now();
-                        let thread_pool_hash = make_hash_thread_pool(num_hash_threads);
+                        let thread_pool = {
+                            let num_threads = accounts_db_
+                                .num_hash_threads
+                                .unwrap_or_else(accounts_db::default_num_hash_threads)
+                                .get();
+                            ThreadPoolBuilder::new()
+                                .thread_name(|i| format!("solVerfyAccts{i:02}"))
+                                .num_threads(num_threads)
+                                .build()
+                                .unwrap()
+                        };
                         let (calculated_accounts_lt_hash, lattice_verify_time) =
-                            meas_dur!(thread_pool_hash.install(|| {
+                            meas_dur!(thread_pool.install(|| {
                                 accounts_db_.calculate_accounts_lt_hash_at_startup_from_storages(
                                     snapshot_storages.0.as_slice(),
                                     &duplicates_lt_hash.unwrap(),
@@ -4637,7 +4643,10 @@ impl Bank {
                                 i64
                             ),
                         );
-                        info!("Initial background accounts hash verification has stopped in {total_time:?}");
+                        info!(
+                            "Initial background accounts hash verification has stopped \
+                             in {total_time:?}",
+                        );
                         is_ok
                     })
                     .unwrap()

@@ -1419,16 +1419,6 @@ pub fn default_num_hash_threads() -> NonZeroUsize {
     let num_threads = (num_cpus::get() / 8).clamp(2, 6);
     NonZeroUsize::new(num_threads).unwrap()
 }
-
-pub fn make_hash_thread_pool(num_threads: Option<NonZeroUsize>) -> ThreadPool {
-    let num_threads = num_threads.unwrap_or_else(default_num_hash_threads).get();
-    rayon::ThreadPoolBuilder::new()
-        .thread_name(|i| format!("solAcctHash{i:02}"))
-        .num_threads(num_threads)
-        .build()
-        .unwrap()
-}
-
 pub fn default_num_foreground_threads() -> usize {
     get_thread_count()
 }
