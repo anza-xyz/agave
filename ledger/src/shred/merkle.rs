@@ -1026,7 +1026,7 @@ pub(crate) fn make_shreds_from_data(
     keypair: &Keypair,
     // The Merkle root of the previous erasure batch if chained.
     chained_merkle_root: Option<Hash>,
-    mut data: &[u8], // Serialized &[Entry]
+    data: &[u8], // Serialized &[Entry]
     slot: Slot,
     parent_slot: Slot,
     shred_version: u16,
@@ -1039,9 +1039,9 @@ pub(crate) fn make_shreds_from_data(
 ) -> Result<Vec<Shred>, Error> {
     let now = Instant::now();
     let chained = chained_merkle_root.is_some();
-    // let resigned = chained && is_last_in_slot;
-    // only sign if last batch in slot and is chained
-    let sign_last_batch = chained && is_last_in_slot;
+
+    // only sign if last fec set in slot and is chained
+    let sign_last_fec_set = chained && is_last_in_slot;
     let proof_size = PROOF_ENTRIES_FOR_32_32_BATCH;
 
     // unsigned data_buffer size
@@ -1049,12 +1049,13 @@ pub(crate) fn make_shreds_from_data(
     let data_buffer_total_size = DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size;
 
     // signed data_buffer size
-    let data_buffer_per_shred_size_signed = if sign_last_batch {
+    let data_buffer_per_shred_size_signed = if sign_last_fec_set {
         ShredData::capacity(proof_size, chained, true)?
     } else {
         0
     };
-    let data_buffer_total_size_signed = DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size_signed;
+    let data_buffer_total_size_signed =
+        DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size_signed;
 
     // Common header for the data shreds.
     let mut common_header_data = ShredCommonHeader {
@@ -1095,38 +1096,31 @@ pub(crate) fn make_shreds_from_data(
         }
     };
 
-    // Pre-allocate shreds to avoid reallocations.
-    let mut sig_data: &[u8] = &[];
-    let mut shreds = {
-        let number_of_batches = if sign_last_batch {
-            if data.len() > data_buffer_total_size_signed {
-                let remainder_to_be_signed = data.len() % data_buffer_total_size;
-                if remainder_to_be_signed <= data_buffer_total_size_signed {
-                    (data, sig_data) = data.split_at(data.len() - remainder_to_be_signed);
-                }
-                else {
-                    (data, sig_data) = data.split_at(data.len());
-                    assert_eq!(sig_data.len(), 0);
-                }
-                data.len().div_ceil(data_buffer_total_size) + 1
-            } else {
-                sig_data = data;
-                data = &[];
-                1
-            }
+    let (mut unsigned_data, signed_data) = if sign_last_fec_set {
+        // Reserve at least one signed batch (may be empty) at the end.
+        if data.len() > data_buffer_total_size_signed {
+            let split_at = data.len() - data_buffer_total_size_signed; // sign everything except the last batch
+            data.split_at(split_at)
         } else {
-            data.len().div_ceil(data_buffer_total_size)
-        };
-        let total_num_shreds = SHREDS_PER_FEC_BLOCK * number_of_batches;
-        Vec::<Shred>::with_capacity(total_num_shreds)
+            (&[][..], data) // only enough data for one fec set, sign the whole thing
+        }
+    } else {
+        (data, &[][..]) // not last fec set, so don't sign
     };
-    stats.data_bytes += data.len();
+    stats.data_bytes += unsigned_data.len() + signed_data.len();
 
+    let unsigned_sets = unsigned_data.len().div_ceil(data_buffer_total_size);
+    let number_of_fec_sets = if sign_last_fec_set {
+        unsigned_sets + 1
+    } else {
+        unsigned_sets
+    };
+    let mut shreds = Vec::<Shred>::with_capacity(SHREDS_PER_FEC_BLOCK * number_of_fec_sets);
 
     // Split the data into full erasure batches and initialize data and coding
     // shreds for each batch.
-    while data.len() >= data_buffer_total_size {
-        let (current_batch_data_chunk, rest) = data.split_at(data_buffer_total_size);
+    while unsigned_data.len() >= data_buffer_total_size {
+        let (current_batch_data_chunk, rest) = unsigned_data.split_at(data_buffer_total_size);
         debug_assert_eq!(
             current_batch_data_chunk.len(),
             DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size
@@ -1142,7 +1136,7 @@ pub(crate) fn make_shreds_from_data(
             .map(Shred::ShredData),
         );
         shreds.extend(make_shreds_code_header_only(&mut common_header_code).map(Shred::ShredCode));
-        data = rest;
+        unsigned_data = rest;
     }
 
     // Two possibilities for taking this conditional:
@@ -1152,54 +1146,33 @@ pub(crate) fn make_shreds_from_data(
     // 2.) Shreds is_empty, which only happens when we entered w/ zero data.
     //
     // In either case, we want to generate empty data shreds.
-    if !data.is_empty() || (shreds.is_empty() && !sign_last_batch) {
-        stats.padding_bytes += data_buffer_total_size - data.len();
-        common_header_data.shred_variant = ShredVariant::MerkleData {
+    if !unsigned_data.is_empty() || (shreds.is_empty() && !sign_last_fec_set) {
+        stats.padding_bytes += data_buffer_total_size - unsigned_data.len();
+        shred_leftover_data(
             proof_size,
             chained,
-            resigned: false,
-        };
-        common_header_code.shred_variant = ShredVariant::MerkleCode {
-            proof_size,
-            chained,
-            resigned: false,
-        };
-        common_header_data.fec_set_index = common_header_data.index;
-        common_header_code.fec_set_index = common_header_data.fec_set_index;
-        shreds.extend({
-            // Create data chunks out of remaining data + padding.
-            let chunks = data
-                .chunks(data_buffer_per_shred_size)
-                .chain(std::iter::repeat(&[][..])) // possible padding
-                .take(DATA_SHREDS_PER_FEC_BLOCK);
-            make_shreds_data(&mut common_header_data, data_header, chunks).map(Shred::ShredData)
-        });
-        shreds.extend(make_shreds_code_header_only(&mut common_header_code).map(Shred::ShredCode));
+            false,
+            unsigned_data,
+            data_buffer_per_shred_size,
+            &mut common_header_data,
+            &mut common_header_code,
+            data_header,
+            &mut shreds,
+        );
     }
-    if !sig_data.is_empty() || (shreds.is_empty() && sign_last_batch) {
-        // send signed last batch
-        stats.padding_bytes += data_buffer_total_size_signed - sig_data.len();
-        common_header_data.shred_variant = ShredVariant::MerkleData {
+    if !signed_data.is_empty() || (shreds.is_empty() && sign_last_fec_set) {
+        stats.padding_bytes += data_buffer_total_size_signed - signed_data.len();
+        shred_leftover_data(
             proof_size,
             chained,
-            resigned: true,
-        };
-        common_header_code.shred_variant = ShredVariant::MerkleCode {
-            proof_size,
-            chained,
-            resigned: true,
-        };
-        common_header_data.fec_set_index = common_header_data.index;
-        common_header_code.fec_set_index = common_header_data.fec_set_index;
-        shreds.extend({
-            // Create data chunks out of remaining data + padding.
-            let chunks = sig_data
-                .chunks(data_buffer_per_shred_size_signed)
-                .chain(std::iter::repeat(&[][..])) // possible padding
-                .take(DATA_SHREDS_PER_FEC_BLOCK);
-            make_shreds_data(&mut common_header_data, data_header, chunks).map(Shred::ShredData)
-        });
-        shreds.extend(make_shreds_code_header_only(&mut common_header_code).map(Shred::ShredCode));
+            true,
+            signed_data,
+            data_buffer_per_shred_size_signed,
+            &mut common_header_data,
+            &mut common_header_code,
+            data_header,
+            &mut shreds,
+        );
     }
 
     // Adjust flags for the very last data shred.
@@ -1267,6 +1240,41 @@ pub(crate) fn make_shreds_from_data(
     }
     stats.gen_coding_elapsed += now.elapsed().as_micros() as u64;
     Ok(shreds)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn shred_leftover_data(
+    proof_size: u8,
+    chained: bool,
+    resigned: bool,
+    data: &[u8],
+    data_buffer_per_shred_size: usize,
+    common_header_data: &mut ShredCommonHeader,
+    common_header_code: &mut ShredCommonHeader,
+    data_header: DataShredHeader,
+    shreds: &mut Vec<Shred>,
+) {
+    common_header_data.shred_variant = ShredVariant::MerkleData {
+        proof_size,
+        chained,
+        resigned,
+    };
+    common_header_code.shred_variant = ShredVariant::MerkleCode {
+        proof_size,
+        chained,
+        resigned,
+    };
+    common_header_data.fec_set_index = common_header_data.index;
+    common_header_code.fec_set_index = common_header_data.fec_set_index;
+    shreds.extend({
+        // Create data chunks out of remaining data + padding.
+        let chunks = data
+            .chunks(data_buffer_per_shred_size)
+            .chain(std::iter::repeat(&[][..])) // possible padding
+            .take(DATA_SHREDS_PER_FEC_BLOCK);
+        make_shreds_data(common_header_data, data_header, chunks).map(Shred::ShredData)
+    });
+    shreds.extend(make_shreds_code_header_only(common_header_code).map(Shred::ShredCode));
 }
 
 // Given shreds of the same erasure batch:
@@ -1747,7 +1755,7 @@ mod test {
 
         // only sign last batch if it is chained and is the last in slot
         // let resigned = chained && is_last_in_slot;
-        let sign_last_batch = chained && is_last_in_slot;
+        let sign_last_fec_set = chained && is_last_in_slot;
 
         let slot = 149_745_689;
         let parent_slot = slot - rng.gen_range(1..65536);
@@ -1786,10 +1794,7 @@ mod test {
             .flat_map(|shred| shred.data().unwrap())
             .copied()
             .collect::<Vec<_>>();
-        assert_eq!(
-            data,
-            data2
-        );
+        assert_eq!(data, data2);
         // Assert that shreds sanitize and verify.
         let pubkey = keypair.pubkey();
         for shred in &shreds {
@@ -1839,7 +1844,7 @@ mod test {
         let mut num_coding_shreds = 0;
         for (index, shred) in shreds.iter().enumerate() {
             let common_header = shred.common_header();
-            let resigned = sign_last_batch && index >= shreds.len() - 64;
+            let resigned = sign_last_fec_set && index >= shreds.len() - 64;
 
             assert_eq!(common_header.slot, slot);
             assert_eq!(common_header.version, shred_version);

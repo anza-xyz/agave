@@ -582,7 +582,7 @@ mod tests {
                 is_retransmitter_signed_variant(bytes).unwrap(),
                 chained && is_last_in_slot && is_last_batch,
             );
-            if chained && is_last_in_slot && is_last_batch{
+            if chained && is_last_in_slot && is_last_batch {
                 assert_eq!(
                     get_retransmitter_signature_offset(bytes).unwrap(),
                     shred.retransmitter_signature_offset().unwrap(),
