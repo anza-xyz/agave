@@ -91,7 +91,7 @@ impl Vortexor {
         tpu_receiver: Receiver<PacketBatch>,
         non_vote_sender: TracedSender,
     ) -> SigVerifyStage {
-        let verifier = TransactionSigVerifier::new(non_vote_sender, None);
+        let verifier = TransactionSigVerifier::new(non_vote_sender, None, None);
         SigVerifyStage::new(
             tpu_receiver,
             verifier,

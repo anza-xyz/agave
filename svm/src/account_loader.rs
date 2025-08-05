@@ -359,7 +359,7 @@ pub fn update_rent_exempt_status_for_account(rent: &Rent, account: &mut AccountS
 /// balance of lamports. If the payer_acount is not able to pay the
 /// fee, the error_metrics is incremented, and a specific error is
 /// returned.
-pub fn validate_fee_payer(
+pub fn validate_fee_payer_with_error_counters(
     payer_address: &Pubkey,
     payer_account: &mut AccountSharedData,
     payer_index: IndexOfAccount,
@@ -367,14 +367,33 @@ pub fn validate_fee_payer(
     rent: &Rent,
     fee: u64,
 ) -> Result<()> {
+    validate_fee_payer(
+        payer_address,
+        payer_account,
+        payer_index,
+        rent_collector,
+        fee,
+    )
+    .inspect_err(|err| match err {
+        TransactionError::AccountNotFound => error_metrics.account_not_found += 1,
+        TransactionError::InvalidAccountForFee => error_metrics.invalid_account_for_fee += 1,
+        TransactionError::InsufficientFundsForFee => error_metrics.insufficient_funds += 1,
+        _ => {}
+    })
+}
+
+pub fn validate_fee_payer(
+    payer_address: &Pubkey,
+    payer_account: &mut AccountSharedData,
+    payer_index: IndexOfAccount,
+    rent_collector: &dyn SVMRentCollector,
+    fee: u64,
+) -> Result<()> {
     if payer_account.lamports() == 0 {
-        error_metrics.account_not_found += 1;
         return Err(TransactionError::AccountNotFound);
     }
-    let system_account_kind = get_system_account_kind(payer_account).ok_or_else(|| {
-        error_metrics.invalid_account_for_fee += 1;
-        TransactionError::InvalidAccountForFee
-    })?;
+    let system_account_kind =
+        get_system_account_kind(payer_account).ok_or(TransactionError::InvalidAccountForFee)?;
     let min_balance = match system_account_kind {
         SystemAccountKind::System => 0,
         SystemAccountKind::Nonce => {
@@ -388,10 +407,7 @@ pub fn validate_fee_payer(
         .lamports()
         .checked_sub(min_balance)
         .and_then(|v| v.checked_sub(fee))
-        .ok_or_else(|| {
-            error_metrics.insufficient_funds += 1;
-            TransactionError::InsufficientFundsForFee
-        })?;
+        .ok_or(TransactionError::InsufficientFundsForFee)?;
 
     let payer_pre_rent_state = get_account_rent_state(rent, payer_account);
     payer_account
@@ -1392,7 +1408,7 @@ mod tests {
         } else {
             AccountSharedData::new(test_parameter.payer_init_balance, 0, &system_program::id())
         };
-        let result = validate_fee_payer(
+        let result = validate_fee_payer_with_error_counters(
             &payer_account_keys.pubkey(),
             &mut account,
             0,
