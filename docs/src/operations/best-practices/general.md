@@ -36,7 +36,7 @@ This is a monthly call that is hosted by the Solana Foundation.
 
 ### Community Led Validator Call
 
-This is also a monthly call hosted by the Solana validator community itself.  
+This is also a monthly call hosted by the Solana validator community itself.
 - Schedule: every fourth Thursday of the month 18:00 CET
 - Agenda: See [HackMD site](https://hackmd.io/1DFauFMWTZG37-U7CXhxMg?view#Solana-Community-Validator-Call-Agendas). 
 - This call is **not recorded**
@@ -96,7 +96,7 @@ process.
 
 The easiest way to upgrade the Solana CLI software is to build the newest
 version from source. See the
-[build from source](../cli/install.md#build-from-source) instructions for details.
+[build from source](../../cli/install.md#build-from-source) instructions for details.
 
 ### Restart
 

@@ -4,9 +4,9 @@ sidebar_label: Setup an Agave RPC Node
 sidebar_position: 6
 ---
 
-Since a Solana RPC server runs the same process as a consensus validator, first follow the instructions on 
-[how to setup a Solana validator](./setup-a-validator.md) to get started. 
-Note that you do not need to create a vote account if you are operating an RPC node. 
+Since a Solana RPC server runs the same process as a consensus validator, first follow the instructions on
+[how to setup a Solana validator](./setup-a-validator.md) to get started.
+Note that you do not need to create a vote account if you are operating an RPC node.
 An RPC node typically does not vote.
 
 After your validator is running, you can refer to this section for the RPC node specific setup instructions.
@@ -71,7 +71,7 @@ The identities of the [known validators](./guides/validator-start.md#known-valid
 
 Additional examples of other Solana cluster-specific validator commands can be found on the [Clusters](../clusters/available.md) page.
 
-Keep in mind, you will still need to customize these commands to operate as an RPC node, as well as other 
+Keep in mind, you will still need to customize these commands to operate as an RPC node, as well as other
 operator-specific configuration settings.
 
 ## Account indexing

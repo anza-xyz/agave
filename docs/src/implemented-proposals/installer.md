@@ -116,7 +116,7 @@ The `agave-install` tool is used by the user to install and update their cluster
 :::info
 
 `agave-install` does not install the `agave-validator` binary, which is required to run a validator node.
-Validator operators are required to [build from source](../cli/install.md#build-from-source). 
+Validator operators are required to [build from source](../cli/install.md#build-from-source).
 
 :::
 
