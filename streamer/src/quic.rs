@@ -115,7 +115,7 @@ pub(crate) fn configure_server(
     Ok((server_config, cert_chain_pem))
 }
 
-pub fn rt(name: String, num_threads: NonZeroUsize) -> Runtime {
+fn rt(name: String, num_threads: NonZeroUsize) -> Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .thread_name(name)
         .worker_threads(num_threads.get())
@@ -648,6 +648,7 @@ impl QuicServerParams {
     }
 }
 
+/// Spawns a tokio runtime and a streamer instance inside it.
 pub fn spawn_server(
     thread_name: &'static str,
     metrics_name: &'static str,

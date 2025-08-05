@@ -161,6 +161,7 @@ pub fn spawn_server_multi(
     )
 }
 
+/// Spawn a streamer instance in the current tokio runtime.
 pub fn spawn_server(
     name: &'static str,
     sockets: impl IntoIterator<Item = UdpSocket>,
@@ -434,7 +435,7 @@ fn prune_unstaked_connection_table(
     }
 }
 
-pub fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
+fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
     // Use the client cert only if it is self signed and the chain length is 1.
     connection
         .peer_identity()?
@@ -461,7 +462,7 @@ fn get_connection_stake(
     ))
 }
 
-pub fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u64) -> usize {
+fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u64) -> usize {
     match peer_type {
         ConnectionPeerType::Staked(peer_stake) => {
             // No checked math for f64 type. So let's explicitly check for 0 here
