@@ -1562,6 +1562,75 @@ mod tests {
     }
 
     #[test]
+    fn test_serde_compat_shred_data() {
+        // bytes of a serialized merkle data shred
+        const PAYLOAD: &str = "aX2ovF3sZRfd6HyqMow9kkrtL3MyJd52m7gvuSjcvA4qayXZ\
+        cVPhjURcs4JX86YQM8wVrKXqdneqdEUJwBWhFrxSkegDSov6NQoK89SzZi9auEXHHr35dmN\
+        4zQbxuNdPjKM2K7b7WKRWaHyoMKQfG9jDbJGcWqwVkAxBmUXZQKryHvAqyNdBuRTdWrMtPK\
+        DiJWhqVWTmokpyGNceL7mqVr3VrLby6dEuiEUCBHCkhbsXBjfpFZk4yRoSKosb7BViTWWdt\
+        pWd7NrbDSiE97sBppEU1nWTPaVQh3bu91x8dEoYk696k532MxnhRLcKeL4XzG6P2HzypAck\
+        JdXiRJDn5E3woA8aiPojqdN9ScthJ8yXq1h4HhvzTRWkRxRBpJL8HEYPBcshwuMLDZ9iBsW\
+        SFZLmj5v1xH3kDnMuNYJg6Dau6PKHnZyD15tTyFtFtMaXaBc35RqYhsM7s8JuQ9tJ1UfFwd\
+        khHa1wdrmTWGcvq9DDmALuTtejH1ccoW43GiYSs1TmByJWjRtupvLzMRifZZ7meaGbUBgHU\
+        kA6t1VN3akoZ9BhdX561KpFGABxTU4NxyFqztEy1EB5EJYtTHwtbJQb1NmNMwKFkazXkn1o\
+        uKK6drH5y19roH3mMo2JykapbvzYPDBSXUwKQWe1RqSvogapwPxm1EzSRDeXNDP6EYUJJjj\
+        TAnckNatpT5UZDz4EhpaSbUzd9b5ztqsdPp9HxeBTm412GopAXKN5iSXSPS2WvrEdnANFD7\
+        tRV3a6PM2SfwpF6eFM5J7xXGJSoPm5TWJSPBMbxttxVFUETSRrBubEsd24aymYZZePJtHr7\
+        Q8S1deygcyXH5WhhYAmR23hNPv3nUUHe8iwJfaFg73Ncjr8fQBVjwePEy9JKT5jNG5sm87q\
+        e2RrHEWEwkNKnNgUknoVMbL7y3wmGFpP8VoKTgP51EjMDz7JTxnVsZeRsSp29STteGKbq4i\
+        wiC5EmMS5K86CAJ86FYt1kXXHJBSw4D79wAMgxRDDycp5PgdowdLxAbwySgpmwdfnxnSD4h\
+        Y8mo4jLGWokP1mGdgjnPmtMbzndiQCLPjpUcbZoVc6SQrTDCufupkJhy1ewo64yA1db6T2T\
+        ASTWSHJkjzaWt7QtFfnBo8WoXQrNKw5pyKAQsmP7n6r1SVD7tASfcZAjfaFHxkVvMpKwTQF\
+        dy9WHxREeCPK3yeN7ACT75RgRuRT1shC1PRCuAu4EFGnBmr3nWuDrYNCG5WrWuW6RRoMyB3\
+        YaXqjYMXRUVuwb5h2PBP9euBb96Ntung8ihWXa2mbKMYMtmaoYCDhYYrFYszYfdgQH68JYz\
+        AXZvjFH1SxCETfiXAWGD1aYDa33rXZLcLVx637igoydr77qmzo5YozRQnuXUiJ19PScLWic\
+        8jWeVmQ6Mm7BLoGhVPyYbJBeyX5HRwh8CNeLK2ekmhFz9MypB1rM2PXUfcnr2MXS9WRK8bh\
+        sy47awNdApPdN3RxmuyPLnvmN6FsG5fUNqF8rsz9KUiJh9C4ziYf6NSZvVG2c1KFsQRyFrS\
+        BzyjqqxBrH1xereV9YNr1gNamFjhZTncpGcPQf9oAoA4LQeSAZXR1dMtfktCs1fFWVbA67F\
+        dQ1GrpZVGTsZCbuw7Tspns8WoL158AdS7";
+
+        let mut rng = {
+            let seed = [1u8; 32];
+            ChaChaRng::from_seed(seed)
+        };
+        let mut seed = [0u8; Keypair::SECRET_KEY_LENGTH];
+        rng.fill(&mut seed[..]);
+        let mut data = [0u8; 4096];
+        rng.fill(&mut data[..]);
+        let keypair = keypair_from_seed(&seed).unwrap();
+        let slot = 142076266;
+        let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 42).unwrap();
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let mut shred = shredder
+            .make_shreds_from_data_slice(
+                &keypair,
+                &data,
+                false,
+                Some(Hash::default()),
+                64,
+                64,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap()
+            .next()
+            .unwrap();
+        shred.sign(&keypair);
+        assert!(shred.verify(&keypair.pubkey()));
+        assert_matches!(shred.sanitize(), Ok(()));
+        let payload = bs58::decode(PAYLOAD).into_vec().unwrap();
+        let mut packet = Packet::default();
+        packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
+        packet.meta_mut().size = payload.len();
+        assert_eq!(shred.bytes_to_store(), payload);
+        assert_eq!(
+            shred,
+            Shred::new_from_serialized_shred(payload.to_vec()).unwrap()
+        );
+        verify_shred_layout(&shred, &packet);
+    }
+
+    #[test]
     fn test_serde_compat_shred_data_empty() {
         // bytes of a serialized merkle data shred
         const PAYLOAD: &str = "HV7qJBe3jCM8aRd4HAXJnJzyDvNYDYsPjjaaK2tTFTxJU2Qj\

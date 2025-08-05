@@ -116,8 +116,8 @@ pub(super) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
 
 #[cfg(test)]
 /// this will corrupt the shred by setting parent offset bytes
-pub(crate) fn corrupt_and_set_parent_offset(shred: &mut [u8], offset: u16) {
-    let bytes = offset.to_le_bytes();
+pub(crate) fn corrupt_and_set_parent_offset(shred: &mut [u8], parent_offset: u16) {
+    let bytes = parent_offset.to_le_bytes();
     assert_eq!(get_shred_type(shred).unwrap(), ShredType::Data);
     shred.get_mut(83..83 + 2).unwrap().copy_from_slice(&bytes);
 }
