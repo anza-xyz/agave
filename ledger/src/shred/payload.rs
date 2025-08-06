@@ -1,3 +1,8 @@
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+use {
+    crate::shred::Nonce,
+    solana_perf::packet::{bytes::BufMut, BytesPacket, Meta, Packet},
+};
 use {
     bytes::{Bytes, BytesMut},
     std::{
@@ -5,15 +10,6 @@ use {
         ops::{Bound, Deref, DerefMut, RangeBounds, RangeFull},
         slice::SliceIndex,
     },
-};
-#[cfg(any(test, feature = "dev-context-only-utils"))]
-use {
-    crate::shred::Nonce,
-    solana_perf::packet::{
-        bytes::{BufMut, BytesMut},
-        BytesPacket, Meta, Packet,
-    },
-    std::mem,
 };
 
 #[derive(Clone, Debug, Eq)]
