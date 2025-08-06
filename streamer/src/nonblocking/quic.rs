@@ -636,6 +636,14 @@ async fn prune_unstaked_connections_and_add_new_connection(
 
 /// Calculate the ratio for per connection receive window from a staked peer
 fn compute_receive_window_ratio_for_staked_node(max_stake: u64, min_stake: u64, stake: u64) -> u64 {
+    // Testing shows the maximum througput from a connection is achieved at receive_window =
+    // PACKET_DATA_SIZE * 10. Beyond that, there is not much gain. We linearly map the
+    // stake to the ratio range from QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO to
+    // QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO. Where the linear algebra of finding the ratio 'r'
+    // for stake 's' is,
+    // r(s) = a * s + b. Given the max_stake, min_stake, max_ratio, min_ratio, we can find
+    // a and b.
+
     if stake > max_stake {
         return QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
     }
