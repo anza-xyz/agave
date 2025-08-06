@@ -63,7 +63,6 @@ pub(crate) struct MockAlpenglowConsensus {
     state: Arc<StateArray>,          // internal state of the test for each round
     highest_slot: Slot,              // highest slot we have observed so far
     should_exit: Arc<AtomicBool>,
-    verify_signatures: Arc<AtomicBool>,
     // external state
     epoch_specs: EpochSpecs,
     cluster_info: Arc<ClusterInfo>,
@@ -199,7 +198,6 @@ impl MockAlpenglowConsensus {
         let (command_sender, vote_command_receiver) = bounded(4);
         let shared_state = Arc::new(std::array::from_fn(|_| Mutex::new(SharedState::new(0))));
         let should_exit = Arc::new(AtomicBool::new(false));
-        let verify_signatures = Arc::new(AtomicBool::new(false));
 
         let (slot_sender, slot_receiver) = bounded(4);
         let runner_thread = {
@@ -216,18 +214,10 @@ impl MockAlpenglowConsensus {
             listener_thread: thread::spawn({
                 let shared_state = shared_state.clone();
                 let should_exit = should_exit.clone();
-                let verify_signatures = verify_signatures.clone();
                 let socket = socket.clone();
                 let my_id = cluster_info.id();
                 move || {
-                    Self::listener_thread(
-                        shared_state,
-                        should_exit,
-                        verify_signatures,
-                        my_id,
-                        socket,
-                        command_sender,
-                    )
+                    Self::listener_thread(shared_state, should_exit, my_id, socket, command_sender)
                 }
             }),
             sender_thread: thread::spawn({
@@ -247,7 +237,6 @@ impl MockAlpenglowConsensus {
             should_exit,
             epoch_specs,
             cluster_info,
-            verify_signatures,
             highest_slot: 0,
             slot_sender: Some(slot_sender),
         }
@@ -298,7 +287,6 @@ impl MockAlpenglowConsensus {
     fn listener_thread(
         self_state: Arc<StateArray>,
         should_exit: Arc<AtomicBool>,
-        verify_signatures: Arc<AtomicBool>,
         my_id: Pubkey,
         socket: Arc<UdpSocket>,
         command_sender: Sender<Command>,
@@ -336,24 +324,18 @@ impl MockAlpenglowConsensus {
                 }
             };
 
-            let verify_signatures = verify_signatures.load(Ordering::Relaxed);
             for pkt in packets.iter().take(n) {
                 if pkt.meta().size < MOCK_VOTE_HEADER_SIZE {
                     trace!("Packet too small {}", pkt.meta().size);
                     continue;
                 }
+                let sender = SocketAddr::new(pkt.meta().addr, pkt.meta().port);
                 let Some(pkt_buf) = pkt.data(..) else {
                     continue;
                 };
                 let vote_pkt = MockVotePacketHeader::from_bytes(pkt_buf);
                 let pk = Pubkey::new_from_array(vote_pkt.sender);
-                let signature = Signature::from(vote_pkt.signature);
-                if verify_signatures
-                    && !signature.verify(
-                        pk.as_array(),
-                        &pkt_buf[SIGNATURE_BYTES..MOCK_VOTE_HEADER_SIZE],
-                    )
-                {
+                if vote_pkt.signature != SIGNATURE {
                     trace!("Sigverify failed");
                     continue;
                 }
@@ -381,6 +363,10 @@ impl MockAlpenglowConsensus {
                 let Some(peer_info) = state.peers.get_mut(&pk) else {
                     continue;
                 };
+                if sender != peer_info.address {
+                    // check if sender socket matches
+                    continue;
+                }
                 trace!(
                     "RX slot {}: {:?} from {}",
                     vote_pkt.slot_number,
@@ -633,10 +619,9 @@ fn prep_and_sign_packet(
         pkt.signature = [0; SIGNATURE_BYTES];
         pkt.state = state as u64;
     }
-    let signature = keypair.sign_message(&packet_buf[SIGNATURE_BYTES..MOCK_VOTE_HEADER_SIZE]);
     {
         let pkt = MockVotePacketHeader::from_bytes_mut(packet_buf);
-        pkt.signature = *signature.as_array();
+        pkt.signature = SIGNATURE;
     }
 }
 
@@ -777,7 +762,6 @@ mod tests {
         let (command_sender, vote_command_receiver) = bounded(4);
         let shared_state = Arc::new(std::array::from_fn(|_| Mutex::new(SharedState::new(0))));
         let should_exit = Arc::new(AtomicBool::new(false));
-        let verify_signatures = Arc::new(AtomicBool::new(false));
 
         let mut packet_tx_buf = [0u8; MOCK_VOTE_PACKET_SIZE];
         let mut packet_rx_buf = packet_tx_buf;
@@ -786,7 +770,6 @@ mod tests {
                 MockAlpenglowConsensus::listener_thread(
                     shared_state.clone(),
                     should_exit.clone(),
-                    verify_signatures,
                     my_id,
                     socket,
                     command_sender,
@@ -1031,3 +1014,5 @@ mod tests {
         result
     }
 }
+
+const SIGNATURE: [u8; SIGNATURE_BYTES] = [7u8; SIGNATURE_BYTES];
