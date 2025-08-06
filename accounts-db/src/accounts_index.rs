@@ -122,6 +122,9 @@ pub enum UpsertReclaim {
     PopulateReclaims,
     /// overwrite existing data in the same slot and do not return in 'reclaims'
     IgnoreReclaims,
+    // Reclaim all older versions of the account from the index and return
+    // in the 'reclaims'
+    ReclaimOldSlots,
 }
 
 #[derive(Debug)]
@@ -3155,6 +3158,55 @@ pub mod tests {
             entry.slot_list.read().unwrap().len(),
             (reclaim_slot + 1) as usize
         );
+
+        // Reclaim all older slots
+        index.upsert(
+            reclaim_slot,
+            reclaim_slot,
+            &key,
+            &AccountSharedData::default(),
+            &AccountSecondaryIndexes::default(),
+            account_value,
+            &mut gc,
+            UpsertReclaim::ReclaimOldSlots,
+        );
+
+        // Verify that older items are reclaimed
+        assert_eq!(gc.len(), reclaim_slot as usize);
+        for (slot, value) in gc.iter() {
+            assert!(*slot < reclaim_slot);
+            assert_eq!(*value, *slot);
+        }
+
+        // Verify that the item added is in in the slot list
+        let ancestors = vec![(reclaim_slot, 0)].into_iter().collect();
+        index
+            .get_with_and_then(
+                &key,
+                Some(&ancestors),
+                None,
+                false,
+                |(slot, account_info)| {
+                    assert_eq!(slot, reclaim_slot);
+                    assert_eq!(account_info, account_value);
+                },
+            )
+            .unwrap();
+
+        // Verify that the newer item remains in the slot list
+        let ancestors = vec![((reclaim_slot + 1), 0)].into_iter().collect();
+        index
+            .get_with_and_then(
+                &key,
+                Some(&ancestors),
+                None,
+                false,
+                |(slot, account_info)| {
+                    assert_eq!(slot, reclaim_slot + 1);
+                    assert_eq!(account_info, account_value + 1);
+                },
+            )
+            .unwrap();
     }
 
     #[test]
@@ -3199,6 +3251,44 @@ pub mod tests {
             &mut gc,
             UpsertReclaim::IgnoreReclaims,
         );
+        index.upsert(
+            2,
+            2,
+            &key,
+            &AccountSharedData::default(),
+            &AccountSecondaryIndexes::default(),
+            CacheableIndexValue(false),
+            &mut gc,
+            UpsertReclaim::ReclaimOldSlots,
+        );
+
+        // Verify that the slot list is length two and consists of the cached account at slot 0
+        // and the cached account at slot 2
+        let entry = index.get_cloned(&key).unwrap();
+        assert_eq!(entry.slot_list.read().unwrap().len(), 2);
+        assert_eq!(
+            entry.slot_list.read().unwrap()[0],
+            PreAllocatedAccountMapEntry::new(
+                1,
+                CacheableIndexValue(true),
+                &index.storage.storage,
+                false
+            )
+            .into()
+        );
+        assert_eq!(
+            entry.slot_list.read().unwrap()[1],
+            PreAllocatedAccountMapEntry::new(
+                2,
+                CacheableIndexValue(false),
+                &index.storage.storage,
+                false
+            )
+            .into()
+        );
+        // Verify that the uncached account at slot 1 was reclaimed
+        assert_eq!(gc.len(), 1);
+        assert_eq!(gc[0], (0, CacheableIndexValue(false)));
     }
 
     #[test]
