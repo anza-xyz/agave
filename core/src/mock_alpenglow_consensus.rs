@@ -25,6 +25,7 @@ use {
     std::{
         collections::HashMap,
         io::Error,
+        iter::once,
         net::{SocketAddr, SocketAddrV4, UdpSocket},
         sync::{
             atomic::{AtomicBool, AtomicU16, Ordering},
@@ -579,25 +580,33 @@ impl MockAlpenglowConsensus {
         command_sender: Sender<Command>,
         state: Arc<StateArray>,
     ) {
-        for slot in slot_receiver.iter() {
-            // we get activated 1 slot in advance to capture votes coming
-            // earlier than we have finished replay
-            std::thread::sleep(Duration::from_millis(400));
-            trace!("Starting voting in slot {slot}");
-            command_sender.send(Command::SendNotarize(slot));
-            std::thread::sleep(Duration::from_millis(400));
-            // collect stats from the previous slot's voting
-            let (peers, total_staked) = {
-                let mut lockguard = get_state_for_slot(&state, slot).lock().unwrap();
-                // check if tasks have been aborted and do not report garbage
-                if lockguard.current_slot == 0 {
-                    return;
+        for start_slot in slot_receiver.iter() {
+            let slot_range = start_slot..(start_slot + NUM_VOTE_ROUNDS);
+            let vote_slots = slot_range.clone().map(|v| Some(v)).chain(once(None));
+            let report_slots = once(None).chain(slot_range.map(|v| Some(v)));
+            for (vote_slot, report_slot) in vote_slots.zip(report_slots) {
+                // we get activated 1 slot in advance to capture votes coming
+                // earlier than we have finished replay
+                std::thread::sleep(Duration::from_millis(400));
+                if let Some(slot) = vote_slot {
+                    trace!("Starting voting in slot {slot}");
+                    command_sender.send(Command::SendNotarize(slot));
                 }
-                let total_staked = lockguard.total_staked;
-                let peers = lockguard.reset();
-                (peers, total_staked)
-            };
-            report_collected_votes(peers, total_staked, slot);
+                if let Some(slot) = report_slot {
+                    // collect stats from the previous slot's voting
+                    let (peers, total_staked) = {
+                        let mut lockguard = get_state_for_slot(&state, slot).lock().unwrap();
+                        // check if tasks have been aborted and do not report garbage
+                        if lockguard.current_slot == 0 {
+                            return;
+                        }
+                        let total_staked = lockguard.total_staked;
+                        let peers = lockguard.reset();
+                        (peers, total_staked)
+                    };
+                    report_collected_votes(peers, total_staked, slot);
+                }
+            }
         }
     }
 
