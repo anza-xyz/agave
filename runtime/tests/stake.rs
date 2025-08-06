@@ -7,6 +7,7 @@ use {
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_keypair::Keypair,
     solana_message::Message,
+    solana_program_test::programs::core_bpf_programs,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -17,7 +18,7 @@ use {
     },
     solana_signer::Signer,
     solana_stake_interface::{
-        instruction as stake_instruction,
+        instruction as stake_instruction, program as stake_program,
         state::{Authorized, Lockup, StakeStateV2},
     },
     solana_stake_program::stake_state,
@@ -50,7 +51,9 @@ fn next_epoch_and_n_slots(
     mut n: usize,
 ) -> Arc<Bank> {
     bank.squash();
-    let slot = bank.get_slots_in_epoch(bank.epoch()) + bank.slot();
+    let slot = bank
+        .epoch_schedule()
+        .get_first_slot_in_epoch(bank.epoch() + 1);
     let mut bank = new_bank_from_parent_with_bank_forks(bank_forks, bank, &Pubkey::default(), slot);
 
     while n > 0 {
@@ -138,6 +141,12 @@ fn test_stake_account_lifetime() {
     let identity_keypair = Keypair::new();
     let identity_pubkey = identity_keypair.pubkey();
 
+    let core_programs = core_bpf_programs(&Rent::default(), |_| true);
+    let stake_idx = core_programs
+        .iter()
+        .position(|(pubkey, _)| *pubkey == stake_program::id())
+        .unwrap();
+
     let GenesisConfigInfo {
         mut genesis_config,
         mint_keypair,
@@ -149,7 +158,19 @@ fn test_stake_account_lifetime() {
     );
     genesis_config.epoch_schedule = EpochSchedule::new(MINIMUM_SLOTS_PER_EPOCH);
     genesis_config.rent = Rent::default();
+    genesis_config.add_account(
+        core_programs[stake_idx].0,
+        core_programs[stake_idx].1.clone(),
+    );
+    genesis_config.add_account(
+        core_programs[stake_idx + 1].0,
+        core_programs[stake_idx + 1].1.clone(),
+    );
+
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    bank.squash();
+    bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 1);
+
     let mint_pubkey = mint_keypair.pubkey();
     let bank_client = BankClient::new_shared(bank.clone());
 

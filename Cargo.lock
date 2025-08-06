@@ -10276,6 +10276,7 @@ dependencies = [
  "solana-poh-config",
  "solana-precompile-error",
  "solana-program-runtime",
+ "solana-program-test",
  "solana-pubkey",
  "solana-rayon-threadlimit",
  "solana-rent",
