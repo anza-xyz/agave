@@ -57,7 +57,24 @@ impl From<&WeightingConfig> for WeightingMode {
 fn get_weight(bucket: u64, alpha: u64) -> u64 {
     debug_assert!((ALPHA_MIN..=ALPHA_MIN + lpf::SCALE.get()).contains(&alpha));
     let b = bucket + 1;
-    lpf::interpolate(b, alpha.saturating_sub(ALPHA_MIN))
+    linearly_interpolate(b, alpha)
+}
+
+/// Approximates `base^alpha` rounded to nearest integer using
+/// integer-only linear interpolation between `base^1` and `base^2`.
+///
+/// Note: This function is most accurate when `base` is small e.g. < ~25.
+#[inline]
+#[allow(clippy::arithmetic_side_effects)]
+pub fn linearly_interpolate(base: u64, alpha: u64) -> u64 {
+    let scale = lpf::SCALE.get();
+    let t = alpha.saturating_sub(ALPHA_MIN);
+    debug_assert!(t <= scale, "interpolation t={} > SCALE={}", t, scale);
+    let base_squared = base.saturating_mul(base);
+    // ((base * (scale - t) + base_squared * t) + scale / 2) / scale
+    ((base.saturating_mul(scale.saturating_sub(t))).saturating_add(base_squared.saturating_mul(t)))
+        .saturating_add(scale / 2)
+        / scale
 }
 
 // Each entry corresponds to a stake bucket for
@@ -227,8 +244,8 @@ impl PushActiveSet {
                 let total_nodes = nodes.len().saturating_add(1);
 
                 let f_scaled = ((num_unstaked.saturating_mul(lpf::SCALE.get() as usize))
-                    .saturating_add(total_nodes.saturating_div(2)))
-                .saturating_div(total_nodes);
+                    .saturating_add(total_nodes / 2))
+                    / total_nodes;
                 let alpha_target = ALPHA_MIN.saturating_add(f_scaled as u64);
                 *alpha = lpf::filter_alpha(
                     *alpha,
@@ -901,5 +918,139 @@ mod tests {
                 WeightingMode::Static => panic!("Expected Dynamic mode"),
             }
         }
+    }
+
+    #[test]
+    fn test_interpolate_t_zero() {
+        // When t=0, should return base
+        assert_eq!(linearly_interpolate(100, 0), 100);
+        assert_eq!(linearly_interpolate(0, 0), 0);
+        assert_eq!(linearly_interpolate(1000000, 0), 1000000);
+    }
+
+    #[test]
+    fn test_interpolate_t_max() {
+        // When t=SCALE, should return base^2
+        let base = 100;
+        let result = linearly_interpolate(base, lpf::SCALE.get());
+        assert_eq!(result, base * base);
+
+        let base2 = 1000;
+        let result = linearly_interpolate(base2, lpf::SCALE.get());
+        assert_eq!(result, base2 * base2);
+    }
+
+    #[test]
+    fn test_interpolate_values() {
+        let t_10 = lpf::SCALE.get() / 10; // 10%
+        let t_50 = lpf::SCALE.get() / 2; // 50%
+        let t_75 = lpf::SCALE.get() * 3 / 4; // 75%
+
+        let base = 3;
+        let result = linearly_interpolate(base, t_10);
+        assert_eq!(result, 4);
+
+        let result = linearly_interpolate(base, t_50);
+        assert_eq!(result, 6);
+
+        let result = linearly_interpolate(base, t_75);
+        assert_eq!(result, 8);
+
+        let base = 15;
+        let result = linearly_interpolate(base, t_10);
+        assert_eq!(result, 36);
+
+        let result = linearly_interpolate(base, t_50);
+        assert_eq!(result, 120);
+
+        let result = linearly_interpolate(base, t_75);
+        assert_eq!(result, 173);
+
+        let base = 24;
+        let result = linearly_interpolate(base, t_10);
+        assert_eq!(result, 79);
+
+        let result = linearly_interpolate(base, t_50);
+        assert_eq!(result, 300);
+
+        let result = linearly_interpolate(base, t_75);
+        assert_eq!(result, 438);
+    }
+
+    #[test]
+    fn test_interpolate_large_base() {
+        let base = 1000000000;
+        let result = linearly_interpolate(base, lpf::SCALE.get() / 2);
+        assert!(result >= base);
+        assert!(result < base * base);
+    }
+
+    #[test]
+    fn test_interpolate_edge_cases() {
+        // Test with base = 1
+        assert_eq!(linearly_interpolate(1, 0), 1);
+        assert_eq!(linearly_interpolate(1, lpf::SCALE.get()), 1);
+        assert_eq!(linearly_interpolate(1, lpf::SCALE.get() / 2), 1);
+
+        // Test with base = 0
+        assert_eq!(linearly_interpolate(0, 0), 0);
+        assert_eq!(linearly_interpolate(0, lpf::SCALE.get()), 0);
+        assert_eq!(linearly_interpolate(0, lpf::SCALE.get() / 2), 0);
+    }
+
+    #[test]
+    fn test_interpolate_rounding() {
+        let base = 3;
+        let t = lpf::SCALE.get() / 3;
+        let result = linearly_interpolate(base, t);
+
+        assert!(result >= 3);
+        assert!(result <= 9);
+    }
+
+    #[test]
+    fn test_integration_filter_and_interpolate() {
+        // Test using filtered alpha with interpolate
+        // Alpha range is [SCALE, 2*SCALE] as used in push_active_set
+        let alpha_min = lpf::SCALE.get();
+        let alpha_max = 2 * lpf::SCALE.get();
+
+        let config = lpf::FilterConfig {
+            output_range: alpha_min..alpha_max,
+            k: lpf::SCALE.get() / 10, // 10%
+        };
+
+        let prev_alpha = alpha_min + lpf::SCALE.get() / 4; // 1.25 * SCALE
+        let target_alpha = alpha_min + lpf::SCALE.get() / 2; // 1.5 * SCALE
+        let filtered_alpha = lpf::filter_alpha(prev_alpha, target_alpha, config);
+
+        let t = filtered_alpha.saturating_sub(alpha_min);
+        let base = 2;
+        let result = linearly_interpolate(base, t);
+
+        assert!(result >= base);
+        assert!(result <= base * base);
+
+        assert!(filtered_alpha >= alpha_min);
+        assert!(filtered_alpha <= alpha_max);
+    }
+
+    #[test]
+    fn test_get_weight_specific_values() {
+        // Test get_weight with specific bucket=15 and alpha=1118676
+        let bucket = 15;
+        let alpha = 1118676;
+
+        // Verify alpha is in the valid range
+        assert!(alpha >= ALPHA_MIN);
+        assert!(alpha <= ALPHA_MAX);
+
+        let result = get_weight(bucket, alpha);
+
+        // Expected calculation:
+        // b = bucket + 1 = 16
+        // t = alpha - ALPHA_MIN = 1118676 - 1000000 = 118676
+        // interpolate(16, 118676) should return 44
+        assert_eq!(result, 44);
     }
 }
