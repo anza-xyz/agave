@@ -4638,7 +4638,7 @@ impl Bank {
                             "startup_verify_accounts",
                             ("total_us", total_time.as_micros(), i64),
                             (
-                                "verify_accounts_lt_hash_us",
+                                "calculate_accounts_lt_hash_us",
                                 lattice_verify_time.as_micros(),
                                 i64
                             ),
