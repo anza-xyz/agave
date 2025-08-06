@@ -6072,6 +6072,12 @@ pub mod tests {
                     "err":null,
                     "innerInstructions": null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 5000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1],
+                    "postBalances": [999982200, 12800, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6159,6 +6165,12 @@ pub mod tests {
                     "err":null,
                     "innerInstructions":null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 5000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1],
+                    "postBalances": [999982200, 12800, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6190,6 +6202,12 @@ pub mod tests {
                     "err":null,
                     "innerInstructions":null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 5000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1],
+                    "postBalances": [999982200, 12800, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6245,6 +6263,12 @@ pub mod tests {
                     "accounts":null,
                     "innerInstructions":null,
                     "loadedAccountsDataSize":0,
+                    "fee": null,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1],
+                    "postBalances": [1000000000, 0, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[],
                     "replacementBlockhash": null,
                     "returnData": null,
@@ -6279,6 +6303,12 @@ pub mod tests {
                     "err":null,
                     "innerInstructions":null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 5000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1],
+                    "postBalances": [999982200, 12800, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6430,6 +6460,12 @@ pub mod tests {
                     "err": null,
                     "innerInstructions": null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 5000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 29300, 1],
+                    "postBalances": [999994999, 29301, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6510,6 +6546,12 @@ pub mod tests {
                     "err":null,
                     "innerInstructions": null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 10000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1, 0, 1],
+                    "postBalances": [999977200, 12800, 1, 0, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program TestProgram11111111111111111111111111111111 invoke [1]",
                         "I am logging from a builtin program!",
@@ -6554,6 +6596,12 @@ pub mod tests {
                     "err":null,
                     "innerInstructions": null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 10000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1, 0, 1],
+                    "postBalances": [999977200, 12800, 1, 0, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program TestProgram11111111111111111111111111111111 invoke [1]",
                         "I am logging from a builtin program!",
@@ -6619,6 +6667,12 @@ pub mod tests {
                         }
                     ],
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 10000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1, 0, 1],
+                    "postBalances": [999977200, 12800, 1, 0, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program TestProgram11111111111111111111111111111111 invoke [1]",
                         "I am logging from a builtin program!",
@@ -6879,7 +6933,7 @@ pub mod tests {
         assert_eq!(
             res,
             Some(
-                r#"{"jsonrpc":"2.0","error":{"code":-32002,"message":"Transaction simulation failed: Blockhash not found","data":{"accounts":null,"err":"BlockhashNotFound","innerInstructions":null,"loadedAccountsDataSize":0,"logs":[],"replacementBlockhash":null,"returnData":null,"unitsConsumed":0}},"id":1}"#.to_string(),
+                r#"{"jsonrpc":"2.0","error":{"code":-32002,"message":"Transaction simulation failed: Blockhash not found","data":{"accounts":null,"err":"BlockhashNotFound","fee":null,"innerInstructions":null,"loadedAccountsDataSize":0,"loadedAddresses":null,"logs":[],"postBalances":null,"postTokenBalances":null,"preBalances":null,"preTokenBalances":null,"replacementBlockhash":null,"returnData":null,"unitsConsumed":0}},"id":1}"#.to_string(),
             )
         );
 
