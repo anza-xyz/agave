@@ -53,8 +53,28 @@ pub(crate) fn ensure_banking_stage_setup(
 ) {
     let root_bank = bank_forks.read().unwrap().sharable_root_bank();
     let unified_receiver = channels.unified_receiver().clone();
-    let mut decision_maker = DecisionMaker::new(poh_recorder.clone());
-    let banking_stage_monitor = Box::new(DecisionMakerWrapper::new(decision_maker.clone()));
+
+    let (is_exited, shared_working_bank, shared_tick_height, shared_leader_first_tick_height) = {
+        let poh_recorder = poh_recorder.read().unwrap();
+        (
+            poh_recorder.is_exited.clone(),
+            poh_recorder.shared_working_bank(),
+            poh_recorder.shared_tick_height(),
+            poh_recorder.shared_leader_first_tick_height(),
+        )
+    };
+
+    let decision_maker = DecisionMaker::new(
+        shared_working_bank.clone(),
+        shared_tick_height.clone(),
+        shared_leader_first_tick_height.clone(),
+    );
+    let banking_stage_monitor = Box::new(DecisionMakerWrapper::new(
+        is_exited,
+        shared_working_bank,
+        shared_tick_height,
+        shared_leader_first_tick_height,
+    ));
     let banking_packet_handler = Box::new(
         move |helper: &BankingStageHelper, batches: BankingPacketBatch| {
             let decision = decision_maker.make_consume_or_forward_decision();

@@ -989,14 +989,17 @@ impl SharedWorkingBank {
         self.0.load_full()
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn store(&self, bank: Arc<Bank>) {
         self.0.store(Some(bank));
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn clear(&self) {
         self.0.store(None);
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn empty() -> Self {
         Self(Arc::new(ArcSwapOption::empty()))
     }
@@ -1012,14 +1015,17 @@ impl SharedTickHeight {
         self.0.load(Ordering::Acquire)
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn new(tick_height: u64) -> Self {
         Self(Arc::new(AtomicU64::new(tick_height)))
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn store(&self, tick_height: u64) {
         self.0.store(tick_height, Ordering::Release);
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn increment(&self) {
         self.0.fetch_add(1, Ordering::Release);
     }
@@ -1042,11 +1048,13 @@ impl SharedLeaderFirstTickHeight {
         }
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn new(tick_height: Option<u64>) -> Self {
         let v = tick_height.unwrap_or(SHARED_LEADER_FIRST_TICK_HEIGHT_NONE);
         Self(Arc::new(AtomicU64::new(v)))
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn store(&self, tick_height: Option<u64>) {
         let v = tick_height.unwrap_or(SHARED_LEADER_FIRST_TICK_HEIGHT_NONE);
         self.0.store(v, Ordering::Release);

@@ -452,7 +452,20 @@ impl BankingStage {
             VoteStorage::new(&bank)
         };
 
-        let decision_maker = DecisionMaker::new(poh_recorder.clone());
+        let (shared_working_bank, shared_tick_height, shared_leader_first_tick_height) = {
+            let poh_recorder = poh_recorder.read().unwrap();
+            (
+                poh_recorder.shared_working_bank(),
+                poh_recorder.shared_tick_height(),
+                poh_recorder.shared_leader_first_tick_height(),
+            )
+        };
+
+        let decision_maker = DecisionMaker::new(
+            shared_working_bank,
+            shared_tick_height,
+            shared_leader_first_tick_height,
+        );
         let committer = Committer::new(
             transaction_status_sender.clone(),
             replay_vote_sender.clone(),
