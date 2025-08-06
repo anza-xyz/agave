@@ -4528,7 +4528,7 @@ impl Bank {
     pub fn run_final_hash_calc(&self) {
         self.force_flush_accounts_cache();
         // note that this slot may not be a root
-        _ = self.verify_accounts_hash(
+        _ = self.verify_accounts(
             VerifyAccountsHashConfig {
                 require_rooted_bank: false,
                 run_in_background: false,
@@ -4537,11 +4537,20 @@ impl Bank {
         );
     }
 
-    /// Recalculate the accounts hash from the account stores. Used to verify a snapshot.
-    /// return true if all is good
-    /// Only called from startup or test code.
+    /// Verify the account state as part of startup, typically from a snapshot.
+    ///
+    /// This fn calculates the accounts lt hash and compares it against the stored value in the
+    /// bank.  Normal validator operation will do this calculation in the background, and use the
+    /// account storage files for input. Tests/ledger-tool may opt to either do the calculation in
+    /// the foreground, or use the accounts index for input.
+    ///
+    /// Returns true if all is good.
+    /// Note, if calculation is running in the background, this fn will return as soon as the
+    /// calculation *begins*, not when it has completed.
+    ///
+    /// Only intended to be called at startup, or from tests/ledger-tool.
     #[must_use]
-    fn verify_accounts_hash(
+    fn verify_accounts(
         &self,
         mut config: VerifyAccountsHashConfig,
         duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
@@ -4572,7 +4581,7 @@ impl Bank {
                 // back to verifying the accounts lt hash with the index (which also means we
                 // cannot run in the background).
                 config.run_in_background = false;
-                return parent.verify_accounts_hash(config, None);
+                return parent.verify_accounts(config, None);
             } else {
                 // this will result in mismatch errors
                 // accounts hash calc doesn't include unrooted slots
@@ -4839,7 +4848,7 @@ impl Bank {
         let (verified_accounts, verify_accounts_time_us) = measure_us!({
             let should_verify_accounts = !self.rc.accounts.accounts_db.skip_initial_hash_calc;
             if should_verify_accounts {
-                self.verify_accounts_hash(
+                self.verify_accounts(
                     VerifyAccountsHashConfig {
                         require_rooted_bank: false,
                         run_in_background: true,
