@@ -51,7 +51,7 @@ use {
     solana_unified_scheduler_logic::{
         BlockSize,
         SchedulingMode::{self, BlockProduction, BlockVerification},
-        SchedulingStateMachine, Task, UsageQueue,
+        SchedulingStateMachine, Task, UsageQueue, UsageQueueConfig,
     },
     static_assertions::const_assert_eq,
     std::{
@@ -1345,14 +1345,25 @@ mod chained_channel {
 /// instance destruction is managed via `solScCleaner`. This struct is here to be put outside
 /// `solana-unified-scheduler-logic` for the crate's original intent (separation of concerns from
 /// the pure-logic-only crate). Some practical and mundane pruning will be implemented in this type.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 struct UsageQueueLoaderInner {
     usage_queues: DashMap<Pubkey, UsageQueue>,
 }
 
+impl Default for UsageQueueLoaderInner {
+    fn default() -> Self {
+        Self {
+            usage_queues: DashMap::new(),
+        }
+    }
+}
+
 impl UsageQueueLoaderInner {
     fn load(&self, address: Pubkey) -> UsageQueue {
-        self.usage_queues.entry(address).or_default().clone()
+        self.usage_queues
+            .entry(address)
+            .or_insert_with(UsageQueue::default)
+            .clone()
     }
 
     fn count(&self) -> usize {
