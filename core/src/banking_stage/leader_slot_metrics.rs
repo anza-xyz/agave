@@ -8,7 +8,7 @@ use {
     solana_clock::Slot,
     solana_poh::poh_recorder::BankStart,
     solana_svm::transaction_error_metrics::*,
-    std::{num::Saturating, time::Instant},
+    std::num::Saturating,
 };
 
 /// A summary of what happened to transactions passed to the processing pipeline.
@@ -397,13 +397,13 @@ pub(crate) struct LeaderSlotMetrics {
 }
 
 impl LeaderSlotMetrics {
-    pub(crate) fn new(slot: Slot, bank_creation_time: &Instant) -> Self {
+    pub(crate) fn new(slot: Slot) -> Self {
         Self {
             slot,
             packet_count_metrics: LeaderSlotPacketCountMetrics::new(),
             transaction_error_metrics: TransactionErrorMetrics::new(),
             vote_packet_count_metrics: VotePacketCountMetrics::new(),
-            timing_metrics: LeaderSlotTimingMetrics::new(bank_creation_time),
+            timing_metrics: LeaderSlotTimingMetrics::new(),
             is_reported: false,
         }
     }
@@ -487,12 +487,9 @@ impl LeaderSlotMetricsTracker {
             }
 
             // Our leader slot has begain, time to create a new slot tracker
-            (None, Some(bank_start)) => {
-                MetricsTrackerAction::NewTracker(Some(LeaderSlotMetrics::new(
-                    bank_start.working_bank.slot(),
-                    &bank_start.bank_creation_time,
-                )))
-            }
+            (None, Some(bank_start)) => MetricsTrackerAction::NewTracker(Some(
+                LeaderSlotMetrics::new(bank_start.working_bank.slot()),
+            )),
 
             (Some(leader_slot_metrics), Some(bank_start)) => {
                 if leader_slot_metrics.slot != bank_start.working_bank.slot() {
@@ -500,7 +497,6 @@ impl LeaderSlotMetricsTracker {
                     leader_slot_metrics.mark_slot_end_detected();
                     MetricsTrackerAction::ReportAndNewTracker(Some(LeaderSlotMetrics::new(
                         bank_start.working_bank.slot(),
-                        &bank_start.bank_creation_time,
                     )))
                 } else {
                     MetricsTrackerAction::Noop
@@ -805,7 +801,7 @@ mod tests {
         super::*,
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, genesis_utils::create_genesis_config},
-        std::{mem, sync::Arc},
+        std::{mem, sync::Arc, time::Instant},
     };
 
     struct TestSlotBoundaryComponents {
