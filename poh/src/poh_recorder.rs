@@ -674,6 +674,14 @@ impl PohRecorder {
         self.tick_height.load()
     }
 
+    pub fn shared_tick_height(&self) -> SharedTickHeight {
+        self.tick_height.clone()
+    }
+
+    pub fn shared_leader_first_tick_height(&self) -> SharedLeaderFirstTickHeight {
+        self.leader_first_tick_height.clone()
+    }
+
     pub fn ticks_per_slot(&self) -> u64 {
         self.ticks_per_slot
     }
