@@ -1767,7 +1767,7 @@ mod tests {
     fn test_update_slot_list_other() {
         solana_logger::setup();
         let reclaim = UpsertReclaim::PopulateReclaims;
-        let new_slot = 0;
+        let new_slot = 5;
         let info = 1;
         let other_value = info + 1;
         let at_new_slot = (new_slot, info);
@@ -1823,13 +1823,13 @@ mod tests {
         let mut possible_initial_slot_list_contents;
         // build a list of possible contents in the slot_list prior to calling 'update_slot_list'
         {
-            // up to 3 ignored slot account_info (ignored means not 'new_slot', not 'other_slot', but different slot #s which could exist in the slot_list initially)
+            // Add ignored slot account_info entries (slots with larger slot #s than 'new_slot' or 'other_slot')
             possible_initial_slot_list_contents = (0..3)
                 .map(|i| (ignored_slot + i, ignored_value + i))
                 .collect::<Vec<_>>();
-            // account_info that already exists in the slot_list AT 'new_slot'
+            // Add account_info for 'new_slot'
             possible_initial_slot_list_contents.push(at_new_slot);
-            // account_info that already exists in the slot_list AT 'other_slot'
+            // Add account_info for 'other_slot'
             possible_initial_slot_list_contents.push((unique_other_slot, other_value));
         }
 
