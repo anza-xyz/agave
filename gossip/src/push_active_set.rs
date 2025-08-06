@@ -84,50 +84,37 @@ impl PushActiveSet {
     }
 
     pub(crate) fn apply_cfg(&mut self, cfg: &WeightingConfig) {
-        match cfg {
-            WeightingConfig::Static => {
-                if self.mode != WeightingMode::Static {
-                    info!("Switching mode: {:?} -> Static", self.mode);
-                    self.mode = WeightingMode::Static;
-                }
+        match (cfg, &mut self.mode) {
+            (WeightingConfig::Static, WeightingMode::Static) => (),
+            (WeightingConfig::Static, current_mode) => {
+                info!("Switching mode: {:?} -> Static", current_mode);
+                self.mode = WeightingMode::Static;
             }
-            WeightingConfig::Dynamic { tc } => {
+            (
+                WeightingConfig::Dynamic { tc },
+                WeightingMode::Dynamic {
+                    filter_k, tc_ms, ..
+                },
+            ) => {
                 let new_tc_ms = match tc {
                     TimeConstant::Value(tc_ms) => *tc_ms,
                     TimeConstant::Default => DEFAULT_TC_MS,
                 };
 
-                let should_update_filter = match self.mode {
-                    WeightingMode::Dynamic { tc_ms, .. } => tc_ms != new_tc_ms,
-                    WeightingMode::Static => true,
-                };
-
-                if should_update_filter {
-                    let new_filter_k =
-                        lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, new_tc_ms);
-
-                    match self.mode {
-                        WeightingMode::Dynamic {
-                            ref mut filter_k,
-                            ref mut tc_ms,
-                            ..
-                        } => {
-                            *filter_k = new_filter_k;
-                            *tc_ms = new_tc_ms;
-                            info!("Recomputed filter K = {} (tc_ms = {})", *filter_k, *tc_ms);
-                        }
-                        WeightingMode::Static => {
-                            info!("Switching mode: Static -> Dynamic");
-                            // Use From implementation for clean conversion
-                            self.mode = WeightingMode::from(cfg);
-                            if let WeightingMode::Dynamic {
-                                filter_k, tc_ms, ..
-                            } = self.mode
-                            {
-                                info!("Initialized filter K = {} (tc_ms = {})", filter_k, tc_ms);
-                            }
-                        }
-                    }
+                if *tc_ms != new_tc_ms {
+                    *filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, new_tc_ms);
+                    *tc_ms = new_tc_ms;
+                    info!("Recomputed filter K = {} (tc_ms = {})", *filter_k, *tc_ms);
+                }
+            }
+            (WeightingConfig::Dynamic { .. }, WeightingMode::Static) => {
+                info!("Switching mode: Static -> Dynamic");
+                self.mode = WeightingMode::from(cfg);
+                if let WeightingMode::Dynamic {
+                    filter_k, tc_ms, ..
+                } = self.mode
+                {
+                    info!("Initialized filter K = {} (tc_ms = {})", filter_k, tc_ms);
                 }
             }
         }
@@ -756,6 +743,163 @@ mod tests {
                 "step {}: alpha did not match expected during final convergence down",
                 i
             );
+        }
+    }
+
+    #[test]
+    fn test_apply_cfg_static_to_static() {
+        // Static -> Static: No change
+        let mut active_set = PushActiveSet::new(WeightingMode::Static);
+        assert_eq!(active_set.mode, WeightingMode::Static);
+
+        active_set.apply_cfg(&WeightingConfig::Static);
+        assert_eq!(active_set.mode, WeightingMode::Static);
+    }
+
+    #[test]
+    fn test_apply_cfg_dynamic_to_static() {
+        // Dynamic -> Static: Mode switch
+        let mut active_set = PushActiveSet::new_dynamic();
+        assert!(matches!(active_set.mode, WeightingMode::Dynamic { .. }));
+
+        active_set.apply_cfg(&WeightingConfig::Static);
+        assert_eq!(active_set.mode, WeightingMode::Static);
+    }
+
+    #[test]
+    fn test_apply_cfg_static_to_dynamic() {
+        // Static -> Dynamic: Mode switch
+        let mut active_set = PushActiveSet::new(WeightingMode::Static);
+        assert_eq!(active_set.mode, WeightingMode::Static);
+
+        let config = WeightingConfig::Dynamic {
+            tc: TimeConstant::Default,
+        };
+        active_set.apply_cfg(&config);
+
+        match active_set.mode {
+            WeightingMode::Dynamic {
+                alpha,
+                filter_k,
+                tc_ms,
+            } => {
+                assert_eq!(alpha, DEFAULT_ALPHA);
+                assert_eq!(tc_ms, DEFAULT_TC_MS);
+                assert_eq!(
+                    filter_k,
+                    lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, DEFAULT_TC_MS)
+                );
+            }
+            WeightingMode::Static => panic!("Expected Dynamic mode after config change"),
+        }
+    }
+
+    #[test]
+    fn test_apply_cfg_dynamic_to_dynamic_same_tc() {
+        // Dynamic -> Dynamic (same tc): No change
+        let mut active_set = PushActiveSet::new_dynamic();
+        let original_mode = active_set.mode;
+
+        let config = WeightingConfig::Dynamic {
+            tc: TimeConstant::Default,
+        };
+        active_set.apply_cfg(&config);
+
+        // Mode should be unchanged since tc is the same
+        assert_eq!(active_set.mode, original_mode);
+    }
+
+    #[test]
+    fn test_apply_cfg_dynamic_to_dynamic_different_tc() {
+        // Dynamic -> Dynamic (different tc): Update filter parameters
+        let mut active_set = PushActiveSet::new_dynamic();
+
+        // Change to a different tc value
+        let new_tc_ms = 45_000;
+        let config = WeightingConfig::Dynamic {
+            tc: TimeConstant::Value(new_tc_ms),
+        };
+        active_set.apply_cfg(&config);
+
+        match active_set.mode {
+            WeightingMode::Dynamic {
+                alpha,
+                filter_k,
+                tc_ms,
+            } => {
+                assert_eq!(alpha, DEFAULT_ALPHA);
+                assert_eq!(tc_ms, new_tc_ms);
+                assert_eq!(
+                    filter_k,
+                    lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, new_tc_ms)
+                );
+            }
+            WeightingMode::Static => panic!("Expected Dynamic mode"),
+        }
+    }
+
+    #[test]
+    fn test_apply_cfg_multiple_transitions() {
+        // Test multiple config changes in sequence
+        let mut active_set = PushActiveSet::new(WeightingMode::Static);
+
+        // Static -> Dynamic
+        active_set.apply_cfg(&WeightingConfig::Dynamic {
+            tc: TimeConstant::Value(20_000),
+        });
+        assert!(matches!(
+            active_set.mode,
+            WeightingMode::Dynamic { tc_ms: 20_000, .. }
+        ));
+
+        // Dynamic -> Dynamic (change tc)
+        active_set.apply_cfg(&WeightingConfig::Dynamic {
+            tc: TimeConstant::Value(40_000),
+        });
+        assert!(matches!(
+            active_set.mode,
+            WeightingMode::Dynamic { tc_ms: 40_000, .. }
+        ));
+
+        // Dynamic -> Static
+        active_set.apply_cfg(&WeightingConfig::Static);
+        assert_eq!(active_set.mode, WeightingMode::Static);
+
+        // Static -> Dynamic (with default tc)
+        active_set.apply_cfg(&WeightingConfig::Dynamic {
+            tc: TimeConstant::Default,
+        });
+        assert!(
+            matches!(active_set.mode, WeightingMode::Dynamic { tc_ms, .. } if tc_ms == DEFAULT_TC_MS)
+        );
+    }
+
+    #[test]
+    fn test_apply_cfg_filter_k_computation() {
+        // Verify that filter_k is correctly computed for different tc values
+        let mut active_set = PushActiveSet::new(WeightingMode::Static);
+
+        let test_cases = [10_000, 30_000, 60_000, 120_000];
+
+        for tc_ms in test_cases {
+            let config = WeightingConfig::Dynamic {
+                tc: TimeConstant::Value(tc_ms),
+            };
+            active_set.apply_cfg(&config);
+
+            let expected_filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, tc_ms);
+
+            match active_set.mode {
+                WeightingMode::Dynamic {
+                    filter_k,
+                    tc_ms: actual_tc_ms,
+                    ..
+                } => {
+                    assert_eq!(actual_tc_ms, tc_ms);
+                    assert_eq!(filter_k, expected_filter_k);
+                }
+                WeightingMode::Static => panic!("Expected Dynamic mode"),
+            }
         }
     }
 }
