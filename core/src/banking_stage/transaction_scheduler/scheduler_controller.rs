@@ -94,7 +94,7 @@ where
             self.timing_metrics.update(|timing_metrics| {
                 timing_metrics.decision_time_us += decision_time_us;
             });
-            let new_leader_slot = decision.bank_start().map(|b| b.working_bank.slot());
+            let new_leader_slot = decision.bank().map(|b| b.slot());
             self.count_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
             self.timing_metrics
@@ -131,16 +131,11 @@ where
         decision: &BufferedPacketsDecision,
     ) -> Result<(), SchedulerError> {
         match decision {
-            BufferedPacketsDecision::Consume(bank_start) => {
+            BufferedPacketsDecision::Consume(bank) => {
                 let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
                     &mut self.container,
                     |txs, results| {
-                        Self::pre_graph_filter(
-                            txs,
-                            results,
-                            &bank_start.working_bank,
-                            MAX_PROCESSING_AGE,
-                        )
+                        Self::pre_graph_filter(txs, results, bank, MAX_PROCESSING_AGE)
                     },
                     |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
                 )?);
