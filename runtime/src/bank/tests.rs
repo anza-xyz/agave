@@ -50,7 +50,9 @@ use {
         compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
     },
     solana_compute_budget_interface::ComputeBudgetInstruction,
-    solana_cost_model::block_cost_limits::{MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0256},
+    solana_cost_model::block_cost_limits::{
+        MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0286, MAX_WRITABLE_ACCOUNT_UNITS,
+    },
     solana_cpi::MAX_RETURN_DATA,
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_feature_gate_interface::{self as feature, Feature},
@@ -974,9 +976,9 @@ fn test_purge_empty_accounts() {
         bank.freeze();
         bank.squash();
         bank.force_flush_accounts_cache();
-        let hash = bank.update_accounts_hash_for_tests();
+        let hash = bank.calculate_accounts_lt_hash_for_tests();
         bank.clean_accounts_for_tests();
-        assert_eq!(bank.update_accounts_hash_for_tests(), hash);
+        assert_eq!(bank.calculate_accounts_lt_hash_for_tests(), hash);
 
         let bank0 = new_from_parent_with_fork_next_slot(bank.clone(), bank_forks.as_ref());
         let blockhash = bank.last_blockhash();
@@ -997,9 +999,9 @@ fn test_purge_empty_accounts() {
         assert_eq!(bank1.get_account(&keypair.pubkey()), None);
 
         info!("bank0 purge");
-        let hash = bank0.update_accounts_hash_for_tests();
+        let hash = bank0.calculate_accounts_lt_hash_for_tests();
         bank0.clean_accounts_for_tests();
-        assert_eq!(bank0.update_accounts_hash_for_tests(), hash);
+        assert_eq!(bank0.calculate_accounts_lt_hash_for_tests(), hash);
 
         assert_eq!(
             bank0.get_account(&keypair.pubkey()).unwrap().lamports(),
@@ -1018,7 +1020,7 @@ fn test_purge_empty_accounts() {
 
         if pass == 0 {
             add_root_and_flush_write_cache(&bank0);
-            assert!(bank0.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank0.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
             continue;
         }
 
@@ -1027,15 +1029,14 @@ fn test_purge_empty_accounts() {
         bank0.squash();
         add_root_and_flush_write_cache(&bank0);
         if pass == 1 {
-            assert!(bank0.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank0.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
             continue;
         }
 
         bank1.freeze();
         bank1.squash();
         add_root_and_flush_write_cache(&bank1);
-        bank1.update_accounts_hash_for_tests();
-        assert!(bank1.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
+        assert!(bank1.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
 
         // keypair should have 0 tokens on both forks
         assert_eq!(bank0.get_account(&keypair.pubkey()), None);
@@ -1043,7 +1044,7 @@ fn test_purge_empty_accounts() {
 
         bank1.clean_accounts_for_tests();
 
-        assert!(bank1.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
+        assert!(bank1.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
     }
 }
 
@@ -2179,8 +2180,7 @@ fn test_bank_hash_internal_state() {
     bank2.transfer(amount, &mint_keypair, &pubkey2).unwrap();
     bank2.squash();
     bank2.force_flush_accounts_cache();
-    bank2.update_accounts_hash(CalcAccountsHashDataSource::Storages, false);
-    assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
+    assert!(bank2.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
 }
 
 #[test]
@@ -2214,8 +2214,7 @@ fn test_bank_hash_internal_state_verify() {
             // we later modify bank 2, so this flush is destructive to the test
             bank2.freeze();
             add_root_and_flush_write_cache(&bank2);
-            bank2.update_accounts_hash_for_tests();
-            assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank2.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
         }
         let bank3 = new_bank_from_parent_with_bank_forks(
             &bank_forks,
@@ -2226,7 +2225,7 @@ fn test_bank_hash_internal_state_verify() {
         assert_eq!(bank0_state, bank0.hash_internal_state());
         if pass == 0 {
             // this relies on us having set bank2's accounts hash in the pass==0 if above
-            assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank2.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
             continue;
         }
         if pass == 1 {
@@ -2235,8 +2234,7 @@ fn test_bank_hash_internal_state_verify() {
             // Doing so throws an assert. So, we can't flush 3 until 2 is flushed.
             bank3.freeze();
             add_root_and_flush_write_cache(&bank3);
-            bank3.update_accounts_hash_for_tests();
-            assert!(bank3.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank3.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
             continue;
         }
 
@@ -2245,8 +2243,7 @@ fn test_bank_hash_internal_state_verify() {
         bank2.freeze(); // <-- keep freeze() *outside* `if pass == 2 {}`
         if pass == 2 {
             add_root_and_flush_write_cache(&bank2);
-            bank2.update_accounts_hash_for_tests();
-            assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
+            assert!(bank2.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
 
             // Verifying the accounts lt hash is only intended to be called at startup, and
             // normally in the background.  Since here we're *not* at startup, and doing it
@@ -2261,8 +2258,7 @@ fn test_bank_hash_internal_state_verify() {
 
         bank3.freeze();
         add_root_and_flush_write_cache(&bank3);
-        bank3.update_accounts_hash_for_tests();
-        assert!(bank3.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
+        assert!(bank3.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
     }
 }
 
@@ -2287,7 +2283,6 @@ fn test_verify_snapshot_bank() {
     .unwrap();
     bank.freeze();
     add_root_and_flush_write_cache(&bank);
-    bank.update_accounts_hash_for_tests();
     assert!(bank.verify_snapshot_bank(false, false, bank.slot(), None));
 
     // tamper the bank after freeze!
@@ -3596,13 +3591,11 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
         );
 
         // Re-adding builtin programs should be no-op
-        bank.update_accounts_hash_for_tests();
-        let old_hash = bank.get_accounts_hash().unwrap();
+        let old_hash = bank.calculate_accounts_lt_hash_for_tests();
         bank.add_mockup_builtin(vote_id, MockBuiltin::vm);
         bank.add_mockup_builtin(stake_id, MockBuiltin::vm);
         add_root_and_flush_write_cache(&bank);
-        bank.update_accounts_hash_for_tests();
-        let new_hash = bank.get_accounts_hash().unwrap();
+        let new_hash = bank.calculate_accounts_lt_hash_for_tests();
         assert_eq!(old_hash, new_hash);
         {
             let stakes = bank.stakes_cache.stakes();
@@ -6722,22 +6715,32 @@ fn test_reserved_account_keys() {
 
 #[test]
 fn test_block_limits() {
+    const MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_FIRST: u64 = 24_000_000;
+    const MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_SECOND: u64 = 40_000_000;
     let (bank0, _bank_forks) = create_simple_test_arc_bank(100_000);
     let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
 
     // Ensure increased block limits features are inactive.
     assert!(!bank
         .feature_set
-        .is_active(&feature_set::raise_block_limits_to_60m::id()));
+        .is_active(&feature_set::raise_block_limits_to_100m::id()));
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_block_limit(),
         MAX_BLOCK_UNITS,
         "before activating the feature, bank should have old/default limit"
     );
+    assert!(!bank
+        .feature_set
+        .is_active(&feature_set::raise_account_cu_limit::id()));
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_account_limit(),
+        MAX_WRITABLE_ACCOUNT_UNITS,
+        "before activating the feature, bank should have old/default limit"
+    );
 
-    // Activate `raise_block_limits_to_60m` feature
+    // Activate `raise_block_limits_to_100m` feature
     bank.store_account(
-        &feature_set::raise_block_limits_to_60m::id(),
+        &feature_set::raise_block_limits_to_100m::id(),
         &feature::create_account(&Feature::default(), 42),
     );
     // apply_feature_activations for `FinishInit` will not cause the block limit to be updated
@@ -6752,16 +6755,99 @@ fn test_block_limits() {
     bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, true);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_block_limit(),
-        MAX_BLOCK_UNITS_SIMD_0256,
+        MAX_BLOCK_UNITS_SIMD_0286,
+        "after activating the feature, bank should have new limit"
+    );
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_account_limit(),
+        MAX_WRITABLE_ACCOUNT_UNITS,
         "after activating the feature, bank should have new limit"
     );
 
     // Make sure the limits propagate to the child-bank.
-    let bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), 2);
+    let mut bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), 2);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_block_limit(),
-        MAX_BLOCK_UNITS_SIMD_0256,
+        MAX_BLOCK_UNITS_SIMD_0286,
         "child bank should have new limit"
+    );
+
+    // Activate `raise_account_cu_limit` feature
+    bank.store_account(
+        &feature_set::raise_account_cu_limit::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+
+    // apply_feature_activations for `FinishInit` will not cause the block limit to be updated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::FinishInit, true);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_account_limit(),
+        MAX_WRITABLE_ACCOUNT_UNITS,
+        "before activating the feature, bank should have old/default limit"
+    );
+
+    // apply_feature_activations for `NewFromParent` will cause feature to be activated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, true);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_account_limit(),
+        MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_SECOND,
+        "after activating the feature, bank should have new limit"
+    );
+
+    // Test SIMD-0306 getting activated first
+    let (bank0, _bank_forks) = create_simple_test_arc_bank(100_000);
+    let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+
+    // Activate `raise_account_cu_limit` feature
+    bank.store_account(
+        &feature_set::raise_account_cu_limit::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+    // apply_feature_activations for `FinishInit` will not cause the block limit to be updated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::FinishInit, true);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_account_limit(),
+        MAX_WRITABLE_ACCOUNT_UNITS,
+        "before activating the feature, bank should have old/default limit"
+    );
+
+    // apply_feature_activations for `NewFromParent` will cause feature to be activated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, true);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS,
+        "after activating the feature, bank should have new limit"
+    );
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_account_limit(),
+        MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_FIRST,
+        "after activating the feature, bank should have new limit"
+    );
+
+    // Activate `raise_block_limits_to_100m` feature
+    bank.store_account(
+        &feature_set::raise_block_limits_to_100m::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+    // apply_feature_activations for `FinishInit` will not cause the block limit to be updated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::FinishInit, true);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS,
+        "before activating the feature, bank should have old/default limit"
+    );
+
+    // apply_feature_activations for `NewFromParent` will cause feature to be activated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, true);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0286,
+        "after activating the feature, bank should have new limit"
+    );
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_account_limit(),
+        MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_SECOND,
+        "after activating the feature, bank should have new limit"
     );
 
     // Test starting from a genesis config with and without feature account
@@ -6773,18 +6859,37 @@ fn test_block_limits() {
         MAX_BLOCK_UNITS,
         "before activating the feature, bank should have old/default limit"
     );
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_account_limit(),
+        MAX_WRITABLE_ACCOUNT_UNITS,
+        "before activating the feature, bank should have old/default limit"
+    );
 
     activate_feature(
         &mut genesis_config,
-        feature_set::raise_block_limits_to_60m::id(),
+        feature_set::raise_block_limits_to_100m::id(),
     );
     let bank = Bank::new_for_tests(&genesis_config);
     assert!(bank
         .feature_set
-        .is_active(&feature_set::raise_block_limits_to_60m::id()));
+        .is_active(&feature_set::raise_block_limits_to_100m::id()));
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_block_limit(),
-        MAX_BLOCK_UNITS_SIMD_0256,
+        MAX_BLOCK_UNITS_SIMD_0286,
+        "bank created from genesis config should have new limit"
+    );
+
+    activate_feature(
+        &mut genesis_config,
+        feature_set::raise_account_cu_limit::id(),
+    );
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert!(bank
+        .feature_set
+        .is_active(&feature_set::raise_account_cu_limit::id()));
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_account_limit(),
+        MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_SECOND,
         "bank created from genesis config should have new limit"
     );
 }
@@ -8625,7 +8730,11 @@ fn test_compute_budget_program_noop() {
                     execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
                 ),
                 heap_size: 48 * 1024,
-                ..ComputeBudget::default()
+                ..ComputeBudget::new_with_defaults(
+                    invoke_context
+                        .get_feature_set()
+                        .raise_cpi_nesting_limit_to_8
+                )
             }
         );
         Ok(())
@@ -8673,7 +8782,11 @@ fn test_compute_request_instruction() {
                     execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
                 ),
                 heap_size: 48 * 1024,
-                ..ComputeBudget::default()
+                ..ComputeBudget::new_with_defaults(
+                    invoke_context
+                        .get_feature_set()
+                        .raise_cpi_nesting_limit_to_8
+                )
             }
         );
         Ok(())
@@ -8728,7 +8841,11 @@ fn test_failed_compute_request_instruction() {
             ComputeBudget {
                 compute_unit_limit: u64::from(TEST_COMPUTE_UNIT_LIMIT),
                 heap_size: 48 * 1024,
-                ..ComputeBudget::default()
+                ..ComputeBudget::new_with_defaults(
+                    invoke_context
+                        .get_feature_set()
+                        .raise_cpi_nesting_limit_to_8
+                )
             }
         );
         Ok(())
@@ -10424,8 +10541,8 @@ fn test_accounts_data_size_and_resize_transactions() {
 fn test_accounts_data_size_with_default_bank() {
     let bank = Bank::default_for_tests();
     assert_eq!(
-        bank.load_accounts_data_size() as usize,
-        bank.get_total_accounts_stats().unwrap().data_len
+        bank.load_accounts_data_size(),
+        bank.calculate_accounts_data_size().unwrap()
     );
 }
 
@@ -10445,8 +10562,8 @@ fn test_accounts_data_size_from_genesis() {
 
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     assert_eq!(
-        bank.load_accounts_data_size() as usize,
-        bank.get_total_accounts_stats().unwrap().data_len
+        bank.load_accounts_data_size(),
+        bank.calculate_accounts_data_size().unwrap()
     );
 
     // Create accounts over a number of banks and ensure the accounts data size remains correct
@@ -10473,8 +10590,8 @@ fn test_accounts_data_size_from_genesis() {
         bank.fill_bank_with_ticks_for_tests();
 
         assert_eq!(
-            bank.load_accounts_data_size() as usize,
-            bank.get_total_accounts_stats().unwrap().data_len,
+            bank.load_accounts_data_size(),
+            bank.calculate_accounts_data_size().unwrap(),
         );
     }
 }
@@ -10794,7 +10911,7 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
 }
 
 #[test]
-fn test_bank_verify_accounts_hash_with_base() {
+fn test_verify_accounts() {
     let GenesisConfigInfo {
         mut genesis_config,
         mint_keypair: mint,
@@ -10831,7 +10948,7 @@ fn test_bank_verify_accounts_hash_with_base() {
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     // make some banks, do some transactions, ensure there's some zero-lamport accounts
-    for _ in 0..2 {
+    for _ in 0..4 {
         let slot = bank.slot() + 1;
         bank = new_bank_from_parent_with_bank_forks(
             bank_forks.as_ref(),
@@ -10842,31 +10959,11 @@ fn test_bank_verify_accounts_hash_with_base() {
         do_transfers(&bank);
     }
 
-    // update the base accounts hash
     bank.squash();
     bank.force_flush_accounts_cache();
-    bank.update_accounts_hash(CalcAccountsHashDataSource::Storages, false);
-    let base_slot = bank.slot();
 
-    // make more banks, do more transactions, ensure there's more zero-lamport accounts
-    for _ in 0..2 {
-        let slot = bank.slot() + 1;
-        bank = new_bank_from_parent_with_bank_forks(
-            bank_forks.as_ref(),
-            bank,
-            &Pubkey::new_unique(),
-            slot,
-        );
-        do_transfers(&bank);
-    }
-
-    // update the incremental accounts hash
-    bank.squash();
-    bank.force_flush_accounts_cache();
-    bank.update_incremental_accounts_hash(base_slot);
-
-    // ensure the accounts hash verifies
-    assert!(bank.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
+    // ensure the accounts verify successfully
+    assert!(bank.verify_accounts(VerifyAccountsHashConfig::default_for_test(), None));
 }
 
 #[test]
@@ -11120,8 +11217,11 @@ fn test_system_instruction_unsigned_transaction() {
 fn test_calc_vote_accounts_to_store_empty() {
     let vote_account_rewards = DashMap::default();
     let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-    assert_eq!(result.rewards.len(), result.accounts_to_store.len());
-    assert!(result.rewards.is_empty());
+    assert_eq!(
+        result.accounts_with_rewards.len(),
+        result.accounts_with_rewards.len()
+    );
+    assert!(result.accounts_with_rewards.is_empty());
 }
 
 #[test]
@@ -11139,8 +11239,11 @@ fn test_calc_vote_accounts_to_store_overflow() {
         },
     );
     let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-    assert_eq!(result.rewards.len(), result.accounts_to_store.len());
-    assert!(result.rewards.is_empty());
+    assert_eq!(
+        result.accounts_with_rewards.len(),
+        result.accounts_with_rewards.len()
+    );
+    assert!(result.accounts_with_rewards.is_empty());
 }
 
 #[test]
@@ -11160,14 +11263,16 @@ fn test_calc_vote_accounts_to_store_normal() {
                 },
             );
             let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-            assert_eq!(result.rewards.len(), result.accounts_to_store.len());
-            assert_eq!(result.rewards.len(), 1);
-            let rewards = &result.rewards[0];
-            let account = &result.accounts_to_store[0].1;
+            assert_eq!(
+                result.accounts_with_rewards.len(),
+                result.accounts_with_rewards.len()
+            );
+            assert_eq!(result.accounts_with_rewards.len(), 1);
+            let (pubkey_result, rewards, account) = &result.accounts_with_rewards[0];
             _ = vote_account.checked_add_lamports(vote_rewards);
             assert!(accounts_equal(account, &vote_account));
             assert_eq!(
-                rewards.1,
+                *rewards,
                 RewardInfo {
                     reward_type: RewardType::Voting,
                     lamports: vote_rewards as i64,
@@ -11175,7 +11280,7 @@ fn test_calc_vote_accounts_to_store_normal() {
                     commission: Some(commission),
                 }
             );
-            assert_eq!(rewards.0, pubkey);
+            assert_eq!(*pubkey_result, pubkey);
         }
     }
 }
@@ -11207,15 +11312,12 @@ fn test_register_hard_fork() {
 #[test]
 fn test_last_restart_slot() {
     fn last_restart_slot_dirty(bank: &Bank) -> bool {
-        let (dirty_accounts, _, _) = bank
+        let dirty_accounts = bank
             .rc
             .accounts
             .accounts_db
-            .get_pubkey_hash_for_slot(bank.slot());
-        let dirty_accounts: HashSet<_> = dirty_accounts
-            .into_iter()
-            .map(|(pubkey, _hash)| pubkey)
-            .collect();
+            .get_pubkeys_for_slot(bank.slot());
+        let dirty_accounts: HashSet<_> = dirty_accounts.into_iter().collect();
         dirty_accounts.contains(&sysvar::last_restart_slot::id())
     }
 

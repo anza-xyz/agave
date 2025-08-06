@@ -1,7 +1,7 @@
 //! A helper to initialize Solana SVM API's `TransactionBatchProcessor`.
 
 use {
-    solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
+    agave_syscalls::create_program_runtime_environment_v1,
     solana_clock::Slot,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_fee_structure::FeeDetails,
@@ -105,7 +105,8 @@ pub(crate) fn get_transaction_check_results(
             None,
             Ok(compute_budget_limit.get_compute_budget_and_limits(
                 compute_budget_limit.loaded_accounts_bytes,
-                FeeDetails::default()
+                FeeDetails::default(),
+                /* simd_0296_active */ false,
             )),
         ));
         len

@@ -12,9 +12,13 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[lib]
+bench = false
+
 [[bin]]
 name = "solana-gossip"
 path = "src/main.rs"
+bench = false
 
 [features]
 frozen-abi = [
@@ -76,13 +80,13 @@ solana-net-utils = { workspace = true }
 solana-packet = "=2.2.1"
 solana-perf = { workspace = true }
 solana-pubkey = { version = "=2.4.0", features = ["rand"] }
-solana-quic-definitions = "=2.2.1"
+solana-quic-definitions = "=2.3.0"
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sanitize = "=2.2.1"
 solana-serde-varint = "=2.2.2"
-solana-sha256-hasher = "=2.2.1"
+solana-sha256-hasher = "=2.3.0"
 solana-short-vec = "=2.2.1"
 solana-signature = { version = "=2.3.0", default-features = false }
 solana-signer = "=2.2.1"
@@ -98,8 +102,8 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
-bencher = { workspace = true }
 bs58 = { workspace = true }
+criterion = { workspace = true }
 num_cpus = { workspace = true }
 rand0-7 = { workspace = true }
 rand_chacha0-2 = { workspace = true }

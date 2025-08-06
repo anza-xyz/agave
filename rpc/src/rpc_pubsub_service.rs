@@ -83,11 +83,11 @@ pub struct PubSubService {
 impl PubSubService {
     pub fn new(
         pubsub_config: PubSubConfig,
-        subscriptions: &Arc<RpcSubscriptions>,
+        subscriptions: &RpcSubscriptions,
         pubsub_addr: SocketAddr,
     ) -> (Trigger, Self) {
         let subscription_control = subscriptions.control().clone();
-        info!("rpc_pubsub bound to {:?}", pubsub_addr);
+        info!("rpc_pubsub bound to {pubsub_addr:?}");
 
         let (trigger, tripwire) = Tripwire::new();
         let thread_hdl = Builder::new()
@@ -454,7 +454,7 @@ async fn listen(
         select! {
             result = listener.accept() => match result {
                 Ok((socket, addr)) => {
-                    debug!("new client ({:?})", addr);
+                    debug!("new client ({addr:?})");
                     let subscription_control = subscription_control.clone();
                     let config = config.clone();
                     let tripwire = tripwire.clone();
@@ -464,13 +464,13 @@ async fn listen(
                             socket, subscription_control, config, tripwire
                         );
                         match handle.await {
-                            Ok(()) => debug!("connection closed ({:?})", addr),
-                            Err(err) => warn!("connection handler error ({:?}): {}", addr, err),
+                            Ok(()) => debug!("connection closed ({addr:?})"),
+                            Err(err) => warn!("connection handler error ({addr:?}): {err}"),
                         }
                         drop(counter_token); // Force moving token into the task.
                     });
                 }
-                Err(e) => error!("couldn't accept connection: {:?}", e),
+                Err(e) => error!("couldn't accept connection: {e:?}"),
             },
             _ = &mut tripwire => return Ok(()),
         }

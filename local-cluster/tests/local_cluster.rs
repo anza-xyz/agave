@@ -4930,14 +4930,8 @@ fn test_duplicate_with_pruned_ancestor() {
             0,
             Hash::default(),
         );
-        let shreds = entries_to_test_shreds(
-            &entries,
-            last_majority_vote,
-            last_minority_vote,
-            true,
-            0,
-            true, // merkle_variant
-        );
+        let shreds =
+            entries_to_test_shreds(&entries, last_majority_vote, last_minority_vote, true, 0);
         our_blockstore.insert_shreds(shreds, None, false).unwrap();
     }
 
@@ -5893,14 +5887,13 @@ fn test_invalid_forks_persisted_on_restart() {
         let version = solana_shred_version::version_from_hash(&last_hash);
         let dup_shreds = Shredder::new(dup_slot, parent, 0, version)
             .unwrap()
-            .entries_to_shreds(
+            .entries_to_merkle_shreds_for_tests(
                 &majority_keypair,
                 &entries,
                 true, // is_full_slot
                 None, // chained_merkle_root
                 0,    // next_shred_index,
                 0,    // next_code_index
-                true, // merkle_variant
                 &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )

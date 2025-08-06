@@ -115,7 +115,7 @@ pub(crate) fn configure_server(
     Ok((server_config, cert_chain_pem))
 }
 
-pub fn rt(name: String, num_threads: NonZeroUsize) -> Runtime {
+fn rt(name: String, num_threads: NonZeroUsize) -> Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .thread_name(name)
         .worker_threads(num_threads.get())
@@ -582,20 +582,21 @@ impl StreamerStats {
     }
 }
 
-pub fn spawn_server(
+#[deprecated(since = "3.0.0", note = "Use spawn_server instead")]
+pub fn spawn_server_multi(
     thread_name: &'static str,
     metrics_name: &'static str,
-    socket: UdpSocket,
+    sockets: Vec<UdpSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     exit: Arc<AtomicBool>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
 ) -> Result<SpawnServerResult, QuicServerError> {
-    spawn_server_multi(
+    spawn_server(
         thread_name,
         metrics_name,
-        vec![socket],
+        sockets,
         keypair,
         packet_sender,
         exit,
@@ -647,10 +648,11 @@ impl QuicServerParams {
     }
 }
 
-pub fn spawn_server_multi(
+/// Spawns a tokio runtime and a streamer instance inside it.
+pub fn spawn_server(
     thread_name: &'static str,
     metrics_name: &'static str,
-    sockets: Vec<UdpSocket>,
+    sockets: impl IntoIterator<Item = UdpSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     exit: Arc<AtomicBool>,
@@ -660,7 +662,7 @@ pub fn spawn_server_multi(
     let runtime = rt(format!("{thread_name}Rt"), quic_server_params.num_threads);
     let result = {
         let _guard = runtime.enter();
-        crate::nonblocking::quic::spawn_server_multi(
+        crate::nonblocking::quic::spawn_server(
             metrics_name,
             sockets,
             keypair,
@@ -694,7 +696,7 @@ mod test {
         super::*,
         crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
         crossbeam_channel::unbounded,
-        solana_net_utils::bind_to_localhost,
+        solana_net_utils::sockets::bind_to_localhost_unique,
         std::net::SocketAddr,
     };
 
@@ -711,7 +713,7 @@ mod test {
         crossbeam_channel::Receiver<PacketBatch>,
         SocketAddr,
     ) {
-        let s = bind_to_localhost().unwrap();
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
@@ -724,7 +726,7 @@ mod test {
         } = spawn_server(
             "solQuicTest",
             "quic_streamer_test",
-            s,
+            [s],
             &keypair,
             sender,
             exit.clone(),
@@ -766,7 +768,7 @@ mod test {
     #[test]
     fn test_quic_server_multiple_streams() {
         solana_logger::setup();
-        let s = bind_to_localhost().unwrap();
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
@@ -779,7 +781,7 @@ mod test {
         } = spawn_server(
             "solQuicTest",
             "quic_streamer_test",
-            s,
+            [s],
             &keypair,
             sender,
             exit.clone(),
@@ -811,7 +813,7 @@ mod test {
     #[test]
     fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();
-        let s = bind_to_localhost().unwrap();
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, _) = unbounded();
         let keypair = Keypair::new();
@@ -824,7 +826,7 @@ mod test {
         } = spawn_server(
             "solQuicTest",
             "quic_streamer_test",
-            s,
+            [s],
             &keypair,
             sender,
             exit.clone(),

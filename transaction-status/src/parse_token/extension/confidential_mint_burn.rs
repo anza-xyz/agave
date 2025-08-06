@@ -1,6 +1,6 @@
 use {
     super::*,
-    spl_token_2022::{
+    spl_token_2022_interface::{
         extension::confidential_mint_burn::instruction::*,
         instruction::{decode_instruction_data, decode_instruction_type},
     },
@@ -284,7 +284,7 @@ mod test {
         solana_instruction::{AccountMeta, Instruction},
         solana_message::Message,
         solana_pubkey::Pubkey,
-        spl_token_2022::{
+        spl_token_2022_interface::{
             extension::confidential_mint_burn::instruction::{
                 confidential_burn_with_split_proofs, confidential_mint_with_split_proofs,
                 initialize_mint,
@@ -300,7 +300,7 @@ mod test {
                 },
             },
         },
-        spl_token_confidential_transfer_proof_extraction::instruction::{ProofData, ProofLocation},
+        spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation,
         std::num::NonZero,
     };
 
@@ -320,7 +320,7 @@ mod test {
     #[test]
     fn test_initialize() {
         let instruction = initialize_mint(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &Pubkey::new_unique(),
             &PodElGamalPubkey::default(),
             &PodAeCiphertext::default(),
@@ -332,7 +332,7 @@ mod test {
     #[test]
     fn test_update() {
         let instruction = update_decryptable_supply(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &Pubkey::new_unique(),
             &Pubkey::new_unique(),
             &[],
@@ -347,16 +347,12 @@ mod test {
         for location in [
             ProofLocation::InstructionOffset(
                 NonZero::new(1).unwrap(),
-                ProofData::InstructionData(&CiphertextCiphertextEqualityProofData::zeroed()),
-            ),
-            ProofLocation::InstructionOffset(
-                NonZero::new(1).unwrap(),
-                ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                &CiphertextCiphertextEqualityProofData::zeroed(),
             ),
             ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
         ] {
             let instructions = rotate_supply_elgamal_pubkey(
-                &spl_token_2022::id(),
+                &spl_token_2022_interface::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 &[],
@@ -374,31 +370,15 @@ mod test {
             (
                 ProofLocation::InstructionOffset(
                     NonZero::new(1).unwrap(),
-                    ProofData::InstructionData(&CiphertextCommitmentEqualityProofData::zeroed()),
+                    &CiphertextCommitmentEqualityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(2).unwrap(),
-                    ProofData::InstructionData(
-                        &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
-                    ),
+                    &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(3).unwrap(),
-                    ProofData::InstructionData(&BatchedRangeProofU128Data::zeroed()),
-                ),
-            ),
-            (
-                ProofLocation::InstructionOffset(
-                    NonZero::new(1).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(2).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(3).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                    &BatchedRangeProofU128Data::zeroed(),
                 ),
             ),
             (
@@ -408,7 +388,7 @@ mod test {
             ),
         ] {
             let instructions = confidential_mint_with_split_proofs(
-                &spl_token_2022::id(),
+                &spl_token_2022_interface::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 &PodElGamalCiphertext::default(),
@@ -431,31 +411,15 @@ mod test {
             (
                 ProofLocation::InstructionOffset(
                     NonZero::new(1).unwrap(),
-                    ProofData::InstructionData(&CiphertextCommitmentEqualityProofData::zeroed()),
+                    &CiphertextCommitmentEqualityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(2).unwrap(),
-                    ProofData::InstructionData(
-                        &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
-                    ),
+                    &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(3).unwrap(),
-                    ProofData::InstructionData(&BatchedRangeProofU128Data::zeroed()),
-                ),
-            ),
-            (
-                ProofLocation::InstructionOffset(
-                    NonZero::new(1).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(2).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(3).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                    &BatchedRangeProofU128Data::zeroed(),
                 ),
             ),
             (
@@ -465,7 +429,7 @@ mod test {
             ),
         ] {
             let instructions = confidential_burn_with_split_proofs(
-                &spl_token_2022::id(),
+                &spl_token_2022_interface::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 &PodAeCiphertext::default(),

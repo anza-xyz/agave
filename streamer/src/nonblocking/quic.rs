@@ -140,18 +140,19 @@ pub struct SpawnNonBlockingServerResult {
     pub max_concurrent_connections: usize,
 }
 
-pub fn spawn_server(
+#[deprecated(since = "3.0.0", note = "Use spawn_server instead")]
+pub fn spawn_server_multi(
     name: &'static str,
-    sock: UdpSocket,
+    sockets: impl IntoIterator<Item = UdpSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     exit: Arc<AtomicBool>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
 ) -> Result<SpawnNonBlockingServerResult, QuicServerError> {
-    spawn_server_multi(
+    spawn_server(
         name,
-        vec![sock],
+        sockets,
         keypair,
         packet_sender,
         exit,
@@ -160,15 +161,17 @@ pub fn spawn_server(
     )
 }
 
-pub fn spawn_server_multi(
+/// Spawn a streamer instance in the current tokio runtime.
+pub fn spawn_server(
     name: &'static str,
-    sockets: Vec<UdpSocket>,
+    sockets: impl IntoIterator<Item = UdpSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     exit: Arc<AtomicBool>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
 ) -> Result<SpawnNonBlockingServerResult, QuicServerError> {
+    let sockets: Vec<_> = sockets.into_iter().collect();
     info!("Start {name} quic server on {sockets:?}");
     let QuicServerParams {
         max_unstaked_connections,
@@ -459,7 +462,7 @@ fn get_connection_stake(
     ))
 }
 
-pub fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u64) -> usize {
+fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u64) -> usize {
     match peer_type {
         ConnectionPeerType::Staked(peer_stake) => {
             // No checked math for f64 type. So let's explicitly check for 0 here
@@ -493,11 +496,6 @@ enum ConnectionHandlerError {
 
 #[derive(Clone)]
 struct NewConnectionHandlerParams {
-    // In principle, the code can be made to work with a crossbeam channel
-    // as long as we're careful never to use a blocking recv or send call
-    // but I've found that it's simply too easy to accidentally block
-    // in async code when using the crossbeam channel, so for the sake of maintainability,
-    // we're sticking with an async channel
     packet_sender: Sender<PacketAccumulator>,
     remote_pubkey: Option<Pubkey>,
     peer_type: ConnectionPeerType,
@@ -1575,7 +1573,7 @@ pub mod test {
         crossbeam_channel::{unbounded, Receiver},
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
-        solana_net_utils::bind_to_localhost,
+        solana_net_utils::sockets::bind_to_localhost_unique,
         solana_signer::Signer,
         std::collections::HashMap,
         tokio::time::sleep,
@@ -1830,7 +1828,7 @@ pub mod test {
             },
         );
 
-        let client_socket = bind_to_localhost().unwrap();
+        let client_socket = bind_to_localhost_unique().expect("should bind - client");
         let mut endpoint = quinn::Endpoint::new(
             EndpointConfig::default(),
             None,
@@ -1993,7 +1991,7 @@ pub mod test {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();
-        let s = bind_to_localhost().unwrap();
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, _) = unbounded();
         let keypair = Keypair::new();
@@ -2006,7 +2004,7 @@ pub mod test {
             max_concurrent_connections: _,
         } = spawn_server(
             "quic_streamer_test",
-            s,
+            [s],
             &keypair,
             sender,
             exit.clone(),
@@ -2026,7 +2024,7 @@ pub mod test {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_multiple_streams() {
         solana_logger::setup();
-        let s = bind_to_localhost().unwrap();
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
@@ -2039,7 +2037,7 @@ pub mod test {
             max_concurrent_connections: _,
         } = spawn_server(
             "quic_streamer_test",
-            s,
+            [s],
             &keypair,
             sender,
             exit.clone(),

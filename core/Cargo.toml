@@ -66,6 +66,7 @@ itertools = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 min-max-heap = { workspace = true }
+num_cpus = { workspace = true }
 num_enum = { workspace = true }
 prio-graph = { workspace = true }
 qualifier_attr = { workspace = true }
@@ -206,7 +207,7 @@ solana-unified-scheduler-pool = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
 solana-vote = { workspace = true, features = ["dev-context-only-utils"] }
-spl-memo = { workspace = true, features = ["no-entrypoint"] }
+spl-memo-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 

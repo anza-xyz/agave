@@ -1,12 +1,12 @@
 use {
     agave_feature_set::FeatureSet,
-    log::*,
-    solana_account::{Account, AccountSharedData, ReadableAccount},
-    solana_bpf_loader_program::syscalls::{
+    agave_syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallInvokeSignedRust, SyscallLog,
         SyscallLogBpfComputeUnits, SyscallLogPubkey, SyscallLogU64, SyscallMemcpy, SyscallMemset,
         SyscallSetReturnData,
     },
+    log::*,
+    solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_clock::{Clock, Slot, UnixTimestamp},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_message::AccountKeys,
@@ -150,7 +150,7 @@ impl<'a> TransactionBatch<'a> {
 }
 
 pub fn create_custom_environment<'a>() -> BuiltinProgram<InvokeContext<'a>> {
-    let compute_budget = ComputeBudget::default();
+    let compute_budget = ComputeBudget::new_with_defaults(/* simd_0296_active */ false);
     let vm_config = Config {
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,

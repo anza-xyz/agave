@@ -71,7 +71,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_program_runtime::execution_budget::SVMTransactionExecutionBudget,
-    solana_rent_collector::RentCollector,
+    solana_rent::Rent,
     solana_svm::transaction_processor::{
         TransactionProcessingConfig, TransactionProcessingEnvironment,
     },
@@ -118,7 +118,7 @@ impl PayTubeChannel {
         let compute_budget = SVMTransactionExecutionBudget::default();
         let feature_set = SVMFeatureSet::all_enabled();
         let fee_structure = FeeStructure::default();
-        let rent_collector = RentCollector::default();
+        let rent = Rent::default();
 
         // PayTube loader/callback implementation.
         //
@@ -151,7 +151,7 @@ impl PayTubeChannel {
             blockhash_lamports_per_signature: fee_structure.lamports_per_signature,
             epoch_total_stake: 0,
             feature_set,
-            rent_collector: Some(&rent_collector),
+            rent,
         };
 
         // The PayTube transaction processing config for Solana SVM.

@@ -2,17 +2,14 @@ use {
     bencher::{benchmark_group, benchmark_main, Bencher},
     rand::{thread_rng, Rng},
     solana_entry::entry::Entry,
-    solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
-        contact_info::ContactInfo,
-    },
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
         shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     },
-    solana_net_utils::bind_to_unspecified,
+    solana_net_utils::sockets::bind_to_localhost_unique,
     solana_pubkey as pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signer::Signer,
@@ -39,7 +36,7 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
         leader_keypair.clone(),
         SocketAddrSpace::Unspecified,
     );
-    let socket = bind_to_unspecified().unwrap();
+    let socket = bind_to_localhost_unique().expect("should bind");
     let socket = BroadcastSocket::Udp(&socket);
     let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
     let bank = Bank::new_for_benches(&genesis_config);

@@ -18,7 +18,7 @@ use {
     solana_streamer::{
         packet::PacketBatchRecycler,
         quic::{
-            spawn_server_multi, QuicServerParams, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
+            spawn_server, QuicServerParams, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
             DEFAULT_MAX_STAKED_CONNECTIONS,
         },
         streamer::{receiver, PacketBatchReceiver, StakedNodes, StreamerReceiveStats},
@@ -261,7 +261,7 @@ fn main() -> Result<()> {
             let (s_reader, r_reader) = unbounded();
             read_channels.push(r_reader);
 
-            let server = spawn_server_multi(
+            let server = spawn_server(
                 "solRcvrBenVote",
                 "bench_vote_metrics",
                 read_sockets,

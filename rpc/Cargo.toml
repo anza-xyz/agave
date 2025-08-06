@@ -17,7 +17,10 @@ crate-type = ["lib"]
 name = "solana_rpc"
 
 [features]
-dev-context-only-utils = ["solana-rpc/dev-context-only-utils"]
+dev-context-only-utils = [
+    "solana-ledger/dev-context-only-utils",
+    "solana-rpc/dev-context-only-utils",
+]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -92,8 +95,8 @@ solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 spl-generic-token = { workspace = true }
-spl-token = { workspace = true, features = ["no-entrypoint"] }
-spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
+spl-token-2022-interface = { workspace = true }
+spl-token-interface = { workspace = true }
 stream-cancel = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

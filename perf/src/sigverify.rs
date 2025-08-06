@@ -510,7 +510,7 @@ pub fn shrink_batches(batches: Vec<PacketBatch>) -> Vec<PacketBatch> {
 }
 
 pub fn ed25519_verify_cpu(batches: &mut [PacketBatch], reject_non_vote: bool, packet_count: usize) {
-    debug!("CPU ECDSA for {}", packet_count);
+    debug!("CPU ECDSA for {packet_count}");
     PAR_THREAD_POOL.install(|| {
         batches.par_iter_mut().flatten().for_each(|mut packet| {
             if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
@@ -522,7 +522,7 @@ pub fn ed25519_verify_cpu(batches: &mut [PacketBatch], reject_non_vote: bool, pa
 
 pub fn ed25519_verify_disabled(batches: &mut [PacketBatch]) {
     let packet_count = count_packets_in_batches(batches);
-    debug!("disabled ECDSA for {}", packet_count);
+    debug!("disabled ECDSA for {packet_count}");
     PAR_THREAD_POOL.install(|| {
         batches.par_iter_mut().flatten().for_each(|mut packet| {
             packet.meta_mut().set_discard(false);
@@ -613,7 +613,7 @@ pub fn ed25519_verify(
     let (signature_offsets, pubkey_offsets, msg_start_offsets, msg_sizes, sig_lens) =
         generate_offsets(batches, recycler, reject_non_vote);
 
-    debug!("CUDA ECDSA for {}", valid_packet_count);
+    debug!("CUDA ECDSA for {valid_packet_count}");
     debug!("allocating out..");
     let mut out = recycler_out.allocate("out_buffer");
     out.set_pinnable();
@@ -642,7 +642,7 @@ pub fn ed25519_verify(
         num_packets = num_packets.saturating_add(batch.len());
     }
     out.resize(signature_offsets.len(), 0);
-    trace!("Starting verify num packets: {}", num_packets);
+    trace!("Starting verify num packets: {num_packets}");
     trace!("elem len: {}", elems.len() as u32);
     trace!("packet sizeof: {}", size_of::<Packet>() as u32);
     trace!("len offset: {}", PACKET_DATA_SIZE as u32);
@@ -662,7 +662,7 @@ pub fn ed25519_verify(
             USE_NON_DEFAULT_STREAM,
         );
         if res != 0 {
-            trace!("RETURN!!!: {}", res);
+            trace!("RETURN!!!: {res}");
         }
     }
     trace!("done verify");
@@ -879,7 +879,7 @@ mod tests {
         let mut tx = Transaction::new_unsigned(message);
 
         info!("message: {:?}", tx.message_data());
-        info!("tx: {:?}", tx);
+        info!("tx: {tx:?}");
         let sig = keypair1.try_sign_message(&tx.message_data()).unwrap();
         tx.signatures = vec![sig; NUM_SIG];
 
@@ -1734,7 +1734,7 @@ mod tests {
 
         let test_cases = set_discards.iter().zip(&expect_valids).enumerate();
         for (i, (set_discard, (expect_batch_count, expect_valid_packets))) in test_cases {
-            debug!("test_shrink case: {}", i);
+            debug!("test_shrink case: {i}");
             let mut batches = to_packet_batches(
                 &(0..PACKET_COUNT).map(|_| test_tx()).collect::<Vec<_>>(),
                 PACKETS_PER_BATCH,
@@ -1747,18 +1747,18 @@ mod tests {
                     .for_each(|(j, mut p)| p.meta_mut().set_discard(set_discard(i, j)))
             });
             assert_eq!(count_valid_packets(&batches), *expect_valid_packets);
-            debug!("show valid packets for case {}", i);
+            debug!("show valid packets for case {i}");
             batches.iter_mut().enumerate().for_each(|(i, b)| {
                 b.iter_mut().enumerate().for_each(|(j, p)| {
                     if !p.meta().discard() {
-                        trace!("{} {}", i, j)
+                        trace!("{i} {j}")
                     }
                 })
             });
-            debug!("done show valid packets for case {}", i);
+            debug!("done show valid packets for case {i}");
             let batches = shrink_batches(batches);
             let shrunken_batch_count = batches.len();
-            debug!("shrunk batch test {} count: {}", i, shrunken_batch_count);
+            debug!("shrunk batch test {i} count: {shrunken_batch_count}");
             assert_eq!(shrunken_batch_count, *expect_batch_count);
             assert_eq!(count_valid_packets(&batches), *expect_valid_packets);
         }

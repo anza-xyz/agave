@@ -9,10 +9,11 @@ use {
     solana_download_utils::{download_snapshot_archive, DownloadProgressRecord},
     solana_genesis_utils::download_then_check_genesis_hash,
     solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
+        cluster_info::ClusterInfo,
         contact_info::{ContactInfo, Protocol},
         crds_data,
         gossip_service::GossipService,
+        node::Node,
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -368,8 +369,6 @@ pub fn attempt_download_genesis_and_snapshot(
     use_progress_bar: bool,
     gossip: &mut Option<(Arc<ClusterInfo>, Arc<AtomicBool>, GossipService)>,
     rpc_client: &RpcClient,
-    full_snapshot_archives_dir: &Path,
-    incremental_snapshot_archives_dir: &Path,
     maximum_local_snapshot_age: Slot,
     start_progress: &Arc<RwLock<ValidatorStartProgress>>,
     minimal_snapshot_download_speed: f32,
@@ -402,8 +401,6 @@ pub fn attempt_download_genesis_and_snapshot(
     info!("RPC node root slot: {rpc_client_slot}");
 
     download_snapshots(
-        full_snapshot_archives_dir,
-        incremental_snapshot_archives_dir,
         validator_config,
         bootstrap_config,
         use_progress_bar,
@@ -559,8 +556,6 @@ pub fn rpc_bootstrap(
     node: &Node,
     identity_keypair: &Arc<Keypair>,
     ledger_path: &Path,
-    full_snapshot_archives_dir: &Path,
-    incremental_snapshot_archives_dir: &Path,
     vote_account: &Pubkey,
     authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     cluster_entrypoints: &[ContactInfo],
@@ -643,8 +638,6 @@ pub fn rpc_bootstrap(
             use_progress_bar,
             &mut gossip,
             &rpc_client,
-            full_snapshot_archives_dir,
-            incremental_snapshot_archives_dir,
             maximum_local_snapshot_age,
             start_progress,
             minimal_snapshot_download_speed,
@@ -1106,8 +1099,6 @@ fn retain_peer_snapshot_hashes_with_highest_incremental_snapshot_slot(
 /// Check to see if we can use our local snapshots, otherwise download newer ones.
 #[allow(clippy::too_many_arguments)]
 fn download_snapshots(
-    full_snapshot_archives_dir: &Path,
-    incremental_snapshot_archives_dir: &Path,
     validator_config: &ValidatorConfig,
     bootstrap_config: &RpcBootstrapConfig,
     use_progress_bar: bool,
@@ -1126,6 +1117,10 @@ fn download_snapshots(
         full: full_snapshot_hash,
         incr: incremental_snapshot_hash,
     } = snapshot_hash.unwrap();
+    let full_snapshot_archives_dir = &validator_config.snapshot_config.full_snapshot_archives_dir;
+    let incremental_snapshot_archives_dir = &validator_config
+        .snapshot_config
+        .incremental_snapshot_archives_dir;
 
     // If the local snapshots are new enough, then use 'em; no need to download new snapshots
     if should_use_local_snapshot(
@@ -1153,8 +1148,6 @@ fn download_snapshots(
         );
     } else {
         download_snapshot(
-            full_snapshot_archives_dir,
-            incremental_snapshot_archives_dir,
             validator_config,
             bootstrap_config,
             use_progress_bar,
@@ -1186,8 +1179,6 @@ fn download_snapshots(
                 );
             } else {
                 download_snapshot(
-                    full_snapshot_archives_dir,
-                    incremental_snapshot_archives_dir,
                     validator_config,
                     bootstrap_config,
                     use_progress_bar,
@@ -1209,8 +1200,6 @@ fn download_snapshots(
 /// Download a snapshot
 #[allow(clippy::too_many_arguments)]
 fn download_snapshot(
-    full_snapshot_archives_dir: &Path,
-    incremental_snapshot_archives_dir: &Path,
     validator_config: &ValidatorConfig,
     bootstrap_config: &RpcBootstrapConfig,
     use_progress_bar: bool,
@@ -1228,6 +1217,10 @@ fn download_snapshot(
     let maximum_incremental_snapshot_archives_to_retain = validator_config
         .snapshot_config
         .maximum_incremental_snapshot_archives_to_retain;
+    let full_snapshot_archives_dir = &validator_config.snapshot_config.full_snapshot_archives_dir;
+    let incremental_snapshot_archives_dir = &validator_config
+        .snapshot_config
+        .incremental_snapshot_archives_dir;
 
     *start_progress.write().unwrap() = ValidatorStartProgress::DownloadingSnapshot {
         slot: desired_snapshot_hash.0,

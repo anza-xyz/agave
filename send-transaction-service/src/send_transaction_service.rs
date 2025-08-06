@@ -317,6 +317,7 @@ impl SendTransactionService {
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         debug!("Starting send-transaction-service::retry_thread.");
+        let root_bank = bank_forks.read().unwrap().sharable_root_bank();
         let retry_interval_ms_default = MAX_RETRY_SLEEP_MS.min(config.retry_rate_ms);
         let mut retry_interval_ms = retry_interval_ms_default;
         Builder::new()
@@ -336,7 +337,7 @@ impl SendTransactionService {
                         .store(transactions.len() as u64, Ordering::Relaxed);
                     let (root_bank, working_bank) = {
                         let bank_forks = bank_forks.read().unwrap();
-                        (bank_forks.root_bank(), bank_forks.working_bank())
+                        (root_bank.load(), bank_forks.working_bank())
                     };
 
                     let result = Self::process_transactions(
@@ -396,7 +397,7 @@ impl SendTransactionService {
                 )
                 .is_some()
             {
-                info!("Transaction is rooted: {}", signature);
+                info!("Transaction is rooted: {signature}");
                 result.rooted += 1;
                 stats.rooted_transactions.fetch_add(1, Ordering::Relaxed);
                 return false;
@@ -416,14 +417,14 @@ impl SendTransactionService {
                 let verify_nonce_account =
                     nonce_account::verify_nonce_account(&nonce_account, &durable_nonce);
                 if verify_nonce_account.is_none() && signature_status.is_none() && expired {
-                    info!("Dropping expired durable-nonce transaction: {}", signature);
+                    info!("Dropping expired durable-nonce transaction: {signature}");
                     result.expired += 1;
                     stats.expired_transactions.fetch_add(1, Ordering::Relaxed);
                     return false;
                 }
             }
             if transaction_info.last_valid_block_height < root_bank.block_height() {
-                info!("Dropping expired transaction: {}", signature);
+                info!("Dropping expired transaction: {signature}");
                 result.expired += 1;
                 stats.expired_transactions.fetch_add(1, Ordering::Relaxed);
                 return false;
@@ -434,7 +435,7 @@ impl SendTransactionService {
 
             if let Some(max_retries) = max_retries {
                 if transaction_info.retries >= max_retries {
-                    info!("Dropping transaction due to max retries: {}", signature);
+                    info!("Dropping transaction due to max retries: {signature}");
                     result.max_retries_elapsed += 1;
                     stats
                         .transactions_exceeding_max_retries
@@ -456,7 +457,7 @@ impl SendTransactionService {
                             // Transaction sent before is unknown to the working bank, it might have been
                             // dropped or landed in another fork. Re-send it.
 
-                            info!("Retrying transaction: {}", signature);
+                            info!("Retrying transaction: {signature}");
                             result.retried += 1;
                             transaction_info.retries += 1;
                         }
@@ -483,7 +484,7 @@ impl SendTransactionService {
                 }
                 Some((_slot, status)) => {
                     if !status {
-                        info!("Dropping failed transaction: {}", signature);
+                        info!("Dropping failed transaction: {signature}");
                         result.failed += 1;
                         stats.failed_transactions.fetch_add(1, Ordering::Relaxed);
                         false

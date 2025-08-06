@@ -17,7 +17,9 @@ use qualifier_attr::qualifiers;
 use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     assert_matches::assert_matches,
-    crossbeam_channel::{self, never, select_biased, Receiver, RecvError, SendError, Sender},
+    crossbeam_channel::{
+        self, never, select_biased, Receiver, RecvError, RecvTimeoutError, SendError, Sender,
+    },
     dashmap::DashMap,
     derive_where::derive_where,
     dyn_clone::{clone_trait_object, DynClone},
@@ -28,6 +30,7 @@ use {
     solana_ledger::blockstore_processor::{
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
     },
+    solana_metrics::datapoint_info,
     solana_poh::transaction_recorder::{RecordTransactionsSummary, TransactionRecorder},
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -46,6 +49,7 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
+        BlockSize,
         SchedulingMode::{self, BlockProduction, BlockVerification},
         SchedulingStateMachine, Task, UsageQueue,
     },
@@ -66,6 +70,10 @@ use {
     unwrap_none::UnwrapNone,
     vec_extract_if_polyfill::MakeExtractIf,
 };
+
+// For now, cap bandwidth use to just half of 1 Gbps link, which should be pretty conservative
+// assumption these days...
+const MAX_BLOCK_SIZE_THRESHOLD: BlockSize = 20 * 1024 * 1024;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
@@ -130,6 +138,8 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     weak_self: Weak<Self>,
     next_scheduler_id: AtomicSchedulerId,
     max_usage_queue_count: usize,
+    scheduler_pool_sender: Sender<Weak<Self>>,
+    cleaner_thread: JoinHandle<()>,
     _phantom: PhantomData<TH>,
 }
 
@@ -230,6 +240,20 @@ impl HandlerContext {
 
     fn banking_stage_helper(&self) -> &BankingStageHelper {
         self.banking_stage_helper.as_ref().unwrap()
+    }
+
+    fn clone_for_scheduler_thread(&self) -> Self {
+        let mut context = self.clone();
+        if self.banking_stage_helper.is_some() {
+            context.disable_banking_packet_handler();
+        }
+        context
+    }
+
+    fn disable_banking_packet_handler(&mut self) {
+        self.banking_packet_receiver = never();
+        self.banking_packet_handler =
+            Box::new(|_, _| unreachable!("paired with never() receiver, this cannot be called"));
     }
 }
 
@@ -353,16 +377,21 @@ impl BankingStageHelper {
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
         index: usize,
+        consumed_block_size: BlockSize,
     ) -> Task {
-        SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
-            self.usage_queue_loader.load(pubkey)
-        })
+        SchedulingStateMachine::create_block_production_task(
+            transaction,
+            index,
+            consumed_block_size,
+            &mut |pubkey| self.usage_queue_loader.load(pubkey),
+        )
     }
 
     fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
         let new_index = self.generate_task_ids(1);
+        let consumed_block_size = executed_task.consumed_block_size();
         let transaction = executed_task.into_transaction();
-        self.create_new_task(transaction, new_index)
+        self.create_new_task(transaction, new_index, consumed_block_size)
     }
 
     pub fn send_new_task(&self, task: Task) {
@@ -433,32 +462,22 @@ where
         max_usage_queue_count: usize,
         timeout_duration: Duration,
     ) -> Arc<Self> {
-        let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
-            scheduler_inners: Mutex::default(),
-            block_production_scheduler_inner: Mutex::default(),
-            trashed_scheduler_inners: Mutex::default(),
-            timeout_listeners: Mutex::default(),
-            common_handler_context: CommonHandlerContext {
-                log_messages_bytes_limit,
-                transaction_status_sender,
-                replay_vote_sender,
-                prioritization_fee_cache,
-            },
-            block_verification_handler_count,
-            banking_stage_handler_context: Mutex::default(),
-            weak_self: weak_self.clone(),
-            next_scheduler_id: AtomicSchedulerId::default(),
-            max_usage_queue_count,
-            _phantom: PhantomData,
-        });
+        let (scheduler_pool_sender, scheduler_pool_receiver) = crossbeam_channel::bounded(1);
 
-        let cleaner_main_loop = {
-            let weak_scheduler_pool = Arc::downgrade(&scheduler_pool);
+        let mut exiting = false;
+        let cleaner_main_loop = move || {
+            info!("cleaner_main_loop: started...");
 
-            move || loop {
-                sleep(pool_cleaner_interval);
+            let weak_scheduler_pool: Weak<Self> = scheduler_pool_receiver.recv().unwrap();
+            loop {
+                match scheduler_pool_receiver.recv_timeout(pool_cleaner_interval) {
+                    Ok(_) => unreachable!(),
+                    Err(RecvTimeoutError::Disconnected | RecvTimeoutError::Timeout) => (),
+                }
 
                 let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
+                    // this is the only safe termination point of cleaner_main_loop while all other
+                    // `break`s being due to poisoned locks.
                     break;
                 };
 
@@ -490,6 +509,10 @@ where
                 };
 
                 let banking_stage_status = scheduler_pool.banking_stage_status();
+                if !exiting && matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
+                    exiting = true;
+                    scheduler_pool.unregister_banking_stage();
+                }
 
                 if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
                     let Ok(mut inner) = scheduler_pool.block_production_scheduler_inner.lock()
@@ -595,12 +618,37 @@ where
                     triggered_timeout_listener_count,
                 ));
             }
+            info!("cleaner_main_loop: ...finished");
         };
 
-        // No need to join; the spawned main loop will gracefully exit.
-        thread::Builder::new()
+        let cleaner_thread = thread::Builder::new()
             .name("solScCleaner".to_owned())
             .spawn_tracked(cleaner_main_loop)
+            .unwrap();
+
+        let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
+            scheduler_inners: Mutex::default(),
+            block_production_scheduler_inner: Mutex::default(),
+            trashed_scheduler_inners: Mutex::default(),
+            timeout_listeners: Mutex::default(),
+            common_handler_context: CommonHandlerContext {
+                log_messages_bytes_limit,
+                transaction_status_sender,
+                replay_vote_sender,
+                prioritization_fee_cache,
+            },
+            block_verification_handler_count,
+            banking_stage_handler_context: Mutex::default(),
+            weak_self: weak_self.clone(),
+            next_scheduler_id: AtomicSchedulerId::default(),
+            max_usage_queue_count,
+            scheduler_pool_sender: scheduler_pool_sender.clone(),
+            cleaner_thread,
+            _phantom: PhantomData,
+        });
+
+        scheduler_pool_sender
+            .send(Arc::downgrade(&scheduler_pool))
             .unwrap();
 
         scheduler_pool
@@ -751,6 +799,19 @@ where
         );
     }
 
+    fn unregister_banking_stage(&self) {
+        let handler_context = &mut self.banking_stage_handler_context.lock().unwrap();
+        let handler_context = handler_context.as_mut().unwrap();
+        // Replace with dummy ones to unblock validator shutdown.
+        // Note that replacing banking_stage_handler_context with None altogether will create a
+        // very short window of race condition due to untimely spawning of block production
+        // scheduler.
+        handler_context.banking_packet_receiver = never();
+        handler_context.banking_packet_handler =
+            Box::new(|_, _| unreachable!("paired with never() receiver, this cannot be called"));
+        handler_context.banking_stage_monitor = Box::new(ExitedBankingMonitor);
+    }
+
     fn banking_stage_status(&self) -> Option<BankingStageStatus> {
         self.banking_stage_handler_context
             .lock()
@@ -782,7 +843,9 @@ where
                     self.block_verification_handler_count,
                     // Return various type-specific no-op values.
                     never(),
-                    Box::new(|_, _| {}),
+                    Box::new(|_, _| {
+                        unreachable!("paired with never() receiver, this cannot be called")
+                    }),
                     None,
                     None,
                 )
@@ -883,6 +946,48 @@ where
             .lock()
             .unwrap()
             .push((timeout_listener, Instant::now()));
+    }
+
+    fn uninstalled_from_bank_forks(self: Arc<Self>) {
+        info!("SchedulerPool::uninstalled_from_bank_forks(): started...");
+
+        // Forcibly return back all taken schedulers back to this scheduler pool.
+        for (listener, _registered_at) in mem::take(&mut *self.timeout_listeners.lock().unwrap()) {
+            listener.trigger(self.clone());
+        }
+
+        // Then, drop all schedulers in the pool.
+        mem::take(&mut *self.scheduler_inners.lock().unwrap());
+        mem::take(&mut *self.block_production_scheduler_inner.lock().unwrap());
+        mem::take(&mut *self.trashed_scheduler_inners.lock().unwrap());
+
+        // At this point, all circular references of this pool has been cut. And there should be
+        // only 1 strong rerefence unless the cleaner thread is active right now.
+
+        // So, wait a bit to unwrap the pool out of the sinful Arc finally here. Note that we can't resort to the
+        // Drop impl, because of the need to take the ownership of the join handle of the cleaner
+        // thread...
+        let mut this = self;
+        let mut this: Self = loop {
+            match Arc::try_unwrap(this) {
+                Ok(pool) => {
+                    break pool;
+                }
+                Err(that) => {
+                    // It seems solScCleaner is active... retry later
+                    this = that;
+                    sleep(Duration::from_millis(100));
+                    // Yes, indefinite loop, but the situation isn't so different from the
+                    // following join(), which indefinitely waits as well.
+                    continue;
+                }
+            }
+        };
+        // Accelerate cleaner thread joining by disconnection
+        this.scheduler_pool_sender = crossbeam_channel::bounded(1).0;
+        this.cleaner_thread.join().unwrap();
+
+        info!("SchedulerPool::uninstalled_from_bank_forks(): ...finished");
     }
 }
 
@@ -1050,6 +1155,10 @@ impl ExecutedTask {
             task,
             result_with_timings: initialized_result_with_timings(),
         })
+    }
+
+    fn consumed_block_size(&self) -> BlockSize {
+        self.task.consumed_block_size()
     }
 
     fn into_transaction(self) -> RuntimeTransaction<SanitizedTransaction> {
@@ -1613,6 +1722,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         (result, timings): &mut ResultWithTimings,
         executed_task: Box<ExecutedTask>,
         state_machine: &mut SchedulingStateMachine,
+        block_size_estimate: &mut usize,
         session_ending: &mut bool,
         handler_context: &HandlerContext,
     ) -> bool {
@@ -1626,6 +1736,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             BlockVerification => match executed_task.result_with_timings.0 {
                 Ok(()) => {
                     // The most normal case
+                    // This is only for block production.
+                    assert_eq!(executed_task.consumed_block_size(), 0);
+
                     false
                 }
                 // This should never be observed because the scheduler thread makes all running
@@ -1648,6 +1761,20 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 match executed_task.result_with_timings.0 {
                     Ok(()) => {
                         // The most normal case
+                        *block_size_estimate = block_size_estimate
+                            .checked_add(executed_task.consumed_block_size())
+                            .unwrap();
+
+                        // Avoid too large blocks in byte wise, which could destabilize the
+                        // cluster.
+                        //
+                        // While this check is very light-weight, it isn't rigid nor deterministic.
+                        // That's why it's called an estimate-based _threshold_, not _limit_ to
+                        // indicate these implications. This lenient behavior is acceptable.
+                        if *block_size_estimate > MAX_BLOCK_SIZE_THRESHOLD {
+                            sleepless_testing::at(CheckPoint::SessionEnding);
+                            *session_ending = true;
+                        }
                     }
                     Err(TransactionError::CommitCancelled)
                     | Err(TransactionError::WouldExceedMaxBlockCostLimit)
@@ -1723,6 +1850,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     ) {
         let scheduling_mode = context.mode();
         let mut current_slot = context.slot();
+        let mut block_size_estimate = 0;
         let (mut is_finished, mut session_ending) = match scheduling_mode {
             BlockVerification => (false, false),
             BlockProduction => {
@@ -1828,7 +1956,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // 5. the handler thread reply back to the scheduler thread as an executed task.
         // 6. the scheduler thread post-processes the executed task.
         let scheduler_main_loop = {
-            let handler_context = handler_context.clone();
+            let handler_context = handler_context.clone_for_scheduler_thread();
             let session_result_sender = self.session_result_sender.clone();
             // Taking new_task_receiver here is important to ensure there's a single receiver. In
             // this way, the replay stage will get .send() failures reliably, after this scheduler
@@ -1934,6 +2062,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     &mut result_with_timings,
                                     executed_task,
                                     &mut state_machine,
+                                    &mut block_size_estimate,
                                     &mut session_ending,
                                     &handler_context,
                                 ) {
@@ -1992,6 +2121,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     &mut result_with_timings,
                                     executed_task,
                                     &mut state_machine,
+                                    &mut block_size_estimate,
                                     &mut session_ending,
                                     &handler_context,
                                 ) {
@@ -2014,6 +2144,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     session_result_sender
                         .send(result_with_timings)
                         .expect("always outlived receiver");
+
+                    if matches!(scheduling_mode, BlockProduction) {
+                        datapoint_info!(
+                            "unified_scheduler-bp_session_stats",
+                            ("slot", current_slot.unwrap_or_default(), i64),
+                            ("block_size_estimate", block_size_estimate, i64),
+                        );
+                    }
                     if matches!(scheduling_mode, BlockVerification) {
                         state_machine.reinitialize();
                     }
@@ -2060,6 +2198,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 assert_eq!(scheduling_mode, new_context.mode());
                                 assert!(!new_context.is_preallocated());
                                 current_slot = new_context.slot();
+                                block_size_estimate = 0;
                                 runnable_task_sender
                                     .send_chained_channel(
                                         &new_context,
@@ -2167,7 +2306,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                             let Ok(banking_packet) = banking_packet else {
                                 info!("disconnected banking_packet_receiver");
-                                break;
+                                // Don't break here; handler threads are expected to outlive its
+                                // associated scheduler thread always. So, disable banking packet
+                                // handler then continue to be cleaned up properly later, much like
+                                // block verification handler thread.
+                                handler_context.disable_banking_packet_handler();
+                                continue;
                             };
                             banking_packet_handler(banking_stage_helper, banking_packet);
                             continue;
@@ -2461,10 +2605,20 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 pub enum BankingStageStatus {
     Active,
     Inactive,
+    Exited,
 }
 
 pub trait BankingStageMonitor: Send + Debug {
     fn status(&mut self) -> BankingStageStatus;
+}
+
+#[derive(Debug)]
+struct ExitedBankingMonitor;
+
+impl BankingStageMonitor for ExitedBankingMonitor {
+    fn status(&mut self) -> BankingStageStatus {
+        BankingStageStatus::Exited
+    }
 }
 
 impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
@@ -2589,6 +2743,7 @@ mod tests {
         solana_timings::ExecuteTimingType,
         solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
+        solana_unified_scheduler_logic::NO_CONSUMED_BLOCK_SIZE,
         std::{
             num::Saturating,
             sync::{atomic::Ordering, Arc, RwLock},
@@ -4382,7 +4537,10 @@ mod tests {
         let handler_context = &HandlerContext {
             thread_count: 0,
             log_messages_bytes_limit: None,
-            transaction_status_sender: Some(TransactionStatusSender { sender }),
+            transaction_status_sender: Some(TransactionStatusSender {
+                sender,
+                dependency_tracker: None,
+            }),
             replay_vote_sender: None,
             prioritization_fee_cache,
             banking_packet_receiver: never(),
@@ -4418,9 +4576,10 @@ mod tests {
                 }
                 assert_matches!(
                     receiver.try_recv(),
-                    Ok(TransactionStatusMessage::Batch(
-                        TransactionStatusBatch { .. }
-                    ))
+                    Ok(TransactionStatusMessage::Batch((
+                        TransactionStatusBatch { .. },
+                        None, // no work sequence
+                    )))
                 );
                 assert_matches!(
                     signal_receiver.try_recv(),
@@ -4515,6 +4674,16 @@ mod tests {
         poh_service.join().unwrap();
     }
 
+    impl BankingStageHelper {
+        fn create_new_unconstrained_task(
+            &self,
+            transaction: RuntimeTransaction<SanitizedTransaction>,
+            index: usize,
+        ) -> Task {
+            self.create_new_task(transaction, index, NO_CONSUMED_BLOCK_SIZE)
+        }
+    }
+
     #[test]
     fn test_block_production_scheduler_buffering_on_spawn() {
         solana_logger::setup();
@@ -4563,7 +4732,7 @@ mod tests {
         ));
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
-                helper.send_new_task(helper.create_new_task(tx0.clone(), 17))
+                helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), 17))
             });
         pool.register_banking_stage(
             None,
@@ -4630,7 +4799,7 @@ mod tests {
         ));
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
-                helper.send_new_task(helper.create_new_task(tx0.clone(), 18))
+                helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), 18))
             });
 
         let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
@@ -4988,7 +5157,7 @@ mod tests {
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
                 for index in 0..DISCARDED_TASK_COUNT {
-                    helper.send_new_task(helper.create_new_task(tx0.clone(), index))
+                    helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), index))
                 }
             });
 

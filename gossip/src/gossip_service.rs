@@ -390,10 +390,7 @@ pub fn make_gossip_node(
 mod tests {
     use {
         super::*,
-        crate::{
-            cluster_info::{ClusterInfo, Node},
-            contact_info::ContactInfo,
-        },
+        crate::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
         std::sync::{atomic::AtomicBool, Arc},
     };
 

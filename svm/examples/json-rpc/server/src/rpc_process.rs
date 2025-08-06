@@ -32,6 +32,7 @@ use {
         loaded_programs::ProgramCacheEntry,
     },
     solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_rpc_client_api::{
         config::*,
         response::{Response as RpcResponse, *},
@@ -62,7 +63,7 @@ use {
         UiTransactionEncoding,
     },
     solana_validator_exit::Exit,
-    spl_token_2022::{
+    spl_token_2022_interface::{
         extension::{
             interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,
             BaseStateWithExtensions, StateWithExtensions,
@@ -555,7 +556,7 @@ impl JsonRpcRequestProcessor {
             blockhash_lamports_per_signature: lamports_per_signature,
             epoch_total_stake: 0,
             feature_set: bank.feature_set.runtime_features(),
-            rent_collector: None,
+            rent: Rent::default(),
         };
 
         let sanitized_output = self

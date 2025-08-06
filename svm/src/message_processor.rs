@@ -3,7 +3,7 @@ use {
     solana_program_runtime::invoke_context::InvokeContext,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
-    solana_transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_transaction_context::IndexOfAccount,
     solana_transaction_error::TransactionError,
 };
 
@@ -25,27 +25,11 @@ pub(crate) fn process_message(
         .zip(program_indices.iter())
         .enumerate()
     {
-        let mut instruction_accounts = Vec::with_capacity(instruction.accounts.len());
-        for (instruction_account_index, index_in_transaction) in
-            instruction.accounts.iter().enumerate()
-        {
-            let index_in_callee = instruction
-                .accounts
-                .get(0..instruction_account_index)
-                .ok_or(TransactionError::InvalidAccountIndex)?
-                .iter()
-                .position(|account_index| account_index == index_in_transaction)
-                .unwrap_or(instruction_account_index)
-                as IndexOfAccount;
-            let index_in_transaction = *index_in_transaction as usize;
-            instruction_accounts.push(InstructionAccount::new(
-                index_in_transaction as IndexOfAccount,
-                index_in_transaction as IndexOfAccount,
-                index_in_callee,
-                message.is_signer(index_in_transaction),
-                message.is_writable(index_in_transaction),
-            ));
-        }
+        invoke_context
+            .prepare_next_top_level_instruction(message, &instruction, program_indices.clone())
+            .map_err(|err| {
+                TransactionError::InstructionError(top_level_instruction_index as u8, err)
+            })?;
 
         let mut compute_units_consumed = 0;
         let (result, process_instruction_us) = measure_us!({
@@ -53,18 +37,10 @@ pub(crate) fn process_message(
                 invoke_context.process_precompile(
                     program_id,
                     instruction.data,
-                    &instruction_accounts,
-                    program_indices,
                     message.instructions_iter().map(|ix| ix.data),
                 )
             } else {
-                invoke_context.process_instruction(
-                    instruction.data,
-                    &instruction_accounts,
-                    program_indices,
-                    &mut compute_units_consumed,
-                    execute_timings,
-                )
+                invoke_context.process_instruction(&mut compute_units_consumed, execute_timings)
             }
         });
 

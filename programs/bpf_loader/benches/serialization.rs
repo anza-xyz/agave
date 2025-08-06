@@ -5,7 +5,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated},
-    solana_transaction_context::{IndexOfAccount, InstructionAccount, TransactionContext},
+    solana_transaction_context::{InstructionAccount, TransactionContext},
 };
 
 fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionContext {
@@ -89,14 +89,8 @@ fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionC
         .take(num_instruction_accounts)
         .enumerate()
     {
-        let index_in_callee = instruction_accounts
-            .iter()
-            .position(|account| account.index_in_transaction == index_in_transaction)
-            .unwrap_or(instruction_account_index) as IndexOfAccount;
         instruction_accounts.push(InstructionAccount::new(
             index_in_transaction,
-            instruction_account_index as IndexOfAccount,
-            index_in_callee,
             false,
             instruction_account_index >= 4,
         ));
@@ -106,9 +100,9 @@ fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionC
         TransactionContext::new(transaction_accounts, Rent::default(), 1, 1);
     let instruction_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
     transaction_context
-        .get_next_instruction_context()
+        .get_next_instruction_context_mut()
         .unwrap()
-        .configure(&[0], &instruction_accounts, &instruction_data);
+        .configure_for_tests(vec![0], instruction_accounts, &instruction_data);
     transaction_context.push().unwrap();
     transaction_context
 }
@@ -124,7 +118,8 @@ fn bench_serialize_unaligned(c: &mut Criterion) {
             let _ = serialize_parameters(
                 &transaction_context,
                 instruction_context,
-                true, // direct_mapping
+                true, // stricter_abi_and_runtime_constraints
+                true, // account_data_direct_mapping
                 true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -142,7 +137,8 @@ fn bench_serialize_unaligned_copy_account_data(c: &mut Criterion) {
             let _ = serialize_parameters(
                 &transaction_context,
                 instruction_context,
-                false, // direct_mapping
+                false, // stricter_abi_and_runtime_constraints
+                false, // account_data_direct_mapping
                 true,  // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -161,7 +157,8 @@ fn bench_serialize_aligned(c: &mut Criterion) {
             let _ = serialize_parameters(
                 &transaction_context,
                 instruction_context,
-                true, // direct_mapping
+                true, // stricter_abi_and_runtime_constraints
+                true, // account_data_direct_mapping
                 true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -180,7 +177,8 @@ fn bench_serialize_aligned_copy_account_data(c: &mut Criterion) {
             let _ = serialize_parameters(
                 &transaction_context,
                 instruction_context,
-                false, // direct_mapping
+                false, // stricter_abi_and_runtime_constraints
+                false, // account_data_direct_mapping
                 true,  // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -199,7 +197,8 @@ fn bench_serialize_unaligned_max_accounts(c: &mut Criterion) {
             let _ = serialize_parameters(
                 &transaction_context,
                 instruction_context,
-                true, // direct_mapping
+                true, // stricter_abi_and_runtime_constraints
+                true, // account_data_direct_mapping
                 true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -218,7 +217,8 @@ fn bench_serialize_aligned_max_accounts(c: &mut Criterion) {
             let _ = serialize_parameters(
                 &transaction_context,
                 instruction_context,
-                true, // direct_mapping
+                true, // stricter_abi_and_runtime_constraints
+                true, // account_data_direct_mapping
                 true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();

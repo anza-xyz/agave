@@ -3,7 +3,7 @@ pub use solana_program_runtime::execution_budget::{
     MAX_INSTRUCTION_STACK_DEPTH, STACK_FRAME_SIZE,
 };
 use {
-    crate::compute_budget_limits::ComputeBudgetLimits, solana_fee_structure::FeeDetails,
+    solana_fee_structure::FeeDetails,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     std::num::NonZeroU32,
 };
@@ -119,6 +119,7 @@ pub struct ComputeBudget {
     pub alt_bn128_g2_decompress: u64,
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 impl Default for ComputeBudget {
     fn default() -> Self {
         Self::from_budget_and_cost(
@@ -129,6 +130,13 @@ impl Default for ComputeBudget {
 }
 
 impl ComputeBudget {
+    pub fn new_with_defaults(simd_0296_active: bool) -> Self {
+        Self::from_budget_and_cost(
+            &SVMTransactionExecutionBudget::new_with_defaults(simd_0296_active),
+            &SVMTransactionExecutionCost::default(),
+        )
+    }
+
     pub fn from_budget_and_cost(
         budget: &SVMTransactionExecutionBudget,
         cost: &SVMTransactionExecutionCost,
@@ -248,16 +256,6 @@ impl ComputeBudget {
             budget: self.to_budget(),
             loaded_accounts_data_size_limit,
             fee_details,
-        }
-    }
-}
-
-impl From<ComputeBudgetLimits> for ComputeBudget {
-    fn from(compute_budget_limits: ComputeBudgetLimits) -> Self {
-        ComputeBudget {
-            compute_unit_limit: u64::from(compute_budget_limits.compute_unit_limit),
-            heap_size: compute_budget_limits.updated_heap_bytes,
-            ..ComputeBudget::default()
         }
     }
 }

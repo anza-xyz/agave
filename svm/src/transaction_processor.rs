@@ -45,11 +45,10 @@ use {
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
-    solana_rent_collector::RentCollector,
+    solana_rent::Rent,
     solana_sdk_ids::{native_loader, system_program},
     solana_svm_callback::TransactionProcessingCallback,
     solana_svm_feature_set::SVMFeatureSet,
-    solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_transaction_context::{ExecutionRecord, TransactionContext},
@@ -122,7 +121,7 @@ pub struct TransactionProcessingConfig<'a> {
 
 /// Runtime environment for transaction batch processing.
 #[derive(Default)]
-pub struct TransactionProcessingEnvironment<'a> {
+pub struct TransactionProcessingEnvironment {
     /// The blockhash to use for the transaction batch.
     pub blockhash: Hash,
     /// Lamports per signature that corresponds to this blockhash.
@@ -136,8 +135,8 @@ pub struct TransactionProcessingEnvironment<'a> {
     pub epoch_total_stake: u64,
     /// Runtime feature set to use for the transaction batch.
     pub feature_set: SVMFeatureSet,
-    /// Rent collector to use for the transaction batch.
-    pub rent_collector: Option<&'a dyn SVMRentCollector>,
+    /// Rent calculator to use for the transaction batch.
+    pub rent: Rent,
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -410,9 +409,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         tx,
                         tx_details,
                         &environment.blockhash,
-                        environment
-                            .rent_collector
-                            .unwrap_or(&RentCollector::default()),
+                        &environment.rent,
                         &mut error_metrics,
                     )
                 }));
@@ -424,9 +421,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 tx,
                 validate_result,
                 &mut error_metrics,
-                environment
-                    .rent_collector
-                    .unwrap_or(&RentCollector::default()),
+                &environment.rent,
             ));
             load_us = load_us.saturating_add(single_load_us);
 
@@ -517,7 +512,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
         environment_blockhash: &Hash,
-        rent_collector: &dyn SVMRentCollector,
+        rent: &Rent,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         // If this is a nonce transaction, validate the nonce info.
@@ -544,7 +539,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             account_loader,
             message,
             checked_details,
-            rent_collector,
+            rent,
             error_counters,
         )
     }
@@ -556,7 +551,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         account_loader: &mut AccountLoader<CB>,
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
-        rent_collector: &dyn SVMRentCollector,
+        rent: &Rent,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let CheckedTransactionDetails {
@@ -581,7 +576,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         };
 
         let fee_payer_loaded_rent_epoch = loaded_fee_payer.account.rent_epoch();
-        update_rent_exempt_status_for_account(rent_collector, &mut loaded_fee_payer.account);
+        update_rent_exempt_status_for_account(rent, &mut loaded_fee_payer.account);
 
         let fee_payer_index = 0;
         validate_fee_payer(
@@ -589,7 +584,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &mut loaded_fee_payer.account,
             fee_payer_index,
             error_counters,
-            rent_collector,
+            rent,
             compute_budget_and_limits.fee_details.total_fee(),
         )?;
 
@@ -623,10 +618,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // If the nonce account was closed in the batch, we error as if the blockhash didn't validate.
         // We must validate the account in case it was reopened, either as a normal system account,
         // or a fake nonce account. We must also check the signer in case the authority was changed.
-        //
-        // We do not need to inspect the nonce account here, because by definition it is either the
-        // first account, inspected in `validate_transaction_fee_payer()`, or the second through nth
-        // account, inspected in `load_transaction()`.
         //
         // Note these checks are *not* obviated by fee-only transactions.
         let nonce_is_valid = account_loader
@@ -831,11 +822,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             })
         }
 
-        let default_rent_collector = RentCollector::default();
-        let rent_collector = environment
-            .rent_collector
-            .unwrap_or(&default_rent_collector);
-
         let lamports_before_tx =
             transaction_accounts_lamports_sum(&transaction_accounts).unwrap_or(0);
 
@@ -843,7 +829,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let mut transaction_context = TransactionContext::new(
             transaction_accounts,
-            rent_collector.get_rent().clone(),
+            environment.rent.clone(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
         );
@@ -854,7 +840,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
 
         let pre_account_state_info =
-            TransactionAccountStateInfo::new(&transaction_context, tx, rent_collector);
+            TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);
 
         let log_collector = if config.recording_config.enable_log_recording {
             match config.log_messages_bytes_limit {
@@ -902,12 +888,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut status = process_result
             .and_then(|info| {
                 let post_account_state_info =
-                    TransactionAccountStateInfo::new(&transaction_context, tx, rent_collector);
+                    TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);
                 TransactionAccountStateInfo::verify_changes(
                     &pre_account_state_info,
                     &post_account_state_info,
                     &transaction_context,
-                    rent_collector,
                 )
                 .map(|_| info)
             })
@@ -1114,7 +1099,7 @@ mod tests {
             loaded_programs::{BlockRelation, ProgramCacheEntryType},
         },
         solana_rent::Rent,
-        solana_rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
+        solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
         solana_sdk_ids::{bpf_loader, system_program, sysvar},
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
@@ -1292,9 +1277,9 @@ mod tests {
             }
             if stack_height > transaction_context.get_instruction_context_stack_height() {
                 transaction_context
-                    .get_next_instruction_context()
+                    .get_next_instruction_context_mut()
                     .unwrap()
-                    .configure(&[], &[], &[index_in_trace as u8]);
+                    .configure_for_tests(vec![], vec![], &[index_in_trace as u8]);
                 transaction_context.push().unwrap();
             }
         }
@@ -2050,13 +2035,8 @@ mod tests {
         ));
         let fee_payer_address = message.fee_payer();
         let current_epoch = 42;
-        let rent_collector = RentCollector {
-            epoch: current_epoch,
-            ..RentCollector::default()
-        };
-        let min_balance = rent_collector
-            .rent
-            .minimum_balance(nonce::state::State::size());
+        let rent = Rent::default();
+        let min_balance = rent.minimum_balance(nonce::state::State::size());
         let transaction_fee = lamports_per_signature;
         let priority_fee = 2_000_000u64;
         let starting_balance = transaction_fee + priority_fee;
@@ -2098,7 +2078,7 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(None, Ok(compute_budget_and_limits)),
                 &Hash::default(),
-                &rent_collector,
+                &rent,
                 &mut error_counters,
             );
 
@@ -2148,9 +2128,11 @@ mod tests {
             &Hash::new_unique(),
         ));
         let fee_payer_address = message.fee_payer();
-        let mut rent_collector = RentCollector::default();
-        rent_collector.rent.lamports_per_byte_year = 1_000_000;
-        let min_balance = rent_collector.rent.minimum_balance(0);
+        let rent = Rent {
+            lamports_per_byte_year: 1_000_000,
+            ..Default::default()
+        };
+        let min_balance = rent.minimum_balance(0);
         let transaction_fee = lamports_per_signature;
         let starting_balance = min_balance - 1;
         let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
@@ -2175,7 +2157,7 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(None, Ok(compute_budget_and_limits)),
                 &Hash::default(),
-                &rent_collector,
+                &rent,
                 &mut error_counters,
             );
 
@@ -2229,7 +2211,7 @@ mod tests {
                     Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
                 ),
                 &Hash::default(),
-                &RentCollector::default(),
+                &Rent::default(),
                 &mut error_counters,
             );
 
@@ -2268,7 +2250,7 @@ mod tests {
                     )),
                 ),
                 &Hash::default(),
-                &RentCollector::default(),
+                &Rent::default(),
                 &mut error_counters,
             );
 
@@ -2283,8 +2265,8 @@ mod tests {
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
         let fee_payer_address = message.fee_payer();
         let transaction_fee = lamports_per_signature;
-        let rent_collector = RentCollector::default();
-        let min_balance = rent_collector.rent.minimum_balance(0);
+        let rent = Rent::default();
+        let min_balance = rent.minimum_balance(0);
         let starting_balance = min_balance + transaction_fee - 1;
         let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
@@ -2311,7 +2293,7 @@ mod tests {
                     )),
                 ),
                 &Hash::default(),
-                &rent_collector,
+                &rent,
                 &mut error_counters,
             );
 
@@ -2352,7 +2334,7 @@ mod tests {
                     )),
                 ),
                 &Hash::default(),
-                &RentCollector::default(),
+                &Rent::default(),
                 &mut error_counters,
             );
 
@@ -2379,7 +2361,7 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(None, Err(DuplicateInstruction(1))),
                 &Hash::default(),
-                &RentCollector::default(),
+                &Rent::default(),
                 &mut error_counters,
             );
 
@@ -2391,7 +2373,7 @@ mod tests {
     #[test_case(true; "simd186_loaded_size")]
     fn test_validate_transaction_fee_payer_is_nonce(formalize_loaded_transaction_data_size: bool) {
         let lamports_per_signature = 5000;
-        let rent_collector = RentCollector::default();
+        let rent = Rent::default();
         let compute_unit_limit = 1000u64;
         let last_blockhash = Hash::new_unique();
         let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
@@ -2455,7 +2437,7 @@ mod tests {
                    &message,
                    tx_details,
                    &environment_blockhash,
-                   &rent_collector,
+                   &rent,
                    &mut error_counters,
                );
 
@@ -2518,7 +2500,7 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(None, Ok(compute_budget_and_limits)),
                 &Hash::default(),
-                &rent_collector,
+                &rent,
                 &mut error_counters,
                );
 
@@ -2564,7 +2546,7 @@ mod tests {
                 )),
             ),
             &Hash::default(),
-            &RentCollector::default(),
+            &Rent::default(),
             &mut TransactionErrorMetrics::default(),
         )
         .unwrap();

@@ -1,0 +1,18 @@
+[package]
+name = "solana-svm-rent-calculator"
+description = "Solana SVM Rent Calculator"
+documentation = "https://docs.rs/solana-svm-rent-calculator"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+solana-account = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-transaction-context = { workspace = true }
+solana-transaction-error = { workspace = true }

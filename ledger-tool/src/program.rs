@@ -1,5 +1,6 @@
 use {
     crate::{args::*, canonicalize_ledger_path, ledger_utils::*},
+    agave_syscalls::create_program_runtime_environment_v1,
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
     serde_derive::{Deserialize, Serialize},
@@ -7,9 +8,7 @@ use {
     solana_account::{
         create_account_shared_data_for_test, state_traits::StateMut, AccountSharedData,
     },
-    solana_bpf_loader_program::{
-        create_vm, load_program_from_bytes, syscalls::create_program_runtime_environment_v1,
-    },
+    solana_bpf_loader_program::{create_vm, load_program_from_bytes},
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
@@ -409,7 +408,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 pubkey,
                 AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
             ));
-            instruction_accounts.push(InstructionAccount::new(0, 0, 0, false, true));
+            instruction_accounts.push(InstructionAccount::new(0, false, true));
             vec![]
         }
         Err(_) => {
@@ -482,8 +481,6 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                     };
                     InstructionAccount::new(
                         txn_acct_index as IndexOfAccount,
-                        txn_acct_index as IndexOfAccount,
-                        txn_acct_index as IndexOfAccount,
                         account_info.is_signer.unwrap_or(false),
                         account_info.is_writable.unwrap_or(false),
                     )
@@ -523,11 +520,11 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
 
     invoke_context
         .transaction_context
-        .get_next_instruction_context()
+        .get_next_instruction_context_mut()
         .unwrap()
-        .configure(
-            &[program_index, program_index.saturating_add(1)],
-            &instruction_accounts,
+        .configure_for_tests(
+            vec![program_index, program_index.saturating_add(1)],
+            instruction_accounts,
             &instruction_data,
         );
     invoke_context.push().unwrap();
@@ -537,7 +534,8 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        false, // direct_mapping
+        false, // stricter_abi_and_runtime_constraints
+        false, // account_data_direct_mapping
         true,  // for mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();

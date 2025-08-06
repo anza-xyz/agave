@@ -64,7 +64,7 @@ impl PacketBatchSender {
     }
 
     /// Receive verified packets from the channel `packet_batch_receiver`
-    /// and send them to the desintations.
+    /// and send them to the destinations.
     fn recv_send(
         send_sock: UdpSocket,
         packet_batch_receiver: BankingPacketReceiver,

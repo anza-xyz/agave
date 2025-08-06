@@ -3,7 +3,8 @@ use {
         epoch_rewards_hasher::hash_rewards_into_partitions, Bank,
         CalculateRewardsAndDistributeVoteRewardsResult, CalculateValidatorRewardsResult,
         EpochRewardCalculateParamInfo, PartitionedRewardsCalculation, PartitionedStakeReward,
-        StakeRewardCalculation, VoteRewardsAccounts, REWARD_CALCULATION_NUM_BLOCKS,
+        StakeRewardCalculation, VoteRewardsAccounts, VoteRewardsAccountsStorable,
+        REWARD_CALCULATION_NUM_BLOCKS,
     },
     crate::{
         bank::{
@@ -147,7 +148,7 @@ impl Bank {
         self.store_vote_accounts_partitioned(vote_account_rewards, metrics);
 
         // update reward history of JUST vote_rewards, stake_rewards is vec![] here
-        self.update_reward_history(vec![], &vote_account_rewards.rewards[..]);
+        self.update_reward_history(vec![], vote_account_rewards);
 
         let StakeRewardCalculation {
             stake_rewards,
@@ -210,7 +211,11 @@ impl Bank {
         metrics: &RewardsMetrics,
     ) {
         let (_, measure_us) = measure_us!({
-            self.store_accounts((self.slot(), &vote_account_rewards.accounts_to_store[..]));
+            let storable = VoteRewardsAccountsStorable {
+                slot: self.slot(),
+                vote_rewards_accounts: vote_account_rewards,
+            };
+            self.store_accounts(storable);
         });
 
         metrics
@@ -606,10 +611,11 @@ mod tests {
                     post_balance: vote_reward_info.vote_rewards,
                     commission: Some(vote_reward_info.commission),
                 };
-                vote_rewards_account.rewards.push((*vote_key, info));
-                vote_rewards_account
-                    .accounts_to_store
-                    .push((*vote_key, vote_reward_info.vote_account.clone()));
+                vote_rewards_account.accounts_with_rewards.push((
+                    *vote_key,
+                    info,
+                    vote_reward_info.vote_account.clone(),
+                ));
                 vote_rewards_account.total_vote_rewards_lamports += vote_reward_info.vote_rewards;
             });
 
@@ -619,7 +625,7 @@ mod tests {
         bank.store_vote_accounts_partitioned(&vote_rewards_account, &metrics);
         assert_eq!(
             expected_vote_rewards_num,
-            vote_rewards_account.accounts_to_store.len()
+            vote_rewards_account.accounts_with_rewards.len()
         );
         assert_eq!(
             vote_rewards
@@ -654,7 +660,7 @@ mod tests {
         let total_vote_rewards = vote_rewards.total_vote_rewards_lamports;
 
         bank.store_vote_accounts_partitioned(&vote_rewards, &metrics);
-        assert_eq!(expected, vote_rewards.accounts_to_store.len());
+        assert_eq!(expected, vote_rewards.accounts_with_rewards.len());
         assert_eq!(0, total_vote_rewards);
     }
 
@@ -688,9 +694,9 @@ mod tests {
             .stake_reward_calculation;
 
         let total_vote_rewards: u64 = vote_rewards
-            .rewards
+            .accounts_with_rewards
             .iter()
-            .map(|reward| reward.1.lamports)
+            .map(|(_, reward_info, _)| reward_info.lamports)
             .sum::<i64>() as u64;
 
         // assert that total rewards matches the sum of vote rewards and stake rewards
@@ -800,18 +806,18 @@ mod tests {
         let vote_state = VoteState::deserialize(vote_account.data()).unwrap();
 
         assert_eq!(
-            vote_rewards_accounts.rewards.len(),
-            vote_rewards_accounts.accounts_to_store.len()
+            vote_rewards_accounts.accounts_with_rewards.len(),
+            vote_rewards_accounts.accounts_with_rewards.len()
         );
-        assert_eq!(vote_rewards_accounts.rewards.len(), 1);
-        let rewards = &vote_rewards_accounts.rewards[0];
-        let account = &vote_rewards_accounts.accounts_to_store[0].1;
+        assert_eq!(vote_rewards_accounts.accounts_with_rewards.len(), 1);
+        let (vote_pubkey_from_result, rewards, account) =
+            &vote_rewards_accounts.accounts_with_rewards[0];
         let vote_rewards = 0;
         let commission = vote_state.commission;
         assert_eq!(account.lamports(), vote_account.lamports());
         assert!(accounts_equal(account, &vote_account));
         assert_eq!(
-            rewards.1,
+            *rewards,
             RewardInfo {
                 reward_type: RewardType::Voting,
                 lamports: vote_rewards as i64,
@@ -819,7 +825,7 @@ mod tests {
                 commission: Some(commission),
             }
         );
-        assert_eq!(&rewards.0, vote_pubkey);
+        assert_eq!(vote_pubkey_from_result, vote_pubkey);
 
         assert_eq!(stake_reward_calculation.stake_rewards.len(), 1);
         let expected_reward = {

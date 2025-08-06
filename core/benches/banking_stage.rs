@@ -21,7 +21,6 @@ use {
     solana_core::{banking_stage::BankingStage, banking_trace::BankingTracer},
     solana_entry::entry::{next_hash, Entry},
     solana_genesis_config::GenesisConfig,
-    solana_gossip::cluster_info::{ClusterInfo, Node},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
@@ -39,7 +38,6 @@ use {
     },
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::instruction as system_instruction,
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
@@ -236,17 +234,10 @@ fn bench_banking(
     );
     let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
         create_test_recorder(bank.clone(), blockstore, None, None);
-    let cluster_info = {
-        let keypair = Arc::new(Keypair::new());
-        let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
-        ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
-    };
-    let cluster_info = Arc::new(cluster_info);
     let (s, _r) = unbounded();
     let _banking_stage = BankingStage::new(
         block_production_method,
         transaction_struct,
-        &cluster_info,
         &poh_recorder,
         transaction_recorder,
         non_vote_receiver,

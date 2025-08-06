@@ -8,7 +8,7 @@ use {
     solana_pubkey::Pubkey,
     solana_system_interface::program as system_program,
     solana_test_validator::{TestValidator, TestValidatorGenesis},
-    spl_token::state::{Account as TokenAccount, Mint},
+    spl_token_interface::state::{Account as TokenAccount, Mint},
 };
 
 const SLOTS_PER_EPOCH: u64 = 50;
@@ -54,7 +54,7 @@ pub fn mint_account() -> AccountSharedData {
         .unwrap();
         data
     };
-    let mut account = AccountSharedData::new(100_000_000, data.len(), &spl_token::id());
+    let mut account = AccountSharedData::new(100_000_000, data.len(), &spl_token_interface::id());
     account.set_data_from_slice(&data);
     account
 }
@@ -71,7 +71,7 @@ pub fn token_account(owner: &Pubkey, mint: &Pubkey, amount: u64) -> AccountShare
                 mint: *mint,
                 owner: *owner,
                 amount,
-                state: spl_token::state::AccountState::Initialized,
+                state: spl_token_interface::state::AccountState::Initialized,
                 ..Default::default()
             },
             &mut data,
@@ -79,7 +79,7 @@ pub fn token_account(owner: &Pubkey, mint: &Pubkey, amount: u64) -> AccountShare
         .unwrap();
         data
     };
-    let mut account = AccountSharedData::new(100_000_000, data.len(), &spl_token::id());
+    let mut account = AccountSharedData::new(100_000_000, data.len(), &spl_token_interface::id());
     account.set_data_from_slice(&data);
     account
 }

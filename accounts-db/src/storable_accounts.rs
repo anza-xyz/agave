@@ -362,12 +362,10 @@ pub mod tests {
             account_info::{AccountInfo, StorageLocation},
             accounts_db::{get_temp_accounts_paths, AccountStorageEntry},
             accounts_file::AccountsFileProvider,
-            accounts_hash::AccountHash,
             append_vec::{AccountMeta, StoredAccountMeta, StoredMeta},
         },
         rand::Rng,
         solana_account::{accounts_equal, AccountSharedData, WritableAccount},
-        solana_hash::Hash,
         std::sync::Arc,
     };
 
@@ -553,14 +551,12 @@ pub mod tests {
         let data = Vec::default();
         let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
         let stored_size = 101;
-        let hash = AccountHash(Hash::new_unique());
         let stored_account = StoredAccountMeta {
             meta: &meta,
             account_meta: &account_meta,
             data: &data,
             offset,
             stored_size,
-            hash: &hash,
         };
 
         let account_from_storage = AccountFromStorage::new(&stored_account);
@@ -587,7 +583,6 @@ pub mod tests {
                 for starting_slot in 0..max_slots {
                     let db = AccountsDb::new_single_for_tests();
                     let data = Vec::default();
-                    let hash = AccountHash(Hash::new_unique());
                     let mut raw = Vec::new();
                     let mut raw2 = Vec::new();
                     let mut raw4 = Vec::new();
@@ -628,7 +623,6 @@ pub mod tests {
                             data: &data,
                             offset,
                             stored_size,
-                            hash: &hash,
                         });
                         raw4.push((raw.0, raw.1.clone()));
                     }
@@ -724,9 +718,6 @@ pub mod tests {
     fn test_storable_accounts_by_slot() {
         for entries in 0..6 {
             let data = Vec::default();
-            let hashes = (0..entries)
-                .map(|_| AccountHash(Hash::new_unique()))
-                .collect::<Vec<_>>();
             let mut raw = Vec::new();
             let mut raw2 = Vec::new();
             for entry in 0..entries {
@@ -764,7 +755,6 @@ pub mod tests {
                     data: &data,
                     offset,
                     stored_size,
-                    hash: &hashes[entry as usize],
                 });
             }
 
@@ -866,7 +856,6 @@ pub mod tests {
             data: &[],
             offset: 0,
             stored_size: 0,
-            hash: &AccountHash(Hash::new_unique()),
         });
 
         let mut slot_accounts = Vec::new();

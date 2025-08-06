@@ -1595,6 +1595,80 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         removed || missing_in_accounts_index
     }
 
+    /// Clean the slot list by removing all slot_list items older than the max_slot
+    /// Decrease the reference count of the entry by the number of removed accounts.
+    /// Returns the slot and account_info of the remaining entry in the slot list
+    /// Note: This must only be called on startup, and reclaims
+    /// must be reclaimed.
+    fn clean_and_unref_slot_list_on_startup(
+        &self,
+        entry: &AccountMapEntry<T>,
+        reclaims: &mut SlotList<T>,
+    ) -> (u64, T) {
+        let mut slot_list = entry.slot_list.write().unwrap();
+        let max_slot = slot_list
+            .iter()
+            .map(|(slot, _account)| *slot)
+            .max()
+            .expect("Slot list has entries");
+
+        let mut reclaim_count = 0;
+
+        slot_list.retain(|(slot, value)| {
+            // keep the newest entry, and reclaim all others
+            if *slot < max_slot {
+                assert!(!value.is_cached(), "Unsafe to reclaim cached entries");
+                reclaims.push((*slot, *value));
+                reclaim_count += 1;
+                false
+            } else {
+                true
+            }
+        });
+
+        // Unref
+        entry.unref_by_count(reclaim_count);
+        assert_eq!(
+            entry.ref_count(),
+            1,
+            "ref count should be one after cleaning all entries"
+        );
+
+        entry.set_dirty(true);
+
+        // Return the last entry in the slot list, which is the only one
+        *slot_list
+            .last()
+            .expect("Slot list should have at least one entry after cleaning")
+    }
+
+    /// Cleans and unrefs all older rooted entries for each pubkey in the accounts index.
+    /// Calls passed in callback on the remaining slot entry
+    /// All pubkeys must be from a single bin
+    pub fn clean_and_unref_rooted_entries_by_bin(
+        &self,
+        pubkeys_by_bin: &[Pubkey],
+        callback: impl Fn(Slot, T),
+    ) -> SlotList<T> {
+        let mut reclaims = Vec::new();
+
+        let map = match pubkeys_by_bin.first() {
+            Some(pubkey) => self.get_bin(pubkey),
+            None => return reclaims, // no pubkeys to process, return
+        };
+
+        for pubkey in pubkeys_by_bin {
+            map.get_internal_inner(pubkey, |entry| {
+                let entry = entry.expect("Expected entry to exist in accounts index");
+                let (slot, account_info) =
+                    self.clean_and_unref_slot_list_on_startup(entry, &mut reclaims);
+                callback(slot, account_info);
+                (false, ())
+            });
+        }
+        reclaims
+    }
+
     /// When can an entry be purged?
     ///
     /// If we get a slot update where slot != newest_root_in_slot_list for an account where slot <
@@ -1855,7 +1929,7 @@ pub mod tests {
         assert!(index.include_key(&pk2));
     }
 
-    const UPSERT_POPULATE_RECLAIMS: UpsertReclaim = UpsertReclaim::PopulateReclaims;
+    const UPSERT_RECLAIM_TEST_DEFAULT: UpsertReclaim = UpsertReclaim::PopulateReclaims;
 
     #[test]
     fn test_insert_no_ancestors() {
@@ -1870,7 +1944,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert!(gc.is_empty());
 
@@ -2013,6 +2087,126 @@ pub mod tests {
     }
 
     #[test]
+    fn test_clean_and_unref_rooted_entries_by_bin_empty() {
+        let index: AccountsIndex<bool, bool> = AccountsIndex::<bool, bool>::default_for_tests();
+        let pubkeys_by_bin: Vec<Pubkey> = vec![];
+
+        let reclaims =
+            index.clean_and_unref_rooted_entries_by_bin(&pubkeys_by_bin, |_slot, _info| {});
+
+        assert!(reclaims.is_empty());
+    }
+
+    #[test]
+    fn test_clean_and_unref_rooted_entries_by_bin_single_entry() {
+        let index = AccountsIndex::<bool, bool>::default_for_tests();
+        let pubkey = solana_pubkey::new_rand();
+        let slot = 0;
+        let account_info = true;
+
+        let mut gc = Vec::new();
+        index.upsert(
+            slot,
+            slot,
+            &pubkey,
+            &AccountSharedData::default(),
+            &AccountSecondaryIndexes::default(),
+            account_info,
+            &mut gc,
+            UPSERT_RECLAIM_TEST_DEFAULT,
+        );
+
+        assert!(gc.is_empty());
+
+        let reclaims = index.clean_and_unref_rooted_entries_by_bin(&[pubkey], |slot, info| {
+            assert_eq!(slot, 0);
+            assert!(info);
+        });
+
+        assert_eq!(reclaims.len(), 0);
+    }
+
+    #[test]
+    fn test_clean_and_unref_rooted_entries_by_bin_with_reclaim() {
+        let index = AccountsIndex::<u64, u64>::default_for_tests();
+        let pubkey = solana_pubkey::new_rand();
+        let slot1 = 0;
+        let slot2 = 1;
+        let account_info1 = 0;
+        let account_info2 = 1;
+
+        let mut gc = Vec::new();
+        for (slot, account_info) in [(slot1, account_info1), (slot2, account_info2)] {
+            index.upsert(
+                slot,
+                slot,
+                &pubkey,
+                &AccountSharedData::default(),
+                &AccountSecondaryIndexes::default(),
+                account_info,
+                &mut gc,
+                UpsertReclaim::IgnoreReclaims,
+            );
+        }
+
+        assert!(gc.is_empty());
+
+        let reclaims = index.clean_and_unref_rooted_entries_by_bin(&[pubkey], |slot, info| {
+            assert_eq!(slot, slot2);
+            assert_eq!(info, account_info2);
+        });
+
+        assert_eq!(reclaims, vec![(slot1, account_info1)]);
+    }
+
+    #[test]
+    fn test_clean_and_unref_rooted_entries_by_bin_multiple_pubkeys() {
+        let index: AccountsIndex<bool, bool> = AccountsIndex::<bool, bool>::default_for_tests();
+        let bin_index = 0;
+        let mut pubkeys = Vec::new();
+        let mut expected_reclaims = Vec::new();
+        let mut gc: Vec<(u64, bool)> = Vec::new();
+
+        while pubkeys.len() < 10 {
+            let new_pubkey = solana_pubkey::new_rand();
+
+            // Ensure the pubkey is in the desired bin
+            if index.bin_calculator.bin_from_pubkey(&new_pubkey) == bin_index {
+                pubkeys.push(new_pubkey);
+            }
+        }
+
+        for (i, pubkey) in pubkeys.iter().enumerate() {
+            let num_inserts: u64 = i as u64 % 4 + 1;
+
+            for slot in 0..num_inserts {
+                if slot > 0 {
+                    expected_reclaims.push((slot - 1, true));
+                }
+                index.upsert(
+                    slot,
+                    slot,
+                    pubkey,
+                    &AccountSharedData::default(),
+                    &AccountSecondaryIndexes::default(),
+                    true,
+                    &mut gc,
+                    UpsertReclaim::IgnoreReclaims,
+                );
+            }
+        }
+
+        assert!(gc.is_empty());
+
+        let mut reclaims = index.clean_and_unref_rooted_entries_by_bin(&pubkeys, |_slot, _info| {});
+        reclaims.sort_unstable();
+        expected_reclaims.sort_unstable();
+
+        assert!(!reclaims.is_empty());
+        assert_eq!(reclaims, expected_reclaims);
+    }
+
+    #[test]
     fn test_new_entry() {
         for store_raw in [false, true] {
             for to_raw_first in [false, true] {
@@ -2120,7 +2314,7 @@ pub mod tests {
                 &AccountSecondaryIndexes::default(),
                 account_infos[0],
                 &mut gc,
-                UPSERT_POPULATE_RECLAIMS,
+                UPSERT_RECLAIM_TEST_DEFAULT,
             );
         } else {
             let items = vec![(key, account_infos[0])];
@@ -2161,7 +2355,7 @@ pub mod tests {
                 &AccountSecondaryIndexes::default(),
                 account_infos[1],
                 &mut gc,
-                UPSERT_POPULATE_RECLAIMS,
+                UPSERT_RECLAIM_TEST_DEFAULT,
             );
         } else {
             // this has the effect of aging out everything in the in-mem cache
@@ -2206,7 +2400,7 @@ pub mod tests {
                 test_new_entry_code_paths_helper([1.0, 2.0], true, *is_upsert, use_disk);
 
                 // account_info type that is NOT cached
-                test_new_entry_code_paths_helper([true, false], false, *is_upsert, use_disk);
+                test_new_entry_code_paths_helper([1, 2], false, *is_upsert, use_disk);
             }
         }
     }
@@ -2230,7 +2424,7 @@ pub mod tests {
             new_entry,
             None,
             &mut SlotList::default(),
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert_eq!(1, account_maps_stats_len(&index));
 
@@ -2270,7 +2464,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert!(gc.is_empty());
 
@@ -2394,7 +2588,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert!(gc.is_empty());
 
@@ -2443,7 +2637,7 @@ pub mod tests {
                 &AccountSecondaryIndexes::default(),
                 true,
                 &mut vec![],
-                UPSERT_POPULATE_RECLAIMS,
+                UPSERT_RECLAIM_TEST_DEFAULT,
             );
             new_pubkey
         })
@@ -2460,7 +2654,7 @@ pub mod tests {
                 &AccountSecondaryIndexes::default(),
                 true,
                 &mut vec![],
-                UPSERT_POPULATE_RECLAIMS,
+                UPSERT_RECLAIM_TEST_DEFAULT,
             );
         }
 
@@ -2515,7 +2709,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert!(gc.is_empty());
 
@@ -2552,7 +2746,7 @@ pub mod tests {
     #[test]
     fn test_update_last_wins() {
         let key = solana_pubkey::new_rand();
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
+        let index = AccountsIndex::<u64, u64>::default_for_tests();
         let ancestors = vec![(0, 0)].into_iter().collect();
         let mut gc = Vec::new();
         index.upsert(
@@ -2561,9 +2755,9 @@ pub mod tests {
             &key,
             &AccountSharedData::default(),
             &AccountSecondaryIndexes::default(),
-            true,
+            1,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert!(gc.is_empty());
         index
@@ -2574,7 +2768,7 @@ pub mod tests {
                 false,
                 |(slot, account_info)| {
                     assert_eq!(slot, 0);
-                    assert!(account_info);
+                    assert_eq!(account_info, 1);
                 },
             )
             .unwrap();
@@ -2586,11 +2780,11 @@ pub mod tests {
             &key,
             &AccountSharedData::default(),
             &AccountSecondaryIndexes::default(),
-            false,
+            0,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
-        assert_eq!(gc, vec![(0, true)]);
+        assert_eq!(gc, vec![(0, 1)]);
         index
             .get_with_and_then(
                 &key,
@@ -2599,7 +2793,7 @@ pub mod tests {
                 false,
                 |(slot, account_info)| {
                     assert_eq!(slot, 0);
-                    assert!(!account_info);
+                    assert_eq!(account_info, 0);
                 },
             )
             .unwrap();
@@ -2620,7 +2814,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert!(gc.is_empty());
         index.upsert(
@@ -2631,7 +2825,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             false,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert!(gc.is_empty());
         index
@@ -2674,7 +2868,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert!(gc.is_empty());
         index.upsert(
@@ -2685,7 +2879,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             false,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         index.upsert(
             2,
@@ -2695,7 +2889,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         index.upsert(
             3,
@@ -2705,7 +2899,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         index.add_root(0);
         index.add_root(1);
@@ -2718,7 +2912,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
 
         // Updating index should not purge older roots, only purges
@@ -2767,7 +2961,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             12,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert_eq!(1, account_maps_stats_len(&index));
 
@@ -2779,7 +2973,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             10,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert_eq!(1, account_maps_stats_len(&index));
 
@@ -2799,7 +2993,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             9,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert_eq!(1, account_maps_stats_len(&index));
     }
@@ -2888,7 +3082,7 @@ pub mod tests {
                 secondary_indexes,
                 true,
                 &mut vec![],
-                UPSERT_POPULATE_RECLAIMS,
+                UPSERT_RECLAIM_TEST_DEFAULT,
             );
         }
 
@@ -3063,7 +3257,7 @@ pub mod tests {
             &secondary_indexes,
             true,
             &mut vec![],
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
@@ -3077,7 +3271,7 @@ pub mod tests {
             &secondary_indexes,
             true,
             &mut vec![],
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
@@ -3202,7 +3396,7 @@ pub mod tests {
             secondary_indexes,
             true,
             &mut vec![],
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
 
         // Now write a different mint index for the same account
@@ -3214,7 +3408,7 @@ pub mod tests {
             secondary_indexes,
             true,
             &mut vec![],
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
 
         // Both pubkeys will now be present in the index
@@ -3234,7 +3428,7 @@ pub mod tests {
             secondary_indexes,
             true,
             &mut vec![],
-            UPSERT_POPULATE_RECLAIMS,
+            UPSERT_RECLAIM_TEST_DEFAULT,
         );
         assert_eq!(secondary_index.get(&secondary_key1), vec![account_key]);
 
@@ -3401,7 +3595,7 @@ pub mod tests {
                 &AccountSecondaryIndexes::default(),
                 value,
                 &mut gc,
-                UPSERT_POPULATE_RECLAIMS,
+                UPSERT_RECLAIM_TEST_DEFAULT,
             );
             assert!(gc.is_empty());
         }
@@ -3430,7 +3624,7 @@ pub mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "decremented ref count when already zero")]
+    #[should_panic(expected = "decremented ref count below zero")]
     fn test_illegal_unref() {
         let value = true;
         let key = solana_pubkey::new_rand();

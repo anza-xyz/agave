@@ -530,7 +530,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            shred::{ProcessShredsStats, Shred, ShredFlags},
+            shred::{ProcessShredsStats, Shred},
             shredder::{ReedSolomonCache, Shredder},
         },
         assert_matches::assert_matches,
@@ -551,19 +551,21 @@ mod tests {
         solana_logger::setup();
         let mut packet = Packet::default();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-        let mut shred = Shred::new_from_data(
-            slot,
-            0xc0de,
-            0xdead,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            0xc0de,
-        );
-        assert_eq!(shred.slot(), slot);
+        let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
         let keypair = Keypair::new();
-        shred.sign(&keypair);
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
+            &keypair,
+            &[],
+            true,
+            Some(Hash::default()),
+            0,
+            0,
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        );
+        let shred = shreds.pop().unwrap();
+        assert_eq!(shred.slot(), slot);
         trace!("signature {}", shred.signature());
         packet.buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
         packet.meta_mut().size = shred.payload().len();
@@ -586,43 +588,30 @@ mod tests {
 
     fn run_test_sigverify_shreds_cpu(thread_pool: &ThreadPool, slot: Slot) {
         solana_logger::setup();
-        let mut batch = PinnedPacketBatch::default();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-        let mut shred = Shred::new_from_data(
-            slot,
-            0xc0de,
-            0xdead,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            0xc0de,
-        );
         let keypair = Keypair::new();
-        shred.sign(&keypair);
-        batch.resize(1, Packet::default());
-        batch[0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        batch[0].meta_mut().size = shred.payload().len();
-        let batch = PacketBatch::from(batch);
+        let batch = make_packet_batch(&keypair, slot);
         let mut batches = [batch];
 
         let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
         let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots, &cache);
-        assert_eq!(rv, vec![vec![1]]);
+        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 1);
 
         let wrong_keypair = Keypair::new();
         let leader_slots = HashMap::from([(slot, wrong_keypair.pubkey())]);
         let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots, &cache);
-        assert_eq!(rv, vec![vec![0]]);
+        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 0);
 
         let leader_slots = HashMap::new();
         let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots, &cache);
-        assert_eq!(rv, vec![vec![0]]);
+        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 0);
 
         let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
-        batches[0].first_mut().unwrap().meta_mut().size = 0;
+        batches[0]
+            .iter_mut()
+            .for_each(|mut packet_ref| packet_ref.meta_mut().size = 0);
         let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots, &cache);
-        assert_eq!(rv, vec![vec![0]]);
+        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 0);
     }
 
     #[test]
@@ -636,23 +625,8 @@ mod tests {
         let recycler_cache = RecyclerCache::default();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
 
-        let mut batch = PinnedPacketBatch::default();
-        let mut shred = Shred::new_from_data(
-            slot,
-            0xc0de,
-            0xdead,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            0xc0de,
-        );
         let keypair = Keypair::new();
-        shred.sign(&keypair);
-        batch.resize(1, Packet::default());
-        batch[0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        batch[0].meta_mut().size = shred.payload().len();
-        let batch = PacketBatch::from(batch);
+        let batch = make_packet_batch(&keypair, slot);
         let mut batches = [batch];
 
         let leader_slots = HashMap::from([(u64::MAX, Pubkey::default()), (slot, keypair.pubkey())]);
@@ -663,7 +637,7 @@ mod tests {
             &recycler_cache,
             &cache,
         );
-        assert_eq!(rv, vec![vec![1]]);
+        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 1);
 
         let wrong_keypair = Keypair::new();
         let leader_slots = HashMap::from([
@@ -677,7 +651,7 @@ mod tests {
             &recycler_cache,
             &cache,
         );
-        assert_eq!(rv, vec![vec![0]]);
+        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 0);
 
         let leader_slots = HashMap::from([(u64::MAX, Pubkey::default())]);
         let rv = verify_shreds_gpu(
@@ -687,9 +661,11 @@ mod tests {
             &recycler_cache,
             &cache,
         );
-        assert_eq!(rv, vec![vec![0]]);
+        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 0);
 
-        batches[0].first_mut().unwrap().meta_mut().size = 0;
+        batches[0]
+            .iter_mut()
+            .for_each(|mut pr| pr.meta_mut().size = 0);
         let leader_slots = HashMap::from([(u64::MAX, Pubkey::default()), (slot, keypair.pubkey())]);
         let rv = verify_shreds_gpu(
             thread_pool,
@@ -698,7 +674,29 @@ mod tests {
             &recycler_cache,
             &cache,
         );
-        assert_eq!(rv, vec![vec![0]]);
+        assert_eq!(rv.into_iter().flatten().all_equal_value().unwrap(), 0);
+    }
+
+    fn make_packet_batch(keypair: &Keypair, slot: u64) -> PacketBatch {
+        let mut batch = PinnedPacketBatch::default();
+        let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
+            keypair,
+            &[],
+            true,
+            Some(Hash::default()),
+            0,
+            0,
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        );
+        batch.resize(shreds.len(), Packet::default());
+        for i in 0..shreds.len() {
+            batch[i].buffer_mut()[..shreds[i].payload().len()].copy_from_slice(shreds[i].payload());
+            batch[i].meta_mut().size = shreds[i].payload().len();
+        }
+        PacketBatch::from(batch)
     }
 
     #[test]
@@ -748,14 +746,14 @@ mod tests {
             .flat_map(|(&slot, keypair)| {
                 let parent_slot = slot - rng.gen::<u16>().max(1) as Slot;
                 let num_entries = rng.gen_range(64..128);
-                let (data_shreds, coding_shreds) = Shredder::new(
+                Shredder::new(
                     slot,
                     parent_slot,
                     rng.gen_range(0..0x40), // reference_tick
                     rng.gen(),              // version
                 )
                 .unwrap()
-                .entries_to_shreds(
+                .make_merkle_shreds_from_entries(
                     keypair,
                     &make_entries(rng, num_entries),
                     is_last_in_slot,
@@ -763,22 +761,19 @@ mod tests {
                     chained.then(|| Hash::new_from_array(rng.gen())),
                     rng.gen_range(0..2671), // next_shred_index
                     rng.gen_range(0..2781), // next_code_index
-                    rng.gen(),              // merkle_variant,
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
-                );
-                [data_shreds, coding_shreds]
+                )
             })
-            .flatten()
             .collect();
         shreds.shuffle(rng);
-        // Assert that all shreds verfiy and sanitize.
+        // Assert that all shreds verify and sanitize.
         for shred in &shreds {
             let pubkey = keypairs[&shred.slot()].pubkey();
             assert!(shred.verify(&pubkey));
             assert_matches!(shred.sanitize(), Ok(()));
         }
-        // Verfiy using layout api.
+        // Verify using layout api.
         for shred in &shreds {
             let shred = shred.payload();
             let slot = shred::layout::get_slot(shred).unwrap();

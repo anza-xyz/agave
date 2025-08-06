@@ -7,18 +7,15 @@ use {
     log::{info, trace},
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
     solana_clock::Slot,
-    solana_core::{
-        accounts_hash_verifier::AccountsHashVerifier,
-        snapshot_packager_service::{PendingSnapshotPackages, SnapshotPackagerService},
-    },
+    solana_core::snapshot_packager_service::SnapshotPackagerService,
     solana_genesis_config::GenesisConfig,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_runtime::{
         accounts_background_service::{
-            AbsRequestHandlers, AccountsBackgroundService, PrunedBanksRequestHandler,
-            SendDroppedBankCallback, SnapshotRequestHandler,
+            AbsRequestHandlers, AccountsBackgroundService, PendingSnapshotPackages,
+            PrunedBanksRequestHandler, SendDroppedBankCallback, SnapshotRequestHandler,
         },
         bank::{Bank, BankTestConfig},
         bank_forks::BankForks,
@@ -173,7 +170,7 @@ where
     let bank_forks = snapshot_test_config.bank_forks.clone();
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
 
-    let (accounts_package_sender, _accounts_package_receiver) = crossbeam_channel::unbounded();
+    let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
     let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
     let snapshot_controller = Arc::new(SnapshotController::new(
         snapshot_request_sender.clone(),
@@ -183,7 +180,7 @@ where
     let snapshot_request_handler = SnapshotRequestHandler {
         snapshot_controller: snapshot_controller.clone(),
         snapshot_request_receiver,
-        accounts_package_sender,
+        pending_snapshot_packages,
     };
     for slot in 1..=last_slot {
         let bank = Bank::new_from_parent(
@@ -207,7 +204,7 @@ where
                 .unwrap()
                 .set_root(bank.slot(), Some(&snapshot_controller), None)
                 .unwrap();
-            snapshot_request_handler.handle_snapshot_requests(0, &AtomicBool::new(false));
+            snapshot_request_handler.handle_snapshot_requests(0);
         }
     }
 
@@ -401,7 +398,7 @@ fn test_bank_forks_incremental_snapshot() {
     let bank_forks = snapshot_test_config.bank_forks.clone();
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
 
-    let (accounts_package_sender, _accounts_package_receiver) = crossbeam_channel::unbounded();
+    let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
     let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
     let snapshot_controller = Arc::new(SnapshotController::new(
         snapshot_request_sender.clone(),
@@ -411,7 +408,7 @@ fn test_bank_forks_incremental_snapshot() {
     let snapshot_request_handler = SnapshotRequestHandler {
         snapshot_controller: snapshot_controller.clone(),
         snapshot_request_receiver,
-        accounts_package_sender,
+        pending_snapshot_packages,
     };
 
     let mut latest_full_snapshot_slot = None;
@@ -447,7 +444,7 @@ fn test_bank_forks_incremental_snapshot() {
                 .unwrap()
                 .set_root(bank.slot(), Some(&snapshot_controller), None)
                 .unwrap();
-            snapshot_request_handler.handle_snapshot_requests(0, &AtomicBool::new(false));
+            snapshot_request_handler.handle_snapshot_requests(0);
         }
 
         // Since AccountsBackgroundService isn't running, manually make a full snapshot archive
@@ -604,7 +601,6 @@ fn test_snapshots_with_background_services() {
 
     let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
     let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
-    let (accounts_package_sender, accounts_package_receiver) = unbounded();
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
 
     let bank_forks = snapshot_test_config.bank_forks.clone();
@@ -629,7 +625,7 @@ fn test_snapshots_with_background_services() {
     let snapshot_request_handler = SnapshotRequestHandler {
         snapshot_controller: snapshot_controller.clone(),
         snapshot_request_receiver,
-        accounts_package_sender: accounts_package_sender.clone(),
+        pending_snapshot_packages: pending_snapshot_packages.clone(),
     };
     let pruned_banks_request_handler = PrunedBanksRequestHandler {
         pruned_banks_receiver,
@@ -648,14 +644,6 @@ fn test_snapshots_with_background_services() {
         cluster_info.clone(),
         snapshot_controller.clone(),
         false,
-    );
-
-    let accounts_hash_verifier = AccountsHashVerifier::new(
-        accounts_package_sender,
-        accounts_package_receiver,
-        pending_snapshot_packages,
-        exit.clone(),
-        snapshot_controller.clone(),
     );
 
     let accounts_background_service =
@@ -778,6 +766,5 @@ fn test_snapshots_with_background_services() {
     info!("Shutting down background services...");
     exit.store(true, Ordering::Relaxed);
     _ = accounts_background_service.join();
-    _ = accounts_hash_verifier.join();
     _ = snapshot_packager_service.join();
 }

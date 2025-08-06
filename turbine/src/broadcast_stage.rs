@@ -580,7 +580,7 @@ pub mod test {
         crossbeam_channel::unbounded,
         rand::Rng,
         solana_entry::entry::create_ticks,
-        solana_gossip::cluster_info::{ClusterInfo, Node},
+        solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
@@ -615,15 +615,14 @@ pub mod test {
             slot, /*parent_slot:*/ 0, /*reference_tick:*/ 0, /*version:*/ 0,
         )
         .unwrap();
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &Keypair::new(),
             &entries,
             true, // is_last_in_slot
             // chained_merkle_root
             Some(Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index,
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index,
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );

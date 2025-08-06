@@ -610,7 +610,34 @@ fn setup_slot_recording(
     let record_slots = arg_matches.occurrences_of("record_slots") > 0;
     let verify_slots = arg_matches.occurrences_of("verify_slots") > 0;
     match (record_slots, verify_slots) {
-        (false, false) => (None, None),
+        (false, false) => {
+            // for regualr replay ledger, report cost-tracker-stats after each
+            // slot is confirmed.
+            let slot_callback = Arc::new(move |bank: &Bank| {
+                // Block must be frozen by this point
+                assert!(bank.is_frozen());
+
+                let (total_transaction_fee, total_priority_fee) = {
+                    let collector_fee_details = bank.get_collector_fee_details();
+                    (
+                        collector_fee_details.total_transaction_fee(),
+                        collector_fee_details.total_priority_fee(),
+                    )
+                };
+
+                let cost_tracker = bank.read_cost_tracker().unwrap();
+                let slot = bank.slot();
+                let is_leader_block = false;
+                cost_tracker.report_stats(
+                    slot,
+                    is_leader_block,
+                    total_transaction_fee,
+                    total_priority_fee,
+                );
+            });
+
+            (Some(slot_callback as ProcessSlotCallback), None)
+        }
         (true, true) => {
             // .default_value() does not work with .conflicts_with() in clap 2.33
             // .conflicts_with("verify_slots")
@@ -651,7 +678,10 @@ fn setup_slot_recording(
                 }));
 
                 (
-                    Some(TransactionStatusSender { sender }),
+                    Some(TransactionStatusSender {
+                        sender,
+                        dependency_tracker: None,
+                    }),
                     transaction_recorder,
                 )
             } else {
@@ -739,7 +769,7 @@ fn record_transactions(
     slots: Arc<Mutex<Vec<SlotDetails>>>,
 ) {
     for tsm in recv {
-        if let TransactionStatusMessage::Batch(batch) = tsm {
+        if let TransactionStatusMessage::Batch((batch, _work_sequence)) = tsm {
             assert_eq!(batch.transactions.len(), batch.commit_results.len());
 
             let transactions: Vec<_> = batch

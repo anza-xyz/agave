@@ -2,16 +2,17 @@
 //!
 //! This can be expensive since we have to walk the append vecs being cleaned up.
 
+mod pending_snapshot_packages;
 mod stats;
+pub use pending_snapshot_packages::PendingSnapshotPackages;
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
     crate::{
         bank::{Bank, BankSlotDelta, DropCallback},
         bank_forks::BankForks,
-        snapshot_bank_utils,
         snapshot_controller::SnapshotController,
-        snapshot_package::{AccountsPackage, AccountsPackageKind, SnapshotKind},
+        snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::SnapshotError,
     },
     crossbeam_channel::{Receiver, SendError, Sender},
@@ -26,7 +27,7 @@ use {
         fmt::{self, Debug, Formatter},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc, LazyLock, RwLock,
+            Arc, LazyLock, Mutex, RwLock,
         },
         thread::{self, sleep, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -131,7 +132,7 @@ pub enum SnapshotRequestKind {
 pub struct SnapshotRequestHandler {
     pub snapshot_controller: Arc<SnapshotController>,
     pub snapshot_request_receiver: SnapshotRequestReceiver,
-    pub accounts_package_sender: Sender<AccountsPackage>,
+    pub pending_snapshot_packages: Arc<Mutex<PendingSnapshotPackages>>,
 }
 
 impl SnapshotRequestHandler {
@@ -140,7 +141,6 @@ impl SnapshotRequestHandler {
     pub fn handle_snapshot_requests(
         &self,
         non_snapshot_time_us: u128,
-        exit: &AtomicBool,
     ) -> Option<Result<Slot, SnapshotError>> {
         let (snapshot_request, num_outstanding_requests, num_re_enqueued_requests) =
             self.get_next_snapshot_request()?;
@@ -156,13 +156,8 @@ impl SnapshotRequestHandler {
             ),
         );
 
-        let accounts_package_kind = new_accounts_package_kind(&snapshot_request)?;
-        Some(self.handle_snapshot_request(
-            non_snapshot_time_us,
-            snapshot_request,
-            accounts_package_kind,
-            exit,
-        ))
+        let snapshot_kind = new_snapshot_kind(&snapshot_request)?;
+        Some(self.handle_snapshot_request(non_snapshot_time_us, snapshot_request, snapshot_kind))
     }
 
     /// Get the next snapshot request to handle
@@ -185,8 +180,6 @@ impl SnapshotRequestHandler {
         let requests_len = requests.len();
         debug!("outstanding snapshot requests ({requests_len}): {requests:?}");
 
-        // NOTE: This code to select the next request is mirrored in AccountsHashVerifier.
-        // Please ensure they stay in sync.
         match requests_len {
             0 => None,
             1 => {
@@ -230,22 +223,21 @@ impl SnapshotRequestHandler {
         &self,
         non_snapshot_time_us: u128,
         snapshot_request: SnapshotRequest,
-        accounts_package_kind: AccountsPackageKind,
-        exit: &AtomicBool,
+        snapshot_kind: SnapshotKind,
     ) -> Result<Slot, SnapshotError> {
-        info!("handling snapshot request: {snapshot_request:?}, {accounts_package_kind:?}");
+        info!("handling snapshot request: {snapshot_request:?}, {snapshot_kind:?}");
         let mut total_time = Measure::start("snapshot_request_receiver_total_time");
         let SnapshotRequest {
             snapshot_root_bank,
             status_cache_slot_deltas,
-            request_kind,
+            request_kind: _,
             enqueued: _,
         } = snapshot_request;
 
         // we should not rely on the state of this validator until startup verification is complete
         assert!(snapshot_root_bank.has_initial_accounts_hash_verification_completed());
 
-        if accounts_package_kind == AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot) {
+        if snapshot_kind.is_full_snapshot() {
             // The latest full snapshot slot is what accounts-db uses to properly handle
             // zero lamport accounts.  We are handling a full snapshot request here, and
             // since taking a snapshot is not allowed to fail, we can update accounts-db now.
@@ -286,34 +278,22 @@ impl SnapshotRequestHandler {
         snapshot_root_bank.shrink_candidate_slots();
         shrink_time.stop();
 
-        // Snapshot the bank and send over an accounts package
+        // Snapshot the bank and send over a snapshot package
         let mut snapshot_time = Measure::start("snapshot_time");
-        let snapshot_storages = snapshot_bank_utils::get_snapshot_storages(&snapshot_root_bank);
-        let accounts_package = match request_kind {
-            SnapshotRequestKind::FullSnapshot | SnapshotRequestKind::IncrementalSnapshot => {
-                match &accounts_package_kind {
-                    AccountsPackageKind::Snapshot(_) => AccountsPackage::new_for_snapshot(
-                        accounts_package_kind,
-                        &snapshot_root_bank,
-                        snapshot_storages,
-                        status_cache_slot_deltas,
-                    ),
-                }
-            }
-        };
-        let send_result = self.accounts_package_sender.send(accounts_package);
-        if let Err(err) = send_result {
-            // Sending the accounts package should never fail *unless* we're shutting down.
-            let accounts_package = &err.0;
-            assert!(
-                exit.load(Ordering::Relaxed),
-                "Failed to send accounts package: {err}, {accounts_package:?}"
-            );
-        }
+        let snapshot_package = SnapshotPackage::new(
+            snapshot_kind,
+            &snapshot_root_bank,
+            snapshot_root_bank.get_snapshot_storages(None),
+            status_cache_slot_deltas,
+        );
+        self.pending_snapshot_packages
+            .lock()
+            .unwrap()
+            .push(snapshot_package);
         snapshot_time.stop();
         info!(
-            "Handled snapshot request. accounts package kind: {:?}, slot: {}, bank hash: {}",
-            accounts_package_kind,
+            "Handled snapshot request. snapshot kind: {:?}, slot: {}, bank hash: {}",
+            snapshot_kind,
             snapshot_root_bank.slot(),
             snapshot_root_bank.hash(),
         );
@@ -433,10 +413,9 @@ impl AbsRequestHandlers {
     pub fn handle_snapshot_requests(
         &self,
         non_snapshot_time_us: u128,
-        exit: &AtomicBool,
     ) -> Option<Result<Slot, SnapshotError>> {
         self.snapshot_request_handler
-            .handle_snapshot_requests(non_snapshot_time_us, exit)
+            .handle_snapshot_requests(non_snapshot_time_us)
     }
 }
 
@@ -519,9 +498,7 @@ impl AccountsBackgroundService {
                         // background threads, and these must not happen concurrently.
                         let snapshot_handle_result = bank
                             .has_initial_accounts_hash_verification_completed()
-                            .then(|| {
-                                request_handlers.handle_snapshot_requests(non_snapshot_time, &exit)
-                            })
+                            .then(|| request_handlers.handle_snapshot_requests(non_snapshot_time))
                             .flatten();
 
                         if let Some(snapshot_handle_result) = snapshot_handle_result {
@@ -683,13 +660,11 @@ impl AbsStatus {
     }
 }
 
-/// Get the AccountsPackageKind from a given SnapshotRequest
+/// Get the SnapshotKind from a given SnapshotRequest
 #[must_use]
-fn new_accounts_package_kind(snapshot_request: &SnapshotRequest) -> Option<AccountsPackageKind> {
+fn new_snapshot_kind(snapshot_request: &SnapshotRequest) -> Option<SnapshotKind> {
     match snapshot_request.request_kind {
-        SnapshotRequestKind::FullSnapshot => {
-            Some(AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot))
-        }
+        SnapshotRequestKind::FullSnapshot => Some(SnapshotKind::FullSnapshot),
         SnapshotRequestKind::IncrementalSnapshot => {
             if let Some(latest_full_snapshot_slot) = snapshot_request
                 .snapshot_root_bank
@@ -698,9 +673,7 @@ fn new_accounts_package_kind(snapshot_request: &SnapshotRequest) -> Option<Accou
                 .accounts_db
                 .latest_full_snapshot_slot()
             {
-                Some(AccountsPackageKind::Snapshot(
-                    SnapshotKind::IncrementalSnapshot(latest_full_snapshot_slot),
-                ))
+                Some(SnapshotKind::IncrementalSnapshot(latest_full_snapshot_slot))
             } else {
                 warn!(
                     "Ignoring IncrementalSnapshot request for slot {} because there is no latest \
@@ -813,7 +786,7 @@ mod test {
             ..SnapshotConfig::default()
         };
 
-        let (accounts_package_sender, _accounts_package_receiver) = crossbeam_channel::unbounded();
+        let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
         let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
         let snapshot_controller = Arc::new(SnapshotController::new(
             snapshot_request_sender.clone(),
@@ -823,7 +796,7 @@ mod test {
         let snapshot_request_handler = SnapshotRequestHandler {
             snapshot_controller,
             snapshot_request_receiver,
-            accounts_package_sender,
+            pending_snapshot_packages,
         };
 
         let send_snapshot_request = |snapshot_root_bank, request_kind| {

@@ -73,7 +73,6 @@ cat > "$CONFIG_FILE" <<EOF
     { "source": "/validator/best-practices/security", "destination": "/operations/best-practices/security" },
     { "source": "/validator/overview/running-validator-or-rpc-node", "destination": "/operations/validator-or-rpc-node" },
     { "source": "/validator/overview/validator-prerequisites", "destination": "/operations/prerequisites" },
-    { "source": "/validator/overview/validator-initiatives", "destination": "/operations/validator-initiatives" },
     { "source": "/running-validator/validator-reqs", "destination": "/operations/requirements" },
     { "source": "/running-validator/validator-troubleshoot", "destination": "/operations/guides/validator-troubleshoot" },
     { "source": "/running-validator/validator-start", "destination": "/operations/guides/validator-start" },

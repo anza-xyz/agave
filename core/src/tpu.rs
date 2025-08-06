@@ -46,17 +46,16 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rpc::{
-        optimistically_confirmed_bank_tracker::BankNotificationSender,
+        optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
-        root_bank_cache::RootBankCache,
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_streamer::{
-        quic::{spawn_server_multi, QuicServerParams, SpawnServerResult},
+        quic::{spawn_server, QuicServerParams, SpawnServerResult},
         streamer::StakedNodes,
     },
     solana_turbine::{
@@ -126,7 +125,7 @@ impl Tpu {
         entry_receiver: Receiver<WorkingBankEntry>,
         retransmit_slots_receiver: Receiver<Slot>,
         sockets: TpuSockets,
-        subscriptions: &Arc<RpcSubscriptions>,
+        subscriptions: Option<Arc<RpcSubscriptions>>,
         transaction_status_sender: Option<TransactionStatusSender>,
         entry_notification_sender: Option<EntryNotifierSender>,
         blockstore: Arc<Blockstore>,
@@ -140,7 +139,7 @@ impl Tpu {
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_vote_receiver: ReplayVoteReceiver,
         replay_vote_sender: ReplayVoteSender,
-        bank_notification_sender: Option<BankNotificationSender>,
+        bank_notification_sender: Option<BankNotificationSenderConfig>,
         tpu_coalesce: Duration,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
         client: ForwardingClientOption,
@@ -213,7 +212,7 @@ impl Tpu {
             endpoints: _,
             thread: tpu_vote_quic_t,
             key_updater: vote_streamer_key_updater,
-        } = spawn_server_multi(
+        } = spawn_server(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
             tpu_vote_quic_sockets,
@@ -231,7 +230,7 @@ impl Tpu {
                 endpoints: _,
                 thread: tpu_quic_t,
                 key_updater,
-            } = spawn_server_multi(
+            } = spawn_server(
                 "solQuicTpu",
                 "quic_streamer_tpu",
                 transactions_quic_sockets,
@@ -253,7 +252,7 @@ impl Tpu {
                 endpoints: _,
                 thread: tpu_forwards_quic_t,
                 key_updater: forwards_key_updater,
-            } = spawn_server_multi(
+            } = spawn_server(
                 "solQuicTpuFwd",
                 "quic_streamer_tpu_forwards",
                 transactions_forwards_quic_sockets,
@@ -315,7 +314,7 @@ impl Tpu {
             gossip_vote_sender,
             vote_tracker,
             bank_forks.clone(),
-            subscriptions.clone(),
+            subscriptions,
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
             replay_vote_receiver,
@@ -327,7 +326,6 @@ impl Tpu {
         let banking_stage = BankingStage::new(
             block_production_method,
             transaction_struct,
-            cluster_info,
             poh_recorder,
             transaction_recorder,
             non_vote_receiver,
@@ -347,7 +345,7 @@ impl Tpu {
             forward_stage_receiver,
             client,
             vote_forwarding_client_socket,
-            RootBankCache::new(bank_forks.clone()),
+            bank_forks.read().unwrap().sharable_root_bank(),
             ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
             DataBudget::default(),
         );

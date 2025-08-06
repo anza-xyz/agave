@@ -11,17 +11,12 @@ use {
     solana_accounts_db::{
         account_info::{AccountInfo, StorageLocation},
         accounts::{AccountAddressFilter, Accounts},
-        accounts_db::{
-            test_utils::create_test_accounts, AccountFromStorage, AccountsDb,
-            VerifyAccountsHashAndLamportsConfig, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
-        },
+        accounts_db::{AccountFromStorage, AccountsDb, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS},
         accounts_index::ScanConfig,
         ancestors::Ancestors,
     },
-    solana_clock::Epoch,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_sysvar::epoch_schedule::EpochSchedule,
     std::{
         collections::{HashMap, HashSet},
         path::PathBuf,
@@ -42,68 +37,6 @@ fn new_accounts_db(account_paths: Vec<PathBuf>) -> AccountsDb {
         None,
         Arc::default(),
     )
-}
-
-#[bench]
-fn bench_accounts_hash_bank_hash(bencher: &mut Bencher) {
-    let accounts_db = new_accounts_db(vec![PathBuf::from("bench_accounts_hash_internal")]);
-    let accounts = Accounts::new(Arc::new(accounts_db));
-    let mut pubkeys: Vec<Pubkey> = vec![];
-    let num_accounts = 60_000;
-    let slot = 0;
-    create_test_accounts(&accounts, &mut pubkeys, num_accounts, slot);
-    let ancestors = Ancestors::from(vec![0]);
-    let (_, total_lamports) = accounts
-        .accounts_db
-        .update_accounts_hash_for_tests(0, &ancestors, false, false);
-    accounts.add_root(slot);
-    accounts.accounts_db.flush_accounts_cache(true, Some(slot));
-    bencher.iter(|| {
-        assert!(accounts
-            .accounts_db
-            .verify_accounts_hash_and_lamports_for_tests(
-                0,
-                total_lamports,
-                VerifyAccountsHashAndLamportsConfig {
-                    ancestors: &ancestors,
-                    epoch_schedule: &EpochSchedule::default(),
-                    epoch: Epoch::default(),
-                    ignore_mismatch: false,
-                    store_detailed_debug_info: false,
-                    use_bg_thread_pool: false,
-                }
-            )
-            .is_ok())
-    });
-}
-
-#[bench]
-fn bench_update_accounts_hash(bencher: &mut Bencher) {
-    solana_logger::setup();
-    let accounts_db = new_accounts_db(vec![PathBuf::from("update_accounts_hash")]);
-    let accounts = Accounts::new(Arc::new(accounts_db));
-    let mut pubkeys: Vec<Pubkey> = vec![];
-    create_test_accounts(&accounts, &mut pubkeys, 50_000, 0);
-    accounts.accounts_db.add_root_and_flush_write_cache(0);
-    let ancestors = Ancestors::from(vec![0]);
-    bencher.iter(|| {
-        accounts
-            .accounts_db
-            .update_accounts_hash_for_tests(0, &ancestors, false, false);
-    });
-}
-
-#[bench]
-fn bench_accounts_delta_hash(bencher: &mut Bencher) {
-    solana_logger::setup();
-    let accounts_db = new_accounts_db(vec![PathBuf::from("accounts_delta_hash")]);
-    let accounts = Accounts::new(Arc::new(accounts_db));
-    let mut pubkeys: Vec<Pubkey> = vec![];
-    create_test_accounts(&accounts, &mut pubkeys, 100_000, 0);
-    accounts.accounts_db.add_root_and_flush_write_cache(0);
-    bencher.iter(|| {
-        accounts.accounts_db.calculate_accounts_delta_hash(0);
-    });
 }
 
 #[bench]

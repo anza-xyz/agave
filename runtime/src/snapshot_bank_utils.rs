@@ -24,7 +24,7 @@ use {
         },
         snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
-        snapshot_package::{AccountsPackage, AccountsPackageKind, SnapshotKind, SnapshotPackage},
+        snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::{
             self, deserialize_snapshot_data_file, get_highest_bank_snapshot_post,
             get_highest_full_snapshot_archive_info, get_highest_incremental_snapshot_archive_info,
@@ -38,8 +38,7 @@ use {
     bincode::{config::Options, serialize_into},
     log::*,
     solana_accounts_db::{
-        accounts_db::{AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId},
-        accounts_hash::MerkleOrLatticeAccountsHash,
+        accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::remove_dir_contents,
     },
@@ -720,23 +719,6 @@ fn _verify_epoch_stakes(
     Ok(())
 }
 
-/// Get the snapshot storages for this bank
-pub fn get_snapshot_storages(bank: &Bank) -> Vec<Arc<AccountStorageEntry>> {
-    let mut measure_snapshot_storages = Measure::start("snapshot-storages");
-    let snapshot_storages = bank.get_snapshot_storages(None);
-    measure_snapshot_storages.stop();
-    datapoint_info!(
-        "get_snapshot_storages",
-        (
-            "snapshot-storages-time-ms",
-            measure_snapshot_storages.as_ms(),
-            i64
-        ),
-    );
-
-    snapshot_storages
-}
-
 /// Convenience function to create a full snapshot archive out of any Bank, regardless of state.
 /// The Bank will be frozen during the process.
 /// This is only called from ledger-tool or tests. Warping is a special case as well.
@@ -789,17 +771,12 @@ fn bank_to_full_snapshot_archive_with(
     bank.force_flush_accounts_cache();
     bank.clean_accounts();
 
-    let merkle_or_lattice_accounts_hash = MerkleOrLatticeAccountsHash::Lattice;
-    let snapshot_storages = bank.get_snapshot_storages(None);
-    let status_cache_slot_deltas = bank.status_cache.read().unwrap().root_slot_deltas();
-    let accounts_package = AccountsPackage::new_for_snapshot(
-        AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
+    let snapshot_package = SnapshotPackage::new(
+        SnapshotKind::FullSnapshot,
         bank,
-        snapshot_storages,
-        status_cache_slot_deltas,
+        bank.get_snapshot_storages(None),
+        bank.status_cache.read().unwrap().root_slot_deltas(),
     );
-    let snapshot_package =
-        SnapshotPackage::new(accounts_package, merkle_or_lattice_accounts_hash, None);
 
     let snapshot_config = SnapshotConfig {
         full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
@@ -849,20 +826,11 @@ pub fn bank_to_incremental_snapshot_archive(
     bank.force_flush_accounts_cache();
     bank.clean_accounts();
 
-    let (merkle_or_lattice_accounts_hash, bank_incremental_snapshot_persistence) =
-        (MerkleOrLatticeAccountsHash::Lattice, None);
-    let snapshot_storages = bank.get_snapshot_storages(Some(full_snapshot_slot));
-    let status_cache_slot_deltas = bank.status_cache.read().unwrap().root_slot_deltas();
-    let accounts_package = AccountsPackage::new_for_snapshot(
-        AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(full_snapshot_slot)),
-        bank,
-        snapshot_storages,
-        status_cache_slot_deltas,
-    );
     let snapshot_package = SnapshotPackage::new(
-        accounts_package,
-        merkle_or_lattice_accounts_hash,
-        bank_incremental_snapshot_persistence,
+        SnapshotKind::IncrementalSnapshot(full_snapshot_slot),
+        bank,
+        bank.get_snapshot_storages(Some(full_snapshot_slot)),
+        bank.status_cache.read().unwrap().root_slot_deltas(),
     );
 
     // Note: Since the snapshot_storages above are *only* the incremental storages,
@@ -1916,7 +1884,7 @@ mod tests {
         let bank_test_config = BankTestConfig {
             accounts_db_config: AccountsDbConfig {
                 storage_access,
-                ..AccountsDbConfig::default()
+                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
             },
         };
 

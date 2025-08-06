@@ -24,7 +24,7 @@ use {
     },
     solana_system_interface::instruction as system_instruction,
     solana_transaction::Transaction as SolanaTransaction,
-    spl_associated_token_account::get_associated_token_address,
+    spl_associated_token_account_interface::address::get_associated_token_address,
     std::collections::HashMap,
 };
 
@@ -103,8 +103,8 @@ impl Ledger {
                 if let Some(mint) = key.mint {
                     let source_pubkey = get_associated_token_address(&from, &mint);
                     let destination_pubkey = get_associated_token_address(&to, &mint);
-                    return spl_token::instruction::transfer(
-                        &spl_token::id(),
+                    return spl_token_interface::instruction::transfer(
+                        &spl_token_interface::id(),
                         &source_pubkey,
                         &destination_pubkey,
                         &from,

@@ -861,6 +861,7 @@ mod test {
             assert_eq!(reserialized_value, expected_json_output_value);
         }
 
+        #[rustfmt::skip]
         let json_input = "{\
             \"err\":null,\
             \"status\":{\"Ok\":null},\
@@ -868,6 +869,7 @@ mod test {
             \"preBalances\":[1,2,3],\
             \"postBalances\":[4,5,6]\
         }";
+        #[rustfmt::skip]
         let expected_json_output = "{\
             \"err\":null,\
             \"status\":{\"Ok\":null},\
@@ -882,6 +884,7 @@ mod test {
         }";
         test_serde::<UiTransactionStatusMeta>(json_input, expected_json_output);
 
+        #[rustfmt::skip]
         let json_input = "{\
             \"accountIndex\":5,\
             \"mint\":\"DXM2yVSouSg1twmQgHLKoSReqXhtUroehWxrTgPmmfWi\",\
@@ -892,6 +895,7 @@ mod test {
                 \"uiAmountString\": \"1\"\
             }\
         }";
+        #[rustfmt::skip]
         let expected_json_output = "{\
             \"accountIndex\":5,\
             \"mint\":\"DXM2yVSouSg1twmQgHLKoSReqXhtUroehWxrTgPmmfWi\",\

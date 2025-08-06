@@ -3,8 +3,8 @@ use {
         account_locks::{validate_account_locks, AccountLocks},
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
-            AccountStorageEntry, AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount,
-            ScanAccountStorageData, ScanStorageResult, VerifyAccountsHashAndLamportsConfig,
+            AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, ScanAccountStorageData,
+            ScanStorageResult,
         },
         accounts_index::{IndexKey, ScanConfig, ScanError, ScanOrder, ScanResult},
         ancestors::Ancestors,
@@ -304,30 +304,6 @@ impl Accounts {
             .into_iter()
             .map(|Reverse((balance, pubkey))| (pubkey, balance))
             .collect())
-    }
-
-    /// Only called from startup or test code.
-    #[must_use]
-    pub fn verify_accounts_hash_and_lamports(
-        &self,
-        snapshot_storages_and_slots: (&[Arc<AccountStorageEntry>], &[Slot]),
-        slot: Slot,
-        total_lamports: u64,
-        base: Option<(Slot, /*capitalization*/ u64)>,
-        config: VerifyAccountsHashAndLamportsConfig,
-    ) -> bool {
-        if let Err(err) = self.accounts_db.verify_accounts_hash_and_lamports(
-            snapshot_storages_and_slots,
-            slot,
-            total_lamports,
-            base,
-            config,
-        ) {
-            warn!("verify_accounts_hash failed: {err:?}, slot: {slot}");
-            false
-        } else {
-            true
-        }
     }
 
     fn load_while_filtering<F: Fn(&AccountSharedData) -> bool>(

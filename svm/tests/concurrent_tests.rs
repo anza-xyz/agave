@@ -1,10 +1,7 @@
 #![cfg(feature = "shuttle-test")]
 
 use {
-    crate::{
-        mock_bank::{create_custom_loader, deploy_program, register_builtins, MockForkGraph},
-        transaction_builder::SanitizedTransactionBuilder,
-    },
+    crate::mock_bank::{create_custom_loader, deploy_program, register_builtins, MockForkGraph},
     assert_matches::assert_matches,
     mock_bank::MockBankCallback,
     shuttle::{
@@ -12,15 +9,13 @@ use {
         thread, Runner,
     },
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_hash::Hash,
-    solana_instruction::AccountMeta,
+    solana_instruction::{AccountMeta, Instruction},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
         loaded_programs::ProgramCacheEntryType,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::bpf_loader_upgradeable,
-    solana_signature::Signature,
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
         transaction_processing_result::{
@@ -32,12 +27,11 @@ use {
         },
     },
     solana_timings::ExecuteTimings,
-    std::collections::HashMap,
+    solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+    std::collections::{HashMap, HashSet},
 };
 
 mod mock_bank;
-
-mod transaction_builder;
 
 fn program_cache_execution(threads: usize) {
     let mut mock_bank = MockBankCallback::default();
@@ -147,7 +141,6 @@ fn svm_concurrent() {
     batch_processor.fill_missing_sysvar_cache_entries(&*mock_bank);
     register_builtins(&mock_bank, &batch_processor, false);
 
-    let mut transaction_builder = SanitizedTransactionBuilder::default();
     let program_id = deploy_program("transfer-from-account".to_string(), 0, &mock_bank);
 
     const THREADS: usize = 4;
@@ -192,40 +185,34 @@ fn svm_concurrent() {
             shared_data.insert(fee_payer, account_data);
         }
 
-        transaction_builder.create_instruction(
-            program_id,
-            vec![
-                AccountMeta {
-                    pubkey: sender,
-                    is_signer: true,
-                    is_writable: true,
-                },
-                AccountMeta {
-                    pubkey: recipient,
-                    is_signer: false,
-                    is_writable: true,
-                },
-                AccountMeta {
-                    pubkey: read_account,
-                    is_signer: false,
-                    is_writable: false,
-                },
-                AccountMeta {
-                    pubkey: system_account,
-                    is_signer: false,
-                    is_writable: false,
-                },
-            ],
-            HashMap::from([(sender, Signature::new_unique())]),
-            vec![0],
-        );
+        let accounts = vec![
+            AccountMeta {
+                pubkey: sender,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: recipient,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: read_account,
+                is_signer: false,
+                is_writable: false,
+            },
+            AccountMeta {
+                pubkey: system_account,
+                is_signer: false,
+                is_writable: false,
+            },
+        ];
 
-        let sanitized_transaction = transaction_builder.build(
-            Hash::default(),
-            (fee_payer, Signature::new_unique()),
-            true,
-            false,
-        );
+        let instruction = Instruction::new_with_bytes(program_id, &[0], accounts);
+        let legacy_transaction = Transaction::new_with_payer(&[instruction], Some(&fee_payer));
+
+        let sanitized_transaction =
+            SanitizedTransaction::try_from_legacy_transaction(legacy_transaction, &HashSet::new());
         transactions[idx % THREADS].push(sanitized_transaction.unwrap());
         check_data[idx % THREADS].push(CheckTxData {
             fee_payer,

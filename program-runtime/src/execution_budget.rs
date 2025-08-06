@@ -5,6 +5,16 @@ use {
 /// Max instruction stack depth. This is the maximum nesting of instructions that can happen during
 /// a transaction.
 pub const MAX_INSTRUCTION_STACK_DEPTH: usize = 5;
+/// Max instruction stack depth with SIMD-0296 enabled. Allows 8 nested CPIs.
+pub const MAX_INSTRUCTION_STACK_DEPTH_SIMD_0296: usize = 9;
+
+fn get_max_instruction_stack_depth(simd_0296_active: bool) -> usize {
+    if simd_0296_active {
+        MAX_INSTRUCTION_STACK_DEPTH_SIMD_0296
+    } else {
+        MAX_INSTRUCTION_STACK_DEPTH
+    }
+}
 
 /// Max call depth. This is the maximum nesting of SBF to SBF call that can happen within a program.
 pub const MAX_CALL_DEPTH: usize = 64;
@@ -54,11 +64,18 @@ pub struct SVMTransactionExecutionBudget {
     pub heap_size: u32,
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 impl Default for SVMTransactionExecutionBudget {
     fn default() -> Self {
+        Self::new_with_defaults(/* simd_0296_active */ false)
+    }
+}
+
+impl SVMTransactionExecutionBudget {
+    pub fn new_with_defaults(simd_0296_active: bool) -> Self {
         SVMTransactionExecutionBudget {
             compute_unit_limit: u64::from(MAX_COMPUTE_UNIT_LIMIT),
-            max_instruction_stack_depth: MAX_INSTRUCTION_STACK_DEPTH,
+            max_instruction_stack_depth: get_max_instruction_stack_depth(simd_0296_active),
             max_instruction_trace_length: 64,
             sha256_max_slices: 20_000,
             max_call_depth: MAX_CALL_DEPTH,

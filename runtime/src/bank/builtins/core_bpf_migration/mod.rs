@@ -9,6 +9,7 @@ use {
     num_traits::{CheckedAdd, CheckedSub},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_builtins::core_bpf_migration::CoreBpfMigrationConfig,
+    solana_compute_budget::compute_budget::ComputeBudget,
     solana_hash::Hash,
     solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
@@ -143,7 +144,11 @@ impl Bank {
         // environment, as well as the two `ProgramCacheForTxBatch`
         // instances configured above, then invoke the loader.
         {
-            let compute_budget = self.compute_budget().unwrap_or_default();
+            let compute_budget = self
+                .compute_budget()
+                .unwrap_or(ComputeBudget::new_with_defaults(
+                    /* simd_0296_active */ false,
+                ));
             let mut sysvar_cache = SysvarCache::default();
             sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
                 if let Some(account) = self.get_account(pubkey) {

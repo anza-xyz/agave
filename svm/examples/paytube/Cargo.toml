@@ -11,6 +11,7 @@ frozen-abi = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-syscalls = { workspace = true }
 solana-account = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-client = { workspace = true }
@@ -26,7 +27,7 @@ solana-logger = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true }
-solana-rent-collector = { workspace = true }
+solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signer = { workspace = true }
 solana-svm = { workspace = true }
@@ -36,8 +37,8 @@ solana-system-interface = { workspace = true }
 solana-system-program = { workspace = true }
 solana-transaction = { workspace = true, features = ["blake3"] }
 solana-transaction-error = { workspace = true }
-spl-associated-token-account = { workspace = true }
-spl-token = { workspace = true }
+spl-associated-token-account-interface = { workspace = true }
+spl-token-interface = { workspace = true }
 termcolor = { workspace = true }
 
 [dev-dependencies]
