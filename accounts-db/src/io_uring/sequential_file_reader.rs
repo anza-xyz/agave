@@ -391,7 +391,7 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
             completion.push(op);
         } else {
             reader_state.buffers[*reader_buf_index] =
-                ReadBufState::Full(Cursor::new(buf.into_shrinked(total_read_len)));
+                ReadBufState::Full(Cursor::new(buf.into_shrunk(total_read_len)));
         }
 
         Ok(())
