@@ -1,43 +1,32 @@
-#![allow(warnings)]
+#![allow(clippy::arithmetic_side_effects)]
 use {
     crate::consensus::Stake,
     bytemuck::{Pod, Zeroable},
-    chrono::TimeDelta,
     crossbeam_channel::{bounded, Receiver, Sender},
-    dashmap::DashMap,
-    futures::future::err,
-    serde::de::DeserializeOwned,
-    serde_bytes::Deserialize,
     solana_clock::Slot,
-    solana_gossip::{
-        cluster_info::ClusterInfo,
-        epoch_specs::{self, EpochSpecs},
-    },
+    solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_keypair::Keypair,
-    solana_packet::{Meta, Packet, PACKET_DATA_SIZE},
+    solana_packet::{Meta, Packet},
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
-    solana_runtime::bank::Bank,
-    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_signature::SIGNATURE_BYTES,
     solana_signer::Signer,
     solana_streamer::{recvmmsg::recv_mmsg, sendmmsg::batch_send},
-    solana_turbine::cluster_nodes,
     static_assertions::const_assert,
     std::{
         collections::HashMap,
-        io::Error,
         iter::once,
-        net::{SocketAddr, SocketAddrV4, UdpSocket},
+        net::{SocketAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, AtomicU16, Ordering},
+            atomic::{AtomicBool, Ordering},
             Arc, Mutex,
         },
         thread::{self, JoinHandle},
         time::{Duration, Instant},
     },
-    trees::TupleTree,
 };
 
-// each mock voting round takes 3 slots to complete:
+// This is a mockup of optimistic Alpenglow voting (no skips)
+// Each mock voting round takes 3 slots to complete:
 // 1. prep & enable reception
 // 2. initiate voting by sending Notarize,
 // 3. closing vote window and finalizing stats
@@ -51,8 +40,8 @@ const SLOTS_BETWEEN_VOTES: Slot = 1013;
 /// number of voting rounds
 const NUM_VOTE_ROUNDS: Slot = 4;
 
-// network needs time to recover if things go terribly wrong
-static_assertions::const_assert!(SLOTS_BETWEEN_VOTES > NUM_VOTE_ROUNDS * 10);
+// The cluster needs time to recover if things go terribly wrong
+const_assert!(SLOTS_BETWEEN_VOTES > NUM_VOTE_ROUNDS * 10);
 
 /// This is a placeholder that is only used for load-testing.
 /// This is not representative of the actual alpenglow implementation.
@@ -122,7 +111,7 @@ impl SharedState {
 }
 
 fn get_state_for_slot(states: &StateArray, slot: Slot) -> &Mutex<SharedState> {
-    &states[(slot % NUM_VOTE_ROUNDS as u64) as usize]
+    &states[(slot % NUM_VOTE_ROUNDS) as usize]
 }
 
 /// This is just for test, and does not represent actual alpenglow
@@ -181,10 +170,10 @@ impl MockVotePacketHeader {
 const MAX_TOWER_HEIGHT: Slot = 32 + 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Command {
-    SendNotarize(Slot),
-    SendNotarizeCertificateAndFinalize(Slot),
-    SendFinalizeCertificate(Slot),
+pub(crate) enum SendCommand {
+    Notarize(Slot),
+    NotarizeCertificateAndFinalize(Slot),
+    FinalizeCertificate(Slot),
 }
 
 impl MockAlpenglowConsensus {
@@ -221,13 +210,11 @@ impl MockAlpenglowConsensus {
                 }
             }),
             sender_thread: thread::spawn({
-                let epoch_specs = epoch_specs.clone();
                 let cluster_info = cluster_info.clone();
                 move || {
                     Self::sender_thread(
                         shared_state,
                         cluster_info,
-                        epoch_specs,
                         socket.clone(),
                         vote_command_receiver,
                     )
@@ -269,7 +256,7 @@ impl MockAlpenglowConsensus {
             state.peers.insert(
                 *peer,
                 PeerData {
-                    stake: stake,
+                    stake,
                     address: ag_addr,
                     relative_toa: [None; NUM_VOTOR_TYPES],
                 },
@@ -289,7 +276,7 @@ impl MockAlpenglowConsensus {
         should_exit: Arc<AtomicBool>,
         my_id: Pubkey,
         socket: Arc<UdpSocket>,
-        command_sender: Sender<Command>,
+        command_sender: Sender<SendCommand>,
     ) {
         socket
             .set_read_timeout(Some(Duration::from_secs(1)))
@@ -399,9 +386,9 @@ impl MockAlpenglowConsensus {
                                 "{my_id} has notarized slot {} by observing 60% of notar votes",
                                 state.current_slot
                             );
-                            command_sender.try_send(Command::SendNotarizeCertificateAndFinalize(
-                                state.current_slot,
-                            ));
+                            let _ = command_sender.try_send(
+                                SendCommand::NotarizeCertificateAndFinalize(state.current_slot),
+                            );
                         }
                         if !state.alpenglow_state.block_finalized
                             && state.alpenglow_state.notarize_stake_collected >= stake_80_percent
@@ -411,8 +398,8 @@ impl MockAlpenglowConsensus {
                                 "{my_id} has finalized slot {} by observing 80% of notar votes",
                                 state.current_slot
                             );
-                            command_sender
-                                .try_send(Command::SendFinalizeCertificate(state.current_slot));
+                            let _ = command_sender
+                                .try_send(SendCommand::FinalizeCertificate(state.current_slot));
                         }
                     }
                     VotorMessageType::NotarizeCertificateAndFinalize => {
@@ -422,9 +409,9 @@ impl MockAlpenglowConsensus {
                                 "{my_id} has notarized slot {} by observing notar certificate",
                                 state.current_slot
                             );
-                            command_sender.try_send(Command::SendNotarizeCertificateAndFinalize(
-                                state.current_slot,
-                            ));
+                            let _ = command_sender.try_send(
+                                SendCommand::NotarizeCertificateAndFinalize(state.current_slot),
+                            );
                         }
                         state.alpenglow_state.finalize_stake_collected += stake;
                         trace!(
@@ -440,8 +427,8 @@ impl MockAlpenglowConsensus {
                                 "{my_id} has finalized slot {} by observing finalize votes",
                                 state.current_slot
                             );
-                            command_sender
-                                .try_send(Command::SendFinalizeCertificate(state.current_slot));
+                            let _ = command_sender
+                                .try_send(SendCommand::FinalizeCertificate(state.current_slot));
                         }
                     }
                     VotorMessageType::FinalizeCertificate => {
@@ -451,8 +438,8 @@ impl MockAlpenglowConsensus {
                                 "{my_id} has finalized slot {} by observing finalize certificate",
                                 state.current_slot
                             );
-                            command_sender
-                                .try_send(Command::SendFinalizeCertificate(state.current_slot));
+                            let _ = command_sender
+                                .try_send(SendCommand::FinalizeCertificate(state.current_slot));
                         }
                     }
                 }
@@ -464,19 +451,18 @@ impl MockAlpenglowConsensus {
     fn sender_thread(
         state: Arc<StateArray>,
         cluster_info: Arc<ClusterInfo>,
-        mut epoch_specs: EpochSpecs,
         socket: Arc<UdpSocket>,
-        command: Receiver<Command>,
+        command: Receiver<SendCommand>,
     ) {
         let mut packet_buf = vec![0u8; MOCK_VOTE_PACKET_SIZE];
         let id = cluster_info.id();
         for command in command.iter() {
             let (slot, votor_msg) = match command {
-                Command::SendNotarize(slot) => (slot, VotorMessageType::Notarize),
-                Command::SendNotarizeCertificateAndFinalize(slot) => {
+                SendCommand::Notarize(slot) => (slot, VotorMessageType::Notarize),
+                SendCommand::NotarizeCertificateAndFinalize(slot) => {
                     (slot, VotorMessageType::NotarizeCertificateAndFinalize)
                 }
-                Command::SendFinalizeCertificate(slot) => {
+                SendCommand::FinalizeCertificate(slot) => {
                     (slot, VotorMessageType::FinalizeCertificate)
                 }
             };
@@ -491,7 +477,7 @@ impl MockAlpenglowConsensus {
             // prepare addresses to send the packets
             let mut send_instructions = Vec::with_capacity(3072); // we have ~2500 validators in testnet
             {
-                let mut state = get_state_for_slot(&state, slot).lock().unwrap();
+                let state = get_state_for_slot(&state, slot).lock().unwrap();
                 // check if our task was aborted, avoid sending if it was.
                 if state.current_slot != slot {
                     return;
@@ -506,7 +492,7 @@ impl MockAlpenglowConsensus {
                 }
             }
             // broadcast to everybody at once
-            batch_send(&socket, send_instructions);
+            let _ = batch_send(&socket, send_instructions);
         }
     }
 
@@ -532,8 +518,8 @@ impl MockAlpenglowConsensus {
         slot % SLOTS_BETWEEN_VOTES == 0
     }
 
-    pub(crate) fn signal_new_slot(&mut self, slot: Slot, root_bank: &Bank) {
-        if !self.check_conditions_to_vote(slot, root_bank.slot()) {
+    pub(crate) fn signal_new_slot(&mut self, slot: Slot, root_slot: Slot) {
+        if !self.check_conditions_to_vote(slot, root_slot) {
             return;
         }
         self.highest_slot = slot;
@@ -547,15 +533,13 @@ impl MockAlpenglowConsensus {
 
         if let Some(slot_sender) = self.slot_sender.as_ref() {
             if slot_sender.try_send(slot).is_err() {
-                error!("Can not initiate mock voting, all workers are busy");
+                error!("Can not initiate mock voting, workers is busy");
                 datapoint_info!(
                     "mock_alpenglow",
                     ("runner_stuck", 1, i64),
                     ("slot", slot, i64)
                 );
             }
-        } else {
-            return;
         }
     }
 
@@ -563,20 +547,20 @@ impl MockAlpenglowConsensus {
     /// is sent over slot_receiver channel
     fn runner(
         slot_receiver: Receiver<Slot>,
-        command_sender: Sender<Command>,
+        command_sender: Sender<SendCommand>,
         state: Arc<StateArray>,
     ) {
         for start_slot in slot_receiver.iter() {
             let slot_range = start_slot..(start_slot + NUM_VOTE_ROUNDS);
-            let vote_slots = slot_range.clone().map(|v| Some(v)).chain(once(None));
-            let report_slots = once(None).chain(slot_range.map(|v| Some(v)));
+            let vote_slots = slot_range.clone().map(Some).chain(once(None));
+            let report_slots = once(None).chain(slot_range.map(Some));
             for (vote_slot, report_slot) in vote_slots.zip(report_slots) {
                 // we get activated 1 slot in advance to capture votes coming
                 // earlier than we have finished replay
                 std::thread::sleep(Duration::from_millis(400));
                 if let Some(slot) = vote_slot {
                     trace!("Starting voting in slot {slot}");
-                    command_sender.send(Command::SendNotarize(slot));
+                    let _ = command_sender.send(SendCommand::Notarize(slot));
                 }
                 if let Some(slot) = report_slot {
                     // collect stats from the previous slot's voting
@@ -624,6 +608,8 @@ fn prep_and_sign_packet(
         pkt.signature = SIGNATURE;
     }
 }
+
+const SIGNATURE: [u8; SIGNATURE_BYTES] = [7u8; SIGNATURE_BYTES];
 
 fn report_collected_votes(peers: HashMap<Pubkey, PeerData>, total_staked: Stake, slot: Slot) {
     trace!("Reporting statistics for slot {}", slot);
@@ -680,7 +666,7 @@ fn compute_stake_weighted_means(
     let mut total_voted_stake: [Stake; NUM_VOTOR_TYPES] = [0; NUM_VOTOR_TYPES];
     let mut total_voted_nodes: [usize; NUM_VOTOR_TYPES] = [0; NUM_VOTOR_TYPES];
     let mut total_delay_ms = [0u128; NUM_VOTOR_TYPES];
-    for (pubkey, peer_data) in peers.iter() {
+    for (_pubkey, peer_data) in peers.iter() {
         for i in 0..NUM_VOTOR_TYPES {
             let Some(rel_toa) = peer_data.relative_toa[i] else {
                 continue;
@@ -689,8 +675,7 @@ fn compute_stake_weighted_means(
             total_voted_nodes[i] += 1;
             // clamping the actual observed ToA to 800 ms to prevent outliers from
             // skewing the dataset too much.
-            total_delay_ms[i] +=
-                (rel_toa.as_millis().clamp(0, 800) as u128) * peer_data.stake as u128;
+            total_delay_ms[i] += rel_toa.as_millis().clamp(0, 800) * peer_data.stake as u128;
         }
     }
 
@@ -716,30 +701,21 @@ fn compute_stake_weighted_means(
 #[cfg(test)]
 mod tests {
     use {
-        crate::{
-            mock_alpenglow_consensus::{
-                compute_stake_weighted_means, get_state_for_slot, prep_and_sign_packet, Command,
-                MockAlpenglowConsensus, PeerData, SharedState, StateArray, VotorMessageType,
-                MOCK_VOTE_HEADER_SIZE, MOCK_VOTE_PACKET_SIZE, NUM_VOTOR_TYPES,
-            },
-            repair::repair_weighted_traversal::test,
+        crate::mock_alpenglow_consensus::{
+            compute_stake_weighted_means, get_state_for_slot, prep_and_sign_packet,
+            MockAlpenglowConsensus, PeerData, SendCommand, SharedState, StateArray,
+            VotorMessageType, MOCK_VOTE_HEADER_SIZE, MOCK_VOTE_PACKET_SIZE, NUM_VOTOR_TYPES,
         },
         crossbeam_channel::bounded,
         solana_clock::Slot,
         solana_keypair::Keypair,
-        solana_net_utils::{
-            bind_in_range,
-            sockets::{bind_to_localhost_unique, localhost_port_range_for_tests},
-        },
+        solana_net_utils::sockets::bind_to_localhost_unique,
         solana_pubkey::Pubkey,
         solana_signer::Signer,
         std::{
             collections::HashMap,
-            net::{IpAddr, Ipv4Addr, UdpSocket},
-            sync::{
-                atomic::{AtomicBool, AtomicU16},
-                Arc, Mutex,
-            },
+            net::UdpSocket,
+            sync::{atomic::AtomicBool, Arc, Mutex},
             thread::sleep,
             time::{Duration, Instant},
         },
@@ -764,7 +740,6 @@ mod tests {
         let should_exit = Arc::new(AtomicBool::new(false));
 
         let mut packet_tx_buf = [0u8; MOCK_VOTE_PACKET_SIZE];
-        let mut packet_rx_buf = packet_tx_buf;
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 MockAlpenglowConsensus::listener_thread(
@@ -794,8 +769,8 @@ mod tests {
             {
                 let slot_state = get_state_for_slot(&shared_state, slot).lock().unwrap();
                 assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 0);
-                assert_eq!(slot_state.alpenglow_state.block_notarized, false);
-                assert_eq!(slot_state.alpenglow_state.block_finalized, false);
+                assert!(!slot_state.alpenglow_state.block_notarized);
+                assert!(!slot_state.alpenglow_state.block_finalized);
             }
 
             sleep(Duration::from_millis(1));
@@ -813,7 +788,7 @@ mod tests {
 
             // wait for the broadcasts
             let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
-            assert_eq!(cmd, Command::SendNotarizeCertificateAndFinalize(slot));
+            assert_eq!(cmd, SendCommand::NotarizeCertificateAndFinalize(slot));
             {
                 let slot_state = get_state_for_slot(&shared_state, slot).lock().unwrap();
                 let peerdata = slot_state.peers.get(&peers[1].0).unwrap();
@@ -822,8 +797,8 @@ mod tests {
                 assert!(peerdata.relative_toa[1].is_none());
                 assert!(peerdata.relative_toa[2].is_none());
                 assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 6);
-                assert_eq!(slot_state.alpenglow_state.block_notarized, true);
-                assert_eq!(slot_state.alpenglow_state.block_finalized, false);
+                assert!(slot_state.alpenglow_state.block_notarized);
+                assert!(!slot_state.alpenglow_state.block_finalized);
             }
             sleep(Duration::from_millis(1));
             // make sure we produce FinalizeCert when getting 60% of stake sending Finalize
@@ -839,7 +814,7 @@ mod tests {
             }
             // wait for the broadcast
             let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
-            assert_eq!(cmd, Command::SendFinalizeCertificate(slot));
+            assert_eq!(cmd, SendCommand::FinalizeCertificate(slot));
             {
                 let slot_state = get_state_for_slot(&shared_state, slot).lock().unwrap();
                 let peerdata = slot_state.peers.get(&peers[1].0).unwrap();
@@ -847,8 +822,8 @@ mod tests {
                 assert!(peerdata.relative_toa[1].unwrap() < test_timeout);
                 assert!(peerdata.relative_toa[2].is_none());
                 assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 6);
-                assert_eq!(slot_state.alpenglow_state.block_finalized, true);
-                let (total_voted_nodes, stake_weighted_delay, percent_collected) =
+                assert!(slot_state.alpenglow_state.block_finalized);
+                let (total_voted_nodes, stake_weighted_delay, _percent_collected) =
                     compute_stake_weighted_means(&slot_state.peers, peers.len() as u64);
                 assert_eq!(total_voted_nodes[0], 6);
                 assert_eq!(total_voted_nodes[1], 6);
@@ -875,8 +850,8 @@ mod tests {
             sleep(Duration::from_millis(1));
             {
                 let slot_state = get_state_for_slot(&shared_state, slot).lock().unwrap();
-                assert_eq!(slot_state.alpenglow_state.block_notarized, false);
-                assert_eq!(slot_state.alpenglow_state.block_finalized, false);
+                assert!(!slot_state.alpenglow_state.block_notarized);
+                assert!(!slot_state.alpenglow_state.block_finalized);
             }
 
             // now we get a couple of notarize certificates
@@ -893,11 +868,11 @@ mod tests {
 
             // wait for the broadcasts
             let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
-            assert_eq!(cmd, Command::SendNotarizeCertificateAndFinalize(slot));
+            assert_eq!(cmd, SendCommand::NotarizeCertificateAndFinalize(slot));
             {
                 let slot_state = get_state_for_slot(&shared_state, slot).lock().unwrap();
-                assert_eq!(slot_state.alpenglow_state.block_notarized, true);
-                assert_eq!(slot_state.alpenglow_state.block_finalized, false);
+                assert!(slot_state.alpenglow_state.block_notarized);
+                assert!(!slot_state.alpenglow_state.block_finalized);
             }
             // and the rest of Notarize votes
             for p in 6..=9 {
@@ -912,12 +887,12 @@ mod tests {
             }
             // wait for the broadcast
             let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
-            assert_eq!(cmd, Command::SendFinalizeCertificate(slot));
+            assert_eq!(cmd, SendCommand::FinalizeCertificate(slot));
             {
                 let slot_state = get_state_for_slot(&shared_state, slot).lock().unwrap();
                 assert!(slot_state.alpenglow_state.notarize_stake_collected >= 8);
-                assert_eq!(slot_state.alpenglow_state.block_notarized, true);
-                assert_eq!(slot_state.alpenglow_state.block_finalized, true);
+                assert!(slot_state.alpenglow_state.block_notarized);
+                assert!(slot_state.alpenglow_state.block_finalized);
             }
 
             // epic packet loss we only see certs
@@ -937,14 +912,14 @@ mod tests {
                 &mut packet_tx_buf,
             );
             let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
-            assert_eq!(cmd, Command::SendNotarizeCertificateAndFinalize(slot));
+            assert_eq!(cmd, SendCommand::NotarizeCertificateAndFinalize(slot));
 
             {
                 let slot_state = get_state_for_slot(&shared_state, slot).lock().unwrap();
                 assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 0);
                 assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 1);
-                assert_eq!(slot_state.alpenglow_state.block_notarized, true);
-                assert_eq!(slot_state.alpenglow_state.block_finalized, false);
+                assert!(slot_state.alpenglow_state.block_notarized);
+                assert!(!slot_state.alpenglow_state.block_finalized);
             }
             // and a Finalize cert
             send_packet(
@@ -956,13 +931,13 @@ mod tests {
                 &mut packet_tx_buf,
             );
             let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
-            assert_eq!(cmd, Command::SendFinalizeCertificate(slot));
+            assert_eq!(cmd, SendCommand::FinalizeCertificate(slot));
             {
                 let slot_state = get_state_for_slot(&shared_state, slot).lock().unwrap();
                 assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 0);
                 assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 1);
-                assert_eq!(slot_state.alpenglow_state.block_notarized, true);
-                assert_eq!(slot_state.alpenglow_state.block_finalized, true);
+                assert!(slot_state.alpenglow_state.block_notarized);
+                assert!(slot_state.alpenglow_state.block_finalized);
             }
             assert!(
                 slot <= max_slots,
@@ -976,8 +951,8 @@ mod tests {
         from_peer: usize,
         votor_message: VotorMessageType,
         slot: u64,
-        keypairs: &Vec<Keypair>,
-        peers: &Vec<(Pubkey, UdpSocket)>,
+        keypairs: &[Keypair],
+        peers: &[(Pubkey, UdpSocket)],
         packet_buf: &mut [u8],
     ) {
         prep_and_sign_packet(packet_buf, slot, votor_message, &keypairs[from_peer]);
@@ -991,7 +966,7 @@ mod tests {
     }
 
     fn mock_prep_rx(state: &StateArray, slot: Slot, peer_map: HashMap<Pubkey, PeerData>) {
-        let mut state = get_state_for_slot(&state, slot).lock().unwrap();
+        let mut state = get_state_for_slot(state, slot).lock().unwrap();
         state.reset();
         state.current_slot = slot;
         state.current_slot_start = Instant::now();
@@ -1001,7 +976,7 @@ mod tests {
 
     fn make_peer_map(sockets: &[(Pubkey, UdpSocket)]) -> HashMap<Pubkey, PeerData> {
         let mut result = HashMap::new();
-        for (i, (peer, socket)) in sockets.iter().enumerate() {
+        for (peer, socket) in sockets {
             result.insert(
                 *peer,
                 PeerData {
@@ -1014,5 +989,3 @@ mod tests {
         result
     }
 }
-
-const SIGNATURE: [u8; SIGNATURE_BYTES] = [7u8; SIGNATURE_BYTES];

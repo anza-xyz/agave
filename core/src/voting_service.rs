@@ -118,8 +118,8 @@ impl VotingService {
                         // trigger mock alpenglow vote if we have just cast an actual vote
                         if let Some(slot) = vote_slot {
                             if let Some(ag) = mock_alpenglow.as_mut() {
-                                let root_bank = { bank_forks.read().unwrap().root_bank() };
-                                ag.signal_new_slot(slot, &root_bank);
+                                let root_slot = { bank_forks.read().unwrap().root() };
+                                ag.signal_new_slot(slot, root_slot);
                             }
                         }
                     }
@@ -129,7 +129,6 @@ impl VotingService {
                 }
             })
             .unwrap();
-
         Self { thread_hdl }
     }
 
