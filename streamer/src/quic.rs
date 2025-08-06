@@ -11,8 +11,7 @@ use {
     },
     rustls::KeyLogFile,
     solana_keypair::Keypair,
-    solana_packet::PACKET_DATA_SIZE,
-    solana_perf::packet::PacketBatch,
+    solana_perf::packet::{PacketBatch, QUIC_MAX_STREAM_SIZE},
     solana_quic_definitions::{
         NotifyKeyUpdate, QUIC_MAX_TIMEOUT, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
     },
@@ -96,8 +95,8 @@ pub(crate) fn configure_server(
     const MAX_CONCURRENT_UNI_STREAMS: u32 =
         (QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS.saturating_mul(2)) as u32;
     config.max_concurrent_uni_streams(MAX_CONCURRENT_UNI_STREAMS.into());
-    config.stream_receive_window((PACKET_DATA_SIZE as u32).into());
-    config.receive_window((PACKET_DATA_SIZE as u32).into());
+    config.stream_receive_window((QUIC_MAX_STREAM_SIZE as u32).into());
+    config.receive_window((QUIC_MAX_STREAM_SIZE as u32).into());
     let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
     config.max_idle_timeout(Some(timeout));
 

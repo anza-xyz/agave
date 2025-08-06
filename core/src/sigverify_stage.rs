@@ -392,6 +392,7 @@ impl SigVerifyStage {
         let mut last_print = Instant::now();
         const MAX_DEDUPER_AGE: Duration = Duration::from_secs(2);
         const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
+        // TODO(klykov): don't we need to increase this constant when we increase the max tx size?
         const DEDUPER_NUM_BITS: u64 = 63_999_979;
         Builder::new()
             .name(thread_name.to_string())
