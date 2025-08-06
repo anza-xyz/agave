@@ -1371,9 +1371,9 @@ mod tests {
     #[test]
     fn test_invalid_native_loader_index() {
         let mut instruction_context = InstructionContext::default();
-        instruction_context.configure(
+        instruction_context.configure_for_tests(
             u16::MAX,
-            vec![InstructionAccount::new(0, 0, false, false)],
+            vec![InstructionAccount::new(0, false, false)],
             &[],
         );
 

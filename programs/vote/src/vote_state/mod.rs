@@ -1169,7 +1169,7 @@ mod tests {
         let mut instruction_context = InstructionContext::default();
         instruction_context.configure_for_tests(
             0,
-            vec![InstructionAccount::new(1, 0, false, true)],
+            vec![InstructionAccount::new(1, false, true)],
             &[],
         );
 
@@ -1318,7 +1318,7 @@ mod tests {
         let mut instruction_context = InstructionContext::default();
         instruction_context.configure_for_tests(
             0,
-            vec![InstructionAccount::new(1, 0, false, true)],
+            vec![InstructionAccount::new(1, false, true)],
             &[],
         );
 

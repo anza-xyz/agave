@@ -1173,7 +1173,7 @@ mod tests {
             transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure(0, vec![InstructionAccount::new(0, 0, false, false)], &[]);
+                .configure_for_tests(0, vec![InstructionAccount::new(0, false, false)], &[]);
             transaction_context.pop().unwrap();
         }
         assert_eq!(
@@ -1476,7 +1476,7 @@ mod tests {
         let svm_instruction =
             SVMInstruction::from(sanitized.message().instructions().first().unwrap());
         invoke_context
-            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, vec![90])
+            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, 90)
             .unwrap();
 
         test_case_1(&invoke_context);
@@ -1485,7 +1485,7 @@ mod tests {
         let svm_instruction =
             SVMInstruction::from(sanitized.message().instructions().get(1).unwrap());
         invoke_context
-            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, vec![90])
+            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, 90)
             .unwrap();
 
         test_case_2(&invoke_context);
@@ -1548,7 +1548,7 @@ mod tests {
             SVMInstruction::from(sanitized.message().instructions().first().unwrap());
 
         invoke_context
-            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, vec![90])
+            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, 90)
             .unwrap();
 
         {
