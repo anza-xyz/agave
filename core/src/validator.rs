@@ -1486,12 +1486,12 @@ impl Validator {
                 .as_ref()
                 .map(TokioRuntime::handle)
                 .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
-            VoteClientOption::TpuClientNext((
+            VoteClientOption::TpuClientNext(
                 Arc::as_ref(&identity_keypair),
                 vote_client_socket.take().expect("Socket should exist."),
                 runtime_handle.clone(),
                 cancel_tpu_client_next.clone(),
-            ))
+            )
         };
 
         let tvu = Tvu::new(
