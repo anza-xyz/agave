@@ -537,7 +537,7 @@ pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Re
 
 /// Searches for several ports on a given binding ip_addr in the provided range.
 ///
-/// This will start at a random point in the range provided, and search sequencially.
+/// This will start at a random point in the range provided, and search sequentially.
 /// If it can not find anything, an Error is returned.
 pub fn find_available_ports_in_range<const N: usize>(
     ip_addr: IpAddr,
