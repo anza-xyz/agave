@@ -4847,6 +4847,7 @@ impl Bank {
                     duplicates_lt_hash,
                 )
             } else {
+                info!("Verifying accounts... Skipped.");
                 self.set_initial_accounts_hash_verification_completed();
                 true
             }
