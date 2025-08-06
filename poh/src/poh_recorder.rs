@@ -59,21 +59,6 @@ pub(crate) type Result<T> = std::result::Result<T, PohRecorderError>;
 
 pub type WorkingBankEntry = (Arc<Bank>, (Entry, u64));
 
-#[derive(Debug, Clone)]
-pub struct BankStart {
-    pub working_bank: Arc<Bank>,
-    pub bank_creation_time: Arc<Instant>,
-}
-
-impl BankStart {
-    pub fn should_working_bank_still_be_processing_txs(&self) -> bool {
-        Bank::should_bank_still_be_processing_txs(
-            &self.bank_creation_time,
-            self.working_bank.ns_per_slot,
-        )
-    }
-}
-
 // Sends the Result of the record operation, including the index in the slot of the first
 // transaction, if being tracked by WorkingBank
 type RecordResultSender = Sender<Result<Option<usize>>>;
@@ -657,13 +642,6 @@ impl PohRecorder {
 
     pub fn bank(&self) -> Option<Arc<Bank>> {
         self.working_bank.as_ref().map(|w| w.bank.clone())
-    }
-
-    pub fn bank_start(&self) -> Option<BankStart> {
-        self.working_bank.as_ref().map(|w| BankStart {
-            working_bank: w.bank.clone(),
-            bank_creation_time: w.start.clone(),
-        })
     }
 
     pub fn has_bank(&self) -> bool {
