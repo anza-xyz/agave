@@ -6,10 +6,7 @@ use {
         receive_and_buffer::{DisconnectedError, ReceiveAndBuffer},
         scheduler::{PreLockFilterAction, Scheduler},
         scheduler_error::SchedulerError,
-        scheduler_metrics::{
-            SchedulerCountMetrics, SchedulerLeaderDetectionMetrics, SchedulerTimingMetrics,
-            SchedulingDetails,
-        },
+        scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics, SchedulingDetails},
     },
     crate::banking_stage::{
         consume_worker::ConsumeWorkerMetrics,
@@ -43,8 +40,6 @@ where
     container: R::Container,
     /// State for scheduling and communicating with worker threads.
     scheduler: S,
-    /// Metrics tracking time for leader bank detection.
-    leader_detection_metrics: SchedulerLeaderDetectionMetrics,
     /// Metrics tracking counts on transactions in different states
     /// over an interval and during a leader slot.
     count_metrics: SchedulerCountMetrics,
@@ -75,7 +70,6 @@ where
             bank_forks,
             container: R::Container::with_capacity(TOTAL_BUFFERED_PACKETS),
             scheduler,
-            leader_detection_metrics: SchedulerLeaderDetectionMetrics::default(),
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
             worker_metrics,
@@ -101,8 +95,6 @@ where
                 timing_metrics.decision_time_us += decision_time_us;
             });
             let new_leader_slot = decision.bank_start().map(|b| b.working_bank.slot());
-            self.leader_detection_metrics
-                .update_and_maybe_report(decision.bank_start());
             self.count_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
             self.timing_metrics

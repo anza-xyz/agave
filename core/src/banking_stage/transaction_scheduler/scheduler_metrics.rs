@@ -2,7 +2,6 @@ use {
     super::scheduler::SchedulingSummary,
     itertools::MinMaxResult,
     solana_clock::Slot,
-    solana_poh::poh_recorder::BankStart,
     solana_time_utils::AtomicInterval,
     std::{
         num::Saturating,
@@ -371,69 +370,6 @@ impl SchedulerTimingMetricsInner {
         self.clear_time_us = Saturating(0);
         self.clean_time_us = Saturating(0);
         self.receive_completed_time_us = Saturating(0);
-    }
-}
-
-#[derive(Default)]
-pub struct SchedulerLeaderDetectionMetrics {
-    inner: Option<SchedulerLeaderDetectionMetricsInner>,
-}
-
-struct SchedulerLeaderDetectionMetricsInner {
-    slot: Slot,
-    bank_creation_time: Instant,
-    bank_detected_time: Instant,
-}
-
-impl SchedulerLeaderDetectionMetrics {
-    pub fn update_and_maybe_report(&mut self, bank_start: Option<&BankStart>) {
-        match (&self.inner, bank_start) {
-            (None, Some(bank_start)) => self.initialize_inner(bank_start),
-            (Some(_inner), None) => self.report_and_reset(),
-            (Some(inner), Some(bank_start)) if inner.slot != bank_start.working_bank.slot() => {
-                self.report_and_reset();
-                self.initialize_inner(bank_start);
-            }
-            _ => {}
-        }
-    }
-
-    fn initialize_inner(&mut self, bank_start: &BankStart) {
-        let bank_detected_time = Instant::now();
-        self.inner = Some(SchedulerLeaderDetectionMetricsInner {
-            slot: bank_start.working_bank.slot(),
-            bank_creation_time: *bank_start.bank_creation_time,
-            bank_detected_time,
-        });
-    }
-
-    fn report_and_reset(&mut self) {
-        let SchedulerLeaderDetectionMetricsInner {
-            slot,
-            bank_creation_time,
-            bank_detected_time,
-        } = self.inner.take().expect("inner must be present");
-
-        let bank_detected_delay_us = bank_detected_time
-            .duration_since(bank_creation_time)
-            .as_micros()
-            .try_into()
-            .unwrap_or(i64::MAX);
-        let bank_detected_to_slot_end_detected_us = bank_detected_time
-            .elapsed()
-            .as_micros()
-            .try_into()
-            .unwrap_or(i64::MAX);
-        datapoint_info!(
-            "banking_stage_scheduler_leader_detection",
-            ("slot", slot, i64),
-            ("bank_detected_delay_us", bank_detected_delay_us, i64),
-            (
-                "bank_detected_to_slot_end_detected_us",
-                bank_detected_to_slot_end_detected_us,
-                i64
-            ),
-        );
     }
 }
 
