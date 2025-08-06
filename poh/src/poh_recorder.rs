@@ -992,6 +992,7 @@ impl SharedWorkingBank {
     // Mutable access not needed for this function.
     // However we use it to guarantee only used when PohRecorder is
     // write locked.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn store(&mut self, bank: Arc<Bank>) {
         self.0.store(Some(bank));
     }
@@ -999,10 +1000,12 @@ impl SharedWorkingBank {
     // Mutable access not needed for this function.
     // However we use it to guarantee only used when PohRecorder is
     // write locked.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn clear(&mut self) {
         self.0.store(None);
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn empty() -> Self {
         Self(Arc::new(ArcSwapOption::empty()))
     }
@@ -1018,6 +1021,7 @@ impl SharedTickHeight {
         self.0.load(Ordering::Acquire)
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn new(tick_height: u64) -> Self {
         Self(Arc::new(AtomicU64::new(tick_height)))
     }
@@ -1025,6 +1029,7 @@ impl SharedTickHeight {
     // Mutable access not needed for this function.
     // However we use it to guarantee only used when PohRecorder is
     // write locked.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn store(&mut self, tick_height: u64) {
         self.0.store(tick_height, Ordering::Release);
     }
@@ -1032,6 +1037,7 @@ impl SharedTickHeight {
     // Mutable access not needed for this function.
     // However we use it to guarantee only used when PohRecorder is
     // write locked.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn increment(&mut self) {
         self.0.fetch_add(1, Ordering::Release);
     }
@@ -1054,6 +1060,7 @@ impl SharedLeaderFirstTickHeight {
         }
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn new(tick_height: Option<u64>) -> Self {
         let v = tick_height.unwrap_or(SHARED_LEADER_FIRST_TICK_HEIGHT_NONE);
         Self(Arc::new(AtomicU64::new(v)))
@@ -1062,6 +1069,7 @@ impl SharedLeaderFirstTickHeight {
     // Mutable access not needed for this function.
     // However we use it to guarantee only used when PohRecorder is
     // write locked.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn store(&mut self, tick_height: Option<u64>) {
         let v = tick_height.unwrap_or(SHARED_LEADER_FIRST_TICK_HEIGHT_NONE);
         self.0.store(v, Ordering::Release);
