@@ -1248,15 +1248,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(DefaultSchedulerPool::cli_message()),
     )
     .arg(
-        Arg::with_name("enable_experimental_block_production_method")
-            .long("enable-experimental-block-production-method")
-            .takes_value(false)
-            .help(
-                "Accept unified-scheduler to be used as an experimental block \
-                 production method",
-            ),
-    )
-    .arg(
         Arg::with_name("wen_restart")
             .long("wen-restart")
             .hidden(hidden_unless_forced())

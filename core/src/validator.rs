@@ -229,7 +229,25 @@ pub enum BlockProductionMethod {
 }
 
 impl BlockProductionMethod {
-    pub const fn cli_names() -> &'static [&'static str] {
+    pub fn cli_names() -> &'static [&'static str] {
+        // Simply return Self::VARIANTS by removing this code block altogether once after
+        // UnifiedScheduler isn't experimental
+        {
+            use std::sync::LazyLock;
+            static VARIANTS_NO_EXPERIMENTAL: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+                BlockProductionMethod::VARIANTS
+                    .iter()
+                    .filter_map(|&variant| (variant != "unified-scheduler").then_some(variant))
+                    .collect()
+            });
+
+            let disable_experimental =
+                std::env::var("SOLANA_ENABLE_EXPERIMENTAL_BLOCK_PRODUCTION_METHOD").is_err();
+            if disable_experimental {
+                return &VARIANTS_NO_EXPERIMENTAL[..];
+            }
+        }
+
         Self::VARIANTS
     }
 

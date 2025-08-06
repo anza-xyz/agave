@@ -62,7 +62,6 @@ without warning. From v4.0.0 onward, symbols in these crates will be unavailable
 
 #### Changes
 * The subscription server now prioritizes processing received messages before sending out responses. This ensures that new subscription requests and time-sensitive messages like `PING` opcodes take priority over notifications.
-* Added experimental `unified-scheduler` option for `--block-production-method`
 
 ### Validator
 
