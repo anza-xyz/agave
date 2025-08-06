@@ -347,7 +347,7 @@ const BANKING_STAGE_MAX_TASK_ID: usize = usize::MAX / 2;
 impl BankingStageHelper {
     fn new(new_task_sender: Sender<NewTaskPayload>) -> Self {
         Self {
-            usage_queue_loader: UsageQueueLoaderInner::default(),
+            usage_queue_loader: UsageQueueLoaderInner::with_config(UsageQueueConfig::high_throughput()),
             next_task_id: AtomicUsize::default(),
             new_task_sender,
         }
@@ -1348,21 +1348,30 @@ mod chained_channel {
 #[derive(Debug)]
 struct UsageQueueLoaderInner {
     usage_queues: DashMap<Pubkey, UsageQueue>,
+    config: UsageQueueConfig,
 }
 
 impl Default for UsageQueueLoaderInner {
     fn default() -> Self {
         Self {
             usage_queues: DashMap::new(),
+            config: UsageQueueConfig::default(),
         }
     }
 }
 
 impl UsageQueueLoaderInner {
+    fn with_config(config: UsageQueueConfig) -> Self {
+        Self {
+            usage_queues: DashMap::new(),
+            config,
+        }
+    }
+
     fn load(&self, address: Pubkey) -> UsageQueue {
         self.usage_queues
             .entry(address)
-            .or_insert_with(UsageQueue::default)
+            .or_insert_with(|| UsageQueue::with_config(self.config))
             .clone()
     }
 
