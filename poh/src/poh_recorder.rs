@@ -187,7 +187,7 @@ pub struct PohRecorder {
     /// the `working_bank` field of this struct.
     shared_working_bank: SharedWorkingBank,
     working_bank_sender: Sender<WorkingBankEntry>,
-    leader_first_tick_height: Option<u64>,
+    leader_first_tick_height: SharedLeaderFirstTickHeight,
     leader_last_tick_height: u64, // zero if none
     grace_ticks: u64,
     blockstore: Arc<Blockstore>,
@@ -275,7 +275,9 @@ impl PohRecorder {
                 start_bank,
                 start_bank_active_descendants: vec![],
                 start_tick_height: tick_height + 1,
-                leader_first_tick_height,
+                leader_first_tick_height: SharedLeaderFirstTickHeight::new(
+                    leader_first_tick_height,
+                ),
                 leader_last_tick_height,
                 grace_ticks,
                 blockstore,
@@ -305,7 +307,8 @@ impl PohRecorder {
         let (leader_first_tick_height, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, self.ticks_per_slot);
         self.grace_ticks = grace_ticks;
-        self.leader_first_tick_height = leader_first_tick_height;
+        self.leader_first_tick_height
+            .store(leader_first_tick_height);
         self.leader_last_tick_height = leader_last_tick_height;
     }
 
@@ -411,7 +414,7 @@ impl PohRecorder {
             self.tick_height.increment();
             trace!("tick_height {}", self.tick_height());
 
-            if self.leader_first_tick_height.is_none() {
+            if self.leader_first_tick_height.load().is_none() {
                 return;
             }
 
@@ -490,7 +493,8 @@ impl PohRecorder {
             let (leader_first_tick_height, leader_last_tick_height, grace_ticks) =
                 Self::compute_leader_slot_tick_heights(next_leader_slot, self.ticks_per_slot);
             self.grace_ticks = grace_ticks;
-            self.leader_first_tick_height = leader_first_tick_height;
+            self.leader_first_tick_height
+                .store(leader_first_tick_height);
             self.leader_last_tick_height = leader_last_tick_height;
 
             datapoint_info!(
@@ -610,6 +614,7 @@ impl PohRecorder {
         self.has_bank()
             || self
                 .leader_first_tick_height
+                .load()
                 .is_some_and(|leader_first_tick_height| {
                     self.tick_height() + within_next_n_ticks >= leader_first_tick_height
                         && self.tick_height() <= self.leader_last_tick_height
@@ -692,13 +697,13 @@ impl PohRecorder {
             "tick_height {}, start_tick_height {}, leader_first_tick_height {:?}, grace_ticks {}, has_bank {}",
             self.tick_height(),
             self.start_tick_height,
-            self.leader_first_tick_height,
+            self.leader_first_tick_height.load(),
             self.grace_ticks,
             self.has_bank()
         );
 
         let current_poh_slot = self.current_poh_slot();
-        let Some(leader_first_tick_height) = self.leader_first_tick_height else {
+        let Some(leader_first_tick_height) = self.leader_first_tick_height.load() else {
             // No next leader slot, so no leader slot has been reached.
             return PohLeaderStatus::NotReached;
         };
@@ -1031,6 +1036,34 @@ impl SharedTickHeight {
 
     fn increment(&self) {
         self.0.fetch_add(1, Ordering::Release);
+    }
+}
+
+/// Wrapper around a atomic-u64 that may be None.
+// Uses the flag of u64::MAX to indicate None; this does not
+// need to be observable outside of PohRecorder.
+#[derive(Clone)]
+pub struct SharedLeaderFirstTickHeight(Arc<AtomicU64>);
+const SHARED_LEADER_FIRST_TICK_HEIGHT_NONE: u64 = u64::MAX;
+
+impl SharedLeaderFirstTickHeight {
+    pub fn load(&self) -> Option<u64> {
+        let v = self.0.load(Ordering::Acquire);
+        if v == SHARED_LEADER_FIRST_TICK_HEIGHT_NONE {
+            None
+        } else {
+            Some(v)
+        }
+    }
+
+    fn new(tick_height: Option<u64>) -> Self {
+        let v = tick_height.unwrap_or(SHARED_LEADER_FIRST_TICK_HEIGHT_NONE);
+        Self(Arc::new(AtomicU64::new(v)))
+    }
+
+    fn store(&self, tick_height: Option<u64>) {
+        let v = tick_height.unwrap_or(SHARED_LEADER_FIRST_TICK_HEIGHT_NONE);
+        self.0.store(v, Ordering::Release);
     }
 }
 
