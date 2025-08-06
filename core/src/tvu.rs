@@ -134,7 +134,7 @@ impl VoteClientOption<'_> {
     pub fn protocol(&self) -> Protocol {
         match self {
             VoteClientOption::ConnectionCache(cache) => cache.protocol(),
-            VoteClientOption::TpuClientNext(_) => Protocol::QUIC,
+            VoteClientOption::TpuClientNext(_, _, _, _) => Protocol::QUIC,
         }
     }
 }

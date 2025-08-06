@@ -9,7 +9,9 @@ use {
     bincode::serialize,
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
-    solana_clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
+    solana_clock::{
+        Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, NUM_CONSECUTIVE_LEADER_SLOTS,
+    },
     solana_connection_cache::client_connection::ClientConnection,
     solana_gossip::{{cluster_info::ClusterInfo, epoch_specs::EpochSpecs}, contact_info::Protocol},
     solana_keypair::Keypair,
@@ -17,6 +19,7 @@ use {
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::bank_forks::BankForks,
     solana_pubkey::Pubkey,
+    solana_quic_definitions::NotifyKeyUpdate,
     solana_tpu_client_next::{
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
@@ -29,6 +32,7 @@ use {
     solana_transaction_error::TransportError,
     std::{
         collections::HashMap,
+        iter::once,
         net::{{SocketAddr, UdpSocket}, UdpSocket},
         sync::{Arc, Mutex, RwLock},
         thread::{self, Builder, JoinHandle},
@@ -260,7 +264,6 @@ struct TpuClientNextClient {
     runtime_handle: tokio::runtime::Handle,
     sender: mpsc::Sender<TransactionBatch>,
     update_certificate_sender: watch::Sender<Option<StakeIdentity>>,
-    cancel: CancellationToken,
 }
 
 const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(5);
@@ -306,7 +309,6 @@ impl TpuClientNextClient {
             runtime_handle,
             sender,
             update_certificate_sender,
-            cancel,
         }
     }
 
@@ -333,38 +335,49 @@ impl TpuClientNextClient {
     }
 }
 
+impl NotifyKeyUpdate for TpuClientNextClient {
+    fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        let stake_identity = StakeIdentity::new(identity);
+        self.update_certificate_sender
+            .send(Some(stake_identity))
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+    }
+}
+
+impl VoteClient for TpuClientNextClient {
+    fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>) {
+        self.runtime_handle.spawn({
+            let sender = self.sender.clone();
+            async move {
+                let res = sender.send(TransactionBatch::new(wire_transactions)).await;
+                if res.is_err() {
+                    warn!("Failed to send transaction to channel: it is closed.");
+                }
+            }
+        });
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    fn protocol(&self) -> Protocol {
+        Protocol::QUIC
+    }
+}
+
 #[derive(Debug, Error)]
 enum SendVoteError {
     #[error(transparent)]
     BincodeError(#[from] bincode::Error),
-    #[error("Invalid TPU address")]
-    InvalidTpuAddress,
     #[error(transparent)]
     TransportError(#[from] TransportError),
 }
 
 fn send_vote_transaction(
-    cluster_info: &ClusterInfo,
     transaction: &Transaction,
-    tpu: Option<SocketAddr>,
-    vote_client: &VoteClientOption,
+    vote_client: Arc<dyn VoteClient + Send + Sync>,
 ) -> Result<(), SendVoteError> {
-    let tpu = tpu
-        .or_else(|| cluster_info.my_contact_info().tpu(vote_client.protocol()))
-        .ok_or(SendVoteError::InvalidTpuAddress)?;
     let buf = serialize(transaction)?;
-
-    match vote_client {
-        VoteClientOption::ConnectionCache(connection_cache) => {
-            let client = connection_cache.get_connection(&tpu);
-
-            client.send_data_async(buf).map_err(|err| {
-                trace!("Ran into an error when sending vote: {err:?} to {tpu:?}");
-                SendVoteError::from(err)
-            })
-        }
-        VoteClientOption::TpuClientNext(tpu_client) => {}
-    }
+    vote_client.send_transactions_in_batch(vec![buf]);
+    Ok(())
 }
 
 pub struct VotingService {
@@ -388,6 +401,62 @@ impl ClusterTpuInfo {
     }
 }
 
+impl TpuInfo for ClusterTpuInfo {
+    fn refresh_recent_peers(&mut self) {
+        self.recent_peers = self
+            .cluster_info
+            .tpu_peers()
+            .into_iter()
+            .chain(once(self.cluster_info.my_contact_info()))
+            .filter_map(|node| {
+                Some((
+                    *node.pubkey(),
+                    (node.tpu(Protocol::UDP)?, node.tpu(Protocol::QUIC)?),
+                ))
+            })
+            .collect();
+    }
+
+    fn get_leader_tpus(&self, max_count: u64, protocol: Protocol) -> Vec<&SocketAddr> {
+        let recorder = self.poh_recorder.read().unwrap();
+        let leaders: Vec<_> = (0..max_count)
+            .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
+            .collect();
+        drop(recorder);
+        let mut unique_leaders = vec![];
+        for leader in leaders.iter() {
+            if let Some(addr) = self.recent_peers.get(leader).map(|addr| match protocol {
+                Protocol::UDP => &addr.0,
+                Protocol::QUIC => &addr.1,
+            }) {
+                if !unique_leaders.contains(&addr) {
+                    unique_leaders.push(addr);
+                }
+            }
+        }
+        unique_leaders
+    }
+
+    fn get_not_unique_leader_tpus(&self, max_count: u64, protocol: Protocol) -> Vec<&SocketAddr> {
+        let recorder = self.poh_recorder.read().unwrap();
+        let leader_pubkeys: Vec<_> = (0..max_count)
+            .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
+            .collect();
+        drop(recorder);
+        leader_pubkeys
+            .iter()
+            .filter_map(|leader_pubkey| {
+                self.recent_peers
+                    .get(leader_pubkey)
+                    .map(|addr| match protocol {
+                        Protocol::UDP => &addr.0,
+                        Protocol::QUIC => &addr.1,
+                    })
+            })
+            .collect()
+    }
+}
+
 impl VotingService {
     pub fn new(
         vote_receiver: Receiver<VoteOp>,
@@ -398,9 +467,23 @@ impl VotingService {
         alpenglow_socket: Option<UdpSocket>,
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> Self {
-        let vote_client = match vote_client {
-            VoteClientOption::ConnectionCache(_) => {
-                // No additional setup needed for ConnectionCache
+        let vote_client: Arc<dyn VoteClient + Send + Sync> = match vote_client {
+            VoteClientOption::ConnectionCache(connection_cache) => {
+                let my_tpu_address = cluster_info.my_contact_info().tpu_vote(Protocol::QUIC)
+                    .unwrap_or_else(|| {
+                        panic!("Vote client requires a valid TPU address, but none found in cluster info");
+                    });
+                let leader_info = Some(ClusterTpuInfo::new(
+                    cluster_info.clone(),
+                    poh_recorder.clone(),
+                ));
+
+                Arc::new(ConnectionCacheClient::new(
+                    connection_cache,
+                    my_tpu_address,
+                    leader_info,
+                    1, // Forward to the next leader only
+                ))
             }
             VoteClientOption::TpuClientNext(
                 identity_keypair,
@@ -417,14 +500,14 @@ impl VotingService {
                     poh_recorder.clone(),
                 ));
 
-                TpuClientNextClient::new(
+                Arc::new(TpuClientNextClient::new(
                     client_runtime,
                     my_tpu_address,
                     leader_info,
                     Some(identity_keypair),
                     vote_client_socket,
                     cancel,
-                )
+                ))
             }
         };
 
@@ -479,7 +562,7 @@ impl VotingService {
         poh_recorder: &RwLock<PohRecorder>,
         tower_storage: &dyn TowerStorage,
         vote_op: VoteOp,
-        vote_client: VoteClientOption,
+        vote_client: Arc<dyn VoteClient + Send + Sync>,
     ) {
         if let VoteOp::PushVote { saved_tower, .. } = &vote_op {
             let mut measure = Measure::start("tower storage save");
@@ -498,26 +581,14 @@ impl VotingService {
             FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET.saturating_add(1);
         #[cfg(test)]
         static_assertions::const_assert_eq!(UPCOMING_LEADER_FANOUT_SLOTS, 3);
-        let upcoming_leader_sockets = upcoming_leader_tpu_vote_sockets(
+        let _upcoming_leader_sockets = upcoming_leader_tpu_vote_sockets(
             cluster_info,
             poh_recorder,
             UPCOMING_LEADER_FANOUT_SLOTS,
             vote_client.protocol(),
         );
 
-        if !upcoming_leader_sockets.is_empty() {
-            for tpu_vote_socket in upcoming_leader_sockets {
-                let _ = send_vote_transaction(
-                    cluster_info,
-                    vote_op.tx(),
-                    Some(tpu_vote_socket),
-                    &vote_client,
-                );
-            }
-        } else {
-            // Send to our own tpu vote socket if we cannot find a leader to send to
-            let _ = send_vote_transaction(cluster_info, vote_op.tx(), None, &vote_client);
-        }
+        let _ = send_vote_transaction(vote_op.tx(), vote_client);
 
         match vote_op {
             VoteOp::PushVote {
