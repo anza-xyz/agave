@@ -53,7 +53,7 @@ fn setup_read_bench(
     );
     blockstore
         .insert_shreds(shreds, None, false)
-        .expect("Expectd successful insertion of shreds into ledger");
+        .expect("Expected successful insertion of shreds into ledger");
 }
 
 // Write small shreds to the ledger
