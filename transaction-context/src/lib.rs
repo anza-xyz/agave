@@ -719,7 +719,7 @@ impl InstructionContext {
         &self,
     ) -> Result<IndexOfAccount, InstructionError> {
         if self.program_account_index_in_tx == u16::MAX {
-            Err(InstructionError::MissingAccount)
+            Err(InstructionError::NotEnoughAccountKeys)
         } else {
             Ok(self.program_account_index_in_tx)
         }
@@ -1378,7 +1378,7 @@ mod tests {
         );
 
         let result = instruction_context.get_index_of_program_account_in_transaction();
-        assert_eq!(result, Err(InstructionError::MissingAccount));
+        assert_eq!(result, Err(InstructionError::NotEnoughAccountKeys));
 
         let transaction_context = TransactionContext::new(
             vec![(
@@ -1391,9 +1391,9 @@ mod tests {
         );
         let result = instruction_context.get_program_key(&transaction_context);
 
-        assert_eq!(result, Err(InstructionError::MissingAccount));
+        assert_eq!(result, Err(InstructionError::NotEnoughAccountKeys));
 
         let result = instruction_context.try_borrow_program_account(&transaction_context);
-        assert_eq!(result.err(), Some(InstructionError::MissingAccount));
+        assert_eq!(result.err(), Some(InstructionError::NotEnoughAccountKeys));
     }
 }
