@@ -90,12 +90,16 @@ impl VotingService {
         alpenglow_socket: Option<UdpSocket>,
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> Self {
-        let epoch_specs = EpochSpecs::from(bank_forks.clone());
         let thread_hdl = Builder::new()
             .name("solVoteService".to_string())
             .spawn({
-                let mut mock_alpenglow = alpenglow_socket
-                    .map(|s| MockAlpenglowConsensus::new(s, cluster_info.clone(), epoch_specs));
+                let mut mock_alpenglow = alpenglow_socket.map(|s| {
+                    MockAlpenglowConsensus::new(
+                        s,
+                        cluster_info.clone(),
+                        EpochSpecs::from(bank_forks.clone()),
+                    )
+                });
                 move || {
                     for vote_op in vote_receiver.iter() {
                         // Figure out if we are casting a vote for a new slot, and what slot it is for
@@ -118,8 +122,8 @@ impl VotingService {
                         // trigger mock alpenglow vote if we have just cast an actual vote
                         if let Some(slot) = vote_slot {
                             if let Some(ag) = mock_alpenglow.as_mut() {
-                                let root_slot = { bank_forks.read().unwrap().root() };
-                                ag.signal_new_slot(slot, root_slot);
+                                let root_bank = { bank_forks.read().unwrap().root_bank().clone() };
+                                ag.signal_new_slot(slot, &root_bank);
                             }
                         }
                     }

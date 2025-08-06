@@ -3,15 +3,16 @@ use {
     crate::consensus::Stake,
     bytemuck::{Pod, Zeroable},
     crossbeam_channel::{bounded, Receiver, Sender},
+    serde::de::DeserializeOwned,
     solana_clock::Slot,
     solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_keypair::Keypair,
     solana_packet::{Meta, Packet},
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
+    solana_runtime::bank::Bank,
     solana_signature::SIGNATURE_BYTES,
     solana_signer::Signer,
     solana_streamer::{recvmmsg::recv_mmsg, sendmmsg::batch_send},
-    static_assertions::const_assert,
     std::{
         collections::HashMap,
         iter::once,
@@ -33,15 +34,13 @@ use {
 //
 // This is done to ensure we can capture votes coming earlier or later than
 // our own slot start/end times.
-// we run VOTES_IN_A_ROW voting rounds every SLOTS_BETWEEN_VOTES slots.
+// we run VOTES_IN_A_ROW voting rounds every N slots, where N is controlled on-chain.
 
-/// slot must divide by this to start voting round
-const SLOTS_BETWEEN_VOTES: Slot = 1013;
 /// number of voting rounds
 const NUM_VOTE_ROUNDS: Slot = 4;
 
-// The cluster needs time to recover if things go terribly wrong
-const_assert!(SLOTS_BETWEEN_VOTES > NUM_VOTE_ROUNDS * 10);
+/// rough upper bound of number of testnet validators to avoid allocations
+const NUM_TESTNET_VALIDATORS: usize = 1024 * 3;
 
 /// This is a placeholder that is only used for load-testing.
 /// This is not representative of the actual alpenglow implementation.
@@ -102,7 +101,7 @@ impl SharedState {
     fn new(current_slot: Slot) -> Self {
         Self {
             current_slot_start: Instant::now(),
-            peers: HashMap::with_capacity(2048),
+            peers: HashMap::with_capacity(NUM_TESTNET_VALIDATORS),
             current_slot,
             total_staked: 0,
             alpenglow_state: AgStateMachine::default(),
@@ -188,7 +187,7 @@ impl MockAlpenglowConsensus {
         let shared_state = Arc::new(std::array::from_fn(|_| Mutex::new(SharedState::new(0))));
         let should_exit = Arc::new(AtomicBool::new(false));
 
-        let (slot_sender, slot_receiver) = bounded(4);
+        let (slot_sender, slot_receiver) = bounded(2);
         let runner_thread = {
             let slot_receiver = slot_receiver.clone();
             let command_sender = command_sender.clone();
@@ -475,7 +474,7 @@ impl MockAlpenglowConsensus {
             );
 
             // prepare addresses to send the packets
-            let mut send_instructions = Vec::with_capacity(3072); // we have ~2500 validators in testnet
+            let mut send_instructions = Vec::with_capacity(NUM_TESTNET_VALIDATORS); // we have ~2500 validators in testnet
             {
                 let state = get_state_for_slot(&state, slot).lock().unwrap();
                 // check if our task was aborted, avoid sending if it was.
@@ -496,7 +495,11 @@ impl MockAlpenglowConsensus {
         }
     }
 
-    fn check_conditions_to_vote(&mut self, slot: Slot, root_slot: Slot) -> bool {
+    fn check_conditions_to_vote(&mut self, interval: u64, slot: Slot, root_slot: Slot) -> bool {
+        if interval <= NUM_VOTE_ROUNDS + 1 {
+            trace!("Alpenglow voting is disabled",);
+            return false;
+        }
         // ensure we do not start process for a slot which is "in the past"
         if slot <= self.highest_slot {
             trace!(
@@ -510,16 +513,20 @@ impl MockAlpenglowConsensus {
         // and keep it stopped no matter what the config says
         if root_slot + MAX_TOWER_HEIGHT < slot {
             error!(
-                "root bank is too far behind ({} vs {slot}). safety latch triggered, test is disabled",
+                "root bank is too far behind ({} vs {slot}), test will not run",
                 self.highest_slot
             );
             return false;
         }
-        slot % SLOTS_BETWEEN_VOTES == 0
+        slot % interval == 0
     }
 
-    pub(crate) fn signal_new_slot(&mut self, slot: Slot, root_slot: Slot) {
-        if !self.check_conditions_to_vote(slot, root_slot) {
+    pub(crate) fn signal_new_slot(&mut self, slot: Slot, root_bank: &Bank) {
+        let Some(config) = get_test_config_from_account::<TestConfig>(root_bank) else {
+            return; // no config is available => test can not run
+        };
+        let interval = config.test_interval_slots as u64;
+        if !self.check_conditions_to_vote(interval, slot, root_bank.slot()) {
             return;
         }
         self.highest_slot = slot;
@@ -543,7 +550,7 @@ impl MockAlpenglowConsensus {
         }
     }
 
-    /// Runs one test for 3 slots when new slot index
+    /// Runs test for 4 slots in a row when new slot index
     /// is sent over slot_receiver channel
     fn runner(
         slot_receiver: Receiver<Slot>,
@@ -696,6 +703,32 @@ fn compute_stake_weighted_means(
         );
     }
     (total_voted_nodes, stake_weighted_delay, percent_collected)
+}
+
+// Pubkey for the account that is used to control the test via on-chain state
+mod control_pubkey {
+    solana_pubkey::declare_id!("9PsiyXopc2M9DMEmsEeafNHHHAUmPKe9mHYgrk6fHPyx");
+}
+
+/// Actual on-chain state that controls the mock alpenglow test
+#[derive(Deserialize, Debug)]
+#[repr(C)]
+pub(crate) struct TestConfig {
+    _version: u8,             // This is part of Record program header
+    _authority: [u8; 32],     // This is part of Record program header
+    test_interval_slots: u16, // 0 here means test is disabled
+    _packet_size: u16,
+    _future_use: [u8; 16],
+}
+
+///Parse an account's content, keeping it in cache.
+pub(crate) fn get_test_config_from_account<T: DeserializeOwned>(bank: &Bank) -> Option<T> {
+    let data = bank
+        .accounts()
+        .accounts_db
+        .load_account_with(&bank.ancestors, &control_pubkey::ID, |_| true)?
+        .0;
+    data.deserialize_data().ok()
 }
 
 #[cfg(test)]
