@@ -172,7 +172,7 @@ impl PohRecorderMetrics {
 
 pub struct PohRecorder {
     pub(crate) poh: Arc<Mutex<Poh>>,
-    tick_height: Arc<AtomicU64>,
+    tick_height: SharedTickHeight,
     clear_bank_signal: Option<Sender<bool>>,
     start_bank: Arc<Bank>, // parent slot
     start_bank_active_descendants: Vec<Slot>,
@@ -266,7 +266,7 @@ impl PohRecorder {
         (
             Self {
                 poh,
-                tick_height: Arc::new(AtomicU64::new(tick_height)),
+                tick_height: SharedTickHeight::new(tick_height),
                 tick_cache: vec![],
                 working_bank: None,
                 shared_working_bank: SharedWorkingBank::empty(),
@@ -408,7 +408,7 @@ impl PohRecorder {
         self.metrics.tick_lock_contention_us += tick_lock_contention_us;
 
         if let Some(poh_entry) = poh_entry {
-            self.tick_height.fetch_add(1, Ordering::Release);
+            self.tick_height.increment();
             trace!("tick_height {}", self.tick_height());
 
             if self.leader_first_tick_height.is_none() {
@@ -534,10 +534,8 @@ impl PohRecorder {
             self.start_bank = reset_bank;
             self.start_bank_active_descendants = vec![];
         }
-        self.tick_height.store(
-            (self.start_slot() + 1) * self.ticks_per_slot,
-            Ordering::Release,
-        );
+        self.tick_height
+            .store((self.start_slot() + 1) * self.ticks_per_slot);
         self.start_tick_height = self.tick_height() + 1;
     }
 
@@ -668,7 +666,7 @@ impl PohRecorder {
     }
 
     pub fn tick_height(&self) -> u64 {
-        self.tick_height.load(Ordering::Acquire)
+        self.tick_height.load()
     }
 
     pub fn ticks_per_slot(&self) -> u64 {
@@ -1010,6 +1008,29 @@ impl SharedWorkingBank {
 
     fn empty() -> Self {
         Self(Arc::new(ArcSwapOption::empty()))
+    }
+}
+
+/// Wrapper around a atomic-u64 that prevents modifying outside
+/// of `PohRecorder`.
+#[derive(Clone)]
+pub struct SharedTickHeight(Arc<AtomicU64>);
+
+impl SharedTickHeight {
+    pub fn load(&self) -> u64 {
+        self.0.load(Ordering::Acquire)
+    }
+
+    fn new(tick_height: u64) -> Self {
+        Self(Arc::new(AtomicU64::new(tick_height)))
+    }
+
+    fn store(&self, tick_height: u64) {
+        self.0.store(tick_height, Ordering::Release);
+    }
+
+    fn increment(&self) {
+        self.0.fetch_add(1, Ordering::Release);
     }
 }
 
