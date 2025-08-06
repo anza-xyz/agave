@@ -5,11 +5,10 @@ use {
         payload::Payload,
         shred_code, shred_data,
         traits::{Shred, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait},
-        CodingShredHeader, DataShredHeader, Error, ShredCommonHeader, ShredFlags, ShredVariant,
+        CodingShredHeader, DataShredHeader, Error, ShredCommonHeader, ShredVariant,
         SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_SIGNATURE,
     },
     assert_matches::debug_assert_matches,
-    solana_clock::Slot,
     solana_perf::packet::deserialize_from_with_limit,
     solana_signature::Signature,
     static_assertions::const_assert_eq,
@@ -188,5 +187,44 @@ impl ShredCodeTrait for ShredCode {
     #[inline]
     fn coding_header(&self) -> &CodingShredHeader {
         &self.coding_header
+    }
+}
+
+impl ShredData {
+    // Maximum size of ledger data that can be embedded in a data-shred.
+    pub(super) const CAPACITY: usize =
+        Self::SIZE_OF_PAYLOAD - Self::SIZE_OF_HEADERS - ShredCode::SIZE_OF_HEADERS;
+
+    // Given shred payload and DataShredHeader.size, returns the slice storing
+    // ledger entries in the shred.
+    pub(super) fn get_data(shred: &[u8], size: u16) -> Result<&[u8], Error> {
+        debug_assert_matches!(
+            shred::layout::get_shred_variant(shred),
+            Ok(ShredVariant::LegacyData)
+        );
+        let size = usize::from(size);
+        (Self::SIZE_OF_HEADERS..=Self::SIZE_OF_HEADERS + Self::CAPACITY)
+            .contains(&size)
+            .then(|| shred.get(Self::SIZE_OF_HEADERS..size))
+            .flatten()
+            .ok_or_else(|| Error::InvalidDataSize {
+                size: size as u16,
+                payload: shred.len(),
+            })
+    }
+
+    pub(super) fn bytes_to_store(&self) -> &[u8] {
+        // Payload will be padded out to Self::SIZE_OF_PAYLOAD.
+        // But only need to store the bytes within data_header.size.
+        &self.payload[..self.data_header.size as usize]
+    }
+
+    pub(super) fn resize_stored_shred(mut shred: Vec<u8>) -> Result<Vec<u8>, Error> {
+        // Old shreds might have been extra zero padded.
+        if !(Self::SIZE_OF_HEADERS..=Self::SIZE_OF_PAYLOAD).contains(&shred.len()) {
+            return Err(Error::InvalidPayloadSize(shred.len()));
+        }
+        shred.resize(Self::SIZE_OF_PAYLOAD, 0u8);
+        Ok(shred)
     }
 }

@@ -416,29 +416,6 @@ impl Shred {
         packet.meta_mut().size = size;
     }
 
-    // TODO: Should this sanitize output?
-    pub fn new_from_data(
-        slot: Slot,
-        index: u32,
-        parent_offset: u16,
-        data: &[u8],
-        flags: ShredFlags,
-        reference_tick: u8,
-        version: u16,
-        fec_set_index: u32,
-    ) -> Self {
-        Self::from(ShredData::new_from_data(
-            slot,
-            index,
-            parent_offset,
-            data,
-            flags,
-            reference_tick,
-            version,
-            fec_set_index,
-        ))
-    }
-
     pub fn new_from_serialized_shred<T>(shred: T) -> Result<Self, Error>
     where
         T: AsRef<[u8]> + Into<Payload>,
@@ -722,10 +699,9 @@ impl TryFrom<u8> for ShredVariant {
     type Error = Error;
     #[inline]
     fn try_from(shred_variant: u8) -> Result<Self, Self::Error> {
-        if shred_variant == u8::from(ShredType::Code) {
-            Ok(ShredVariant::LegacyCode)
-        } else if shred_variant == u8::from(ShredType::Data) {
-            Ok(ShredVariant::LegacyData)
+        if shred_variant == u8::from(ShredType::Code) || shred_variant == u8::from(ShredType::Data)
+        {
+            Err(Error::InvalidShredVariant)
         } else {
             let proof_size = shred_variant & 0x0F;
             match shred_variant & 0xF0 {
