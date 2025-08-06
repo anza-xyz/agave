@@ -687,13 +687,12 @@ pub fn execute(
     if matches!(
         validator_config.block_production_method,
         BlockProductionMethod::UnifiedScheduler
-    ) && !matches.is_present("enable_experimental_block_production_method")
-    {
-        Err(
+    ) {
+        warn!(
             "Currently, the unified-scheduler method is experimental for block-production. \
-            Explicitly pass --enable-experimental-block-production-method to use it."
-                .to_string(),
-        )?;
+            It doesn't support priority ordering, has known security issues and should be used \
+            only for developing and benchmarking purposes"
+        );
     }
 
     let public_rpc_addr = matches
