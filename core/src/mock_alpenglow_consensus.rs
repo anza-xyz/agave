@@ -143,7 +143,7 @@ impl TryFrom<u64> for VotorMessageType {
         match value {
             0 => Ok(Self::Notarize),
             1 => Ok(Self::NotarizeCertificateAndFinalize),
-            3 => Ok(Self::FinalizeCertificate),
+            2 => Ok(Self::FinalizeCertificate),
             _ => Err(()),
         }
     }
@@ -942,7 +942,7 @@ mod tests {
             {
                 let slot_state = get_state_for_slot(&shared_state, slot).lock().unwrap();
                 assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 0);
-                assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 0);
+                assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 1);
                 assert_eq!(slot_state.alpenglow_state.block_notarized, true);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, false);
             }
@@ -960,7 +960,7 @@ mod tests {
             {
                 let slot_state = get_state_for_slot(&shared_state, slot).lock().unwrap();
                 assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 0);
-                assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 0);
+                assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 1);
                 assert_eq!(slot_state.alpenglow_state.block_notarized, true);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, true);
             }
