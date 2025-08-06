@@ -9050,7 +9050,6 @@ name = "solana-svm"
 version = "2.3.8"
 dependencies = [
  "ahash 0.8.11",
- "itertools 0.12.1",
  "log",
  "percentage",
  "qualifier_attr",
@@ -9078,7 +9077,6 @@ dependencies = [
  "solana-rent-collector",
  "solana-rent-debits",
  "solana-sdk-ids",
- "solana-slot-hashes",
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-rent-collector",
