@@ -1011,11 +1011,17 @@ impl SharedWorkingBank {
         self.0.load_full()
     }
 
-    fn store(&self, bank: Arc<Bank>) {
+    // Mutable access not needed for this function.
+    // However we use it to guarantee only used when PohRecorder is
+    // write locked.
+    fn store(&mut self, bank: Arc<Bank>) {
         self.0.store(Some(bank));
     }
 
-    fn clear(&self) {
+    // Mutable access not needed for this function.
+    // However we use it to guarantee only used when PohRecorder is
+    // write locked.
+    fn clear(&mut self) {
         self.0.store(None);
     }
 
@@ -1038,11 +1044,17 @@ impl SharedTickHeight {
         Self(Arc::new(AtomicU64::new(tick_height)))
     }
 
-    fn store(&self, tick_height: u64) {
+    // Mutable access not needed for this function.
+    // However we use it to guarantee only used when PohRecorder is
+    // write locked.
+    fn store(&mut self, tick_height: u64) {
         self.0.store(tick_height, Ordering::Release);
     }
 
-    fn increment(&self) {
+    // Mutable access not needed for this function.
+    // However we use it to guarantee only used when PohRecorder is
+    // write locked.
+    fn increment(&mut self) {
         self.0.fetch_add(1, Ordering::Release);
     }
 }
@@ -1069,7 +1081,10 @@ impl SharedLeaderFirstTickHeight {
         Self(Arc::new(AtomicU64::new(v)))
     }
 
-    fn store(&self, tick_height: Option<u64>) {
+    // Mutable access not needed for this function.
+    // However we use it to guarantee only used when PohRecorder is
+    // write locked.
+    fn store(&mut self, tick_height: Option<u64>) {
         let v = tick_height.unwrap_or(SHARED_LEADER_FIRST_TICK_HEIGHT_NONE);
         self.0.store(v, Ordering::Release);
     }
