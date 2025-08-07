@@ -10,7 +10,7 @@ use {
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank, root_bank_cache::RootBankCache, vote_sender_types::BLSVerifiedMessageSender,
+        bank::Bank, bank_forks::SharableBank, vote_sender_types::BLSVerifiedMessageSender,
     },
     solana_signer::Signer,
     solana_transaction::Transaction,
@@ -83,7 +83,7 @@ pub struct VotingContext {
     pub bls_sender: Sender<BLSOp>,
     pub commitment_sender: Sender<AlpenglowCommitmentAggregationData>,
     pub wait_to_vote_slot: Option<u64>,
-    pub root_bank_cache: RootBankCache,
+    pub root_bank: SharableBank,
 }
 
 pub fn get_bls_keypair(
@@ -129,53 +129,55 @@ pub fn generate_vote_tx(
                 return GenerateVoteTxResult::Failed;
             }
         }
-        let Some(vote_account) = bank.get_vote_account(&context.vote_account_pubkey) else {
+        let Some(_vote_account) = bank.get_vote_account(&context.vote_account_pubkey) else {
             warn!("Vote account {vote_account_pubkey} does not exist.  Unable to vote");
             return GenerateVoteTxResult::Failed;
         };
-        let Some(vote_state) = vote_account.alpenglow_vote_state() else {
-            warn!(
-                "Vote account {vote_account_pubkey} does not have an Alpenglow vote state.  Unable to vote",
-            );
-            return GenerateVoteTxResult::Failed;
-        };
-        if *vote_state.node_pubkey() != context.identity_keypair.pubkey() {
-            info!(
-                "Vote account node_pubkey mismatch: {} (expected: {}).  Unable to vote",
-                vote_state.node_pubkey(),
-                context.identity_keypair.pubkey()
-            );
-            return GenerateVoteTxResult::HotSpare;
-        }
-        bls_pubkey_in_vote_account = match vote_account.bls_pubkey() {
-            None => {
-                panic!(
-                    "No BLS pubkey in vote account {}",
-                    context.identity_keypair.pubkey()
-                );
-            }
-            Some(key) => *key,
-        };
+        // let Some(vote_state) = vote_account.alpenglow_vote_state() else {
+        //     warn!(
+        //         "Vote account {vote_account_pubkey} does not have an Alpenglow vote state.  Unable to vote",
+        //     );
+        //     return GenerateVoteTxResult::Failed;
+        // };
+        // if *vote_state.node_pubkey() != context.identity_keypair.pubkey() {
+        //     info!(
+        //         "Vote account node_pubkey mismatch: {} (expected: {}).  Unable to vote",
+        //         vote_state.node_pubkey(),
+        //         context.identity_keypair.pubkey()
+        //     );
+        //     return GenerateVoteTxResult::HotSpare;
+        // }
+        bls_pubkey_in_vote_account = BLSPubkey::default();
+        // bls_pubkey_in_vote_account = match vote_account.bls_pubkey() {
+        //     None => {
+        //         panic!(
+        //             "No BLS pubkey in vote account {}",
+        //             context.identity_keypair.pubkey()
+        //         );
+        //     }
+        //     Some(key) => *key,
+        // };
 
-        let Some(authorized_voter_pubkey) = vote_state.get_authorized_voter(bank.epoch()) else {
-            warn!("Vote account {vote_account_pubkey} has no authorized voter for epoch {}.  Unable to vote",
-                bank.epoch()
-            );
-            return GenerateVoteTxResult::Failed;
-        };
+        // let Some(authorized_voter_pubkey) = vote_state.get_authorized_voter(bank.epoch()) else {
+        //     warn!("Vote account {vote_account_pubkey} has no authorized voter for epoch {}.  Unable to vote",
+        //         bank.epoch()
+        //     );
+        //     return GenerateVoteTxResult::Failed;
+        // };
 
-        let Some(keypair) = authorized_voter_keypairs
-            .iter()
-            .find(|keypair| keypair.pubkey() == authorized_voter_pubkey)
-        else {
-            warn!(
-                "The authorized keypair {authorized_voter_pubkey} for vote account \
-                 {vote_account_pubkey} is not available.  Unable to vote"
-            );
-            return GenerateVoteTxResult::NonVoting;
-        };
+        // let Some(keypair) = authorized_voter_keypairs
+        //     .iter()
+        //     .find(|keypair| keypair.pubkey() == authorized_voter_pubkey)
+        // else {
+        //     warn!(
+        //         "The authorized keypair {authorized_voter_pubkey} for vote account \
+        //          {vote_account_pubkey} is not available.  Unable to vote"
+        //     );
+        //     return GenerateVoteTxResult::NonVoting;
+        // };
 
-        authorized_voter_keypair = keypair.clone();
+        // authorized_voter_keypair = keypair.clone();
+        authorized_voter_keypair = Arc::new(Keypair::new());
     }
 
     let bls_keypair = get_bls_keypair(context, &authorized_voter_keypair)
@@ -189,19 +191,20 @@ pub fn generate_vote_tx(
     }
     let vote_serialized = bincode::serialize(&vote).unwrap();
 
-    let Some(epoch_stakes) = bank.epoch_stakes(bank.epoch()) else {
+    let Some(_epoch_stakes) = bank.epoch_stakes(bank.epoch()) else {
         panic!(
             "The bank {} doesn't have its own epoch_stakes for {}",
             bank.slot(),
             bank.epoch()
         );
     };
-    let Some(my_rank) = epoch_stakes
-        .bls_pubkey_to_rank_map()
-        .get_rank(&my_bls_pubkey)
-    else {
-        return GenerateVoteTxResult::NoRankFound;
-    };
+    // let Some(my_rank) = epoch_stakes
+    //     .bls_pubkey_to_rank_map()
+    //     .get_rank(&my_bls_pubkey)
+    // else {
+    //     return GenerateVoteTxResult::NoRankFound;
+    // };
+    let my_rank = &0;
     GenerateVoteTxResult::BLSMessage(BLSMessage::Vote(VoteMessage {
         vote: *vote,
         signature: bls_keypair.sign(&vote_serialized).into(),
@@ -230,7 +233,7 @@ pub(crate) fn insert_vote_and_create_bls_message(
         context.vote_history.add_vote(vote);
     }
 
-    let bank = context.root_bank_cache.root_bank();
+    let bank = context.root_bank.load();
     let bls_message = match generate_vote_tx(&vote, &bank, context) {
         GenerateVoteTxResult::BLSMessage(bls_message) => bls_message,
         e => {

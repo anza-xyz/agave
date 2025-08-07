@@ -25,7 +25,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_runtime::{
-        root_bank_cache::RootBankCache, vote_sender_types::BLSVerifiedMessageReceiver,
+        bank::Bank, bank_forks::SharableBank, vote_sender_types::BLSVerifiedMessageReceiver,
     },
     solana_votor_messages::bls_message::{BLSMessage, CertificateMessage},
     stats::CertificatePoolServiceStats,
@@ -47,7 +47,7 @@ pub(crate) struct CertificatePoolContext {
     pub(crate) my_pubkey: Pubkey,
     pub(crate) my_vote_pubkey: Pubkey,
     pub(crate) blockstore: Arc<Blockstore>,
-    pub(crate) root_bank_cache: RootBankCache,
+    pub(crate) root_bank: SharableBank,
     pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
 
     // TODO: for now we ingest our own votes into the certificate pool
@@ -82,7 +82,7 @@ impl CertificatePoolService {
 
     fn maybe_update_root_and_send_new_certificates(
         cert_pool: &mut CertificatePool,
-        root_bank_cache: &mut RootBankCache,
+        root_bank: Arc<Bank>,
         bls_sender: &Sender<BLSOp>,
         new_finalized_slot: Option<Slot>,
         new_certificates_to_send: Vec<Arc<CertificateMessage>>,
@@ -96,7 +96,6 @@ impl CertificatePoolService {
             *standstill_timer = Instant::now();
             CertificatePoolServiceStats::incr_u16(&mut stats.new_finalized_slot);
             // Set root
-            let root_bank = root_bank_cache.root_bank();
             if root_bank.slot() > *current_root {
                 CertificatePoolServiceStats::incr_u16(&mut stats.new_root);
                 *current_root = root_bank.slot();
@@ -164,7 +163,7 @@ impl CertificatePoolService {
             )?;
         Self::maybe_update_root_and_send_new_certificates(
             cert_pool,
-            &mut ctx.root_bank_cache,
+            ctx.root_bank.load(),
             &ctx.bls_sender,
             new_finalized_slot,
             new_certificates_to_send,
@@ -186,9 +185,10 @@ impl CertificatePoolService {
     // Main loop for the certificate pool service, it only exits when any channel is disconnected
     fn certificate_pool_ingest_loop(mut ctx: CertificatePoolContext) -> Result<(), ()> {
         let mut events = vec![];
+        let root_bank = ctx.root_bank.load();
         let mut cert_pool = certificate_pool::load_from_blockstore(
             &ctx.my_pubkey,
-            &ctx.root_bank_cache.root_bank(),
+            &root_bank,
             ctx.blockstore.as_ref(),
             Some(ctx.certificate_sender.clone()),
             &mut events,
@@ -198,14 +198,13 @@ impl CertificatePoolService {
         info!("{}: Certificate pool loop initialized", &ctx.my_pubkey);
         Votor::wait_for_migration_or_exit(&ctx.exit, &ctx.start);
         info!("{}: Certificate pool loop starting", &ctx.my_pubkey);
-        let mut current_root = ctx.root_bank_cache.root_bank().slot();
+        let mut current_root = root_bank.slot();
         let mut stats = CertificatePoolServiceStats::new();
 
         // Standstill tracking
         let mut standstill_timer = Instant::now();
 
         // Kick off parent ready
-        let root_bank = ctx.root_bank_cache.root_bank();
         let root_block = (root_bank.slot(), root_bank.block_id().unwrap_or_default());
         let mut highest_parent_ready = root_bank.slot();
         events.push(VotorEvent::ParentReady {
@@ -341,10 +340,10 @@ impl CertificatePoolService {
         }
         *highest_parent_ready = new_highest_parent_ready;
 
-        let Some(leader_pubkey) = ctx.leader_schedule_cache.slot_leader_at(
-            *highest_parent_ready,
-            Some(&ctx.root_bank_cache.root_bank()),
-        ) else {
+        let Some(leader_pubkey) = ctx
+            .leader_schedule_cache
+            .slot_leader_at(*highest_parent_ready, Some(&ctx.root_bank.load()))
+        else {
             error!("Unable to compute the leader at slot {highest_parent_ready}. Something is wrong, exiting");
             ctx.exit.store(true, Ordering::Relaxed);
             return;

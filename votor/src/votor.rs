@@ -1,5 +1,6 @@
 //! The entrypoint into votor the module responsible for voting, rooting, and notifying
 //! the core to create a new block.
+//! ```text
 //!
 //!                                Votor
 //!   ┌────────────────────────────────────────────────────────────────────────────┐
@@ -39,7 +40,7 @@
 //!   │                          │                    │     │                    │ │
 //!   │                          └────────────────────┘     └────────────────────┘ │
 //!   └────────────────────────────────────────────────────────────────────────────┘
-//!
+//! ```
 use {
     crate::{
         certificate_pool_service::{CertificatePoolContext, CertificatePoolService},
@@ -66,7 +67,6 @@ use {
     solana_runtime::{
         bank_forks::BankForks,
         installed_scheduler_pool::BankWithScheduler,
-        root_bank_cache::RootBankCache,
         snapshot_controller::SnapshotController,
         vote_sender_types::{BLSVerifiedMessageReceiver, BLSVerifiedMessageSender},
     },
@@ -199,7 +199,7 @@ impl Votor {
             bls_sender: bls_sender.clone(),
             commitment_sender: commitment_sender.clone(),
             wait_to_vote_slot,
-            root_bank_cache: RootBankCache::new(bank_forks.clone()),
+            root_bank: bank_forks.read().unwrap().sharable_root_bank(),
         };
 
         let root_context = RootContext {
@@ -230,13 +230,13 @@ impl Votor {
             my_pubkey,
             my_vote_pubkey: vote_account,
             blockstore,
-            root_bank_cache: RootBankCache::new(bank_forks.clone()),
             leader_schedule_cache,
             bls_receiver,
             bls_sender,
             event_sender,
             commitment_sender,
             certificate_sender,
+            root_bank: bank_forks.read().unwrap().sharable_root_bank(),
         };
 
         let event_handler = EventHandler::new(event_handler_context);
