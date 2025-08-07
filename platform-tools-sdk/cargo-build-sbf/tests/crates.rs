@@ -9,7 +9,6 @@ use {
     },
 };
 
-
 static SBF_TOOLS_INSTALL: AtomicBool = AtomicBool::new(true);
 fn run_cargo_build(crate_name: &str, extra_args: &[&str], fail: bool) {
     let cwd = env::current_dir().expect("Unable to get current working directory");
