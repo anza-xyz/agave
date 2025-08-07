@@ -1040,7 +1040,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) {
         let mut sysvar_cache = self.sysvar_cache.write().unwrap();
         sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
-            if let Some(account) = callbacks.get_account_shared_data(pubkey) {
+            if let Some((account, _slot)) = callbacks.get_account_shared_data(pubkey) {
                 set_sysvar(account.data());
             }
         });
@@ -1172,12 +1172,12 @@ mod tests {
             }
         }
 
-        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
             self.account_shared_data
                 .read()
                 .unwrap()
                 .get(pubkey)
-                .cloned()
+                .map(|account| (account.clone(), 0))
         }
 
         fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {

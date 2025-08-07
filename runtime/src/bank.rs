@@ -5681,12 +5681,11 @@ impl TransactionProcessingCallback for Bank {
             .ok()
     }
 
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
         self.rc
             .accounts
             .accounts_db
             .load_with_fixed_root(&self.ancestors, pubkey)
-            .map(|(acc, _)| acc)
     }
 
     // NOTE: must hold idempotent for the same set of arguments

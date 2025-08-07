@@ -64,7 +64,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
 ) -> Option<ProgramAccountLoadResult> {
-    let program_account = callbacks.get_account_shared_data(pubkey)?;
+    let (program_account, _slot) = callbacks.get_account_shared_data(pubkey)?;
 
     if loader_v4::check_id(program_account.owner()) {
         return Some(
@@ -92,7 +92,9 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
         programdata_address,
     }) = program_account.state()
     {
-        if let Some(programdata_account) = callbacks.get_account_shared_data(&programdata_address) {
+        if let Some((programdata_account, _slot)) =
+            callbacks.get_account_shared_data(&programdata_address)
+        {
             if let Ok(UpgradeableLoaderState::ProgramData {
                 slot,
                 upgrade_authority_address: _,
@@ -217,7 +219,7 @@ pub(crate) fn get_program_modification_slot<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
 ) -> TransactionResult<Slot> {
-    let program = callbacks
+    let (program, _slot) = callbacks
         .get_account_shared_data(pubkey)
         .ok_or(TransactionError::ProgramAccountNotFound)?;
     if bpf_loader_upgradeable::check_id(program.owner()) {
@@ -225,7 +227,7 @@ pub(crate) fn get_program_modification_slot<CB: TransactionProcessingCallback>(
             programdata_address,
         }) = program.state()
         {
-            let programdata = callbacks
+            let (programdata, _slot) = callbacks
                 .get_account_shared_data(&programdata_address)
                 .ok_or(TransactionError::ProgramAccountNotFound)?;
             if let Ok(UpgradeableLoaderState::ProgramData {
@@ -295,8 +297,11 @@ mod tests {
             }
         }
 
-        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
-            self.account_shared_data.borrow().get(pubkey).cloned()
+        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
+            self.account_shared_data
+                .borrow()
+                .get(pubkey)
+                .map(|account| (account.clone(), 0))
         }
 
         fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {

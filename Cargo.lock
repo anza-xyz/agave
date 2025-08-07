@@ -10944,6 +10944,7 @@ name = "solana-svm-callback"
 version = "3.0.0"
 dependencies = [
  "solana-account",
+ "solana-clock",
  "solana-precompile-error",
  "solana-pubkey",
 ]

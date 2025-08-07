@@ -80,12 +80,12 @@ impl TransactionProcessingCallback for MockBankCallback {
         }
     }
 
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
         self.account_shared_data
             .read()
             .unwrap()
             .get(pubkey)
-            .cloned()
+            .map(|account| (account.clone(), 0))
     }
 
     fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
