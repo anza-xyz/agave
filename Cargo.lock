@@ -343,6 +343,7 @@ dependencies = [
  "agave-votor",
  "agave-xdp",
  "assert_cmd",
+ "assert_matches",
  "caps",
  "chrono",
  "clap 2.33.3",

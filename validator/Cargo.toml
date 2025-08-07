@@ -102,6 +102,7 @@ libc = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
+assert_matches = { workspace = true }
 predicates = { workspace = true }
 pretty_assertions = { workspace = true }
 scopeguard = { workspace = true }

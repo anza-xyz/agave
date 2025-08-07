@@ -3,6 +3,7 @@ use {
         banking_stage::BankingControlMsg, cluster_slots_service::cluster_slots::ClusterSlots,
         repair::repair_service::OutstandingShredRepairs,
     },
+    agave_votor::event::VotorEventSender,
     solana_gossip::{cluster_info::ClusterInfo, node::NodeMultihoming},
     solana_ledger::blockstore::Blockstore,
     solana_pubkey::Pubkey,
@@ -88,4 +89,5 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub banking_control_sender: mpsc::Sender<BankingControlMsg>,
     pub snapshot_controller: Arc<SnapshotController>,
     pub blockstore: Arc<Blockstore>,
+    pub votor_event_sender: VotorEventSender,
 }

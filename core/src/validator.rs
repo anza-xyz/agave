@@ -1701,7 +1701,7 @@ impl Validator {
                 )
             }),
             cancel,
-            votor_event_sender,
+            votor_event_sender.clone(),
         );
 
         datapoint_info!(
@@ -1735,6 +1735,7 @@ impl Validator {
             banking_control_sender,
             snapshot_controller,
             blockstore: blockstore.clone(),
+            votor_event_sender,
         });
 
         Ok(Self {
