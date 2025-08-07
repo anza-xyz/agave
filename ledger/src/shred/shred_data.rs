@@ -102,7 +102,7 @@ impl ShredData {
         )>,
     ) -> Result<usize, Error> {
         match merkle_variant {
-            None => Ok(legacy::ShredData::CAPACITY),
+            None => Err(Error::InvalidShredVariant),
             Some((proof_size, chained, resigned)) => {
                 debug_assert!(chained || !resigned);
                 merkle::ShredData::capacity(proof_size, chained, resigned)

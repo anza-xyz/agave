@@ -214,6 +214,7 @@ pub enum ShredType {
     Code = 0b0101_1010,
 }
 
+#[allow(dead_code)] //legacy shreds
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 #[serde(into = "u8", try_from = "u8")]
 enum ShredVariant {
