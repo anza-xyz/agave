@@ -17,7 +17,7 @@ pub mod api {
     // Fixed point scale for K and `alpha` calculation
     pub const SCALE: NonZeroU64 = NonZeroU64::new(1_000_000).unwrap();
     // 2 * pi * SCALE
-    const TWO_PI_SCALED: u64 = 6_283_185;
+    const TWO_PI_SCALED: u64 = (2.0 * std::f64::consts::PI * SCALE.get() as f64) as u64;
 
     #[derive(Clone)]
     pub struct FilterConfig {

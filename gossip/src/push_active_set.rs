@@ -57,7 +57,8 @@ impl From<&WeightingConfig> for WeightingMode {
 fn get_weight(bucket: u64, alpha: u64) -> u64 {
     debug_assert!((ALPHA_MIN..=ALPHA_MIN + lpf::SCALE.get()).contains(&alpha));
     let b = bucket + 1;
-    linearly_interpolate(b, alpha)
+    let b_squared = b.saturating_mul(b);
+    gossip_interpolate_weight(b, b_squared, alpha)
 }
 
 /// Approximates `base^alpha` rounded to nearest integer using
@@ -66,11 +67,10 @@ fn get_weight(bucket: u64, alpha: u64) -> u64 {
 /// Note: This function is most accurate when `base` is small e.g. < ~25.
 #[inline]
 #[allow(clippy::arithmetic_side_effects)]
-pub fn linearly_interpolate(base: u64, alpha: u64) -> u64 {
+pub fn gossip_interpolate_weight(base: u64, base_squared: u64, alpha: u64) -> u64 {
     let scale = lpf::SCALE.get();
     let t = alpha.saturating_sub(ALPHA_MIN);
     debug_assert!(t <= scale, "interpolation t={} > SCALE={}", t, scale);
-    let base_squared = base.saturating_mul(base);
     // ((base * (scale - t) + base_squared * t) + scale / 2) / scale
     ((base.saturating_mul(scale.saturating_sub(t))).saturating_add(base_squared.saturating_mul(t)))
         .saturating_add(scale / 2)
@@ -922,21 +922,24 @@ mod tests {
 
     #[test]
     fn test_interpolate_t_zero() {
-        // When t=0, should return base
-        assert_eq!(linearly_interpolate(100, 0), 100);
-        assert_eq!(linearly_interpolate(0, 0), 0);
-        assert_eq!(linearly_interpolate(1000000, 0), 1000000);
+        // When alpha = ALPHA_MIN (t = 0), should return base
+        assert_eq!(gossip_interpolate_weight(100, 100 * 100, ALPHA_MIN), 100);
+        assert_eq!(gossip_interpolate_weight(0, 0, ALPHA_MIN), 0);
+        assert_eq!(
+            gossip_interpolate_weight(1_000_000, 1_000_000 * 1_000_000, ALPHA_MIN),
+            1_000_000
+        );
     }
 
     #[test]
     fn test_interpolate_t_max() {
-        // When t=SCALE, should return base^2
+        // When alpha = ALPHA_MAX (t = SCALE), should return base^2
         let base = 100;
-        let result = linearly_interpolate(base, lpf::SCALE.get());
+        let result = gossip_interpolate_weight(base, base * base, ALPHA_MAX);
         assert_eq!(result, base * base);
 
         let base2 = 1000;
-        let result = linearly_interpolate(base2, lpf::SCALE.get());
+        let result = gossip_interpolate_weight(base2, base2 * base2, ALPHA_MAX);
         assert_eq!(result, base2 * base2);
     }
 
@@ -947,40 +950,40 @@ mod tests {
         let t_75 = lpf::SCALE.get() * 3 / 4; // 75%
 
         let base = 3;
-        let result = linearly_interpolate(base, t_10);
+        let result = gossip_interpolate_weight(base, base * base, ALPHA_MIN + t_10);
         assert_eq!(result, 4);
 
-        let result = linearly_interpolate(base, t_50);
+        let result = gossip_interpolate_weight(base, base * base, ALPHA_MIN + t_50);
         assert_eq!(result, 6);
 
-        let result = linearly_interpolate(base, t_75);
+        let result = gossip_interpolate_weight(base, base * base, ALPHA_MIN + t_75);
         assert_eq!(result, 8);
 
         let base = 15;
-        let result = linearly_interpolate(base, t_10);
+        let result = gossip_interpolate_weight(base, base * base, ALPHA_MIN + t_10);
         assert_eq!(result, 36);
 
-        let result = linearly_interpolate(base, t_50);
+        let result = gossip_interpolate_weight(base, base * base, ALPHA_MIN + t_50);
         assert_eq!(result, 120);
 
-        let result = linearly_interpolate(base, t_75);
+        let result = gossip_interpolate_weight(base, base * base, ALPHA_MIN + t_75);
         assert_eq!(result, 173);
 
         let base = 24;
-        let result = linearly_interpolate(base, t_10);
+        let result = gossip_interpolate_weight(base, base * base, ALPHA_MIN + t_10);
         assert_eq!(result, 79);
 
-        let result = linearly_interpolate(base, t_50);
+        let result = gossip_interpolate_weight(base, base * base, ALPHA_MIN + t_50);
         assert_eq!(result, 300);
 
-        let result = linearly_interpolate(base, t_75);
+        let result = gossip_interpolate_weight(base, base * base, ALPHA_MIN + t_75);
         assert_eq!(result, 438);
     }
 
     #[test]
     fn test_interpolate_large_base() {
-        let base = 1000000000;
-        let result = linearly_interpolate(base, lpf::SCALE.get() / 2);
+        let base = 1_000_000_000u64;
+        let result = gossip_interpolate_weight(base, base * base, ALPHA_MIN + lpf::SCALE.get() / 2);
         assert!(result >= base);
         assert!(result < base * base);
     }
@@ -988,21 +991,27 @@ mod tests {
     #[test]
     fn test_interpolate_edge_cases() {
         // Test with base = 1
-        assert_eq!(linearly_interpolate(1, 0), 1);
-        assert_eq!(linearly_interpolate(1, lpf::SCALE.get()), 1);
-        assert_eq!(linearly_interpolate(1, lpf::SCALE.get() / 2), 1);
+        assert_eq!(gossip_interpolate_weight(1, 1, ALPHA_MIN), 1);
+        assert_eq!(gossip_interpolate_weight(1, 1, ALPHA_MAX), 1);
+        assert_eq!(
+            gossip_interpolate_weight(1, 1, ALPHA_MIN + (lpf::SCALE.get() / 2)),
+            1
+        );
 
         // Test with base = 0
-        assert_eq!(linearly_interpolate(0, 0), 0);
-        assert_eq!(linearly_interpolate(0, lpf::SCALE.get()), 0);
-        assert_eq!(linearly_interpolate(0, lpf::SCALE.get() / 2), 0);
+        assert_eq!(gossip_interpolate_weight(0, 0, ALPHA_MIN), 0);
+        assert_eq!(gossip_interpolate_weight(0, 0, ALPHA_MAX), 0);
+        assert_eq!(
+            gossip_interpolate_weight(0, 0, ALPHA_MIN + (lpf::SCALE.get() / 2)),
+            0
+        );
     }
 
     #[test]
     fn test_interpolate_rounding() {
         let base = 3;
         let t = lpf::SCALE.get() / 3;
-        let result = linearly_interpolate(base, t);
+        let result = gossip_interpolate_weight(base, base * base, ALPHA_MIN + t);
 
         assert!(result >= 3);
         assert!(result <= 9);
@@ -1024,9 +1033,8 @@ mod tests {
         let target_alpha = alpha_min + lpf::SCALE.get() / 2; // 1.5 * SCALE
         let filtered_alpha = lpf::filter_alpha(prev_alpha, target_alpha, config);
 
-        let t = filtered_alpha.saturating_sub(alpha_min);
         let base = 2;
-        let result = linearly_interpolate(base, t);
+        let result = gossip_interpolate_weight(base, base * base, filtered_alpha);
 
         assert!(result >= base);
         assert!(result <= base * base);

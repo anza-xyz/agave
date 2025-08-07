@@ -6744,12 +6744,8 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
-<<<<<<< HEAD
  "solana-logger 3.0.0",
-=======
- "solana-logger",
  "solana-low-pass-filter",
->>>>>>> 3299f17111 (agave-unstable-api implementation)
  "solana-measure",
  "solana-metrics",
  "solana-native-token",
