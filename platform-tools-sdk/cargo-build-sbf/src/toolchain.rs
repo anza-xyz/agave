@@ -1,9 +1,5 @@
 use {
-    crate::{
-        home_dir, semver_version,
-        utils::{rust_target_triple, spawn},
-        Config,
-    },
+    crate::{home_dir, utils::spawn, Config},
     bzip2::bufread::BzDecoder,
     log::{debug, error, warn},
     regex::Regex,
@@ -55,6 +51,22 @@ fn downloadable_version(version: &str) -> String {
         version.to_string()
     } else {
         format!("v{version}")
+    }
+}
+
+fn semver_version(version: &str) -> String {
+    let starts_with_v = version.starts_with('v');
+    let dots = version.as_bytes().iter().fold(
+        0,
+        |n: u32, c| if *c == b'.' { n.saturating_add(1) } else { n },
+    );
+    match (dots, starts_with_v) {
+        (0, false) => format!("{version}.0.0"),
+        (0, true) => format!("{}.0.0", &version[1..]),
+        (1, false) => format!("{version}.0"),
+        (1, true) => format!("{}.0", &version[1..]),
+        (_, false) => version.to_string(),
+        (_, true) => version[1..].to_string(),
     }
 }
 
@@ -426,5 +438,23 @@ fn check_solana_target_installed(target: &str) {
              in $PATH or the $RUSTC environment variable for the build to succeed."
         );
         exit(1);
+    }
+}
+
+pub(crate) fn rust_target_triple(config: &Config) -> String {
+    let tools_version = semver::Version::parse(&semver_version(
+        config
+            .platform_tools_version
+            .unwrap_or(DEFAULT_PLATFORM_TOOLS_VERSION),
+    ))
+    .unwrap();
+    let sbpf_minimum_version = semver::Version::parse(&semver_version("v1.44")).unwrap();
+
+    if config.arch == "v0" && tools_version < sbpf_minimum_version {
+        "sbf-solana-solana".to_string()
+    } else if config.arch == "v0" {
+        "sbpf-solana-solana".to_string()
+    } else {
+        format!("sbpf{}-solana-solana", config.arch)
     }
 }
