@@ -5597,36 +5597,45 @@ impl AccountsDb {
         // Randomized order works well with rayon work splitting, since we only care about
         // uniform distribution of total work size per batch (other ordering strategies might be
         // useful for optimizing disk read sizes and buffers usage in a single IO queue).
-        let storages = AccountStoragesOrderer::with_random_order(storages);
-        let mut lt_hash = storages
-            .par_iter()
-            .fold(
-                || Box::new((LtHash::identity(), append_vec::new_scan_accounts_reader())),
-                |mut state, storage| {
-                    let (ref mut accum, ref mut reader) = state.as_mut();
-                    // Function is calculating the accounts_lt_hash from all accounts in the
-                    // storages as of startup_slot. This means that any accounts marked obsolete at a
-                    // slot newer than startup_slot should be included in the accounts_lt_hash
-                    let obsolete_accounts = storage.get_obsolete_accounts(Some(startup_slot));
-                    storage
-                        .accounts
-                        .scan_accounts(reader, |offset, account| {
-                            // Obsolete accounts were not included in the original hash, so they should not be added here
-                            if !obsolete_accounts.contains(&(offset, account.data.len())) {
-                                let account_lt_hash =
-                                    Self::lt_hash_account(&account, account.pubkey());
-                                accum.mix_in(&account_lt_hash.0);
-                            }
-                        })
-                        .expect("must scan accounts storage");
-                    state
-                },
-            )
-            .map(|elem| elem.0)
-            .reduce(LtHash::identity, |mut accum, elem| {
-                accum.mix_in(&elem);
-                accum
-            });
+        let storages = AccountStoragesOrderer::with_random_order(storages).multi_consumer();
+        let mut lt_hash = std::thread::scope(|s| {
+            let handles = (0..6)
+                .map(|_| {
+                    s.spawn(|| {
+                        let mut thread_lt_hash = LtHash::identity();
+                        let mut reader = append_vec::new_scan_accounts_reader();
+
+                        while let Some(storage) = storages.next() {
+                            // Function is calculating the accounts_lt_hash from all accounts in the
+                            // storages as of startup_slot. This means that any accounts marked obsolete at a
+                            // slot newer than startup_slot should be included in the accounts_lt_hash
+                            let obsolete_accounts =
+                                storage.get_obsolete_accounts(Some(startup_slot));
+                            storage
+                                .accounts
+                                .scan_accounts(&mut reader, |offset, account| {
+                                    // Obsolete accounts were not included in the original hash, so they should not be added here
+                                    if !obsolete_accounts.contains(&(offset, account.data.len())) {
+                                        let account_lt_hash =
+                                            Self::lt_hash_account(&account, account.pubkey());
+                                        thread_lt_hash.mix_in(&account_lt_hash.0);
+                                    }
+                                })
+                                .expect("must scan accounts storage");
+                        }
+                        thread_lt_hash
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .reduce(|mut accum, elem| {
+                    accum.mix_in(&elem);
+                    accum
+                })
+        })
+        .unwrap();
 
         if self.mark_obsolete_accounts {
             // If `mark_obsolete_accounts` is true, then none if the duplicate accounts were

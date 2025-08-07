@@ -8,8 +8,11 @@ use {
     solana_clock::Slot,
     solana_nohash_hasher::{BuildNoHashHasher, IntMap},
     std::{
-        ops::Range,
-        sync::{Arc, RwLock},
+        ops::{Index, Range},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, RwLock,
+        },
     },
 };
 
@@ -347,12 +350,51 @@ impl<'a> AccountStoragesOrderer<'a> {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.indices.len()
+    }
+
     pub fn iter(&'a self) -> impl ExactSizeIterator<Item = &'a AccountStorageEntry> + 'a {
         self.indices.iter().map(|i| self.storages[*i].as_ref())
     }
 
     pub fn par_iter(&'a self) -> impl IndexedParallelIterator<Item = &'a AccountStorageEntry> + 'a {
         self.indices.par_iter().map(|i| self.storages[*i].as_ref())
+    }
+
+    pub fn multi_consumer(self) -> AccountStoragesMultiConsumeIter<'a> {
+        AccountStoragesMultiConsumeIter::new(self)
+    }
+}
+
+impl Index<usize> for AccountStoragesOrderer<'_> {
+    type Output = AccountStorageEntry;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.storages[self.indices[index]].as_ref()
+    }
+}
+
+pub struct AccountStoragesMultiConsumeIter<'a> {
+    orderer: AccountStoragesOrderer<'a>,
+    current_index: AtomicUsize,
+}
+
+impl<'a> AccountStoragesMultiConsumeIter<'a> {
+    pub fn new(orderer: AccountStoragesOrderer<'a>) -> Self {
+        Self {
+            orderer,
+            current_index: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn next(&'a self) -> Option<&'a AccountStorageEntry> {
+        let index = self.current_index.fetch_add(1, Ordering::Relaxed);
+        if index < self.orderer.len() {
+            Some(&self.orderer[index])
+        } else {
+            None
+        }
     }
 }
 
