@@ -4101,7 +4101,7 @@ impl AccountsDb {
         account: &Pubkey,
         owners: &[Pubkey],
     ) -> Result<usize, MatchAccountOwnerError> {
-        let (slot, storage_location, _maybe_account_accesor) = self
+        let (slot, storage_location, _maybe_account_accessor) = self
             .read_index_for_accessor_or_load_slow(ancestors, account, None, false)
             .ok_or(MatchAccountOwnerError::UnableToLoad)?;
 
@@ -4487,7 +4487,7 @@ impl AccountsDb {
         pubkey: &Pubkey,
         should_put_in_read_cache_fn: impl Fn(&AccountSharedData) -> bool,
     ) -> Option<(AccountSharedData, Slot)> {
-        let (slot, storage_location, _maybe_account_accesor) =
+        let (slot, storage_location, _maybe_account_accessor) =
             self.read_index_for_accessor_or_load_slow(ancestors, pubkey, None, false)?;
         // Notice the subtle `?` at previous line, we bail out pretty early if missing.
 
@@ -4554,7 +4554,7 @@ impl AccountsDb {
 
         let starting_max_root = self.accounts_index.max_root_inclusive();
 
-        let (slot, storage_location, _maybe_account_accesor) =
+        let (slot, storage_location, _maybe_account_accessor) =
             self.read_index_for_accessor_or_load_slow(ancestors, pubkey, max_root, false)?;
         // Notice the subtle `?` at previous line, we bail out pretty early if missing.
 
@@ -6463,7 +6463,7 @@ impl AccountsDb {
         let slot = accounts.target_slot();
         let mut store_accounts_time = Measure::start("store_accounts");
 
-        // Flush the read cache if neccessary. This will occur during shrink or clean
+        // Flush the read cache if necessary. This will occur during shrink or clean
         if self.read_only_accounts_cache.can_slot_be_in_cache(slot) {
             (0..accounts.len()).for_each(|index| {
                 // based on the patterns of how a validator writes accounts, it is almost always the case that there is no read only cache entry
@@ -7169,7 +7169,7 @@ impl AccountsDb {
             return;
         }
         // This number is chosen to keep the initial ram usage sufficiently small
-        // The process of generating the index is goverened entirely by how fast the disk index can be populated.
+        // The process of generating the index is governed entirely by how fast the disk index can be populated.
         // 10M accounts is sufficiently small that it will never have memory usage. It seems sufficiently large that it will provide sufficient performance.
         // Performance is measured by total time to generate the index.
         // Just estimating - 150M accounts can easily be held in memory in the accounts index on a 256G machine. 2-300M are also likely 'fine' during startup.
@@ -7380,7 +7380,7 @@ enum HandleReclaims<'a> {
 
 /// Specify whether obsolete accounts should be marked or not during reclaims
 /// They should only be marked if they are also getting unreffed in the index
-/// Temporariliy allow dead code until the feature is implemented
+/// Temporarily allow dead code until the feature is implemented
 #[derive(Debug, Copy, Clone)]
 enum MarkAccountsObsolete {
     #[allow(dead_code)]
@@ -7413,7 +7413,7 @@ impl AccountStorageEntry {
 #[cfg(feature = "dev-context-only-utils")]
 impl AccountsDb {
     /// Return the number of slots marked with uncleaned pubkeys.
-    /// This is useful for testing clean aglorithms.
+    /// This is useful for testing clean algorithms.
     pub fn get_len_of_slots_with_uncleaned_pubkeys(&self) -> usize {
         self.uncleaned_pubkeys.len()
     }
