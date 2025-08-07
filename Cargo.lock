@@ -9220,18 +9220,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "307fb2f78060995979e9b4f68f833623565ed4e55d3725f100454ce78a99a1a3"
 
 [[package]]
-name = "solana-net-shaper"
-version = "3.0.0"
-dependencies = [
- "clap 3.2.23",
- "rand 0.8.5",
- "serde",
- "serde_derive",
- "serde_json",
- "solana-logger",
-]
-
-[[package]]
 name = "solana-net-utils"
 version = "3.0.0"
 dependencies = [

@@ -56,7 +56,6 @@ members = [
     "memory-management",
     "merkle-tree",
     "metrics",
-    "net-shaper",
     "net-utils",
     "notifier",
     "perf",
