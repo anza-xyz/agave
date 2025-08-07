@@ -7608,14 +7608,4 @@ pub mod test_utils {
             pubkeys.push(pubkey);
         }
     }
-
-    // Only used by bench, not safe to call otherwise accounts can conflict with the
-    // accounts cache!
-    pub fn update_accounts_bench(accounts: &Accounts, pubkeys: &[Pubkey], slot: u64) {
-        for pubkey in pubkeys {
-            let amount = thread_rng().gen_range(0..10);
-            let account = AccountSharedData::new(amount, 0, AccountSharedData::default().owner());
-            accounts.store_cached((slot, &[(pubkey, &account)][..]), None);
-        }
-    }
 }
