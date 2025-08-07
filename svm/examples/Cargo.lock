@@ -872,6 +872,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "boxcar"
+version = "0.2.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26c4925bc979b677330a8c7fe7a8c94af2dbb4a2d37b4a20a80d884400f46baa"
+
+[[package]]
 name = "brotli"
 version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6958,12 +6964,15 @@ dependencies = [
  "bv",
  "bytes",
  "caps",
+ "crossbeam-channel",
  "curve25519-dalek 4.1.3",
  "dlopen2",
  "fnv",
+ "itertools 0.12.1",
  "libc",
  "log",
  "nix",
+ "num_cpus",
  "rand 0.8.5",
  "rayon",
  "serde",
@@ -6977,6 +6986,7 @@ dependencies = [
  "solana-short-vec",
  "solana-signature",
  "solana-time-utils",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -7632,6 +7642,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "blake3",
+ "boxcar",
  "bv",
  "bytemuck",
  "crossbeam-channel",

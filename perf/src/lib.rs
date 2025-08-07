@@ -11,6 +11,7 @@ pub mod sigverify;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod test_tx;
 pub mod thread;
+pub mod thread_pool;
 
 #[macro_use]
 extern crate log;

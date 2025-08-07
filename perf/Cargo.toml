@@ -38,10 +38,13 @@ ahash = { workspace = true }
 bincode = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 bytes = { workspace = true, features = ["serde"] }
+crossbeam-channel = { workspace = true }
 curve25519-dalek = { workspace = true }
 dlopen2 = { workspace = true }
 fnv = { workspace = true }
+itertools = { workspace = true }
 log = { workspace = true }
+num_cpus = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
@@ -69,6 +72,7 @@ solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true, optional = true }
 solana-vote = { workspace = true, optional = true }
 solana-vote-program = { workspace = true, optional = true }
+thiserror = { workspace = true }
 
 [target."cfg(target_os = \"linux\")".dependencies]
 caps = { workspace = true }
@@ -78,6 +82,7 @@ nix = { workspace = true, features = ["user"] }
 [dev-dependencies]
 assert_matches = { workspace = true }
 bencher = { workspace = true }
+boxcar = { workspace = true }
 rand_chacha = { workspace = true }
 solana-logger = { workspace = true }
 solana-perf = { path = ".", features = ["dev-context-only-utils"] }

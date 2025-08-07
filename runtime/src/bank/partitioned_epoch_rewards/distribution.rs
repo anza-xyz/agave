@@ -162,7 +162,7 @@ impl Bank {
         let metrics = RewardsStoreMetrics {
             pre_capitalization,
             post_capitalization: self.capitalization(),
-            total_stake_accounts_count: partition_rewards.all_stake_rewards.len(),
+            total_stake_accounts_count: partition_rewards.all_stake_rewards.count(),
             total_num_partitions: partition_rewards.partition_indices.len(),
             partition_index,
             store_stake_accounts_us,
@@ -268,7 +268,7 @@ impl Bank {
                 .unwrap_or_else(|| {
                     panic!(
                         "partition reward out of bound: {index} >= {}",
-                        partition_rewards.all_stake_rewards.len()
+                        partition_rewards.all_stake_rewards.count()
                     )
                 });
             let stake_pubkey = partitioned_stake_reward.stake_pubkey;
@@ -312,6 +312,7 @@ mod tests {
             },
             inflation_rewards::points::PointValue,
         },
+        boxcar::{vec as boxcar_vec, Vec as BoxcarVec},
         rand::Rng,
         solana_account::from_account,
         solana_accounts_db::stake_rewards::StakeReward,
@@ -339,7 +340,7 @@ mod tests {
 
         let stake_rewards = (0..expected_num)
             .map(|_| PartitionedStakeReward::new_random())
-            .collect::<Vec<_>>();
+            .collect::<BoxcarVec<_>>();
 
         let partition_indices =
             hash_rewards_into_partitions(&stake_rewards, &Hash::new_from_array([1; 32]), 2);
@@ -363,7 +364,7 @@ mod tests {
 
         let stake_rewards = (0..expected_num)
             .map(|_| PartitionedStakeReward::new_random())
-            .collect::<Vec<_>>();
+            .collect::<BoxcarVec<_>>();
 
         let partition_indices = hash_rewards_into_partitions(
             &stake_rewards,
@@ -387,7 +388,7 @@ mod tests {
 
         bank.set_epoch_reward_status_distribution(
             bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
-            Arc::new(vec![]),
+            Arc::new(boxcar_vec![]),
             vec![],
         );
 
@@ -744,11 +745,11 @@ mod tests {
             .map(|_| StakeReward::new_random())
             .collect::<Vec<_>>();
         populate_starting_stake_accounts_from_stake_rewards(&bank, &stake_rewards);
-        let converted_rewards: Vec<_> = convert_rewards(stake_rewards);
+        let converted_rewards = convert_rewards(stake_rewards);
 
         let expected_total = converted_rewards
             .iter()
-            .map(|stake_reward| stake_reward.stake_reward)
+            .map(|(_, stake_reward)| stake_reward.stake_reward)
             .sum::<u64>();
 
         let partitioned_rewards = StartBlockHeightAndPartitionedRewards {
@@ -771,7 +772,7 @@ mod tests {
 
         let partitioned_rewards = StartBlockHeightAndPartitionedRewards {
             distribution_starting_block_height: bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
-            all_stake_rewards: Arc::new(vec![]),
+            all_stake_rewards: Arc::new(boxcar_vec![]),
             partition_indices: vec![vec![]],
         };
 

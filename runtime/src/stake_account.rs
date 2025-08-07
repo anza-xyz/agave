@@ -5,7 +5,10 @@ use {
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
     solana_stake_interface::state::{Delegation, Stake, StakeStateV2},
-    std::marker::PhantomData,
+    std::{
+        hash::{Hash, Hasher},
+        marker::PhantomData,
+    },
     thiserror::Error,
 };
 
@@ -56,6 +59,15 @@ impl StakeAccount<Delegation> {
         // Safe to unwrap here because StakeAccount<Delegation> will always
         // only wrap a stake-state.
         self.stake_state.stake_ref().unwrap()
+    }
+}
+
+impl Hash for StakeAccount<Delegation> {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
+        self.delegation().voter_pubkey.hash(state);
     }
 }
 
