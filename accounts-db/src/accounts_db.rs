@@ -2204,25 +2204,6 @@ impl AccountsDb {
         }
     }
 
-    /// Iterate over all accounts from all `storages` and call `callback` with each account.
-    ///
-    /// `callback` parameters:
-    /// * Offset: the offset within the file of this account
-    /// * StoredAccountInfo: the account itself, with account data
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn scan_accounts_from_storages(
-        storages: &[Arc<AccountStorageEntry>],
-        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
-    ) {
-        let mut reader = append_vec::new_scan_accounts_reader();
-        for storage in storages {
-            storage
-                .accounts
-                .scan_accounts(&mut reader, &mut callback)
-                .expect("must scan accounts storage");
-        }
-    }
-
     // Purge zero lamport accounts and older rooted account states as garbage
     // collection
     // Only remove those accounts where the entire rooted history of the account
@@ -7494,6 +7475,24 @@ impl AccountsDb {
                 slot,
             ));
             assert_eq!(account, account1);
+        }
+    }
+
+    /// Iterate over all accounts from all `storages` and call `callback` with each account.
+    ///
+    /// `callback` parameters:
+    /// * Offset: the offset within the file of this account
+    /// * StoredAccountInfo: the account itself, with account data
+    pub fn scan_accounts_from_storages(
+        storages: &[Arc<AccountStorageEntry>],
+        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
+    ) {
+        let mut reader = append_vec::new_scan_accounts_reader();
+        for storage in storages {
+            storage
+                .accounts
+                .scan_accounts(&mut reader, &mut callback)
+                .expect("must scan accounts storage");
         }
     }
 
