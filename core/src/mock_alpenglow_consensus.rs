@@ -1,10 +1,10 @@
-#![allow(clippy::arithmetic_side_effects)]
+#![allow(clippy::arithmetic_side_effects, dead_code)]
 use {
     crate::consensus::Stake,
     bytemuck::{Pod, Zeroable},
     crossbeam_channel::{bounded, Receiver, Sender},
     serde::de::DeserializeOwned,
-    solana_clock::Slot,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_keypair::Keypair,
     solana_packet::{Meta, Packet},
@@ -62,7 +62,7 @@ pub(crate) struct MockAlpenglowConsensus {
 struct PeerData {
     stake: Stake,
     address: SocketAddr,
-    relative_toa: [Option<Duration>; NUM_VOTOR_TYPES],
+    relative_time_of_arrival: [Option<Duration>; NUM_VOTOR_TYPES],
 }
 
 /// State machine internal state for the mock alpenglow
@@ -108,6 +108,7 @@ impl SharedState {
         }
     }
 }
+const ONE_SLOT: Duration = Duration::from_millis(DEFAULT_MS_PER_SLOT);
 
 fn get_state_for_slot(states: &StateArray, slot: Slot) -> &Mutex<SharedState> {
     &states[(slot % NUM_VOTE_ROUNDS) as usize]
@@ -187,7 +188,7 @@ impl MockAlpenglowConsensus {
         let shared_state = Arc::new(std::array::from_fn(|_| Mutex::new(SharedState::new(0))));
         let should_exit = Arc::new(AtomicBool::new(false));
 
-        let (slot_sender, slot_receiver) = bounded(2);
+        let (slot_sender, slot_receiver) = bounded(1);
         let runner_thread = {
             let slot_receiver = slot_receiver.clone();
             let command_sender = command_sender.clone();
@@ -231,7 +232,7 @@ impl MockAlpenglowConsensus {
     /// prepare to receive votes for the slot indicated
     /// This should be called in advance
     /// in case we are really late getting shreds
-    fn prepare_to_receive(&mut self, slot: Slot) -> Result<(), Slot> {
+    fn prepare_to_receive(&mut self, slot: Slot, slot_start: Instant) -> Result<(), Slot> {
         trace!(
             "{}: preparing to receive for slot {slot}",
             self.cluster_info.id()
@@ -243,7 +244,7 @@ impl MockAlpenglowConsensus {
             return Err(state.current_slot);
         }
         state.current_slot = slot;
-        state.current_slot_start = Instant::now();
+        state.current_slot_start = slot_start;
         for (peer, &stake) in staked_nodes.iter() {
             let Some(ag_addr) = self
                 .cluster_info
@@ -257,7 +258,7 @@ impl MockAlpenglowConsensus {
                 PeerData {
                     stake,
                     address: ag_addr,
-                    relative_toa: [None; NUM_VOTOR_TYPES],
+                    relative_time_of_arrival: [None; NUM_VOTOR_TYPES],
                 },
             );
             state.total_staked += stake;
@@ -359,7 +360,7 @@ impl MockAlpenglowConsensus {
                     votor_msg,
                     pk
                 );
-                let toa = &mut peer_info.relative_toa[votor_msg as u64 as usize];
+                let toa = &mut peer_info.relative_time_of_arrival[votor_msg as u64 as usize];
                 if toa.is_none() {
                     *toa = Some(elapsed);
                 } else {
@@ -495,11 +496,7 @@ impl MockAlpenglowConsensus {
         }
     }
 
-    fn check_conditions_to_vote(&mut self, interval: u64, slot: Slot, root_slot: Slot) -> bool {
-        if interval <= NUM_VOTE_ROUNDS + 1 {
-            trace!("Alpenglow voting is disabled",);
-            return false;
-        }
+    fn check_conditions_to_vote(&mut self, slot: Slot, root_bank: &Bank) -> bool {
         // ensure we do not start process for a slot which is "in the past"
         if slot <= self.highest_slot {
             trace!(
@@ -508,33 +505,47 @@ impl MockAlpenglowConsensus {
             );
             return false;
         }
+        self.highest_slot = slot;
 
+        let Some(config) = get_test_config_from_account::<TestConfig>(root_bank) else {
+            trace!(
+                "Skipping AG logic for slot {slot}, onchain config is not available {}",
+                self.highest_slot
+            );
+            return false; // no config is available => test can not run
+        };
+        let interval = config.test_interval_slots as u64;
+        if interval <= NUM_VOTE_ROUNDS + 1 {
+            trace!("Alpenglow voting is disabled",);
+            return false;
+        }
+
+        let root_slot = root_bank.slot();
         // If we fall too far behind and can not root banks, engage safety latch to stop the test
         // and keep it stopped no matter what the config says
         if root_slot + MAX_TOWER_HEIGHT < slot {
             error!(
-                "root bank is too far behind ({} vs {slot}), test will not run",
-                self.highest_slot
+                "root slot ({root_slot}) is too far behind vote slot ({slot}), test will not run",
             );
             return false;
         }
+
         slot % interval == 0
     }
 
     pub(crate) fn signal_new_slot(&mut self, slot: Slot, root_bank: &Bank) {
-        let Some(config) = get_test_config_from_account::<TestConfig>(root_bank) else {
-            return; // no config is available => test can not run
-        };
-        let interval = config.test_interval_slots as u64;
-        if !self.check_conditions_to_vote(interval, slot, root_bank.slot()) {
+        if !self.check_conditions_to_vote(slot, root_bank) {
             return;
         }
-        self.highest_slot = slot;
-        for s in slot..slot + 4 {
-            if self.prepare_to_receive(s).is_err() {
-                error!("Can not initiate mock voting, slot {s} was not released");
-                datapoint_info!("mock_alpenglow", ("runner_stuck", 2, i64), ("slot", s, i64));
-                return;
+        {
+            let mut slot_start = Instant::now();
+            for s in slot..slot + NUM_VOTE_ROUNDS {
+                if self.prepare_to_receive(s, slot_start).is_err() {
+                    error!("Can not initiate mock voting, slot {s} was not released");
+                    datapoint_info!("mock_alpenglow", ("runner_stuck", 2, i64), ("slot", s, i64));
+                    return;
+                }
+                slot_start += ONE_SLOT;
             }
         }
 
@@ -564,7 +575,7 @@ impl MockAlpenglowConsensus {
             for (vote_slot, report_slot) in vote_slots.zip(report_slots) {
                 // we get activated 1 slot in advance to capture votes coming
                 // earlier than we have finished replay
-                std::thread::sleep(Duration::from_millis(400));
+                std::thread::sleep(ONE_SLOT);
                 if let Some(slot) = vote_slot {
                     trace!("Starting voting in slot {slot}");
                     let _ = command_sender.send(SendCommand::Notarize(slot));
@@ -675,7 +686,7 @@ fn compute_stake_weighted_means(
     let mut total_delay_ms = [0u128; NUM_VOTOR_TYPES];
     for (_pubkey, peer_data) in peers.iter() {
         for i in 0..NUM_VOTOR_TYPES {
-            let Some(rel_toa) = peer_data.relative_toa[i] else {
+            let Some(rel_toa) = peer_data.relative_time_of_arrival[i] else {
                 continue;
             };
             total_voted_stake[i] += peer_data.stake;
@@ -722,7 +733,7 @@ pub(crate) struct TestConfig {
 }
 
 ///Parse an account's content, keeping it in cache.
-pub(crate) fn get_test_config_from_account<T: DeserializeOwned>(bank: &Bank) -> Option<T> {
+fn get_test_config_from_account<T: DeserializeOwned>(bank: &Bank) -> Option<T> {
     let data = bank
         .accounts()
         .accounts_db
@@ -825,10 +836,10 @@ mod tests {
             {
                 let slot_state = get_state_for_slot(&shared_state, slot).lock().unwrap();
                 let peerdata = slot_state.peers.get(&peers[1].0).unwrap();
-                assert!(peerdata.relative_toa[0].unwrap().as_millis() > 0);
-                assert!(peerdata.relative_toa[0].unwrap() < test_timeout);
-                assert!(peerdata.relative_toa[1].is_none());
-                assert!(peerdata.relative_toa[2].is_none());
+                assert!(peerdata.relative_time_of_arrival[0].unwrap().as_millis() > 0);
+                assert!(peerdata.relative_time_of_arrival[0].unwrap() < test_timeout);
+                assert!(peerdata.relative_time_of_arrival[1].is_none());
+                assert!(peerdata.relative_time_of_arrival[2].is_none());
                 assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 6);
                 assert!(slot_state.alpenglow_state.block_notarized);
                 assert!(!slot_state.alpenglow_state.block_finalized);
@@ -851,9 +862,9 @@ mod tests {
             {
                 let slot_state = get_state_for_slot(&shared_state, slot).lock().unwrap();
                 let peerdata = slot_state.peers.get(&peers[1].0).unwrap();
-                assert!(peerdata.relative_toa[1].unwrap().as_millis() > 0);
-                assert!(peerdata.relative_toa[1].unwrap() < test_timeout);
-                assert!(peerdata.relative_toa[2].is_none());
+                assert!(peerdata.relative_time_of_arrival[1].unwrap().as_millis() > 0);
+                assert!(peerdata.relative_time_of_arrival[1].unwrap() < test_timeout);
+                assert!(peerdata.relative_time_of_arrival[2].is_none());
                 assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 6);
                 assert!(slot_state.alpenglow_state.block_finalized);
                 let (total_voted_nodes, stake_weighted_delay, _percent_collected) =
@@ -1015,7 +1026,7 @@ mod tests {
                 PeerData {
                     stake: 1,
                     address: socket.local_addr().unwrap(),
-                    relative_toa: [None; NUM_VOTOR_TYPES],
+                    relative_time_of_arrival: [None; NUM_VOTOR_TYPES],
                 },
             );
         }
