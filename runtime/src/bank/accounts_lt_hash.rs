@@ -832,7 +832,7 @@ mod tests {
 
         // get all the lt hashes for each version of all accounts
         let mut stored_accounts_map = HashMap::<_, Vec<_>>::new();
-        AccountsDb::scan_accounts_from_storages(&storages, |account| {
+        AccountsDb::scan_accounts_from_storages(&storages, |_offset, account| {
             let pubkey = account.pubkey();
             let account_lt_hash = AccountsDb::lt_hash_account(&account, pubkey);
             stored_accounts_map

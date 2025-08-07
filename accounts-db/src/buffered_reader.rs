@@ -137,18 +137,22 @@ impl<'a, T: Backing> BufferedReader<'a, T> {
     }
 
     pub fn with_file(mut self, file: &'a File, read_limit: usize) -> Self {
-        self.set_file(file, read_limit).unwrap();
+        self.do_set_file(file, read_limit);
         self
     }
-}
 
-impl<'a, T: Backing> FileBufRead<'a> for BufferedReader<'a, T> {
-    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
+    fn do_set_file(&mut self, file: &'a File, read_limit: usize) {
         self.file = Some(file);
         self.file_len_valid = read_limit;
         self.file_last_offset = 0;
         self.file_offset_of_next_read = 0;
         self.buf_valid_bytes = 0..0;
+    }
+}
+
+impl<'a, T: Backing> FileBufRead<'a> for BufferedReader<'a, T> {
+    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
+        self.do_set_file(file, read_limit);
         Ok(())
     }
 
