@@ -352,13 +352,13 @@ fn retransmit(
             let socket: &UdpSocket = retransmit_sockets
                 [interface_offset + (index % num_retransmit_sockets_per_interface)]
                 .as_ref();
-            if rand::thread_rng().gen_ratio(1, 5000) {
-                error!(
-                    "greg: retransmit_socket index: {}, interface_offset: {}",
-                    index, interface_offset
-                );
-                info!("greg: retransmit_socket socket: {:?}", socket.local_addr());
-            }
+            // if rand::thread_rng().gen_ratio(1, 5000) {
+            //     error!(
+            //         "greg: retransmit_socket index: {}, interface_offset: {}",
+            //         index, interface_offset
+            //     );
+            //     info!("greg: retransmit_socket socket: {:?}", socket.local_addr());
+            // }
             RetransmitSocket::Socket(socket)
             // RetransmitSocket::Socket(
             //     &retransmit_sockets
