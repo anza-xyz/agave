@@ -465,7 +465,7 @@ impl ProgramCacheEntry {
         account_owner: ProgramCacheEntryOwner,
         reason: ProgramCacheEntryType,
     ) -> Self {
-        Self::new_tombstone_with_usage_counters(
+        Self::new_tombstone_with_usage_counter(
             slot,
             account_owner,
             reason,
@@ -473,7 +473,7 @@ impl ProgramCacheEntry {
         )
     }
 
-    pub fn new_tombstone_with_usage_counters(
+    pub fn new_tombstone_with_usage_counter(
         slot: Slot,
         account_owner: ProgramCacheEntryOwner,
         reason: ProgramCacheEntryType,
@@ -780,7 +780,7 @@ impl ProgramCacheForTxBatch {
                     // Found a program entry on the current fork, but it's not effective
                     // yet. It indicates that the program has delayed visibility. Return
                     // the tombstone to reflect that.
-                    Arc::new(ProgramCacheEntry::new_tombstone_with_usage_counters(
+                    Arc::new(ProgramCacheEntry::new_tombstone_with_usage_counter(
                         entry.deployment_slot,
                         entry.account_owner,
                         ProgramCacheEntryType::DelayVisibility,
@@ -1112,7 +1112,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     // Found a program entry on the current fork, but it's not effective
                                     // yet. It indicates that the program has delayed visibility. Return
                                     // the tombstone to reflect that.
-                                    Arc::new(ProgramCacheEntry::new_tombstone_with_usage_counters(
+                                    Arc::new(ProgramCacheEntry::new_tombstone_with_usage_counter(
                                         entry.deployment_slot,
                                         entry.account_owner,
                                         ProgramCacheEntryType::DelayVisibility,
