@@ -223,7 +223,7 @@ dependencies = [
  "solana-cli-config",
  "solana-cli-output",
  "solana-clock",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-core",
  "solana-download-utils",
  "solana-entry",
@@ -5688,7 +5688,7 @@ dependencies = [
  "solana-account",
  "solana-banks-interface",
  "solana-clock",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-hash",
  "solana-message",
  "solana-program-pack",
@@ -5713,7 +5713,7 @@ dependencies = [
  "serde_derive",
  "solana-account",
  "solana-clock",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-hash",
  "solana-message",
  "solana-pubkey",
@@ -5736,7 +5736,7 @@ dependencies = [
  "solana-banks-interface",
  "solana-client",
  "solana-clock",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-hash",
  "solana-message",
  "solana-pubkey",
@@ -5913,7 +5913,7 @@ dependencies = [
  "rpassword",
  "solana-clock",
  "solana-cluster-type",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-derivation-path",
  "solana-hash",
  "solana-keypair",
@@ -5940,7 +5940,7 @@ dependencies = [
  "serde_derive",
  "serde_yaml",
  "solana-clap-utils",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "url 2.5.4",
 ]
 
@@ -6002,7 +6002,7 @@ dependencies = [
  "rayon",
  "solana-account",
  "solana-client-traits",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-connection-cache",
  "solana-epoch-info",
  "solana-hash",
@@ -6037,7 +6037,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83f0071874e629f29e0eb3dab8a863e98502ac7aba55b7e0df1803fc5cac72a7"
 dependencies = [
  "solana-account",
- "solana-commitment-config",
+ "solana-commitment-config 2.2.1",
  "solana-epoch-info",
  "solana-hash",
  "solana-instruction",
@@ -6080,6 +6080,12 @@ name = "solana-commitment-config"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac49c4dde3edfa832de1697e9bcdb7c3b3f7cb7a1981b7c62526c8bb6700fb73"
+
+[[package]]
+name = "solana-commitment-config"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fa5933a62dadb7d3ed35e6329de5cebb0678acc8f9cfdf413269084eeccc63f"
 dependencies = [
  "serde",
  "serde_derive",
@@ -7539,7 +7545,7 @@ dependencies = [
  "solana-banks-interface",
  "solana-banks-server",
  "solana-clock",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-compute-budget",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
@@ -7768,7 +7774,7 @@ dependencies = [
  "solana-accounts-db",
  "solana-client",
  "solana-clock",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-entry",
  "solana-epoch-info",
  "solana-epoch-rewards-hasher",
@@ -7843,7 +7849,7 @@ dependencies = [
  "solana-account",
  "solana-account-decoder-client-types",
  "solana-clock",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-epoch-info",
  "solana-epoch-schedule",
  "solana-feature-gate-interface",
@@ -7886,7 +7892,7 @@ name = "solana-rpc-client-nonce-utils"
 version = "3.0.0"
 dependencies = [
  "solana-account",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-hash",
  "solana-message",
  "solana-nonce",
@@ -7909,7 +7915,7 @@ dependencies = [
  "solana-account",
  "solana-account-decoder-client-types",
  "solana-clock",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-fee-calculator",
  "solana-inflation",
  "solana-pubkey",
@@ -7972,7 +7978,7 @@ dependencies = [
  "solana-builtins",
  "solana-client-traits",
  "solana-clock",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-compute-budget-interface",
@@ -9416,7 +9422,7 @@ dependencies = [
  "solana-cli-output",
  "solana-clock",
  "solana-cluster-type",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-compute-budget",
  "solana-core",
  "solana-epoch-schedule",
@@ -9488,7 +9494,7 @@ dependencies = [
  "rayon",
  "solana-client-traits",
  "solana-clock",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-connection-cache",
  "solana-epoch-schedule",
  "solana-measure",
@@ -9652,7 +9658,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "solana-account-decoder-client-types",
- "solana-commitment-config",
+ "solana-commitment-config 3.0.0",
  "solana-instruction",
  "solana-message",
  "solana-pubkey",
