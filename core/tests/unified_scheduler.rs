@@ -15,7 +15,7 @@ use {
         repair::cluster_slot_state_verifier::{
             DuplicateConfirmedSlots, DuplicateSlotsTracker, EpochSlotsFrozenSlots,
         },
-        replay_stage::ReplayStage,
+        replay_stage::{ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
     solana_entry::entry::Entry,
@@ -135,44 +135,47 @@ fn test_scheduler_waited_by_drop_bank_service() {
     info!("calling handle_new_root()...");
     // Mostly copied from: test_handle_new_root()
     {
-        let mut heaviest_subtree_fork_choice = HeaviestSubtreeForkChoice::new((root, root_hash));
+        let heaviest_subtree_fork_choice = HeaviestSubtreeForkChoice::new((root, root_hash));
 
         let mut progress = ProgressMap::default();
         for i in genesis..=root {
             progress.insert(i, ForkProgress::new(Hash::default(), None, None, 0, 0));
         }
 
-        let mut duplicate_slots_tracker: DuplicateSlotsTracker =
+        let duplicate_slots_tracker: DuplicateSlotsTracker =
             vec![root - 1, root, root + 1].into_iter().collect();
-        let mut duplicate_confirmed_slots: DuplicateConfirmedSlots = vec![root - 1, root, root + 1]
+        let duplicate_confirmed_slots: DuplicateConfirmedSlots = vec![root - 1, root, root + 1]
             .into_iter()
             .map(|s| (s, Hash::default()))
             .collect();
-        let mut unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes =
+        let unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes =
             UnfrozenGossipVerifiedVoteHashes {
                 votes_per_slot: vec![root - 1, root, root + 1]
                     .into_iter()
                     .map(|s| (s, HashMap::new()))
                     .collect(),
             };
-        let mut epoch_slots_frozen_slots: EpochSlotsFrozenSlots = vec![root - 1, root, root + 1]
+        let epoch_slots_frozen_slots: EpochSlotsFrozenSlots = vec![root - 1, root, root + 1]
             .into_iter()
             .map(|slot| (slot, Hash::default()))
             .collect();
+        let mut tbft_structs = TowerBFTStructures {
+            heaviest_subtree_fork_choice,
+            duplicate_slots_tracker,
+            duplicate_confirmed_slots,
+            unfrozen_gossip_verified_vote_hashes,
+            epoch_slots_frozen_slots,
+        };
         ReplayStage::handle_new_root(
             root,
             &bank_forks,
             &mut progress,
             None, // snapshot_controller
             None,
-            &mut heaviest_subtree_fork_choice,
-            &mut duplicate_slots_tracker,
-            &mut duplicate_confirmed_slots,
-            &mut unfrozen_gossip_verified_vote_hashes,
             &mut true,
             &mut Vec::new(),
-            &mut epoch_slots_frozen_slots,
             &drop_bank_sender1,
+            &mut tbft_structs,
         )
         .unwrap();
     }
