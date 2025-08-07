@@ -20,7 +20,7 @@ use {
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
-        num::Saturating,
+        num::Wrapping,
         sync::{Arc, RwLock},
     },
 };
@@ -202,7 +202,7 @@ where
     /// Clears the transaction state container.
     /// This only clears pending transactions, and does **not** clear in-flight transactions.
     fn clear_container(&mut self) {
-        let mut num_dropped_on_clear = Saturating::<usize>(0);
+        let mut num_dropped_on_clear = Wrapping::<usize>(0);
         while let Some(id) = self.container.pop() {
             self.container.remove_by_id(id.id);
             num_dropped_on_clear += 1;
@@ -233,7 +233,7 @@ where
 
         const CHUNK_SIZE: usize = 128;
         let mut error_counters = TransactionErrorMetrics::default();
-        let mut num_dropped_on_clean = Saturating::<usize>(0);
+        let mut num_dropped_on_clean = Wrapping::<usize>(0);
         for chunk in transaction_ids.chunks(CHUNK_SIZE) {
             let lock_results = vec![Ok(()); chunk.len()];
             let sanitized_txs: Vec<_> = chunk

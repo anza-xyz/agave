@@ -6,7 +6,7 @@ use {
         transaction_state::TransactionState, transaction_state_container::StateContainer,
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    std::num::Saturating,
+    std::num::Wrapping,
 };
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -27,8 +27,8 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
         &mut self,
         container: &mut impl StateContainer<Tx>,
     ) -> Result<(usize, usize), SchedulerError> {
-        let mut total_num_transactions = Saturating::<usize>(0);
-        let mut total_num_retryable = Saturating::<usize>(0);
+        let mut total_num_transactions = Wrapping::<usize>(0);
+        let mut total_num_retryable = Wrapping::<usize>(0);
         loop {
             let (num_transactions, num_retryable) = self
                 .scheduling_common_mut()
@@ -39,8 +39,8 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
             total_num_transactions += num_transactions;
             total_num_retryable += num_retryable;
         }
-        let Saturating(total_num_transactions) = total_num_transactions;
-        let Saturating(total_num_retryable) = total_num_retryable;
+        let Wrapping(total_num_transactions) = total_num_transactions;
+        let Wrapping(total_num_retryable) = total_num_retryable;
         Ok((total_num_transactions, total_num_retryable))
     }
 

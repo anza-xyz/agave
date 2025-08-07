@@ -20,7 +20,7 @@ use {
     crossbeam_channel::{Receiver, Sender},
     solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    std::num::Saturating,
+    std::num::Wrapping,
 };
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -107,7 +107,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
 
         // Track metrics on filter.
         let mut num_scanned: usize = 0;
-        let mut num_scheduled = Saturating::<usize>(0);
+        let mut num_scheduled = Wrapping::<usize>(0);
         let mut num_sent: usize = 0;
         let mut num_unschedulable_conflicts: usize = 0;
         let mut num_unschedulable_threads: usize = 0;
@@ -206,7 +206,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
 
         self.working_account_set.clear();
         num_sent += self.common.send_batches()?;
-        let Saturating(num_scheduled) = num_scheduled;
+        let Wrapping(num_scheduled) = num_scheduled;
         assert_eq!(
             num_scheduled, num_sent,
             "number of scheduled and sent transactions must match"
