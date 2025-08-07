@@ -1095,6 +1095,9 @@ fn verify_ticks(
             return Ok(());
         }
 
+        // If the bank is in the alpenglow epoch, but the parent is from an epoch
+        // where the feature flag is not active, we must verify ticks that correspond
+        // to the epoch in which poh is active.
         if bank.slot() >= first_alpenglow_slot && next_bank_tick_height == max_bank_tick_height {
             if entries.is_empty() {
                 // This shouldn't happen, but good to double check
