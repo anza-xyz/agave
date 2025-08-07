@@ -51,6 +51,7 @@ solana-system-transaction = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tls-utils = { workspace = true }
 solana-transaction-error = { workspace = true }
+solana-votor = { workspace = true }
 static_assertions = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

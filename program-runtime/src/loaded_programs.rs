@@ -958,6 +958,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             error!("Failed to lock fork graph for reading.");
             return;
         };
+        self.prune_locked(new_root_slot, new_root_epoch, &fork_graph);
+    }
+
+    pub fn prune_locked(&mut self, new_root_slot: Slot, new_root_epoch: Epoch, fork_graph: &FG) {
         let mut preparation_phase_ends = false;
         if self.latest_root_epoch != new_root_epoch {
             self.latest_root_epoch = new_root_epoch;

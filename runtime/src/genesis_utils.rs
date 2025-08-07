@@ -2,10 +2,12 @@ use {
     agave_feature_set::{FeatureSet, FEATURE_NAMES},
     log::*,
     solana_account::{Account, AccountSharedData},
+    solana_bls_signatures::{keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey},
     solana_feature_gate_interface::{self as feature, Feature},
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis_config::{ClusterType, GenesisConfig},
     solana_keypair::Keypair,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_native_token::sol_to_lamports,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -15,7 +17,10 @@ use {
     solana_stake_program::stake_state,
     solana_system_interface::program as system_program,
     solana_vote_program::vote_state,
-    std::borrow::Borrow,
+    solana_votor_messages::{
+        self, bls_message::BLS_KEYPAIR_DERIVE_SEED, state::VoteState as AlpenglowVoteState,
+    },
+    std::{borrow::Borrow, fs::File, io::Read},
 };
 
 // Default amount received by the validator
@@ -49,14 +54,18 @@ pub struct ValidatorVoteKeypairs {
     pub node_keypair: Keypair,
     pub vote_keypair: Keypair,
     pub stake_keypair: Keypair,
+    pub bls_keypair: BLSKeypair,
 }
 
 impl ValidatorVoteKeypairs {
     pub fn new(node_keypair: Keypair, vote_keypair: Keypair, stake_keypair: Keypair) -> Self {
+        let bls_keypair =
+            BLSKeypair::derive_from_signer(&vote_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
         Self {
             node_keypair,
             vote_keypair,
             stake_keypair,
+            bls_keypair,
         }
     }
 
@@ -65,6 +74,7 @@ impl ValidatorVoteKeypairs {
             node_keypair: Keypair::new(),
             vote_keypair: Keypair::new(),
             stake_keypair: Keypair::new(),
+            bls_keypair: BLSKeypair::new(),
         }
     }
 }
@@ -98,6 +108,22 @@ pub fn create_genesis_config_with_vote_accounts(
         voting_keypairs,
         stakes,
         ClusterType::Development,
+        None,
+    )
+}
+
+pub fn create_genesis_config_with_alpenglow_vote_accounts(
+    mint_lamports: u64,
+    voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
+    stakes: Vec<u64>,
+    alpenglow_so_path: &str,
+) -> GenesisConfigInfo {
+    create_genesis_config_with_vote_accounts_and_cluster_type(
+        mint_lamports,
+        voting_keypairs,
+        stakes,
+        ClusterType::Development,
+        Some(alpenglow_so_path),
     )
 }
 
@@ -106,6 +132,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
     stakes: Vec<u64>,
     cluster_type: ClusterType,
+    alpenglow_so_path: Option<&str>,
 ) -> GenesisConfigInfo {
     assert!(!voting_keypairs.is_empty());
     assert_eq!(voting_keypairs.len(), stakes.len());
@@ -120,12 +147,14 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         &validator_pubkey,
         &voting_keypairs[0].borrow().vote_keypair.pubkey(),
         &voting_keypairs[0].borrow().stake_keypair.pubkey(),
+        Some(&voting_keypairs[0].borrow().bls_keypair.public.into()),
         stakes[0],
         VALIDATOR_LAMPORTS,
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
         Rent::free(),               // most tests don't expect rent
         cluster_type,
         vec![],
+        alpenglow_so_path,
     );
 
     let mut genesis_config_info = GenesisConfigInfo {
@@ -139,10 +168,22 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         let node_pubkey = validator_voting_keypairs.borrow().node_keypair.pubkey();
         let vote_pubkey = validator_voting_keypairs.borrow().vote_keypair.pubkey();
         let stake_pubkey = validator_voting_keypairs.borrow().stake_keypair.pubkey();
+        let bls_pubkey = validator_voting_keypairs.borrow().bls_keypair.public.into();
 
         // Create accounts
         let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
-        let vote_account = vote_state::create_account(&vote_pubkey, &node_pubkey, 0, *stake);
+        let vote_account = if alpenglow_so_path.is_some() {
+            AlpenglowVoteState::create_account_with_authorized(
+                &node_pubkey,
+                &vote_pubkey,
+                &vote_pubkey,
+                0,
+                *stake,
+                bls_pubkey,
+            )
+        } else {
+            vote_state::create_account(&vote_pubkey, &node_pubkey, 0, *stake)
+        };
         let stake_account = Account::from(stake_state::create_account(
             &stake_pubkey,
             &vote_pubkey,
@@ -181,6 +222,44 @@ pub fn create_genesis_config_with_leader(
         mint_lamports,
         validator_pubkey,
         validator_stake_lamports,
+        None,
+    )
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub fn create_genesis_config_with_alpenglow_vote_accounts_no_program(
+    mint_lamports: u64,
+    voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
+    stakes: Vec<u64>,
+) -> GenesisConfigInfo {
+    create_genesis_config_with_alpenglow_vote_accounts(
+        mint_lamports,
+        voting_keypairs,
+        stakes,
+        build_alpenglow_vote::ALPENGLOW_VOTE_SO_PATH,
+    )
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub fn create_genesis_config_with_leader_enable_alpenglow(
+    mint_lamports: u64,
+    validator_pubkey: &Pubkey,
+    validator_stake_lamports: u64,
+    alpenglow_so_path: Option<&str>,
+) -> GenesisConfigInfo {
+    // Use deterministic keypair so we don't get confused by randomness in tests
+    let mint_keypair = Keypair::from_seed(&[
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ])
+    .unwrap();
+
+    create_genesis_config_with_leader_with_mint_keypair(
+        mint_keypair,
+        mint_lamports,
+        validator_pubkey,
+        validator_stake_lamports,
+        alpenglow_so_path,
     )
 }
 
@@ -189,6 +268,7 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
     mint_lamports: u64,
     validator_pubkey: &Pubkey,
     validator_stake_lamports: u64,
+    alpenglow_so_path: Option<&str>,
 ) -> GenesisConfigInfo {
     // Use deterministic keypair so we don't get confused by randomness in tests
     let voting_keypair = Keypair::from_seed(&[
@@ -197,18 +277,23 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
     ])
     .unwrap();
 
+    let bls_keypair =
+        BLSKeypair::derive_from_signer(&voting_keypair, BLS_KEYPAIR_DERIVE_SEED).unwrap();
+    let bls_pubkey: BLSPubkey = bls_keypair.public.into();
     let genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
         validator_pubkey,
         &voting_keypair.pubkey(),
         &Pubkey::new_unique(),
+        Some(&bls_pubkey),
         validator_stake_lamports,
         VALIDATOR_LAMPORTS,
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
         Rent::free(),               // most tests don't expect rent
         ClusterType::Development,
         vec![],
+        alpenglow_so_path,
     );
 
     GenesisConfigInfo {
@@ -227,10 +312,10 @@ pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
     do_activate_all_features::<false>(genesis_config);
 }
 
-fn do_activate_all_features<const IS_ALPENGLOW: bool>(genesis_config: &mut GenesisConfig) {
+pub fn do_activate_all_features<const IS_ALPENGLOW: bool>(genesis_config: &mut GenesisConfig) {
     // Activate all features at genesis in development mode
     for feature_id in FeatureSet::default().inactive() {
-        if IS_ALPENGLOW || *feature_id != agave_feature_set::alpenglow::id() {
+        if IS_ALPENGLOW || *feature_id != agave_feature_set::secp256k1_program_enabled::id() {
             activate_feature(genesis_config, *feature_id);
         }
     }
@@ -265,6 +350,67 @@ pub fn activate_feature(genesis_config: &mut GenesisConfig, feature_id: Pubkey) 
     );
 }
 
+pub fn include_alpenglow_bpf_program(genesis_config: &mut GenesisConfig, alpenglow_so_path: &str) {
+    // Parse out the elf
+    let mut program_data_elf: Vec<u8> = vec![];
+    File::open(alpenglow_so_path)
+        .and_then(|mut file| file.read_to_end(&mut program_data_elf))
+        .unwrap_or_else(|err| {
+            panic!(
+                "Error: failed to read alpenglow-vote program from path {}: {}",
+                alpenglow_so_path, err
+            )
+        });
+
+    // Derive the address for the program data account
+    let address = solana_votor_messages::id();
+    let loader = solana_sdk_ids::bpf_loader_upgradeable::id();
+    let programdata_address = solana_loader_v3_interface::get_program_data_address(&address);
+
+    // Generate the data for the program data account
+    let upgrade_authority_address = system_program::id();
+    let mut program_data = bincode::serialize(&UpgradeableLoaderState::ProgramData {
+        slot: 0,
+        upgrade_authority_address: Some(upgrade_authority_address),
+    })
+    .unwrap();
+    program_data.extend_from_slice(&program_data_elf);
+
+    // Store the program data account into genesis
+    genesis_config.add_account(
+        programdata_address,
+        AccountSharedData::from(Account {
+            lamports: genesis_config
+                .rent
+                .minimum_balance(program_data.len())
+                .max(1u64),
+            data: program_data,
+            owner: loader,
+            executable: false,
+            rent_epoch: 0,
+        }),
+    );
+
+    // Add the program acccount to genesis
+    let program_data = bincode::serialize(&UpgradeableLoaderState::Program {
+        programdata_address,
+    })
+    .unwrap();
+    genesis_config.add_account(
+        address,
+        AccountSharedData::from(Account {
+            lamports: genesis_config
+                .rent
+                .minimum_balance(program_data.len())
+                .max(1u64),
+            data: program_data,
+            owner: loader,
+            executable: true,
+            rent_epoch: 0,
+        }),
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn create_genesis_config_with_leader_ex_no_features(
     mint_lamports: u64,
@@ -272,19 +418,32 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     validator_pubkey: &Pubkey,
     validator_vote_account_pubkey: &Pubkey,
     validator_stake_account_pubkey: &Pubkey,
+    validator_bls_pubkey: Option<&BLSPubkey>,
     validator_stake_lamports: u64,
     validator_lamports: u64,
     fee_rate_governor: FeeRateGovernor,
     rent: Rent,
     cluster_type: ClusterType,
     mut initial_accounts: Vec<(Pubkey, AccountSharedData)>,
+    alpenglow_so_path: Option<&str>,
 ) -> GenesisConfig {
-    let validator_vote_account = vote_state::create_account(
-        validator_vote_account_pubkey,
-        validator_pubkey,
-        0,
-        validator_stake_lamports,
-    );
+    let validator_vote_account = if alpenglow_so_path.is_some() {
+        AlpenglowVoteState::create_account_with_authorized(
+            validator_pubkey,
+            validator_vote_account_pubkey,
+            validator_vote_account_pubkey,
+            0,
+            validator_stake_lamports,
+            *validator_bls_pubkey.unwrap(),
+        )
+    } else {
+        vote_state::create_account(
+            validator_vote_account_pubkey,
+            validator_pubkey,
+            0,
+            validator_stake_lamports,
+        )
+    };
 
     let validator_stake_account = stake_state::create_account(
         validator_stake_account_pubkey,
@@ -331,6 +490,10 @@ pub fn create_genesis_config_with_leader_ex_no_features(
 
     solana_stake_program::add_genesis_accounts(&mut genesis_config);
 
+    if let Some(alpenglow_so_path) = alpenglow_so_path {
+        include_alpenglow_bpf_program(&mut genesis_config, alpenglow_so_path);
+    }
+
     genesis_config
 }
 
@@ -341,12 +504,14 @@ pub fn create_genesis_config_with_leader_ex(
     validator_pubkey: &Pubkey,
     validator_vote_account_pubkey: &Pubkey,
     validator_stake_account_pubkey: &Pubkey,
+    validator_bls_pubkey: Option<&BLSPubkey>,
     validator_stake_lamports: u64,
     validator_lamports: u64,
     fee_rate_governor: FeeRateGovernor,
     rent: Rent,
     cluster_type: ClusterType,
     initial_accounts: Vec<(Pubkey, AccountSharedData)>,
+    alpenglow_so_path: Option<&str>,
 ) -> GenesisConfig {
     let mut genesis_config = create_genesis_config_with_leader_ex_no_features(
         mint_lamports,
@@ -354,16 +519,22 @@ pub fn create_genesis_config_with_leader_ex(
         validator_pubkey,
         validator_vote_account_pubkey,
         validator_stake_account_pubkey,
+        validator_bls_pubkey,
         validator_stake_lamports,
         validator_lamports,
         fee_rate_governor,
         rent,
         cluster_type,
         initial_accounts,
+        alpenglow_so_path,
     );
 
     if genesis_config.cluster_type == ClusterType::Development {
-        activate_all_features(&mut genesis_config);
+        if alpenglow_so_path.is_some() {
+            activate_all_features_alpenglow(&mut genesis_config);
+        } else {
+            activate_all_features(&mut genesis_config);
+        }
     }
 
     genesis_config

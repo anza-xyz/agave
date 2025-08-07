@@ -9,16 +9,13 @@ pub struct PodRistrettoPoint(pub [u8; 32]);
 mod target_arch {
     use {
         super::*,
-        crate::{
-            curve_syscall_traits::{GroupOperations, MultiScalarMultiplication, PointValidation},
-            errors::Curve25519Error,
-            scalar::PodScalar,
-        },
+        crate::{errors::Curve25519Error, scalar::PodScalar},
         curve25519_dalek::{
             ristretto::{CompressedRistretto, RistrettoPoint},
             scalar::Scalar,
             traits::VartimeMultiscalarMul,
         },
+        solana_curve_traits::{GroupOperations, MultiScalarMultiplication, PointValidation},
     };
 
     pub fn validate_ristretto(point: &PodRistrettoPoint) -> bool {

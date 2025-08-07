@@ -5,6 +5,10 @@ use {
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
+    crate::banking_stage::leader_slot_metrics::{
+        CommittedTransactionsCounts, ProcessTransactionsSummary,
+    },
+    crossbeam_channel::unbounded,
     itertools::Itertools,
     solana_clock::MAX_PROCESSING_AGE,
     solana_fee::FeeFeatures,
@@ -28,7 +32,7 @@ use {
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::TransactionError,
-    std::{num::Saturating, sync::Arc},
+    std::{num::Saturating, sync::Arc, time::Instant},
 };
 
 /// Consumer will create chunks of transactions from buffer with up to this size.
@@ -77,6 +81,19 @@ pub struct Consumer {
     log_messages_bytes_limit: Option<usize>,
 }
 
+impl From<&TransactionRecorder> for Consumer {
+    fn from(transaction_recorder: &TransactionRecorder) -> Self {
+        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let committer = Committer::new(None, replay_vote_sender, Arc::default());
+        Self::new(
+            committer,
+            transaction_recorder.clone(),
+            QosService::new(u32::MAX),
+            None,
+        )
+    }
+}
+
 impl Consumer {
     pub fn new(
         committer: Committer,
@@ -89,6 +106,98 @@ impl Consumer {
             transaction_recorder,
             qos_service,
             log_messages_bytes_limit,
+        }
+    }
+
+    /// Sends transactions to the bank.
+    ///
+    /// Returns the number of transactions successfully processed by the bank, which may be less
+    /// than the total number if max PoH height was reached and the bank halted
+    pub(crate) fn process_transactions(
+        &self,
+        bank: &Arc<Bank>,
+        bank_creation_time: &Instant,
+        transactions: &[impl TransactionWithMeta],
+    ) -> ProcessTransactionsSummary {
+        let mut chunk_start = 0;
+        let mut all_retryable_tx_indexes = vec![];
+        let mut total_transaction_counts = CommittedTransactionsCounts::default();
+        let mut total_cost_model_throttled_transactions_count: u64 = 0;
+        let mut total_cost_model_us: u64 = 0;
+        let mut total_execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
+        let mut total_error_counters = TransactionErrorMetrics::default();
+        let mut reached_max_poh_height = false;
+        while chunk_start != transactions.len() {
+            let chunk_end = std::cmp::min(
+                transactions.len(),
+                chunk_start + TARGET_NUM_TRANSACTIONS_PER_BATCH,
+            );
+            let process_transaction_batch_output =
+                self.process_and_record_transactions(bank, &transactions[chunk_start..chunk_end]);
+
+            let ProcessTransactionBatchOutput {
+                cost_model_throttled_transactions_count: new_cost_model_throttled_transactions_count,
+                cost_model_us: new_cost_model_us,
+                execute_and_commit_transactions_output,
+            } = process_transaction_batch_output;
+            total_cost_model_throttled_transactions_count =
+                total_cost_model_throttled_transactions_count
+                    .saturating_add(new_cost_model_throttled_transactions_count);
+            total_cost_model_us = total_cost_model_us.saturating_add(new_cost_model_us);
+
+            let ExecuteAndCommitTransactionsOutput {
+                transaction_counts: new_transaction_counts,
+                retryable_transaction_indexes: new_retryable_transaction_indexes,
+                commit_transactions_result: new_commit_transactions_result,
+                execute_and_commit_timings: new_execute_and_commit_timings,
+                error_counters: new_error_counters,
+                ..
+            } = execute_and_commit_transactions_output;
+
+            total_execute_and_commit_timings.accumulate(&new_execute_and_commit_timings);
+            total_error_counters.accumulate(&new_error_counters);
+            total_transaction_counts.accumulate(
+                &new_transaction_counts,
+                new_commit_transactions_result.is_ok(),
+            );
+
+            // Add the retryable txs (transactions that errored in a way that warrants a retry)
+            // to the list of unprocessed txs.
+            all_retryable_tx_indexes.extend_from_slice(&new_retryable_transaction_indexes);
+
+            let should_bank_still_be_processing_txs =
+                Bank::should_bank_still_be_processing_txs(bank_creation_time, bank.ns_per_slot);
+            match (
+                new_commit_transactions_result,
+                should_bank_still_be_processing_txs,
+            ) {
+                (Err(PohRecorderError::MaxHeightReached), _) | (_, false) => {
+                    info!(
+                        "process transactions: max height reached slot: {} height: {}",
+                        bank.slot(),
+                        bank.tick_height()
+                    );
+                    // process_and_record_transactions has returned all retryable errors in
+                    // transactions[chunk_start..chunk_end], so we just need to push the remaining
+                    // transactions into the unprocessed queue.
+                    all_retryable_tx_indexes.extend(chunk_end..transactions.len());
+                    reached_max_poh_height = true;
+                    break;
+                }
+                _ => (),
+            }
+            // Don't exit early on any other type of error, continue processing...
+            chunk_start = chunk_end;
+        }
+
+        ProcessTransactionsSummary {
+            reached_max_poh_height,
+            transaction_counts: total_transaction_counts,
+            retryable_transaction_indexes: all_retryable_tx_indexes,
+            cost_model_throttled_transactions_count: total_cost_model_throttled_transactions_count,
+            cost_model_us: total_cost_model_us,
+            execute_and_commit_timings: total_execute_and_commit_timings,
+            error_counters: total_error_counters,
         }
     }
 

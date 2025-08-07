@@ -24,6 +24,7 @@ use {
     solana_rpc_client_api::{config::RpcAccountIndex, custom_error::RpcCustomError},
     solana_signer::Signer,
     solana_validator_exit::Exit,
+    solana_votor::event::VotorEvent,
     std::{
         collections::{HashMap, HashSet},
         env, error,
@@ -804,6 +805,12 @@ impl AdminRpcImpl {
                 .cluster_info
                 .set_keypair(Arc::new(identity_keypair));
             warn!("Identity set to {}", post_init.cluster_info.id());
+            post_init
+                .votor_event_sender
+                .send(VotorEvent::SetIdentity)
+                .unwrap_or_else(|err| {
+                    error!("Failed to send SetIdentity event: {err}");
+                });
             Ok(())
         })
     }
@@ -973,6 +980,7 @@ mod tests {
         solana_streamer::socket::SocketAddrSpace,
         solana_system_interface::program as system_program,
         solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
+        solana_votor::event::VotorEventSender,
         spl_generic_token::token,
         spl_token_2022::state::{Account as TokenAccount, AccountState as TokenAccountState, Mint},
         std::{collections::HashSet, fs::remove_dir_all, sync::atomic::AtomicBool},
@@ -981,6 +989,7 @@ mod tests {
     #[derive(Default)]
     struct TestConfig {
         account_indexes: AccountSecondaryIndexes,
+        votor_event_sender: Option<VotorEventSender>,
     }
 
     struct RpcHandler {
@@ -1016,6 +1025,10 @@ mod tests {
             let vote_account = vote_keypair.pubkey();
             let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
             let repair_whitelist = Arc::new(RwLock::new(HashSet::new()));
+            let votor_event_sender = config.votor_event_sender.unwrap_or_else(|| {
+                let (votor_event_sender, _) = crossbeam_channel::unbounded();
+                votor_event_sender
+            });
             let meta = AdminRpcRequestMetadata {
                 rpc_addr: None,
                 start_time: SystemTime::now(),
@@ -1038,6 +1051,7 @@ mod tests {
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
                     gossip_socket: None,
+                    votor_event_sender,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,
@@ -1087,7 +1101,10 @@ mod tests {
             };
 
             // RPC & Bank Setup
-            let rpc = RpcHandler::start_with_config(TestConfig { account_indexes });
+            let rpc = RpcHandler::start_with_config(TestConfig {
+                account_indexes,
+                votor_event_sender: None,
+            });
 
             let bank = rpc.root_bank();
             let RpcHandler { io, meta, .. } = rpc;
@@ -1380,7 +1397,11 @@ mod tests {
     // Bank but without validator.
     #[test]
     fn test_set_identity() {
-        let rpc = RpcHandler::start_with_config(TestConfig::default());
+        let (votor_event_sender, votor_event_receiver) = crossbeam_channel::unbounded();
+        let rpc = RpcHandler::start_with_config(TestConfig {
+            account_indexes: AccountSecondaryIndexes::default(),
+            votor_event_sender: Some(votor_event_sender),
+        });
 
         let RpcHandler { io, meta, .. } = rpc;
 
@@ -1417,6 +1438,14 @@ mod tests {
             actual_validator_id,
             expected_validator_id.pubkey().to_string()
         );
+        let event = votor_event_receiver
+            .recv()
+            .expect("Failed to receive SetIdentity event");
+        if let VotorEvent::SetIdentity = event {
+            info!("Received SetIdentity event as expected");
+        } else {
+            panic!("Unexpected event received: {:?}", event);
+        }
     }
 
     struct TestValidatorWithAdminRpc {

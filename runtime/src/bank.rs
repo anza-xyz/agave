@@ -33,6 +33,7 @@
 //! It offers a high-level API that signs transactions
 //! on behalf of the caller, and a low-level API for when they have
 //! already been signed and verified.
+
 use {
     crate::{
         account_saver::collect_accounts_to_store,
@@ -1569,6 +1570,19 @@ impl Bank {
             .prune(new_root_slot, new_root_epoch);
     }
 
+    pub fn prune_program_cache_locked(
+        &self,
+        new_root_slot: Slot,
+        new_root_epoch: Epoch,
+        bank_forks: &BankForks,
+    ) {
+        self.transaction_processor
+            .program_cache
+            .write()
+            .unwrap()
+            .prune_locked(new_root_slot, new_root_epoch, bank_forks);
+    }
+
     pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
         self.transaction_processor
             .program_cache
@@ -2431,8 +2445,7 @@ impl Bank {
         let slots_per_epoch = self.epoch_schedule().slots_per_epoch;
         let vote_accounts = self.vote_accounts();
         let recent_timestamps = vote_accounts.iter().filter_map(|(pubkey, (_, account))| {
-            let vote_state = account.vote_state_view();
-            let last_timestamp = vote_state.last_timestamp();
+            let last_timestamp = account.last_timestamp();
             let slot_delta = self.slot().checked_sub(last_timestamp.slot)?;
             (slot_delta <= slots_per_epoch)
                 .then_some((*pubkey, (last_timestamp.slot, last_timestamp.timestamp)))
@@ -4895,6 +4908,10 @@ impl Bank {
         self.tick_height.load(Relaxed)
     }
 
+    pub fn set_tick_height(&self, tick_height: u64) {
+        self.tick_height.store(tick_height, Relaxed)
+    }
+
     /// Return the inflation parameters of the Bank
     pub fn inflation(&self) -> Inflation {
         *self.inflation.read().unwrap()
@@ -5555,6 +5572,10 @@ impl Bank {
 
     pub fn fee_structure(&self) -> &FeeStructure {
         &self.fee_structure
+    }
+
+    pub fn parent_block_id(&self) -> Option<Hash> {
+        self.parent().and_then(|p| p.block_id())
     }
 
     pub fn block_id(&self) -> Option<Hash> {

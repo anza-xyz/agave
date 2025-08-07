@@ -407,8 +407,11 @@ impl Tower {
             if voted_stake == 0 {
                 continue;
             }
-            trace!("{vote_account_pubkey} {key} with stake {voted_stake}");
-            let mut vote_state = TowerVoteState::from(account.vote_state_view());
+            trace!("{} {} with stake {}", vote_account_pubkey, key, voted_stake);
+            let Some(vote_state_view) = account.vote_state_view() else {
+                continue; // not relevant to Alpenglow.
+            };
+            let mut vote_state = TowerVoteState::from(vote_state_view);
             for vote in &vote_state.votes {
                 lockout_intervals
                     .entry(vote.last_locked_out_slot())
@@ -610,7 +613,9 @@ impl Tower {
 
     pub fn last_voted_slot_in_bank(bank: &Bank, vote_account_pubkey: &Pubkey) -> Option<Slot> {
         let vote_account = bank.get_vote_account(vote_account_pubkey)?;
-        vote_account.vote_state_view().last_voted_slot()
+        // TODO(wen): make this work for Alpenglow.
+        let vote_state_view = vote_account.vote_state_view()?;
+        vote_state_view.last_voted_slot()
     }
 
     pub fn record_bank_vote(&mut self, bank: &Bank) -> Option<Slot> {
@@ -1615,7 +1620,11 @@ impl Tower {
         bank: &Bank,
     ) {
         if let Some(vote_account) = bank.get_vote_account(vote_account_pubkey) {
-            self.vote_state = TowerVoteState::from(vote_account.vote_state_view());
+            self.vote_state = TowerVoteState::from(
+                vote_account
+                    .vote_state_view()
+                    .expect("must be TowerBFT account"),
+            );
             self.initialize_root(root);
             self.initialize_lockouts(|v| v.slot() > root);
         } else {
@@ -1693,6 +1702,7 @@ impl TowerError {
 pub enum ExternalRootSource {
     Tower(Slot),
     HardFork(Slot),
+    VoteHistory(Slot),
 }
 
 impl ExternalRootSource {
@@ -1700,15 +1710,16 @@ impl ExternalRootSource {
         match self {
             ExternalRootSource::Tower(slot) => *slot,
             ExternalRootSource::HardFork(slot) => *slot,
+            ExternalRootSource::VoteHistory(slot) => *slot,
         }
     }
 }
 
-// Given an untimely crash, tower may have roots that are not reflected in blockstore,
+// Given an untimely crash, tower/vote history may have roots that are not reflected in blockstore,
 // or the reverse of this.
 // That's because we don't impose any ordering guarantee or any kind of write barriers
-// between tower (plain old POSIX fs calls) and blockstore (through RocksDB), when
-// `ReplayState::handle_votable_bank()` saves tower before setting blockstore roots.
+// between tower/vote history (plain old POSIX fs calls) and blockstore (through RocksDB), when
+// replay or voting loop saves tower/vote history before setting blockstore roots.
 pub fn reconcile_blockstore_roots_with_external_source(
     external_source: ExternalRootSource,
     blockstore: &Blockstore,
@@ -1979,6 +1990,7 @@ pub mod test {
         let duplicate_ancestor1 = 44;
         let duplicate_ancestor2 = 45;
         vote_simulator
+            .tbft_structs
             .heaviest_subtree_fork_choice
             .mark_fork_invalid_candidate(&(
                 duplicate_ancestor1,
@@ -1991,6 +2003,7 @@ pub mod test {
                     .hash(),
             ));
         vote_simulator
+            .tbft_structs
             .heaviest_subtree_fork_choice
             .mark_fork_invalid_candidate(&(
                 duplicate_ancestor2,
@@ -2011,7 +2024,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchDuplicateRollback(duplicate_ancestor2)
         );
@@ -2025,6 +2038,7 @@ pub mod test {
         }
         for (i, duplicate_ancestor) in confirm_ancestors.into_iter().enumerate() {
             vote_simulator
+                .tbft_structs
                 .heaviest_subtree_fork_choice
                 .mark_fork_valid_candidate(&(
                     duplicate_ancestor,
@@ -2044,7 +2058,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             );
             if i == 0 {
                 assert_eq!(
@@ -2076,7 +2090,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SameFork
         );
@@ -2091,7 +2105,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2108,7 +2122,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2125,7 +2139,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2142,7 +2156,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2161,7 +2175,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2178,7 +2192,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SwitchProof(Hash::default())
         );
@@ -2196,7 +2210,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SwitchProof(Hash::default())
         );
@@ -2218,7 +2232,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2246,7 +2260,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, num_validators * 10000)
         );
@@ -2262,7 +2276,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2295,7 +2309,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SwitchProof(Hash::default())
         );
@@ -2315,7 +2329,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2439,7 +2453,7 @@ pub mod test {
             .unwrap()
             .get_vote_account(&vote_pubkey)
             .unwrap();
-        let state = observed.vote_state_view();
+        let state = observed.vote_state_view().unwrap();
         info!("observed tower: {:#?}", state.votes_iter().collect_vec());
 
         let num_slots_to_try = 200;
@@ -3035,7 +3049,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SameFork
         );
@@ -3050,7 +3064,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -3066,7 +3080,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SwitchProof(Hash::default())
         );
@@ -3126,7 +3140,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -3142,7 +3156,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -3158,7 +3172,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SwitchProof(Hash::default())
         );
@@ -3763,7 +3777,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20_000)
         );
@@ -3781,7 +3795,7 @@ pub mod test {
                     total_stake,
                     bank0.epoch_vote_accounts(0).unwrap(),
                     &vote_simulator.latest_validator_votes_for_frozen_banks,
-                    &vote_simulator.heaviest_subtree_fork_choice,
+                    &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
                 ),
                 SwitchForkDecision::SwitchProof(Hash::default())
             );
@@ -3819,7 +3833,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20_000)
         );
@@ -3839,7 +3853,7 @@ pub mod test {
                     total_stake,
                     bank0.epoch_vote_accounts(0).unwrap(),
                     &vote_simulator.latest_validator_votes_for_frozen_banks,
-                    &vote_simulator.heaviest_subtree_fork_choice,
+                    &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
                 ),
                 SwitchForkDecision::SwitchProof(Hash::default())
             );

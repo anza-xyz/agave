@@ -936,12 +936,14 @@ impl TestValidator {
             &validator_identity.pubkey(),
             &validator_vote_account.pubkey(),
             &validator_stake_account.pubkey(),
+            None,
             validator_stake_lamports,
             validator_identity_lamports,
             config.fee_rate_governor.clone(),
             config.rent.clone(),
             solana_cluster_type::ClusterType::Development,
             accounts.into_iter().collect(),
+            None,
         );
         genesis_config.epoch_schedule = config
             .epoch_schedule
@@ -958,7 +960,10 @@ impl TestValidator {
         }
 
         for feature in feature_set {
-            genesis_utils::activate_feature(&mut genesis_config, feature);
+            // TODO remove this
+            if feature != agave_feature_set::secp256k1_program_enabled::id() {
+                genesis_utils::activate_feature(&mut genesis_config, feature);
+            }
         }
 
         let ledger_path = match &config.ledger_path {
@@ -1431,6 +1436,8 @@ mod test {
         [
             agave_feature_set::deprecate_rewards_sysvar::id(),
             agave_feature_set::disable_fees_sysvar::id(),
+            // TODO: remove this
+            agave_feature_set::secp256k1_program_enabled::id(),
         ]
         .into_iter()
         .for_each(|feature| {

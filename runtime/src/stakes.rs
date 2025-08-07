@@ -78,7 +78,7 @@ impl StakesCache {
         // Zero lamport accounts are not stored in accounts-db
         // and so should be removed from cache as well.
         if account.lamports() == 0 {
-            if solana_vote_program::check_id(owner) {
+            if solana_vote_program::check_id(owner) || solana_votor_messages::check_id(owner) {
                 let _old_vote_account = {
                     let mut stakes = self.0.write().unwrap();
                     stakes.remove_vote_account(pubkey)
@@ -119,6 +119,39 @@ impl StakesCache {
                     stakes.remove_vote_account(pubkey)
                 };
             };
+        } else if solana_votor_messages::check_id(owner) {
+            match VoteAccount::try_from(account.to_account_shared_data()) {
+                Ok(vote_account) => {
+                    if vote_account
+                        .alpenglow_vote_state()
+                        .unwrap()
+                        .is_initialized()
+                    {
+                        // drop the old account after releasing the lock
+                        let _old_vote_account = {
+                            let mut stakes = self.0.write().unwrap();
+                            stakes.upsert_vote_account(
+                                pubkey,
+                                vote_account,
+                                new_rate_activation_epoch,
+                            )
+                        };
+                    } else {
+                        // drop the old account after releasing the lock
+                        let _old_vote_account = {
+                            let mut stakes = self.0.write().unwrap();
+                            stakes.remove_vote_account(pubkey)
+                        };
+                    }
+                }
+                Err(_) => {
+                    // drop the old account after releasing the lock
+                    let _old_vote_account = {
+                        let mut stakes = self.0.write().unwrap();
+                        stakes.remove_vote_account(pubkey)
+                    };
+                }
+            }
         } else if solana_stake_program::check_id(owner) {
             match StakeAccount::try_from(account.to_account_shared_data()) {
                 Ok(stake_account) => {
@@ -213,9 +246,19 @@ impl Stakes<StakeAccount> {
                 let voter_pubkey = &delegation.voter_pubkey;
                 if stakes.vote_accounts.get(voter_pubkey).is_none() {
                     if let Some(account) = get_account(voter_pubkey) {
-                        if VoteStateVersions::is_correct_size_and_initialized(account.data())
-                            && VoteAccount::try_from(account.clone()).is_ok()
-                        {
+                        let is_valid_account = if solana_votor_messages::check_id(account.owner()) {
+                            match VoteAccount::try_from(account.clone()) {
+                                Ok(vote_account) => vote_account
+                                    .alpenglow_vote_state()
+                                    .unwrap()
+                                    .is_initialized(),
+                                Err(_) => false,
+                            }
+                        } else {
+                            VoteStateVersions::is_correct_size_and_initialized(account.data())
+                                && VoteAccount::try_from(account.clone()).is_ok()
+                        };
+                        if is_valid_account {
                             error!("vote account not cached: {voter_pubkey}, {account:?}");
                             return Err(Error::VoteAccountNotCached(*voter_pubkey));
                         }
@@ -515,21 +558,34 @@ pub(crate) mod tests {
         super::*,
         rayon::ThreadPoolBuilder,
         solana_account::WritableAccount,
+        solana_bls_signatures::keypair::Keypair as BLSKeypair,
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_stake_interface as stake,
         solana_stake_program::stake_state,
-        solana_vote_interface::state::{VoteState, VoteStateVersions},
-        solana_vote_program::vote_state,
+        solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
+        solana_votor_messages::state::VoteState as AlpenglowVoteState,
+        test_case::test_case,
     };
 
     //  set up some dummies for a staked node     ((     vote      )  (     stake     ))
     pub(crate) fn create_staked_node_accounts(
         stake: u64,
+        is_alpenglow: bool,
     ) -> ((Pubkey, AccountSharedData), (Pubkey, AccountSharedData)) {
         let vote_pubkey = solana_pubkey::new_rand();
-        let vote_account =
-            vote_state::create_account(&vote_pubkey, &solana_pubkey::new_rand(), 0, 1);
+        let bls_keypair = BLSKeypair::new();
+        let vote_account = if is_alpenglow {
+            AlpenglowVoteState::create_account_with_authorized(
+                &vote_pubkey,
+                &vote_pubkey,
+                &vote_pubkey,
+                0,
+                1,
+                bls_keypair.public.into(),
+            )
+        } else {
+            vote_state::create_account(&vote_pubkey, &solana_pubkey::new_rand(), 0, 1)
+        };
         let stake_pubkey = solana_pubkey::new_rand();
         (
             (vote_pubkey, vote_account),
@@ -555,8 +611,9 @@ pub(crate) mod tests {
         )
     }
 
-    #[test]
-    fn test_stakes_basic() {
+    #[test_case(true; "alpenglow")]
+    #[test_case(false; "towerbft")]
+    fn test_stakes_basic(is_alpenglow: bool) {
         for i in 0..4 {
             let stakes_cache = StakesCache::new(Stakes {
                 epoch: i,
@@ -564,7 +621,7 @@ pub(crate) mod tests {
             });
 
             let ((vote_pubkey, vote_account), (stake_pubkey, mut stake_account)) =
-                create_staked_node_accounts(10);
+                create_staked_node_accounts(10, is_alpenglow);
 
             stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
             stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
@@ -617,39 +674,47 @@ pub(crate) mod tests {
         }
     }
 
-    #[test]
-    fn test_stakes_highest() {
+    #[test_case(true; "alpenglow")]
+    #[test_case(false; "towerbft")]
+    fn test_stakes_highest(is_alpenglow: bool) {
         let stakes_cache = StakesCache::default();
 
         assert_eq!(stakes_cache.stakes().highest_staked_node(), None);
 
         let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
-            create_staked_node_accounts(10);
+            create_staked_node_accounts(10, is_alpenglow);
 
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
         stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
 
         let ((vote11_pubkey, vote11_account), (stake11_pubkey, stake11_account)) =
-            create_staked_node_accounts(20);
+            create_staked_node_accounts(20, is_alpenglow);
 
         stakes_cache.check_and_store(&vote11_pubkey, &vote11_account, None);
         stakes_cache.check_and_store(&stake11_pubkey, &stake11_account, None);
 
-        let vote11_node_pubkey = vote_state::from(&vote11_account).unwrap().node_pubkey;
+        let vote11_node_pubkey = if is_alpenglow {
+            *AlpenglowVoteState::deserialize(vote11_account.data())
+                .unwrap()
+                .node_pubkey()
+        } else {
+            vote_state::from(&vote11_account).unwrap().node_pubkey
+        };
 
         let highest_staked_node = stakes_cache.stakes().highest_staked_node().copied();
         assert_eq!(highest_staked_node, Some(vote11_node_pubkey));
     }
 
-    #[test]
-    fn test_stakes_vote_account_disappear_reappear() {
+    #[test_case(true; "alpenglow")]
+    #[test_case(false; "towerbft")]
+    fn test_stakes_vote_account_disappear_reappear(is_alpenglow: bool) {
         let stakes_cache = StakesCache::new(Stakes {
             epoch: 4,
             ..Stakes::default()
         });
 
         let ((vote_pubkey, mut vote_account), (stake_pubkey, stake_account)) =
-            create_staked_node_accounts(10);
+            create_staked_node_accounts(10, is_alpenglow);
 
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
         stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
@@ -696,9 +761,15 @@ pub(crate) mod tests {
         }
 
         // Vote account uninitialized
-        let default_vote_state = VoteState::default();
-        let versioned = VoteStateVersions::new_current(default_vote_state);
-        vote_state::to(&versioned, &mut vote_account).unwrap();
+        if is_alpenglow {
+            vote_account.set_data(cache_data.clone());
+            let default_vote_state = AlpenglowVoteState::default();
+            default_vote_state.serialize_into(vote_account.data_as_mut_slice());
+        } else {
+            let default_vote_state = VoteState::default();
+            let versioned = VoteStateVersions::new_current(default_vote_state);
+            vote_state::to(&versioned, &mut vote_account).unwrap();
+        }
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
 
         {
@@ -719,18 +790,19 @@ pub(crate) mod tests {
         }
     }
 
-    #[test]
-    fn test_stakes_change_delegate() {
+    #[test_case(true; "alpenglow")]
+    #[test_case(false; "towerbft")]
+    fn test_stakes_change_delegate(is_alpenglow: bool) {
         let stakes_cache = StakesCache::new(Stakes {
             epoch: 4,
             ..Stakes::default()
         });
 
         let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
-            create_staked_node_accounts(10);
+            create_staked_node_accounts(10, is_alpenglow);
 
         let ((vote_pubkey2, vote_account2), (_stake_pubkey2, stake_account2)) =
-            create_staked_node_accounts(10);
+            create_staked_node_accounts(10, is_alpenglow);
 
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
         stakes_cache.check_and_store(&vote_pubkey2, &vote_account2, None);
@@ -767,15 +839,17 @@ pub(crate) mod tests {
             );
         }
     }
-    #[test]
-    fn test_stakes_multiple_stakers() {
+
+    #[test_case(true; "alpenglow")]
+    #[test_case(false; "towerbft")]
+    fn test_stakes_multiple_stakers(is_alpenglow: bool) {
         let stakes_cache = StakesCache::new(Stakes {
             epoch: 4,
             ..Stakes::default()
         });
 
         let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
-            create_staked_node_accounts(10);
+            create_staked_node_accounts(10, is_alpenglow);
 
         let stake_pubkey2 = solana_pubkey::new_rand();
         let stake_account2 = create_stake_account(10, &vote_pubkey, &stake_pubkey2);
@@ -794,12 +868,13 @@ pub(crate) mod tests {
         }
     }
 
-    #[test]
-    fn test_activate_epoch() {
+    #[test_case(true; "alpenglow")]
+    #[test_case(false; "towerbft")]
+    fn test_activate_epoch(is_alpenglow: bool) {
         let stakes_cache = StakesCache::default();
 
         let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
-            create_staked_node_accounts(10);
+            create_staked_node_accounts(10, is_alpenglow);
 
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
         stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
@@ -825,15 +900,16 @@ pub(crate) mod tests {
         }
     }
 
-    #[test]
-    fn test_stakes_not_delegate() {
+    #[test_case(true; "alpenglow")]
+    #[test_case(false; "towerbft")]
+    fn test_stakes_not_delegate(is_alpenglow: bool) {
         let stakes_cache = StakesCache::new(Stakes {
             epoch: 4,
             ..Stakes::default()
         });
 
         let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
-            create_staked_node_accounts(10);
+            create_staked_node_accounts(10, is_alpenglow);
 
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
         stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
@@ -848,7 +924,7 @@ pub(crate) mod tests {
         // not a stake account, and whacks above entry
         stakes_cache.check_and_store(
             &stake_pubkey,
-            &AccountSharedData::new(1, 0, &stake::program::id()),
+            &AccountSharedData::new(1, 0, &solana_stake_interface::program::id()),
             None,
         );
         {

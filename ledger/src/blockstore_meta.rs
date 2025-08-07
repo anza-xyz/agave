@@ -8,8 +8,9 @@ use {
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
+    solana_votor_messages::bls_message::CertificateMessage,
     std::{
-        collections::BTreeSet,
+        collections::{BTreeSet, HashMap},
         ops::{Range, RangeBounds},
     },
 };
@@ -876,6 +877,42 @@ impl OptimisticSlotMetaVersioned {
         match self {
             OptimisticSlotMetaVersioned::V0(meta) => meta.timestamp,
         }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+/// Holds the certificates for this slot in blockstore
+/// Under normal operation there will only be *one* certificate,
+/// either `notarize_fallback` or `skip`
+/// In the worse case (duplicate blocks) there can be at most:
+/// - 3 `notarize_fallback certificates`
+/// - plus 1 `skip_certificate`
+///
+/// Note: Currently these are pre BLS `CertificateMessage`, but post BLS
+/// the certificate will be one transaction / similar, roughly 800 bytes in size
+///
+/// This will normally be written to once per slot, but in the worst case 4 times per slot
+/// It will be read to serve repair to other nodes.
+pub struct SlotCertificates {
+    /// The notarization fallback certificates keyed by block_id
+    pub notarize_fallback_certificates: HashMap<Hash, CertificateMessage>,
+    /// The skip certificate
+    pub skip_certificate: Option<CertificateMessage>,
+}
+
+impl SlotCertificates {
+    /// Insert a new notarization fallback certificate for this slot.
+    /// Overwrites an existing one if it exists
+    pub fn add_notarization_fallback_certificate(
+        &mut self,
+        block_id: Hash,
+        cert: CertificateMessage,
+    ) {
+        self.notarize_fallback_certificates.insert(block_id, cert);
+    }
+
+    pub fn set_skip_certificate(&mut self, cert: CertificateMessage) {
+        self.skip_certificate.replace(cert);
     }
 }
 

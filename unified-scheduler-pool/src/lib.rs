@@ -451,6 +451,7 @@ where
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn do_new(
         block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,

@@ -6,7 +6,7 @@ use {
     solana_poh::poh_recorder::{BankStart, PohRecorder},
     solana_unified_scheduler_pool::{BankingStageMonitor, BankingStageStatus},
     std::{
-        sync::{atomic::{AtomicBool, Ordering::Relaxed}, Arc, RwLock},
+        sync::{atomic::{AtomicBool, Ordering::{self, Relaxed}}, Arc, RwLock},
         time::{Duration, Instant},
     },
 };
@@ -101,9 +101,22 @@ impl DecisionMaker {
     }
 
     fn bank_start(poh_recorder: &PohRecorder) -> Option<BankStart> {
-        poh_recorder
-            .bank_start()
-            .filter(|bank_start| bank_start.should_working_bank_still_be_processing_txs())
+        poh_recorder.bank_start().filter(|bank_start| {
+            let first_alpenglow_slot = bank_start
+                .working_bank
+                .feature_set
+                .activated_slot(&agave_feature_set::secp256k1_program_enabled::id())
+                .unwrap_or(u64::MAX);
+            let contains_valid_certificate =
+                if bank_start.working_bank.slot() >= first_alpenglow_slot {
+                    bank_start
+                        .contains_valid_certificate
+                        .load(Ordering::Relaxed)
+                } else {
+                    true
+                };
+            contains_valid_certificate && bank_start.should_working_bank_still_be_processing_txs()
+        })
     }
 
     fn would_be_leader_shortly(poh_recorder: &PohRecorder) -> bool {
@@ -156,13 +169,15 @@ mod tests {
         super::*,
         core::panic,
         solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
-        solana_ledger::{blockstore::Blockstore, genesis_utils::create_genesis_config},
+        solana_ledger::{blockstore::Blockstore, genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
         solana_poh::poh_recorder::create_test_recorder,
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
         std::{
-            env::temp_dir,
-            sync::{atomic::Ordering, Arc},
+            sync::{
+                atomic::{AtomicBool, Ordering},
+                Arc,
+            },
             time::Instant,
         },
     };
@@ -171,6 +186,7 @@ mod tests {
     fn test_buffered_packet_decision_bank_start() {
         let bank = Arc::new(Bank::default_for_tests());
         let bank_start = BankStart {
+            contains_valid_certificate: Arc::new(AtomicBool::new(true)),
             working_bank: bank,
             bank_creation_time: Arc::new(Instant::now()),
         };
@@ -188,8 +204,8 @@ mod tests {
     fn test_make_consume_or_forward_decision() {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        let ledger_path = temp_dir();
-        let blockstore = Arc::new(Blockstore::open(ledger_path.as_path()).unwrap());
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let (exit, poh_recorder, _transaction_recorder, poh_service, _entry_receiver) =
             create_test_recorder(bank.clone(), blockstore, None, None);
         // Drop the poh service immediately to avoid potential ticking
@@ -255,12 +271,106 @@ mod tests {
     }
 
     #[test]
+    fn test_make_consume_or_forward_decision_alpenglow() {
+        let genesis_config = create_genesis_config(2).genesis_config;
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let (exit, poh_recorder, _transaction_recorder, poh_service, _entry_receiver) =
+            create_test_recorder(bank.clone(), blockstore, None, None);
+        // Drop the poh service immediately to avoid potential ticking
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
+
+        let my_pubkey = Pubkey::new_unique();
+        let decision_maker = DecisionMaker::new(poh_recorder.clone());
+        poh_recorder.write().unwrap().reset(bank.clone(), None);
+        let slot = bank.slot() + 1;
+        let mut bank = Bank::new_from_parent(bank, &my_pubkey, slot);
+        bank.activate_feature(&agave_feature_set::secp256k1_program_enabled::id());
+        let bank = Arc::new(bank);
+
+        // Currently Leader, with alpenglow enabled, no certificate - Hold
+        {
+            poh_recorder
+                .write()
+                .unwrap()
+                .set_bank_for_test(bank.clone());
+            assert!(!poh_recorder
+                .write()
+                .unwrap()
+                .bank_start()
+                .unwrap()
+                .contains_valid_certificate
+                .load(Ordering::Relaxed));
+            let decision = decision_maker.make_consume_or_forward_decision_no_cache();
+            assert_matches!(decision, BufferedPacketsDecision::Hold);
+        }
+
+        // Currently Leader, with alpenglow enabled, certificate valid - Consume
+        {
+            poh_recorder
+                .write()
+                .unwrap()
+                .bank_start()
+                .unwrap()
+                .contains_valid_certificate
+                .store(true, Ordering::Relaxed);
+            let decision = decision_maker.make_consume_or_forward_decision_no_cache();
+            assert_matches!(decision, BufferedPacketsDecision::Consume(_));
+        }
+
+        // Will be leader shortly - Hold
+        for next_leader_slot_offset in [0, 1].into_iter() {
+            let next_leader_slot = bank.slot() + next_leader_slot_offset;
+            poh_recorder.write().unwrap().reset(
+                bank.clone(),
+                Some((
+                    next_leader_slot,
+                    next_leader_slot + NUM_CONSECUTIVE_LEADER_SLOTS,
+                )),
+            );
+            let decision = decision_maker.make_consume_or_forward_decision_no_cache();
+            assert!(
+                matches!(decision, BufferedPacketsDecision::Hold),
+                "next_leader_slot_offset: {next_leader_slot_offset}",
+            );
+        }
+
+        // Will be leader - ForwardAndHold
+        for next_leader_slot_offset in [2, 19].into_iter() {
+            let next_leader_slot = bank.slot() + next_leader_slot_offset;
+            poh_recorder.write().unwrap().reset(
+                bank.clone(),
+                Some((
+                    next_leader_slot,
+                    next_leader_slot + NUM_CONSECUTIVE_LEADER_SLOTS + 1,
+                )),
+            );
+            let decision = decision_maker.make_consume_or_forward_decision_no_cache();
+            assert!(
+                matches!(decision, BufferedPacketsDecision::ForwardAndHold),
+                "next_leader_slot_offset: {next_leader_slot_offset}",
+            );
+        }
+
+        // Known leader, not me - Forward
+        {
+            poh_recorder.write().unwrap().reset(bank, None);
+            let decision = decision_maker.make_consume_or_forward_decision_no_cache();
+            assert_matches!(decision, BufferedPacketsDecision::Forward);
+        }
+    }
+
+    #[test]
     fn test_should_process_or_forward_packets() {
         let bank = Arc::new(Bank::default_for_tests());
         let bank_start = Some(BankStart {
+            contains_valid_certificate: Arc::new(AtomicBool::new(true)),
             working_bank: bank,
             bank_creation_time: Arc::new(Instant::now()),
         });
+
         // having active bank allows to consume immediately
         assert_matches!(
             DecisionMaker::consume_or_forward_packets(

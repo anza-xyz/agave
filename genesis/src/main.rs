@@ -8,9 +8,11 @@ use {
     itertools::Itertools,
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+    solana_bls_signatures::Pubkey as BLSPubkey,
     solana_clap_utils::{
         input_parsers::{
-            cluster_type_of, pubkey_of, pubkeys_of, unix_timestamp_from_rfc3339_datetime,
+            bls_pubkeys_of, cluster_type_of, pubkey_of, pubkeys_of,
+            unix_timestamp_from_rfc3339_datetime,
         },
         input_validators::{
             is_pubkey, is_pubkey_or_keypair, is_rfc3339_datetime, is_slot, is_url_or_moniker,
@@ -38,11 +40,13 @@ use {
     solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
+    solana_runtime::genesis_utils::include_alpenglow_bpf_program,
     solana_sdk_ids::system_program,
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
     solana_stake_program::stake_state,
     solana_vote_program::vote_state::{self, VoteStateV3},
+    solana_votor_messages::state::VoteState as AlpenglowVoteState,
     std::{
         collections::HashMap,
         error,
@@ -115,6 +119,7 @@ pub fn load_validator_accounts(
     commission: u8,
     rent: &Rent,
     genesis_config: &mut GenesisConfig,
+    is_alpenglow: bool,
 ) -> io::Result<()> {
     let accounts_file = File::open(file)?;
     let validator_genesis_accounts: Vec<StakedValidatorAccountInfo> =
@@ -143,15 +148,22 @@ pub fn load_validator_accounts(
                 ))
             })?,
         ];
+        let bls_pubkeys: Vec<BLSPubkey> = account_details.bls_pubkey.map_or(Ok(vec![]), |s| {
+            BLSPubkey::from_str(&s).map(|pk| vec![pk]).map_err(|err| {
+                io::Error::new(io::ErrorKind::Other, format!("Invalid BLS pubkey: {err}"))
+            })
+        })?;
 
         add_validator_accounts(
             genesis_config,
             &mut pubkeys.iter(),
+            bls_pubkeys,
             account_details.balance_lamports,
             account_details.stake_lamports,
             commission,
             rent,
             None,
+            is_alpenglow,
         )?;
     }
 
@@ -225,17 +237,20 @@ fn features_to_deactivate_for_cluster(
 fn add_validator_accounts(
     genesis_config: &mut GenesisConfig,
     pubkeys_iter: &mut Iter<Pubkey>,
+    bls_pubkeys: Vec<BLSPubkey>,
     lamports: u64,
     stake_lamports: u64,
     commission: u8,
     rent: &Rent,
     authorized_pubkey: Option<&Pubkey>,
+    is_alpenglow: bool,
 ) -> io::Result<()> {
     rent_exempt_check(
         stake_lamports,
         rent.minimum_balance(StakeStateV2::size_of()),
     )?;
 
+    let mut bls_pubkeys_iter = bls_pubkeys.iter();
     loop {
         let Some(identity_pubkey) = pubkeys_iter.next() else {
             break;
@@ -248,13 +263,27 @@ fn add_validator_accounts(
             AccountSharedData::new(lamports, 0, &system_program::id()),
         );
 
-        let vote_account = vote_state::create_account_with_authorized(
-            identity_pubkey,
-            identity_pubkey,
-            identity_pubkey,
-            commission,
-            VoteStateV3::get_rent_exempt_reserve(rent).max(1),
-        );
+        let vote_account = if is_alpenglow {
+            let bls_pubkey = bls_pubkeys_iter
+                .next()
+                .expect("Missing BLS pubkey for {identity_pubkey}");
+            AlpenglowVoteState::create_account_with_authorized(
+                identity_pubkey,
+                identity_pubkey,
+                identity_pubkey,
+                commission,
+                AlpenglowVoteState::get_rent_exempt_reserve(rent).max(1),
+                *bls_pubkey,
+            )
+        } else {
+            vote_state::create_account_with_authorized(
+                identity_pubkey,
+                identity_pubkey,
+                identity_pubkey,
+                commission,
+                VoteStateV3::get_rent_exempt_reserve(rent).max(1),
+            )
+        };
 
         genesis_config.add_account(
             *stake_pubkey,
@@ -315,7 +344,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     // vote account
     let default_bootstrap_validator_lamports = &sol_to_lamports(500.0)
         .max(VoteStateV3::get_rent_exempt_reserve(&rent))
+        .max(AlpenglowVoteState::get_rent_exempt_reserve(&rent))
         .to_string();
+
     // stake account
     let default_bootstrap_validator_stake_lamports = &sol_to_lamports(0.5)
         .max(rent.minimum_balance(StakeStateV2::size_of()))
@@ -348,6 +379,15 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .multiple(true)
                 .required(true)
                 .help("The bootstrap validator's identity, vote and stake pubkeys"),
+        )
+        .arg(
+            Arg::with_name("bootstrap_validator_bls_pubkey")
+                .long("bootstrap-validator-bls-pubkey")
+                .value_name("BLS_PUBKEY")
+                .multiple(true)
+                .takes_value(true)
+                .required(false)
+                .help("The bootstrap validator's bls pubkey"),
         )
         .arg(
             Arg::with_name("ledger_path")
@@ -606,6 +646,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     feature sets",
                 ),
         )
+        .arg(
+            Arg::with_name("alpenglow")
+                .long("alpenglow")
+                .takes_value(true)
+                .help("Path to spl-alpenglow_vote.so. When specified, we use Alpenglow consensus; when not specified, we use POH."),
+        )
         .get_matches();
 
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
@@ -618,6 +664,16 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let bootstrap_validator_pubkeys = pubkeys_of(&matches, "bootstrap_validator").unwrap();
     assert_eq!(bootstrap_validator_pubkeys.len() % 3, 0);
+
+    let bootstrap_validator_bls_pubkeys =
+        bls_pubkeys_of(&matches, "bootstrap_validator_bls_pubkey");
+    if let Some(pubkeys) = &bootstrap_validator_bls_pubkeys {
+        assert_eq!(
+            pubkeys.len() * 3,
+            bootstrap_validator_pubkeys.len(),
+            "Number of BLS pubkeys must match the number of bootstrap validator identities"
+        );
+    }
 
     // Ensure there are no duplicated pubkeys in the --bootstrap-validator list
     {
@@ -726,14 +782,18 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let commission = value_t_or_exit!(matches, "vote_commission_percentage", u8);
     let rent = genesis_config.rent.clone();
 
+    let alpenglow_so_path = matches.value_of("alpenglow");
+
     add_validator_accounts(
         &mut genesis_config,
         &mut bootstrap_validator_pubkeys.iter(),
+        bootstrap_validator_bls_pubkeys.unwrap_or_default(),
         bootstrap_validator_lamports,
         bootstrap_validator_stake_lamports,
         commission,
         &rent,
         bootstrap_stake_authorized_pubkey.as_ref(),
+        alpenglow_so_path.is_some(),
     )?;
 
     if let Some(creation_time) = unix_timestamp_from_rfc3339_datetime(&matches, "creation_time") {
@@ -748,7 +808,13 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     }
 
     solana_stake_program::add_genesis_accounts(&mut genesis_config);
-    solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
+
+    if alpenglow_so_path.is_some() {
+        solana_runtime::genesis_utils::activate_all_features_alpenglow(&mut genesis_config);
+    } else {
+        solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
+    }
+
     if !features_to_deactivate.is_empty() {
         solana_runtime::genesis_utils::deactivate_features(
             &mut genesis_config,
@@ -764,7 +830,13 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     if let Some(files) = matches.values_of("validator_accounts_file") {
         for file in files {
-            load_validator_accounts(file, commission, &rent, &mut genesis_config)?;
+            load_validator_accounts(
+                file,
+                commission,
+                &rent,
+                &mut genesis_config,
+                alpenglow_so_path.is_some(),
+            )?;
         }
     }
 
@@ -813,6 +885,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 }),
             );
         }
+    }
+
+    if let Some(alpenglow_so_path) = alpenglow_so_path {
+        include_alpenglow_bpf_program(&mut genesis_config, alpenglow_so_path);
     }
 
     if let Some(values) = matches.values_of("upgradeable_program") {
@@ -887,6 +963,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 mod tests {
     use {
         super::*,
+        solana_bls_signatures::keypair::Keypair as BLSKeypair,
         solana_borsh::v1 as borsh1,
         solana_genesis_config::GenesisConfig,
         solana_stake_interface as stake,
@@ -1237,17 +1314,20 @@ mod tests {
             "unknownfile",
             100,
             &Rent::default(),
-            &mut GenesisConfig::default()
+            &mut GenesisConfig::default(),
+            false,
         )
         .is_err());
 
         let mut genesis_config = GenesisConfig::default();
 
+        let bls_pubkey: BLSPubkey = BLSKeypair::new().public.into();
         let validator_accounts = vec![
             StakedValidatorAccountInfo {
                 identity_account: solana_pubkey::new_rand().to_string(),
                 vote_account: solana_pubkey::new_rand().to_string(),
                 stake_account: solana_pubkey::new_rand().to_string(),
+                bls_pubkey: None,
                 balance_lamports: 100000000000,
                 stake_lamports: 10000000000,
             },
@@ -1255,6 +1335,7 @@ mod tests {
                 identity_account: solana_pubkey::new_rand().to_string(),
                 vote_account: solana_pubkey::new_rand().to_string(),
                 stake_account: solana_pubkey::new_rand().to_string(),
+                bls_pubkey: Some(bls_pubkey.to_string()),
                 balance_lamports: 200000000000,
                 stake_lamports: 20000000000,
             },
@@ -1262,6 +1343,7 @@ mod tests {
                 identity_account: solana_pubkey::new_rand().to_string(),
                 vote_account: solana_pubkey::new_rand().to_string(),
                 stake_account: solana_pubkey::new_rand().to_string(),
+                bls_pubkey: Some(bls_pubkey.to_string()),
                 balance_lamports: 300000000000,
                 stake_lamports: 30000000000,
             },
@@ -1280,6 +1362,7 @@ mod tests {
             100,
             &Rent::default(),
             &mut genesis_config,
+            false,
         )
         .expect("Failed to load validator accounts");
 
@@ -1291,7 +1374,7 @@ mod tests {
             assert_eq!(genesis_config.accounts.len(), expected_accounts_len);
 
             // test account data matches
-            for b64_account in validator_accounts.iter() {
+            for (i, b64_account) in validator_accounts.iter().enumerate() {
                 // check identity
                 let identity_pk = b64_account.identity_account.parse().unwrap();
                 assert_eq!(
@@ -1318,6 +1401,13 @@ mod tests {
                     b64_account.stake_lamports,
                     genesis_config.accounts[&stake_pk].lamports
                 );
+
+                // check BLS pubkey
+                if i == 0 {
+                    assert!(b64_account.bls_pubkey.is_none());
+                } else {
+                    assert_eq!(b64_account.bls_pubkey, Some(bls_pubkey.to_string()));
+                }
 
                 let stake_data = genesis_config.accounts[&stake_pk].data.clone();
                 let stake_state =

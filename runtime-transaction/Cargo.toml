@@ -32,6 +32,8 @@ solana-signature = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
+solana-vote = { workspace = true }
+solana-votor-messages = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

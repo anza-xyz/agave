@@ -58,6 +58,7 @@ fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         memo: None,
         fee_payer: 0,
         compute_unit_price,
+        is_alpenglow: false,
     };
     process_command(&config).unwrap();
     let vote_account = rpc_client
@@ -286,6 +287,7 @@ fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         memo: None,
         fee_payer: 0,
         compute_unit_price,
+        is_alpenglow: false,
     };
     process_command(&config_payer).unwrap();
     let vote_account = rpc_client

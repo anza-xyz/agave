@@ -56,11 +56,12 @@ use {
         vote_instruction,
         vote_state::{self, VoteInit},
     },
+    solana_votor::vote_history_storage::FileVoteHistoryStorage,
     std::{
         collections::HashMap,
         io::{Error, Result},
         iter,
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
         time::Duration,
@@ -183,6 +184,8 @@ impl LocalCluster {
                 .0,
         ];
         config.tower_storage = Arc::new(FileTowerStorage::new(ledger_path.to_path_buf()));
+        config.vote_history_storage =
+            Arc::new(FileVoteHistoryStorage::new(ledger_path.to_path_buf()));
 
         let snapshot_config = &mut config.snapshot_config;
         let dummy: PathBuf = DUMMY_SNAPSHOT_CONFIG_PATH_MARKER.into();
@@ -195,6 +198,22 @@ impl LocalCluster {
     }
 
     pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
+        Self::init(config, socket_addr_space, None)
+    }
+
+    pub fn new_alpenglow(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
+        Self::init(
+            config,
+            socket_addr_space,
+            Some(build_alpenglow_vote::ALPENGLOW_VOTE_SO_PATH),
+        )
+    }
+
+    pub fn init(
+        config: &mut ClusterConfig,
+        socket_addr_space: SocketAddrSpace,
+        alpenglow_so_path: Option<&str>,
+    ) -> Self {
         assert_eq!(config.validator_configs.len(), config.node_stakes.len());
 
         let quic_connection_cache_config = config.tpu_use_quic.then(|| {
@@ -270,11 +289,11 @@ impl LocalCluster {
                     );
                     if *in_genesis {
                         Some((
-                            ValidatorVoteKeypairs {
-                                node_keypair: node_keypair.insecure_clone(),
-                                vote_keypair: vote_keypair.insecure_clone(),
-                                stake_keypair: Keypair::new(),
-                            },
+                            ValidatorVoteKeypairs::new(
+                                node_keypair.insecure_clone(),
+                                vote_keypair.insecure_clone(),
+                                Keypair::new(),
+                            ),
                             stake,
                         ))
                     } else {
@@ -304,6 +323,7 @@ impl LocalCluster {
             &keys_in_genesis,
             stakes_in_genesis,
             config.cluster_type,
+            alpenglow_so_path,
         );
         genesis_config.accounts.extend(
             config
@@ -665,6 +685,23 @@ impl LocalCluster {
         info!("{test_name} done waiting for roots");
     }
 
+    pub fn check_for_new_processed(
+        &self,
+        num_new_processed: usize,
+        test_name: &str,
+        socket_addr_space: SocketAddrSpace,
+    ) {
+        let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
+        info!("{} looking for new processed slots on all nodes", test_name);
+        cluster_tests::check_for_new_processed(
+            num_new_processed,
+            &alive_node_contact_infos,
+            &self.connection_cache,
+            test_name,
+        );
+        info!("{} done waiting for processed slots", test_name);
+    }
+
     pub fn check_no_new_roots(
         &self,
         num_slots_to_wait: usize,
@@ -726,6 +763,25 @@ impl LocalCluster {
 
             std::thread::sleep(Duration::from_millis(400));
         }
+    }
+
+    pub fn check_for_new_notarized_votes(
+        &self,
+        num_new_notarized_votes: usize,
+        test_name: &str,
+        socket_addr_space: SocketAddrSpace,
+        vote_listener_addr: UdpSocket,
+    ) {
+        let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
+        info!("{} looking for new notarized votes on all nodes", test_name);
+        cluster_tests::check_for_new_notarized_votes(
+            num_new_notarized_votes,
+            &alive_node_contact_infos,
+            &self.connection_cache,
+            test_name,
+            vote_listener_addr,
+        );
+        info!("{} done waiting for notarized votes", test_name);
     }
 
     /// Attempt to send and confirm tx "attempts" times

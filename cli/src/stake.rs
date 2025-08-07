@@ -1747,7 +1747,26 @@ pub fn process_deactivate_stake_account(
             &vote_account_address,
             rpc_client.commitment(),
         )?;
-        if !eligible_for_deactivate_delinquent(&vote_state.epoch_credits, current_epoch) {
+
+        let is_eligible_for_deactivate_delinquent = match vote_state {
+            crate::vote::VoteStateWrapper::VoteState(ref vote_state) => {
+                eligible_for_deactivate_delinquent(&vote_state.epoch_credits, current_epoch)
+            }
+            crate::vote::VoteStateWrapper::AlpenglowVoteState(ref vote_state) => {
+                let credits = vote_state.epoch_credits().credits();
+                let prev_credits = vote_state.epoch_credits().prev_credits();
+
+                let mut epoch_credits = vec![];
+
+                if credits != 0 && prev_credits != 0 {
+                    epoch_credits.push((current_epoch, credits, prev_credits));
+                };
+
+                eligible_for_deactivate_delinquent(epoch_credits.as_slice(), current_epoch)
+            }
+        };
+
+        if is_eligible_for_deactivate_delinquent {
             return Err(CliError::BadParameter(format!(
                 "Stake has not been delinquent for {} epochs",
                 stake::MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION,

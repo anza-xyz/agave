@@ -1,7 +1,7 @@
 use {
     crossbeam_channel::{Receiver, Sender},
     solana_core::{
-        banking_trace::TracedSender, sigverify::TransactionSigVerifier,
+        banking_trace::TracedSender, sigverifier::ed25519_sigverifier::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
     },
     solana_keypair::Keypair,

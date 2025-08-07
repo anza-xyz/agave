@@ -6,9 +6,9 @@
 //! if perf-libs are available
 
 use {
-    crate::sigverify,
+    crate::sigverifier::ed25519_sigverifier::ed25519_verify_disabled,
     core::time::Duration,
-    crossbeam_channel::{Receiver, RecvTimeoutError, SendError},
+    crossbeam_channel::{Receiver, RecvTimeoutError, SendError, TrySendError},
     itertools::Itertools,
     solana_measure::measure::Measure,
     solana_perf::{
@@ -43,6 +43,9 @@ const MAX_DISCARDED_PACKET_RATE: f64 = 0.10;
 pub enum SigVerifyServiceError<SendType> {
     #[error("send packets batch error")]
     Send(#[from] SendError<SendType>),
+
+    #[error("try_send packet errror")]
+    TrySend(#[from] TrySendError<SendType>),
 
     #[error("streamer error")]
     Streamer(#[from] StreamerError),
@@ -221,7 +224,7 @@ impl SigVerifier for DisabledSigVerifier {
         mut batches: Vec<PacketBatch>,
         _valid_packets: usize,
     ) -> Vec<PacketBatch> {
-        sigverify::ed25519_verify_disabled(&mut batches);
+        ed25519_verify_disabled(&mut batches);
         batches
     }
 
@@ -412,7 +415,7 @@ impl SigVerifyStage {
                             SigVerifyServiceError::Streamer(StreamerError::RecvTimeout(
                                 RecvTimeoutError::Timeout,
                             )) => (),
-                            SigVerifyServiceError::Send(_) => {
+                            SigVerifyServiceError::Send(_) | SigVerifyServiceError::TrySend(_) => {
                                 break;
                             }
                             _ => error!("{e:?}"),
@@ -437,7 +440,9 @@ impl SigVerifyStage {
 mod tests {
     use {
         super::*,
-        crate::{banking_trace::BankingTracer, sigverify::TransactionSigVerifier},
+        crate::{
+            banking_trace::BankingTracer, sigverifier::ed25519_sigverifier::TransactionSigVerifier,
+        },
         crossbeam_channel::unbounded,
         solana_perf::{
             packet::{to_packet_batches, Packet, PinnedPacketBatch},

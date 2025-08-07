@@ -1029,7 +1029,10 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use solana_curve25519::{curve_syscall_traits::*, edwards, ristretto};
+        use {
+            solana_curve25519::{edwards, ristretto},
+            solana_curve_traits::*,
+        };
         match curve_id {
             CURVE25519_EDWARDS => {
                 let cost = invoke_context
@@ -1092,11 +1095,14 @@ declare_builtin_function!(
         result_point_addr: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use solana_curve25519::{
-            curve_syscall_traits::*,
-            edwards::{self, PodEdwardsPoint},
-            ristretto::{self, PodRistrettoPoint},
-            scalar,
+        use {
+            solana_bls12_381::{g1, g2, scalar as bls_scalar},
+            solana_curve25519::{
+                edwards::{self, PodEdwardsPoint},
+                ristretto::{self, PodRistrettoPoint},
+                scalar,
+            },
+            solana_curve_traits::*,
         };
         match curve_id {
             CURVE25519_EDWARDS => match group_op {
@@ -1295,6 +1301,176 @@ declare_builtin_function!(
                 }
             },
 
+            BLS12_381_G1_PROJECTIVE => match group_op {
+                ADD => {
+                    // TODO: add compute costs
+
+                    let left_point = translate_type::<g1::PodG1Projective>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                    )?;
+                    let right_point = translate_type::<g1::PodG1Projective>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                    )?;
+
+                    if let Some(result_point) = g1::add(left_point, right_point) {
+                        *translate_type_mut::<g1::PodG1Projective>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                SUB => {
+                    // TODO: add compute costs
+
+                    let left_point = translate_type::<g1::PodG1Projective>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                    )?;
+                    let right_point = translate_type::<g1::PodG1Projective>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                    )?;
+
+                    if let Some(result_point) = g1::subtract(left_point, right_point) {
+                        *translate_type_mut::<g1::PodG1Projective>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                MUL => {
+                    // TODO: add compute costs
+
+                    let scalar = translate_type::<bls_scalar::PodScalar>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                    )?;
+                    let input_point = translate_type::<g1::PodG1Projective>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                    )?;
+
+                    if let Some(result_point) = g1::multiply(scalar, input_point) {
+                        *translate_type_mut::<g1::PodG1Projective>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                _ => {
+                    if invoke_context.get_feature_set().abort_on_invalid_curve {
+                        Err(SyscallError::InvalidAttribute.into())
+                    } else {
+                        Ok(1)
+                    }
+                }
+            },
+
+            BLS12_381_G2_PROJECTIVE => match group_op {
+                ADD => {
+                    // TODO: add compute costs
+
+                    let left_point = translate_type::<g2::PodG2Projective>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                    )?;
+                    let right_point = translate_type::<g2::PodG2Projective>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                    )?;
+
+                    if let Some(result_point) = g2::add(left_point, right_point) {
+                        *translate_type_mut::<g2::PodG2Projective>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                SUB => {
+                    // TODO: add compute costs
+
+                    let left_point = translate_type::<g2::PodG2Projective>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                    )?;
+                    let right_point = translate_type::<g2::PodG2Projective>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                    )?;
+
+                    if let Some(result_point) = g2::subtract(left_point, right_point) {
+                        *translate_type_mut::<g2::PodG2Projective>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                MUL => {
+                    // TODO: add compute costs
+
+                    let scalar = translate_type::<bls_scalar::PodScalar>(
+                        memory_mapping,
+                        left_input_addr,
+                        invoke_context.get_check_aligned(),
+                    )?;
+                    let input_point = translate_type::<g2::PodG2Projective>(
+                        memory_mapping,
+                        right_input_addr,
+                        invoke_context.get_check_aligned(),
+                    )?;
+
+                    if let Some(result_point) = g2::multiply(scalar, input_point) {
+                        *translate_type_mut::<g2::PodG2Projective>(
+                            memory_mapping,
+                            result_point_addr,
+                            invoke_context.get_check_aligned(),
+                        )? = result_point;
+                        Ok(0)
+                    } else {
+                        Ok(1)
+                    }
+                }
+                _ => {
+                    if invoke_context.get_feature_set().abort_on_invalid_curve {
+                        Err(SyscallError::InvalidAttribute.into())
+                    } else {
+                        Ok(1)
+                    }
+                }
+            },
+
             _ => {
                 if invoke_context.get_feature_set().abort_on_invalid_curve {
                     Err(SyscallError::InvalidAttribute.into())
@@ -1320,11 +1496,13 @@ declare_builtin_function!(
         result_point_addr: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use solana_curve25519::{
-            curve_syscall_traits::*,
-            edwards::{self, PodEdwardsPoint},
-            ristretto::{self, PodRistrettoPoint},
-            scalar,
+        use {
+            solana_curve25519::{
+                edwards::{self, PodEdwardsPoint},
+                ristretto::{self, PodRistrettoPoint},
+                scalar,
+            },
+            solana_curve_traits::*,
         };
 
         if points_len > 512 {
@@ -2850,7 +3028,7 @@ mod tests {
 
     #[test]
     fn test_syscall_edwards_curve_point_validation() {
-        use solana_curve25519::curve_syscall_traits::CURVE25519_EDWARDS;
+        use solana_curve_traits::CURVE25519_EDWARDS;
 
         let config = Config::default();
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
@@ -2923,7 +3101,7 @@ mod tests {
 
     #[test]
     fn test_syscall_ristretto_curve_point_validation() {
-        use solana_curve25519::curve_syscall_traits::CURVE25519_RISTRETTO;
+        use solana_curve_traits::CURVE25519_RISTRETTO;
 
         let config = Config::default();
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
@@ -2996,7 +3174,7 @@ mod tests {
 
     #[test]
     fn test_syscall_edwards_curve_group_ops() {
-        use solana_curve25519::curve_syscall_traits::{ADD, CURVE25519_EDWARDS, MUL, SUB};
+        use solana_curve_traits::{ADD, CURVE25519_EDWARDS, MUL, SUB};
 
         let config = Config::default();
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
@@ -3151,7 +3329,7 @@ mod tests {
 
     #[test]
     fn test_syscall_ristretto_curve_group_ops() {
-        use solana_curve25519::curve_syscall_traits::{ADD, CURVE25519_RISTRETTO, MUL, SUB};
+        use solana_curve_traits::{ADD, CURVE25519_RISTRETTO, MUL, SUB};
 
         let config = Config::default();
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
@@ -3308,7 +3486,7 @@ mod tests {
 
     #[test]
     fn test_syscall_multiscalar_multiplication() {
-        use solana_curve25519::curve_syscall_traits::{CURVE25519_EDWARDS, CURVE25519_RISTRETTO};
+        use solana_curve_traits::{CURVE25519_EDWARDS, CURVE25519_RISTRETTO};
 
         let config = Config::default();
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
@@ -3414,7 +3592,7 @@ mod tests {
 
     #[test]
     fn test_syscall_multiscalar_multiplication_maximum_length_exceeded() {
-        use solana_curve25519::curve_syscall_traits::{CURVE25519_EDWARDS, CURVE25519_RISTRETTO};
+        use solana_curve_traits::{CURVE25519_EDWARDS, CURVE25519_RISTRETTO};
 
         let config = Config::default();
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());

@@ -136,7 +136,7 @@ solana-logger = "=2.3.1"
 solana-measure = { path = "../../measure", version = "=3.0.0" }
 solana-msg = "=2.2.1"
 solana-poseidon = { path = "../../poseidon/", version = "=3.0.0" }
-solana-program = "=2.2.1"
+solana-program = "=2.3.0"
 solana-program-entrypoint = "=2.3.0"
 solana-program-error = "=2.2.2"
 solana-program-memory = "=2.2.1"

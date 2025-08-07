@@ -14,8 +14,8 @@ use {
 // base port for deconflicted allocations
 const BASE_PORT: u16 = 5000;
 // how much to allocate per individual process.
-// we expect to have at most 64 concurrent tests in CI at any moment on a given host.
-const SLICE_PER_PROCESS: u16 = (u16::MAX - BASE_PORT) / 64;
+// we expect to have at most 256 concurrent tests in CI at any moment on a given host.
+const SLICE_PER_PROCESS: u16 = (u16::MAX - BASE_PORT) / 256;
 /// When running under nextest, this will try to provide
 /// a unique slice of port numbers (assuming no other nextest processes
 /// are running on the same host) based on NEXTEST_TEST_GLOBAL_SLOT variable

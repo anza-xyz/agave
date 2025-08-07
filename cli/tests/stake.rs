@@ -92,6 +92,7 @@ fn test_stake_delegation_force() {
         memo: None,
         fee_payer: 0,
         compute_unit_price: None,
+        is_alpenglow: false,
     };
     process_command(&config).unwrap();
 

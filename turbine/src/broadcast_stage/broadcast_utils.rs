@@ -11,6 +11,7 @@ use {
     },
     solana_poh::poh_recorder::WorkingBankEntry,
     solana_runtime::bank::Bank,
+    solana_votor::event::{CompletedBlock, VotorEvent, VotorEventSender},
     std::{
         sync::Arc,
         time::{Duration, Instant},
@@ -190,6 +191,22 @@ pub(super) fn get_chained_merkle_root_from_parent(
         slot: parent,
         index,
     })
+}
+
+/// Set the block id on the bank and send it for consideration in voting
+pub(super) fn set_block_id_and_send(
+    votor_event_sender: &VotorEventSender,
+    bank: Arc<Bank>,
+    block_id: Hash,
+) -> Result<()> {
+    bank.set_block_id(Some(block_id));
+    if bank.is_frozen() {
+        votor_event_sender.send(VotorEvent::Block(CompletedBlock {
+            slot: bank.slot(),
+            bank,
+        }))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

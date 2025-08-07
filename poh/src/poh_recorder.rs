@@ -11,12 +11,11 @@
 //! * recorded entry must be >= WorkingBank::min_tick_height && entry must be < WorkingBank::max_tick_height
 //!
 #[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
-    crate::{
-        leader_bank_notifier::LeaderBankNotifier, poh_service::PohService,
-        transaction_recorder::TransactionRecorder,
-    },
+    crate::transaction_recorder::TransactionRecorder, qualifier_attr::qualifiers, std::sync::RwLock,
+};
+use {
+    crate::{leader_bank_notifier::LeaderBankNotifier, poh_service::PohService},
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TrySendError},
     log::*,
     solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
@@ -33,7 +32,7 @@ use {
     solana_transaction::versioned::VersionedTransaction,
     std::{
         cmp,
-        sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
+        sync::{atomic::AtomicBool, Arc, Mutex},
         time::Instant,
     },
     thiserror::Error,
@@ -62,6 +61,7 @@ pub type WorkingBankEntry = (Arc<Bank>, (Entry, u64));
 pub struct BankStart {
     pub working_bank: Arc<Bank>,
     pub bank_creation_time: Arc<Instant>,
+    pub contains_valid_certificate: Arc<AtomicBool>,
 }
 
 impl BankStart {
@@ -70,6 +70,16 @@ impl BankStart {
             &self.bank_creation_time,
             self.working_bank.ns_per_slot,
         )
+    }
+}
+
+impl From<&WorkingBank> for BankStart {
+    fn from(w: &WorkingBank) -> Self {
+        Self {
+            working_bank: w.bank.clone(),
+            bank_creation_time: w.start.clone(),
+            contains_valid_certificate: w.contains_valid_certificate.clone(),
+        }
     }
 }
 
@@ -105,6 +115,7 @@ pub struct WorkingBank {
     pub min_tick_height: u64,
     pub max_tick_height: u64,
     pub transaction_index: Option<usize>,
+    pub contains_valid_certificate: Arc<AtomicBool>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -195,12 +206,15 @@ pub struct PohRecorder {
     // Allocation to hold PohEntrys recorded into PoHStream.
     entries: Vec<PohEntry>,
     track_transaction_indexes: bool,
+    pub is_alpenglow_enabled: bool,
+    pub use_alpenglow_tick_producer: bool,
 }
 
 impl PohRecorder {
     /// A recorder to synchronize PoH with the following data structures
     /// * bank - the LastId's queue is updated on `tick` and `record` events
     #[allow(clippy::too_many_arguments)]
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new(
         tick_height: u64,
         last_entry_hash: Hash,
@@ -225,6 +239,7 @@ impl PohRecorder {
             leader_schedule_cache,
             poh_config,
             is_exited,
+            false,
         )
     }
 
@@ -241,6 +256,7 @@ impl PohRecorder {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
+        is_alpenglow_enabled: bool,
     ) -> (Self, Receiver<WorkingBankEntry>) {
         let tick_number = 0;
         let poh = Arc::new(Mutex::new(Poh::new_with_slot_info(
@@ -281,6 +297,8 @@ impl PohRecorder {
                 is_exited,
                 entries: Vec::with_capacity(64),
                 track_transaction_indexes: false,
+                is_alpenglow_enabled,
+                use_alpenglow_tick_producer: is_alpenglow_enabled,
             },
             working_bank_receiver,
         )
@@ -304,7 +322,7 @@ impl PohRecorder {
 
     // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub(crate) fn record(
+    pub fn record(
         &mut self,
         bank_slot: Slot,
         mixins: Vec<Hash>,
@@ -432,7 +450,7 @@ impl PohRecorder {
         }
     }
 
-    pub fn set_bank(&mut self, bank: BankWithScheduler) {
+    pub fn set_bank(&mut self, bank: BankWithScheduler) -> BankStart {
         assert!(self.working_bank.is_none());
         self.leader_bank_notifier.set_in_progress(&bank);
         let working_bank = WorkingBank {
@@ -441,7 +459,9 @@ impl PohRecorder {
             bank,
             start: Arc::new(Instant::now()),
             transaction_index: self.track_transaction_indexes.then_some(0),
+            contains_valid_certificate: Arc::new(AtomicBool::new(false)),
         };
+        let bank_start = BankStart::from(&working_bank);
         trace!("new working bank");
         assert_eq!(working_bank.bank.ticks_per_slot(), self.ticks_per_slot());
         if let Some(hashes_per_tick) = *working_bank.bank.hashes_per_tick() {
@@ -462,6 +482,7 @@ impl PohRecorder {
         // TODO: adjust the working_bank.start time based on number of ticks
         // that have already elapsed based on current tick height.
         let _ = self.flush_cache(false);
+        bank_start
     }
 
     fn clear_bank(&mut self) {
@@ -503,9 +524,14 @@ impl PohRecorder {
 
     fn reset_poh(&mut self, reset_bank: Arc<Bank>, reset_start_bank: bool) {
         let blockhash = reset_bank.last_blockhash();
+        let hashes_per_tick = if self.use_alpenglow_tick_producer {
+            None
+        } else {
+            *reset_bank.hashes_per_tick()
+        };
         let poh_hash = {
             let mut poh = self.poh.lock().unwrap();
-            poh.reset(blockhash, *reset_bank.hashes_per_tick());
+            poh.reset(blockhash, hashes_per_tick);
             poh.hash
         };
         info!(
@@ -642,10 +668,7 @@ impl PohRecorder {
     }
 
     pub fn bank_start(&self) -> Option<BankStart> {
-        self.working_bank.as_ref().map(|w| BankStart {
-            working_bank: w.bank.clone(),
-            bank_creation_time: w.start.clone(),
-        })
+        self.working_bank.as_ref().map(BankStart::from)
     }
 
     pub fn has_bank(&self) -> bool {
@@ -874,15 +897,54 @@ impl PohRecorder {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn set_bank_for_test(&mut self, bank: Arc<Bank>) {
-        self.set_bank(BankWithScheduler::new_without_scheduler(bank))
+        self.set_bank(BankWithScheduler::new_without_scheduler(bank));
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn clear_bank_for_test(&mut self) {
         self.clear_bank();
     }
+
+    pub fn tick_alpenglow(&mut self, slot_max_tick_height: u64) {
+        let (poh_entry, tick_lock_contention_us) = measure_us!({
+            let mut poh_l = self.poh.lock().unwrap();
+            poh_l.tick()
+        });
+        self.metrics.tick_lock_contention_us += tick_lock_contention_us;
+
+        if let Some(poh_entry) = poh_entry {
+            self.tick_height = slot_max_tick_height;
+
+            // Should be empty in most cases, but reset just to be safe
+            self.tick_cache = vec![];
+            self.tick_cache.push((
+                Entry {
+                    num_hashes: poh_entry.num_hashes,
+                    hash: poh_entry.hash,
+                    transactions: vec![],
+                },
+                self.tick_height,
+            ));
+
+            let (_flush_res, flush_cache_and_tick_us) = measure_us!(self.flush_cache(true));
+            self.metrics.flush_cache_tick_us += flush_cache_and_tick_us;
+        }
+    }
+
+    pub fn migrate_to_alpenglow_poh(&mut self) {
+        self.tick_cache = vec![];
+        {
+            let mut poh = self.poh.lock().unwrap();
+            // sets PoH to low power mode
+            let hashes_per_tick = None;
+            let current_hash = poh.hash;
+            info!("migrating poh to low power mode");
+            poh.reset(current_hash, hashes_per_tick);
+        }
+    }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 fn do_create_test_recorder(
     bank: Arc<Bank>,
     blockstore: Arc<Blockstore>,
@@ -931,6 +993,7 @@ fn do_create_test_recorder(
         crate::poh_service::DEFAULT_PINNED_CPU_CORE,
         crate::poh_service::DEFAULT_HASHES_PER_BATCH,
         record_receiver,
+        || {},
     );
 
     (
@@ -942,6 +1005,7 @@ fn do_create_test_recorder(
     )
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn create_test_recorder(
     bank: Arc<Bank>,
     blockstore: Arc<Blockstore>,
@@ -957,6 +1021,7 @@ pub fn create_test_recorder(
     do_create_test_recorder(bank, blockstore, poh_config, leader_schedule_cache, false)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn create_test_recorder_with_index_tracking(
     bank: Arc<Bank>,
     blockstore: Arc<Blockstore>,
@@ -1608,6 +1673,7 @@ mod tests {
             &Arc::new(LeaderScheduleCache::default()),
             &PohConfig::default(),
             Arc::new(AtomicBool::default()),
+            false,
         );
         poh_recorder.set_bank_for_test(bank);
         poh_recorder.clear_bank();

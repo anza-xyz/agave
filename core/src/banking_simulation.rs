@@ -44,6 +44,7 @@ use {
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
+    solana_votor::event::VotorEventReceiver,
     std::{
         collections::BTreeMap,
         fmt::Display,
@@ -419,6 +420,7 @@ struct SimulatorLoop {
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     retransmit_slots_sender: Sender<Slot>,
     retracer: Arc<BankingTracer>,
+    _completed_block_receiver: VotorEventReceiver,
 }
 
 impl SimulatorLoop {
@@ -741,6 +743,7 @@ impl BankingSimulator {
             &leader_schedule_cache,
             &genesis_config.poh_config,
             exit.clone(),
+            false,
         );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let (record_sender, record_receiver) = unbounded();
@@ -753,6 +756,7 @@ impl BankingSimulator {
             DEFAULT_PINNED_CPU_CORE,
             DEFAULT_HASHES_PER_BATCH,
             record_receiver,
+            || {},
         );
 
         // Enable BankingTracer to approximate the real environment as close as possible because
@@ -785,6 +789,7 @@ impl BankingSimulator {
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
+        let (completed_block_sender, completed_block_receiver) = unbounded();
         let shred_version = compute_shred_version(
             &genesis_config.hash(),
             Some(&bank_forks.read().unwrap().root_bank().hard_forks()),
@@ -819,6 +824,7 @@ impl BankingSimulator {
             shred_version,
             sender,
             None,
+            completed_block_sender,
         );
 
         info!("Start banking stage!...");
@@ -891,6 +897,7 @@ impl BankingSimulator {
             leader_schedule_cache,
             retransmit_slots_sender,
             retracer,
+            _completed_block_receiver: completed_block_receiver,
         };
 
         let simulator_threads = SimulatorThreads {

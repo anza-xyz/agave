@@ -19,6 +19,7 @@ path = "src/main.rs"
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-syscalls = { workspace = true }
+alpenglow-vote = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
 clap = { workspace = true }
@@ -40,7 +41,9 @@ serde_json = { workspace = true }
 solana-account = "=2.2.1"
 solana-account-decoder = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
-solana-borsh = "=2.2.1"
+solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
+solana-borsh = { workspace = true }
+solana-bpf-loader-program = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
@@ -95,8 +98,10 @@ solana-transaction-status = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
 solana-udp-client = { workspace = true }
 solana-version = { workspace = true }
+solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
-spl-memo = { version = "=6.0.0", features = ["no-entrypoint"] }
+solana-votor-messages = { workspace = true }
+spl-memo = { workspace = true, features = ["no-entrypoint"] }
 thiserror = { workspace = true }
 tiny-bip39 = { workspace = true }
 

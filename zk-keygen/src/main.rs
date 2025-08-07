@@ -1,6 +1,7 @@
 use {
     bip39::{Mnemonic, MnemonicType, Seed},
     clap::{crate_description, crate_name, Arg, ArgMatches, Command, PossibleValue},
+    solana_bls_signatures::{keypair::Keypair as BlsKeypair, Pubkey as BlsPubkey},
     solana_clap_v3_utils::{
         input_parsers::{signer::SignerSourceParserBuilder, STDOUT_OUTFILE_TOKEN},
         keygen::{
@@ -36,6 +37,23 @@ fn output_encodable_key<K: EncodableKey>(
     Ok(())
 }
 
+// BLS keypair do not (yet) implement the `EncodableKey` trait, so handle it
+// separately for now
+fn write_bls_keypair(
+    keypair: &BlsKeypair,
+    outfile: &str,
+    source: &str,
+) -> Result<(), Box<dyn error::Error>> {
+    if outfile == STDOUT_OUTFILE_TOKEN {
+        let mut stdout = std::io::stdout();
+        keypair.write_json(&mut stdout)?;
+    } else {
+        keypair.write_json_file(outfile)?;
+        println!("Wrote {source} to {outfile}");
+    }
+    Ok(())
+}
+
 fn app(crate_version: &str) -> Command {
     Command::new(crate_name!())
         .about(crate_description!())
@@ -53,7 +71,7 @@ fn app(crate_version: &str) -> Command {
                         .value_parser(clap::value_parser!(KeyType))
                         .value_name("TYPE")
                         .required(true)
-                        .help("The type of encryption key")
+                        .help("The type of encryption key [possible values: elgamal, aes128, bls]")
                 )
                 .arg(
                     Arg::new("outfile")
@@ -85,7 +103,8 @@ fn app(crate_version: &str) -> Command {
                         .index(1)
                         .takes_value(true)
                         .value_parser([
-                            PossibleValue::new("elgamal")
+                            PossibleValue::new("elgamal"),
+                            PossibleValue::new("bls"),
                         ])
                         .value_name("TYPE")
                         .required(true)
@@ -226,12 +245,35 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                         );
                     }
                 }
+                KeyType::Bls => {
+                    if !silent {
+                        eprintln!("Generating a new Bls keypair");
+                    }
+
+                    let bls_keypair = BlsKeypair::derive(seed.as_bytes())?;
+                    if let Some(outfile) = outfile {
+                        write_bls_keypair(&bls_keypair, outfile, "new BLS keypair")
+                            .map_err(|err| format!("Unable to write {outfile}: {err}"))?;
+                    }
+
+                    if !silent {
+                        let phrase: &str = mnemonic.phrase();
+                        let divider = String::from_utf8(vec![b'='; phrase.len()]).unwrap();
+                        let bls_pubkey: BlsPubkey = bls_keypair.public.into();
+                        println!(
+                            "{}\npubkey: {}\n{}\nSave this seed phrase{} to recover your new ElGamal keypair:\n{}\n{}",
+                            &divider, bls_pubkey, &divider, passphrase_message, phrase, &divider
+                        );
+                    }
+                }
             }
         }
         ("pubkey", matches) => {
             let key_type = matches.try_get_one::<String>("type")?.unwrap();
             let key_type = if key_type == "elgamal" {
                 KeyType::ElGamal
+            } else if key_type == "bls" {
+                KeyType::Bls
             } else {
                 return Err("unsupported key type".into());
             };
@@ -252,6 +294,13 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                         elgamal_keypair_from_path(matches, path, "pubkey recovery", false)?;
                     let elgamal_pubkey = elgamal_keypair.pubkey();
                     println!("{elgamal_pubkey}");
+                }
+                KeyType::Bls => {
+                    // TODO: BLS only supports JSON files for now
+                    let bls_keypair_path = matches.get_one::<String>("keypair").unwrap();
+                    let bls_keypair = BlsKeypair::read_json_file(bls_keypair_path)?;
+                    let bls_pubkey: BlsPubkey = bls_keypair.public.into();
+                    println!("{bls_pubkey}");
                 }
                 _ => unreachable!(),
             }
@@ -295,6 +344,9 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                     };
                     output_encodable_key(&key, outfile, "recovered AES128 key")?;
                 }
+                KeyType::Bls => {
+                    println!("Recovery of BLS keypairs is not yet supported")
+                }
             }
         }
         _ => unreachable!(),
@@ -307,6 +359,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
 enum KeyType {
     ElGamal,
     Aes128,
+    Bls,
 }
 
 impl KeyType {
@@ -314,6 +367,7 @@ impl KeyType {
         match self {
             KeyType::ElGamal => "elgamal.json",
             KeyType::Aes128 => "aes128.json",
+            KeyType::Bls => "bls.json",
         }
     }
 }
@@ -329,6 +383,7 @@ impl FromStr for KeyType {
         match s.as_str() {
             "elgamal" => Ok(Self::ElGamal),
             "aes128" => Ok(Self::Aes128),
+            "bls" => Ok(Self::Bls),
             _ => Err(KeyTypeError(s)),
         }
     }
@@ -448,7 +503,50 @@ mod tests {
     }
 
     #[test]
-    fn test_pubkey() {
+    fn test_new_bls() {
+        let outfile_dir = tempdir().unwrap();
+        // use `Pubkey::new_unique()` to generate names for temporary key files
+        let outfile_path = tmp_outfile_path(&outfile_dir, &Pubkey::new_unique().to_string());
+
+        // general success case
+        process_test_command(&[
+            "solana-zk-keygen",
+            "new",
+            "bls",
+            "--outfile",
+            &outfile_path,
+            "--no-bip39-passphrase",
+        ])
+        .unwrap();
+
+        // refuse to overwrite file
+        let result = process_test_command(&[
+            "solana-zk-keygen",
+            "new",
+            "bls",
+            "--outfile",
+            &outfile_path,
+            "--no-bip39-passphrase",
+        ])
+        .unwrap_err()
+        .to_string();
+
+        let expected = format!("Refusing to overwrite {outfile_path} without --force flag");
+        assert_eq!(result, expected);
+
+        // no outfile
+        process_test_command(&[
+            "solana-keygen",
+            "new",
+            "bls",
+            "--no-bip39-passphrase",
+            "--no-outfile",
+        ])
+        .unwrap();
+    }
+
+    #[test]
+    fn test_pubkey_elgamal() {
         let keypair_out_dir = tempdir().unwrap();
         // use `Pubkey::new_unique()` to generate names for temporary key files
         let keypair_path = tmp_outfile_path(&keypair_out_dir, &Pubkey::new_unique().to_string());
@@ -457,5 +555,17 @@ mod tests {
         keypair.write_to_file(&keypair_path).unwrap();
 
         process_test_command(&["solana-keygen", "pubkey", "elgamal", &keypair_path]).unwrap();
+    }
+
+    #[test]
+    fn test_pubkey_bls() {
+        let keypair_out_dir = tempdir().unwrap();
+        // use `Pubkey::new_unique()` to generate names for temporary key files
+        let keypair_path = tmp_outfile_path(&keypair_out_dir, &Pubkey::new_unique().to_string());
+
+        let keypair = BlsKeypair::new();
+        keypair.write_json_file(&keypair_path).unwrap();
+
+        process_test_command(&["solana-keygen", "pubkey", "bls", &keypair_path]).unwrap();
     }
 }

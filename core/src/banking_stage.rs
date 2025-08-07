@@ -1,7 +1,6 @@
 //! The `banking_stage` processes Transaction messages. It is intended to be used
 //! to construct a software pipeline. The stage uses all available CPU cores and
 //! can do its processing in parallel with signature verification on the GPU.
-
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -33,7 +32,12 @@ use {
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
     },
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_time_utils::AtomicInterval,
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction},
+        versioned::VersionedTransaction,
+    },
     std::{
         cmp, env,
         num::Saturating,
@@ -43,7 +47,7 @@ use {
             Arc, RwLock,
         },
         thread::{self, Builder, JoinHandle},
-        time::Duration,
+        time::{Duration, Instant},
     },
     transaction_scheduler::{
         greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
@@ -663,14 +667,85 @@ impl BankingStage {
     }
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
+pub fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     bank_forks: &RwLock<BankForks>,
     poh_recorder: &RwLock<PohRecorder>,
     tpu_bank: Bank,
 ) {
     let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
     poh_recorder.write().unwrap().set_bank(tpu_bank);
+}
+
+#[allow(dead_code)]
+pub fn commit_certificate(
+    bank: &Arc<Bank>,
+    transaction_recorder: &TransactionRecorder,
+    certificate: Vec<VersionedTransaction>,
+) -> bool {
+    if certificate.is_empty() {
+        return true;
+    }
+    let consumer = Consumer::from(transaction_recorder);
+    let runtime_transactions: Result<Vec<RuntimeTransaction<SanitizedTransaction>>, _> =
+        certificate
+            .into_iter()
+            .map(|versioned_tx| {
+                // Short circuits on first error because
+                // transactions in the certificate need to
+                // be guaranteed to not fail
+                RuntimeTransaction::try_create(
+                    versioned_tx,
+                    MessageHash::Compute,
+                    None,
+                    &**bank,
+                    bank.get_reserved_account_keys(),
+                )
+            })
+            .collect();
+
+    //TODO: guarantee these transactions don't fail
+    if let Err(e) = runtime_transactions {
+        error!(
+            "Error in bank {} creating runtime transaction in certificate {:?}",
+            bank.slot(),
+            e
+        );
+        return false;
+    }
+
+    let runtime_transactions = runtime_transactions.unwrap();
+    let summary = consumer.process_transactions(bank, &Instant::now(), &runtime_transactions);
+
+    if summary.reached_max_poh_height {
+        error!("Slot took too long to ingest votes {}", bank.slot());
+        datapoint_error!(
+            "vote_certificate_commit_failure",
+            ("error", "slot took too long to ingest votes", String),
+            ("slot", bank.slot(), i64)
+        );
+        // TODO: check if 2/3 of the stake landed, otherwise return false
+        return false;
+    }
+
+    if summary.error_counters.total.0 != 0 {
+        error!(
+            "Vote certificate commit failure {} errors occured",
+            summary.error_counters.total.0
+        );
+        datapoint_error!(
+            "vote_certificate_commit_failure",
+            (
+                "error",
+                format!("{} errors occurred", summary.error_counters.total.0),
+                String
+            ),
+            ("slot", bank.slot(), i64)
+        );
+        // TODO: check if 2/3 of the stake landed, otherwise return false
+        return false;
+    }
+
+    true
 }
 
 #[cfg(test)]

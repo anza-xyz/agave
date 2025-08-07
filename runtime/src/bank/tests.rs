@@ -578,12 +578,14 @@ pub(in crate::bank) fn new_from_parent_next_epoch(
     new_bank_from_parent_with_bank_forks(bank_forks, parent, &Pubkey::default(), slot)
 }
 
-#[test]
-fn test_bank_update_vote_stake_rewards() {
+#[test_case(true; "alpenglow")]
+#[test_case(false; "towerbft")]
+fn test_bank_update_vote_stake_rewards(is_alpenglow: bool) {
     let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-    check_bank_update_vote_stake_rewards(|bank: &Bank| {
-        bank._load_vote_and_stake_accounts(&thread_pool, null_tracer())
-    });
+    check_bank_update_vote_stake_rewards(
+        |bank: &Bank| bank._load_vote_and_stake_accounts(&thread_pool, null_tracer()),
+        is_alpenglow,
+    );
 }
 
 impl Bank {
@@ -683,7 +685,7 @@ type StakeDelegations = Vec<(Pubkey, StakeAccount<Delegation>)>;
 type StakeDelegationsMap = DashMap<Pubkey, StakeDelegations>;
 
 #[cfg(test)]
-fn check_bank_update_vote_stake_rewards<F>(load_vote_and_stake_accounts: F)
+fn check_bank_update_vote_stake_rewards<F>(load_vote_and_stake_accounts: F, is_alpenglow: bool)
 where
     F: Fn(&Bank) -> StakeDelegationsMap,
 {
@@ -718,27 +720,39 @@ where
     );
 
     let ((vote_id, mut vote_account), (stake_id, stake_account)) =
-        crate::stakes::tests::create_staked_node_accounts(10_000);
+        crate::stakes::tests::create_staked_node_accounts(10_000, is_alpenglow);
     let starting_vote_and_stake_balance = 10_000 + 1;
 
     // set up accounts
     bank0.store_account_and_update_capitalization(&stake_id, &stake_account);
 
     // generate some rewards
-    let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
-    for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-        if let Some(v) = vote_state.as_mut() {
-            vote_state::process_slot_vote_unchecked(v, i as u64)
+    if is_alpenglow {
+        let mut vote_state =
+            *solana_votor_messages::state::VoteState::deserialize(vote_account.data()).unwrap();
+        for _ in 0..MAX_LOCKOUT_HISTORY + 42 {
+            let mut epoch_credits = *vote_state.epoch_credits();
+            epoch_credits.set_credits(epoch_credits.credits() + 16);
+            vote_state.set_epoch_credits(epoch_credits);
+            vote_state.serialize_into(vote_account.data_as_mut_slice());
+            bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
         }
-        let versioned = VoteStateVersions::Current(Box::new(vote_state.take().unwrap()));
-        vote_state::to(&versioned, &mut vote_account).unwrap();
-        bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
-        match versioned {
-            VoteStateVersions::Current(v) => {
-                vote_state = Some(*v);
+    } else {
+        let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
+        for i in 0..MAX_LOCKOUT_HISTORY + 42 {
+            if let Some(v) = vote_state.as_mut() {
+                vote_state::process_slot_vote_unchecked(v, i as u64)
             }
-            _ => panic!("Has to be of type Current"),
-        };
+            let versioned = VoteStateVersions::Current(Box::new(vote_state.take().unwrap()));
+            vote_state::to(&versioned, &mut vote_account).unwrap();
+            bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
+            match versioned {
+                VoteStateVersions::Current(v) => {
+                    vote_state = Some(*v);
+                }
+                _ => panic!("Has to be of type Current"),
+            };
+        }
     }
     bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
     bank0.freeze();
@@ -3512,8 +3526,7 @@ fn test_add_duplicate_static_program() {
     );
 }
 
-#[test]
-fn test_add_instruction_processor_for_existing_unrelated_accounts() {
+fn test_add_instruction_processor_for_existing_unrelated_accounts(is_alpenglow: bool) {
     for pass in 0..5 {
         let mut bank = create_simple_test_bank(500);
 
@@ -3537,7 +3550,7 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
         }
 
         let ((vote_id, vote_account), (stake_id, stake_account)) =
-            crate::stakes::tests::create_staked_node_accounts(1_0000);
+            crate::stakes::tests::create_staked_node_accounts(1_0000, is_alpenglow);
         bank.capitalization
             .fetch_add(vote_account.lamports() + stake_account.lamports(), Relaxed);
         bank.store_account(&vote_id, &vote_account);
@@ -3615,6 +3628,12 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
             String::from_utf8_lossy(bank.get_account(&stake_id).unwrap_or_default().data())
         );
     }
+}
+
+#[test]
+fn test_add_instruction_processor_for_existing_unrelated_accounts_tests() {
+    test_add_instruction_processor_for_existing_unrelated_accounts(false);
+    test_add_instruction_processor_for_existing_unrelated_accounts(true);
 }
 
 #[allow(deprecated)]
@@ -11324,7 +11343,7 @@ fn test_last_restart_slot() {
     let GenesisConfigInfo {
         mut genesis_config, ..
     } = create_genesis_config_with_leader(mint_lamports, &leader_pubkey, validator_stake_lamports);
-    // Remove last restart slot account so we can simluate its' activation
+    // Remove last restart slot account so we can simulate its' activation
     genesis_config
         .accounts
         .remove(&feature_set::last_restart_slot_sysvar::id())

@@ -27,6 +27,7 @@ frozen-abi = [
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
+alpenglow-vote = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
@@ -110,6 +111,9 @@ solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+solana-votor-messages = { workspace = true }
+spl-token = { workspace = true, features = ["no-entrypoint"] }
+spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }

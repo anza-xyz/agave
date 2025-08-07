@@ -338,6 +338,7 @@ pub enum CliCommand {
         memo: Option<String>,
         fee_payer: SignerIndex,
         compute_unit_price: Option<u64>,
+        is_alpenglow: bool,
     },
     ShowVoteAccount {
         pubkey: Pubkey,
@@ -1474,6 +1475,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             memo,
             fee_payer,
             compute_unit_price,
+            is_alpenglow,
         } => process_create_vote_account(
             &rpc_client,
             config,
@@ -1491,6 +1493,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             memo.as_ref(),
             *fee_payer,
             *compute_unit_price,
+            *is_alpenglow,
         ),
         CliCommand::ShowVoteAccount {
             pubkey: vote_account_pubkey,
@@ -2151,6 +2154,7 @@ mod tests {
             memo: None,
             fee_payer: 0,
             compute_unit_price: None,
+            is_alpenglow: false,
         };
         config.signers = vec![&keypair, &bob_keypair, &identity_keypair];
         let result = process_command(&config);
@@ -2430,6 +2434,7 @@ mod tests {
             memo: None,
             fee_payer: 0,
             compute_unit_price: None,
+            is_alpenglow: false,
         };
         config.signers = vec![&keypair, &bob_keypair, &identity_keypair];
         assert!(process_command(&config).is_err());

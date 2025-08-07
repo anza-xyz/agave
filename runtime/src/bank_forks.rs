@@ -199,6 +199,10 @@ impl BankForks {
         self.get(slot).map(|bank| bank.hash())
     }
 
+    pub fn is_frozen(&self, slot: Slot) -> bool {
+        self.get(slot).map(|bank| bank.is_frozen()).unwrap_or(false)
+    }
+
     pub fn root_bank(&self) -> Arc<Bank> {
         self[self.root()].clone()
     }
@@ -281,6 +285,20 @@ impl BankForks {
             entry.remove_entry();
         }
         Some(bank)
+    }
+
+    pub fn highest_frozen_bank(&self) -> Option<Arc<Bank>> {
+        self.banks
+            .values()
+            .filter_map(|bank| {
+                if bank.is_frozen() {
+                    Some(bank.slot())
+                } else {
+                    None
+                }
+            })
+            .max()
+            .and_then(|slot| self.get(slot))
     }
 
     pub fn highest_slot(&self) -> Slot {
@@ -417,7 +435,7 @@ impl BankForks {
 
     pub fn prune_program_cache(&self, root: Slot) {
         if let Some(root_bank) = self.banks.get(&root) {
-            root_bank.prune_program_cache(root, root_bank.epoch());
+            root_bank.prune_program_cache_locked(root, root_bank.epoch(), self);
         }
     }
 

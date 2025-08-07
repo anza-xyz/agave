@@ -5,8 +5,11 @@
 use {
     crate::{
         completed_data_sets_service::CompletedDataSetsSender,
-        repair::repair_service::{
-            OutstandingShredRepairs, RepairInfo, RepairService, RepairServiceChannels,
+        repair::{
+            certificate_service::{CertificateReceiver, CertificateService},
+            repair_service::{
+                OutstandingShredRepairs, RepairInfo, RepairService, RepairServiceChannels,
+            },
         },
         result::{Error, Result},
     },
@@ -165,6 +168,13 @@ fn run_check_duplicate(
             }
         };
 
+        if root_bank
+            .feature_set
+            .is_active(&agave_feature_set::secp256k1_program_enabled::id())
+        {
+            return Ok(());
+        }
+
         // Propagate duplicate proof through gossip
         cluster_info.push_duplicate_shred(&shred1, &shred2)?;
         // Notify duplicate consensus state machine
@@ -272,6 +282,7 @@ pub(crate) struct WindowService {
     t_insert: JoinHandle<()>,
     t_check_duplicate: JoinHandle<()>,
     repair_service: RepairService,
+    certificate_service: CertificateService,
 }
 
 impl WindowService {
@@ -284,6 +295,7 @@ impl WindowService {
         window_service_channels: WindowServiceChannels,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
+        certificate_receiver: CertificateReceiver,
     ) -> WindowService {
         let cluster_info = repair_info.cluster_info.clone();
         let bank_forks = repair_info.bank_forks.clone();
@@ -309,6 +321,9 @@ impl WindowService {
             outstanding_repair_requests.clone(),
             repair_service_channels,
         );
+
+        let certificate_service =
+            CertificateService::new(exit.clone(), blockstore.clone(), certificate_receiver);
 
         let (duplicate_sender, duplicate_receiver) = unbounded();
 
@@ -336,6 +351,7 @@ impl WindowService {
             t_insert,
             t_check_duplicate,
             repair_service,
+            certificate_service,
         }
     }
 
@@ -453,7 +469,8 @@ impl WindowService {
     pub(crate) fn join(self) -> thread::Result<()> {
         self.t_insert.join()?;
         self.t_check_duplicate.join()?;
-        self.repair_service.join()
+        self.repair_service.join()?;
+        self.certificate_service.join()
     }
 }
 

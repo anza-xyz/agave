@@ -210,7 +210,10 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
             .map(|(_, (stake, _))| stake)
             .sum();
         for (stake, vote_account) in bank.vote_accounts().values() {
-            let vote_state_view = vote_account.vote_state_view();
+            // TODO(wen): make this work for Alpenglow
+            let Some(vote_state_view) = vote_account.vote_state_view() else {
+                continue;
+            };
             if let Some(last_vote) = vote_state_view.last_voted_slot() {
                 let entry = last_votes.entry(*vote_state_view.node_pubkey()).or_insert((
                     last_vote,
@@ -250,7 +253,10 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
         let mut first = true;
         loop {
             for (_, vote_account) in bank.vote_accounts().values() {
-                let vote_state_view = vote_account.vote_state_view();
+                // TODO(wen): make this work for Alpenglow
+                let Some(vote_state_view) = vote_account.vote_state_view() else {
+                    continue;
+                };
                 if let Some(last_vote) = vote_state_view.last_voted_slot() {
                     let validator_votes =
                         all_votes.entry(*vote_state_view.node_pubkey()).or_default();

@@ -379,10 +379,12 @@ fn check_for_simple_vote_transaction(
         .checked_add(size_of::<Pubkey>())
         .ok_or(PacketError::InvalidLen)?;
 
-    if packet
+    let program_id = packet
         .data(instruction_program_id_start..instruction_program_id_end)
-        .ok_or(PacketError::InvalidLen)?
-        == solana_sdk_ids::vote::id().as_ref()
+        .ok_or(PacketError::InvalidLen)?;
+
+    if program_id == solana_sdk_ids::vote::id().as_ref()
+        || program_id == solana_votor_messages::id().as_ref()
     {
         packet.meta_mut().flags |= PacketFlags::SIMPLE_VOTE_TX;
     }

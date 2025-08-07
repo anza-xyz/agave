@@ -83,6 +83,7 @@ solana-unified-scheduler-pool = { workspace = true }
 solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
+solana-votor = { workspace = true }
 symlink = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

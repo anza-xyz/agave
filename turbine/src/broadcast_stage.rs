@@ -35,6 +35,7 @@ use {
         socket::SocketAddrSpace,
     },
     solana_time_utils::{timestamp, AtomicInterval},
+    solana_votor::event::VotorEventSender,
     static_assertions::const_assert_eq,
     std::{
         collections::{HashMap, HashSet},
@@ -125,6 +126,7 @@ impl BroadcastStageType {
         shred_version: u16,
         quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         xdp_sender: Option<XdpSender>,
+        votor_event_sender: VotorEventSender,
     ) -> BroadcastStage {
         match self {
             BroadcastStageType::Standard => BroadcastStage::new(
@@ -136,6 +138,7 @@ impl BroadcastStageType {
                 blockstore,
                 bank_forks,
                 quic_endpoint_sender,
+                votor_event_sender.clone(),
                 StandardBroadcastRun::new(shred_version),
                 xdp_sender,
             ),
@@ -149,6 +152,7 @@ impl BroadcastStageType {
                 blockstore,
                 bank_forks,
                 quic_endpoint_sender,
+                votor_event_sender.clone(),
                 FailEntryVerificationBroadcastRun::new(shred_version),
                 xdp_sender,
             ),
@@ -162,6 +166,7 @@ impl BroadcastStageType {
                 blockstore,
                 bank_forks,
                 quic_endpoint_sender,
+                votor_event_sender.clone(),
                 BroadcastFakeShredsRun::new(0, shred_version),
                 xdp_sender,
             ),
@@ -175,6 +180,7 @@ impl BroadcastStageType {
                 blockstore,
                 bank_forks,
                 quic_endpoint_sender,
+                votor_event_sender.clone(),
                 BroadcastDuplicatesRun::new(shred_version, config.clone()),
                 xdp_sender,
             ),
@@ -190,6 +196,7 @@ trait BroadcastRun {
         receiver: &Receiver<WorkingBankEntry>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
+        votor_event_sender: &VotorEventSender,
     ) -> Result<()>;
     fn transmit(
         &mut self,
@@ -232,6 +239,7 @@ impl BroadcastStage {
         receiver: &Receiver<WorkingBankEntry>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
+        votor_event_sender: &VotorEventSender,
         mut broadcast_stage_run: impl BroadcastRun,
     ) -> BroadcastStageReturnType {
         loop {
@@ -241,6 +249,7 @@ impl BroadcastStage {
                 receiver,
                 socket_sender,
                 blockstore_sender,
+                votor_event_sender,
             );
             let res = Self::handle_error(res, "run");
             if let Some(res) = res {
@@ -293,6 +302,7 @@ impl BroadcastStage {
         blockstore: Arc<Blockstore>,
         bank_forks: Arc<RwLock<BankForks>>,
         quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
+        votor_event_sender: VotorEventSender,
         mut broadcast_stage_run: impl BroadcastRun + Send + 'static + Clone,
         xdp_sender: Option<XdpSender>,
     ) -> Self {
@@ -314,6 +324,7 @@ impl BroadcastStage {
                         &receiver,
                         &socket_sender_,
                         &blockstore_sender,
+                        &votor_event_sender,
                         bs_run,
                     )
                 })
@@ -754,6 +765,8 @@ pub mod test {
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank = bank_forks.read().unwrap().root_bank();
 
+        let (votor_event_sender, _) = unbounded();
+
         // Start up the broadcast stage
         let broadcast_service = BroadcastStage::new(
             leader_info.sockets.broadcast,
@@ -764,6 +777,7 @@ pub mod test {
             blockstore.clone(),
             bank_forks,
             quic_endpoint_sender,
+            votor_event_sender,
             StandardBroadcastRun::new(0),
             None,
         );

@@ -719,13 +719,18 @@ impl RepairService {
             repair_metrics,
         );
 
-        Self::handle_popular_pruned_forks(
-            root_bank.clone(),
-            repair_weight,
-            popular_pruned_forks_requests,
-            popular_pruned_forks_sender,
-            repair_metrics,
-        );
+        if !root_bank
+            .feature_set
+            .is_active(&agave_feature_set::secp256k1_program_enabled::id())
+        {
+            Self::handle_popular_pruned_forks(
+                root_bank.clone(),
+                repair_weight,
+                popular_pruned_forks_requests,
+                popular_pruned_forks_sender,
+                repair_metrics,
+            );
+        }
 
         Self::build_and_send_repair_batch(
             serve_repair,

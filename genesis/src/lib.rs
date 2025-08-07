@@ -29,4 +29,5 @@ pub struct StakedValidatorAccountInfo {
     pub identity_account: String,
     pub vote_account: String,
     pub stake_account: String,
+    pub bls_pubkey: Option<String>,
 }

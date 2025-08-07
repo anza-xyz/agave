@@ -24,6 +24,7 @@ frozen-abi = [
     "dep:solana-frozen-abi-macro",
     "solana-accounts-db/frozen-abi",
     "solana-bloom/frozen-abi",
+    "solana-bls-signatures/frozen-abi",
     "solana-compute-budget/frozen-abi",
     "solana-cost-model/frozen-abi",
     "solana-frozen-abi/frozen-abi",
@@ -46,12 +47,14 @@ agave-feature-set = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-verified-packet-receiver = { workspace = true }
 ahash = { workspace = true }
+alpenglow-vote = { workspace = true, features = ["serde"] }
 anyhow = { workspace = true }
 arrayvec = { workspace = true }
 assert_matches = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
+bitvec = { workspace = true }
 bs58 = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
@@ -85,6 +88,7 @@ solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bincode = { workspace = true }
 solana-bloom = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-builtins-default-costs = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
@@ -163,6 +167,8 @@ solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+solana-votor = { workspace = true }
+solana-votor-messages = { workspace = true }
 solana-wen-restart = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }

@@ -25,14 +25,12 @@ use {
         iter::{IntoParallelRefIterator, ParallelIterator},
         ThreadPool,
     },
-    solana_account::ReadableAccount,
     solana_clock::{Epoch, Slot},
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
     solana_stake_interface::state::Delegation,
     solana_sysvar::epoch_rewards::EpochRewards,
     solana_vote::vote_account::VoteAccount,
-    solana_vote_program::vote_state::VoteStateVersions,
     std::sync::{
         atomic::{AtomicU64, Ordering::Relaxed},
         Arc,
@@ -340,6 +338,19 @@ impl Bank {
             cached_vote_accounts,
         } = reward_calculate_params;
 
+        let solana_vote_program: Pubkey = solana_vote_program::id();
+        let get_vote_account = |vote_pubkey: &Pubkey| -> Option<VoteAccount> {
+            if let Some(vote_account) = cached_vote_accounts.get(vote_pubkey) {
+                return Some(vote_account.clone());
+            }
+            // If accounts-db contains a valid vote account, then it should
+            // already have been cached in cached_vote_accounts; so the code
+            // below is only for sanity checking, and can be removed once
+            // the cache is deemed to be reliable.
+            let account = self.get_account_with_fixed_root(vote_pubkey)?;
+            VoteAccount::try_from(account).ok()
+        };
+
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let estimated_num_vote_accounts = cached_vote_accounts.len();
         let vote_account_rewards: VoteRewards = DashMap::with_capacity_and_hasher_and_shard_amount(
@@ -349,7 +360,6 @@ impl Bank {
         );
 
         let total_stake_rewards = AtomicU64::default();
-        const ASSERT_STAKE_CACHE: bool = false; // Turn this on to assert that all vote accounts are in the cache
         let (stake_rewards, measure_stake_rewards_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
                 .par_iter()
@@ -364,29 +374,18 @@ impl Bank {
 
                     let stake_pubkey = **stake_pubkey;
                     let vote_pubkey = stake_account.delegation().voter_pubkey;
-                    let vote_account_from_cache = cached_vote_accounts.get(&vote_pubkey);
-                    if ASSERT_STAKE_CACHE && vote_account_from_cache.is_none() {
-                        let account_from_db = self.get_account_with_fixed_root(&vote_pubkey);
-                        if let Some(account_from_db) = account_from_db {
-                            if VoteStateVersions::is_correct_size_and_initialized(
-                                account_from_db.data(),
-                            ) && VoteAccount::try_from(account_from_db.clone()).is_ok()
-                            {
-                                panic!(
-                                    "Vote account {} not found in cache, but found in db: {:?}",
-                                    vote_pubkey, account_from_db
-                                );
-                            }
-                        }
+                    let vote_account = get_vote_account(&vote_pubkey)?;
+                    if vote_account.owner() != &solana_vote_program
+                        && !solana_votor_messages::check_id(vote_account.owner())
+                    {
+                        return None;
                     }
-                    let vote_account = vote_account_from_cache?;
-                    let vote_state_view = vote_account.vote_state_view();
                     let mut stake_state = *stake_account.stake_state();
 
                     let redeemed = redeem_rewards(
                         rewarded_epoch,
                         &mut stake_state,
-                        vote_state_view,
+                        &vote_account,
                         &point_value,
                         stake_history,
                         reward_calc_tracer.as_ref(),
@@ -394,7 +393,7 @@ impl Bank {
                     );
 
                     if let Ok((stakers_reward, voters_reward)) = redeemed {
-                        let commission = vote_state_view.commission();
+                        let commission = vote_account.commission();
 
                         // track voter rewards
                         let mut voters_reward_entry = vote_account_rewards
@@ -471,13 +470,14 @@ impl Bank {
                     let Some(vote_account) = cached_vote_accounts.get(&vote_pubkey) else {
                         return 0;
                     };
-                    if vote_account.owner() != &solana_vote_program {
+                    if vote_account.owner() != &solana_vote_program
+                        && !solana_votor_messages::check_id(vote_account.owner())
+                    {
                         return 0;
                     }
-
                     calculate_points(
                         stake_account.stake_state(),
-                        vote_account.vote_state_view(),
+                        vote_account,
                         stake_history,
                         new_warmup_cooldown_rate_epoch,
                     )

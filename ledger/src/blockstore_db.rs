@@ -194,6 +194,7 @@ impl Rocks {
             new_cf_descriptor::<columns::BlockHeight>(options, oldest_slot),
             new_cf_descriptor::<columns::OptimisticSlots>(options, oldest_slot),
             new_cf_descriptor::<columns::MerkleRootMeta>(options, oldest_slot),
+            new_cf_descriptor::<columns::SlotCertificates>(options, oldest_slot),
         ];
 
         // If the access type is Secondary, we don't need to open all of the
@@ -242,7 +243,7 @@ impl Rocks {
         cf_descriptors
     }
 
-    const fn columns() -> [&'static str; 20] {
+    const fn columns() -> [&'static str; 21] {
         [
             columns::ErasureMeta::NAME,
             columns::DeadSlots::NAME,
@@ -264,6 +265,7 @@ impl Rocks {
             columns::BlockHeight::NAME,
             columns::OptimisticSlots::NAME,
             columns::MerkleRootMeta::NAME,
+            columns::SlotCertificates::NAME,
         ]
     }
 

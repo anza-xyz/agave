@@ -8,6 +8,7 @@ use {
     solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::bank_forks::BankForks,
     solana_streamer::atomic_udp_socket::AtomicUdpSocket,
+    solana_votor::event::VotorEventSender,
     std::{
         collections::{HashMap, HashSet},
         net::UdpSocket,
@@ -80,4 +81,5 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub outstanding_repair_requests: Arc<RwLock<OutstandingRequests<ShredRepairType>>>,
     pub cluster_slots: Arc<ClusterSlots>,
     pub gossip_socket: Option<AtomicUdpSocket>,
+    pub votor_event_sender: VotorEventSender,
 }

@@ -41,7 +41,7 @@ fn bench_vote_account_try_from(b: &mut Bencher) {
 
     b.iter(|| {
         let vote_account = VoteAccount::try_from(account.clone()).unwrap();
-        let vote_state_view = vote_account.vote_state_view();
+        let vote_state_view = vote_account.vote_state_view().unwrap();
         assert_eq!(&vote_state.node_pubkey, vote_state_view.node_pubkey());
         assert_eq!(vote_state.commission, vote_state_view.commission());
         assert_eq!(vote_state.credits(), vote_state_view.credits());

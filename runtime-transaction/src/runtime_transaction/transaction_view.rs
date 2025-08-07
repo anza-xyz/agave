@@ -38,6 +38,24 @@ fn is_simple_vote_transaction<D: TransactionData>(
     is_simple_vote_transaction_impl(signatures, is_legacy_message, instruction_programs)
 }
 
+fn is_alpenglow_simple_vote_transaction<D: TransactionData>(
+    transaction: &SanitizedTransactionView<D>,
+) -> bool {
+    let signatures = transaction.signatures();
+    let is_legacy_message = matches!(transaction.version(), TransactionVersion::Legacy);
+    let mut instruction_programs = transaction
+        .program_instructions_iter()
+        .map(|(program_id, _ix)| program_id);
+
+    signatures.len() < 3
+        && is_legacy_message
+        && instruction_programs
+            .next()
+            .xor(instruction_programs.next())
+            .map(|program_id| program_id == &solana_votor_messages::ID)
+            .unwrap_or(false)
+}
+
 impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
     pub fn try_from(
         transaction: SanitizedTransactionView<D>,
@@ -48,8 +66,10 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
             MessageHash::Precomputed(hash) => hash,
             MessageHash::Compute => VersionedMessage::hash_raw_message(transaction.message_data()),
         };
-        let is_simple_vote_tx =
-            is_simple_vote_tx.unwrap_or_else(|| is_simple_vote_transaction(&transaction));
+        let is_simple_vote_tx = is_simple_vote_tx.unwrap_or_else(|| {
+            is_simple_vote_transaction(&transaction)
+                || is_alpenglow_simple_vote_transaction(&transaction)
+        });
 
         let InstructionMeta {
             precompile_signature_details,

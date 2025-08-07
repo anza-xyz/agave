@@ -49,6 +49,7 @@ solana-entry = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
+solana-poh = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-system-transaction = { workspace = true }
 test-case = { workspace = true }

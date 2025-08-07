@@ -22,13 +22,19 @@ frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
 [dependencies]
 bincode = { workspace = true, optional = true }
+bitvec = { workspace = true }
+bytemuck = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
+num-derive = { workspace = true }
+num-traits = { workspace = true }
+num_enum = { workspace = true }
 rand = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-bincode = { workspace = true }
+solana-bls-signatures = { workspace = true, features = ["bytemuck"] }
 solana-clock = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
@@ -40,14 +46,18 @@ solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-packet = { workspace = true }
+solana-program = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-serialize-utils = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
+solana-votor-messages = { workspace = true }
+spl-pod = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
@@ -55,6 +65,7 @@ arbitrary = { workspace = true }
 bencher = { workspace = true }
 bincode = { workspace = true }
 rand = { workspace = true }
+serial_test = { workspace = true }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-sha256-hasher = { workspace = true }
@@ -62,6 +73,7 @@ solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode", "dev-context-only-utils"] }
 static_assertions = { workspace = true }
+test-case = { workspace = true }
 
 [[bench]]
 name = "vote_account"

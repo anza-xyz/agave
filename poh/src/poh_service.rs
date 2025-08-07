@@ -97,7 +97,8 @@ impl PohTiming {
 }
 
 impl PohService {
-    pub fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub fn new<F>(
         poh_recorder: Arc<RwLock<PohRecorder>>,
         poh_config: &PohConfig,
         poh_exit: Arc<AtomicBool>,
@@ -105,46 +106,84 @@ impl PohService {
         pinned_cpu_core: usize,
         hashes_per_batch: u64,
         record_receiver: Receiver<Record>,
-    ) -> Self {
+        block_creation_loop: F,
+    ) -> Self
+    where
+        // TODO: this weirdness is because solana_poh can't depend on solana_core
+        // Once we cleanup the prototype and separate alpenglow into it's own crate this
+        // can be fixed.
+        F: FnOnce() + std::marker::Send + 'static,
+    {
         let poh_config = poh_config.clone();
+        let is_alpenglow_enabled = poh_recorder.read().unwrap().is_alpenglow_enabled;
         let tick_producer = Builder::new()
             .name("solPohTickProd".to_string())
             .spawn(move || {
-                if poh_config.hashes_per_tick.is_none() {
-                    if poh_config.target_tick_count.is_none() {
-                        Self::low_power_tick_producer(
-                            poh_recorder,
-                            &poh_config,
-                            &poh_exit,
-                            record_receiver,
-                        );
+                if !is_alpenglow_enabled {
+                    if poh_config.hashes_per_tick.is_none() {
+                        if poh_config.target_tick_count.is_none() {
+                            Self::low_power_tick_producer(
+                                poh_recorder.clone(),
+                                &poh_config,
+                                &poh_exit,
+                                record_receiver.clone(),
+                            );
+                        } else {
+                            Self::short_lived_low_power_tick_producer(
+                                poh_recorder.clone(),
+                                &poh_config,
+                                &poh_exit,
+                                record_receiver.clone(),
+                            );
+                        }
                     } else {
-                        Self::short_lived_low_power_tick_producer(
-                            poh_recorder,
-                            &poh_config,
+                        // PoH service runs in a tight loop, generating hashes as fast as possible.
+                        // Let's dedicate one of the CPU cores to this thread so that it can gain
+                        // from cache performance.
+                        if let Some(cores) = core_affinity::get_core_ids() {
+                            core_affinity::set_for_current(cores[pinned_cpu_core]);
+                        }
+                        Self::tick_producer(
+                            poh_recorder.clone(),
                             &poh_exit,
-                            record_receiver,
+                            ticks_per_slot,
+                            hashes_per_batch,
+                            record_receiver.clone(),
+                            Self::target_ns_per_tick(
+                                ticks_per_slot,
+                                poh_config.target_tick_duration.as_nanos() as u64,
+                            ),
                         );
                     }
-                } else {
-                    // PoH service runs in a tight loop, generating hashes as fast as possible.
-                    // Let's dedicate one of the CPU cores to this thread so that it can gain
-                    // from cache performance.
-                    if let Some(cores) = core_affinity::get_core_ids() {
-                        core_affinity::set_for_current(cores[pinned_cpu_core]);
+
+                    // Migrate to alpenglow PoH
+                    if !poh_exit.load(Ordering::Relaxed)
+                    // Should be set by replay_stage after it sees a notarized
+                    // block in the new alpenglow epoch
+                    && poh_recorder.read().unwrap().is_alpenglow_enabled
+                    {
+                        info!("Migrating poh service to alpenglow tick producer");
+                    } else {
+                        poh_exit.store(true, Ordering::Relaxed);
+                        return;
                     }
-                    Self::tick_producer(
-                        poh_recorder,
-                        &poh_exit,
-                        ticks_per_slot,
-                        hashes_per_batch,
-                        record_receiver,
-                        Self::target_ns_per_tick(
-                            ticks_per_slot,
-                            poh_config.target_tick_duration.as_nanos() as u64,
-                        ),
-                    );
                 }
+
+                // Start alpenglow
+                //
+                // Important this is called *before* any new alpenglow
+                // leaders call `set_bank()`, otherwise, the old PoH
+                // tick producer will still tick in that alpenglow bank
+                //
+                // TODO: Can essentailly replace this with no ticks
+                // once we properly remove poh/entry verification in replay
+                {
+                    let mut w_poh_recorder = poh_recorder.write().unwrap();
+                    w_poh_recorder.migrate_to_alpenglow_poh();
+                    w_poh_recorder.use_alpenglow_tick_producer = true;
+                }
+                info!("Starting alpenglow block creation loop");
+                block_creation_loop();
                 poh_exit.store(true, Ordering::Relaxed);
             })
             .unwrap();
@@ -181,7 +220,12 @@ impl PohService {
             );
             if remaining_tick_time.is_zero() {
                 last_tick = Instant::now();
-                poh_recorder.write().unwrap().tick();
+                let mut w_poh_recorder = poh_recorder.write().unwrap();
+                w_poh_recorder.tick();
+                if w_poh_recorder.is_alpenglow_enabled {
+                    info!("exiting tick_producer because alpenglow enabled");
+                    break;
+                }
             }
         }
     }
@@ -355,6 +399,10 @@ impl PohService {
                     let mut poh_recorder_l = poh_recorder.write().unwrap();
                     lock_time.stop();
                     timing.total_lock_time_ns += lock_time.as_ns();
+                    if poh_recorder_l.is_alpenglow_enabled {
+                        info!("exiting tick_producer because alpenglow enabled");
+                        break;
+                    }
                     let mut tick_time = Measure::start("tick");
                     poh_recorder_l.tick();
                     tick_time.stop();
@@ -518,6 +566,7 @@ mod tests {
             DEFAULT_PINNED_CPU_CORE,
             hashes_per_batch,
             record_receiver,
+            || {},
         );
         poh_recorder.write().unwrap().set_bank_for_test(bank);
 

@@ -636,6 +636,16 @@ impl AncestorHashesService {
                 if exit.load(Ordering::Relaxed) {
                     return;
                 }
+                if repair_info
+                    .bank_forks
+                    .read()
+                    .unwrap()
+                    .root_bank()
+                    .feature_set
+                    .is_active(&agave_feature_set::secp256k1_program_enabled::id())
+                {
+                    return;
+                }
                 Self::manage_ancestor_requests(
                     &ancestor_hashes_request_statuses,
                     &ancestor_hashes_request_socket,

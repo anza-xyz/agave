@@ -69,6 +69,7 @@ solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true, optional = true }
 solana-vote = { workspace = true, optional = true }
 solana-vote-program = { workspace = true, optional = true }
+solana-votor-messages = { workspace = true }
 
 [target."cfg(target_os = \"linux\")".dependencies]
 caps = { workspace = true }

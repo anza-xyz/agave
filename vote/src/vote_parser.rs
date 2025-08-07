@@ -1,11 +1,99 @@
 use {
     crate::vote_transaction::VoteTransaction, solana_bincode::limited_deserialize,
-    solana_hash::Hash, solana_pubkey::Pubkey, solana_signature::Signature,
+    solana_clock::Slot, solana_hash::Hash, solana_pubkey::Pubkey, solana_signature::Signature,
     solana_svm_transaction::svm_transaction::SVMTransaction, solana_transaction::Transaction,
     solana_vote_interface::instruction::VoteInstruction,
+    solana_votor_messages::vote::Vote as AlpenglowVote,
 };
 
-pub type ParsedVote = (Pubkey, VoteTransaction, Option<Hash>, Signature);
+/// Represents a parsed vote transaction, which can be either a traditional Tower
+/// vote or an Alpenglow vote. This enum allows unified handling of different vote types.
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum ParsedVoteTransaction {
+    Tower(VoteTransaction),
+    Alpenglow(AlpenglowVote),
+}
+
+impl ParsedVoteTransaction {
+    pub fn slots(&self) -> Vec<Slot> {
+        match self {
+            ParsedVoteTransaction::Tower(tx) => tx.slots(),
+            ParsedVoteTransaction::Alpenglow(tx) => vec![tx.slot()],
+        }
+    }
+    pub fn last_voted_slot(&self) -> Option<Slot> {
+        match self {
+            ParsedVoteTransaction::Tower(tx) => tx.last_voted_slot(),
+            ParsedVoteTransaction::Alpenglow(tx) => Some(tx.slot()),
+        }
+    }
+
+    pub fn last_voted_slot_hash(&self) -> Option<(Slot, Hash)> {
+        match self {
+            ParsedVoteTransaction::Tower(tx) => tx.last_voted_slot_hash(),
+            ParsedVoteTransaction::Alpenglow(tx) => match tx {
+                AlpenglowVote::Notarize(vote) => Some((vote.slot(), Hash::default())),
+                AlpenglowVote::Finalize(_vote) => None,
+                AlpenglowVote::NotarizeFallback(vote) => Some((vote.slot(), Hash::default())),
+                AlpenglowVote::Skip(_vote) => None,
+                AlpenglowVote::SkipFallback(_vote) => None,
+            },
+        }
+    }
+
+    pub fn is_alpenglow_vote(&self) -> bool {
+        matches!(self, ParsedVoteTransaction::Alpenglow(_))
+    }
+
+    pub fn is_full_tower_vote(&self) -> bool {
+        match self {
+            ParsedVoteTransaction::Tower(tx) => tx.is_full_tower_vote(),
+            ParsedVoteTransaction::Alpenglow(_tx) => false,
+        }
+    }
+
+    pub fn as_tower_transaction(self) -> Option<VoteTransaction> {
+        match self {
+            ParsedVoteTransaction::Tower(tx) => Some(tx),
+            ParsedVoteTransaction::Alpenglow(_tx) => None,
+        }
+    }
+
+    pub fn as_alpenglow_transaction(self) -> Option<AlpenglowVote> {
+        match self {
+            ParsedVoteTransaction::Tower(_tx) => None,
+            ParsedVoteTransaction::Alpenglow(tx) => Some(tx),
+        }
+    }
+
+    pub fn as_tower_transaction_ref(&self) -> Option<&VoteTransaction> {
+        match self {
+            ParsedVoteTransaction::Tower(tx) => Some(tx),
+            ParsedVoteTransaction::Alpenglow(_tx) => None,
+        }
+    }
+
+    pub fn as_alpenglow_transaction_ref(&self) -> Option<&AlpenglowVote> {
+        match self {
+            ParsedVoteTransaction::Tower(_tx) => None,
+            ParsedVoteTransaction::Alpenglow(tx) => Some(tx),
+        }
+    }
+}
+
+impl From<VoteTransaction> for ParsedVoteTransaction {
+    fn from(value: VoteTransaction) -> Self {
+        ParsedVoteTransaction::Tower(value)
+    }
+}
+
+impl From<AlpenglowVote> for ParsedVoteTransaction {
+    fn from(value: solana_votor_messages::vote::Vote) -> Self {
+        ParsedVoteTransaction::Alpenglow(value)
+    }
+}
+
+pub type ParsedVote = (Pubkey, ParsedVoteTransaction, Option<Hash>, Signature);
 
 // Used for locally forwarding processed vote transactions to consensus
 pub fn parse_sanitized_vote_transaction(tx: &impl SVMTransaction) -> Option<ParsedVote> {
@@ -18,7 +106,12 @@ pub fn parse_sanitized_vote_transaction(tx: &impl SVMTransaction) -> Option<Pars
     let key = tx.account_keys().get(first_account)?;
     let (vote, switch_proof_hash) = parse_vote_instruction_data(first_instruction.data)?;
     let signature = tx.signatures().first().cloned().unwrap_or_default();
-    Some((*key, vote, switch_proof_hash, signature))
+    Some((
+        *key,
+        ParsedVoteTransaction::Tower(vote),
+        switch_proof_hash,
+        signature,
+    ))
 }
 
 // Used for parsing gossip vote transactions
@@ -35,7 +128,12 @@ pub fn parse_vote_transaction(tx: &Transaction) -> Option<ParsedVote> {
     let key = message.account_keys.get(first_account)?;
     let (vote, switch_proof_hash) = parse_vote_instruction_data(&first_instruction.data)?;
     let signature = tx.signatures.first().cloned().unwrap_or_default();
-    Some((*key, vote, switch_proof_hash, signature))
+    Some((
+        *key,
+        ParsedVoteTransaction::Tower(vote),
+        switch_proof_hash,
+        signature,
+    ))
 }
 
 fn parse_vote_instruction_data(
@@ -136,7 +234,10 @@ mod test {
         );
         let (key, vote, hash, signature) = parse_vote_transaction(&vote_tx).unwrap();
         assert_eq!(hash, input_hash);
-        assert_eq!(vote, VoteTransaction::from(Vote::new(vec![42], bank_hash)));
+        assert_eq!(
+            vote,
+            ParsedVoteTransaction::Tower(VoteTransaction::from(Vote::new(vec![42], bank_hash)))
+        );
         assert_eq!(key, vote_keypair.pubkey());
         assert_eq!(signature, vote_tx.signatures[0]);
 

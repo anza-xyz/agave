@@ -15,6 +15,7 @@ use {
     },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_account::Account,
+    solana_bls_signatures::{keypair::Keypair as BLSKeypair, Pubkey as BLSPubkey},
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
@@ -40,11 +41,17 @@ use {
     solana_system_interface::error::SystemError,
     solana_transaction::Transaction,
     solana_vote_program::{
+        authorized_voters::AuthorizedVoters,
         vote_error::VoteError,
         vote_instruction::{self, withdraw, CreateVoteAccountConfig},
         vote_state::{
-            VoteAuthorize, VoteInit, VoteState, VoteStateVersions, VOTE_CREDITS_MAXIMUM_PER_SLOT,
+            BlockTimestamp, VoteAuthorize, VoteInit, VoteState, VoteStateVersions,
+            VOTE_CREDITS_MAXIMUM_PER_SLOT,
         },
+    },
+    solana_votor_messages::{
+        bls_message::BLS_KEYPAIR_DERIVE_SEED, instruction::InitializeAccountInstructionData,
+        state::VoteState as AlpenglowVoteState,
     },
     std::rc::Rc,
 };
@@ -117,6 +124,15 @@ impl VoteSubCommands for App<'_, '_> {
                         .help(
                             "Seed for address generation; if specified, the resulting account \
                              will be at a derived address of the VOTE ACCOUNT pubkey",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("alpenglow")
+                        .long("alpenglow")
+                        .takes_value(false)
+                        .help(
+                            "When enabled, creates an Alpenglow vote account. When disabled, \
+                             creates a POH vote account.",
                         ),
                 )
                 .offline_args()
@@ -474,6 +490,7 @@ pub fn parse_create_vote_account(
         signer_of(matches, NONCE_AUTHORITY_ARG.name, wallet_manager)?;
     let (fee_payer, fee_payer_pubkey) = signer_of(matches, FEE_PAYER_ARG.name, wallet_manager)?;
     let compute_unit_price = value_of(matches, COMPUTE_UNIT_PRICE_ARG.name);
+    let is_alpenglow = matches.is_present("alpenglow");
 
     if !allow_unsafe {
         if authorized_withdrawer == vote_account_pubkey.unwrap() {
@@ -515,6 +532,7 @@ pub fn parse_create_vote_account(
             memo,
             fee_payer: signer_info.index_of(fee_payer_pubkey).unwrap(),
             compute_unit_price,
+            is_alpenglow,
         },
         signers: signer_info.signers,
     })
@@ -808,6 +826,7 @@ pub fn process_create_vote_account(
     memo: Option<&String>,
     fee_payer: SignerIndex,
     compute_unit_price: Option<u64>,
+    is_alpenglow: bool,
 ) -> ProcessResult {
     let vote_account = config.signers[vote_account];
     let vote_account_pubkey = vote_account.pubkey();
@@ -829,48 +848,85 @@ pub fn process_create_vote_account(
     )?;
 
     let required_balance = rpc_client
-        .get_minimum_balance_for_rent_exemption(VoteState::size_of())?
+        .get_minimum_balance_for_rent_exemption(if is_alpenglow {
+            solana_votor_messages::state::VoteState::size()
+        } else {
+            VoteState::size_of()
+        })?
         .max(1);
+
     let amount = SpendAmount::Some(required_balance);
 
     let fee_payer = config.signers[fee_payer];
     let nonce_authority = config.signers[nonce_authority];
-    let space = VoteStateVersions::vote_state_size_of(true) as u64;
-
     let compute_unit_limit = match blockhash_query {
         BlockhashQuery::None(_) | BlockhashQuery::FeeCalculator(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::All(_) => ComputeUnitLimit::Simulated,
     };
+
     let build_message = |lamports| {
-        let vote_init = VoteInit {
-            node_pubkey: identity_pubkey,
-            authorized_voter: authorized_voter.unwrap_or(identity_pubkey),
-            authorized_withdrawer,
-            commission,
-        };
-        let mut create_vote_account_config = CreateVoteAccountConfig {
-            space,
-            ..CreateVoteAccountConfig::default()
-        };
-        let to = if let Some(seed) = seed {
-            create_vote_account_config.with_seed = Some((&vote_account_pubkey, seed));
-            &vote_account_address
+        let node_pubkey = identity_pubkey;
+        let authorized_voter = authorized_voter.unwrap_or(identity_pubkey);
+
+        let from_pubkey = &config.signers[0].pubkey();
+        let to_pubkey = &vote_account_address;
+
+        let mut ixs = if is_alpenglow {
+            let bls_keypair =
+                BLSKeypair::derive_from_signer(&identity_account, BLS_KEYPAIR_DERIVE_SEED).unwrap();
+            let bls_pubkey: BLSPubkey = bls_keypair.public.into();
+            let initialize_account_ixn_meta = InitializeAccountInstructionData {
+                node_pubkey,
+                authorized_voter,
+                authorized_withdrawer,
+                commission,
+                bls_pubkey,
+            };
+
+            let create_ix = solana_system_interface::instruction::create_account(
+                from_pubkey,
+                to_pubkey,
+                lamports,
+                solana_votor_messages::state::VoteState::size() as u64,
+                &solana_votor_messages::id(),
+            );
+
+            let init_ix = solana_votor_messages::instruction::initialize_account(
+                *to_pubkey,
+                &initialize_account_ixn_meta,
+            );
+
+            vec![create_ix, init_ix]
         } else {
-            &vote_account_pubkey
+            let vote_init = VoteInit {
+                node_pubkey,
+                authorized_voter,
+                authorized_withdrawer,
+                commission,
+            };
+            let mut create_vote_account_config = CreateVoteAccountConfig {
+                space: VoteStateVersions::vote_state_size_of(true) as u64,
+                ..CreateVoteAccountConfig::default()
+            };
+            if let Some(seed) = seed {
+                create_vote_account_config.with_seed = Some((&vote_account_pubkey, seed));
+            }
+
+            vote_instruction::create_account_with_config(
+                from_pubkey,
+                to_pubkey,
+                &vote_init,
+                lamports,
+                create_vote_account_config,
+            )
         };
 
-        let ixs = vote_instruction::create_account_with_config(
-            &config.signers[0].pubkey(),
-            to,
-            &vote_init,
-            lamports,
-            create_vote_account_config,
-        )
-        .with_memo(memo)
-        .with_compute_unit_config(&ComputeUnitConfig {
-            compute_unit_price,
-            compute_unit_limit,
-        });
+        ixs = ixs
+            .with_memo(memo)
+            .with_compute_unit_config(&ComputeUnitConfig {
+                compute_unit_price,
+                compute_unit_limit,
+            });
 
         if let Some(nonce_account) = &nonce_account {
             Message::new_with_nonce(
@@ -976,15 +1032,15 @@ pub fn process_vote_authorize(
             if let Some(vote_state) = vote_state {
                 let current_epoch = rpc_client.get_epoch_info()?.epoch;
                 let current_authorized_voter = vote_state
-                    .authorized_voters()
                     .get_authorized_voter(current_epoch)
                     .ok_or_else(|| {
                         CliError::RpcRequestError(
                             "Invalid vote account state; no authorized voters found".to_string(),
                         )
                     })?;
+
                 check_current_authority(
-                    &[current_authorized_voter, vote_state.authorized_withdrawer],
+                    &[current_authorized_voter, vote_state.authorized_withdrawer()],
                     &authorized.pubkey(),
                 )?;
                 if let Some(signer) = new_authorized_signer {
@@ -1004,7 +1060,10 @@ pub fn process_vote_authorize(
                 (new_authorized_pubkey, "new_authorized_pubkey".to_string()),
             )?;
             if let Some(vote_state) = vote_state {
-                check_current_authority(&[vote_state.authorized_withdrawer], &authorized.pubkey())?
+                check_current_authority(
+                    &[vote_state.authorized_withdrawer()],
+                    &authorized.pubkey(),
+                )?
             }
         }
     }
@@ -1257,11 +1316,71 @@ pub fn process_vote_update_commission(
     }
 }
 
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum VoteStateWrapper {
+    VoteState(VoteState),
+    AlpenglowVoteState(AlpenglowVoteState),
+}
+
+impl VoteStateWrapper {
+    pub fn get_authorized_voter(&self, epoch: u64) -> Option<Pubkey> {
+        match self {
+            VoteStateWrapper::VoteState(vote_state) => vote_state.get_authorized_voter(epoch),
+            VoteStateWrapper::AlpenglowVoteState(vote_state) => {
+                vote_state.get_authorized_voter(epoch)
+            }
+        }
+    }
+
+    pub fn authorized_withdrawer(&self) -> Pubkey {
+        match self {
+            VoteStateWrapper::VoteState(vote_state) => vote_state.authorized_withdrawer,
+            VoteStateWrapper::AlpenglowVoteState(vote_state) => *vote_state.authorized_withdrawer(),
+        }
+    }
+
+    pub fn node_pubkey(&self) -> Pubkey {
+        match self {
+            VoteStateWrapper::VoteState(vote_state) => vote_state.node_pubkey,
+            VoteStateWrapper::AlpenglowVoteState(vote_state) => *vote_state.node_pubkey(),
+        }
+    }
+
+    pub fn credits(&self) -> u64 {
+        match self {
+            VoteStateWrapper::VoteState(vote_state) => vote_state.credits(),
+            VoteStateWrapper::AlpenglowVoteState(vote_state) => {
+                vote_state.epoch_credits().credits()
+            }
+        }
+    }
+
+    pub fn commission(&self) -> u8 {
+        match self {
+            VoteStateWrapper::VoteState(vote_state) => vote_state.commission,
+            VoteStateWrapper::AlpenglowVoteState(vote_state) => vote_state.commission(),
+        }
+    }
+
+    pub fn last_timestamp(&self) -> BlockTimestamp {
+        match self {
+            VoteStateWrapper::VoteState(vote_state) => vote_state.last_timestamp.clone(),
+            VoteStateWrapper::AlpenglowVoteState(vote_state) => BlockTimestamp {
+                slot: vote_state.latest_timestamp_legacy_format().slot,
+                timestamp: vote_state.latest_timestamp_legacy_format().timestamp,
+            },
+        }
+    }
+}
+
+const SOLANA_VOTE_PROGRAM_ID: Pubkey = solana_vote_program::id();
+const ALPENGLOW_VOTE_PROGRAM_ID: Pubkey = solana_votor_messages::id();
+
 pub(crate) fn get_vote_account(
     rpc_client: &RpcClient,
     vote_account_pubkey: &Pubkey,
     commitment_config: CommitmentConfig,
-) -> Result<(Account, VoteState), Box<dyn std::error::Error>> {
+) -> Result<(Account, VoteStateWrapper), Box<dyn std::error::Error>> {
     let vote_account = rpc_client
         .get_account_with_commitment(vote_account_pubkey, commitment_config)?
         .value
@@ -1269,19 +1388,32 @@ pub(crate) fn get_vote_account(
             CliError::RpcRequestError(format!("{vote_account_pubkey:?} account does not exist"))
         })?;
 
-    if vote_account.owner != solana_vote_program::id() {
-        return Err(CliError::RpcRequestError(format!(
-            "{vote_account_pubkey:?} is not a vote account"
-        ))
-        .into());
-    }
-    let vote_state = VoteState::deserialize(&vote_account.data).map_err(|_| {
-        CliError::RpcRequestError(
-            "Account data could not be deserialized to vote state".to_string(),
-        )
-    })?;
+    let vote_state_wrapper = match vote_account.owner {
+        SOLANA_VOTE_PROGRAM_ID => VoteStateWrapper::VoteState(
+            VoteState::deserialize(&vote_account.data).map_err(|_| {
+                CliError::RpcRequestError(
+                    "Account data could not be deserialized to vote state".to_string(),
+                )
+            })?,
+        ),
 
-    Ok((vote_account, vote_state))
+        ALPENGLOW_VOTE_PROGRAM_ID => VoteStateWrapper::AlpenglowVoteState(
+            *AlpenglowVoteState::deserialize(&vote_account.data).map_err(|_| {
+                CliError::RpcRequestError(
+                    "Account data could not be deserialized to vote state".to_string(),
+                )
+            })?,
+        ),
+
+        _ => {
+            return Err(CliError::RpcRequestError(format!(
+                "{vote_account_pubkey:?} is not a vote account"
+            ))
+            .into())
+        }
+    };
+
+    Ok((vote_account, vote_state_wrapper))
 }
 
 pub fn process_show_vote_account(
@@ -1303,55 +1435,73 @@ pub fn process_show_vote_account(
 
     let mut votes: Vec<CliLandedVote> = vec![];
     let mut epoch_voting_history: Vec<CliEpochVotingHistory> = vec![];
-    if !vote_state.votes.is_empty() {
-        for vote in &vote_state.votes {
-            votes.push(vote.into());
+    let mut epoch_rewards = None;
+
+    // TODO: handle Alpenglow case
+    if let VoteStateWrapper::VoteState(ref vote_state) = vote_state {
+        if !vote_state.votes.is_empty() {
+            for vote in &vote_state.votes {
+                votes.push(vote.into());
+            }
+            for (epoch, credits, prev_credits) in vote_state.epoch_credits().iter().copied() {
+                let credits_earned = credits.saturating_sub(prev_credits);
+                let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
+                let is_tvc_active = tvc_activation_epoch.map(|e| epoch >= e).unwrap_or_default();
+                let max_credits_per_slot = if is_tvc_active {
+                    VOTE_CREDITS_MAXIMUM_PER_SLOT
+                } else {
+                    1
+                };
+                epoch_voting_history.push(CliEpochVotingHistory {
+                    epoch,
+                    slots_in_epoch,
+                    credits_earned,
+                    credits,
+                    prev_credits,
+                    max_credits_per_slot,
+                });
+            }
         }
-        for (epoch, credits, prev_credits) in vote_state.epoch_credits().iter().copied() {
-            let credits_earned = credits.saturating_sub(prev_credits);
-            let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
-            let is_tvc_active = tvc_activation_epoch.map(|e| epoch >= e).unwrap_or_default();
-            let max_credits_per_slot = if is_tvc_active {
-                VOTE_CREDITS_MAXIMUM_PER_SLOT
-            } else {
-                1
-            };
-            epoch_voting_history.push(CliEpochVotingHistory {
-                epoch,
-                slots_in_epoch,
-                credits_earned,
-                credits,
-                prev_credits,
-                max_credits_per_slot,
+
+        epoch_rewards =
+            with_rewards.and_then(|num_epochs| {
+                match crate::stake::fetch_epoch_rewards(
+                    rpc_client,
+                    vote_account_address,
+                    num_epochs,
+                    starting_epoch,
+                ) {
+                    Ok(rewards) => Some(rewards),
+                    Err(error) => {
+                        eprintln!("Failed to fetch epoch rewards: {error:?}");
+                        None
+                    }
+                }
             });
-        }
     }
 
-    let epoch_rewards =
-        with_rewards.and_then(|num_epochs| {
-            match crate::stake::fetch_epoch_rewards(
-                rpc_client,
-                vote_account_address,
-                num_epochs,
-                starting_epoch,
-            ) {
-                Ok(rewards) => Some(rewards),
-                Err(error) => {
-                    eprintln!("Failed to fetch epoch rewards: {error:?}");
-                    None
-                }
-            }
-        });
+    let authorized_voters = match vote_state {
+        VoteStateWrapper::VoteState(ref vote_state) => vote_state.authorized_voters(),
+        // TODO: implement this properly for AlpenglowVoteState
+        VoteStateWrapper::AlpenglowVoteState(_) => &AuthorizedVoters::default(),
+    };
+
+    let root_slot = match vote_state {
+        VoteStateWrapper::VoteState(ref vote_state) => vote_state.root_slot,
+        // TODO: no real equivalent for Alpenglow - we should really change
+        // process_show_vote_account properly
+        VoteStateWrapper::AlpenglowVoteState(_) => None,
+    };
 
     let vote_account_data = CliVoteAccount {
         account_balance: vote_account.lamports,
-        validator_identity: vote_state.node_pubkey.to_string(),
-        authorized_voters: vote_state.authorized_voters().into(),
-        authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
+        validator_identity: vote_state.node_pubkey().to_string(),
+        authorized_voters: authorized_voters.into(),
+        authorized_withdrawer: vote_state.authorized_withdrawer().to_string(),
         credits: vote_state.credits(),
-        commission: vote_state.commission,
-        root_slot: vote_state.root_slot,
-        recent_timestamp: vote_state.last_timestamp.clone(),
+        commission: vote_state.commission(),
+        root_slot,
+        recent_timestamp: vote_state.last_timestamp(),
         votes,
         epoch_voting_history,
         use_lamports_unit,
@@ -1853,6 +2003,7 @@ mod tests {
                     memo: None,
                     fee_payer: 0,
                     compute_unit_price: None,
+                    is_alpenglow: false,
                 },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
@@ -1887,6 +2038,7 @@ mod tests {
                     memo: None,
                     fee_payer: 0,
                     compute_unit_price: None,
+                    is_alpenglow: false,
                 },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
@@ -1928,6 +2080,7 @@ mod tests {
                     memo: None,
                     fee_payer: 0,
                     compute_unit_price: None,
+                    is_alpenglow: false,
                 },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
@@ -1981,6 +2134,7 @@ mod tests {
                     memo: None,
                     fee_payer: 0,
                     compute_unit_price: None,
+                    is_alpenglow: false,
                 },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
@@ -2024,6 +2178,7 @@ mod tests {
                     memo: None,
                     fee_payer: 0,
                     compute_unit_price: None,
+                    is_alpenglow: false,
                 },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
@@ -2063,6 +2218,7 @@ mod tests {
                     memo: None,
                     fee_payer: 0,
                     compute_unit_price: None,
+                    is_alpenglow: false,
                 },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),

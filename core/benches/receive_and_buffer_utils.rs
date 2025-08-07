@@ -30,7 +30,7 @@ use {
     solana_signer::Signer,
     solana_transaction::versioned::VersionedTransaction,
     std::{
-        sync::{Arc, RwLock},
+        sync::{atomic::AtomicBool, Arc, RwLock},
         time::Instant,
     },
 };
@@ -194,6 +194,7 @@ pub fn setup_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
     let bank_start = BankStart {
         working_bank: bank.clone(),
         bank_creation_time: Arc::new(Instant::now()),
+        contains_valid_certificate: Arc::new(AtomicBool::new(false)),
     };
 
     let (sender, receiver) = unbounded();

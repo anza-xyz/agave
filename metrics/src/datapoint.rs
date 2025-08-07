@@ -81,6 +81,11 @@ impl DataPoint {
         self
     }
 
+    pub fn add_field_u64(&mut self, name: &'static str, value: u64) -> &mut Self {
+        self.fields.push((name, value.to_string() + "u"));
+        self
+    }
+
     pub fn add_field_f64(&mut self, name: &'static str, value: f64) -> &mut Self {
         self.fields.push((name, value.to_string()));
         self
@@ -107,6 +112,9 @@ macro_rules! create_datapoint {
     };
     (@field $point:ident $name:expr, $value:expr, i64) => {
         $point.add_field_i64($name, $value as i64);
+    };
+    (@field $point:ident $name:expr, $value:expr, u64) => {
+        $point.add_field_u64($name, $value as u64);
     };
     (@field $point:ident $name:expr, $value:expr, f64) => {
         $point.add_field_f64($name, $value as f64);

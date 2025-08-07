@@ -96,7 +96,12 @@ fi
 
 # Ensure files are created with the current host uid/gid
 if [[ -z "$SOLANA_DOCKER_RUN_NOSETUID" ]]; then
-  ARGS+=(--user "$(id -u):$(id -g)")
+  ARGS+=(
+    --user "$(id -u):$(id -g)"
+    --volume "/etc/passwd:/etc/passwd:ro"
+    --volume "/etc/group:/etc/group:ro"
+    --volume "/var/lib/buildkite-agent:/var/lib/buildkite-agent"
+  )
 fi
 
 if [[ -n $SOLANA_ALLOCATE_TTY ]]; then
@@ -122,6 +127,7 @@ ARGS+=(
   --env CI_PULL_REQUEST
   --env CI_REPO_SLUG
   --env CRATES_IO_TOKEN
+  --env CARGO_NET_GIT_FETCH_WITH_CLI
 )
 
 # Also propagate environment variables needed for codecov

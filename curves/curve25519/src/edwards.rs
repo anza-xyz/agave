@@ -9,16 +9,13 @@ pub struct PodEdwardsPoint(pub [u8; 32]);
 mod target_arch {
     use {
         super::*,
-        crate::{
-            curve_syscall_traits::{GroupOperations, MultiScalarMultiplication, PointValidation},
-            errors::Curve25519Error,
-            scalar::PodScalar,
-        },
+        crate::{errors::Curve25519Error, scalar::PodScalar},
         curve25519_dalek::{
             edwards::{CompressedEdwardsY, EdwardsPoint},
             scalar::Scalar,
             traits::VartimeMultiscalarMul,
         },
+        solana_curve_traits::{GroupOperations, MultiScalarMultiplication, PointValidation},
     };
 
     pub fn validate_edwards(point: &PodEdwardsPoint) -> bool {

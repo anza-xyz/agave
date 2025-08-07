@@ -16,6 +16,7 @@ members = [
     "bench-vote",
     "bloom",
     "bucket_map",
+    "build-alpenglow-vote",
     "builtins",
     "builtins-default-costs",
     "cargo-registry",
@@ -31,6 +32,8 @@ members = [
     "connection-cache",
     "core",
     "cost-model",
+    "curves/bls12-381",
+    "curves/curve-traits",
     "curves/curve25519",
     "dos",
     "download-utils",
@@ -136,6 +139,8 @@ members = [
     "version",
     "vortexor",
     "vote",
+    "votor",
+    "votor-messages",
     "watchtower",
     "wen-restart",
     "xdp",
@@ -188,6 +193,7 @@ agave-transaction-view = { path = "transaction-view", version = "=3.0.0" }
 agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=3.0.0" }
 agave-xdp = { path = "xdp", version = "=3.0.0" }
 ahash = "0.8.11"
+alpenglow-vote = { git = "https://github.com/solana-program/alpenglow-vote.git", rev = "cdae90a", features = ["serde"] }
 anyhow = "1.0.98"
 aquamarine = "0.6.0"
 arbitrary = "1.4.1"
@@ -212,7 +218,10 @@ base64 = "0.22.1"
 bencher = "0.1.5"
 bincode = "1.3.3"
 bitflags = { version = "2.9.1" }
+bitvec = { version = "1.0.1", features = ["serde"] }
 blake3 = "1.8.2"
+blst = "0.3.14"
+blstrs = "0.7.1"
 borsh = { version = "1.5.7", features = ["derive", "unstable__schema"] }
 borsh0-10 = { package = "borsh", version = "0.10.3" }
 bs58 = { version = "0.5.1", default-features = false }
@@ -260,6 +269,7 @@ env_logger = "0.11.8"
 etcd-client = "0.11.1"
 fast-math = "0.1"
 fd-lock = "3.0.13"
+ff = "0.13.1"
 five8_const = "0.1.4"
 flate2 = "1.0.31"
 fnv = "1.0.7"
@@ -271,6 +281,7 @@ gethostname = "0.2.3"
 getrandom = "0.3.3"
 goauth = "0.13.1"
 governor = "0.6.3"
+group = "0.13.0"
 hex = "0.4.3"
 hidapi = { version = "2.6.3", default-features = false }
 histogram = "0.6.9"
@@ -378,6 +389,7 @@ solana-account-decoder-client-types = { path = "account-decoder-client-types", v
 solana-account-info = "2.3.0"
 solana-accounts-db = { path = "accounts-db", version = "=3.0.0" }
 solana-address-lookup-table-interface = "2.2.2"
+solana-address-lookup-table-program = { path = "programs/address-lookup-table", version = "=2.3.0" }
 solana-atomic-u64 = "2.2.1"
 solana-banks-client = { path = "banks-client", version = "=3.0.0" }
 solana-banks-interface = { path = "banks-interface", version = "=3.0.0" }
@@ -387,10 +399,13 @@ solana-big-mod-exp = "2.2.1"
 solana-bincode = "2.2.1"
 solana-blake3-hasher = "2.2.1"
 solana-bloom = { path = "bloom", version = "=3.0.0" }
+solana-bls-signatures = { version = "0.1.0", features = ["serde"] }
+solana-bls12-381 = { path = "curves/bls12-381", version = "=3.0.0" }
 solana-bn254 = "2.2.2"
 solana-borsh = "2.2.1"
 solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=3.0.0" }
 solana-bucket-map = { path = "bucket_map", version = "=3.0.0" }
+solana-build-alpenglow-vote = { path = "build-alpenglow-vote" }
 solana-builtins = { path = "builtins", version = "=3.0.0" }
 solana-builtins-default-costs = { path = "builtins-default-costs", version = "=3.0.0" }
 solana-clap-utils = { path = "clap-utils", version = "=3.0.0" }
@@ -413,6 +428,7 @@ solana-connection-cache = { path = "connection-cache", version = "=3.0.0", defau
 solana-core = { path = "core", version = "=3.0.0" }
 solana-cost-model = { path = "cost-model", version = "=3.0.0" }
 solana-cpi = "2.2.1"
+solana-curve-traits = { path = "curves/curve-traits", version = "=3.0.0" }
 solana-curve25519 = { path = "curves/curve25519", version = "=3.0.0" }
 solana-define-syscall = "2.3.0"
 solana-derivation-path = "2.2.1"
@@ -558,6 +574,8 @@ solana-version = { path = "version", version = "=3.0.0" }
 solana-vote = { path = "vote", version = "=3.0.0" }
 solana-vote-interface = "2.2.6"
 solana-vote-program = { path = "programs/vote", version = "=3.0.0", default-features = false }
+solana-votor = { path = "votor", version = "=3.0.0" }
+solana-votor-messages = { path = "votor-messages", version = "=3.0.0" }
 solana-wen-restart = { path = "wen-restart", version = "=3.0.0" }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=3.0.0" }
 solana-zk-keygen = { path = "zk-keygen", version = "=3.0.0" }
