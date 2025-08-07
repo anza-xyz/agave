@@ -453,7 +453,7 @@ solana-loader-v4-interface = "2.2.1"
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=3.0.0" }
 solana-local-cluster = { path = "local-cluster", version = "=3.0.0" }
 solana-logger = "3.0.0"
-solana-low-pass-filter = { path = "low-pass-filter", version = "=3.0.0"}
+solana-low-pass-filter = { path = "low-pass-filter", version = "=3.0.0" }
 solana-measure = { path = "measure", version = "=3.0.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=3.0.0" }
 solana-message = "2.4.0"
