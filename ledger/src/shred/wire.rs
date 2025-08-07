@@ -151,8 +151,9 @@ fn get_data_size(shred: &[u8]) -> Result<u16, Error> {
 #[inline]
 pub(crate) fn get_data(shred: &[u8]) -> Result<&[u8], Error> {
     match get_shred_variant(shred)? {
-        ShredVariant::LegacyCode | ShredVariant::LegacyData => Err(Error::InvalidShredType),
-        ShredVariant::MerkleCode { .. } => Err(Error::InvalidShredType),
+        ShredVariant::LegacyCode | ShredVariant::LegacyData | ShredVariant::MerkleCode { .. } => {
+            Err(Error::InvalidShredType)
+        }
         ShredVariant::MerkleData {
             proof_size,
             chained,
@@ -417,7 +418,7 @@ pub(crate) fn corrupt_packet<R: Rng>(
                 let size = shred.len() - if resigned { SIGNATURE_BYTES } else { 0 };
                 size - offset..size
             })
-            .unwrap();
+            .expect("Only merkle shreds are possible");
         modify_packet(rng, packet, offsets);
     }
     // Assert that the signature no longer verifies.

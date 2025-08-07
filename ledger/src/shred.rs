@@ -214,12 +214,12 @@ pub enum ShredType {
     Code = 0b0101_1010,
 }
 
-#[allow(dead_code)] //legacy shreds
+#[allow(dead_code)] //legacy shreds have been removed, TODO remove unused enum variants
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 #[serde(into = "u8", try_from = "u8")]
 enum ShredVariant {
-    LegacyCode, // 0b0101_1010
-    LegacyData, // 0b1010_0101
+    LegacyCode, // 0b0101_1010 TO REMOVE
+    LegacyData, // 0b1010_0101 TO REMOVE
     // proof_size is the number of Merkle proof entries, and is encoded in the
     // lowest 4 bits of the binary representation. The first 4 bits identify
     // the shred variant:
