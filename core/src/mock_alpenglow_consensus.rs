@@ -1,4 +1,4 @@
-#![allow(clippy::arithmetic_side_effects, dead_code)]
+#![allow(clippy::arithmetic_side_effects)]
 use {
     crate::consensus::Stake,
     bytemuck::{Pod, Zeroable},
@@ -722,7 +722,7 @@ mod control_pubkey {
 }
 
 /// Actual on-chain state that controls the mock alpenglow test
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)] // Serialize is needed for tests only
 #[repr(C)]
 pub(crate) struct TestConfig {
     _version: u8,             // This is part of Record program header
@@ -747,7 +747,7 @@ mod tests {
     use {
         crate::mock_alpenglow_consensus::{
             compute_stake_weighted_means, get_state_for_slot, prep_and_sign_packet,
-            MockAlpenglowConsensus, PeerData, SendCommand, SharedState, StateArray,
+            MockAlpenglowConsensus, PeerData, SendCommand, SharedState, StateArray, TestConfig,
             VotorMessageType, MOCK_VOTE_HEADER_SIZE, MOCK_VOTE_PACKET_SIZE, NUM_VOTOR_TYPES,
         },
         crossbeam_channel::bounded,
@@ -764,6 +764,14 @@ mod tests {
             time::{Duration, Instant},
         },
     };
+
+    #[test]
+    fn test_record_size() {
+        assert_eq!(
+            bincode::serialized_size(&TestConfig::default()).unwrap(),
+            53
+        );
+    }
 
     #[test]
     fn test_mock_alpenglow_statemachine() {
