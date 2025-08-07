@@ -12,13 +12,9 @@ use {
     solana_perf::packet::deserialize_from_with_limit,
     solana_signature::Signature,
     static_assertions::const_assert_eq,
-    std::{io::Cursor, ops::Range},
+    std::io::Cursor,
 };
 
-// All payload including any zero paddings are signed.
-// Code and data shreds have the same payload size.
-pub(super) const SIGNED_MESSAGE_OFFSETS: Range<usize> =
-    SIZE_OF_SIGNATURE..ShredData::SIZE_OF_PAYLOAD;
 const_assert_eq!(ShredData::SIZE_OF_PAYLOAD, ShredCode::SIZE_OF_PAYLOAD);
 const_assert_eq!(ShredData::SIZE_OF_PAYLOAD, 1228);
 const_assert_eq!(ShredData::CAPACITY, 1051);
