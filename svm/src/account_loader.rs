@@ -320,6 +320,8 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
 // Once SIMD-0186 is implemented, 100% of accounts will be.
 impl<CB: TransactionProcessingCallback> TransactionProcessingCallback for AccountLoader<'_, CB> {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
+        // The returned last-modification-slot is a dummy value for now,
+        // but will later be used in IndexImplementation::V2 of the global program cache.
         self.do_load(pubkey).0.map(|account| (account, 0))
     }
 }
