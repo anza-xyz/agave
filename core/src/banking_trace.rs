@@ -6,6 +6,7 @@ use {
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
     solana_clock::Slot,
     solana_hash::Hash,
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         fs::{create_dir_all, remove_dir_all},
         io::{self, Write},
@@ -185,7 +186,6 @@ pub struct Channels {
     pub gossip_vote_receiver: BankingPacketReceiver,
 }
 
-#[allow(dead_code)]
 impl Channels {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn unified_sender(&self) -> &BankingPacketSender {
@@ -284,6 +284,11 @@ impl BankingTracer {
                 gossip_vote_receiver,
             }
         }
+    }
+
+    pub fn create_channels_for_scheduler_pool(&self, pool: &DefaultSchedulerPool) -> Channels {
+        let should_unify = pool.block_production_supported();
+        self.create_channels(should_unify)
     }
 
     fn create_channel(&self, label: ChannelLabel) -> (BankingPacketSender, BankingPacketReceiver) {
