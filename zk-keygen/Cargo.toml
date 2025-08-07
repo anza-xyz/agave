@@ -28,7 +28,7 @@ clap = { version = "3.1.5", features = ["cargo", "derive"] }
 dirs-next = { workspace = true }
 solana-clap-v3-utils = { workspace = true, features = ["elgamal"] }
 solana-remote-wallet = { workspace = true, features = ["default"] }
-solana-seed-derivable = "=2.2.1"
+solana-seed-derivable = "=3.0.0"
 solana-signer = "=2.2.1"
 solana-version = { workspace = true }
 solana-zk-token-sdk = { workspace = true }
