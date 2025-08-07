@@ -33,8 +33,6 @@ pub trait InvokeContextCallback {
 
 /// Runtime callbacks for transaction processing.
 pub trait TransactionProcessingCallback: InvokeContextCallback {
-    fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize>;
-
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)>;
 
     fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey) {}

@@ -322,12 +322,6 @@ impl<CB: TransactionProcessingCallback> TransactionProcessingCallback for Accoun
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
         self.do_load(pubkey).0.map(|account| (account, 0))
     }
-
-    fn account_matches_owners(&self, pubkey: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-        self.do_load(pubkey)
-            .0
-            .and_then(|account| owners.iter().position(|entry| entry == account.owner()))
-    }
 }
 
 // NOTE this is a required subtrait of TransactionProcessingCallback.
@@ -891,10 +885,6 @@ mod tests {
     impl InvokeContextCallback for TestCallbacks {}
 
     impl TransactionProcessingCallback for TestCallbacks {
-        fn account_matches_owners(&self, _account: &Pubkey, _owners: &[Pubkey]) -> Option<usize> {
-            None
-        }
-
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
             self.accounts_map
                 .get(pubkey)
