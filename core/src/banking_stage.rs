@@ -431,7 +431,7 @@ impl BankingStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new_central_scheduler(
+    fn new_central_scheduler(
         transaction_struct: TransactionStructure,
         use_greedy_scheduler: bool,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
