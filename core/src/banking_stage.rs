@@ -80,8 +80,12 @@ conditional_vis_mod!(
 );
 conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
 
-// Fixed thread size seems to be fastest on GCP setup
-pub const NUM_THREADS: u32 = 6;
+pub const DEFAULT_NUM_WORKERS: u32 = 4;
+pub const NUM_THREADS: u32 = {
+    DEFAULT_NUM_WORKERS
+    + 1 // scheduler thread
+    + 1 // vote-thread
+};
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
@@ -383,7 +387,7 @@ impl BankingStage {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
-            Self::num_threads(),
+            Self::default_or_env_num_workers(),
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
@@ -401,7 +405,7 @@ impl BankingStage {
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
-        num_threads: u32,
+        num_workers: u32,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
@@ -431,7 +435,7 @@ impl BankingStage {
         let non_vote_thread_hdls = Self::new_central_scheduler(
             transaction_struct,
             use_greedy_scheduler,
-            num_threads,
+            num_workers,
             non_vote_receiver,
             transaction_recorder.clone(),
             poh_recorder.clone(),
@@ -449,7 +453,7 @@ impl BankingStage {
     fn new_central_scheduler(
         transaction_struct: TransactionStructure,
         use_greedy_scheduler: bool,
-        num_threads: u32,
+        num_workers: u32,
         non_vote_receiver: BankingPacketReceiver,
         transaction_recorder: TransactionRecorder,
         poh_recorder: Arc<RwLock<PohRecorder>>,
@@ -466,7 +470,7 @@ impl BankingStage {
                 Self::spawn_scheduler_and_workers(
                     receive_and_buffer,
                     use_greedy_scheduler,
-                    num_threads,
+                    num_workers,
                     transaction_recorder,
                     poh_recorder,
                     bank_forks,
@@ -482,7 +486,7 @@ impl BankingStage {
                 Self::spawn_scheduler_and_workers(
                     receive_and_buffer,
                     use_greedy_scheduler,
-                    num_threads,
+                    num_workers,
                     transaction_recorder,
                     poh_recorder,
                     bank_forks,
@@ -496,7 +500,7 @@ impl BankingStage {
     fn spawn_scheduler_and_workers<R: ReceiveAndBuffer + Send + Sync + 'static>(
         receive_and_buffer: R,
         use_greedy_scheduler: bool,
-        num_threads: u32,
+        num_workers: u32,
         transaction_recorder: TransactionRecorder,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -504,10 +508,9 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
     ) -> Vec<JoinHandle<()>> {
         // + 1 for scheduler thread
-        let mut thread_hdls = Vec::with_capacity(num_threads as usize + 1);
+        let mut thread_hdls = Vec::with_capacity(num_workers as usize + 1);
 
         // Create channels for communication between scheduler and workers
-        let num_workers = (num_threads).saturating_sub(NUM_VOTE_PROCESSING_THREADS);
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
             (0..num_workers).map(|_| unbounded()).unzip();
         let (finished_work_sender, finished_work_receiver) = unbounded();
@@ -627,11 +630,12 @@ impl BankingStage {
             .unwrap()
     }
 
-    pub fn num_threads() -> u32 {
+    pub fn default_or_env_num_workers() -> u32 {
         cmp::max(
             env::var("SOLANA_BANKING_THREADS")
                 .map(|x| x.parse().unwrap_or(NUM_THREADS))
-                .unwrap_or(NUM_THREADS),
+                .unwrap_or(NUM_THREADS)
+                .saturating_sub(2), // - 2 for vote and scheduler threads
             MIN_TOTAL_THREADS,
         )
     }

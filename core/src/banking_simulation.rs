@@ -828,7 +828,7 @@ impl BankingSimulator {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
-            BankingStage::num_threads(),
+            BankingStage::default_or_env_num_workers(),
             None,
             replay_vote_sender,
             None,
