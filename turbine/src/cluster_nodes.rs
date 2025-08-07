@@ -395,9 +395,13 @@ fn cmp_nodes_stake(a: &Node, b: &Node) -> Ordering {
         })
 }
 
-// Dedups socket addresses so that if there are 2 nodes in the cluster with the
-// same TVU socket-addr, we only send shreds to one of them.
-// Additionally limits number of nodes at the same IP address to 1
+/// If set > 1 it allows the nodes to run behind a NAT.
+/// This usecase is currently not supported.
+const MAX_NUM_NODES_PER_IP_ADDRESS: usize = 1;
+
+/// Dedups socket addresses so that if there are 2 nodes in the cluster with the
+/// same TVU socket-addr, we only send shreds to one of them.
+/// Additionally limits number of nodes at the same IP address to 1
 fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
     const TVU_PROTOCOLS: [Protocol; 2] = [Protocol::UDP, Protocol::QUIC];
     let capacity = nodes.len().saturating_mul(2);
@@ -421,7 +425,7 @@ fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
                 .entry((protocol, addr.ip()))
                 .and_modify(|count| *count += 1)
                 .or_insert(1);
-            if !addrs.insert((protocol, addr)) || count > 1 {
+            if !addrs.insert((protocol, addr)) || count > MAX_NUM_NODES_PER_IP_ADDRESS {
                 // Remove the respective TVU address so that no more shreds are
                 // sent to this socket address.
                 node.remove_tvu_addr(protocol);
