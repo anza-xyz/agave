@@ -1863,7 +1863,7 @@ pub fn set_alpenglow_ticks(bank: &Bank) {
 /// Calculates how many ticks are needed for a block at `slot` with parent `parent_slot`
 ///
 /// If both `parent_slot` and `slot` are greater than or equal to `first_alpenglow_slot`, then
-/// only 1 tick is needed. This tick has no hashing guarentees, it is simply used as a signal
+/// only 1 tick is needed. This tick has no hashing guarantees, it is simply used as a signal
 /// for the end of the block.
 ///
 /// If both `parent_slot` and `slot` are less than `first_alpenglow_slot`, we need the
