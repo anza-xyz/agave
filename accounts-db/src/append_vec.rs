@@ -208,20 +208,6 @@ pub struct AppendVec {
 
 const PAGE_SIZE: usize = 4 * 1024;
 
-/// Create a reusable buffered reader tuned for full accounts' storage scan.
-pub(crate) fn new_full_accounts_scan_reader<'a>() -> impl RequiredLenBufFileRead<'a> {
-    // 128KiB covers a reasonably large distribution of typical account sizes.
-    // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
-    const MIN_CAPACITY: usize = 1024 * 128;
-    const MAX_CAPACITY: usize = STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
-    const BUFFER_SIZE: usize = PAGE_SIZE * 8;
-    BufReaderWithOverflow::new(
-        BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(),
-        MIN_CAPACITY,
-        MAX_CAPACITY,
-    )
-}
-
 pub struct AppendVecStat {
     pub open_as_mmap: AtomicU64,
     pub open_as_file_io: AtomicU64,
@@ -1351,6 +1337,20 @@ impl AppendVec {
     }
 }
 
+/// Create a reusable buffered reader tuned for scanning storages with account data.
+pub(crate) fn new_scan_accounts_reader<'a>() -> impl RequiredLenBufFileRead<'a> {
+    // 128KiB covers a reasonably large distribution of typical account sizes.
+    // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
+    const MIN_CAPACITY: usize = 1024 * 128;
+    const MAX_CAPACITY: usize = STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
+    const BUFFER_SIZE: usize = PAGE_SIZE * 8;
+    BufReaderWithOverflow::new(
+        BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(),
+        MIN_CAPACITY,
+        MAX_CAPACITY,
+    )
+}
+
 /// The per-account hash, stored in the AppendVec.
 ///
 /// This field is now obsolete, but it still lives in the file format.
@@ -1711,7 +1711,7 @@ pub mod tests {
         let av_file = AppendVec::new_from_file(&path.path, av_mmap.len(), StorageAccess::File)
             .unwrap()
             .0;
-        let mut reader = new_full_accounts_scan_reader();
+        let mut reader = new_scan_accounts_reader();
         for av in [&av_mmap, &av_file] {
             let mut index = 0;
             av.scan_accounts_stored_meta(&mut reader, |v| {
@@ -1761,7 +1761,7 @@ pub mod tests {
         assert_eq!(indexes[0], 0);
         assert_eq!(av.accounts_count(), size);
 
-        let mut reader = new_full_accounts_scan_reader();
+        let mut reader = new_scan_accounts_reader();
 
         let mut sample = 0;
         let now = Instant::now();

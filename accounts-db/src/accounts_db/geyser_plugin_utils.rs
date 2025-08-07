@@ -66,13 +66,13 @@ impl AccountsDb {
         if accounts_update_notifier.snapshot_notifications_enabled() {
             let mut storages = self.storage.all_storages();
             storages.sort_unstable_by_key(|storage| Reverse(storage.slot));
-            let mut reader = append_vec::new_full_accounts_scan_reader();
+            let mut reader = append_vec::new_scan_accounts_reader();
             storages
                 .iter()
                 .map(|storage| {
                     Self::notify_accounts_in_storage(
-                        &mut reader,
                         accounts_update_notifier.as_ref(),
+                        &mut reader,
                         storage,
                     )
                 })
@@ -103,8 +103,8 @@ impl AccountsDb {
     }
 
     fn notify_accounts_in_storage<'a>(
-        reader: &mut impl RequiredLenBufFileRead<'a>,
         notifier: &dyn AccountsUpdateNotifierInterface,
+        reader: &mut impl RequiredLenBufFileRead<'a>,
         storage: &'a AccountStorageEntry,
     ) -> GeyserPluginNotifyAtSnapshotRestoreStats {
         let mut pure_notify_time = Duration::ZERO;
