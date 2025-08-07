@@ -77,8 +77,8 @@ pub struct SchedulerCountMetricsInner {
     pub num_dropped_on_receive_transaction_checks: Saturating<usize>,
     /// Number of transactions that were dropped due to clearing.
     pub num_dropped_on_clear: Saturating<usize>,
-    /// Number of transactions that were dropped due to age and status checks.
-    pub num_dropped_on_age_and_status: Saturating<usize>,
+    /// Number of transactions that were dropped during cleaning.
+    pub num_dropped_on_clean: Saturating<usize>,
     /// Number of transactions that were dropped due to exceeded capacity.
     pub num_dropped_on_capacity: Saturating<usize>,
     /// Min prioritization fees in the transaction container
@@ -130,7 +130,7 @@ impl SchedulerCountMetricsInner {
             num_dropped_on_receive_transaction_checks:
                 Saturating(num_dropped_on_receive_transaction_checks),
             num_dropped_on_clear: Saturating(num_dropped_on_clear),
-            num_dropped_on_age_and_status: Saturating(num_dropped_on_age_and_status),
+            num_dropped_on_clean: Saturating(num_dropped_on_clean),
             num_dropped_on_capacity: Saturating(num_dropped_on_capacity),
             min_prioritization_fees: _min_prioritization_fees,
             max_prioritization_fees: _max_prioritization_fees,
@@ -167,8 +167,8 @@ impl SchedulerCountMetricsInner {
             ),
             ("num_dropped_on_clear", num_dropped_on_clear, i64),
             (
-                "num_dropped_on_age_and_status",
-                num_dropped_on_age_and_status,
+                "num_dropped_on_clean",
+                num_dropped_on_clean,
                 i64
             ),
             ("num_dropped_on_capacity", num_dropped_on_capacity, i64),
@@ -195,7 +195,7 @@ impl SchedulerCountMetricsInner {
             || self.num_dropped_on_validate_locks != Saturating(0)
             || self.num_dropped_on_receive_transaction_checks != Saturating(0)
             || self.num_dropped_on_clear != Saturating(0)
-            || self.num_dropped_on_age_and_status != Saturating(0)
+            || self.num_dropped_on_clean != Saturating(0)
             || self.num_dropped_on_capacity != Saturating(0)
     }
 
@@ -213,7 +213,7 @@ impl SchedulerCountMetricsInner {
         self.num_dropped_on_validate_locks = Saturating(0);
         self.num_dropped_on_receive_transaction_checks = Saturating(0);
         self.num_dropped_on_clear = Saturating(0);
-        self.num_dropped_on_age_and_status = Saturating(0);
+        self.num_dropped_on_clean = Saturating(0);
         self.num_dropped_on_capacity = Saturating(0);
         self.min_prioritization_fees = u64::MAX;
         self.max_prioritization_fees = 0;
