@@ -3,6 +3,7 @@ use {
     std::{net::IpAddr, num::NonZeroU32},
 };
 
+/// Limits the rate of connections per IP address.
 pub struct ConnectionRateLimiter {
     limiter: DefaultKeyedRateLimiter<IpAddr>,
 }
@@ -75,7 +76,17 @@ impl TotalConnectionRateLimiter {
 
 #[cfg(test)]
 pub mod test {
-    use {super::*, std::net::Ipv4Addr};
+    use {
+        super::*,
+        std::{
+            net::Ipv4Addr,
+            sync::{
+                atomic::{AtomicUsize, Ordering},
+                Arc,
+            },
+            time::{Duration, Instant},
+        },
+    };
 
     #[tokio::test]
     async fn test_total_connection_rate_limiter() {
@@ -103,5 +114,43 @@ pub mod test {
         assert!(limiter.is_allowed(&ip2));
         assert!(limiter.is_allowed(&ip2));
         assert!(!limiter.is_allowed(&ip2));
+    }
+
+    #[test]
+    fn test_bench_rate_limiter() {
+        let run_duration = Duration::from_secs(3);
+        let limiter = Arc::new(ConnectionRateLimiter::new(60 * 100));
+
+        let accepted = AtomicUsize::new(0);
+        let rejected = AtomicUsize::new(0);
+
+        let start = Instant::now();
+        let ip_pool = 2048;
+        let expected_total_accepts = (run_duration.as_secs() * 100 * ip_pool) as i64;
+        let workers = 8;
+
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    for i in 1.. {
+                        if Instant::now() > start + run_duration {
+                            break;
+                        }
+                        let ip = IpAddr::V4(Ipv4Addr::from_bits(i % ip_pool as u32));
+                        if limiter.is_allowed(&ip) {
+                            accepted.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            rejected.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                });
+            }
+        });
+
+        let acc = accepted.load(Ordering::Relaxed);
+        let rej = rejected.load(Ordering::Relaxed);
+        println!("Run complete over {:?} seconds", run_duration.as_secs());
+        println!("Accepted: {acc} (target {expected_total_accepts})");
+        println!("Rejected: {rej}");
     }
 }

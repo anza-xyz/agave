@@ -13,6 +13,7 @@
 mod ip_echo_client;
 mod ip_echo_server;
 pub mod sockets;
+pub mod token_bucket;
 
 #[cfg(feature = "dev-context-only-utils")]
 pub mod tooling_for_tests;

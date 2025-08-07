@@ -23,6 +23,7 @@ dev-context-only-utils = ["dep:pcap-file", "dep:hxdmp"]
 anyhow = { workspace = true }
 bincode = { workspace = true }
 bytes = { workspace = true }
+dashmap = { workspace = true, features = ["raw-api"] }
 hxdmp = { version = "0.2.1", optional = true }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -41,3 +42,7 @@ solana-logger = { workspace = true }
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "token_bucket"
+harness = false
