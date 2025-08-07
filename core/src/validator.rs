@@ -1076,11 +1076,11 @@ impl Validator {
                 )),
                 Some((&staked_nodes, &identity_keypair.pubkey())),
             ))),
-            (false, false) => Some(Arc::new(ConnectionCache::with_udp(
+            (true, true) => None,
+            (_, false) => Some(Arc::new(ConnectionCache::with_udp(
                 "connection_cache_vote_udp",
                 tpu_connection_pool_size,
             ))),
-            (true, _) => None,
         };
 
         // test-validator crate may start the validator in a tokio runtime
