@@ -91,7 +91,7 @@ type StateArray = [Mutex<SharedState>; NUM_VOTE_ROUNDS as usize];
 
 impl SharedState {
     fn reset(&mut self) -> HashMap<Pubkey, PeerData> {
-        let mut peers = HashMap::with_capacity(2048);
+        let mut peers = HashMap::with_capacity(NUM_TESTNET_VALIDATORS);
         std::mem::swap(&mut peers, &mut self.peers);
         self.current_slot = 0;
         self.total_staked = 0;
