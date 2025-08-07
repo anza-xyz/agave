@@ -4004,7 +4004,7 @@ mod tests {
     }
 
     /// Ensure that `split()` respects the minimum delegation requirements.  This applies to
-    /// both the source and destination acounts.  Thus, we have four permutations possible based on
+    /// both the source and destination accounts.  Thus, we have four permutations possible based on
     /// if each account's post-split delegation is equal-to (EQ) or less-than (LT) the minimum:
     ///
     ///  source | dest | result
