@@ -399,7 +399,7 @@ solana-client = { path = "client", version = "=3.0.0" }
 solana-client-traits = "2.2.1"
 solana-clock = "2.2.2"
 solana-cluster-type = "2.2.1"
-solana-commitment-config = "2.2.1"
+solana-commitment-config = "3.0.0"
 solana-compute-budget = { path = "compute-budget", version = "=3.0.0" }
 solana-compute-budget-instruction = { path = "compute-budget-instruction", version = "=3.0.0" }
 solana-compute-budget-interface = "2.2.2"
