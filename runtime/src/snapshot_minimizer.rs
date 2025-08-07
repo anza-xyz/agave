@@ -186,7 +186,7 @@ impl<'a> SnapshotMinimizer<'a> {
         });
     }
 
-    /// Remove accounts not in `minimized_accoun_set` from accounts_db
+    /// Remove accounts not in `minimized_account_set` from accounts_db
     fn minimize_accounts_db(&self) {
         let (minimized_slot_set, minimized_slot_set_measure) =
             measure_time!(self.get_minimized_slot_set(), "generate minimized slot set");
