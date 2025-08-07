@@ -7,7 +7,7 @@ use {
     solana_measure::measure_us,
     solana_transaction::versioned::VersionedTransaction,
     std::{
-        num::Saturating,
+        num::{Saturating, Wrapping},
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc,
@@ -18,7 +18,7 @@ use {
 
 #[derive(Default, Debug)]
 pub struct RecordTransactionsTimings {
-    pub processing_results_to_transactions_us: Saturating<u64>,
+    pub processing_results_to_transactions_us: Wrapping<u64>,
     pub hash_us: Saturating<u64>,
     pub poh_record_us: Saturating<u64>,
 }

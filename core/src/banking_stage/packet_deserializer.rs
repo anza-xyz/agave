@@ -6,7 +6,7 @@ use {
     crossbeam_channel::RecvTimeoutError,
     solana_perf::packet::PacketBatch,
     std::{
-        num::Saturating,
+        num::Wrapping,
         time::{Duration, Instant},
     },
 };
@@ -28,15 +28,15 @@ pub struct PacketDeserializer {
 #[derive(Default, Debug, PartialEq)]
 pub struct PacketReceiverStats {
     /// Number of packets passing sigverify
-    pub passed_sigverify_count: Saturating<u64>,
+    pub passed_sigverify_count: Wrapping<u64>,
     /// Number of packets failing sigverify
-    pub failed_sigverify_count: Saturating<u64>,
+    pub failed_sigverify_count: Wrapping<u64>,
     /// Number of packets dropped due to sanitization error
-    pub failed_sanitization_count: Saturating<u64>,
+    pub failed_sanitization_count: Wrapping<u64>,
     /// Number of packets dropped due to prioritization error
-    pub failed_prioritization_count: Saturating<u64>,
+    pub failed_prioritization_count: Wrapping<u64>,
     /// Number of vote packets dropped
-    pub invalid_vote_count: Saturating<u64>,
+    pub invalid_vote_count: Wrapping<u64>,
 }
 
 impl PacketReceiverStats {
@@ -86,7 +86,7 @@ impl PacketDeserializer {
         banking_batches: &[BankingPacketBatch],
     ) -> ReceivePacketResults {
         let mut packet_stats = PacketReceiverStats::default();
-        let mut errors = Saturating::<usize>(0);
+        let mut errors = Wrapping::<usize>(0);
         let deserialized_packets: Vec<_> = banking_batches
             .iter()
             .flat_map(|banking_batch| banking_batch.iter())
@@ -101,7 +101,7 @@ impl PacketDeserializer {
                 }
             })
             .collect();
-        let Saturating(errors) = errors;
+        let Wrapping(errors) = errors;
         packet_stats.passed_sigverify_count +=
             errors.saturating_add(deserialized_packets.len()) as u64;
         packet_stats.failed_sigverify_count += packet_count
@@ -176,8 +176,8 @@ mod tests {
     fn test_deserialize_and_collect_packets_empty() {
         let results = PacketDeserializer::deserialize_and_collect_packets(0, &[]);
         assert_eq!(results.deserialized_packets.len(), 0);
-        assert_eq!(results.packet_stats.passed_sigverify_count, Saturating(0));
-        assert_eq!(results.packet_stats.failed_sigverify_count, Saturating(0));
+        assert_eq!(results.packet_stats.passed_sigverify_count, Wrapping(0));
+        assert_eq!(results.packet_stats.failed_sigverify_count, Wrapping(0));
     }
 
     #[test]
@@ -192,8 +192,8 @@ mod tests {
             &[BankingPacketBatch::new(packet_batches)],
         );
         assert_eq!(results.deserialized_packets.len(), 2);
-        assert_eq!(results.packet_stats.passed_sigverify_count, Saturating(2));
-        assert_eq!(results.packet_stats.failed_sigverify_count, Saturating(0));
+        assert_eq!(results.packet_stats.passed_sigverify_count, Wrapping(2));
+        assert_eq!(results.packet_stats.failed_sigverify_count, Wrapping(0));
     }
 
     #[test]
@@ -213,7 +213,7 @@ mod tests {
             &[BankingPacketBatch::new(packet_batches)],
         );
         assert_eq!(results.deserialized_packets.len(), 1);
-        assert_eq!(results.packet_stats.passed_sigverify_count, Saturating(1));
-        assert_eq!(results.packet_stats.failed_sigverify_count, Saturating(1));
+        assert_eq!(results.packet_stats.passed_sigverify_count, Wrapping(1));
+        assert_eq!(results.packet_stats.failed_sigverify_count, Wrapping(1));
     }
 }
