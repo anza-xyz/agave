@@ -44,6 +44,35 @@ impl ReadOnlyAtomicSlot {
     }
 }
 
+/// Convenience type since often root/working banks are fetched together.
+#[derive(Clone)]
+pub struct SharableBanks {
+    root_bank: SharableBank,
+    working_bank: SharableBank,
+}
+
+impl SharableBanks {
+    pub fn root(&self) -> Arc<Bank> {
+        self.root_bank.load()
+    }
+
+    pub fn working(&self) -> Arc<Bank> {
+        self.working_bank.load()
+    }
+
+    pub fn load(&self) -> BankPair {
+        BankPair {
+            root_bank: self.root(),
+            working_bank: self.working(),
+        }
+    }
+}
+
+pub struct BankPair {
+    pub root_bank: Arc<Bank>,
+    pub working_bank: Arc<Bank>,
+}
+
 #[derive(Clone)]
 pub struct SharableBank(Arc<ArcSwap<Bank>>);
 
@@ -225,6 +254,13 @@ impl BankForks {
 
     pub fn sharable_working_bank(&self) -> SharableBank {
         self.working_bank.clone()
+    }
+
+    pub fn sharable_banks(&self) -> SharableBanks {
+        SharableBanks {
+            root_bank: self.sharable_root_bank(),
+            working_bank: self.sharable_working_bank(),
+        }
     }
 
     pub fn root_bank(&self) -> Arc<Bank> {
