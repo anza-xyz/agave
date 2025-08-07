@@ -308,7 +308,14 @@ impl RecentLeaderSlots {
         let max_index = recent_slots.len() - 1;
         let median_index = max_index / 2;
         let median_recent_slot = recent_slots[median_index];
-        let expected_current_slot = median_recent_slot + (max_index - median_index) as u64;
+
+        // recent_slots usually contains each slot twice because we subscribe to
+        // both FirstShredReceived and Completed events. If all shreds are
+        // legitimate, the list will contain ~2 entries per slot. Therefore, the
+        // number of unique slots between the median and the end is roughly half
+        // of that range.
+        let offset = recent_slots.len() as u64 / 4;
+        let expected_current_slot = median_recent_slot + offset;
         let max_reasonable_current_slot = expected_current_slot + MAX_SLOT_SKIP_DISTANCE;
 
         // Return the highest slot that doesn't exceed what we believe is a
@@ -348,8 +355,8 @@ mod tests {
         assert_slot(RecentLeaderSlots::from(recent_slots), 12);
 
         assert_slot(
-            RecentLeaderSlots::from(vec![0, 1 + MAX_SLOT_SKIP_DISTANCE]),
-            1 + MAX_SLOT_SKIP_DISTANCE,
+            RecentLeaderSlots::from(vec![0, MAX_SLOT_SKIP_DISTANCE]),
+            MAX_SLOT_SKIP_DISTANCE,
         );
         assert_slot(
             RecentLeaderSlots::from(vec![0, 2 + MAX_SLOT_SKIP_DISTANCE]),
