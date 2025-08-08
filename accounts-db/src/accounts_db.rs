@@ -6091,25 +6091,9 @@ impl AccountsDb {
             .fetch_add(measure.as_us(), Ordering::Relaxed);
     }
 
-    pub fn store_cached<'a>(&self, accounts: impl StorableAccounts<'a>) {
-        self.store_accounts_unfrozen(
-            accounts,
-            None,
-            UpdateIndexThreadSelection::PoolWithThreshold,
-        );
-    }
-
-    pub(crate) fn store_cached_inline_update_index<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-    ) {
-        self.store_accounts_unfrozen(accounts, transactions, UpdateIndexThreadSelection::Inline);
-    }
-
     /// Stores accounts in the write cache and updates the index.
     /// This should only be used for accounts that are unrooted (unfrozen)
-    fn store_accounts_unfrozen<'a>(
+    pub(crate) fn store_accounts_unfrozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
