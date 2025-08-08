@@ -123,7 +123,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     environments: &ProgramRuntimeEnvironments,
     pubkey: &Pubkey,
-    slot: Slot,
+    current_slot: Slot,
     execute_timings: &mut ExecuteTimings,
     reload: bool,
 ) -> Option<Arc<ProgramCacheEntry>> {
@@ -135,7 +135,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     let (load_result, _last_modification_slot) = load_program_accounts(callbacks, pubkey)?;
     let loaded_program = match load_result {
         ProgramAccountLoadResult::InvalidAccountData(owner) => Ok(
-            ProgramCacheEntry::new_tombstone(slot, owner, ProgramCacheEntryType::Closed),
+            ProgramCacheEntry::new_tombstone(current_slot, owner, ProgramCacheEntryType::Closed),
         ),
 
         ProgramAccountLoadResult::ProgramOfLoaderV1(program_account) => load_program_from_bytes(
@@ -160,56 +160,60 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
         )
         .map_err(|_| (0, ProgramCacheEntryOwner::LoaderV2)),
 
-        ProgramAccountLoadResult::ProgramOfLoaderV3(program_account, programdata_account, slot) => {
-            programdata_account
-                .data()
-                .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
-                .ok_or(Box::new(InstructionError::InvalidAccountData).into())
-                .and_then(|programdata| {
-                    load_program_from_bytes(
-                        &mut load_program_metrics,
-                        programdata,
-                        program_account.owner(),
-                        program_account
-                            .data()
-                            .len()
-                            .saturating_add(programdata_account.data().len()),
-                        slot,
-                        environments.program_runtime_v1.clone(),
-                        reload,
-                    )
-                })
-                .map_err(|_| (slot, ProgramCacheEntryOwner::LoaderV3))
-        }
-
-        ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot) => program_account
+        ProgramAccountLoadResult::ProgramOfLoaderV3(
+            program_account,
+            programdata_account,
+            deployment_slot,
+        ) => programdata_account
             .data()
-            .get(LoaderV4State::program_data_offset()..)
+            .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
             .ok_or(Box::new(InstructionError::InvalidAccountData).into())
-            .and_then(|elf_bytes| {
+            .and_then(|programdata| {
                 load_program_from_bytes(
                     &mut load_program_metrics,
-                    elf_bytes,
-                    &loader_v4::id(),
-                    program_account.data().len(),
-                    slot,
+                    programdata,
+                    program_account.owner(),
+                    program_account
+                        .data()
+                        .len()
+                        .saturating_add(programdata_account.data().len()),
+                    deployment_slot,
                     environments.program_runtime_v1.clone(),
                     reload,
                 )
             })
-            .map_err(|_| (slot, ProgramCacheEntryOwner::LoaderV4)),
+            .map_err(|_| (deployment_slot, ProgramCacheEntryOwner::LoaderV3)),
+
+        ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, deployment_slot) => {
+            program_account
+                .data()
+                .get(LoaderV4State::program_data_offset()..)
+                .ok_or(Box::new(InstructionError::InvalidAccountData).into())
+                .and_then(|elf_bytes| {
+                    load_program_from_bytes(
+                        &mut load_program_metrics,
+                        elf_bytes,
+                        &loader_v4::id(),
+                        program_account.data().len(),
+                        deployment_slot,
+                        environments.program_runtime_v1.clone(),
+                        reload,
+                    )
+                })
+                .map_err(|_| (deployment_slot, ProgramCacheEntryOwner::LoaderV4))
+        }
     }
-    .unwrap_or_else(|(slot, owner)| {
+    .unwrap_or_else(|(deployment_slot, owner)| {
         let env = environments.program_runtime_v1.clone();
         ProgramCacheEntry::new_tombstone(
-            slot,
+            deployment_slot,
             owner,
             ProgramCacheEntryType::FailedVerification(env),
         )
     });
 
     load_program_metrics.submit_datapoint(&mut execute_timings.details);
-    loaded_program.update_access_slot(slot);
+    loaded_program.update_access_slot(current_slot);
     Some(Arc::new(loaded_program))
 }
 
