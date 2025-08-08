@@ -654,7 +654,8 @@ fn run_test_remove_unrooted_slot(is_cached: bool, db: AccountsDb) {
     let ancestors = vec![(unrooted_slot, 1)].into_iter().collect();
     assert!(!db.accounts_index.contains(&key));
     if is_cached {
-        db.store_cached((unrooted_slot, &[(&key, &account0)][..]));
+        db.store_for_tests((unrooted_slot, &[(&key, &account0)][..]));
+        assert!(db.accounts_cache.contains(unrooted_slot));
     } else {
         let file_size = 4096; // value doesn't need to be exact, just big enough to hold account0
         let storage = db.create_and_insert_store(unrooted_slot, file_size, "");
@@ -2759,13 +2760,13 @@ fn test_store_clean_after_shrink() {
 
     let account = AccountSharedData::new(1, 16 * 4096, &Pubkey::default());
     let pubkey1 = solana_pubkey::new_rand();
-    accounts.store_cached((0, &[(&pubkey1, &account)][..]));
+    accounts.store_for_tests((0, &[(&pubkey1, &account)][..]));
 
     let pubkey2 = solana_pubkey::new_rand();
-    accounts.store_cached((0, &[(&pubkey2, &account)][..]));
+    accounts.store_for_tests((0, &[(&pubkey2, &account)][..]));
 
     let zero_account = AccountSharedData::new(0, 1, &Pubkey::default());
-    accounts.store_cached((1, &[(&pubkey1, &zero_account)][..]));
+    accounts.store_for_tests((1, &[(&pubkey1, &zero_account)][..]));
 
     // Add root 0 and flush separately
     accounts.add_root(0);
@@ -2871,7 +2872,7 @@ fn test_store_load_cached() {
     let key = Pubkey::default();
     let account0 = AccountSharedData::new(1, 0, &key);
     let slot = 0;
-    db.store_cached((slot, &[(&key, &account0)][..]));
+    db.store_for_tests((slot, &[(&key, &account0)][..]));
 
     // Load with no ancestors and no root will return nothing
     assert!(db
@@ -2903,7 +2904,7 @@ fn test_store_flush_load_cached() {
     let key = Pubkey::default();
     let account0 = AccountSharedData::new(1, 0, &key);
     let slot = 0;
-    db.store_cached((slot, &[(&key, &account0)][..]));
+    db.store_for_tests((slot, &[(&key, &account0)][..]));
     db.mark_slot_frozen(slot);
 
     // No root was added yet, requires an ancestor to find
@@ -2935,9 +2936,9 @@ fn test_flush_accounts_cache() {
     let unrooted_key = solana_pubkey::new_rand();
     let key5 = solana_pubkey::new_rand();
     let key6 = solana_pubkey::new_rand();
-    db.store_cached((unrooted_slot, &[(&unrooted_key, &account0)][..]));
-    db.store_cached((root5, &[(&key5, &account0)][..]));
-    db.store_cached((root6, &[(&key6, &account0)][..]));
+    db.store_for_tests((unrooted_slot, &[(&unrooted_key, &account0)][..]));
+    db.store_for_tests((root5, &[(&key5, &account0)][..]));
+    db.store_for_tests((root6, &[(&key6, &account0)][..]));
     for slot in &[unrooted_slot, root5, root6] {
         db.mark_slot_frozen(*slot);
     }
@@ -2996,7 +2997,7 @@ fn run_test_flush_accounts_cache_if_needed(num_roots: usize, num_unrooted: usize
     let num_slots = 2 * max_cache_slots();
     for i in 0..num_roots + num_unrooted {
         let key = Pubkey::new_unique();
-        db.store_cached((i as Slot, &[(&key, &account0)][..]));
+        db.store_for_tests((i as Slot, &[(&key, &account0)][..]));
         keys.push(key);
         db.mark_slot_frozen(i as Slot);
         if i < num_roots {
@@ -3049,8 +3050,8 @@ fn test_read_only_accounts_cache() {
     let account_key = Pubkey::new_unique();
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
     let slot1_account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
-    db.store_cached((0, &[(&account_key, &zero_lamport_account)][..]));
-    db.store_cached((1, &[(&account_key, &slot1_account)][..]));
+    db.store_for_tests((0, &[(&account_key, &zero_lamport_account)][..]));
+    db.store_for_tests((1, &[(&account_key, &slot1_account)][..]));
 
     db.add_root(0);
     db.add_root(1);
@@ -3072,7 +3073,7 @@ fn test_read_only_accounts_cache() {
         .unwrap();
     assert_eq!(account.lamports(), 1);
     assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
-    db.store_cached((2, &[(&account_key, &zero_lamport_account)][..]));
+    db.store_for_tests((2, &[(&account_key, &zero_lamport_account)][..]));
     assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
     let account = db
         .load_with_fixed_root(&Ancestors::default(), &account_key)
@@ -3088,8 +3089,8 @@ fn test_load_with_read_only_accounts_cache() {
     let account_key = Pubkey::new_unique();
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
     let slot1_account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
-    db.store_cached((0, &[(&account_key, &zero_lamport_account)][..]));
-    db.store_cached((1, &[(&account_key, &slot1_account)][..]));
+    db.store_for_tests((0, &[(&account_key, &zero_lamport_account)][..]));
+    db.store_for_tests((1, &[(&account_key, &slot1_account)][..]));
 
     db.add_root(0);
     db.add_root(1);
@@ -3113,7 +3114,7 @@ fn test_load_with_read_only_accounts_cache() {
     assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
     assert_eq!(slot, 1);
 
-    db.store_cached((2, &[(&account_key, &zero_lamport_account)][..]));
+    db.store_for_tests((2, &[(&account_key, &zero_lamport_account)][..]));
     let account = db.load_account_with(&Ancestors::default(), &account_key, |_| false);
     assert!(account.is_none());
     assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
@@ -3125,7 +3126,7 @@ fn test_load_with_read_only_accounts_cache() {
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
 
     let slot2_account = AccountSharedData::new(2, 1, AccountSharedData::default().owner());
-    db.store_cached((2, &[(&account_key, &slot2_account)][..]));
+    db.store_for_tests((2, &[(&account_key, &slot2_account)][..]));
     let (account, slot) = db
         .load_account_with(&Ancestors::default(), &account_key, |_| false)
         .unwrap();
@@ -3134,7 +3135,7 @@ fn test_load_with_read_only_accounts_cache() {
     assert_eq!(slot, 2);
 
     let slot2_account = AccountSharedData::new(2, 1, AccountSharedData::default().owner());
-    db.store_cached((2, &[(&account_key, &slot2_account)][..]));
+    db.store_for_tests((2, &[(&account_key, &slot2_account)][..]));
     let (account, slot) = db
         .load_account_with(&Ancestors::default(), &account_key, |_| true)
         .unwrap();
@@ -3154,8 +3155,8 @@ fn test_flush_cache_clean() {
     let account_key = Pubkey::new_unique();
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
     let slot1_account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
-    db.store_cached((0, &[(&account_key, &zero_lamport_account)][..]));
-    db.store_cached((1, &[(&account_key, &slot1_account)][..]));
+    db.store_for_tests((0, &[(&account_key, &zero_lamport_account)][..]));
+    db.store_for_tests((1, &[(&account_key, &slot1_account)][..]));
 
     db.add_root(0);
     db.add_root(1);
@@ -3203,16 +3204,16 @@ fn test_flush_cache_dont_clean_zero_lamport_account() {
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
     // Store into slot 0, and then flush the slot to storage
-    db.store_cached((0, &[(&zero_lamport_account_key, &slot0_account)][..]));
+    db.store_for_tests((0, &[(&zero_lamport_account_key, &slot0_account)][..]));
     // Second key keeps other lamport account entry for slot 0 alive,
     // preventing clean of the zero_lamport_account in slot 1.
-    db.store_cached((0, &[(&other_account_key, &slot0_account)][..]));
+    db.store_for_tests((0, &[(&other_account_key, &slot0_account)][..]));
     db.add_root(0);
     db.flush_accounts_cache(true, None);
     assert!(db.storage.get_slot_storage_entry(0).is_some());
 
     // Store into slot 1, a dummy slot that will be dead and purged before flush
-    db.store_cached((1, &[(&zero_lamport_account_key, &zero_lamport_account)][..]));
+    db.store_for_tests((1, &[(&zero_lamport_account_key, &zero_lamport_account)][..]));
 
     // Store into slot 2, which makes all updates from slot 1 outdated.
     // This means slot 1 is a dead slot. Later, slot 1 will be cleaned/purged
@@ -3220,7 +3221,7 @@ fn test_flush_cache_dont_clean_zero_lamport_account() {
     // the refcount of `zero_lamport_account_key` because cached keys do not bump
     // the refcount in the index. This means clean should *not* remove
     // `zero_lamport_account_key` from slot 2
-    db.store_cached((2, &[(&zero_lamport_account_key, &zero_lamport_account)][..]));
+    db.store_for_tests((2, &[(&zero_lamport_account_key, &zero_lamport_account)][..]));
     db.add_root(1);
     db.add_root(2);
 
@@ -3272,7 +3273,7 @@ fn test_flush_cache_populates_uncleaned_pubkeys() {
     let account = AccountSharedData::new(10, 0, &Pubkey::default());
 
     // storing accounts doesn't add anything to uncleaned_pubkeys
-    accounts_db.store_cached((slot, [(pubkey, account)].as_slice()));
+    accounts_db.store_for_tests((slot, [(pubkey, account)].as_slice()));
     assert_eq!(accounts_db.get_len_of_slots_with_uncleaned_pubkeys(), 0);
 
     // ...but ensure that rooting and flushing the write cache does
@@ -3357,11 +3358,11 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
                             /        \
                           1            2 (root)
     */
-    db.store_cached((0, &[(&account_key, &zero_lamport_account)][..]));
-    db.store_cached((1, &[(&account_key, &slot1_account)][..]));
+    db.store_for_tests((0, &[(&account_key, &zero_lamport_account)][..]));
+    db.store_for_tests((1, &[(&account_key, &slot1_account)][..]));
     // Fodder for the scan so that the lock on `account_key` is not held
-    db.store_cached((1, &[(&account_key2, &slot1_account)][..]));
-    db.store_cached((2, &[(&account_key, &slot2_account)][..]));
+    db.store_for_tests((1, &[(&account_key2, &slot1_account)][..]));
+    db.store_for_tests((2, &[(&account_key, &slot2_account)][..]));
 
     let max_scan_root = 0;
     db.add_root(max_scan_root);
@@ -3455,7 +3456,7 @@ define_accounts_db_test!(test_alive_bytes, |accounts_db| {
 
     for data_size in 0..num_keys {
         let account = AccountSharedData::new(1, data_size, &Pubkey::default());
-        accounts_db.store_cached((slot, &[(&Pubkey::new_unique(), &account)][..]));
+        accounts_db.store_for_tests((slot, &[(&Pubkey::new_unique(), &account)][..]));
     }
 
     accounts_db.add_root(slot);
@@ -3514,7 +3515,7 @@ define_accounts_db_test!(
             let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
             let key = Pubkey::new_unique();
-            accounts_db.store_cached((slot, &[(&key, &zero_account)][..]));
+            accounts_db.store_for_tests((slot, &[(&key, &zero_account)][..]));
             pubkeys.push(key);
         }
 
@@ -3582,7 +3583,7 @@ fn setup_accounts_db_cache_clean(
         .take(num_slots)
         .collect();
     if scan_slot.is_some() {
-        accounts_db.store_cached(
+        accounts_db.store_for_tests(
             // Store it in a slot that isn't returned in `slots`
             (
                 stall_slot,
@@ -3599,7 +3600,7 @@ fn setup_accounts_db_cache_clean(
     for slot in &slots {
         for key in &keys[*slot as usize..] {
             let space = 1; // 1 byte allows us to track by size
-            accounts_db.store_cached((
+            accounts_db.store_for_tests((
                 *slot,
                 &[(key, &AccountSharedData::new(1, space, &Pubkey::default()))][..],
             ));
@@ -3642,7 +3643,7 @@ fn test_accounts_db_cache_clean_dead_slots() {
     slots.push(alive_slot);
     for key in &keys {
         // Store a slot that overwrites all previous keys, rendering all previous keys dead
-        accounts_db.store_cached((
+        accounts_db.store_for_tests((
             alive_slot,
             &[(key, &AccountSharedData::new(1, 0, &Pubkey::default()))][..],
         ));
@@ -3946,7 +3947,7 @@ fn test_shrink_unref() {
     db.add_root(0);
 
     // Make account_key1 in slot 0 outdated by updating in rooted slot 1
-    db.store_cached((1, &[(&account_key1, &account1)][..]));
+    db.store_for_tests((1, &[(&account_key1, &account1)][..]));
     db.add_root(1);
     // Flushes all roots
     db.flush_accounts_cache(true, None);
@@ -3962,7 +3963,7 @@ fn test_shrink_unref() {
     db.shrink_candidate_slots(&epoch_schedule);
 
     // Make slot 0 dead by updating the remaining key
-    db.store_cached((2, &[(&account_key2, &account1)][..]));
+    db.store_for_tests((2, &[(&account_key2, &account1)][..]));
     db.add_root(2);
 
     // Flushes all roots
@@ -3992,12 +3993,12 @@ fn test_clean_drop_dead_zero_lamport_single_ref_accounts() {
 
     // slot 0 - stored a 1-lamport account
     let slot = 0;
-    accounts_db.store_cached((slot, &[(&key1, &one_account)][..]));
+    accounts_db.store_for_tests((slot, &[(&key1, &one_account)][..]));
     accounts_db.add_root(slot);
 
     // slot 1 - store a 0 -lamport account
     let slot = 1;
-    accounts_db.store_cached((slot, &[(&key1, &zero_account)][..]));
+    accounts_db.store_for_tests((slot, &[(&key1, &zero_account)][..]));
     accounts_db.add_root(slot);
 
     accounts_db.flush_accounts_cache(true, None);
@@ -4025,8 +4026,8 @@ fn test_clean_drop_dead_storage_handle_zero_lamport_single_ref_accounts() {
 
     // Make account_key1 in slot 0 outdated by updating in rooted slot 1 with a zero lamport account
     // And store one additional live account to make the store still alive after clean.
-    db.store_cached((1, &[(&account_key1, &account0)][..]));
-    db.store_cached((1, &[(&account_key2, &account1)][..]));
+    db.store_for_tests((1, &[(&account_key1, &account0)][..]));
+    db.store_for_tests((1, &[(&account_key2, &account1)][..]));
     db.add_root(1);
     // Flushes all roots
     db.flush_accounts_cache(true, None);
@@ -4066,7 +4067,7 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     db.add_root_and_flush_write_cache(0);
 
     // Make account_key1 in slot 0 outdated by updating in rooted slot 1 with a zero lamport account
-    db.store_cached((1, &[(&account_key1, &account0)][..]));
+    db.store_for_tests((1, &[(&account_key1, &account0)][..]));
     db.add_root(1);
     // Flushes all roots
     db.flush_accounts_cache(true, None);
@@ -4096,7 +4097,7 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     assert!(!db.shrink_candidate_slots.lock().unwrap().contains(&1));
 
     // Now, make slot 0 dead by updating the remaining key
-    db.store_cached((2, &[(&account_key2, &account1)][..]));
+    db.store_for_tests((2, &[(&account_key2, &account1)][..]));
     db.add_root(2);
 
     // Flushes all roots
@@ -4238,7 +4239,7 @@ fn test_load_account_and_cache_flush_race() {
     let db = Arc::new(db);
     let pubkey = Arc::new(Pubkey::new_unique());
     let exit = Arc::new(AtomicBool::new(false));
-    db.store_cached((
+    db.store_for_tests((
         0,
         &[(
             pubkey.as_ref(),
@@ -4262,7 +4263,7 @@ fn test_load_account_and_cache_flush_race() {
                         return;
                     }
                     account.set_lamports(slot + 1);
-                    db.store_cached((slot, &[(pubkey.as_ref(), &account)][..]));
+                    db.store_for_tests((slot, &[(pubkey.as_ref(), &account)][..]));
                     db.add_root(slot);
                     sleep(Duration::from_millis(RACY_SLEEP_MS));
                     db.flush_accounts_cache(true, None);
@@ -4398,7 +4399,7 @@ fn test_cache_flush_delayed_remove_unrooted_race() {
     let num_trials = 10;
     for _ in 0..num_trials {
         let pubkey = Pubkey::new_unique();
-        db.store_cached((slot, &[(&pubkey, &account)][..]));
+        db.store_for_tests((slot, &[(&pubkey, &account)][..]));
         // Wait for both threads to finish
         flush_trial_start_sender.send(()).unwrap();
         remove_trial_start_sender.send(()).unwrap();
@@ -4482,7 +4483,7 @@ fn test_cache_flush_remove_unrooted_race_multiple_slots() {
         let slot_to_pubkey_map: HashMap<Slot, Pubkey> = (0..num_cached_slots)
             .map(|slot| {
                 let pubkey = Pubkey::new_unique();
-                db.store_cached((slot, &[(&pubkey, &account)][..]));
+                db.store_for_tests((slot, &[(&pubkey, &account)][..]));
                 (slot, pubkey)
             })
             .collect();
@@ -4897,17 +4898,17 @@ define_accounts_db_test!(
 
         let slot1: Slot = 1;
         let account = AccountSharedData::new(111, space, &owner);
-        accounts_db.store_cached((slot1, &[(&pubkey, &account)][..]));
+        accounts_db.store_for_tests((slot1, &[(&pubkey, &account)][..]));
         accounts_db.add_root_and_flush_write_cache(slot1);
 
         let slot2: Slot = 2;
         let account = AccountSharedData::new(222, space, &owner);
-        accounts_db.store_cached((slot2, &[(&pubkey, &account)][..]));
+        accounts_db.store_for_tests((slot2, &[(&pubkey, &account)][..]));
         accounts_db.add_root_and_flush_write_cache(slot2);
 
         let slot3: Slot = 3;
         let account = AccountSharedData::new(0, space, &owner);
-        accounts_db.store_cached((slot3, &[(&pubkey, &account)][..]));
+        accounts_db.store_for_tests((slot3, &[(&pubkey, &account)][..]));
         accounts_db.add_root_and_flush_write_cache(slot3);
 
         assert_eq!(accounts_db.ref_count_for_pubkey(&pubkey), 3);
