@@ -344,6 +344,7 @@ pub struct BatchedTransactionErrorDetails {
 
 pub struct BankingStage {
     vote_thread_hdl: JoinHandle<()>,
+    non_vote_exit_signal: Arc<AtomicBool>,
     non_vote_thread_hdls: Vec<JoinHandle<()>>,
 }
 
@@ -432,7 +433,7 @@ impl BankingStage {
             block_production_method,
             BlockProductionMethod::CentralSchedulerGreedy
         );
-        let non_vote_thread_hdls = Self::new_central_scheduler(
+        let (non_vote_exit_signal, non_vote_thread_hdls) = Self::new_central_scheduler(
             transaction_struct,
             use_greedy_scheduler,
             num_workers,
@@ -446,6 +447,7 @@ impl BankingStage {
 
         Self {
             vote_thread_hdl,
+            non_vote_exit_signal,
             non_vote_thread_hdls,
         }
     }
@@ -460,7 +462,7 @@ impl BankingStage {
         bank_forks: Arc<RwLock<BankForks>>,
         committer: Committer,
         log_messages_bytes_limit: Option<usize>,
-    ) -> Vec<JoinHandle<()>> {
+    ) -> (Arc<AtomicBool>, Vec<JoinHandle<()>>) {
         match transaction_struct {
             TransactionStructure::Sdk => {
                 let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
@@ -506,7 +508,10 @@ impl BankingStage {
         bank_forks: Arc<RwLock<BankForks>>,
         committer: Committer,
         log_messages_bytes_limit: Option<usize>,
-    ) -> Vec<JoinHandle<()>> {
+    ) -> (Arc<AtomicBool>, Vec<JoinHandle<()>>) {
+        // Create an exit signal for the scheduler and workers
+        let exit = Arc::new(AtomicBool::new(false));
+
         // + 1 for scheduler thread
         let mut thread_hdls = Vec::with_capacity(num_workers as usize + 1);
 
@@ -522,7 +527,7 @@ impl BankingStage {
             let id = (index as u32).saturating_add(NUM_VOTE_PROCESSING_THREADS);
             let consume_worker = ConsumeWorker::new(
                 id,
-                Arc::new(AtomicBool::new(false)),
+                exit.clone(),
                 work_receiver,
                 Consumer::new(
                     committer.clone(),
@@ -550,13 +555,14 @@ impl BankingStage {
         // assignment without introducing `dyn`.
         macro_rules! spawn_scheduler {
             ($scheduler:ident) => {
+                let exit = exit.clone();
                 thread_hdls.push(
                     Builder::new()
                         .name("solBnkTxSched".to_string())
                         .spawn(move || {
                             let scheduler_controller = SchedulerController::new(
-                                Arc::new(AtomicBool::new(false)),
-                                decision_maker.clone(),
+                                exit,
+                                decision_maker,
                                 receive_and_buffer,
                                 bank_forks,
                                 $scheduler,
@@ -593,7 +599,7 @@ impl BankingStage {
             spawn_scheduler!(scheduler);
         }
 
-        thread_hdls
+        (exit, thread_hdls)
     }
 
     fn spawn_vote_worker(
@@ -644,6 +650,8 @@ impl BankingStage {
 
     pub fn join(self) -> thread::Result<()> {
         self.vote_thread_hdl.join()?;
+
+        self.non_vote_exit_signal.store(true, Ordering::Relaxed);
         for bank_thread_hdl in self.non_vote_thread_hdls {
             bank_thread_hdl.join()?;
         }
