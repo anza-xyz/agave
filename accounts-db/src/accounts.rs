@@ -4,7 +4,7 @@ use {
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
             AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, ScanAccountStorageData,
-            ScanStorageResult,
+            ScanStorageResult, UpdateIndexThreadSelection,
         },
         accounts_index::{IndexKey, ScanConfig, ScanError, ScanOrder, ScanResult},
         ancestors::Ancestors,
@@ -552,12 +552,19 @@ impl Accounts {
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
     ) {
-        self.accounts_db
-            .store_cached_inline_update_index(accounts, transactions);
+        self.accounts_db.store_accounts_unfrozen(
+            accounts,
+            transactions,
+            UpdateIndexThreadSelection::Inline,
+        );
     }
 
     pub fn store_accounts_cached<'a>(&self, accounts: impl StorableAccounts<'a>) {
-        self.accounts_db.store_cached(accounts)
+        self.accounts_db.store_accounts_unfrozen(
+            accounts,
+            None,
+            UpdateIndexThreadSelection::PoolWithThreshold,
+        );
     }
 
     /// Add a slot to root.  Root slots cannot be purged
