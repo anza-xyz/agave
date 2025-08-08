@@ -9,9 +9,6 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[features]
-agave-unstable-api = []
-
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-xdp = { workspace = true }
@@ -34,7 +31,7 @@ solana-entry = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
-solana-ledger = { workspace = true }
+solana-ledger = { workspace = true, features = ["agave-unstable-api"] }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
@@ -65,14 +62,12 @@ caps = { workspace = true }
 assert_matches = { workspace = true }
 bencher = { workspace = true }
 bs58 = { workspace = true }
-conditional-mod = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-ledger = { workspace = true, features = ["agave-unstable-api","dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-transaction = { workspace = true }
-solana-turbine = { path = ".", features = ["agave-unstable-api"] }
 test-case = { workspace = true }
 
 [[bench]]
