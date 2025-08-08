@@ -22,8 +22,6 @@ mod geyser_plugin_utils;
 pub mod stats;
 pub mod tests;
 
-use std::thread;
-
 #[cfg(test)]
 use crate::append_vec::StoredAccountMeta;
 #[cfg(feature = "dev-context-only-utils")]
@@ -94,6 +92,7 @@ use {
             atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
             Arc, Condvar, Mutex, RwLock,
         },
+        thread,
         thread::sleep,
         time::{Duration, Instant},
     },
