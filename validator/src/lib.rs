@@ -1,15 +1,21 @@
 #![allow(clippy::arithmetic_side_effects)]
+#[cfg(not(target_os = "windows"))]
+use signal_hook::{consts::SIGTERM, consts::SIGUSR1, iterator::Signals};
 pub use solana_test_validator as test_validator;
 use {
     console::style,
     fd_lock::{RwLock, RwLockWriteGuard},
     indicatif::{ProgressDrawTarget, ProgressStyle},
+    solana_validator_exit::Exit,
     std::{
         borrow::Cow,
+        env,
         fmt::Display,
         fs::{File, OpenOptions},
         path::Path,
         process::exit,
+        sync::Arc,
+        thread::JoinHandle,
         time::Duration,
     },
 };
@@ -19,6 +25,79 @@ pub mod bootstrap;
 pub mod cli;
 pub mod commands;
 pub mod dashboard;
+
+#[cfg(unix)]
+fn redirect_stderr(filename: &str) {
+    use std::os::unix::io::AsRawFd;
+    match OpenOptions::new().create(true).append(true).open(filename) {
+        Ok(file) => unsafe {
+            libc::dup2(file.as_raw_fd(), libc::STDERR_FILENO);
+        },
+        Err(err) => eprintln!("Unable to open {filename}: {err}"),
+    }
+}
+
+#[cfg_attr(not(unix), allow(unused_variables))]
+fn create_signal_handler_thread(
+    logfile: Option<String>,
+    validator_exit: Arc<std::sync::RwLock<Exit>>,
+) -> Option<JoinHandle<()>> {
+    // Default to RUST_BACKTRACE=1 for more informative validator logs
+    if env::var_os("RUST_BACKTRACE").is_none() {
+        env::set_var("RUST_BACKTRACE", "1")
+    }
+
+    #[cfg(unix)]
+    {
+        solana_logger::setup_with_default_filter();
+        if let Some(ref logfile) = logfile {
+            redirect_stderr(logfile);
+        }
+
+        use log::{info, warn};
+        let mut signals = Signals::new([SIGTERM, SIGUSR1]).unwrap_or_else(|err| {
+            eprintln!("Unable to register SIGUSR1 handler: {err:?}");
+            exit(1);
+        });
+
+        std::thread::Builder::new()
+            .name("solSigHandler".into())
+            .spawn(move || {
+                for signal in signals.forever() {
+                    match signal {
+                        SIGTERM => {
+                            info!("Received SIGTERM ({}). Initiating graceful exit.", signal);
+                            validator_exit.write().unwrap().exit();
+                        }
+                        SIGUSR1 => {
+                            if let Some(ref logfile) = logfile {
+                                info!(
+                                    "Received SIGUSR1 ({}), reopening log file: {:?}",
+                                    signal, logfile
+                                );
+                                redirect_stderr(logfile);
+                            }
+                        }
+                        s => warn!("Received unknown signal: {}", s),
+                    }
+                }
+            })
+            .ok()
+    }
+    #[cfg(not(unix))]
+    {
+        println!("Signal handling is not supported on this platform.");
+        match logfile {
+            Some(logfile) => {
+                solana_logger::setup_file_with_default(&logfile, solana_logger::DEFAULT_FILTER);
+            }
+            None => {
+                solana_logger::setup_with_default_filter();
+            }
+        }
+        None
+    }
+}
 
 pub fn format_name_value(name: &str, value: &str) -> String {
     format!("{} {}", style(name).bold(), value)
