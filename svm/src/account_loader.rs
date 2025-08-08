@@ -159,7 +159,7 @@ pub struct FeesOnlyTransaction {
 // account states mid-batch.
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
-    loaded_accounts: AHashMap<Pubkey, AccountSharedData>,
+    loaded_accounts: AHashMap<Pubkey, (AccountSharedData, Slot)>,
     callbacks: &'a CB,
     pub(crate) feature_set: &'a SVMFeatureSet,
 }
@@ -180,7 +180,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         if let Some(slot_history) =
             account_overrides.and_then(|overrides| overrides.get(&slot_history::id()))
         {
-            loaded_accounts.insert(slot_history::id(), slot_history.clone());
+            loaded_accounts.insert(slot_history::id(), (slot_history.clone(), 0));
         }
 
         Self {
@@ -235,11 +235,12 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     // This is a general purpose function suitable for usage outside initial transaction loading.
     pub(crate) fn load_account(&mut self, account_key: &Pubkey) -> Option<AccountSharedData> {
         match self.do_load(account_key) {
-            (Some(account), true) => {
-                self.loaded_accounts.insert(*account_key, account.clone());
+            (Some((account, slot)), true) => {
+                self.loaded_accounts
+                    .insert(*account_key, (account.clone(), slot));
                 Some(account)
             }
-            (account, false) => account,
+            (account_and_slot, false) => account_and_slot.map(|(account, _slot)| account),
             (None, true) => unreachable!(),
         }
     }
@@ -247,20 +248,20 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     // Internal helper for core loading logic to prevent code duplication. Returns a bool
     // indicating whether the account came from accounts-db, which allows wrappers with
     // &mut self to insert the account. Wrappers with &self ignore it.
-    fn do_load(&self, account_key: &Pubkey) -> (Option<AccountSharedData>, bool) {
-        if let Some(account) = self.loaded_accounts.get(account_key) {
+    fn do_load(&self, account_key: &Pubkey) -> (Option<(AccountSharedData, Slot)>, bool) {
+        if let Some((account, slot)) = self.loaded_accounts.get(account_key) {
             // If lamports is 0, a previous transaction deallocated this account.
             // We return None instead of the account we found so it can be created fresh.
             // We *never* remove accounts, or else we would fetch stale state from accounts-db.
             let option_account = if account.lamports() == 0 {
                 None
             } else {
-                Some(account.clone())
+                Some((account.clone(), *slot))
             };
 
             (option_account, false)
-        } else if let Some((account, _slot)) = self.callbacks.get_account_shared_data(account_key) {
-            (Some(account), true)
+        } else if let Some((account, slot)) = self.callbacks.get_account_shared_data(account_key) {
+            (Some((account, slot)), true)
         } else {
             (None, false)
         }
@@ -270,11 +271,13 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         &mut self,
         message: &impl SVMMessage,
         executed_transaction: &ExecutedTransaction,
+        slot: Slot,
     ) {
         if executed_transaction.was_successful() {
             self.update_accounts_for_successful_tx(
                 message,
                 &executed_transaction.loaded_transaction.accounts,
+                slot,
             );
         } else {
             self.update_accounts_for_failed_tx(
@@ -285,8 +288,9 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
 
     pub(crate) fn update_accounts_for_failed_tx(&mut self, rollback_accounts: &RollbackAccounts) {
         for (account_address, account) in rollback_accounts {
+            let (_account, slot) = self.loaded_accounts.get(account_address).unwrap();
             self.loaded_accounts
-                .insert(*account_address, account.clone());
+                .insert(*account_address, (account.clone(), *slot));
         }
     }
 
@@ -294,6 +298,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         &mut self,
         message: &impl SVMMessage,
         transaction_accounts: &[TransactionAccount],
+        slot: Slot,
     ) {
         for (i, (address, account)) in (0..message.account_keys().len()).zip(transaction_accounts) {
             if !message.is_writable(i) {
@@ -308,7 +313,8 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
                 continue;
             }
 
-            self.loaded_accounts.insert(*address, account.clone());
+            self.loaded_accounts
+                .insert(*address, (account.clone(), slot));
         }
     }
 }
@@ -320,9 +326,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
 // Once SIMD-0186 is implemented, 100% of accounts will be.
 impl<CB: TransactionProcessingCallback> TransactionProcessingCallback for AccountLoader<'_, CB> {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
-        // The returned last-modification-slot is a dummy value for now,
-        // but will later be used in IndexImplementation::V2 of the global program cache.
-        self.do_load(pubkey).0.map(|account| (account, 0))
+        self.do_load(pubkey).0
     }
 }
 
