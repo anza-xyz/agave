@@ -1232,20 +1232,15 @@ fn finish_erasure_batch(
     // Write common and {data,coding} headers into shreds' payload.
     fn write_headers(shred: &mut Shred) -> Result<(), bincode::Error> {
         match shred {
-            Shred::ShredCode(shred) => {
-                bincode::serialize_into(
-                    &mut shred.payload.as_mut()[..],
-                    &(&shred.common_header, &shred.coding_header),
-                )?;
-            }
-            Shred::ShredData(shred) => {
-                bincode::serialize_into(
-                    &mut shred.payload.as_mut()[..],
-                    &(&shred.common_header, &shred.data_header),
-                )?;
-            }
+            Shred::ShredCode(shred) => bincode::serialize_into(
+                &mut shred.payload.as_mut()[..],
+                &(&shred.common_header, &shred.coding_header),
+            ),
+            Shred::ShredData(shred) => bincode::serialize_into(
+                &mut shred.payload.as_mut()[..],
+                &(&shred.common_header, &shred.data_header),
+            ),
         }
-        Ok(())
     }
     match thread_pool {
         None => shreds.iter_mut().try_for_each(write_headers),
