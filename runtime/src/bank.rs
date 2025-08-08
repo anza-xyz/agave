@@ -4631,7 +4631,7 @@ impl Bank {
                     .spawn(move || {
                         info!("Verifying accounts in background...");
                         let start = Instant::now();
-                        let num_threads = accounts_db
+                        let num_threads = accounts_db_
                             .num_hash_threads
                             .unwrap_or_else(accounts_db::default_num_hash_threads);
                         let (calculated_accounts_lt_hash, lattice_verify_time) =
