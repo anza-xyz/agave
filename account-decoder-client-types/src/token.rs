@@ -37,7 +37,7 @@ pub fn real_number_string(amount: u64, decimals: u8) -> String {
     let decimals = decimals as usize;
     if decimals > 0 {
         // Left-pad zeros to decimals + 1, so we at least have an integer zero
-        format!("{:0width$}", amount, width = decimals + 1)
+        format!("{:0width$}", amount, width = decimals + 1);
         // Add the decimal point (Sorry, "," locales!)
         s.insert(s.len() - decimals, '.');
         s
