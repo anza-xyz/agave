@@ -568,6 +568,8 @@ pub mod tests {
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )
         };
+        let connection_cache = Arc::new(connection_cache);
+        let client_option = VoteClientOption::ConnectionCache(connection_cache.clone());
 
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
@@ -628,7 +630,8 @@ pub mod tests {
             cluster_slots,
             wen_restart_repair_slots,
             None,
-            Arc::new(connection_cache),
+            Some(&connection_cache),
+            client_option,
         )
         .expect("assume success");
         if enable_wen_restart {

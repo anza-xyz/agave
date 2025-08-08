@@ -371,9 +371,10 @@ enum SendVoteError {
     TransportError(#[from] TransportError),
 }
 
-fn send_vote_transaction(
+// Helper for sending vote transaction with generic VoteClient
+fn send_vote_transaction<V: VoteClient + ?Sized>(
     transaction: &Transaction,
-    vote_client: Arc<dyn VoteClient + Send + Sync>,
+    vote_client: &V,
 ) -> Result<(), SendVoteError> {
     let buf = serialize(transaction)?;
     vote_client.send_transactions_in_batch(vec![buf]);
@@ -467,7 +468,8 @@ impl VotingService {
         alpenglow_socket: Option<UdpSocket>,
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> Self {
-        let vote_client: Arc<dyn VoteClient + Send + Sync> = match vote_client {
+        // Pattern match and construct the concrete vote client type
+        match vote_client {
             VoteClientOption::ConnectionCache(connection_cache) => {
                 let my_tpu_address = cluster_info.my_contact_info().tpu_vote(Protocol::QUIC)
                     .unwrap_or_else(|| {
@@ -478,12 +480,33 @@ impl VotingService {
                     poh_recorder.clone(),
                 ));
 
-                Arc::new(ConnectionCacheClient::new(
+                let vote_client = ConnectionCacheClient::new(
                     connection_cache,
                     my_tpu_address,
                     leader_info,
                     1, // Forward to the next leader only
-                ))
+                );
+
+                let thread_hdl = Builder::new()
+                    .name("solVoteService".to_string())
+                    .spawn({
+                        let cluster_info = cluster_info.clone();
+                        let poh_recorder = poh_recorder.clone();
+                        let tower_storage = tower_storage.clone();
+                        move || {
+                            for vote_op in vote_receiver.iter() {
+                                Self::handle_vote(
+                                    &cluster_info,
+                                    &poh_recorder,
+                                    tower_storage.as_ref(),
+                                    vote_op,
+                                    &vote_client,
+                                );
+                            }
+                        }
+                    })
+                    .unwrap();
+                Self { thread_hdl }
             }
             VoteClientOption::TpuClientNext(
                 identity_keypair,
@@ -500,20 +523,18 @@ impl VotingService {
                     poh_recorder.clone(),
                 ));
 
-                Arc::new(TpuClientNextClient::new(
+                let vote_client = TpuClientNextClient::new(
                     client_runtime,
                     my_tpu_address,
                     leader_info,
                     Some(identity_keypair),
                     vote_client_socket,
                     cancel,
-                ))
-            }
-        };
+                );
 
-        let thread_hdl = Builder::new()
-            .name("solVoteService".to_string())
-            .spawn({
+                let thread_hdl = Builder::new()
+                    .name("solVoteService".to_string())
+                    .spawn({
                 let mut mock_alpenglow = alpenglow_socket.map(|s| {
                     MockAlpenglowConsensus::new(
                         s,
@@ -521,8 +542,12 @@ impl VotingService {
                         EpochSpecs::from(bank_forks.clone()),
                     )
                 });
-                move || {
-                    for vote_op in vote_receiver.iter() {
+                {
+                        let cluster_info = cluster_info.clone();
+                        let poh_recorder = poh_recorder.clone();
+                        let tower_storage = tower_storage.clone();
+                        move || {
+                                for vote_op in vote_receiver.iter() {
                         // Figure out if we are casting a vote for a new slot, and what slot it is for
                         let vote_slot = match vote_op {
                             VoteOp::PushVote {
@@ -533,13 +558,13 @@ impl VotingService {
                             _ => None,
                         };
                         // perform all the normal vote handling routines
-                        Self::handle_vote(
-                            &cluster_info,
-                            &poh_recorder,
-                            tower_storage.as_ref(),
-                            vote_op,
-                            vote_client.clone(),
-                        );
+                                    Self::handle_vote(
+                                        &cluster_info,
+                                        &poh_recorder,
+                                        tower_storage.as_ref(),
+                                        vote_op,
+                                        &vote_client,
+                                    );
                         // trigger mock alpenglow vote if we have just cast an actual vote
                         if let Some(slot) = vote_slot {
                             if let Some(ag) = mock_alpenglow.as_mut() {
@@ -551,18 +576,22 @@ impl VotingService {
                     if let Some(ag) = mock_alpenglow {
                         let _ = ag.join();
                     }
-                }
-            })
-            .unwrap();
-        Self { thread_hdl }
+                            }
+                        }
+                    })
+                    .unwrap();
+                Self { thread_hdl }
+            }
+        }
     }
 
-    pub fn handle_vote(
+    // Generic version of handle_vote
+    pub fn handle_vote<V: VoteClient + Send + Sync>(
         cluster_info: &ClusterInfo,
         poh_recorder: &RwLock<PohRecorder>,
         tower_storage: &dyn TowerStorage,
         vote_op: VoteOp,
-        vote_client: Arc<dyn VoteClient + Send + Sync>,
+        vote_client: &V,
     ) {
         if let VoteOp::PushVote { saved_tower, .. } = &vote_op {
             let mut measure = Measure::start("tower storage save");
