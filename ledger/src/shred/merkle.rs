@@ -801,14 +801,15 @@ pub(super) fn recover(
         batch
     };
     // Obtain erasure encoded shards from the shreds and reconstruct shreds.
-    let mut shards: Vec<(_, bool)> = shreds
+    let mut shards = shreds
         .iter_mut()
         .zip(&mask)
         .map(|(shred, &mask)| Ok((shred.erasure_shard_mut()?, mask)))
-        .collect::<Result<_, Error>>()?;
+        .collect::<Result<Vec<_>, Error>>()?;
     reed_solomon_cache
         .get(num_data_shreds, num_coding_shreds)?
         .reconstruct(&mut shards)?;
+    // Drop the mut guards to allow further mutation below.
     drop(shards);
     // Verify and sanitize recovered shreds, re-compute the Merkle tree and set
     // the merkle proof on the recovered shreds.
