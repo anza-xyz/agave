@@ -541,6 +541,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             account_loader.update_accounts_for_successful_tx(
                                 tx,
                                 &executed_tx.loaded_transaction.accounts,
+                                self.slot,
                             );
                             // Also update local program cache with modifications made by the
                             // transaction, if it executed successfully.
