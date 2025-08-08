@@ -522,6 +522,7 @@ impl BankingStage {
             let id = (index as u32).saturating_add(NUM_VOTE_PROCESSING_THREADS);
             let consume_worker = ConsumeWorker::new(
                 id,
+                Arc::new(AtomicBool::new(false)),
                 work_receiver,
                 Consumer::new(
                     committer.clone(),
