@@ -4333,6 +4333,7 @@ pub(crate) mod tests {
             },
             replay_stage::ReplayStage,
             vote_simulator::{self, VoteSimulator},
+            voting_service::{ClusterTpuInfo, ConnectionCacheClient},
         },
         blockstore_processor::{
             confirm_full_slot, fill_blockstore_slot_with_ticks, process_bank_0, ProcessOptions,
@@ -7563,6 +7564,36 @@ pub(crate) mod tests {
         assert_eq!(heaviest_subtree_fork_choice.best_overall_slot().0, 4);
     }
 
+    fn create_connection_cache_client(
+        cluster_info: Arc<ClusterInfo>,
+        poh_recorder: Arc<RwLock<PohRecorder>>,
+    ) -> ConnectionCacheClient<ClusterTpuInfo> {
+        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
+            ConnectionCache::new_quic(
+                "connection_cache_vote_quic",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        } else {
+            ConnectionCache::with_udp(
+                "connection_cache_vote_udp",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        };
+
+        let leader_info = Some(ClusterTpuInfo::new(
+            cluster_info.clone(),
+            poh_recorder.clone(),
+        ));
+
+        let protocol = connection_cache.protocol();
+        ConnectionCacheClient::new(
+            Arc::new(connection_cache),
+            cluster_info.my_contact_info().tpu_vote(protocol).unwrap(),
+            leader_info,
+            1, // Forward to the next leader only
+        )
+    }
+
     #[test]
     fn test_replay_stage_refresh_last_vote() {
         let ReplayBlockstoreComponents {
@@ -7575,6 +7606,8 @@ pub(crate) mod tests {
         } = replay_blockstore_components(None, 10, None::<GenerateVotes>);
         let tower_storage = NullTowerStorage::default();
 
+        let cluster_info = Arc::new(cluster_info);
+        let poh_recorder = Arc::new(poh_recorder);
         let VoteSimulator {
             mut validator_keypairs,
             bank_forks,
@@ -7648,24 +7681,15 @@ pub(crate) mod tests {
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
 
-        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic(
-                "connection_cache_vote_quic",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        } else {
-            ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        };
+        let vote_client =
+            create_connection_cache_client(cluster_info.clone(), poh_recorder.clone());
 
         crate::voting_service::VotingService::handle_vote(
             &cluster_info,
             &poh_recorder,
             &tower_storage,
             vote_info,
-            Arc::new(connection_cache),
+            &vote_client,
         );
 
         let mut cursor = Cursor::default();
@@ -7753,24 +7777,15 @@ pub(crate) mod tests {
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
 
-        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic(
-                "connection_cache_vote_quic",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        } else {
-            ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        };
+        let vote_client =
+            create_connection_cache_client(cluster_info.clone(), poh_recorder.clone());
 
         crate::voting_service::VotingService::handle_vote(
             &cluster_info,
             &poh_recorder,
             &tower_storage,
             vote_info,
-            Arc::new(connection_cache),
+            &vote_client,
         );
 
         let votes = cluster_info.get_votes(&mut cursor);
@@ -7881,24 +7896,15 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic(
-                "connection_cache_vote_quic",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        } else {
-            ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        };
+        let vote_client =
+            create_connection_cache_client(cluster_info.clone(), poh_recorder.clone());
 
         crate::voting_service::VotingService::handle_vote(
             &cluster_info,
             &poh_recorder,
             &tower_storage,
             vote_info,
-            Arc::new(connection_cache),
+            &vote_client,
         );
 
         assert!(last_vote_refresh_time.last_refresh_time > clone_refresh_time);
@@ -7997,8 +8003,8 @@ pub(crate) mod tests {
         has_new_vote_been_rooted: bool,
         voting_sender: &Sender<VoteOp>,
         voting_receiver: &Receiver<VoteOp>,
-        cluster_info: &ClusterInfo,
-        poh_recorder: &RwLock<PohRecorder>,
+        cluster_info: Arc<ClusterInfo>,
+        poh_recorder: Arc<RwLock<PohRecorder>>,
         tower_storage: &dyn TowerStorage,
         make_it_landing: bool,
         cursor: &mut Cursor,
@@ -8023,24 +8029,15 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic(
-                "connection_cache_vote_quic",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        } else {
-            ConnectionCache::with_udp(
-                "connection_cache_vote_udp",
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            )
-        };
+        let vote_client =
+            create_connection_cache_client(cluster_info.clone(), poh_recorder.clone());
 
         crate::voting_service::VotingService::handle_vote(
-            cluster_info,
-            poh_recorder,
+            &cluster_info,
+            &poh_recorder,
             tower_storage,
             vote_info,
-            Arc::new(connection_cache),
+            &vote_client,
         );
 
         let votes = cluster_info.get_votes(cursor);
@@ -8091,6 +8088,8 @@ pub(crate) mod tests {
             ..
         } = replay_blockstore_components(None, 10, None::<GenerateVotes>);
         let tower_storage = NullTowerStorage::default();
+        let cluster_info = Arc::new(cluster_info);
+        let poh_recorder = Arc::new(poh_recorder);
 
         let VoteSimulator {
             mut validator_keypairs,
@@ -8148,8 +8147,8 @@ pub(crate) mod tests {
             has_new_vote_been_rooted,
             &voting_sender,
             &voting_receiver,
-            &cluster_info,
-            &poh_recorder,
+            cluster_info.clone(),
+            poh_recorder.clone(),
             &tower_storage,
             true,
             &mut cursor,
@@ -8166,8 +8165,8 @@ pub(crate) mod tests {
             has_new_vote_been_rooted,
             &voting_sender,
             &voting_receiver,
-            &cluster_info,
-            &poh_recorder,
+            cluster_info,
+            poh_recorder,
             &tower_storage,
             false,
             &mut cursor,
