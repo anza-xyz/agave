@@ -87,7 +87,8 @@ impl PubkeyValidityProof {
         Self { Y, z }
     }
 
-    /// Verifies a public key validity proof.
+    /// Verifies a public key validity proof. The function rejects identity public keys
+    /// even if the verifying algebraic relation holds.
     ///
     /// * `elgamal_pubkey` - The ElGamal public key to be proved
     /// * `transcript` - The transcript that does the bookkeeping for the Fiat-Shamir heuristic
@@ -100,6 +101,10 @@ impl PubkeyValidityProof {
 
         // extract the relevant scalar and Ristretto points from the input
         let P = elgamal_pubkey.get_point();
+
+        if P.is_identity() {
+            return Err(SigmaProofVerificationError::PubkeyIsIdentity.into());
+        }
 
         // include Y to transcript and extract challenge
         transcript.validate_and_append_point(b"Y", &self.Y)?;
@@ -146,6 +151,8 @@ mod test {
         crate::{
             encryption::pod::elgamal::PodElGamalPubkey, sigma_proofs::pod::PodPubkeyValidityProof,
         },
+        bytemuck::Zeroable,
+        curve25519_dalek::traits::Identity,
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
         std::str::FromStr,
@@ -190,5 +197,29 @@ mod test {
         let mut verifier_transcript = Transcript::new(b"test");
 
         proof.verify(&pubkey, &mut verifier_transcript).unwrap();
+    }
+
+    #[test]
+    fn test_pubkey_proof_verify_identity() {
+        // An identity ElGamal pubkey
+        let identity_pubkey: ElGamalPubkey = PodElGamalPubkey::zeroed().try_into().unwrap();
+
+        // A dummy proof
+        let proof = PubkeyValidityProof {
+            Y: RistrettoPoint::identity().compress(),
+            z: Scalar::ZERO,
+        };
+
+        let mut verifier_transcript = Transcript::new(b"test");
+        let err = proof
+            .verify(&identity_pubkey, &mut verifier_transcript)
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            PubkeyValidityProofVerificationError::from(
+                SigmaProofVerificationError::PubkeyIsIdentity
+            )
+        );
     }
 }
