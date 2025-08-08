@@ -28,7 +28,7 @@ pub enum WeightingMode {
     // alpha in [1.0, 2.0], smoothed over time, scaled up by 1,000,000 to avoid floating-point math
     Dynamic {
         alpha: u64,    // current alpha (fixed-point, 1,000,000–2,000,000)
-        filter_k: u64, // default: 611,000
+        filter_k: u64, // default: 611,015
         tc_ms: u64,    // IIR time-constant (ms)
     },
 }
@@ -101,8 +101,8 @@ impl PushActiveSet {
     }
 
     pub(crate) fn apply_cfg(&mut self, cfg: &WeightingConfig) {
-        info!("greg: apply_cfg");
-        match (&mut self.mode, WeightingConfigTyped::from(cfg)) {
+        let config_type = WeightingConfigTyped::from(cfg);
+        match (&mut self.mode, config_type) {
             (WeightingMode::Static, WeightingConfigTyped::Static) => (),
             (current_mode, WeightingConfigTyped::Static) => {
                 // Dynamic -> Static: Switch mode
@@ -115,7 +115,6 @@ impl PushActiveSet {
                 },
                 WeightingConfigTyped::Dynamic { tc },
             ) => {
-                info!("greg: apply_cfg dynamic -> dynamic");
                 // Dynamic -> Dynamic: Update parameters if needed
                 let new_tc_ms = match tc {
                     TimeConstant::Value(ms) => ms,
@@ -127,10 +126,9 @@ impl PushActiveSet {
                     info!("Recomputed filter K = {} (tc_ms = {})", *filter_k, *tc_ms);
                 }
             }
-            (WeightingMode::Static, WeightingConfigTyped::Dynamic { .. }) => {
-                // Static -> Dynamic: Switch mode
-                info!("Switching mode: Static -> Dynamic");
-                self.mode = WeightingMode::from(WeightingConfigTyped::from(cfg));
+            (current_mode, WeightingConfigTyped::Dynamic { .. }) => {
+                info!("Switching mode: {:?} -> Dynamic", current_mode);
+                self.mode = WeightingMode::from(config_type);
                 if let WeightingMode::Dynamic {
                     filter_k, tc_ms, ..
                 } = self.mode
@@ -772,15 +770,20 @@ mod tests {
     }
 
     #[test]
+    fn test_record_size() {
+        assert_eq!(
+            bincode::serialized_size(&WeightingConfig::default()).unwrap(),
+            58
+        );
+    }
+
+    #[test]
     fn test_apply_cfg_static_to_static() {
         // Static -> Static: No change
         let mut active_set = PushActiveSet::new(WeightingMode::Static);
         assert_eq!(active_set.mode, WeightingMode::Static);
 
-        active_set.apply_cfg(&WeightingConfig {
-            weighting_mode: WEIGHTING_MODE_STATIC,
-            tc_ms: 0,
-        });
+        active_set.apply_cfg(&WeightingConfig::new_for_test(WEIGHTING_MODE_STATIC, 0));
         assert_eq!(active_set.mode, WeightingMode::Static);
     }
 
@@ -790,10 +793,7 @@ mod tests {
         let mut active_set = PushActiveSet::new_dynamic();
         assert!(matches!(active_set.mode, WeightingMode::Dynamic { .. }));
 
-        active_set.apply_cfg(&WeightingConfig {
-            weighting_mode: WEIGHTING_MODE_STATIC,
-            tc_ms: 0,
-        });
+        active_set.apply_cfg(&WeightingConfig::new_for_test(WEIGHTING_MODE_STATIC, 0));
         assert_eq!(active_set.mode, WeightingMode::Static);
     }
 
@@ -803,10 +803,7 @@ mod tests {
         let mut active_set = PushActiveSet::new(WeightingMode::Static);
         assert_eq!(active_set.mode, WeightingMode::Static);
 
-        let config = WeightingConfig {
-            weighting_mode: WEIGHTING_MODE_DYNAMIC,
-            tc_ms: 0,
-        };
+        let config = WeightingConfig::new_for_test(WEIGHTING_MODE_DYNAMIC, 0);
         active_set.apply_cfg(&config);
 
         match active_set.mode {
@@ -832,10 +829,7 @@ mod tests {
         let mut active_set = PushActiveSet::new_dynamic();
         let original_mode = active_set.mode;
 
-        let config = WeightingConfig {
-            weighting_mode: WEIGHTING_MODE_DYNAMIC,
-            tc_ms: 0,
-        };
+        let config = WeightingConfig::new_for_test(WEIGHTING_MODE_DYNAMIC, 0);
         active_set.apply_cfg(&config);
 
         // Mode should be unchanged since tc is the same
@@ -849,10 +843,7 @@ mod tests {
 
         // Change to a different tc value
         let new_tc_ms = 45_000;
-        let config = WeightingConfig {
-            weighting_mode: WEIGHTING_MODE_DYNAMIC,
-            tc_ms: new_tc_ms,
-        };
+        let config = WeightingConfig::new_for_test(WEIGHTING_MODE_DYNAMIC, new_tc_ms);
         active_set.apply_cfg(&config);
 
         match active_set.mode {
@@ -878,37 +869,31 @@ mod tests {
         let mut active_set = PushActiveSet::new(WeightingMode::Static);
 
         // Static -> Dynamic
-        active_set.apply_cfg(&WeightingConfig {
-            weighting_mode: WEIGHTING_MODE_DYNAMIC,
-            tc_ms: 20_000,
-        });
+        active_set.apply_cfg(&WeightingConfig::new_for_test(
+            WEIGHTING_MODE_DYNAMIC,
+            20_000,
+        ));
         assert!(matches!(
             active_set.mode,
             WeightingMode::Dynamic { tc_ms: 20_000, .. }
         ));
 
         // Dynamic -> Dynamic (change tc)
-        active_set.apply_cfg(&WeightingConfig {
-            weighting_mode: WEIGHTING_MODE_DYNAMIC,
-            tc_ms: 40_000,
-        });
+        active_set.apply_cfg(&WeightingConfig::new_for_test(
+            WEIGHTING_MODE_DYNAMIC,
+            40_000,
+        ));
         assert!(matches!(
             active_set.mode,
             WeightingMode::Dynamic { tc_ms: 40_000, .. }
         ));
 
         // Dynamic -> Static
-        active_set.apply_cfg(&WeightingConfig {
-            weighting_mode: WEIGHTING_MODE_STATIC,
-            tc_ms: 0,
-        });
+        active_set.apply_cfg(&WeightingConfig::new_for_test(WEIGHTING_MODE_STATIC, 0));
         assert_eq!(active_set.mode, WeightingMode::Static);
 
         // Static -> Dynamic (with default tc)
-        active_set.apply_cfg(&WeightingConfig {
-            weighting_mode: WEIGHTING_MODE_DYNAMIC,
-            tc_ms: 0,
-        });
+        active_set.apply_cfg(&WeightingConfig::new_for_test(WEIGHTING_MODE_DYNAMIC, 0));
         assert!(
             matches!(active_set.mode, WeightingMode::Dynamic { tc_ms, .. } if tc_ms == DEFAULT_TC_MS)
         );
@@ -922,10 +907,7 @@ mod tests {
         let test_cases = [10_000, 30_000, 60_000, 120_000];
 
         for tc_ms in test_cases {
-            let config = WeightingConfig {
-                weighting_mode: WEIGHTING_MODE_DYNAMIC,
-                tc_ms,
-            };
+            let config = WeightingConfig::new_for_test(WEIGHTING_MODE_DYNAMIC, tc_ms);
             active_set.apply_cfg(&config);
 
             let expected_filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, tc_ms);
