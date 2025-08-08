@@ -378,12 +378,6 @@ impl Index<usize> for AccountStoragesOrderer<'_> {
 /// A thread-safe, lock-free iterator for consuming `AccountStorageEntry` values
 /// from an `AccountStoragesOrderer` across multiple threads.
 ///
-/// # Overview
-/// This type enables multiple threads to iterate over the same ordered collection
-/// **concurrently** without requiring locks. Internally, it uses an `AtomicUsize`
-/// to track the current position, so each call to [`next`] returns a unique
-/// element until the collection is exhausted.
-///
 /// Unlike standard iterators, `AccountStoragesConcurrentConsumer`:
 /// - Is **shared** between threads via references (`&self`), not moved.
 /// - Allows safe, parallel consumption where each item is yielded at most once.
@@ -401,6 +395,8 @@ impl<'a> AccountStoragesConcurrentConsumer<'a> {
         }
     }
 
+    /// Takes the next `AccountStorageEntry` moving shared consume position
+    /// until the end of the entries source is reached.
     pub fn next(&'a self) -> Option<&'a AccountStorageEntry> {
         let index = self.current_index.fetch_add(1, Ordering::Relaxed);
         if index < self.orderer.len() {
