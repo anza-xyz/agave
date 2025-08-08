@@ -209,7 +209,7 @@ mod serde_snapshot_tests {
             .collect();
         for (i, pubkey) in pubkeys.iter().enumerate() {
             let account = AccountSharedData::new(i as u64 + 1, 0, &Pubkey::default());
-            accounts.store_accounts_cached((slot, [(pubkey, &account)].as_slice()));
+            accounts.store_accounts_seq((slot, [(pubkey, &account)].as_slice()), None);
         }
         check_accounts_local(&accounts, &pubkeys, 100);
         accounts.accounts_db.add_root_and_flush_write_cache(slot);
