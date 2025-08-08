@@ -1,7 +1,7 @@
-#![feature(test)]
-extern crate test;
+#![allow(clippy::arithmetic_side_effects)]
 
 use {
+    bencher::{benchmark_group, benchmark_main, black_box, Bencher},
     bincode::serialize,
     rand::{rngs::SmallRng, Rng, SeedableRng},
     solana_accounts_db::ancestors::Ancestors,
@@ -9,11 +9,9 @@ use {
     solana_runtime::{bank::BankStatusCache, status_cache::*},
     solana_sha256_hasher::hash,
     solana_signature::{Signature, SIGNATURE_BYTES},
-    test::Bencher,
 };
 
-#[bench]
-fn bench_status_cache_serialize(bencher: &mut Bencher) {
+fn bench_status_cache_serialize(b: &mut Bencher) {
     let mut status_cache = BankStatusCache::default();
     status_cache.add_root(0);
     status_cache.clear();
@@ -30,13 +28,12 @@ fn bench_status_cache_serialize(bencher: &mut Bencher) {
         }
     }
     assert!(status_cache.roots().contains(&0));
-    bencher.iter(|| {
+    b.iter(|| {
         let _ = serialize(&status_cache.root_slot_deltas()).unwrap();
     });
 }
 
-#[bench]
-fn bench_status_cache_root_slot_deltas(bencher: &mut Bencher) {
+fn bench_status_cache_root_slot_deltas(b: &mut Bencher) {
     let mut status_cache = BankStatusCache::default();
 
     // fill the status cache
@@ -48,7 +45,7 @@ fn bench_status_cache_root_slot_deltas(bencher: &mut Bencher) {
         status_cache.add_root(*slot);
     }
 
-    bencher.iter(|| test::black_box(status_cache.root_slot_deltas()));
+    b.iter(|| black_box(status_cache.root_slot_deltas()));
 }
 
 fn fill_status_cache(status_cache: &mut BankStatusCache, max_cache_entries: u64, num_txs: usize) {
@@ -70,8 +67,7 @@ fn fill_status_cache_slot(
     }
 }
 
-#[bench]
-fn bench_status_cache_check_and_insert(bencher: &mut Bencher) {
+fn bench_status_cache_check_and_insert(b: &mut Bencher) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
     let max_cache_entries = MAX_CACHE_ENTRIES as u64;
@@ -97,7 +93,7 @@ fn bench_status_cache_check_and_insert(bencher: &mut Bencher) {
         tx_hashes.push(Signature::from(sigbytes));
     }
 
-    bencher.iter(|| {
+    b.iter(|| {
         for tx_hash in &tx_hashes {
             if status_cache
                 .get_status(*tx_hash, &blockhash, &ancestors)
@@ -109,17 +105,25 @@ fn bench_status_cache_check_and_insert(bencher: &mut Bencher) {
     });
 }
 
-#[bench]
-fn bench_status_cache_add_roots(bencher: &mut Bencher) {
+fn bench_status_cache_add_roots(b: &mut Bencher) {
     // Fill up the status cache to better match what intense runtime usage would
     // look like.
     let max_cache_entries = MAX_CACHE_ENTRIES as u64;
     let mut status_cache = BankStatusCache::default();
     fill_status_cache(&mut status_cache, max_cache_entries, 100_000);
     let start_slot = max_cache_entries + 1;
-    bencher.iter(|| {
+    b.iter(|| {
         for root in start_slot..start_slot + max_cache_entries {
             status_cache.add_root(root);
         }
     });
 }
+
+benchmark_group!(
+    benches,
+    bench_status_cache_serialize,
+    bench_status_cache_root_slot_deltas,
+    bench_status_cache_check_and_insert,
+    bench_status_cache_add_roots
+);
+benchmark_main!(benches);

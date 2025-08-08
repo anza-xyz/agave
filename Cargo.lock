@@ -10206,6 +10206,7 @@ dependencies = [
  "arrayref",
  "assert_matches",
  "base64 0.22.1",
+ "bencher",
  "bincode",
  "blake3",
  "bv",
