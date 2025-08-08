@@ -66,7 +66,7 @@ solana-epoch-schedule = "=2.2.1"
 solana-frozen-abi = { version = "=2.3.0", optional = true, features = [
     "frozen-abi",
 ] }
-solana-frozen-abi-macro = { version = "=2.2.1", optional = true, features = [
+solana-frozen-abi-macro = { version = "=3.0.0", optional = true, features = [
     "frozen-abi",
 ] }
 solana-hash = "=2.3.0"
