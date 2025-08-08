@@ -5593,7 +5593,7 @@ impl AccountsDb {
         storages: &[Arc<AccountStorageEntry>],
         duplicates_lt_hash: &DuplicatesLtHash,
         startup_slot: Slot,
-        num_threads: usize,
+        num_threads: NonZeroUsize,
     ) -> AccountsLtHash {
         // Randomized order works well with rayon work splitting, since we only care about
         // uniform distribution of total work size per batch (other ordering strategies might be
@@ -5601,10 +5601,10 @@ impl AccountsDb {
         let storages =
             AccountStoragesOrderer::with_random_order(storages).into_concurrent_consumer();
         let mut lt_hash = thread::scope(|s| {
-            let handles = (0..num_threads)
+            let handles = (0..num_threads.get())
                 .map(|i| {
                     thread::Builder::new()
-                        .name(format!("solVerfyAccts{i:02}"))
+                        .name(format!("solAcctLtHash{i:02}"))
                         .spawn_scoped(s, || {
                             let mut thread_lt_hash = LtHash::identity();
                             let mut reader = append_vec::new_scan_accounts_reader();

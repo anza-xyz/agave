@@ -406,7 +406,10 @@ mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::{self as pubkey, Pubkey},
         solana_signer::Signer as _,
-        std::{cmp, collections::HashMap, iter, ops::RangeFull, str::FromStr as _, sync::Arc},
+        std::{
+            cmp, collections::HashMap, iter, num::NonZeroUsize, ops::RangeFull, str::FromStr as _,
+            sync::Arc,
+        },
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
     };
@@ -866,7 +869,7 @@ mod tests {
                 &storages,
                 &duplicates_lt_hash,
                 bank.slot(),
-                2,
+                NonZeroUsize::new(2).unwrap(),
             );
         assert_eq!(
             expected_accounts_lt_hash,
@@ -1159,7 +1162,7 @@ mod tests {
                 storages.as_slice(),
                 &DuplicatesLtHash::default(),
                 bank.slot(),
-                2,
+                NonZeroUsize::new(2).unwrap(),
             );
 
         // Ensure that the hash is the same as before since the obsolete account updates in slot0
@@ -1174,7 +1177,7 @@ mod tests {
                 storages.as_slice(),
                 &DuplicatesLtHash::default(),
                 bank.slot() + 1,
-                2,
+                NonZeroUsize::new(2).unwrap(),
             );
 
         // The hashes should be different now as pubkey1 account will not be included in the hash

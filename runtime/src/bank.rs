@@ -4624,8 +4624,7 @@ impl Bank {
         let expected_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap().clone();
         let num_threads = accounts_db
             .num_hash_threads
-            .unwrap_or_else(accounts_db::default_num_hash_threads)
-            .get();
+            .unwrap_or_else(accounts_db::default_num_hash_threads);
         if config.run_in_background {
             let accounts_db_ = Arc::clone(accounts_db);
             accounts_db.verify_accounts_hash_in_bg.start(|| {
