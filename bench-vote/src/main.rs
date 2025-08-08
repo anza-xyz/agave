@@ -9,7 +9,10 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_message::Message,
-    solana_net_utils::{bind_to_unspecified, SocketConfig},
+    solana_net_utils::{
+        bind_to_unspecified,
+        sockets::{multi_bind_in_range_with_config, SocketConfiguration as SocketConfig},
+    },
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::{
@@ -187,8 +190,8 @@ fn main() -> Result<()> {
         let mut read_channels = Vec::new();
         let mut read_threads = Vec::new();
         let recycler = PacketBatchRecycler::default();
-        let config = SocketConfig::default().reuseport(true);
-        let (port, read_sockets) = solana_net_utils::multi_bind_in_range_with_config(
+        let config = SocketConfig::default();
+        let (port, read_sockets) = multi_bind_in_range_with_config(
             ip_addr,
             (port, port + num_sockets as u16),
             config,
