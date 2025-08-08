@@ -160,6 +160,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         fmt,
+        num::NonZeroUsize,
         ops::{AddAssign, RangeFull},
         path::PathBuf,
         slice,
@@ -4622,9 +4623,6 @@ impl Bank {
         // get the correct storages required to calculate and verify the accounts hashes.
         let snapshot_storages = accounts_db.get_storages(RangeFull);
         let expected_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap().clone();
-        let num_threads = accounts_db
-            .num_hash_threads
-            .unwrap_or_else(accounts_db::default_num_hash_threads);
         if config.run_in_background {
             let accounts_db_ = Arc::clone(accounts_db);
             accounts_db.verify_accounts_hash_in_bg.start(|| {
@@ -4633,6 +4631,9 @@ impl Bank {
                     .spawn(move || {
                         info!("Verifying accounts in background...");
                         let start = Instant::now();
+                        let num_threads = accounts_db
+                            .num_hash_threads
+                            .unwrap_or_else(accounts_db::default_num_hash_threads);
                         let (calculated_accounts_lt_hash, lattice_verify_time) =
                             meas_dur!(accounts_db_
                                 .calculate_accounts_lt_hash_at_startup_from_storages(
@@ -4665,6 +4666,7 @@ impl Bank {
         } else {
             info!("Verifying accounts in foreground...");
             let start = Instant::now();
+            let num_threads = NonZeroUsize::new(num_cpus::get()).unwrap();
             let calculated_accounts_lt_hash = if let Some(duplicates_lt_hash) = duplicates_lt_hash {
                 accounts_db.calculate_accounts_lt_hash_at_startup_from_storages(
                     snapshot_storages.0.as_slice(),
