@@ -890,11 +890,6 @@ pub struct BorrowedAccount<'a> {
 }
 
 impl BorrowedAccount<'_> {
-    /// Returns the transaction context
-    pub fn transaction_context(&self) -> &TransactionContext {
-        self.transaction_context
-    }
-
     /// Returns the index of this account (transaction wide)
     #[inline]
     pub fn get_index_in_transaction(&self) -> IndexOfAccount {
@@ -1006,24 +1001,6 @@ impl BorrowedAccount<'_> {
         self.touch()?;
         self.make_data_mut();
         Ok(self.account.data_as_mut_slice())
-    }
-
-    /// Overwrites the account data and size (transaction wide).
-    ///
-    /// You should always prefer set_data_from_slice(). Calling this method is
-    /// currently safe but requires some special casing during CPI when direct
-    /// account mapping is enabled.
-    #[cfg(all(
-        not(target_os = "solana"),
-        any(test, feature = "dev-context-only-utils")
-    ))]
-    pub fn set_data(&mut self, data: Vec<u8>) -> Result<(), InstructionError> {
-        self.can_data_be_resized(data.len())?;
-        self.touch()?;
-
-        self.update_accounts_resize_delta(data.len())?;
-        self.account.set_data(data);
-        Ok(())
     }
 
     /// Overwrites the account data and size (transaction wide).
