@@ -350,7 +350,7 @@ impl<'a> AccountStoragesOrderer<'a> {
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub fn entries_len(&self) -> usize {
         self.indices.len()
     }
 
@@ -399,7 +399,7 @@ impl<'a> AccountStoragesConcurrentConsumer<'a> {
     /// until the end of the entries source is reached.
     pub fn next(&'a self) -> Option<&'a AccountStorageEntry> {
         let index = self.current_index.fetch_add(1, Ordering::Relaxed);
-        if index < self.orderer.len() {
+        if index < self.orderer.entries_len() {
             Some(&self.orderer[index])
         } else {
             None

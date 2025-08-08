@@ -1159,6 +1159,7 @@ mod tests {
                 storages.as_slice(),
                 &DuplicatesLtHash::default(),
                 bank.slot(),
+                2,
             );
 
         // Ensure that the hash is the same as before since the obsolete account updates in slot0
@@ -1173,6 +1174,7 @@ mod tests {
                 storages.as_slice(),
                 &DuplicatesLtHash::default(),
                 bank.slot() + 1,
+                2,
             );
 
         // The hashes should be different now as pubkey1 account will not be included in the hash
