@@ -362,8 +362,8 @@ impl<'a> AccountStoragesOrderer<'a> {
         self.indices.par_iter().map(|i| self.storages[*i].as_ref())
     }
 
-    pub fn multi_consumer(self) -> AccountStoragesMultiConsumeIter<'a> {
-        AccountStoragesMultiConsumeIter::new(self)
+    pub fn into_concurrent_consumer(self) -> AccountStoragesConcurrentConsumer<'a> {
+        AccountStoragesConcurrentConsumer::new(self)
     }
 }
 
@@ -375,12 +375,25 @@ impl Index<usize> for AccountStoragesOrderer<'_> {
     }
 }
 
-pub struct AccountStoragesMultiConsumeIter<'a> {
+/// A thread-safe, lock-free iterator for consuming `AccountStorageEntry` values
+/// from an `AccountStoragesOrderer` across multiple threads.
+///
+/// # Overview
+/// This type enables multiple threads to iterate over the same ordered collection
+/// **concurrently** without requiring locks. Internally, it uses an `AtomicUsize`
+/// to track the current position, so each call to [`next`] returns a unique
+/// element until the collection is exhausted.
+///
+/// Unlike standard iterators, `AccountStoragesConcurrentConsumer`:
+/// - Is **shared** between threads via references (`&self`), not moved.
+/// - Allows safe, parallel consumption where each item is yielded at most once.
+/// - Does **not** implement `Iterator` because it must take `&self` instead of `&mut self`.
+pub struct AccountStoragesConcurrentConsumer<'a> {
     orderer: AccountStoragesOrderer<'a>,
     current_index: AtomicUsize,
 }
 
-impl<'a> AccountStoragesMultiConsumeIter<'a> {
+impl<'a> AccountStoragesConcurrentConsumer<'a> {
     pub fn new(orderer: AccountStoragesOrderer<'a>) -> Self {
         Self {
             orderer,

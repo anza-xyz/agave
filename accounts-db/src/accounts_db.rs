@@ -5597,7 +5597,8 @@ impl AccountsDb {
         // Randomized order works well with rayon work splitting, since we only care about
         // uniform distribution of total work size per batch (other ordering strategies might be
         // useful for optimizing disk read sizes and buffers usage in a single IO queue).
-        let storages = AccountStoragesOrderer::with_random_order(storages).multi_consumer();
+        let storages =
+            AccountStoragesOrderer::with_random_order(storages).into_concurrent_consumer();
         let mut lt_hash = std::thread::scope(|s| {
             let handles = (0..6)
                 .map(|_| {
