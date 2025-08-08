@@ -8,11 +8,15 @@ pub enum TimeConstant {
     Default,
 }
 
-#[derive(Deserialize, Debug)]
+/// Actual on-chain state that controls the weighting of gossip nodes
+#[derive(Serialize, Deserialize, Debug, Default)]
 #[repr(C)]
 pub struct WeightingConfig {
-    pub weighting_mode: u8,
-    pub tc_ms: u64,
+    _version: u8,           // This is part of Record program header
+    _authority: [u8; 32],   // This is part of Record program header
+    pub weighting_mode: u8, // 0 = Static, 1 = Dynamic
+    pub tc_ms: u64,         // IIR time constant in milliseconds
+    _future_use: [u8; 16],  // Reserved for future use
 }
 
 pub const WEIGHTING_MODE_STATIC: u8 = 0;
@@ -41,8 +45,21 @@ impl From<&WeightingConfig> for WeightingConfigTyped {
     }
 }
 
+impl WeightingConfig {
+    #[cfg(test)]
+    pub fn new_for_test(weighting_mode: u8, tc_ms: u64) -> Self {
+        Self {
+            _version: 0,
+            _authority: [0; 32],
+            weighting_mode,
+            tc_ms,
+            _future_use: [0; 16],
+        }
+    }
+}
+
 mod weighting_config_control_pubkey {
-    solana_pubkey::declare_id!("gosWyfqaAmMhdrSM9srCsV6DihYg7Ze56SvJLwZbNSP");
+    solana_pubkey::declare_id!("goSwVUizoqNYKEaaiTjkgdN2RgLpvsTvFt1MEVGibY9");
 }
 
 pub(crate) fn get_gossip_config_from_account(bank: &Bank) -> Option<WeightingConfig> {
