@@ -866,6 +866,7 @@ mod tests {
                 &storages,
                 &duplicates_lt_hash,
                 bank.slot(),
+                2,
             );
         assert_eq!(
             expected_accounts_lt_hash,

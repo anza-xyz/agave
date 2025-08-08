@@ -4622,6 +4622,10 @@ impl Bank {
         // get the correct storages required to calculate and verify the accounts hashes.
         let snapshot_storages = accounts_db.get_storages(RangeFull);
         let expected_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap().clone();
+        let num_threads = accounts_db
+            .num_hash_threads
+            .unwrap_or_else(accounts_db::default_num_hash_threads)
+            .get();
         if config.run_in_background {
             let accounts_db_ = Arc::clone(accounts_db);
             accounts_db.verify_accounts_hash_in_bg.start(|| {
@@ -4630,25 +4634,14 @@ impl Bank {
                     .spawn(move || {
                         info!("Verifying accounts in background...");
                         let start = Instant::now();
-                        let thread_pool = {
-                            let num_threads = accounts_db_
-                                .num_hash_threads
-                                .unwrap_or_else(accounts_db::default_num_hash_threads)
-                                .get();
-                            ThreadPoolBuilder::new()
-                                .thread_name(|i| format!("solVerfyAccts{i:02}"))
-                                .num_threads(num_threads)
-                                .build()
-                                .unwrap()
-                        };
                         let (calculated_accounts_lt_hash, lattice_verify_time) =
-                            meas_dur!(thread_pool.install(|| {
-                                accounts_db_.calculate_accounts_lt_hash_at_startup_from_storages(
+                            meas_dur!(accounts_db_
+                                .calculate_accounts_lt_hash_at_startup_from_storages(
                                     snapshot_storages.0.as_slice(),
                                     &duplicates_lt_hash.unwrap(),
                                     slot,
-                                )
-                            }));
+                                    num_threads
+                                ));
                         let is_ok =
                             check_lt_hash(&expected_accounts_lt_hash, &calculated_accounts_lt_hash);
                         accounts_db_
@@ -4678,6 +4671,7 @@ impl Bank {
                     snapshot_storages.0.as_slice(),
                     &duplicates_lt_hash,
                     slot,
+                    num_threads,
                 )
             } else {
                 accounts_db.calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot)
