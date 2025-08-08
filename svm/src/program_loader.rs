@@ -63,8 +63,8 @@ pub(crate) fn load_program_from_bytes(
 pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
-) -> Option<ProgramAccountLoadResult> {
-    let (program_account, _slot) = callbacks.get_account_shared_data(pubkey)?;
+) -> Option<(ProgramAccountLoadResult, Slot)> {
+    let (program_account, last_modification_slot) = callbacks.get_account_shared_data(pubkey)?;
 
     let load_result = if loader_v4::check_id(program_account.owner()) {
         solana_loader_v4_program::get_state(program_account.data())
@@ -106,7 +106,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     } else {
         ProgramAccountLoadResult::InvalidAccountData(ProgramCacheEntryOwner::LoaderV3)
     };
-    Some(load_result)
+    Some((load_result, last_modification_slot))
 }
 
 /// Loads the program with the given pubkey.
@@ -127,7 +127,8 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
         ..LoadProgramMetrics::default()
     };
 
-    let loaded_program = match load_program_accounts(callbacks, pubkey)? {
+    let (load_result, _last_modification_slot) = load_program_accounts(callbacks, pubkey)?;
+    let loaded_program = match load_result {
         ProgramAccountLoadResult::InvalidAccountData(owner) => Ok(
             ProgramCacheEntry::new_tombstone(slot, owner, ProgramCacheEntryType::Closed),
         ),
@@ -316,7 +317,7 @@ mod tests {
         let result = load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData(_))
+            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
         ));
 
         account_data.set_data(Vec::new());
@@ -329,7 +330,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData(_))
+            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
         ));
     }
 
@@ -347,7 +348,7 @@ mod tests {
         let result = load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData(_))
+            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
         ));
 
         account_data.set_data(vec![0; 64]);
@@ -358,7 +359,7 @@ mod tests {
         let result = load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData(_))
+            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
         ));
 
         let loader_data = LoaderV4State {
@@ -380,9 +381,13 @@ mod tests {
         let result = load_program_accounts(&mock_bank, &key);
 
         match result {
-            Some(ProgramAccountLoadResult::ProgramOfLoaderV4(data, deployment_slot)) => {
+            Some((
+                ProgramAccountLoadResult::ProgramOfLoaderV4(data, deployment_slot),
+                last_modification_slot,
+            )) => {
                 assert_eq!(data, account_data);
                 assert_eq!(deployment_slot, 25);
+                assert_eq!(last_modification_slot, 25);
             }
 
             _ => panic!("Invalid result"),
@@ -402,9 +407,10 @@ mod tests {
 
         let result = load_program_accounts(&mock_bank, &key);
         match result {
-            Some(ProgramAccountLoadResult::ProgramOfLoaderV1(data))
-            | Some(ProgramAccountLoadResult::ProgramOfLoaderV2(data)) => {
+            Some((ProgramAccountLoadResult::ProgramOfLoaderV1(data), last_modification_slot))
+            | Some((ProgramAccountLoadResult::ProgramOfLoaderV2(data), last_modification_slot)) => {
                 assert_eq!(data, account_data);
+                assert_eq!(last_modification_slot, 0);
             }
             _ => panic!("Invalid result"),
         }
@@ -442,10 +448,14 @@ mod tests {
         let result = load_program_accounts(&mock_bank, &key1);
 
         match result {
-            Some(ProgramAccountLoadResult::ProgramOfLoaderV3(data1, data2, deployment_slot)) => {
+            Some((
+                ProgramAccountLoadResult::ProgramOfLoaderV3(data1, data2, deployment_slot),
+                last_modification_slot,
+            )) => {
                 assert_eq!(data1, account_data);
                 assert_eq!(data2, account_data2);
                 assert_eq!(deployment_slot, 25);
+                assert_eq!(last_modification_slot, 25);
             }
 
             _ => panic!("Invalid result"),
