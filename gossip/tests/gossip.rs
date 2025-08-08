@@ -5,10 +5,11 @@ extern crate log;
 use {
     rayon::iter::*,
     solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
+        cluster_info::ClusterInfo,
         contact_info::{ContactInfo, Protocol},
         crds::Cursor,
         gossip_service::GossipService,
+        node::Node,
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -346,7 +347,7 @@ pub fn cluster_info_scale() {
         sleep(Duration::from_secs(1));
     }
     time.stop();
-    warn!("found {} nodes in {} success: {}", num_nodes, time, success);
+    warn!("found {num_nodes} nodes in {time} success: {success}");
 
     for num_votes in 1..1000 {
         let mut time = Measure::start("votes");
@@ -390,10 +391,10 @@ pub fn cluster_info_scale() {
                 }
             }
             warn!("not_done: {}/{}", not_done, nodes.len());
-            warn!("num_old: {}", num_old);
-            warn!("num_push_total: {}", num_push_total);
-            warn!("num_pushes: {}", num_pushes);
-            warn!("num_pulls: {}", num_pulls);
+            warn!("num_old: {num_old}");
+            warn!("num_push_total: {num_push_total}");
+            warn!("num_pushes: {num_pushes}");
+            warn!("num_pulls: {num_pulls}");
             success = not_done < (nodes.len() / 20);
             if success {
                 break;
@@ -401,10 +402,7 @@ pub fn cluster_info_scale() {
             sleep(Duration::from_millis(200));
         }
         time.stop();
-        warn!(
-            "propagated vote {} in {} success: {}",
-            num_votes, time, success
-        );
+        warn!("propagated vote {num_votes} in {time} success: {success}");
         sleep(Duration::from_millis(200));
         for (node, _, _) in nodes.iter() {
             node.gossip.push.num_old.store(0, Ordering::Relaxed);

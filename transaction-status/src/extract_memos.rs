@@ -69,7 +69,9 @@ fn extract_memos_inner(
                 KeyType::MemoProgram => Some(&ix.data),
                 KeyType::OtherProgram => None,
                 KeyType::Unknown(program_id) => {
-                    if **program_id == spl_memo::v1::id() || **program_id == spl_memo::id() {
+                    if **program_id == spl_memo_interface::v1::id()
+                        || **program_id == spl_memo_interface::v3::id()
+                    {
                         account_keys[index] = KeyType::MemoProgram;
                         Some(&ix.data)
                     } else {
@@ -116,9 +118,9 @@ mod test {
         ];
         let static_keys = vec![
             fee_payer,
-            spl_memo::v1::id(),
+            spl_memo_interface::v1::id(),
             another_program_id,
-            spl_memo::id(),
+            spl_memo_interface::v3::id(),
         ];
         let account_keys = AccountKeys::new(&static_keys, None);
 

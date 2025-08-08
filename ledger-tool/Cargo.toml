@@ -18,6 +18,7 @@ dev-context-only-utils = []
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
+agave-syscalls = { workspace = true }
 bs58 = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 clap = { workspace = true }
@@ -58,7 +59,7 @@ solana-keypair = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-loader-v3-interface = { workspace = true }
 solana-log-collector = { workspace = true }
-solana-logger = "=2.3.1"
+solana-logger = "=3.0.0"
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }

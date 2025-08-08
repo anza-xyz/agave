@@ -2,10 +2,8 @@
 members = [
     "account-decoder",
     "account-decoder-client-types",
-    "accounts-bench",
     "accounts-cluster-bench",
     "accounts-db",
-    "accounts-db/accounts-hash-cache-tool",
     "accounts-db/store-histogram",
     "accounts-db/store-tool",
     "banking-bench",
@@ -73,7 +71,6 @@ members = [
     "program-test",
     "programs/bpf-loader-tests",
     "programs/bpf_loader",
-    "programs/bpf_loader/gen-syscall-list",
     "programs/compute-budget",
     "programs/compute-budget-bench",
     "programs/ed25519-tests",
@@ -107,12 +104,11 @@ members = [
     "streamer",
     "svm",
     "svm-callback",
-    "svm-conformance",
     "svm-feature-set",
-    "svm-rent-collector",
     "svm-transaction",
+    "syscalls",
+    "syscalls/gen-syscall-list",
     "test-validator",
-    "thin-client",
     "thread-manager",
     "timings",
     "tls-utils",
@@ -141,11 +137,10 @@ members = [
     "wen-restart",
     "xdp",
     "zk-keygen",
-    "zk-sdk",
     "zk-token-sdk",
 ]
 
-exclude = ["programs/sbf", "svm/examples", "svm/tests/example-programs"]
+exclude = ["programs/sbf", "svm/tests/example-programs"]
 
 resolver = "2"
 
@@ -184,6 +179,7 @@ agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=
 agave-io-uring = { path = "io-uring", version = "=3.0.0" }
 agave-precompiles = { path = "precompiles", version = "=3.0.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.0.0" }
+agave-syscalls = { path = "syscalls", version = "=3.0.0" }
 agave-thread-manager = { path = "thread-manager", version = "=3.0.0" }
 agave-transaction-view = { path = "transaction-view", version = "=3.0.0" }
 agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=3.0.0" }
@@ -203,13 +199,14 @@ arrayvec = "0.7.6"
 assert_cmd = "2.0"
 assert_matches = "1.5.0"
 async-channel = "1.9.0"
-async-lock = "3.4.0"
+async-lock = "3.4.1"
 async-trait = "0.1.88"
 atty = "0.2.11"
 axum = "0.7.9"
 aya = "0.13"
 backoff = "0.4.0"
 base64 = "0.22.1"
+bencher = "0.1.5"
 bincode = "1.3.3"
 bitflags = { version = "2.9.1" }
 blake3 = "1.8.2"
@@ -219,7 +216,7 @@ bs58 = { version = "0.5.1", default-features = false }
 bv = "0.11.1"
 byte-unit = "4.0.19"
 bytemuck = "1.23.1"
-bytemuck_derive = "1.9.3"
+bytemuck_derive = "1.10.1"
 bytes = "1.10"
 bzip2 = "0.4.4"
 caps = "0.5.5"
@@ -241,7 +238,7 @@ criterion-stats = "0.3.0"
 crossbeam-channel = "0.5.15"
 csv = "1.3.1"
 ctrlc = "3.4.7"
-curve25519-dalek = { version = "4.2.0", features = ["digest", "rand_core"] }
+curve25519-dalek = { version = "4.1.3", features = ["digest", "rand_core"] }
 dashmap = "5.5.3"
 derivation-path = { version = "0.2.0", default-features = false }
 derive-where = "1.5.0"
@@ -251,12 +248,12 @@ digest = "0.10.7"
 dir-diff = "0.3.3"
 dirs-next = "2.0.0"
 dlopen2 = "0.5.0"
-dyn-clone = "1.0.19"
+dyn-clone = "1.0.20"
 eager = "0.1.0"
 ed25519-dalek = "=1.0.1"
 ed25519-dalek-bip32 = "0.2.0"
 enum-iterator = "1.5.0"
-env_logger = "0.9.3"
+env_logger = "0.11.8"
 etcd-client = "0.11.1"
 fast-math = "0.1"
 fd-lock = "3.0.13"
@@ -282,7 +279,7 @@ hyper-proxy = "0.9.1"
 im = "15.1.0"
 indexmap = "2.10.0"
 indicatif = "0.18.0"
-io-uring = "0.7.8"
+io-uring = "0.7.9"
 itertools = "0.12.1"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
@@ -350,7 +347,7 @@ reqwest = { version = "0.12.22", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
-rustls = { version = "0.23.29", features = ["std"], default-features = false }
+rustls = { version = "0.23.31", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.26"
 seqlock = "0.2.0"
@@ -358,7 +355,7 @@ serde = "1.0.219" # must match the serde_derive version, see https://github.com/
 serde-big-array = "0.5.1"
 serde_bytes = "0.11.17"
 serde_derive = "1.0.219" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
-serde_json = "1.0.140"
+serde_json = "1.0.142"
 serde_with = { version = "3.14.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "2.0.0"
@@ -370,7 +367,7 @@ siphasher = "1.0.1"
 slab = "0.4.10"
 smallvec = "1.15.1"
 smpl_jwt = "0.7.1"
-socket2 = "0.5.10"
+socket2 = "0.6.0"
 soketto = "0.7"
 solana-account = "2.2.1"
 solana-account-decoder = { path = "account-decoder", version = "=3.0.0" }
@@ -454,7 +451,7 @@ solana-loader-v4-interface = "2.2.1"
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=3.0.0" }
 solana-local-cluster = { path = "local-cluster", version = "=3.0.0" }
 solana-log-collector = { path = "log-collector", version = "=3.0.0" }
-solana-logger = "2.3.1"
+solana-logger = "3.0.0"
 solana-measure = { path = "measure", version = "=3.0.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=3.0.0" }
 solana-message = "2.4.0"
@@ -485,7 +482,7 @@ solana-program-test = { path = "program-test", version = "=3.0.0" }
 solana-pubkey = { version = "2.4.0", default-features = false }
 solana-pubsub-client = { path = "pubsub-client", version = "=3.0.0" }
 solana-quic-client = { path = "quic-client", version = "=3.0.0" }
-solana-quic-definitions = "2.2.1"
+solana-quic-definitions = "2.3.0"
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=3.0.0" }
 solana-remote-wallet = { path = "remote-wallet", version = "=3.0.0", default-features = false }
 solana-rent = "2.2.1"
@@ -510,7 +507,7 @@ solana-send-transaction-service = { path = "send-transaction-service", version =
 solana-serde = "2.2.1"
 solana-serde-varint = "2.2.2"
 solana-serialize-utils = "2.2.1"
-solana-sha256-hasher = "2.2.1"
+solana-sha256-hasher = "2.3.0"
 solana-short-vec = "2.2.1"
 solana-shred-version = "2.2.1"
 solana-signature = { version = "2.3.0", default-features = false }
@@ -525,9 +522,7 @@ solana-storage-proto = { path = "storage-proto", version = "=3.0.0" }
 solana-streamer = { path = "streamer", version = "=3.0.0" }
 solana-svm = { path = "svm", version = "=3.0.0" }
 solana-svm-callback = { path = "svm-callback", version = "=3.0.0" }
-solana-svm-conformance = { path = "svm-conformance", version = "=3.0.0" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.0.0" }
-solana-svm-rent-collector = { path = "svm-rent-collector", version = "=3.0.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.0.0" }
 solana-system-interface = "1.0"
 solana-system-program = { path = "programs/system", version = "=3.0.0" }
@@ -535,7 +530,6 @@ solana-system-transaction = "2.2.1"
 solana-sysvar = "2.2.2"
 solana-sysvar-id = "2.2.1"
 solana-test-validator = { path = "test-validator", version = "=3.0.0" }
-solana-thin-client = { path = "thin-client", version = "=3.0.0" }
 solana-time-utils = "2.2.1"
 solana-timings = { path = "timings", version = "=3.0.0" }
 solana-tls-utils = { path = "tls-utils", version = "=3.0.0" }
@@ -556,23 +550,22 @@ solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=3
 solana-validator-exit = "2.2.1"
 solana-version = { path = "version", version = "=3.0.0" }
 solana-vote = { path = "vote", version = "=3.0.0" }
-solana-vote-interface = "2.2.5"
+solana-vote-interface = "2.2.6"
 solana-vote-program = { path = "programs/vote", version = "=3.0.0", default-features = false }
 solana-wen-restart = { path = "wen-restart", version = "=3.0.0" }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=3.0.0" }
 solana-zk-keygen = { path = "zk-keygen", version = "=3.0.0" }
-solana-zk-sdk = { path = "zk-sdk", version = "=3.0.0" }
+solana-zk-sdk = "3.0.0"
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=3.0.0" }
 solana-zk-token-sdk = { path = "zk-token-sdk", version = "=3.0.0" }
-spl-associated-token-account = "7.0.0"
+spl-associated-token-account-interface = "1.0.0"
 spl-generic-token = "1.0.1"
-spl-instruction-padding = "0.3.0"
-spl-memo = "6.0.0"
+spl-memo-interface = "1.0.0"
 spl-pod = "0.5.1"
-spl-token = "8.0.0"
-spl-token-2022 = "8.0.1"
-spl-token-confidential-transfer-proof-extraction = "0.3.0"
+spl-token-2022-interface = "1.0.0"
+spl-token-confidential-transfer-proof-extraction = "0.4.0"
 spl-token-group-interface = "0.6.0"
+spl-token-interface = "1.0.0"
 spl-token-metadata-interface = "0.7.0"
 static_assertions = "1.1.0"
 stream-cancel = "0.8.2"
@@ -583,7 +576,7 @@ symlink = "0.1.0"
 syn = "2.0"
 sys-info = "0.9.1"
 sysctl = "0.4.6"
-systemstat = "0.2.4"
+systemstat = "0.2.5"
 tar = "0.4.44"
 tarpc = "0.29.0"
 tempfile = "3.20.0"
@@ -591,15 +584,16 @@ test-case = "3.3.1"
 thiserror = "2.0.12"
 thread-priority = "1.2.0"
 tiny-bip39 = "0.8.2"
-tokio = "1.46.1"
+tokio = "1.47.1"
 tokio-serde = "0.8"
 tokio-stream = "0.1.17"
 tokio-tungstenite = "0.20.1"
-tokio-util = "0.7.15"
+tokio-util = "0.7.16"
 toml = "0.8.12"
 tonic = "0.9.2"
 tonic-build = "0.9.2"
 tower = "0.5.2"
+tracing = "0.1"
 trait-set = "0.3.0"
 trees = "0.4.2"
 tungstenite = "0.20.1"
@@ -646,12 +640,12 @@ crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d
 
 # We include the following crates as our dependencies above from crates.io:
 #
-#  * spl-associated-token-account
+#  * spl-associated-token-account-interface
 #  * spl-instruction-padding
-#  * spl-memo
+#  * spl-memo-interface
 #  * spl-pod
 #  * spl-token
-#  * spl-token-2022
+#  * spl-token-2022-interface
 #  * spl-token-metadata-interface
 #
 # They, in turn, depend on a number of crates that we also include directly
@@ -677,4 +671,3 @@ crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d
 # There is a similar override in `programs/sbf/Cargo.toml`.  Please keep both
 # comments and the overrides in sync.
 solana-curve25519 = { path = "curves/curve25519" }
-solana-zk-sdk = { path = "zk-sdk" }

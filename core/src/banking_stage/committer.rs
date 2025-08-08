@@ -20,6 +20,7 @@ use {
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processing_result::TransactionProcessingResult,
     },
+    solana_transaction_error::TransactionError,
     std::{num::Saturating, sync::Arc},
 };
 
@@ -28,8 +29,9 @@ pub enum CommitTransactionDetails {
     Committed {
         compute_units: u64,
         loaded_accounts_data_size: u32,
+        result: Result<(), TransactionError>,
     },
-    NotCommitted,
+    NotCommitted(TransactionError),
 }
 
 #[derive(Clone)]
@@ -85,8 +87,9 @@ impl Committer {
                     loaded_accounts_data_size: committed_tx
                         .loaded_account_stats
                         .loaded_accounts_data_size,
+                    result: committed_tx.status.clone(),
                 },
-                Err(_) => CommitTransactionDetails::NotCommitted,
+                Err(err) => CommitTransactionDetails::NotCommitted(err.clone()),
             })
             .collect();
 

@@ -1,11 +1,9 @@
 use {
     arc_swap::ArcSwap,
     std::{
+        cell::RefCell,
         net::{SocketAddr, UdpSocket},
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        },
+        sync::Arc,
     },
 };
 
@@ -13,7 +11,6 @@ use {
 #[derive(Debug)]
 pub struct AtomicUdpSocketInner {
     socket: ArcSwap<UdpSocket>,
-    did_change: AtomicBool,
 }
 
 #[derive(Debug, Clone)]
@@ -26,7 +23,6 @@ impl AtomicUdpSocket {
         Self {
             inner: Arc::new(AtomicUdpSocketInner {
                 socket: ArcSwap::from_pointee(sock),
-                did_change: AtomicBool::new(false),
             }),
         }
     }
@@ -36,18 +32,9 @@ impl AtomicUdpSocket {
         self.inner.socket.load_full()
     }
 
-    /// Returns true if the socket has changed since the last call to this method.
-    ///
-    /// Will swap the `did_change` flag to `false`.
-    #[inline]
-    pub fn did_change(&self) -> bool {
-        self.inner.did_change.swap(false, Ordering::Acquire)
-    }
-
     #[inline]
     pub fn swap(&self, new_sock: UdpSocket) {
         self.inner.socket.store(Arc::new(new_sock));
-        self.inner.did_change.store(true, Ordering::Release);
     }
 
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
@@ -64,14 +51,7 @@ pub enum CurrentSocket {
 pub trait SocketProvider {
     fn current_socket(&self) -> CurrentSocket;
 
-    fn did_change(&self) -> bool;
-
-    #[inline]
-    fn current_socket_ref(&self) -> Arc<UdpSocket> {
-        match self.current_socket() {
-            CurrentSocket::Same(sock) | CurrentSocket::Changed(sock) => sock,
-        }
-    }
+    fn current_socket_ref(&self) -> Arc<UdpSocket>;
 }
 
 /// Fixed UDP Socket -> default
@@ -85,41 +65,50 @@ impl FixedSocketProvider {
 }
 impl SocketProvider for FixedSocketProvider {
     #[inline]
-    fn did_change(&self) -> bool {
-        false
+    fn current_socket(&self) -> CurrentSocket {
+        CurrentSocket::Same(self.socket.clone())
     }
 
     #[inline]
-    fn current_socket(&self) -> CurrentSocket {
-        CurrentSocket::Same(self.socket.clone())
+    fn current_socket_ref(&self) -> Arc<UdpSocket> {
+        self.socket.clone()
     }
 }
 
 /// Hot-swappable `AtomicUdpSocket`
 pub struct AtomicSocketProvider {
     atomic: Arc<AtomicUdpSocket>,
+    current: RefCell<Arc<UdpSocket>>, // per‑provider cached pointer
 }
 
 impl AtomicSocketProvider {
     pub fn new(atomic: Arc<AtomicUdpSocket>) -> Self {
-        Self { atomic }
+        Self {
+            current: RefCell::new(atomic.load()),
+            atomic,
+        }
     }
 }
 
 impl SocketProvider for AtomicSocketProvider {
-    #[inline]
-    fn did_change(&self) -> bool {
-        self.atomic.did_change()
-    }
-
     // Check if the socket has changed since the last call
     #[inline]
     fn current_socket(&self) -> CurrentSocket {
-        let sock = self.atomic.load();
-        if self.did_change() {
-            CurrentSocket::Changed(sock)
+        let new_sock = self.atomic.load();
+        let mut cached = self.current.borrow_mut();
+
+        if !Arc::ptr_eq(&new_sock, &*cached) {
+            *cached = new_sock.clone(); // update cache
+            CurrentSocket::Changed(new_sock)
         } else {
-            CurrentSocket::Same(sock)
+            CurrentSocket::Same(new_sock)
+        }
+    }
+
+    #[inline]
+    fn current_socket_ref(&self) -> Arc<UdpSocket> {
+        match self.current_socket() {
+            CurrentSocket::Same(s) | CurrentSocket::Changed(s) => s,
         }
     }
 }

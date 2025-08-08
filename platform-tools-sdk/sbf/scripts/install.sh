@@ -109,30 +109,46 @@ if [[ ! -e criterion-$version.md || ! -e criterion ]]; then
 fi
 
 # Install platform tools
-version=v1.50
-if [[ ! -e platform-tools-$version.md || ! -e platform-tools ]]; then
+tools_version=v1.50
+rust_version=1.84.1
+if [[ ! -e platform-tools-$tools_version.md || ! -e platform-tools ]]; then
   (
     set -e
     rm -rf platform-tools*
     job="download \
            https://github.com/anza-xyz/platform-tools/releases/download \
-           $version \
+           $tools_version \
            platform-tools-${machine}-${arch}.tar.bz2 \
            platform-tools"
-    get $version platform-tools "$job"
+    get $tools_version platform-tools "$job"
   )
   exitcode=$?
   if [[ $exitcode -ne 0 ]]; then
     exit 1
   fi
-  touch platform-tools-$version.md
+  touch platform-tools-$tools_version.md
   set -ex
   ./platform-tools/rust/bin/rustc --version
   ./platform-tools/rust/bin/rustc --print sysroot
+
+  if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+    # MacOS has an outdated version of bash and does not support the safer 'mapfile' alternative
+    toolchains=()
+    while IFS='' read -r line; do toolchains+=("$line"); done < <(rustup toolchain list)
+  else
+    mapfile -t toolchains < <(rustup toolchain list)
+  fi
+
   set +e
-  rustup toolchain uninstall solana
+  for item in "${toolchains[@]}"
+  do
+    if [[ $item == *"solana"* ]]; then
+      rustup toolchain uninstall "$item"
+    fi
+  done
   set -e
-  rustup toolchain link solana platform-tools/rust
+
+  rustup toolchain link "$rust_version-sbpf-solana-$tools_version" platform-tools/rust
 fi
 
 exit 0

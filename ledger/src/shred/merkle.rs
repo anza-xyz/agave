@@ -70,7 +70,7 @@ pub struct ShredCode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum Shred {
+pub(crate) enum Shred {
     ShredCode(ShredCode),
     ShredData(ShredData),
 }
@@ -1019,7 +1019,7 @@ fn make_shreds_code_header_only(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn make_shreds_from_data(
+pub(crate) fn make_shreds_from_data(
     thread_pool: &ThreadPool,
     keypair: &Keypair,
     // The Merkle root of the previous erasure batch if chained.

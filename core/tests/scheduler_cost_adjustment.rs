@@ -68,7 +68,7 @@ impl TestSetup {
 
     fn install_memo_program_account(&mut self) {
         self.genesis_config.accounts.insert(
-            spl_memo::id(),
+            spl_memo_interface::v3::id(),
             Account {
                 lamports: u64::MAX,
                 // borrows memo elf for executing memo ix in order to set up test condition
@@ -150,7 +150,11 @@ impl TestSetup {
     fn memo_ix(&self) -> (Instruction, u32) {
         // construct a memo instruction that would consume more CU than DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
         let memo = "The quick brown fox jumped over the lazy dog. ".repeat(22) + "!";
-        let memo_ix = spl_memo::build_memo(memo.as_bytes(), &[]);
+        let memo_ix = spl_memo_interface::instruction::build_memo(
+            &spl_memo_interface::v3::id(),
+            memo.as_bytes(),
+            &[],
+        );
         let memo_ix_cost = 356_963;
 
         (memo_ix, memo_ix_cost)

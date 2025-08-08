@@ -1,5 +1,5 @@
 #[cfg(feature = "dev-context-only-utils")]
-use crate::append_vec::StoredAccountMeta;
+use crate::append_vec::{self, StoredAccountMeta};
 use {
     crate::{
         account_info::{AccountInfo, Offset},
@@ -7,6 +7,7 @@ use {
         accounts_db::AccountsFileId,
         accounts_update_notifier_interface::AccountForGeyser,
         append_vec::{AppendVec, AppendVecError},
+        buffered_reader::RequiredLenBufFileRead,
         storable_accounts::StorableAccounts,
         tiered_storage::{
             error::TieredStorageError, hot::HOT_FORMAT, index::IndexOffset, TieredStorage,
@@ -322,12 +323,13 @@ impl AccountsFile {
     ///
     /// Prefer scan_accounts_without_data() when account data is not needed,
     /// as it can potentially read less and be faster.
-    pub fn scan_accounts(
-        &self,
+    pub(crate) fn scan_accounts<'a>(
+        &'a self,
+        reader: &mut impl RequiredLenBufFileRead<'a>,
         callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
     ) -> Result<()> {
         match self {
-            Self::AppendVec(av) => av.scan_accounts(callback),
+            Self::AppendVec(av) => av.scan_accounts(reader, callback),
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
                     reader.scan_accounts(callback)?;
@@ -346,8 +348,9 @@ impl AccountsFile {
         &self,
         callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
     ) -> Result<()> {
+        let mut reader = append_vec::new_scan_accounts_reader();
         match self {
-            Self::AppendVec(av) => av.scan_accounts_stored_meta(callback),
+            Self::AppendVec(av) => av.scan_accounts_stored_meta(&mut reader, callback),
             Self::TieredStorage(_) => {
                 unimplemented!("StoredAccountMeta is only implemented for AppendVec")
             }
@@ -356,11 +359,12 @@ impl AccountsFile {
 
     /// Iterate over all accounts and call `callback` with each account.
     /// Only intended to be used by Geyser.
-    pub fn scan_accounts_for_geyser(
-        &self,
+    pub(crate) fn scan_accounts_for_geyser<'a>(
+        &'a self,
+        reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(AccountForGeyser<'local>),
     ) -> Result<()> {
-        self.scan_accounts(|_offset, account| {
+        self.scan_accounts(reader, |_offset, account| {
             let account_for_geyser = AccountForGeyser {
                 pubkey: account.pubkey(),
                 lamports: account.lamports(),

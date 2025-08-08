@@ -1,8 +1,5 @@
-#![feature(test)]
-
-extern crate test;
-
 use {
+    criterion::{criterion_group, criterion_main, Criterion},
     rand::{thread_rng, Rng},
     solana_gossip::{
         crds::{Crds, GossipRoute, VersionedCrdsValue},
@@ -11,7 +8,6 @@ use {
     },
     solana_time_utils::timestamp,
     std::iter::repeat_with,
-    test::Bencher,
 };
 
 const CRDS_SHARDS_BITS: u32 = 8;
@@ -25,7 +21,7 @@ fn new_test_crds_value<R: Rng>(rng: &mut R) -> VersionedCrdsValue {
     crds.get::<&VersionedCrdsValue>(&label).cloned().unwrap()
 }
 
-fn bench_crds_shards_find(bencher: &mut Bencher, num_values: usize, mask_bits: u32) {
+fn bench_crds_shards_find(c: &mut Criterion, num_values: usize, mask_bits: u32) {
     let mut rng = thread_rng();
     let values: Vec<_> = repeat_with(|| new_test_crds_value(&mut rng))
         .take(num_values)
@@ -34,43 +30,53 @@ fn bench_crds_shards_find(bencher: &mut Bencher, num_values: usize, mask_bits: u
     for (index, value) in values.iter().enumerate() {
         assert!(shards.insert(index, value));
     }
-    bencher.iter(|| {
-        let mask = rng.gen();
-        let _hits = shards.find(mask, mask_bits).count();
-    });
+    c.bench_function(
+        &format!("bench_crds_shards_find: mask_bits: {:?}", mask_bits),
+        |b| {
+            b.iter(|| {
+                let mask = rng.gen();
+                let _hits = shards.find(mask, mask_bits).count();
+            })
+        },
+    );
 }
 
-#[bench]
-fn bench_crds_shards_find_0(bencher: &mut Bencher) {
-    bench_crds_shards_find(bencher, 100_000, 0);
+fn bench_crds_shards_find_0(c: &mut Criterion) {
+    bench_crds_shards_find(c, 100_000, 0);
 }
 
-#[bench]
-fn bench_crds_shards_find_1(bencher: &mut Bencher) {
-    bench_crds_shards_find(bencher, 100_000, 1);
+fn bench_crds_shards_find_1(c: &mut Criterion) {
+    bench_crds_shards_find(c, 100_000, 1);
 }
 
-#[bench]
-fn bench_crds_shards_find_3(bencher: &mut Bencher) {
-    bench_crds_shards_find(bencher, 100_000, 3);
+fn bench_crds_shards_find_3(c: &mut Criterion) {
+    bench_crds_shards_find(c, 100_000, 3);
 }
 
-#[bench]
-fn bench_crds_shards_find_5(bencher: &mut Bencher) {
-    bench_crds_shards_find(bencher, 100_000, 5);
+fn bench_crds_shards_find_5(c: &mut Criterion) {
+    bench_crds_shards_find(c, 100_000, 5);
 }
 
-#[bench]
-fn bench_crds_shards_find_7(bencher: &mut Bencher) {
-    bench_crds_shards_find(bencher, 100_000, 7);
+fn bench_crds_shards_find_7(c: &mut Criterion) {
+    bench_crds_shards_find(c, 100_000, 7);
 }
 
-#[bench]
-fn bench_crds_shards_find_8(bencher: &mut Bencher) {
-    bench_crds_shards_find(bencher, 100_000, 8);
+fn bench_crds_shards_find_8(c: &mut Criterion) {
+    bench_crds_shards_find(c, 100_000, 8);
 }
 
-#[bench]
-fn bench_crds_shards_find_9(bencher: &mut Bencher) {
-    bench_crds_shards_find(bencher, 100_000, 9);
+fn bench_crds_shards_find_9(c: &mut Criterion) {
+    bench_crds_shards_find(c, 100_000, 9);
 }
+
+criterion_group!(
+    benches,
+    bench_crds_shards_find_0,
+    bench_crds_shards_find_1,
+    bench_crds_shards_find_3,
+    bench_crds_shards_find_5,
+    bench_crds_shards_find_7,
+    bench_crds_shards_find_8,
+    bench_crds_shards_find_9
+);
+criterion_main!(benches);

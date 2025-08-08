@@ -2,7 +2,6 @@
 
 use {
     crate::{
-        accounts_background_service::SnapshotRequest,
         bank::{bank_hash_details, Bank, SquashTiming},
         bank_hash_cache::DumpedSlotSubscription,
         installed_scheduler_pool::{
@@ -10,7 +9,7 @@ use {
         },
         snapshot_controller::SnapshotController,
     },
-    crossbeam_channel::SendError,
+    arc_swap::ArcSwap,
     log::*,
     solana_clock::{BankId, Slot},
     solana_hash::Hash,
@@ -45,11 +44,21 @@ impl ReadOnlyAtomicSlot {
     }
 }
 
-#[derive(Error, Debug)]
-pub enum SetRootError {
-    #[error("failed to send epoch accounts hash request for bank {0}: {1}")]
-    SendEpochAccountHashError(Slot, SendError<SnapshotRequest>),
+#[derive(Clone)]
+pub struct SharableBank(Arc<ArcSwap<Bank>>);
+
+impl SharableBank {
+    pub fn load(&self) -> Arc<Bank> {
+        self.0.load_full()
+    }
+
+    fn store(&self, bank: Arc<Bank>) {
+        self.0.store(bank);
+    }
 }
+
+#[derive(Error, Debug)]
+pub enum SetRootError {}
 
 #[derive(Debug, Default, Copy, Clone)]
 struct SetRootMetrics {
@@ -74,6 +83,7 @@ pub struct BankForks {
     banks: HashMap<Slot, BankWithScheduler>,
     descendants: HashMap<Slot, HashSet<Slot>>,
     root: Arc<AtomicSlot>,
+    root_bank: SharableBank,
     in_vote_only_mode: Arc<AtomicBool>,
     highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
@@ -120,6 +130,7 @@ impl BankForks {
 
         let bank_forks = Arc::new(RwLock::new(Self {
             root: Arc::new(AtomicSlot::new(root_slot)),
+            root_bank: SharableBank(Arc::new(ArcSwap::from(Arc::clone(&root_bank)))),
             banks,
             descendants,
             in_vote_only_mode: Arc::new(AtomicBool::new(false)),
@@ -204,8 +215,12 @@ impl BankForks {
         self.get(slot).map(|bank| bank.hash())
     }
 
+    pub fn sharable_root_bank(&self) -> SharableBank {
+        self.root_bank.clone()
+    }
+
     pub fn root_bank(&self) -> Arc<Bank> {
-        self[self.root()].clone()
+        self.root_bank.load()
     }
 
     pub fn install_scheduler_pool(&mut self, pool: InstalledSchedulerPoolArc) {
@@ -341,15 +356,18 @@ impl BankForks {
         snapshot_controller: Option<&SnapshotController>,
         highest_super_majority_root: Option<Slot>,
     ) -> Result<(Vec<BankWithScheduler>, SetRootMetrics), SetRootError> {
-        let old_epoch = self.root_bank().epoch();
-        // To support `RootBankCache` (via `ReadOnlyAtomicSlot`) accessing `root` *without* locking
-        // BankForks first *and* from a different thread, this store *must* be at least Release to
-        // ensure atomic ordering correctness.
-        self.root.store(root, Ordering::Release);
+        let old_epoch = self.root_bank.load().epoch();
 
         let root_bank = &self
             .get(root)
             .expect("root bank didn't exist in bank_forks");
+
+        // To support `RootBankCache` (via `ReadOnlyAtomicSlot`) accessing `root` *without* locking
+        // BankForks first *and* from a different thread, this store *must* be at least Release to
+        // ensure atomic ordering correctness.
+        self.root.store(root, Ordering::Release);
+        self.root_bank.store(Arc::clone(root_bank));
+
         let new_epoch = root_bank.epoch();
         if old_epoch != new_epoch {
             info!(
@@ -654,28 +672,35 @@ impl ForkGraph for BankForks {
     }
 }
 
+impl Drop for BankForks {
+    fn drop(&mut self) {
+        info!("BankForks::drop(): started...");
+        self.banks.clear();
+
+        if let Some(scheduler_pool) = self.scheduler_pool.take() {
+            scheduler_pool.uninstalled_from_bank_forks();
+        }
+        info!("BankForks::drop(): ...finished");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*,
         crate::{
-            accounts_background_service::SnapshotRequestKind,
             bank::test_utils::update_vote_account_timestamp,
             genesis_utils::{
                 create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
             },
-            snapshot_config::SnapshotConfig,
         },
         assert_matches::assert_matches,
-        solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
         solana_clock::UnixTimestamp,
         solana_epoch_schedule::EpochSchedule,
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
         solana_signer::Signer,
         solana_vote_program::vote_state::BlockTimestamp,
-        std::{sync::atomic::Ordering::Relaxed, time::Duration},
     };
 
     #[test]
@@ -778,48 +803,10 @@ mod tests {
         let slots_in_epoch = 32;
         genesis_config.epoch_schedule = EpochSchedule::new(slots_in_epoch);
 
-        // Spin up a thread to be a fake Accounts Background Service.  Need to intercept and handle
-        // all EpochAccountsHash requests so future rooted banks do not hang in Bank::freeze()
-        // waiting for an in-flight EAH calculation to complete.
-        let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
-        let snapshot_controller = SnapshotController::new(
-            snapshot_request_sender,
-            SnapshotConfig::new_disabled(),
-            0, /* root_slot */
-        );
-        let bg_exit = Arc::new(AtomicBool::new(false));
-        let bg_thread = {
-            let exit = Arc::clone(&bg_exit);
-            std::thread::spawn(move || {
-                while !exit.load(Relaxed) {
-                    snapshot_request_receiver
-                        .try_iter()
-                        .filter(|snapshot_request| {
-                            snapshot_request.request_kind == SnapshotRequestKind::EpochAccountsHash
-                        })
-                        .for_each(|snapshot_request| {
-                            snapshot_request
-                                .snapshot_root_bank
-                                .rc
-                                .accounts
-                                .accounts_db
-                                .epoch_accounts_hash_manager
-                                .set_valid(
-                                    EpochAccountsHash::new(Hash::new_unique()),
-                                    snapshot_request.snapshot_root_bank.slot(),
-                                )
-                        });
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-            })
-        };
-
         let bank0 = Bank::new_for_tests(&genesis_config);
         let bank_forks0 = BankForks::new_rw_arc(bank0);
         let mut bank_forks0 = bank_forks0.write().unwrap();
-        bank_forks0
-            .set_root(0, Some(&snapshot_controller), None)
-            .unwrap();
+        bank_forks0.set_root(0, None, None).unwrap();
 
         let bank1 = Bank::new_for_tests(&genesis_config);
         let bank_forks1 = BankForks::new_rw_arc(bank1);
@@ -854,9 +841,7 @@ mod tests {
 
             // Set root in bank_forks0 to truncate the ancestor history
             bank_forks0.insert(child1);
-            bank_forks0
-                .set_root(slot, Some(&snapshot_controller), None)
-                .unwrap();
+            bank_forks0.set_root(slot, None, None).unwrap();
 
             // Don't set root in bank_forks1 to keep the ancestor history
             bank_forks1.insert(child2);
@@ -870,9 +855,6 @@ mod tests {
         info!("child0.ancestors: {:?}", child1.ancestors);
         info!("child1.ancestors: {:?}", child2.ancestors);
         assert_eq!(child1.hash(), child2.hash());
-
-        bg_exit.store(true, Relaxed);
-        bg_thread.join().unwrap();
     }
 
     fn make_hash_map(data: Vec<(Slot, Vec<Slot>)>) -> HashMap<Slot, HashSet<Slot>> {

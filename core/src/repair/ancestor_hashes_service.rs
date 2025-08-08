@@ -606,7 +606,7 @@ impl AncestorHashesService {
         let serve_repair = {
             ServeRepair::new(
                 repair_info.cluster_info.clone(),
-                repair_info.bank_forks.clone(),
+                repair_info.bank_forks.read().unwrap().sharable_root_bank(),
                 repair_info.repair_whitelist.clone(),
                 Box::new(StandardRepairHandler::new(blockstore)),
             )
@@ -914,8 +914,9 @@ mod test {
             vote_simulator::VoteSimulator,
         },
         solana_gossip::{
-            cluster_info::{ClusterInfo, Node},
+            cluster_info::ClusterInfo,
             contact_info::{ContactInfo, Protocol},
+            node::Node,
         },
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -923,7 +924,7 @@ mod test {
             blockstore::make_many_slot_entries, get_tmp_ledger_path,
             get_tmp_ledger_path_auto_delete, shred::Nonce,
         },
-        solana_net_utils::bind_to_unspecified,
+        solana_net_utils::sockets::bind_to_localhost_unique,
         solana_perf::packet::Packet,
         solana_runtime::bank_forks::BankForks,
         solana_signer::Signer,
@@ -1271,7 +1272,11 @@ mod test {
             let responder_serve_repair = {
                 ServeRepair::new(
                     Arc::new(cluster_info),
-                    vote_simulator.bank_forks,
+                    vote_simulator
+                        .bank_forks
+                        .read()
+                        .unwrap()
+                        .sharable_root_bank(),
                     Arc::<RwLock<HashSet<_>>>::default(), // repair whitelist
                     Box::new(StandardRepairHandler::new(blockstore.clone())),
                 )
@@ -1357,7 +1362,8 @@ mod test {
     impl ManageAncestorHashesState {
         fn new(bank_forks: Arc<RwLock<BankForks>>) -> Self {
             let ancestor_hashes_request_statuses = Arc::new(DashMap::new());
-            let ancestor_hashes_request_socket = Arc::new(bind_to_unspecified().unwrap());
+            let ancestor_hashes_request_socket =
+                Arc::new(bind_to_localhost_unique().expect("should bind"));
             let epoch_schedule = bank_forks
                 .read()
                 .unwrap()
@@ -1377,7 +1383,7 @@ mod test {
             let requester_serve_repair = {
                 ServeRepair::new(
                     requester_cluster_info.clone(),
-                    bank_forks.clone(),
+                    bank_forks.read().unwrap().sharable_root_bank(),
                     repair_whitelist.clone(),
                     Box::new(StandardRepairHandler::new(blockstore)),
                 )

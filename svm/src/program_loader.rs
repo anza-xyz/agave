@@ -821,9 +821,9 @@ mod tests {
 
         let upcoming_environments = ProgramRuntimeEnvironments::default();
         let current_environments = {
-            let mut program_cache = batch_processor.program_cache.write().unwrap();
-            program_cache.upcoming_environments = Some(upcoming_environments.clone());
-            program_cache.environments.clone()
+            let mut global_program_cache = batch_processor.global_program_cache.write().unwrap();
+            global_program_cache.upcoming_environments = Some(upcoming_environments.clone());
+            global_program_cache.environments.clone()
         };
         mock_bank
             .account_shared_data

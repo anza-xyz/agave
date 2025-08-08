@@ -124,13 +124,14 @@ impl VoteWorker {
         let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(decision.bank_start());
         slot_metrics_tracker.increment_make_decision_us(make_decision_us);
 
+        // Take metrics action before processing packets (potentially resetting the
+        // slot metrics tracker to the next slot) so that we don't count the
+        // packet processing metrics from the next slot towards the metrics
+        // of the previous slot
+        slot_metrics_tracker.apply_action(metrics_action);
+
         match decision {
             BufferedPacketsDecision::Consume(bank_start) => {
-                // Take metrics action before consume packets (potentially resetting the
-                // slot metrics tracker to the next slot) so that we don't count the
-                // packet processing metrics from the next slot towards the metrics
-                // of the previous slot
-                slot_metrics_tracker.apply_action(metrics_action);
                 let (_, consume_buffered_packets_us) = measure_us!(self.consume_buffered_packets(
                     &bank_start,
                     banking_stage_stats,

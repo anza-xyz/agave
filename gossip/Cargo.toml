@@ -12,9 +12,13 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[lib]
+bench = false
+
 [[bin]]
 name = "solana-gossip"
 path = "src/main.rs"
+bench = false
 
 [features]
 frozen-abi = [
@@ -68,7 +72,7 @@ solana-frozen-abi-macro = { version = "=2.2.1", optional = true, features = [
 solana-hash = "=2.3.0"
 solana-keypair = "=2.2.1"
 solana-ledger = { workspace = true }
-solana-logger = "=2.3.1"
+solana-logger = "=3.0.0"
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = "=2.2.2"
@@ -76,13 +80,13 @@ solana-net-utils = { workspace = true }
 solana-packet = "=2.2.1"
 solana-perf = { workspace = true }
 solana-pubkey = { version = "=2.4.0", features = ["rand"] }
-solana-quic-definitions = "=2.2.1"
+solana-quic-definitions = "=2.3.0"
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sanitize = "=2.2.1"
 solana-serde-varint = "=2.2.2"
-solana-sha256-hasher = "=2.2.1"
+solana-sha256-hasher = "=2.3.0"
 solana-short-vec = "=2.2.1"
 solana-signature = { version = "=2.3.0", default-features = false }
 solana-signer = "=2.2.1"
@@ -115,12 +119,15 @@ test-case = { workspace = true }
 
 [[bench]]
 name = "crds"
+harness = false
 
 [[bench]]
 name = "crds_gossip_pull"
+harness = false
 
 [[bench]]
 name = "crds_shards"
+harness = false
 
 [[bench]]
 name = "weighted_shuffle"

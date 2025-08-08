@@ -13,8 +13,8 @@ use {
     crate::banking_stage::{
         consumer::Consumer, decision_maker::BufferedPacketsDecision,
         immutable_deserialized_packet::ImmutableDeserializedPacket,
-        packet_deserializer::PacketDeserializer, packet_filter::MAX_ALLOWED_PRECOMPILE_SIGNATURES,
-        scheduler_messages::MaxAge, TransactionStateContainer,
+        packet_deserializer::PacketDeserializer, scheduler_messages::MaxAge,
+        TransactionStateContainer,
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_transaction_view::{
@@ -101,10 +101,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
 
         let (received_packet_results, receive_time_us) = measure_us!(self
             .packet_receiver
-            .receive_packets(recv_timeout, MAX_RECEIVE_PACKETS, |packet| {
-                packet.check_excessive_precompiles()?;
-                Ok(packet)
-            }));
+            .receive_packets(recv_timeout, MAX_RECEIVE_PACKETS));
 
         timing_metrics.update(|timing_metrics| {
             timing_metrics.receive_time_us += receive_time_us;
@@ -297,6 +294,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
 
         // Receive packet batches.
         const TIMEOUT: Duration = Duration::from_millis(10);
+        const PACKET_BURST_LIMIT: usize = 1000;
         let start = Instant::now();
         let mut num_received = 0;
         let mut received_message = false;
@@ -336,7 +334,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             }
         }
 
-        while start.elapsed() < TIMEOUT {
+        while start.elapsed() < TIMEOUT && num_received < PACKET_BURST_LIMIT {
             match self.receiver.try_recv() {
                 Ok(packet_batch_message) => {
                     received_message = true;
@@ -388,7 +386,7 @@ impl TransactionViewReceiveAndBuffer {
 
         let mut num_received = 0usize;
         let mut num_buffered = 0usize;
-        let mut num_dropped_on_status_age_checks = 0usize;
+        let mut num_dropped_on_transaction_checks = 0usize;
         let mut num_dropped_on_capacity = 0usize;
         let mut num_dropped_on_receive = 0usize;
 
@@ -423,7 +421,7 @@ impl TransactionViewReceiveAndBuffer {
                     .zip(transaction_priority_ids.iter())
                 {
                     if result.is_err() {
-                        num_dropped_on_status_age_checks += 1;
+                        num_dropped_on_transaction_checks += 1;
                         container.remove_by_id(priority_id.id);
                         continue;
                     }
@@ -436,7 +434,7 @@ impl TransactionViewReceiveAndBuffer {
                         &mut error_counters,
                     ) {
                         *result = Err(err);
-                        num_dropped_on_status_age_checks += 1;
+                        num_dropped_on_transaction_checks += 1;
                         container.remove_by_id(priority_id.id);
                         continue;
                     }
@@ -506,9 +504,10 @@ impl TransactionViewReceiveAndBuffer {
         count_metrics.update(|count_metrics| {
             count_metrics.num_received += num_received;
             count_metrics.num_buffered += num_buffered;
-            count_metrics.num_dropped_on_age_and_status += num_dropped_on_status_age_checks;
             count_metrics.num_dropped_on_capacity += num_dropped_on_capacity;
             count_metrics.num_dropped_on_receive += num_dropped_on_receive;
+            count_metrics.num_dropped_on_receive_transaction_checks +=
+                num_dropped_on_transaction_checks;
         });
 
         num_received
@@ -537,15 +536,6 @@ impl TransactionViewReceiveAndBuffer {
 
         // Discard non-vote packets if in vote-only mode.
         if root_bank.vote_only_bank() && !view.is_simple_vote_transaction() {
-            return Err(());
-        }
-
-        // Check excessive pre-compiles.
-        let signature_details = view.signature_details();
-        let num_precompiles = signature_details.num_ed25519_instruction_signatures()
-            + signature_details.num_secp256k1_instruction_signatures()
-            + signature_details.num_secp256r1_instruction_signatures();
-        if num_precompiles > MAX_ALLOWED_PRECOMPILE_SIGNATURES {
             return Err(());
         }
 

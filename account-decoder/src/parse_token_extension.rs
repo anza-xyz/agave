@@ -11,7 +11,7 @@ use {
     solana_clock::UnixTimestamp,
     solana_program_pack::Pack,
     solana_pubkey::Pubkey,
-    spl_token_2022::{
+    spl_token_2022_interface::{
         extension::{self, BaseState, BaseStateWithExtensions, ExtensionType, StateWithExtensions},
         solana_zk_sdk::encryption::pod::elgamal::PodElGamalPubkey,
     },
@@ -202,8 +202,9 @@ fn convert_mint_close_authority(
 fn convert_default_account_state(
     default_account_state: extension::default_account_state::DefaultAccountState,
 ) -> UiDefaultAccountState {
-    let account_state = spl_token_2022::state::AccountState::try_from(default_account_state.state)
-        .unwrap_or_default();
+    let account_state =
+        spl_token_2022_interface::state::AccountState::try_from(default_account_state.state)
+            .unwrap_or_default();
     UiDefaultAccountState {
         account_state: convert_account_state(account_state),
     }

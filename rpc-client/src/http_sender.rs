@@ -174,9 +174,9 @@ impl RpcSender for HttpSender {
 
                     too_many_requests_retries -= 1;
                     debug!(
-                                "Too many requests: server responded with {:?}, {} retries left, pausing for {:?}",
-                                response, too_many_requests_retries, duration
-                            );
+                        "Too many requests: server responded with {response:?}, \
+                         {too_many_requests_retries} retries left, pausing for {duration:?}"
+                    );
 
                     sleep(duration).await;
                     stats_updater.add_rate_limited_time(duration);
@@ -194,7 +194,7 @@ impl RpcSender for HttpSender {
                                         match serde_json::from_value::<RpcSimulateTransactionResult>(json["error"]["data"].clone()) {
                                             Ok(data) => RpcResponseErrorData::SendTransactionPreflightFailure(data),
                                             Err(err) => {
-                                                debug!("Failed to deserialize RpcSimulateTransactionResult: {:?}", err);
+                                                debug!("Failed to deserialize RpcSimulateTransactionResult: {err:?}");
                                                 RpcResponseErrorData::Empty
                                             }
                                         }

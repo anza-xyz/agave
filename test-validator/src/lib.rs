@@ -1,6 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_feature_set::{FeatureSet, FEATURE_NAMES},
+    agave_feature_set::{raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES},
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
@@ -25,8 +25,9 @@ use {
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
     solana_gossip::{
-        cluster_info::{BindIpAddrs, ClusterInfo, Node, NodeConfig},
+        cluster_info::{BindIpAddrs, ClusterInfo, NodeConfig},
         contact_info::Protocol,
+        node::Node,
     },
     solana_inflation::Inflation,
     solana_instruction::{AccountMeta, Instruction},
@@ -1089,7 +1090,11 @@ impl TestValidator {
                 .compute_unit_limit
                 .map(|compute_unit_limit| ComputeBudget {
                     compute_unit_limit,
-                    ..ComputeBudget::default()
+                    ..ComputeBudget::new_with_defaults(
+                        !config
+                            .deactivate_feature_set
+                            .contains(&raise_cpi_nesting_limit_to_8::id()),
+                    )
                 }),
             log_messages_bytes_limit: config.log_messages_bytes_limit,
             transaction_account_lock_limit: config.transaction_account_lock_limit,

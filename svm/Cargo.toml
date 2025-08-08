@@ -17,7 +17,10 @@ crate-type = ["lib"]
 name = "solana_svm"
 
 [features]
-dev-context-only-utils = ["dep:qualifier_attr"]
+dev-context-only-utils = [
+    "dep:qualifier_attr",
+    "solana-program-runtime/dev-context-only-utils",
+]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
@@ -33,7 +36,6 @@ svm-internal = []
 
 [dependencies]
 ahash = { workspace = true }
-itertools = { workspace = true }
 log = { workspace = true }
 percentage = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
@@ -66,10 +68,8 @@ solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-rent-collector = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-slot-hashes = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
-solana-svm-rent-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar-id = { workspace = true }
@@ -83,12 +83,12 @@ thiserror = { workspace = true }
 [dev-dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
+agave-syscalls = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 ed25519-dalek = { workspace = true }
 libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
-prost = { workspace = true }
 rand0-7 = { workspace = true }
 shuttle = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
@@ -113,13 +113,12 @@ solana-signature = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-svm = { path = ".", features = ["dev-context-only-utils", "svm-internal"] }
-solana-svm-conformance = { workspace = true }
 solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
-spl-token = { workspace = true }
+spl-token-interface = { workspace = true }
 test-case = { workspace = true }
 
 [lints]

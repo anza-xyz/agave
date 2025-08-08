@@ -1,6 +1,6 @@
 use {
     super::*,
-    spl_token_2022::{
+    spl_token_2022_interface::{
         extension::cpi_guard::instruction::CpiGuardInstruction,
         instruction::decode_instruction_type,
     },
@@ -42,7 +42,9 @@ mod test {
         super::*,
         solana_message::Message,
         solana_pubkey::Pubkey,
-        spl_token_2022::extension::cpi_guard::instruction::{disable_cpi_guard, enable_cpi_guard},
+        spl_token_2022_interface::extension::cpi_guard::instruction::{
+            disable_cpi_guard, enable_cpi_guard,
+        },
     };
 
     #[test]
@@ -51,8 +53,13 @@ mod test {
 
         // Enable, single owner
         let owner_pubkey = Pubkey::new_unique();
-        let enable_cpi_guard_ix =
-            enable_cpi_guard(&spl_token_2022::id(), &account_pubkey, &owner_pubkey, &[]).unwrap();
+        let enable_cpi_guard_ix = enable_cpi_guard(
+            &spl_token_2022_interface::id(),
+            &account_pubkey,
+            &owner_pubkey,
+            &[],
+        )
+        .unwrap();
         let message = Message::new(&[enable_cpi_guard_ix], None);
         let compiled_instruction = &message.instructions[0];
         assert_eq!(
@@ -75,7 +82,7 @@ mod test {
         let multisig_signer0 = Pubkey::new_unique();
         let multisig_signer1 = Pubkey::new_unique();
         let enable_cpi_guard_ix = enable_cpi_guard(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &account_pubkey,
             &multisig_pubkey,
             &[&multisig_signer0, &multisig_signer1],
@@ -103,8 +110,13 @@ mod test {
         );
 
         // Disable, single owner
-        let enable_cpi_guard_ix =
-            disable_cpi_guard(&spl_token_2022::id(), &account_pubkey, &owner_pubkey, &[]).unwrap();
+        let enable_cpi_guard_ix = disable_cpi_guard(
+            &spl_token_2022_interface::id(),
+            &account_pubkey,
+            &owner_pubkey,
+            &[],
+        )
+        .unwrap();
         let message = Message::new(&[enable_cpi_guard_ix], None);
         let compiled_instruction = &message.instructions[0];
         assert_eq!(
@@ -127,7 +139,7 @@ mod test {
         let multisig_signer0 = Pubkey::new_unique();
         let multisig_signer1 = Pubkey::new_unique();
         let enable_cpi_guard_ix = disable_cpi_guard(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &account_pubkey,
             &multisig_pubkey,
             &[&multisig_signer0, &multisig_signer1],

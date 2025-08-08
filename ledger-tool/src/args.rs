@@ -3,10 +3,9 @@ use {
     clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
-        accounts_db::{AccountsDb, AccountsDbConfig},
+        accounts_db::AccountsDbConfig,
         accounts_file::StorageAccess,
         accounts_index::{AccountsIndexConfig, IndexLimitMb, ScanFilter},
-        utils::create_and_canonicalize_directories,
     },
     solana_clap_utils::{
         hidden_unless_forced,
@@ -47,13 +46,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .help(
                 "Persistent accounts-index location. May be specified multiple times. \
                 [default: <LEDGER>/accounts_index]",
-            ),
-        Arg::with_name("accounts_hash_cache_path")
-            .long("accounts-hash-cache-path")
-            .value_name("PATH")
-            .takes_value(true)
-            .help(
-                "Use PATH as accounts hash cache location [default: <LEDGER>/accounts_hash_cache]",
             ),
         Arg::with_name("accounts_index_bins")
             .long("accounts-index-bins")
@@ -115,18 +107,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .takes_value(true)
             .possible_values(&["mmap", "file"])
             .help("Access account storages using this method"),
-        Arg::with_name("no_accounts_db_experimental_accumulator_hash")
-            .long("no-accounts-db-experimental-accumulator-hash")
-            .help("Disables the experimental accumulator hash")
-            .hidden(hidden_unless_forced()),
-        Arg::with_name("accounts_db_verify_experimental_accumulator_hash")
-            .long("accounts-db-verify-experimental-accumulator-hash")
-            .help("Verifies the experimental accumulator hash")
-            .hidden(hidden_unless_forced()),
-        Arg::with_name("accounts_db_snapshots_use_experimental_accumulator_hash")
-            .long("accounts-db-snapshots-use-experimental-accumulator-hash")
-            .help("Snapshots use the experimental accumulator hash")
-            .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_hash_threads")
             .long("accounts-db-hash-threads")
             .value_name("NUM_THREADS")
@@ -147,13 +127,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .validator(is_parsable::<usize>)
             .takes_value(true)
             .help("The number of ancient storages the ancient slot combining should converge to.")
-            .hidden(hidden_unless_forced()),
-        Arg::with_name("accounts_db_hash_calculation_pubkey_bins")
-            .long("accounts-db-hash-calculation-pubkey-bins")
-            .value_name("USIZE")
-            .validator(is_parsable::<usize>)
-            .takes_value(true)
-            .help("The number of pubkey bins used for accounts hash calculation.")
             .hidden(hidden_unless_forced()),
     ]
     .into_boxed_slice()
@@ -234,8 +207,6 @@ pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -
     let verify_index = arg_matches.is_present("verify_accounts_index");
     let limit_load_slot_count_from_snapshot =
         value_t!(arg_matches, "limit_load_slot_count_from_snapshot", usize).ok();
-    let on_halt_store_hash_raw_data_for_debug =
-        arg_matches.is_present("halt_at_slot_store_hash_raw_data");
     let run_final_accounts_hash_calc = arg_matches.is_present("run_final_hash_calc");
     let debug_keys = pubkeys_of(arg_matches, "debug_key")
         .map(|pubkeys| Arc::new(pubkeys.into_iter().collect::<HashSet<_>>()));
@@ -250,7 +221,6 @@ pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -
         accounts_db_skip_shrink,
         verify_index,
         limit_load_slot_count_from_snapshot,
-        on_halt_store_hash_raw_data_for_debug,
         run_final_accounts_hash_calc,
         debug_keys,
         run_verification,
@@ -290,23 +260,6 @@ pub fn get_accounts_db_config(
         ..AccountsIndexConfig::default()
     };
 
-    let accounts_hash_cache_path = arg_matches
-        .value_of("accounts_hash_cache_path")
-        .map(Into::into)
-        .unwrap_or_else(|| {
-            ledger_tool_ledger_path.join(AccountsDb::DEFAULT_ACCOUNTS_HASH_CACHE_DIR)
-        });
-    let accounts_hash_cache_path = create_and_canonicalize_directories([&accounts_hash_cache_path])
-        .unwrap_or_else(|err| {
-            eprintln!(
-                "Unable to access accounts hash cache path '{}': {err}",
-                accounts_hash_cache_path.display(),
-            );
-            std::process::exit(1);
-        })
-        .pop()
-        .unwrap();
-
     let storage_access = arg_matches
         .value_of("accounts_db_access_storages_method")
         .map(|method| match method {
@@ -339,7 +292,6 @@ pub fn get_accounts_db_config(
     AccountsDbConfig {
         index: Some(accounts_index_config),
         base_working_path: Some(ledger_tool_ledger_path),
-        accounts_hash_cache_path: Some(accounts_hash_cache_path),
         ancient_append_vec_offset: value_t!(arg_matches, "accounts_db_ancient_append_vecs", i64)
             .ok(),
         ancient_storage_ideal_size: value_t!(
@@ -349,22 +301,10 @@ pub fn get_accounts_db_config(
         )
         .ok(),
         max_ancient_storages: value_t!(arg_matches, "accounts_db_max_ancient_storages", usize).ok(),
-        hash_calculation_pubkey_bins: value_t!(
-            arg_matches,
-            "accounts_db_hash_calculation_pubkey_bins",
-            usize
-        )
-        .ok(),
         exhaustively_verify_refcounts: arg_matches.is_present("accounts_db_verify_refcounts"),
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
         storage_access,
         scan_filter_for_shrinking,
-        enable_experimental_accumulator_hash: !arg_matches
-            .is_present("no_accounts_db_experimental_accumulator_hash"),
-        verify_experimental_accumulator_hash: arg_matches
-            .is_present("accounts_db_verify_experimental_accumulator_hash"),
-        snapshots_use_experimental_accumulator_hash: arg_matches
-            .is_present("accounts_db_snapshots_use_experimental_accumulator_hash"),
         num_hash_threads,
         ..AccountsDbConfig::default()
     }

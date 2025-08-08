@@ -13,7 +13,6 @@ Here is a list of some of the requirements for being a good operator:
 
 - Performant computer hardware and a fast internet connection
   - You can find a list of [hardware requirements here](./requirements.md)
-  - Solana helps facilitate data-center server rentals through the [Solana server program](https://solana.foundation/server-program)
 - Knowledge of the Linux terminal
 - Linux system administration
   - Accessing your machine via ssh and scp

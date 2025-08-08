@@ -55,8 +55,6 @@ pub(crate) use self::{
     merkle_tree::{PROOF_ENTRIES_FOR_32_32_BATCH, SIZE_OF_MERKLE_ROOT},
     payload::serde_bytes_payload,
 };
-#[cfg(any(test, feature = "dev-context-only-utils"))]
-use solana_perf::packet::{bytes::Bytes, BytesPacket, Meta, Packet};
 pub use {
     self::{
         payload::Payload,
@@ -71,25 +69,24 @@ use {
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
     num_enum::{IntoPrimitive, TryFromPrimitive},
-    rayon::ThreadPool,
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_entry::entry::{create_ticks, Entry},
     solana_hash::Hash,
-    solana_keypair::Keypair,
     solana_perf::packet::PacketRef,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::hashv,
     solana_signature::{Signature, SIGNATURE_BYTES},
-    solana_signer::Signer,
     static_assertions::const_assert_eq,
-    std::{fmt::Debug, time::Instant},
+    std::fmt::Debug,
     thiserror::Error,
 };
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer};
 
 mod common;
 mod legacy;
-mod merkle;
+pub(crate) mod merkle;
 mod merkle_tree;
 mod payload;
 pub mod shred_code;
@@ -202,6 +199,8 @@ pub enum Error {
     InvalidShredType,
     #[error("Invalid shred variant")]
     InvalidShredVariant,
+    #[error("Invalid packet size, could not get the shred")]
+    InvalidPacketSize,
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("Unknown proof size")]
@@ -397,14 +396,11 @@ use dispatch;
 
 impl Shred {
     dispatch!(fn common_header(&self) -> &ShredCommonHeader);
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     dispatch!(fn set_signature(&mut self, signature: Signature));
     dispatch!(fn signed_data(&self) -> Result<SignedData, Error>);
 
     dispatch!(pub fn chained_merkle_root(&self) -> Result<Hash, Error>);
-    // Returns the portion of the shred's payload which is erasure coded.
-    dispatch!(pub(crate) fn erasure_shard(&self) -> Result<&[u8], Error>);
-    // Returns the shard index within the erasure coding set.
-    dispatch!(pub(crate) fn erasure_shard_index(&self) -> Result<usize, Error>);
     dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
 
     dispatch!(pub fn into_payload(self) -> Payload);
@@ -412,27 +408,12 @@ impl Shred {
     dispatch!(pub fn payload(&self) -> &Payload);
     dispatch!(pub fn sanitize(&self) -> Result<(), Error>);
 
-    #[deprecated(since = "2.3.0")]
-    pub fn set_index(&mut self, _index: u32) {}
-    #[deprecated(since = "2.3.0")]
-    pub fn set_slot(&mut self, _slot: Slot) {}
-
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn copy_to_packet(&self, packet: &mut Packet) {
         let payload = self.payload();
         let size = payload.len();
         packet.buffer_mut()[..size].copy_from_slice(&payload[..]);
         packet.meta_mut().size = size;
-    }
-
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
-    pub fn to_packet(&self) -> BytesPacket {
-        let buffer: &[u8] = match self.payload() {
-            Payload::Shared(bytes) => bytes.as_ref(),
-            Payload::Unique(bytes) => bytes.as_ref(),
-        };
-        let buffer = Bytes::copy_from_slice(buffer);
-        BytesPacket::new(buffer, Meta::default())
     }
 
     // TODO: Should this sanitize output?
@@ -481,29 +462,6 @@ impl Shred {
                 Self::from(ShredData::from(shred))
             }
         })
-    }
-
-    #[deprecated(since = "2.3.0", note = "Legacy shreds are deprecated")]
-    pub fn new_from_parity_shard(
-        slot: Slot,
-        index: u32,
-        parity_shard: &[u8],
-        fec_set_index: u32,
-        num_data_shreds: u16,
-        num_coding_shreds: u16,
-        position: u16,
-        version: u16,
-    ) -> Self {
-        Self::from(ShredCode::new_from_parity_shard(
-            slot,
-            index,
-            parity_shard,
-            fec_set_index,
-            num_data_shreds,
-            num_coding_shreds,
-            position,
-            version,
-        ))
     }
 
     /// Unique identifier for each shred.
@@ -559,6 +517,7 @@ impl Shred {
         &self.common_header().signature
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn sign(&mut self, keypair: &Keypair) {
         let data = self.signed_data().unwrap();
         let signature = keypair.sign_message(data.as_ref());
@@ -584,15 +543,6 @@ impl Shred {
         match self {
             Self::ShredCode(_) => false,
             Self::ShredData(shred) => shred.last_in_slot(),
-        }
-    }
-
-    /// This is not a safe function. It only changes the meta information.
-    /// Use this only for test code which doesn't care about actual shred
-    pub fn set_last_in_slot(&mut self) {
-        match self {
-            Self::ShredCode(_) => (),
-            Self::ShredData(shred) => shred.set_last_in_slot(),
         }
     }
 
@@ -840,43 +790,6 @@ pub fn recover(
     Ok(shreds.map(|shred| shred.map(Shred::from)))
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn make_merkle_shreds_from_entries(
-    thread_pool: &ThreadPool,
-    keypair: &Keypair,
-    entries: &[Entry],
-    slot: Slot,
-    parent_slot: Slot,
-    shred_version: u16,
-    reference_tick: u8,
-    is_last_in_slot: bool,
-    chained_merkle_root: Option<Hash>,
-    next_shred_index: u32,
-    next_code_index: u32,
-    reed_solomon_cache: &ReedSolomonCache,
-    stats: &mut ProcessShredsStats,
-) -> Result<impl Iterator<Item = Shred>, Error> {
-    let now = Instant::now();
-    let entries = bincode::serialize(entries)?;
-    stats.serialize_elapsed += now.elapsed().as_micros() as u64;
-    let shreds = merkle::make_shreds_from_data(
-        thread_pool,
-        keypair,
-        chained_merkle_root,
-        &entries[..],
-        slot,
-        parent_slot,
-        shred_version,
-        reference_tick,
-        is_last_in_slot,
-        next_shred_index,
-        next_code_index,
-        reed_solomon_cache,
-        stats,
-    )?;
-    Ok(shreds.into_iter().map(Shred::from))
-}
-
 // Accepts shreds in the slot range [root + 1, max_slot].
 #[must_use]
 pub fn should_discard_shred<'a, P>(
@@ -884,7 +797,6 @@ pub fn should_discard_shred<'a, P>(
     root: Slot,
     max_slot: Slot,
     shred_version: u16,
-    drop_unchained_merkle_shreds: impl Fn(Slot) -> bool,
     stats: &mut ShredFetchStats,
 ) -> bool
 where
@@ -962,24 +874,15 @@ where
         }
     }
     match shred_variant {
-        ShredVariant::LegacyCode | ShredVariant::LegacyData => {
+        ShredVariant::LegacyCode
+        | ShredVariant::LegacyData
+        | ShredVariant::MerkleCode { chained: false, .. }
+        | ShredVariant::MerkleData { chained: false, .. } => {
             return true;
-        }
-        ShredVariant::MerkleCode { chained: false, .. } => {
-            if drop_unchained_merkle_shreds(slot) {
-                return true;
-            }
-            stats.num_shreds_merkle_code = stats.num_shreds_merkle_code.saturating_add(1);
         }
         ShredVariant::MerkleCode { chained: true, .. } => {
             stats.num_shreds_merkle_code_chained =
                 stats.num_shreds_merkle_code_chained.saturating_add(1);
-        }
-        ShredVariant::MerkleData { chained: false, .. } => {
-            if drop_unchained_merkle_shreds(slot) {
-                return true;
-            }
-            stats.num_shreds_merkle_data = stats.num_shreds_merkle_data.saturating_add(1);
         }
         ShredVariant::MerkleData { chained: true, .. } => {
             stats.num_shreds_merkle_data_chained =
@@ -1012,6 +915,7 @@ pub fn max_entries_per_n_shred(
     (shred_data_size * num_shreds - count_size) / entry_size
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn verify_test_data_shred(
     shred: &Shred,
     index: u32,
@@ -1051,7 +955,6 @@ mod tests {
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
         rayon::ThreadPoolBuilder,
         solana_keypair::keypair_from_seed,
-        solana_signer::Signer,
         std::io::{Cursor, Seek, SeekFrom, Write},
         test_case::{test_case, test_matrix},
     };
@@ -1063,10 +966,6 @@ mod tests {
     const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_VARIANT;
     const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
     const OFFSET_OF_SHRED_VARIANT: usize = SIZE_OF_SIGNATURE;
-
-    fn bs58_decode<T: AsRef<[u8]>>(data: T) -> Vec<u8> {
-        bs58::decode(data).into_vec().unwrap()
-    }
 
     pub(super) fn make_merkle_shreds_for_tests<R: Rng>(
         rng: &mut R,
@@ -1195,17 +1094,13 @@ mod tests {
 
     #[test]
     fn test_invalid_parent_offset() {
-        let shred = Shred::new_from_data(10, 0, 1000, &[1, 2, 3], ShredFlags::empty(), 0, 1, 0);
+        let keypair = Keypair::new();
+        let shred = Shredder::single_shred_for_tests(10, &keypair);
+        assert_matches!(shred.parent(), Ok(9));
         let mut packet = Packet::default();
         shred.copy_to_packet(&mut packet);
+        wire::corrupt_and_set_parent_offset(packet.buffer_mut(), 1000);
         let shred_res = Shred::new_from_serialized_shred(packet.data(..).unwrap().to_vec());
-        assert_matches!(
-            shred.parent(),
-            Err(Error::InvalidParentOffset {
-                slot: 10,
-                parent_offset: 1000
-            })
-        );
         assert_matches!(
             shred_res,
             Err(Error::InvalidParentOffset {
@@ -1215,11 +1110,9 @@ mod tests {
         );
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_should_discard_shred(chained: bool, is_last_in_slot: bool) {
+    #[test_case(true ; "last_in_slot")]
+    #[test_case(false ; "not_last_in_slot")]
+    fn test_should_discard_shred(is_last_in_slot: bool) {
         solana_logger::setup();
         let mut rng = rand::thread_rng();
         let slot = 18_291;
@@ -1227,7 +1120,7 @@ mod tests {
             &mut rng,
             slot,
             1200 * 5, // data_size
-            chained,
+            true,     // chained
             is_last_in_slot,
         )
         .unwrap();
@@ -1253,7 +1146,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
         }
@@ -1266,7 +1158,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 1);
@@ -1277,7 +1168,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 2);
@@ -1288,7 +1178,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 3);
@@ -1299,7 +1188,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 4);
@@ -1310,7 +1198,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 5);
@@ -1322,7 +1209,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version.wrapping_add(1),
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.shred_version_mismatch, 1);
@@ -1334,7 +1220,6 @@ mod tests {
                 parent_slot + 1, // root
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.slot_out_of_range, 1);
@@ -1356,7 +1241,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.slot_out_of_range, 1);
@@ -1378,7 +1262,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.bad_parent_offset, 1);
@@ -1399,7 +1282,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_out_of_bounds, 1);
@@ -1416,7 +1298,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
         }
@@ -1427,7 +1308,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version.wrapping_add(1),
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.shred_version_mismatch, 1);
@@ -1439,7 +1319,6 @@ mod tests {
                 slot, // root
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.slot_out_of_range, 1);
@@ -1460,7 +1339,6 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
-                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_out_of_bounds, 1);
@@ -1685,131 +1563,121 @@ mod tests {
 
     #[test]
     fn test_serde_compat_shred_data() {
-        const SEED: &str = "6qG9NGWEtoTugS4Zgs46u8zTccEJuRHtrNMiUayLHCxt";
-        const PAYLOAD: &str = "hNX8YgJCQwSFGJkZ6qZLiepwPjpctC9UCsMD1SNNQurBXv\
-        rm7KKfLmPRMM9CpWHt6MsJuEWpDXLGwH9qdziJzGKhBMfYH63avcchjdaUiMqzVip7cUD\
-        kqZ9zZJMrHCCUDnxxKMupsJWKroUSjKeo7hrug2KfHah85VckXpRna4R9QpH7tf2WVBTD\
-        M4m3EerctsEQs8eZaTRxzTVkhtJYdNf74KZbH58dc3Yn2qUxF1mexWoPS6L5oZBatx";
+        // bytes of a serialized merkle data shred
+        const PAYLOAD: &str = "aX2ovF3sZRfd6HyqMow9kkrtL3MyJd52m7gvuSjcvA4qayXZ\
+        cVPhjURcs4JX86YQM8wVrKXqdneqdEUJwBWhFrxSkegDSov6NQoK89SzZi9auEXHHr35dmN\
+        4zQbxuNdPjKM2K7b7WKRWaHyoMKQfG9jDbJGcWqwVkAxBmUXZQKryHvAqyNdBuRTdWrMtPK\
+        DiJWhqVWTmokpyGNceL7mqVr3VrLby6dEuiEUCBHCkhbsXBjfpFZk4yRoSKosb7BViTWWdt\
+        pWd7NrbDSiE97sBppEU1nWTPaVQh3bu91x8dEoYk696k532MxnhRLcKeL4XzG6P2HzypAck\
+        JdXiRJDn5E3woA8aiPojqdN9ScthJ8yXq1h4HhvzTRWkRxRBpJL8HEYPBcshwuMLDZ9iBsW\
+        SFZLmj5v1xH3kDnMuNYJg6Dau6PKHnZyD15tTyFtFtMaXaBc35RqYhsM7s8JuQ9tJ1UfFwd\
+        khHa1wdrmTWGcvq9DDmALuTtejH1ccoW43GiYSs1TmByJWjRtupvLzMRifZZ7meaGbUBgHU\
+        kA6t1VN3akoZ9BhdX561KpFGABxTU4NxyFqztEy1EB5EJYtTHwtbJQb1NmNMwKFkazXkn1o\
+        uKK6drH5y19roH3mMo2JykapbvzYPDBSXUwKQWe1RqSvogapwPxm1EzSRDeXNDP6EYUJJjj\
+        TAnckNatpT5UZDz4EhpaSbUzd9b5ztqsdPp9HxeBTm412GopAXKN5iSXSPS2WvrEdnANFD7\
+        tRV3a6PM2SfwpF6eFM5J7xXGJSoPm5TWJSPBMbxttxVFUETSRrBubEsd24aymYZZePJtHr7\
+        Q8S1deygcyXH5WhhYAmR23hNPv3nUUHe8iwJfaFg73Ncjr8fQBVjwePEy9JKT5jNG5sm87q\
+        e2RrHEWEwkNKnNgUknoVMbL7y3wmGFpP8VoKTgP51EjMDz7JTxnVsZeRsSp29STteGKbq4i\
+        wiC5EmMS5K86CAJ86FYt1kXXHJBSw4D79wAMgxRDDycp5PgdowdLxAbwySgpmwdfnxnSD4h\
+        Y8mo4jLGWokP1mGdgjnPmtMbzndiQCLPjpUcbZoVc6SQrTDCufupkJhy1ewo64yA1db6T2T\
+        ASTWSHJkjzaWt7QtFfnBo8WoXQrNKw5pyKAQsmP7n6r1SVD7tASfcZAjfaFHxkVvMpKwTQF\
+        dy9WHxREeCPK3yeN7ACT75RgRuRT1shC1PRCuAu4EFGnBmr3nWuDrYNCG5WrWuW6RRoMyB3\
+        YaXqjYMXRUVuwb5h2PBP9euBb96Ntung8ihWXa2mbKMYMtmaoYCDhYYrFYszYfdgQH68JYz\
+        AXZvjFH1SxCETfiXAWGD1aYDa33rXZLcLVx637igoydr77qmzo5YozRQnuXUiJ19PScLWic\
+        8jWeVmQ6Mm7BLoGhVPyYbJBeyX5HRwh8CNeLK2ekmhFz9MypB1rM2PXUfcnr2MXS9WRK8bh\
+        sy47awNdApPdN3RxmuyPLnvmN6FsG5fUNqF8rsz9KUiJh9C4ziYf6NSZvVG2c1KFsQRyFrS\
+        BzyjqqxBrH1xereV9YNr1gNamFjhZTncpGcPQf9oAoA4LQeSAZXR1dMtfktCs1fFWVbA67F\
+        dQ1GrpZVGTsZCbuw7Tspns8WoL158AdS7";
+
         let mut rng = {
-            let seed = <[u8; 32]>::try_from(bs58_decode(SEED)).unwrap();
+            let seed = [1u8; 32];
             ChaChaRng::from_seed(seed)
         };
-        let mut data = [0u8; legacy::ShredData::CAPACITY];
-        rng.fill(&mut data[..]);
-
         let mut seed = [0u8; Keypair::SECRET_KEY_LENGTH];
         rng.fill(&mut seed[..]);
+        let mut data = [0u8; 4096];
+        rng.fill(&mut data[..]);
         let keypair = keypair_from_seed(&seed).unwrap();
-        let mut shred = Shred::new_from_data(
-            141939602, // slot
-            28685,     // index
-            36390,     // parent_offset
-            &data,     // data
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            37,    // reference_tick
-            45189, // version
-            28657, // fec_set_index
-        );
+        let slot = 142076266;
+        let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 42).unwrap();
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let mut shred = shredder
+            .make_shreds_from_data_slice(
+                &keypair,
+                &data,
+                false,
+                Some(Hash::default()),
+                64,
+                64,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap()
+            .next()
+            .unwrap();
         shred.sign(&keypair);
         assert!(shred.verify(&keypair.pubkey()));
         assert_matches!(shred.sanitize(), Ok(()));
-        let mut payload = bs58_decode(PAYLOAD);
-        payload.extend({
-            let skip = payload.len() - SIZE_OF_DATA_SHRED_HEADERS;
-            data.iter().skip(skip).copied()
-        });
+        let payload = bs58::decode(PAYLOAD).into_vec().unwrap();
         let mut packet = Packet::default();
         packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
         packet.meta_mut().size = payload.len();
         assert_eq!(shred.bytes_to_store(), payload);
-        assert_eq!(shred, Shred::new_from_serialized_shred(payload).unwrap());
+        assert_eq!(
+            shred,
+            Shred::new_from_serialized_shred(payload.to_vec()).unwrap()
+        );
         verify_shred_layout(&shred, &packet);
     }
 
     #[test]
     fn test_serde_compat_shred_data_empty() {
-        const SEED: &str = "E3M5hm8yAEB7iPhQxFypAkLqxNeZCTuGBDMa8Jdrghoo";
-        const PAYLOAD: &str = "nRNFVBEsV9FEM5KfmsCXJsgELRSkCV55drTavdy5aZPnsp\
-        B8WvsgY99ZuNHDnwkrqe6Lx7ARVmercwugR5HwDcLA9ivKMypk9PNucDPLs67TXWy6k9R\
-        ozKmy";
+        // bytes of a serialized merkle data shred
+        const PAYLOAD: &str = "HV7qJBe3jCM8aRd4HAXJnJzyDvNYDYsPjjaaK2tTFTxJU2Qj\
+        7i87e45TzCg2Vv4rrcBznfs8212svH8aXsM2WYDPst43KyDz99FesBZ8aasxhkUgHGg3Smc\
+        Pa7opSARcYBpQAG2UHRYFmoPsj3hXADsX5C8JBM3jyHLtbQ78CH11J2dh7J4ps8JxCcUsq7\
+        E7PVs7NgFku54c8gBuhBuAMykvvSyhGRjyXCL17feubvA8WQyMJz27eXk8hE6LGs98ucsV9\
+        pScMuXVbAL4rT2cW9gN77QP4mBohJ8miWbMYbi7eLxiXJ9nA6i7XZd32GKscf3Ln8PK7NFT\
+        JpKxinptw2vd3MuVQRQjNuyZLTEjJSiaxoR1mhSKet27PCTkPWRAxPfMCvLNY2mtdixnFfk\
+        BdKj1nrwHcQYqNnKHjg3axRhx58QQ7VX5LSNGRtLByZRFMq9wCy7zz7HiMKvMZzddqixHcx\
+        EFeaM6YFh2sfmW3AKz4pS9s6XL3mAD9MtFvRJUXupNK9P3XtA7BGU8Z8AyYnVi4wxfaWoSd\
+        22nhDmMuHTRNHgUDxCEPHfE5enuR3PG4q1DGpVyV9rM6678qFG3cUKdTbJw85uFAkedEhAn\
+        RsU5u7H2DUTMrZ3AsLGuRmRoLZdxcFGe9GJmWY3WYEBJsdrJUVTnQVDsgvcc7HiFCoGBmGG\
+        KPS19ncA7Ynie1iokXCjwZNaQf3fpUMksGzkqjfYiFfGQDMNTsPUdcHFAae5Nmh3p8bduG6\
+        TNHn3A4LoSMX8wwM6Sn4XL3fFLHrkWTV8CJfg67AoqpzgGiWQNdeK2HRABGRbamUxXSzWhA\
+        tJ7yEPrh9tKTX851mpPjrFHxpu68xDL3t5nd18mtALJ5n5gmTsXMwUxpt9GfGrZyHXteZfH\
+        jaMLmSqvmDAFH1xADU2SZucRDbAWsuaWUMwaPXCNtiozgJ6uRnyxmwBhikChgtxDSZmRALA\
+        uYwEnCE8uj4NWvryeVpzfy6m9tqYutCkRsbNodaGmBZ2KGtg4iaQjj4iCK9jKKAxpYVnxbr\
+        n2jtFezUTsR9dqFh94c9Aa4NdPgkr19hcqabqBZyzan3xP3Jvs78Z5uqkSUVtXP3t3b5ozd\
+        qjYRMkgwsgGpNqcmBLGANiPXrQ8SseoNsCs3Xtv6Vf7oGg1St3teXSrtWMbsouK3uF8DPgn\
+        S14yUtrs8cyXX53QMCEuY1wKcoQZwSWqL86FTvZUA3vT6SYvjVKYxAXwNP1ouKdwtePfwdH\
+        wdM37RT9SMht4BLEXutSCcBys1K3pTWWwqGB87A26apuG1TiqeEugv1FrjprEKyt84S3FgM\
+        5eJfdN5NDArvw9bBR81UoYmyZgX5pEY6gNg2xw28Gd7gH9TVe5Y31iggni2oJ3GuBj3R7Ma\
+        umdo8rE1S4tBWVGsXikv9KFDtMmT2sMmeFuAwDbUZEGsBCAfK7EQpKcYSv7KajtgLpqi6JW\
+        RP8nBR7FkKR9qv5khhiBLuRzfSxwtADXZknFRU6bh8Ba6JmLhjhqkCYETizXmZVrjvy4gLZ\
+        we5YHZW5uhbthAzfcLRxuTxnPbyW7LehgwkYde64b8PzqYepYUtxqFHuJSwddis1VuoA2Lb\
+        M3SeyTe262Q7gUiPEjwQdRXKwUAgGrxVu";
         let mut rng = {
-            let seed = <[u8; 32]>::try_from(bs58_decode(SEED)).unwrap();
+            let seed = [1u8; 32];
             ChaChaRng::from_seed(seed)
         };
         let mut seed = [0u8; Keypair::SECRET_KEY_LENGTH];
         rng.fill(&mut seed[..]);
         let keypair = keypair_from_seed(&seed).unwrap();
-        let mut shred = Shred::new_from_data(
-            142076266, // slot
-            21443,     // index
-            51279,     // parent_offset
-            &[],       // data
-            ShredFlags::DATA_COMPLETE_SHRED,
-            49,    // reference_tick
-            59445, // version
-            21414, // fec_set_index
-        );
+        let mut shred = Shredder::single_shred_for_tests(142076266, &keypair);
         shred.sign(&keypair);
         assert!(shred.verify(&keypair.pubkey()));
         assert_matches!(shred.sanitize(), Ok(()));
-        let payload = bs58_decode(PAYLOAD);
+        let payload = bs58::decode(PAYLOAD).into_vec().unwrap();
         let mut packet = Packet::default();
         packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
         packet.meta_mut().size = payload.len();
         assert_eq!(shred.bytes_to_store(), payload);
-        assert_eq!(shred, Shred::new_from_serialized_shred(payload).unwrap());
+        assert_eq!(
+            shred,
+            Shred::new_from_serialized_shred(payload.to_vec()).unwrap()
+        );
         verify_shred_layout(&shred, &packet);
-    }
-
-    #[test]
-    fn test_shred_flags() {
-        fn make_shred(is_last_data: bool, is_last_in_slot: bool, reference_tick: u8) -> Shred {
-            let flags = if is_last_in_slot {
-                assert!(is_last_data);
-                ShredFlags::LAST_SHRED_IN_SLOT
-            } else if is_last_data {
-                ShredFlags::DATA_COMPLETE_SHRED
-            } else {
-                ShredFlags::empty()
-            };
-            Shred::new_from_data(
-                0,   // slot
-                0,   // index
-                0,   // parent_offset
-                &[], // data
-                flags,
-                reference_tick,
-                0, // version
-                0, // fec_set_index
-            )
-        }
-        fn check_shred_flags(
-            shred: &Shred,
-            is_last_data: bool,
-            is_last_in_slot: bool,
-            reference_tick: u8,
-        ) {
-            assert_eq!(shred.data_complete(), is_last_data);
-            assert_eq!(shred.last_in_slot(), is_last_in_slot);
-            assert_eq!(shred.reference_tick(), reference_tick.min(63u8));
-            assert_eq!(
-                layout::get_reference_tick(shred.payload()).unwrap(),
-                reference_tick.min(63u8),
-            );
-        }
-        for is_last_data in [false, true] {
-            for is_last_in_slot in [false, true] {
-                // LAST_SHRED_IN_SLOT also implies DATA_COMPLETE_SHRED. So it
-                // cannot be LAST_SHRED_IN_SLOT if not DATA_COMPLETE_SHRED.
-                let is_last_in_slot = is_last_in_slot && is_last_data;
-                for reference_tick in [0, 37, 63, 64, 80, 128, 255] {
-                    let mut shred = make_shred(is_last_data, is_last_in_slot, reference_tick);
-                    check_shred_flags(&shred, is_last_data, is_last_in_slot, reference_tick);
-                    shred.set_last_in_slot();
-                    check_shred_flags(&shred, true, true, reference_tick);
-                }
-            }
-        }
     }
 
     #[test]

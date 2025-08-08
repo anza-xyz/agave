@@ -171,7 +171,7 @@ mod tests {
             let mut batches =
                 to_packet_batches(&(0..1000).map(|_| test_tx()).collect::<Vec<_>>(), 128);
             discard += dedup_packets_and_count_discards(&filter, &mut batches) as usize;
-            trace!("{} {}", i, discard);
+            trace!("{i} {discard}");
             if filter.popcount.load(Ordering::Relaxed) > capacity {
                 break;
             }

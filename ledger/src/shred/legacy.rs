@@ -6,8 +6,7 @@ use {
         shred_code, shred_data,
         traits::{Shred, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait},
         CodingShredHeader, DataShredHeader, Error, ShredCommonHeader, ShredFlags, ShredVariant,
-        SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_COMMON_SHRED_HEADER, SIZE_OF_DATA_SHRED_HEADERS,
-        SIZE_OF_SIGNATURE,
+        SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_SIGNATURE,
     },
     assert_matches::debug_assert_matches,
     solana_clock::Slot,
@@ -268,54 +267,5 @@ impl ShredData {
         }
         shred.resize(Self::SIZE_OF_PAYLOAD, 0u8);
         Ok(shred)
-    }
-
-    // Only for tests.
-    pub(crate) fn set_last_in_slot(&mut self) {
-        self.data_header.flags |= ShredFlags::LAST_SHRED_IN_SLOT;
-        let buffer = &mut self.payload[SIZE_OF_COMMON_SHRED_HEADER..];
-        bincode::serialize_into(buffer, &self.data_header).unwrap();
-    }
-}
-
-impl ShredCode {
-    pub(super) fn new_from_parity_shard(
-        slot: Slot,
-        index: u32,
-        parity_shard: &[u8],
-        fec_set_index: u32,
-        num_data_shreds: u16,
-        num_coding_shreds: u16,
-        position: u16,
-        version: u16,
-    ) -> Self {
-        let common_header = ShredCommonHeader {
-            signature: Signature::default(),
-            shred_variant: ShredVariant::LegacyCode,
-            index,
-            slot,
-            version,
-            fec_set_index,
-        };
-        let coding_header = CodingShredHeader {
-            num_data_shreds,
-            num_coding_shreds,
-            position,
-        };
-        let mut payload = vec![0; Self::SIZE_OF_PAYLOAD];
-        let mut cursor = Cursor::new(&mut payload[..]);
-        bincode::serialize_into(&mut cursor, &common_header).unwrap();
-        bincode::serialize_into(&mut cursor, &coding_header).unwrap();
-        // Tests may have an empty parity_shard.
-        if !parity_shard.is_empty() {
-            let offset = cursor.position() as usize;
-            debug_assert_eq!(offset, Self::SIZE_OF_HEADERS);
-            payload[offset..].copy_from_slice(parity_shard);
-        }
-        Self {
-            common_header,
-            coding_header,
-            payload: Payload::from(payload),
-        }
     }
 }

@@ -12,7 +12,7 @@ use {
     solana_quic_definitions::NotifyKeyUpdate,
     solana_streamer::{
         nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-        quic::{spawn_server_multi, EndpointKeyUpdater, QuicServerParams},
+        quic::{spawn_server, EndpointKeyUpdater, QuicServerParams},
         streamer::StakedNodes,
     },
     std::{
@@ -133,7 +133,7 @@ impl Vortexor {
             tpu_quic_fwd,
         } = tpu_sockets;
 
-        let tpu_result = spawn_server_multi(
+        let tpu_result = spawn_server(
             "solVtxTpu",
             "quic_vortexor_tpu",
             tpu_quic,
@@ -149,7 +149,7 @@ impl Vortexor {
         // for staked connections:
         quic_server_params.max_staked_connections = max_fwd_staked_connections;
         quic_server_params.max_unstaked_connections = max_fwd_unstaked_connections;
-        let tpu_fwd_result = spawn_server_multi(
+        let tpu_fwd_result = spawn_server(
             "solVtxTpuFwd",
             "quic_vortexor_tpu_forwards",
             tpu_quic_fwd,

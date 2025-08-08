@@ -43,6 +43,8 @@ const PRUNE_DATA_PREFIX: &[u8] = b"\xffSOLANA_PRUNE_DATA";
 const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 /// Minimum serialized size of a Protocol::PullResponse packet.
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
+/// Timeout for pull requests in milliseconds
+pub(crate) const PULL_REQUEST_TIMEOUT_MS: u64 = 3000;
 
 // TODO These messages should go through the gpu pipeline for spam filtering
 /// Gossip protocol messages base enum
@@ -159,7 +161,19 @@ impl Sanitize for Protocol {
                 match val.data() {
                     CrdsData::LegacyContactInfo(_) | CrdsData::ContactInfo(_) => val.sanitize(),
                     _ => Err(SanitizeError::InvalidValue),
+                }?;
+                // Discard PullRequest if sender wallclock is out of sync with this node's wallclock
+                let now = solana_time_utils::timestamp();
+                let wallclock_window = now.saturating_sub(PULL_REQUEST_TIMEOUT_MS)
+                    ..=now.saturating_add(PULL_REQUEST_TIMEOUT_MS);
+                if !wallclock_window.contains(&val.wallclock()) {
+                    error!(
+                        "Discarding PullRequest: sender wallclock out of bounds. Sender Pubkey: {}",
+                        val.pubkey()
+                    );
+                    return Err(SanitizeError::ValueOutOfBounds);
                 }
+                Ok(())
             }
             Protocol::PullResponse(_, val) => {
                 // PullResponse is allowed to carry anything in its CrdsData, including deprecated Crds

@@ -2,6 +2,7 @@ use {
     crate::{accounts_index::AccountsIndexRootsStats, append_vec::APPEND_VEC_STATS},
     solana_time_utils::AtomicInterval,
     std::{
+        iter::Sum,
         num::Saturating,
         sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     },
@@ -761,5 +762,24 @@ impl ShrinkAncientStats {
                 i64
             ),
         );
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ObsoleteAccountsStats {
+    pub accounts_marked_obsolete: u64,
+    pub slots_removed: u64,
+}
+
+impl Sum<Self> for ObsoleteAccountsStats {
+    fn sum<I>(iter: I) -> Self
+    where
+        I: Iterator<Item = Self>,
+    {
+        iter.fold(Self::default(), |mut accumulated_stats, item| {
+            accumulated_stats.accounts_marked_obsolete += item.accounts_marked_obsolete;
+            accumulated_stats.slots_removed += item.slots_removed;
+            accumulated_stats
+        })
     }
 }

@@ -1,21 +1,15 @@
-#![feature(test)]
-
-extern crate test;
-
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     rand::{thread_rng, Rng},
     solana_entry::entry::Entry,
-    solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
-        contact_info::ContactInfo,
-    },
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
         shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     },
-    solana_net_utils::bind_to_unspecified,
+    solana_net_utils::sockets::bind_to_localhost_unique,
     solana_pubkey as pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signer::Signer,
@@ -23,16 +17,15 @@ use {
     solana_time_utils::{timestamp, AtomicInterval},
     solana_turbine::{
         broadcast_stage::{
-            broadcast_metrics::TransmitShredsStats, broadcast_shreds, BroadcastStage,
+            broadcast_metrics::TransmitShredsStats, broadcast_shreds, BroadcastSocket,
+            BroadcastStage,
         },
         cluster_nodes::ClusterNodesCache,
     },
     std::{collections::HashMap, sync::Arc, time::Duration},
-    test::Bencher,
 };
 
-#[bench]
-fn broadcast_shreds_bench(bencher: &mut Bencher) {
+fn broadcast_shreds_bench(b: &mut Bencher) {
     solana_logger::setup();
     let leader_keypair = Arc::new(Keypair::new());
     let (quic_endpoint_sender, _quic_endpoint_receiver) =
@@ -43,7 +36,8 @@ fn broadcast_shreds_bench(bencher: &mut Bencher) {
         leader_keypair.clone(),
         SocketAddrSpace::Unspecified,
     );
-    let socket = bind_to_unspecified().unwrap();
+    let socket = bind_to_localhost_unique().expect("should bind");
+    let socket = BroadcastSocket::Udp(&socket);
     let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
     let bank = Bank::new_for_benches(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank);
@@ -87,11 +81,11 @@ fn broadcast_shreds_bench(bencher: &mut Bencher) {
     );
     let shreds = Arc::new(shreds);
     let last_datapoint = Arc::new(AtomicInterval::default());
-    bencher.iter(move || {
+    b.iter(move || {
         let shreds = shreds.clone();
         broadcast_shreds(
-            &socket,
-            &shreds,
+            socket,
+            shreds,
             &cluster_nodes_cache,
             &last_datapoint,
             &mut TransmitShredsStats::default(),
@@ -103,3 +97,6 @@ fn broadcast_shreds_bench(bencher: &mut Bencher) {
         .unwrap();
     });
 }
+
+benchmark_group!(benches, broadcast_shreds_bench);
+benchmark_main!(benches);

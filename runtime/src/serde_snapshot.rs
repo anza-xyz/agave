@@ -19,11 +19,10 @@ use {
             AtomicAccountsFileId, DuplicatesLtHash, IndexGenerationInfo,
         },
         accounts_file::{AccountsFile, StorageAccess},
-        accounts_hash::{AccountsDeltaHash, AccountsHash},
+        accounts_hash::AccountsLtHash,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::AncestorsForSerialization,
         blockhash_queue::BlockhashQueue,
-        epoch_accounts_hash::EpochAccountsHash,
     },
     solana_builtins::prototype::BuiltinPrototype,
     solana_clock::{Epoch, Slot, UnixTimestamp},
@@ -33,6 +32,7 @@ use {
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_inflation::Inflation,
+    solana_lattice_hash::lt_hash::LtHash,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_rent_collector::RentCollector,
@@ -60,12 +60,7 @@ mod tests;
 mod types;
 mod utils;
 
-pub(crate) use {
-    solana_accounts_db::accounts_hash::{
-        SerdeAccountsDeltaHash, SerdeAccountsHash, SerdeIncrementalAccountsHash,
-    },
-    storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
-};
+pub(crate) use storage::{SerializableAccountStorageEntry, SerializedAccountsFileId};
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 
@@ -84,34 +79,22 @@ pub struct AccountsDbFields<T>(
     Vec<(Slot, Hash)>,
 );
 
-/// Incremental snapshots only calculate their accounts hash based on the
-/// account changes WITHIN the incremental slot range. So, we need to keep track
-/// of the full snapshot expected accounts hash results. We also need to keep
-/// track of the hash and capitalization specific to the incremental snapshot
-/// slot range. The capitalization we calculate for the incremental slot will
-/// NOT be consistent with the bank's capitalization. It is not feasible to
-/// calculate a capitalization delta that is correct given just incremental
-/// slots account data and the full snapshot's capitalization.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
-pub struct BankIncrementalSnapshotPersistence {
-    /// slot of full snapshot
-    pub full_slot: Slot,
-    /// accounts hash from the full snapshot
-    pub full_hash: SerdeAccountsHash,
-    /// capitalization from the full snapshot
+#[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ObsoleteIncrementalSnapshotPersistence {
+    pub full_slot: u64,
+    pub full_hash: [u8; 32],
     pub full_capitalization: u64,
-    /// hash of the accounts in the incremental snapshot slot range, including zero-lamport accounts
-    pub incremental_hash: SerdeIncrementalAccountsHash,
-    /// capitalization of the accounts in the incremental snapshot slot range
+    pub incremental_hash: [u8; 32],
     pub incremental_capitalization: u64,
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct BankHashInfo {
-    accounts_delta_hash: SerdeAccountsDeltaHash,
-    accounts_hash: SerdeAccountsHash,
+    obsolete_accounts_delta_hash: [u8; 32],
+    obsolete_accounts_hash: [u8; 32],
     stats: BankHashStats,
 }
 
@@ -165,6 +148,9 @@ struct DeserializableVersionedBank {
 
 impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
     fn from(dvb: DeserializableVersionedBank) -> Self {
+        // This serves as a canary for the LtHash.
+        // If it is not replaced during deserialization, it indicates a bug.
+        const LT_HASH_CANARY: LtHash = LtHash([0xCAFE; LtHash::NUM_ELEMENTS]);
         BankFieldsToDeserialize {
             blockhash_queue: dvb.blockhash_queue,
             ancestors: dvb.ancestors,
@@ -194,11 +180,9 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             inflation: dvb.inflation,
             stakes: dvb.stakes,
             is_delta: dvb.is_delta,
-            incremental_snapshot_persistence: None,
-            epoch_accounts_hash: None,
             versioned_epoch_stakes: HashMap::default(), // populated from ExtraFieldsToDeserialize
-            accounts_lt_hash: None,                     // populated from ExtraFieldsToDeserialize
-            bank_hash_stats: BankHashStats::default(),  // populated from AccountsDbFields
+            accounts_lt_hash: AccountsLtHash(LT_HASH_CANARY), // populated from ExtraFieldsToDeserialize
+            bank_hash_stats: BankHashStats::default(),        // populated from AccountsDbFields
         }
     }
 }
@@ -410,9 +394,9 @@ struct ExtraFieldsToDeserialize {
     #[serde(deserialize_with = "default_on_eof")]
     lamports_per_signature: u64,
     #[serde(deserialize_with = "default_on_eof")]
-    incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
+    _obsolete_incremental_snapshot_persistence: Option<ObsoleteIncrementalSnapshotPersistence>,
     #[serde(deserialize_with = "default_on_eof")]
-    epoch_accounts_hash: Option<Hash>,
+    _obsolete_epoch_accounts_hash: Option<Hash>,
     #[serde(deserialize_with = "default_on_eof")]
     versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     #[serde(deserialize_with = "default_on_eof")]
@@ -428,10 +412,10 @@ struct ExtraFieldsToDeserialize {
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
 #[derive(Debug, Serialize)]
-pub struct ExtraFieldsToSerialize<'a> {
+pub struct ExtraFieldsToSerialize {
     pub lamports_per_signature: u64,
-    pub incremental_snapshot_persistence: Option<&'a BankIncrementalSnapshotPersistence>,
-    pub epoch_accounts_hash: Option<EpochAccountsHash>,
+    pub obsolete_incremental_snapshot_persistence: Option<ObsoleteIncrementalSnapshotPersistence>,
+    pub obsolete_epoch_accounts_hash: Option<Hash>,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: Option<SerdeAccountsLtHash>,
 }
@@ -463,8 +447,8 @@ where
     // Process extra fields
     let ExtraFieldsToDeserialize {
         lamports_per_signature,
-        incremental_snapshot_persistence,
-        epoch_accounts_hash,
+        _obsolete_incremental_snapshot_persistence: _incremental_snapshot_persistence,
+        _obsolete_epoch_accounts_hash,
         versioned_epoch_stakes,
         accounts_lt_hash,
     } = extra_fields;
@@ -472,10 +456,10 @@ where
     bank_fields.fee_rate_governor = bank_fields
         .fee_rate_governor
         .clone_with_lamports_per_signature(lamports_per_signature);
-    bank_fields.incremental_snapshot_persistence = incremental_snapshot_persistence;
-    bank_fields.epoch_accounts_hash = epoch_accounts_hash;
     bank_fields.versioned_epoch_stakes = versioned_epoch_stakes;
-    bank_fields.accounts_lt_hash = accounts_lt_hash.map(Into::into);
+    bank_fields.accounts_lt_hash = accounts_lt_hash
+        .expect("snapshot must have accounts_lt_hash")
+        .into();
 
     Ok((bank_fields, accounts_db_fields))
 }
@@ -632,8 +616,6 @@ pub fn serialize_bank_snapshot_into<W>(
     stream: &mut BufWriter<W>,
     bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
-    accounts_delta_hash: AccountsDeltaHash,
-    accounts_hash: AccountsHash,
     account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
     extra_fields: ExtraFieldsToSerialize,
     write_version: u64,
@@ -649,8 +631,6 @@ where
         &mut serializer,
         bank_fields,
         bank_hash_stats,
-        accounts_delta_hash,
-        accounts_hash,
         account_storage_entries,
         extra_fields,
         write_version,
@@ -662,8 +642,6 @@ pub fn serialize_bank_snapshot_with<S>(
     serializer: S,
     bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
-    accounts_delta_hash: AccountsDeltaHash,
-    accounts_hash: AccountsHash,
     account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
     extra_fields: ExtraFieldsToSerialize,
     write_version: u64,
@@ -677,8 +655,6 @@ where
         slot,
         account_storage_entries,
         bank_hash_stats,
-        accounts_delta_hash,
-        accounts_hash,
         write_version,
     };
     (serializable_bank, serializable_accounts_db, extra_fields).serialize(serializer)
@@ -700,26 +676,22 @@ impl Serialize for SerializableBankAndStorage<'_> {
         let mut bank_fields = self.bank.get_fields_to_serialize();
         let accounts_db = &self.bank.rc.accounts.accounts_db;
         let bank_hash_stats = self.bank.get_bank_hash_stats();
-        let accounts_delta_hash = accounts_db.get_accounts_delta_hash(slot).unwrap();
-        let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
         let lamports_per_signature = bank_fields.fee_rate_governor.lamports_per_signature;
         let versioned_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
-        let accounts_lt_hash = bank_fields.accounts_lt_hash.clone().map(Into::into);
+        let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
         let bank_fields_to_serialize = (
             SerializableVersionedBank::from(bank_fields),
             SerializableAccountsDb::<'_> {
                 slot,
                 account_storage_entries: self.snapshot_storages,
                 bank_hash_stats,
-                accounts_delta_hash,
-                accounts_hash,
                 write_version,
             },
             ExtraFieldsToSerialize {
                 lamports_per_signature,
-                incremental_snapshot_persistence: None,
-                epoch_accounts_hash: self.bank.get_epoch_accounts_hash_to_serialize(),
+                obsolete_incremental_snapshot_persistence: None,
+                obsolete_epoch_accounts_hash: None,
                 versioned_epoch_stakes,
                 accounts_lt_hash,
             },
@@ -744,8 +716,6 @@ impl Serialize for SerializableBankAndStorageNoExtra<'_> {
         let bank_fields = self.bank.get_fields_to_serialize();
         let accounts_db = &self.bank.rc.accounts.accounts_db;
         let bank_hash_stats = self.bank.get_bank_hash_stats();
-        let accounts_delta_hash = accounts_db.get_accounts_delta_hash(slot).unwrap();
-        let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
         (
             SerializableVersionedBank::from(bank_fields),
@@ -753,8 +723,6 @@ impl Serialize for SerializableBankAndStorageNoExtra<'_> {
                 slot,
                 account_storage_entries: self.snapshot_storages,
                 bank_hash_stats,
-                accounts_delta_hash,
-                accounts_hash,
                 write_version,
             },
         )
@@ -780,8 +748,6 @@ struct SerializableAccountsDb<'a> {
     slot: Slot,
     account_storage_entries: &'a [Vec<Arc<AccountStorageEntry>>],
     bank_hash_stats: BankHashStats,
-    accounts_delta_hash: AccountsDeltaHash,
-    accounts_hash: AccountsHash,
     write_version: u64,
 }
 
@@ -803,8 +769,8 @@ impl Serialize for SerializableAccountsDb<'_> {
             )
         }));
         let bank_hash_info = BankHashInfo {
-            accounts_delta_hash: self.accounts_delta_hash.into(),
-            accounts_hash: self.accounts_hash.into(),
+            obsolete_accounts_delta_hash: [0; 32],
+            obsolete_accounts_hash: [0; 32],
             stats: self.bank_hash_stats.clone(),
         };
 
@@ -859,13 +825,6 @@ pub(crate) fn reconstruct_bank_from_fields<E>(
 where
     E: SerializableStorage + std::marker::Sync,
 {
-    let capitalizations = (
-        bank_fields.full.capitalization,
-        bank_fields
-            .incremental
-            .as_ref()
-            .map(|bank_fields| bank_fields.capitalization),
-    );
     let mut bank_fields = bank_fields.collapse_into();
     let (accounts_db, reconstructed_accounts_db_info) = reconstruct_accountsdb_from_fields(
         snapshot_accounts_db_fields,
@@ -876,10 +835,6 @@ where
         accounts_db_config,
         accounts_update_notifier,
         exit,
-        bank_fields.epoch_accounts_hash,
-        capitalizations,
-        bank_fields.incremental_snapshot_persistence.as_ref(),
-        bank_fields.accounts_lt_hash.is_some(),
     )?;
     bank_fields.bank_hash_stats = reconstructed_accounts_db_info.bank_hash_stats;
 
@@ -1041,10 +996,6 @@ fn reconstruct_accountsdb_from_fields<E>(
     accounts_db_config: Option<AccountsDbConfig>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-    epoch_accounts_hash: Option<Hash>,
-    capitalizations: (u64, Option<u64>),
-    incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
-    has_accounts_lt_hash: bool,
 ) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), Error>
 where
     E: SerializableStorage + std::marker::Sync,
@@ -1056,116 +1007,10 @@ where
         exit,
     );
 
-    if let Some(epoch_accounts_hash) = epoch_accounts_hash {
-        accounts_db
-            .epoch_accounts_hash_manager
-            .set_valid(EpochAccountsHash::new(epoch_accounts_hash), 0);
-    }
-
-    // Store the accounts hash & capitalization, from the full snapshot, in the new AccountsDb
-    {
-        let AccountsDbFields(_, _, slot, bank_hash_info, _, _) =
-            &snapshot_accounts_db_fields.full_snapshot_accounts_db_fields;
-
-        if let Some(incremental_snapshot_persistence) = incremental_snapshot_persistence {
-            // If we've booted from local state that was originally intended to be an incremental
-            // snapshot, then we will use the incremental snapshot persistence field to set the
-            // initial accounts hashes in accounts db.
-            let old_accounts_hash = accounts_db.set_accounts_hash_from_snapshot(
-                incremental_snapshot_persistence.full_slot,
-                incremental_snapshot_persistence.full_hash.clone(),
-                incremental_snapshot_persistence.full_capitalization,
-            );
-            assert!(
-                old_accounts_hash.is_none(),
-                "There should not already be an AccountsHash at slot {slot}: {old_accounts_hash:?}",
-            );
-            let old_incremental_accounts_hash = accounts_db
-                .set_incremental_accounts_hash_from_snapshot(
-                    *slot,
-                    incremental_snapshot_persistence.incremental_hash.clone(),
-                    incremental_snapshot_persistence.incremental_capitalization,
-                );
-            assert!(
-                old_incremental_accounts_hash.is_none(),
-                "There should not already be an IncrementalAccountsHash at slot {slot}: {old_incremental_accounts_hash:?}",
-            );
-        } else {
-            // Otherwise, we've booted from a snapshot archive, or from local state that was *not*
-            // intended to be an incremental snapshot.
-            let old_accounts_hash = accounts_db.set_accounts_hash_from_snapshot(
-                *slot,
-                bank_hash_info.accounts_hash.clone(),
-                capitalizations.0,
-            );
-            assert!(
-                old_accounts_hash.is_none(),
-                "There should not already be an AccountsHash at slot {slot}: {old_accounts_hash:?}",
-            );
-        }
-    }
-
-    // Store the accounts hash & capitalization, from the incremental snapshot, in the new AccountsDb
-    {
-        if let Some(AccountsDbFields(_, _, slot, bank_hash_info, _, _)) =
-            snapshot_accounts_db_fields
-                .incremental_snapshot_accounts_db_fields
-                .as_ref()
-        {
-            if let Some(incremental_snapshot_persistence) = incremental_snapshot_persistence {
-                // Use the presence of a BankIncrementalSnapshotPersistence to indicate the
-                // Incremental Accounts Hash feature is enabled, and use its accounts hashes
-                // instead of `BankHashInfo`'s.
-                let AccountsDbFields(_, _, full_slot, full_bank_hash_info, _, _) =
-                    &snapshot_accounts_db_fields.full_snapshot_accounts_db_fields;
-                let full_accounts_hash = &full_bank_hash_info.accounts_hash;
-                assert_eq!(
-                    incremental_snapshot_persistence.full_slot, *full_slot,
-                    "The incremental snapshot's base slot ({}) must match the full snapshot's slot ({full_slot})!",
-                    incremental_snapshot_persistence.full_slot,
-                );
-                assert_eq!(
-                    &incremental_snapshot_persistence.full_hash, full_accounts_hash,
-                    "The incremental snapshot's base accounts hash ({}) must match the full snapshot's accounts hash ({})!",
-                    &incremental_snapshot_persistence.full_hash.0, full_accounts_hash.0,
-                );
-                assert_eq!(
-                    incremental_snapshot_persistence.full_capitalization, capitalizations.0,
-                    "The incremental snapshot's base capitalization ({}) must match the full snapshot's capitalization ({})!",
-                    incremental_snapshot_persistence.full_capitalization, capitalizations.0,
-                );
-                let old_incremental_accounts_hash = accounts_db
-                    .set_incremental_accounts_hash_from_snapshot(
-                        *slot,
-                        incremental_snapshot_persistence.incremental_hash.clone(),
-                        incremental_snapshot_persistence.incremental_capitalization,
-                    );
-                assert!(
-                    old_incremental_accounts_hash.is_none(),
-                    "There should not already be an IncrementalAccountsHash at slot {slot}: {old_incremental_accounts_hash:?}",
-                );
-            } else {
-                // ..and without a BankIncrementalSnapshotPersistence then the Incremental Accounts
-                // Hash feature is disabled; the accounts hash in `BankHashInfo` is valid.
-                let old_accounts_hash = accounts_db.set_accounts_hash_from_snapshot(
-                    *slot,
-                    bank_hash_info.accounts_hash.clone(),
-                    capitalizations
-                        .1
-                        .expect("capitalization from incremental snapshot"),
-                );
-                assert!(
-                    old_accounts_hash.is_none(),
-                    "There should not already be an AccountsHash at slot {slot}: {old_accounts_hash:?}",
-                );
-            };
-        }
-    }
-
     let AccountsDbFields(
         _snapshot_storages,
         snapshot_version,
-        snapshot_slot,
+        _snapshot_slot,
         snapshot_bank_hash_info,
         _snapshot_historical_roots,
         _snapshot_historical_roots_with_hash,
@@ -1195,14 +1040,6 @@ where
     );
 
     // Process deserialized data, set necessary fields in self
-    let old_accounts_delta_hash = accounts_db.set_accounts_delta_hash_from_snapshot(
-        snapshot_slot,
-        snapshot_bank_hash_info.accounts_delta_hash,
-    );
-    assert!(
-        old_accounts_delta_hash.is_none(),
-        "There should not already be an AccountsDeltaHash at slot {snapshot_slot}: {old_accounts_delta_hash:?}",
-        );
     accounts_db.storage.initialize(storage);
     accounts_db
         .next_id
@@ -1222,21 +1059,12 @@ where
         })
         .unwrap();
 
-    // When generating the index, we want to calculate the duplicates lt hash value (needed to do
-    // the lattice-based verification of the accounts in the background) optimistically.
-    // This means, either when the cli arg is set, or when the snapshot has an accounts lt hash.
-    let is_accounts_lt_hash_enabled =
-        accounts_db.is_experimental_accumulator_hash_enabled() || has_accounts_lt_hash;
     info!("Building accounts index...");
     let start = Instant::now();
     let IndexGenerationInfo {
         accounts_data_len,
         duplicates_lt_hash,
-    } = accounts_db.generate_index(
-        limit_load_slot_count_from_snapshot,
-        verify_index,
-        is_accounts_lt_hash_enabled,
-    );
+    } = accounts_db.generate_index(limit_load_slot_count_from_snapshot, verify_index);
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
     handle.join().unwrap();

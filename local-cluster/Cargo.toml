@@ -56,7 +56,6 @@ solana-stake-program = { workspace = true }
 solana-streamer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
-solana-thin-client = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-transaction = { workspace = true }

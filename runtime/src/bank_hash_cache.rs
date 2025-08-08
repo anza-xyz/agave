@@ -8,7 +8,10 @@
 //! contend for the local lock during slot dumping due to duplicate blocks which should be extremely rare.
 
 use {
-    crate::{bank::Bank, bank_forks::BankForks, root_bank_cache::RootBankCache},
+    crate::{
+        bank::Bank,
+        bank_forks::{BankForks, SharableBank},
+    },
     solana_clock::Slot,
     solana_hash::Hash,
     std::{
@@ -23,14 +26,14 @@ pub type DumpedSlotSubscription = Arc<Mutex<bool>>;
 pub struct BankHashCache {
     hashes: BTreeMap<Slot, Hash>,
     bank_forks: Arc<RwLock<BankForks>>,
-    root_bank_cache: RootBankCache,
+    root_bank: SharableBank,
     last_root: Slot,
     dumped_slot_subscription: DumpedSlotSubscription,
 }
 
 impl BankHashCache {
     pub fn new(bank_forks: Arc<RwLock<BankForks>>) -> Self {
-        let root_bank_cache = RootBankCache::new(bank_forks.clone());
+        let root_bank = bank_forks.read().unwrap().sharable_root_bank();
         let dumped_slot_subscription = DumpedSlotSubscription::default();
         bank_forks
             .write()
@@ -39,7 +42,7 @@ impl BankHashCache {
         Self {
             hashes: BTreeMap::default(),
             bank_forks,
-            root_bank_cache,
+            root_bank,
             last_root: 0,
             dumped_slot_subscription,
         }
@@ -91,7 +94,7 @@ impl BankHashCache {
 
     /// Returns the root bank and also prunes cache of any slots < root
     pub fn get_root_bank_and_prune_cache(&mut self) -> Arc<Bank> {
-        let root_bank = self.root_bank_cache.root_bank();
+        let root_bank = self.root_bank.load();
         if root_bank.slot() != self.last_root {
             self.last_root = root_bank.slot();
             self.hashes = self.hashes.split_off(&self.last_root);

@@ -92,6 +92,7 @@ check-cfg = [
 [workspace.dependencies]
 agave-feature-set = { path = "../../feature-set", version = "=3.0.0" }
 agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=3.0.0" }
+agave-syscalls = { path = "../../syscalls", version = "=3.0.0" }
 agave-validator = { path = "../../validator", version = "=3.0.0" }
 array-bytes = "=1.4.1"
 bincode = { version = "1.1.4", default-features = false }
@@ -154,7 +155,7 @@ solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version
 solana-sbpf = "=0.12.0"
 solana-sdk-ids = "=2.2.1"
 solana-secp256k1-recover = "=2.2.1"
-solana-sha256-hasher = { version = "=2.2.1", features = ["sha2"] }
+solana-sha256-hasher = { version = "=2.3.0", features = ["sha2"] }
 solana-stake-interface = { version = "=1.2.1", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=3.0.0" }
 solana-svm-callback = { path = "../../svm-callback", version = "=3.0.0" }
@@ -168,7 +169,6 @@ solana-transaction-status = { path = "../../transaction-status", version = "=3.0
 solana-type-overrides = { path = "../../type-overrides", version = "=3.0.0" }
 solana-vote = { path = "../../vote", version = "=3.0.0" }
 solana-vote-program = { path = "../../programs/vote", version = "=3.0.0" }
-solana-zk-sdk = { path = "../../zk-sdk", version = "=3.0.0" }
 thiserror = "1.0"
 
 [features]
@@ -182,6 +182,7 @@ frozen-abi = []
 [dev-dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
+agave-syscalls = { workspace = true }
 agave-validator = { workspace = true }
 bincode = { workspace = true }
 borsh = { workspace = true }
@@ -260,12 +261,12 @@ name = "bpf_loader"
 [patch.crates-io]
 # We include the following crates as our dependencies from crates.io:
 #
-#  * spl-associated-token-account
+#  * spl-associated-token-account-interface
 #  * spl-instruction-padding
-#  * spl-memo
+#  * spl-memo-interface
 #  * spl-pod
 #  * spl-token
-#  * spl-token-2022
+#  * spl-token-2022-interface
 #  * spl-token-metadata-interface
 #
 # They are included indirectly, for example, `account-decoder` depends on
@@ -299,4 +300,3 @@ name = "bpf_loader"
 # There is a similar override in `../../Cargo.toml`.  Please keep both comments
 # and the overrides in sync.
 solana-curve25519 = { path = "../../curves/curve25519" }
-solana-zk-sdk = { path = "../../zk-sdk" }

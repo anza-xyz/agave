@@ -4,14 +4,17 @@
 use {
     super::SendTransactionStats,
     crate::{
-        quic_networking::send_data_over_stream, send_transaction_stats::record_error,
-        transaction_batch::TransactionBatch, QuicError,
+        logging::{debug, error, trace, warn},
+        quic_networking::send_data_over_stream,
+        send_transaction_stats::record_error,
+        transaction_batch::TransactionBatch,
+        QuicError,
     },
-    log::*,
     quinn::{ConnectError, Connection, Endpoint},
     solana_clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_measure::measure::Measure,
     solana_time_utils::timestamp,
+    solana_tls_utils::socket_addr_to_quic_server_name,
     std::{
         net::SocketAddr,
         sync::{atomic::Ordering, Arc},
@@ -209,7 +212,8 @@ impl ConnectionWorker {
     /// If an error occurs, the state may transition to `Retry` or `Closing`,
     /// depending on the nature of the error.
     async fn create_connection(&mut self, retries_attempt: usize) {
-        let connecting = self.endpoint.connect(self.peer, "connect");
+        let server_name = socket_addr_to_quic_server_name(self.peer);
+        let connecting = self.endpoint.connect(self.peer, &server_name);
         match connecting {
             Ok(connecting) => {
                 let mut measure_connection = Measure::start("establish connection");

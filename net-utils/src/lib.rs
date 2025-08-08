@@ -366,8 +366,8 @@ pub fn multi_bind_in_range_with_config(
     if !PLATFORM_SUPPORTS_SOCKET_CONFIGS && num != 1 {
         // See https://github.com/solana-labs/solana/issues/4607
         warn!(
-            "multi_bind_in_range_with_config() only supports 1 socket on this platform ({} requested)",
-            num
+            "multi_bind_in_range_with_config() only supports 1 socket on this platform ({num} \
+             requested)"
         );
         num = 1;
     }
@@ -464,7 +464,8 @@ pub fn bind_common_with_config(
 
 #[deprecated(
     since = "2.3.2",
-    note = "Please avoid this function, in favor of sockets::bind_two_in_range_with_offset_and_config"
+    note = "Please avoid this function, in favor of \
+            sockets::bind_two_in_range_with_offset_and_config"
 )]
 #[allow(deprecated)]
 pub fn bind_two_in_range_with_offset(
@@ -484,7 +485,8 @@ pub fn bind_two_in_range_with_offset(
 
 #[deprecated(
     since = "2.3.2",
-    note = "Please avoid this function, in favor of sockets::bind_two_in_range_with_offset_and_config"
+    note = "Please avoid this function, in favor of \
+            sockets::bind_two_in_range_with_offset_and_config"
 )]
 #[allow(deprecated)]
 pub fn bind_two_in_range_with_offset_and_config(
@@ -535,7 +537,7 @@ pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Re
 
 /// Searches for several ports on a given binding ip_addr in the provided range.
 ///
-/// This will start at a random point in the range provided, and search sequencially.
+/// This will start at a random point in the range provided, and search sequentially.
 /// If it can not find anything, an Error is returned.
 pub fn find_available_ports_in_range<const N: usize>(
     ip_addr: IpAddr,
@@ -582,8 +584,7 @@ pub fn bind_more_with_config(
     if !PLATFORM_SUPPORTS_SOCKET_CONFIGS {
         if num > 1 {
             warn!(
-                "bind_more_with_config() only supports 1 socket on this platform ({} requested)",
-                num
+                "bind_more_with_config() only supports 1 socket on this platform ({num} requested)"
             );
         }
         Ok(vec![socket])

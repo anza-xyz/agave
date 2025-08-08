@@ -422,7 +422,7 @@ fn validate_endpoints(
         if let Some(common_genesis_hash) = opt_common_genesis_hash {
             if common_genesis_hash != genesis_hash {
                 return Err(
-                    "Endpoints don't aggree on genesis hash, have you mixed up clusters?".into(),
+                    "Endpoints don't agree on genesis hash, have you mixed up clusters?".into(),
                 );
             }
         } else {
