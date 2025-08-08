@@ -472,8 +472,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     true => Err(fees_only_tx.load_error),
                     false => {
                         // Update loaded accounts cache with nonce and fee-payer
-                        account_loader
-                            .update_accounts_for_failed_tx(&fees_only_tx.rollback_accounts);
+                        account_loader.update_accounts_for_failed_tx(
+                            &fees_only_tx.rollback_accounts,
+                            self.slot,
+                        );
 
                         Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
                     }
@@ -541,6 +543,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             account_loader.update_accounts_for_successful_tx(
                                 tx,
                                 &executed_tx.loaded_transaction.accounts,
+                                self.slot,
                             );
                             // Also update local program cache with modifications made by the
                             // transaction, if it executed successfully.
@@ -556,6 +559,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         (Err(_), false) => {
                             account_loader.update_accounts_for_failed_tx(
                                 &executed_tx.loaded_transaction.rollback_accounts,
+                                self.slot,
                             );
 
                             Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
