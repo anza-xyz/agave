@@ -1,8 +1,7 @@
 use {
     crate::{
         bit_vec::BitVec,
-        blockstore::MAX_DATA_SHREDS_PER_SLOT,
-        shred::{self, Shred, ShredType},
+        shred::{self, Shred, ShredType, MAX_DATA_SHREDS_PER_SLOT},
     },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},

@@ -1,14 +1,12 @@
 use {
-    crate::{
-        blockstore::MAX_CODE_SHREDS_PER_SLOT,
-        shred::{
-            common::dispatch,
-            legacy, merkle,
-            payload::Payload,
-            traits::{Shred, ShredCode as ShredCodeTrait},
-            CodingShredHeader, Error, ShredCommonHeader, ShredType, SignedData,
-            DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, SIZE_OF_NONCE,
-        },
+    crate::shred::{
+        common::dispatch,
+        legacy, merkle,
+        payload::Payload,
+        traits::{Shred, ShredCode as ShredCodeTrait},
+        CodingShredHeader, Error, ShredCommonHeader, ShredType, SignedData,
+        DATA_SHREDS_PER_FEC_BLOCK, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT,
+        SIZE_OF_NONCE,
     },
     solana_hash::Hash,
     solana_packet::PACKET_DATA_SIZE,

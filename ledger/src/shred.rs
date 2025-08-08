@@ -63,7 +63,7 @@ pub use {
 };
 use {
     self::{shred_code::ShredCode, traits::Shred as _},
-    crate::blockstore::{self, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT},
+    crate::blockstore::{self},
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
     num_enum::{IntoPrimitive, TryFromPrimitive},
@@ -117,6 +117,12 @@ const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
 pub const DATA_SHREDS_PER_FEC_BLOCK: usize = 32;
 pub const CODING_SHREDS_PER_FEC_BLOCK: usize = 32;
 pub const SHREDS_PER_FEC_BLOCK: usize = DATA_SHREDS_PER_FEC_BLOCK + CODING_SHREDS_PER_FEC_BLOCK;
+
+/// An upper bound on maximum number of data shreds we can handle in a slot
+/// 32K shreds would allow ~320K peak TPS
+/// (32K shreds per slot * 4 TX per shred * 2.5 slots per sec)
+pub const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
+pub const MAX_CODE_SHREDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT;
 
 // Statically compute the typical data batch size assuming:
 // 1. 32:32 erasure coding batch
