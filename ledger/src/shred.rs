@@ -63,7 +63,7 @@ pub use {
 };
 use {
     self::{shred_code::ShredCode, traits::Shred as _},
-    crate::blockstore::{self, MAX_DATA_SHREDS_PER_SLOT},
+    crate::blockstore::{self, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT},
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
     num_enum::{IntoPrimitive, TryFromPrimitive},
@@ -132,10 +132,6 @@ pub const fn get_data_shred_bytes_per_batch_typical() -> u64 {
         };
     (DATA_SHREDS_PER_FEC_BLOCK * capacity) as u64
 }
-
-// For legacy tests and benchmarks.
-const_assert_eq!(LEGACY_SHRED_DATA_CAPACITY, 1051);
-pub const LEGACY_SHRED_DATA_CAPACITY: usize = legacy::ShredData::CAPACITY;
 
 // LAST_SHRED_IN_SLOT also implies DATA_COMPLETE_SHRED.
 // So it cannot be LAST_SHRED_IN_SLOT if not also DATA_COMPLETE_SHRED.
@@ -815,7 +811,7 @@ where
     };
     match ShredType::from(shred_variant) {
         ShredType::Code => {
-            if index >= MAX_DATA_SHREDS_PER_SLOT as u32 {
+            if index >= MAX_CODE_SHREDS_PER_SLOT as u32 {
                 stats.index_out_of_bounds += 1;
                 return true;
             }
@@ -1294,7 +1290,7 @@ mod tests {
             assert_eq!(stats.slot_out_of_range, 1);
         }
         {
-            let index = u32::try_from(MAX_DATA_SHREDS_PER_SLOT).unwrap();
+            let index = u32::try_from(MAX_CODE_SHREDS_PER_SLOT).unwrap();
             {
                 let mut cursor = Cursor::new(packet.buffer_mut());
                 cursor

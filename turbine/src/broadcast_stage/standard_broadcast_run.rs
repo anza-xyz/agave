@@ -275,7 +275,7 @@ impl StandardBroadcastRun {
                 is_last_in_slot,
                 process_stats,
                 blockstore::MAX_DATA_SHREDS_PER_SLOT as u32,
-                blockstore::MAX_DATA_SHREDS_PER_SLOT as u32,
+                blockstore::MAX_CODE_SHREDS_PER_SLOT as u32,
             )
             .unwrap();
         // Insert the first data shred synchronously so that blockstore stores

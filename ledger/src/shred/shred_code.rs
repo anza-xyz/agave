@@ -1,11 +1,14 @@
 use {
-    crate::shred::{
-        common::dispatch,
-        legacy, merkle,
-        payload::Payload,
-        traits::{Shred, ShredCode as ShredCodeTrait},
-        CodingShredHeader, Error, ShredCommonHeader, ShredType, SignedData,
-        DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, SIZE_OF_NONCE,
+    crate::{
+        blockstore::MAX_CODE_SHREDS_PER_SLOT,
+        shred::{
+            common::dispatch,
+            legacy, merkle,
+            payload::Payload,
+            traits::{Shred, ShredCode as ShredCodeTrait},
+            CodingShredHeader, Error, ShredCommonHeader, ShredType, SignedData,
+            DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, SIZE_OF_NONCE,
+        },
     },
     solana_hash::Hash,
     solana_packet::PACKET_DATA_SIZE,
@@ -115,7 +118,7 @@ pub(super) fn erasure_shard_index<T: ShredCodeTrait>(shred: &T) -> Option<usize>
     if shred
         .first_coding_index()?
         .checked_add(u32::from(coding_header.num_coding_shreds.checked_sub(1)?))? as usize
-        >= MAX_DATA_SHREDS_PER_SLOT
+        >= MAX_CODE_SHREDS_PER_SLOT
     {
         return None;
     }
@@ -133,7 +136,7 @@ pub(super) fn sanitize<T: ShredCodeTrait>(shred: &T) -> Result<(), Error> {
     }
     let common_header = shred.common_header();
     let coding_header = shred.coding_header();
-    if common_header.index as usize >= MAX_DATA_SHREDS_PER_SLOT {
+    if common_header.index as usize >= MAX_DATA_SHREDS_PER_SLOT.max(MAX_CODE_SHREDS_PER_SLOT) {
         return Err(Error::InvalidShredIndex(
             ShredType::Code,
             common_header.index,

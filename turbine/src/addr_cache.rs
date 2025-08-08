@@ -3,7 +3,7 @@ use {
     itertools::Itertools,
     solana_clock::Slot,
     solana_ledger::{
-        blockstore::MAX_DATA_SHREDS_PER_SLOT,
+        blockstore::{MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT},
         shred::{ShredId, ShredType},
     },
     std::{
@@ -323,7 +323,7 @@ impl CacheEntry {
         let code = {
             // There at least as many coding shreds as data shreds.
             let max_index = self.max_index_code.max(self.max_index_data) as usize + extend_buffer;
-            self.index_code..max_index.min(MAX_DATA_SHREDS_PER_SLOT)
+            self.index_code..max_index.min(MAX_CODE_SHREDS_PER_SLOT)
         }
         .filter(|&k| matches!(self.code.get(k), None | Some(None)))
         .map(|k| (ShredType::Code, k));
