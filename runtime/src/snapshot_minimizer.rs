@@ -551,7 +551,7 @@ mod tests {
             current_slot += 1;
 
             for (index, pubkey) in pubkeys.iter().enumerate() {
-                accounts.store_for_tests(current_slot, &[(pubkey, &account)]);
+                accounts.store_for_tests((current_slot, [(pubkey, &account)].as_slice()));
 
                 if current_slot % 2 == 0 && index % 100 == 0 {
                     minimized_account_set.insert(*pubkey);

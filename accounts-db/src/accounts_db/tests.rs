@@ -432,7 +432,7 @@ define_accounts_db_test!(test_accountsdb_add_root, |db| {
     let key = Pubkey::default();
     let account0 = AccountSharedData::new(1, 0, &key);
 
-    db.store_for_tests(0, &[(&key, &account0)]);
+    db.store_for_tests((0, [(&key, &account0)].as_slice()));
     db.add_root(0);
     let ancestors = vec![(1, 1)].into_iter().collect();
     assert_eq!(
@@ -445,10 +445,10 @@ define_accounts_db_test!(test_accountsdb_latest_ancestor, |db| {
     let key = Pubkey::default();
     let account0 = AccountSharedData::new(1, 0, &key);
 
-    db.store_for_tests(0, &[(&key, &account0)]);
+    db.store_for_tests((0, [(&key, &account0)].as_slice()));
 
     let account1 = AccountSharedData::new(0, 0, &key);
-    db.store_for_tests(1, &[(&key, &account1)]);
+    db.store_for_tests((1, [(&key, &account1)].as_slice()));
 
     let ancestors = vec![(1, 1)].into_iter().collect();
     assert_eq!(
@@ -478,10 +478,10 @@ define_accounts_db_test!(test_accountsdb_latest_ancestor_with_root, |db| {
     let key = Pubkey::default();
     let account0 = AccountSharedData::new(1, 0, &key);
 
-    db.store_for_tests(0, &[(&key, &account0)]);
+    db.store_for_tests((0, [(&key, &account0)].as_slice()));
 
     let account1 = AccountSharedData::new(0, 0, &key);
-    db.store_for_tests(1, &[(&key, &account1)]);
+    db.store_for_tests((1, [(&key, &account1)].as_slice()));
     db.add_root(0);
 
     let ancestors = vec![(1, 1)].into_iter().collect();
@@ -502,7 +502,7 @@ define_accounts_db_test!(test_accountsdb_root_one_slot, |db| {
     let account0 = AccountSharedData::new(1, 0, &key);
 
     // store value 1 in the "root", i.e. db zero
-    db.store_for_tests(0, &[(&key, &account0)]);
+    db.store_for_tests((0, [(&key, &account0)].as_slice()));
 
     // now we have:
     //
@@ -515,7 +515,7 @@ define_accounts_db_test!(test_accountsdb_root_one_slot, |db| {
 
     // store value 0 in one child
     let account1 = AccountSharedData::new(0, 0, &key);
-    db.store_for_tests(1, &[(&key, &account1)]);
+    db.store_for_tests((1, [(&key, &account1)].as_slice()));
 
     // masking accounts is done at the Accounts level, at accountsDB we see
     // original account (but could also accept "None", which is implemented
@@ -593,8 +593,8 @@ define_accounts_db_test!(test_accountsdb_count_stores, |db| {
 
     let pubkey = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, DEFAULT_FILE_SIZE as usize / 3, &pubkey);
-    db.store_for_tests(1, &[(&pubkey, &account)]);
-    db.store_for_tests(1, &[(&pubkeys[0], &account)]);
+    db.store_for_tests((1, [(&pubkey, &account)].as_slice()));
+    db.store_for_tests((1, [(&pubkeys[0], &account)].as_slice()));
     // adding root doesn't change anything
     db.add_root_and_flush_write_cache(1);
     {
@@ -609,7 +609,7 @@ define_accounts_db_test!(test_accountsdb_count_stores, |db| {
     // overwrite old rooted account version; only the r_slot_0_stores.count() should be
     // decremented
     // slot 2 is not a root and should be ignored by clean
-    db.store_for_tests(2, &[(&pubkeys[0], &account)]);
+    db.store_for_tests((2, [(&pubkeys[0], &account)].as_slice()));
     db.clean_accounts_for_tests();
     {
         let slot_0_store = &db.storage.get_slot_storage_entry(0).unwrap();
@@ -626,11 +626,11 @@ define_accounts_db_test!(test_accounts_unsquashed, |db0| {
 
     // 1 token in the "root", i.e. db zero
     let account0 = AccountSharedData::new(1, 0, &key);
-    db0.store_for_tests(0, &[(&key, &account0)]);
+    db0.store_for_tests((0, [(&key, &account0)].as_slice()));
 
     // 0 lamports in the child
     let account1 = AccountSharedData::new(0, 0, &key);
-    db0.store_for_tests(1, &[(&key, &account1)]);
+    db0.store_for_tests((1, [(&key, &account1)].as_slice()));
 
     // masking accounts is done at the Accounts level, at accountsDB we see
     // original account
@@ -656,7 +656,7 @@ fn run_test_remove_unrooted_slot(is_cached: bool, db: AccountsDb) {
     if is_cached {
         db.store_cached((unrooted_slot, &[(&key, &account0)][..]));
     } else {
-        db.store_for_tests(unrooted_slot, &[(&key, &account0)]);
+        db.store_for_tests((unrooted_slot, [(&key, &account0)].as_slice()));
     }
     assert!(db.accounts_index.contains(&key));
     db.assert_load_account(unrooted_slot, key, 1);
@@ -670,7 +670,7 @@ fn run_test_remove_unrooted_slot(is_cached: bool, db: AccountsDb) {
 
     // Test we can store for the same slot again and get the right information
     let account0 = AccountSharedData::new(2, 0, &key);
-    db.store_for_tests(unrooted_slot, &[(&key, &account0)]);
+    db.store_for_tests((unrooted_slot, [(&key, &account0)].as_slice()));
     db.assert_load_account(unrooted_slot, key, 2);
 }
 
@@ -689,7 +689,7 @@ fn update_accounts(accounts: &AccountsDb, pubkeys: &[Pubkey], slot: Slot, range:
         if let Some((mut account, _)) = accounts.load_without_fixed_root(&ancestors, &pubkeys[idx])
         {
             account.checked_add_lamports(1).unwrap();
-            accounts.store_for_tests(slot, &[(&pubkeys[idx], &account)]);
+            accounts.store_for_tests((slot, [(&pubkeys[idx], &account)].as_slice()));
             if account.is_zero_lamport() {
                 let ancestors = vec![(slot, 0)].into_iter().collect();
                 assert!(accounts
@@ -752,7 +752,7 @@ fn test_account_grow_many() {
     for i in 0..9 {
         let key = solana_pubkey::new_rand();
         let account = AccountSharedData::new(i + 1, size as usize / 4, &key);
-        accounts.store_for_tests(0, &[(&key, &account)]);
+        accounts.store_for_tests((0, [(&key, &account)].as_slice()));
         keys.push(key);
     }
     let ancestors = vec![(0, 0)].into_iter().collect();
@@ -788,7 +788,7 @@ fn test_account_grow() {
         let status = [AccountStorageStatus::Available, AccountStorageStatus::Full];
         let pubkey1 = solana_pubkey::new_rand();
         let account1 = AccountSharedData::new(1, DEFAULT_FILE_SIZE as usize / 2, &pubkey1);
-        accounts.store_for_tests(0, &[(&pubkey1, &account1)]);
+        accounts.store_for_tests((0, [(&pubkey1, &account1)].as_slice()));
         if pass == 0 {
             accounts.add_root_and_flush_write_cache(0);
             let store = &accounts.storage.get_slot_storage_entry(0).unwrap();
@@ -799,7 +799,7 @@ fn test_account_grow() {
 
         let pubkey2 = solana_pubkey::new_rand();
         let account2 = AccountSharedData::new(1, DEFAULT_FILE_SIZE as usize / 2, &pubkey2);
-        accounts.store_for_tests(0, &[(&pubkey2, &account2)]);
+        accounts.store_for_tests((0, [(&pubkey2, &account2)].as_slice()));
 
         if pass == 1 {
             accounts.add_root_and_flush_write_cache(0);
@@ -827,7 +827,7 @@ fn test_account_grow() {
 
         // lots of writes, but they are all duplicates
         for i in 0..25 {
-            accounts.store_for_tests(0, &[(&pubkey1, &account1)]);
+            accounts.store_for_tests((0, [(&pubkey1, &account1)].as_slice()));
             let flush = pass == i + 2;
             if flush {
                 accounts.add_root_and_flush_write_cache(0);
@@ -867,7 +867,7 @@ fn test_lazy_gc_slot() {
     let pubkey = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     //store an account
-    accounts.store_for_tests(0, &[(&pubkey, &account)]);
+    accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
     accounts.add_root_and_flush_write_cache(0);
 
     let ancestors = vec![(0, 0)].into_iter().collect();
@@ -886,7 +886,7 @@ fn test_lazy_gc_slot() {
     assert_eq!(accounts.storage.get_slot_storage_entry(0).unwrap().id(), id);
 
     //store causes clean
-    accounts.store_for_tests(1, &[(&pubkey, &account)]);
+    accounts.store_for_tests((1, [(&pubkey, &account)].as_slice()));
 
     //slot is gone
     accounts.print_accounts_stats("pre-clean");
@@ -914,8 +914,8 @@ fn test_clean_zero_lamport_and_dead_slot() {
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
     // Store two accounts
-    accounts.store_for_tests(0, &[(&pubkey1, &account)]);
-    accounts.store_for_tests(0, &[(&pubkey2, &account)]);
+    accounts.store_for_tests((0, [(&pubkey1, &account)].as_slice()));
+    accounts.store_for_tests((0, [(&pubkey2, &account)].as_slice()));
 
     // Make sure both accounts are in the same AppendVec in slot 0, which
     // will prevent pubkey1 from being cleaned up later even when it's a
@@ -950,10 +950,10 @@ fn test_clean_zero_lamport_and_dead_slot() {
     );
 
     // Update account 1 in slot 1
-    accounts.store_for_tests(1, &[(&pubkey1, &account)]);
+    accounts.store_for_tests((1, [(&pubkey1, &account)].as_slice()));
 
     // Update account 1 as  zero lamports account
-    accounts.store_for_tests(2, &[(&pubkey1, &zero_lamport_account)]);
+    accounts.store_for_tests((2, [(&pubkey1, &zero_lamport_account)].as_slice()));
 
     // Pubkey 1 was the only account in slot 1, and it was updated in slot 2, so
     // slot 1 should be purged
@@ -988,13 +988,13 @@ fn test_clean_dead_slot_with_obsolete_accounts() {
     let account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
 
     // Store account 1 in slot 0
-    accounts.store_for_tests(0, &[(&pubkey, &account)]);
+    accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
 
     // Update account 1 as in slot 1
-    accounts.store_for_tests(1, &[(&pubkey, &account)]);
+    accounts.store_for_tests((1, [(&pubkey, &account)].as_slice()));
 
     // Update account 1 as in slot 2
-    accounts.store_for_tests(2, &[(&pubkey, &account)]);
+    accounts.store_for_tests((2, [(&pubkey, &account)].as_slice()));
 
     // Flush the slots individually to avoid reclaims
     accounts.add_root_and_flush_write_cache(0);
@@ -1038,10 +1038,10 @@ fn test_remove_zero_lamport_multi_ref_accounts_panic() {
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
     let slot = 1;
 
-    accounts.store_for_tests(slot, &[(&pubkey_zero, &one_lamport_account)]);
+    accounts.store_for_tests((slot, [(&pubkey_zero, &one_lamport_account)].as_slice()));
     accounts.add_root_and_flush_write_cache(slot);
 
-    accounts.store_for_tests(slot + 1, &[(&pubkey_zero, &zero_lamport_account)]);
+    accounts.store_for_tests((slot + 1, [(&pubkey_zero, &zero_lamport_account)].as_slice()));
     accounts.add_root_and_flush_write_cache(slot + 1);
 
     // This should panic because there are 2 refs for pubkey_zero.
@@ -1064,17 +1064,18 @@ fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
             AccountSharedData::new(0, 0, AccountSharedData::default().owner());
         let slot = 1;
 
-        accounts.store_for_tests(
+        accounts.store_for_tests((
             slot,
-            &[(&pubkey_zero, &zero_lamport_account), (&pubkey2, &account)],
-        );
+            [(&pubkey_zero, &zero_lamport_account), (&pubkey2, &account)].as_slice(),
+        ));
 
         // Simulate rooting the zero-lamport account, writes it to storage
         accounts.add_root_and_flush_write_cache(slot);
 
         if pass > 0 {
             // store in write cache
-            accounts.store_for_tests(slot + 1, &[(&pubkey_zero, &zero_lamport_account)]);
+            accounts
+                .store_for_tests((slot + 1, [(&pubkey_zero, &zero_lamport_account)].as_slice()));
             if pass == 2 {
                 // move to a storage (causing ref count to increase)
                 accounts.add_root_and_flush_write_cache(slot + 1);
@@ -1182,10 +1183,10 @@ fn test_shrink_zero_lamport_single_ref_account() {
             AccountSharedData::new(0, 0, AccountSharedData::default().owner());
         let slot = 1;
         // Store a zero-lamport account and a non-zero lamport account
-        accounts.store_for_tests(
+        accounts.store_for_tests((
             slot,
-            &[(&pubkey_zero, &zero_lamport_account), (&pubkey2, &account)],
-        );
+            [(&pubkey_zero, &zero_lamport_account), (&pubkey2, &account)].as_slice(),
+        ));
 
         // Simulate rooting the zero-lamport account, should be a
         // candidate for cleaning
@@ -1261,10 +1262,10 @@ fn test_clean_multiple_zero_lamport_decrements_index_ref_count() {
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
     // Store 2 accounts in slot 0, then update account 1 in two more slots
-    accounts.store_for_tests(0, &[(&pubkey1, &zero_lamport_account)]);
-    accounts.store_for_tests(0, &[(&pubkey2, &zero_lamport_account)]);
-    accounts.store_for_tests(1, &[(&pubkey1, &zero_lamport_account)]);
-    accounts.store_for_tests(2, &[(&pubkey1, &zero_lamport_account)]);
+    accounts.store_for_tests((0, [(&pubkey1, &zero_lamport_account)].as_slice()));
+    accounts.store_for_tests((0, [(&pubkey2, &zero_lamport_account)].as_slice()));
+    accounts.store_for_tests((1, [(&pubkey1, &zero_lamport_account)].as_slice()));
+    accounts.store_for_tests((2, [(&pubkey1, &zero_lamport_account)].as_slice()));
     // Root all slots
     accounts.add_root_and_flush_write_cache(0);
     accounts.add_root_and_flush_write_cache(1);
@@ -1305,8 +1306,8 @@ fn test_clean_zero_lamport_and_old_roots() {
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
     // Store a zero-lamport account
-    accounts.store_for_tests(0, &[(&pubkey, &account)]);
-    accounts.store_for_tests(1, &[(&pubkey, &zero_lamport_account)]);
+    accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
+    accounts.store_for_tests((1, [(&pubkey, &zero_lamport_account)].as_slice()));
 
     // Simulate rooting the zero-lamport account, should be a
     // candidate for cleaning
@@ -1342,8 +1343,8 @@ fn test_clean_old_with_normal_account() {
     let pubkey = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     //store an account
-    accounts.store_for_tests(0, &[(&pubkey, &account)]);
-    accounts.store_for_tests(1, &[(&pubkey, &account)]);
+    accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
+    accounts.store_for_tests((1, [(&pubkey, &account)].as_slice()));
 
     // simulate slots are rooted after while
     accounts.add_root_and_flush_write_cache(0);
@@ -1370,10 +1371,10 @@ fn test_clean_old_with_zero_lamport_account() {
     let normal_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
     //store an account
-    accounts.store_for_tests(0, &[(&pubkey1, &normal_account)]);
-    accounts.store_for_tests(1, &[(&pubkey1, &zero_account)]);
-    accounts.store_for_tests(0, &[(&pubkey2, &normal_account)]);
-    accounts.store_for_tests(1, &[(&pubkey2, &normal_account)]);
+    accounts.store_for_tests((0, [(&pubkey1, &normal_account)].as_slice()));
+    accounts.store_for_tests((1, [(&pubkey1, &zero_account)].as_slice()));
+    accounts.store_for_tests((0, [(&pubkey2, &normal_account)].as_slice()));
+    accounts.store_for_tests((1, [(&pubkey2, &normal_account)].as_slice()));
 
     //simulate slots are rooted after while
     accounts.add_root_and_flush_write_cache(0);
@@ -1418,11 +1419,11 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     zero_account.set_data(account_data_with_mint);
 
     //store an account
-    accounts.store_for_tests(0, &[(&pubkey1, &normal_account)]);
-    accounts.store_for_tests(0, &[(&pubkey1, &normal_account)]);
-    accounts.store_for_tests(1, &[(&pubkey1, &zero_account)]);
-    accounts.store_for_tests(0, &[(&pubkey2, &normal_account)]);
-    accounts.store_for_tests(2, &[(&pubkey2, &normal_account)]);
+    accounts.store_for_tests((0, [(&pubkey1, &normal_account)].as_slice()));
+    accounts.store_for_tests((0, [(&pubkey1, &normal_account)].as_slice()));
+    accounts.store_for_tests((1, [(&pubkey1, &zero_account)].as_slice()));
+    accounts.store_for_tests((0, [(&pubkey2, &normal_account)].as_slice()));
+    accounts.store_for_tests((2, [(&pubkey2, &normal_account)].as_slice()));
 
     //simulate slots are rooted after while
     accounts.add_root_and_flush_write_cache(0);
@@ -1540,8 +1541,8 @@ fn test_clean_max_slot_zero_lamport_account() {
 
     // store an account, make it a zero lamport account
     // in slot 1
-    accounts.store_for_tests(0, &[(&pubkey, &account)]);
-    accounts.store_for_tests(1, &[(&pubkey, &zero_account)]);
+    accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
+    accounts.store_for_tests((1, [(&pubkey, &zero_account)].as_slice()));
 
     // simulate slots are rooted after while
     accounts.add_root_and_flush_write_cache(0);
@@ -1592,10 +1593,10 @@ fn test_accounts_db_purge_keep_live() {
 
     // Step A
     let mut current_slot = 1;
-    accounts.store_for_tests(current_slot, &[(&pubkey, &account)]);
+    accounts.store_for_tests((current_slot, [(&pubkey, &account)].as_slice()));
     // Store another live account to slot 1 which will prevent any purge
     // since the store count will not be zero
-    accounts.store_for_tests(current_slot, &[(&pubkey2, &account2)]);
+    accounts.store_for_tests((current_slot, [(&pubkey2, &account2)].as_slice()));
     accounts.add_root_and_flush_write_cache(current_slot);
     let (slot1, account_info1) = accounts
         .accounts_index
@@ -1616,7 +1617,7 @@ fn test_accounts_db_purge_keep_live() {
     // Step B
     current_slot += 1;
     let zero_lamport_slot = current_slot;
-    accounts.store_for_tests(current_slot, &[(&pubkey, &zero_lamport_account)]);
+    accounts.store_for_tests((current_slot, [(&pubkey, &zero_lamport_account)].as_slice()));
     accounts.add_root_and_flush_write_cache(current_slot);
 
     accounts.assert_load_account(current_slot, pubkey, zero_lamport);
@@ -1666,11 +1667,11 @@ fn test_accounts_db_purge1() {
     accounts.add_root(0);
 
     let mut current_slot = 1;
-    accounts.store_for_tests(current_slot, &[(&pubkey, &account)]);
+    accounts.store_for_tests((current_slot, [(&pubkey, &account)].as_slice()));
     accounts.add_root_and_flush_write_cache(current_slot);
 
     current_slot += 1;
-    accounts.store_for_tests(current_slot, &[(&pubkey, &zero_lamport_account)]);
+    accounts.store_for_tests((current_slot, [(&pubkey, &zero_lamport_account)].as_slice()));
     accounts.add_root_and_flush_write_cache(current_slot);
 
     accounts.assert_load_account(current_slot, pubkey, zero_lamport);
@@ -1728,7 +1729,7 @@ fn test_store_account_stress() {
                     loop {
                         let account_bal = thread_rng().gen_range(1..99);
                         account.set_lamports(account_bal);
-                        db.store_for_tests(slot, &[(&pubkey, &account)]);
+                        db.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
 
                         let (account, slot) = db
                             .load_without_fixed_root(&Ancestors::default(), &pubkey)
@@ -1757,11 +1758,11 @@ fn test_accountsdb_scan_accounts() {
     let key0 = solana_pubkey::new_rand();
     let account0 = AccountSharedData::new(1, 0, &key);
 
-    db.store_for_tests(0, &[(&key0, &account0)]);
+    db.store_for_tests((0, [(&key0, &account0)].as_slice()));
 
     let key1 = solana_pubkey::new_rand();
     let account1 = AccountSharedData::new(2, 0, &key);
-    db.store_for_tests(1, &[(&key1, &account1)]);
+    db.store_for_tests((1, [(&key1, &account1)].as_slice()));
 
     let ancestors = vec![(0, 0)].into_iter().collect();
     let mut accounts = Vec::new();
@@ -1797,11 +1798,11 @@ fn test_cleanup_key_not_removed() {
     let key0 = solana_pubkey::new_rand();
     let account0 = AccountSharedData::new(1, 0, &key);
 
-    db.store_for_tests(0, &[(&key0, &account0)]);
+    db.store_for_tests((0, [(&key0, &account0)].as_slice()));
 
     let key1 = solana_pubkey::new_rand();
     let account1 = AccountSharedData::new(2, 0, &key);
-    db.store_for_tests(1, &[(&key1, &account1)]);
+    db.store_for_tests((1, [(&key1, &account1)].as_slice()));
 
     db.print_accounts_stats("pre");
 
@@ -1810,7 +1811,7 @@ fn test_cleanup_key_not_removed() {
     let _ = db.purge_keys_exact(purge_keys.iter());
 
     let account2 = AccountSharedData::new(3, 0, &key);
-    db.store_for_tests(2, &[(&key1, &account2)]);
+    db.store_for_tests((2, [(&key1, &account2)].as_slice()));
 
     db.print_accounts_stats("post");
     let ancestors = vec![(2, 0)].into_iter().collect();
@@ -1832,7 +1833,7 @@ fn test_store_large_account() {
     let data_len = DEFAULT_FILE_SIZE as usize + 7;
     let account = AccountSharedData::new(1, data_len, &key);
 
-    db.store_for_tests(0, &[(&key, &account)]);
+    db.store_for_tests((0, [(&key, &account)].as_slice()));
 
     let ancestors = vec![(0, 0)].into_iter().collect();
     let ret = db.load_without_fixed_root(&ancestors, &key).unwrap();
@@ -1952,7 +1953,7 @@ fn test_verify_bank_capitalization() {
         let account = AccountSharedData::new(1, some_data_len, &key);
         let ancestors = vec![(some_slot, 0)].into_iter().collect();
 
-        db.store_for_tests(some_slot, &[(&key, &account)]);
+        db.store_for_tests((some_slot, [(&key, &account)].as_slice()));
         if pass == 0 {
             db.add_root_and_flush_write_cache(some_slot);
 
@@ -1964,13 +1965,14 @@ fn test_verify_bank_capitalization() {
         }
 
         let native_account_pubkey = solana_pubkey::new_rand();
-        db.store_for_tests(
+        db.store_for_tests((
             some_slot,
-            &[(
+            [(
                 &native_account_pubkey,
                 &create_loadable_account_for_test("foo"),
-            )],
-        );
+            )]
+            .as_slice(),
+        ));
         db.add_root_and_flush_write_cache(some_slot);
 
         assert_eq!(
@@ -1992,7 +1994,7 @@ fn test_storage_finder() {
     let account = AccountSharedData::new(lamports, data_len, &solana_pubkey::new_rand());
     // pre-populate with a smaller empty store
     db.create_and_insert_store(1, 8192, "test_storage_finder");
-    db.store_for_tests(1, &[(&key, &account)]);
+    db.store_for_tests((1, [(&key, &account)].as_slice()));
 }
 
 #[test]
@@ -2011,7 +2013,7 @@ fn test_get_snapshot_storages_only_older_than_or_equal_to_snapshot_slot() {
     let base_slot = before_slot + 1;
     let after_slot = base_slot + 1;
 
-    db.store_for_tests(base_slot, &[(&key, &account)]);
+    db.store_for_tests((base_slot, [(&key, &account)].as_slice()));
     db.add_root_and_flush_write_cache(base_slot);
     assert!(db.get_storages(..=before_slot).0.is_empty());
 
@@ -2029,7 +2031,7 @@ fn test_get_snapshot_storages_only_non_empty() {
         let base_slot = 0;
         let after_slot = base_slot + 1;
 
-        db.store_for_tests(base_slot, &[(&key, &account)]);
+        db.store_for_tests((base_slot, [(&key, &account)].as_slice()));
         if pass == 0 {
             db.add_root_and_flush_write_cache(base_slot);
             db.storage.remove(&base_slot, false);
@@ -2037,7 +2039,7 @@ fn test_get_snapshot_storages_only_non_empty() {
             continue;
         }
 
-        db.store_for_tests(base_slot, &[(&key, &account)]);
+        db.store_for_tests((base_slot, [(&key, &account)].as_slice()));
         db.add_root_and_flush_write_cache(base_slot);
         assert_eq!(1, db.get_storages(..=after_slot).0.len());
     }
@@ -2052,7 +2054,7 @@ fn test_get_snapshot_storages_only_roots() {
     let base_slot = 0;
     let after_slot = base_slot + 1;
 
-    db.store_for_tests(base_slot, &[(&key, &account)]);
+    db.store_for_tests((base_slot, [(&key, &account)].as_slice()));
     assert!(db.get_storages(..=after_slot).0.is_empty());
 
     db.add_root_and_flush_write_cache(base_slot);
@@ -2068,7 +2070,7 @@ fn test_get_snapshot_storages_exclude_empty() {
     let base_slot = 0;
     let after_slot = base_slot + 1;
 
-    db.store_for_tests(base_slot, &[(&key, &account)]);
+    db.store_for_tests((base_slot, [(&key, &account)].as_slice()));
     db.add_root_and_flush_write_cache(base_slot);
     assert_eq!(1, db.get_storages(..=after_slot).0.len());
 
@@ -2087,7 +2089,7 @@ fn test_get_snapshot_storages_with_base_slot() {
     let account = AccountSharedData::new(1, 0, &key);
 
     let slot = 10;
-    db.store_for_tests(slot, &[(&key, &account)]);
+    db.store_for_tests((slot, [(&key, &account)].as_slice()));
     db.add_root_and_flush_write_cache(slot);
     assert_eq!(0, db.get_storages(slot + 1..=slot + 1).0.len());
     assert_eq!(1, db.get_storages(slot..=slot + 1).0.len());
@@ -2099,7 +2101,7 @@ define_accounts_db_test!(
     |accounts| {
         let pubkey = solana_pubkey::new_rand();
         let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
-        accounts.store_for_tests(0, &[(&pubkey, &account)]);
+        accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
         accounts.add_root_and_flush_write_cache(0);
         let storage_entry = accounts.storage.get_slot_storage_entry(0).unwrap();
         storage_entry.remove_accounts(0, 1);
@@ -2133,11 +2135,11 @@ fn do_full_clean_refcount(mut accounts: AccountsDb, store1_first: bool, store_si
     // A: Initialize AccountsDb with pubkey1 and pubkey2
     current_slot += 1;
     if store1_first {
-        accounts.store_for_tests(current_slot, &[(&pubkey1, &account)]);
-        accounts.store_for_tests(current_slot, &[(&pubkey2, &account)]);
+        accounts.store_for_tests((current_slot, [(&pubkey1, &account)].as_slice()));
+        accounts.store_for_tests((current_slot, [(&pubkey2, &account)].as_slice()));
     } else {
-        accounts.store_for_tests(current_slot, &[(&pubkey2, &account)]);
-        accounts.store_for_tests(current_slot, &[(&pubkey1, &account)]);
+        accounts.store_for_tests((current_slot, [(&pubkey2, &account)].as_slice()));
+        accounts.store_for_tests((current_slot, [(&pubkey1, &account)].as_slice()));
     }
     accounts.add_root_and_flush_write_cache(current_slot);
 
@@ -2148,8 +2150,8 @@ fn do_full_clean_refcount(mut accounts: AccountsDb, store1_first: bool, store_si
     current_slot += 1;
     assert_eq!(0, accounts.alive_account_count_in_slot(current_slot));
     assert_eq!(1, accounts.ref_count_for_pubkey(&pubkey1));
-    accounts.store_for_tests(current_slot, &[(&pubkey1, &account2)]);
-    accounts.store_for_tests(current_slot, &[(&pubkey1, &account2)]);
+    accounts.store_for_tests((current_slot, [(&pubkey1, &account2)].as_slice()));
+    accounts.store_for_tests((current_slot, [(&pubkey1, &account2)].as_slice()));
     accounts.add_root_and_flush_write_cache(current_slot);
     assert_eq!(1, accounts.alive_account_count_in_slot(current_slot));
     // Stores to same pubkey, same slot only count once towards the
@@ -2167,9 +2169,9 @@ fn do_full_clean_refcount(mut accounts: AccountsDb, store1_first: bool, store_si
     // C: more updates to trigger clean of previous updates
     current_slot += 1;
     assert_eq!(2, accounts.ref_count_for_pubkey(&pubkey1));
-    accounts.store_for_tests(current_slot, &[(&pubkey1, &account3)]);
-    accounts.store_for_tests(current_slot, &[(&pubkey2, &account3)]);
-    accounts.store_for_tests(current_slot, &[(&pubkey3, &account4)]);
+    accounts.store_for_tests((current_slot, [(&pubkey1, &account3)].as_slice()));
+    accounts.store_for_tests((current_slot, [(&pubkey2, &account3)].as_slice()));
+    accounts.store_for_tests((current_slot, [(&pubkey3, &account4)].as_slice()));
     accounts.add_root_and_flush_write_cache(current_slot);
     assert_eq!(3, accounts.ref_count_for_pubkey(&pubkey1));
 
@@ -2180,9 +2182,9 @@ fn do_full_clean_refcount(mut accounts: AccountsDb, store1_first: bool, store_si
     // D: Make all keys 0-lamport, cleans all keys
     current_slot += 1;
     assert_eq!(3, accounts.ref_count_for_pubkey(&pubkey1));
-    accounts.store_for_tests(current_slot, &[(&pubkey1, &zero_lamport_account)]);
-    accounts.store_for_tests(current_slot, &[(&pubkey2, &zero_lamport_account)]);
-    accounts.store_for_tests(current_slot, &[(&pubkey3, &zero_lamport_account)]);
+    accounts.store_for_tests((current_slot, [(&pubkey1, &zero_lamport_account)].as_slice()));
+    accounts.store_for_tests((current_slot, [(&pubkey2, &zero_lamport_account)].as_slice()));
+    accounts.store_for_tests((current_slot, [(&pubkey3, &zero_lamport_account)].as_slice()));
 
     let snapshot_stores = accounts.get_storages(..=current_slot).0;
     let total_accounts: usize = snapshot_stores.iter().map(|s| s.accounts_count()).sum();
@@ -2269,7 +2271,7 @@ fn test_shrink_candidate_slots() {
 
     current_slot += 1;
     for pubkey in &pubkeys {
-        accounts.store_for_tests(current_slot, &[(pubkey, &account)]);
+        accounts.store_for_tests((current_slot, [(pubkey, &account)].as_slice()));
     }
     let shrink_slot = current_slot;
     accounts.add_root_and_flush_write_cache(current_slot);
@@ -2279,7 +2281,7 @@ fn test_shrink_candidate_slots() {
     let updated_pubkeys = &pubkeys[0..pubkey_count - pubkey_count_after_shrink];
 
     for pubkey in updated_pubkeys {
-        accounts.store_for_tests(current_slot, &[(pubkey, &account)]);
+        accounts.store_for_tests((current_slot, [(pubkey, &account)].as_slice()));
     }
     accounts.add_root_and_flush_write_cache(current_slot);
     accounts.clean_accounts_for_tests();
@@ -2335,7 +2337,7 @@ fn test_shrink_candidate_slots_with_dead_ancient_account() {
         .map(|(pubkey, account)| (pubkey, account))
         .collect();
     let starting_ancient_slot = 1;
-    db.store_for_tests(starting_ancient_slot, &accounts);
+    db.store_for_tests((starting_ancient_slot, accounts.as_slice()));
     db.add_root_and_flush_write_cache(starting_ancient_slot);
     let storage = db.get_storage_for_slot(starting_ancient_slot).unwrap();
     let ancient_accounts = db.get_unique_accounts_from_storage(&storage);
@@ -2354,10 +2356,10 @@ fn test_shrink_candidate_slots_with_dead_ancient_account() {
     let ancient_append_vec_offset = db.ancient_append_vec_offset.unwrap().abs();
     let current_slot = epoch_schedule.slots_per_epoch + ancient_append_vec_offset as u64 + 1;
     // Simulate killing of the ancient account by overwriting it in the current slot.
-    db.store_for_tests(
+    db.store_for_tests((
         current_slot,
-        &[(&modified_account_pubkey, &modified_account)],
-    );
+        [(&modified_account_pubkey, &modified_account)].as_slice(),
+    ));
     db.add_root_and_flush_write_cache(current_slot);
     // This should remove the dead ancient account from the index.
     db.clean_accounts_for_tests();
@@ -2735,7 +2737,7 @@ fn test_store_overhead() {
     let accounts = AccountsDb::new_single_for_tests();
     let account = AccountSharedData::default();
     let pubkey = solana_pubkey::new_rand();
-    accounts.store_for_tests(0, &[(&pubkey, &account)]);
+    accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
     accounts.add_root_and_flush_write_cache(0);
     let store = accounts.storage.get_slot_storage_entry(0).unwrap();
     let total_len = store.accounts.len();
@@ -2799,7 +2801,7 @@ fn test_wrapping_storage_id() {
     // write unique keys to successive slots
     keys.iter().enumerate().for_each(|(slot, key)| {
         let slot = slot as Slot;
-        db.store_for_tests(slot, &[(key, &zero_lamport_account)]);
+        db.store_for_tests((slot, [(key, &zero_lamport_account)].as_slice()));
         db.add_root_and_flush_write_cache(slot);
     });
     assert_eq!(slots - 1, db.next_id.load(Ordering::Acquire));
@@ -2824,7 +2826,7 @@ fn test_reuse_storage_id() {
     // write unique keys to successive slots
     keys.iter().enumerate().for_each(|(slot, key)| {
         let slot = slot as Slot;
-        db.store_for_tests(slot, &[(key, &zero_lamport_account)]);
+        db.store_for_tests((slot, [(key, &zero_lamport_account)].as_slice()));
         db.add_root_and_flush_write_cache(slot);
         // reset next_id to what it was previously to cause us to re-use the same id
         db.next_id.store(AccountsFileId::MAX, Ordering::Release);
@@ -2842,8 +2844,8 @@ fn test_zero_lamport_new_root_not_cleaned() {
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
     // Store zero lamport account into slots 0 and 1, root both slots
-    db.store_for_tests(0, &[(&account_key, &zero_lamport_account)]);
-    db.store_for_tests(1, &[(&account_key, &zero_lamport_account)]);
+    db.store_for_tests((0, [(&account_key, &zero_lamport_account)].as_slice()));
+    db.store_for_tests((1, [(&account_key, &zero_lamport_account)].as_slice()));
     db.add_root_and_flush_write_cache(0);
     db.add_root_and_flush_write_cache(1);
 
@@ -4027,8 +4029,8 @@ fn test_shrink_unref() {
     let account1 = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
 
     // Store into slot 0
-    db.store_for_tests(0, &[(&account_key1, &account1)]);
-    db.store_for_tests(0, &[(&account_key2, &account1)]);
+    db.store_for_tests((0, [(&account_key1, &account1)].as_slice()));
+    db.store_for_tests((0, [(&account_key2, &account1)].as_slice()));
     db.add_root(0);
 
     // Make account_key1 in slot 0 outdated by updating in rooted slot 1
@@ -4106,7 +4108,7 @@ fn test_clean_drop_dead_storage_handle_zero_lamport_single_ref_accounts() {
     let account0 = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
     // Store into slot 0
-    db.store_for_tests(0, &[(&account_key1, &account1)]);
+    db.store_for_tests((0, [(&account_key1, &account1)].as_slice()));
     db.add_root_and_flush_write_cache(0);
 
     // Make account_key1 in slot 0 outdated by updating in rooted slot 1 with a zero lamport account
@@ -4147,8 +4149,8 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     let account0 = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
     // Store into slot 0
-    db.store_for_tests(0, &[(&account_key1, &account1)]);
-    db.store_for_tests(0, &[(&account_key2, &account1)]);
+    db.store_for_tests((0, [(&account_key1, &account1)].as_slice()));
+    db.store_for_tests((0, [(&account_key2, &account1)].as_slice()));
     db.add_root_and_flush_write_cache(0);
 
     // Make account_key1 in slot 0 outdated by updating in rooted slot 1 with a zero lamport account
@@ -4211,8 +4213,11 @@ define_accounts_db_test!(test_partial_clean, |db| {
     let account4 = AccountSharedData::new(4, 0, AccountSharedData::default().owner());
 
     // Store accounts into slots 0 and 1
-    db.store_for_tests(0, &[(&account_key1, &account1), (&account_key2, &account1)]);
-    db.store_for_tests(1, &[(&account_key1, &account2)]);
+    db.store_for_tests((
+        0,
+        [(&account_key1, &account1), (&account_key2, &account1)].as_slice(),
+    ));
+    db.store_for_tests((1, [(&account_key1, &account2)].as_slice()));
 
     db.print_accounts_stats("pre-clean1");
 
@@ -4233,7 +4238,10 @@ define_accounts_db_test!(test_partial_clean, |db| {
     db.add_root_and_flush_write_cache(0);
 
     // store into slot 2
-    db.store_for_tests(2, &[(&account_key2, &account3), (&account_key1, &account3)]);
+    db.store_for_tests((
+        2,
+        [(&account_key2, &account3), (&account_key1, &account3)].as_slice(),
+    ));
     db.clean_accounts_for_tests();
     db.print_accounts_stats("post-clean2");
 
@@ -4243,7 +4251,7 @@ define_accounts_db_test!(test_partial_clean, |db| {
 
     db.print_accounts_stats("post-clean3");
 
-    db.store_for_tests(3, &[(&account_key2, &account4)]);
+    db.store_for_tests((3, [(&account_key2, &account4)].as_slice()));
     db.add_root_and_flush_write_cache(3);
 
     // Check that we can clean where max_root=3 and slot=2 is not rooted
@@ -4380,7 +4388,7 @@ fn do_test_load_account_and_shrink_race(with_retry: bool) {
     let lamports = 42;
     let mut account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     account.set_lamports(lamports);
-    db.store_for_tests(slot, &[(&pubkey, &account)]);
+    db.store_for_tests((slot, [(pubkey.as_ref(), &account)].as_slice()));
 
     // Set the slot as a root so account loads will see the contents of this slot
     db.add_root(slot);
@@ -4667,9 +4675,9 @@ fn test_remove_uncleaned_slots_and_collect_pubkeys_up_to_slot() {
     let account2 = AccountSharedData::new(0, 0, &pubkey2);
     let account3 = AccountSharedData::new(0, 0, &pubkey3);
 
-    db.store_for_tests(slot1, &[(&pubkey1, &account1)]);
-    db.store_for_tests(slot2, &[(&pubkey2, &account2)]);
-    db.store_for_tests(slot3, &[(&pubkey3, &account3)]);
+    db.store_for_tests((slot1, [(&pubkey1, &account1)].as_slice()));
+    db.store_for_tests((slot2, [(&pubkey2, &account2)].as_slice()));
+    db.store_for_tests((slot3, [(&pubkey3, &account3)].as_slice()));
 
     // slot 1 is _not_ a root on purpose
     db.add_root(slot2);
@@ -4875,7 +4883,7 @@ define_accounts_db_test!(test_set_storage_count_and_alive_bytes, |accounts| {
     let shared_key = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
     let slot0 = 0;
-    accounts.store_for_tests(slot0, &[(&shared_key, &account)]);
+    accounts.store_for_tests((slot0, [(&shared_key, &account)].as_slice()));
     accounts.add_root_and_flush_write_cache(slot0);
 
     // fake out the store count to avoid the assert
@@ -4922,15 +4930,15 @@ define_accounts_db_test!(test_purge_alive_unrooted_slots_after_clean, |accounts|
 
     // Store accounts with greater than 0 lamports
     let account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
-    accounts.store_for_tests(slot0, &[(&shared_key, &account)]);
-    accounts.store_for_tests(slot0, &[(&unrooted_key, &account)]);
+    accounts.store_for_tests((slot0, [(&shared_key, &account)].as_slice()));
+    accounts.store_for_tests((slot0, [(&unrooted_key, &account)].as_slice()));
 
     // Simulate adding dirty pubkeys on bank freeze. Note this is
     // not a rooted slot
 
     // On the next *rooted* slot, update the `shared_key` account to zero lamports
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
-    accounts.store_for_tests(slot1, &[(&shared_key, &zero_lamport_account)]);
+    accounts.store_for_tests((slot1, [(&shared_key, &zero_lamport_account)].as_slice()));
 
     // Simulate adding dirty pubkeys on bank freeze, set root
     accounts.add_root_and_flush_write_cache(slot1);
@@ -5656,7 +5664,7 @@ fn test_shrink_collect_simple() {
                                     account.set_lamports(u64::from(old_lamports == 0));
                                 }
 
-                                db.store_for_tests(slot5, &[(pubkey, &account)]);
+                                db.store_for_tests((slot5, [(pubkey, &account)].as_slice()));
                                 account.set_lamports(old_lamports);
                                 let mut alive = alive;
                                 if append_opposite_alive_account
@@ -5824,7 +5832,7 @@ fn test_shrink_collect_with_obsolete_accounts() {
             account.set_lamports(200);
             regular_pubkeys.push(*pubkey);
         }
-        db.store_for_tests(slot, &[(pubkey, &account)]);
+        db.store_for_tests((slot, [(pubkey, &account)].as_slice()));
     }
 
     // Flush the cache
@@ -6405,10 +6413,10 @@ fn test_clean_old_storages_with_reclaims_rooted() {
         let account = AccountSharedData::new(slot, 0, &Pubkey::new_unique());
         // store `pubkey` into multiple slots, and also store another unique pubkey
         // to prevent the whole storage from being marked as dead by `clean`.
-        accounts_db.store_for_tests(
+        accounts_db.store_for_tests((
             slot,
-            &[(&pubkey, &account), (&Pubkey::new_unique(), &account)],
-        );
+            [(&pubkey, &account), (&Pubkey::new_unique(), &account)].as_slice(),
+        ));
         accounts_db.add_root_and_flush_write_cache(slot);
         accounts_db.uncleaned_pubkeys.remove(&slot);
         // ensure this slot is *not* in the dirty_stores nor uncleaned_pubkeys, because we want to
@@ -6465,10 +6473,10 @@ fn test_clean_old_storages_with_reclaims_unrooted() {
         let account = AccountSharedData::new(slot, 0, &Pubkey::new_unique());
         // store `pubkey` into multiple slots, and also store another unique pubkey
         // to prevent the whole storage from being marked as dead by `clean`.
-        accounts_db.store_for_tests(
+        accounts_db.store_for_tests((
             slot,
-            &[(&pubkey, &account), (&Pubkey::new_unique(), &account)],
-        );
+            [(&pubkey, &account), (&Pubkey::new_unique(), &account)].as_slice(),
+        ));
     }
 
     // only `old_slot` should be rooted, not `new_slot`
@@ -6509,20 +6517,22 @@ fn test_clean_old_storages_with_reclaims_unrooted() {
 #[test]
 fn test_calculate_capitalization_simple() {
     let accounts_db = AccountsDb::new_single_for_tests();
-    accounts_db.store_for_tests(
+    accounts_db.store_for_tests((
         0,
-        &[(
+        [(
             &Pubkey::new_unique(),
             &AccountSharedData::new(123, 0, &Pubkey::default()),
-        )],
-    );
-    accounts_db.store_for_tests(
+        )]
+        .as_slice(),
+    ));
+    accounts_db.store_for_tests((
         1,
-        &[(
+        [(
             &Pubkey::new_unique(),
             &AccountSharedData::new(456, 0, &Pubkey::default()),
-        )],
-    );
+        )]
+        .as_slice(),
+    ));
     assert_eq!(
         accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0, 1]), 1),
         123 + 456,
@@ -6536,8 +6546,8 @@ fn test_calculate_capitalization_simple() {
 fn test_calculate_capitalization_overflow_intra_slot() {
     let accounts_db = AccountsDb::new_single_for_tests();
     let account = AccountSharedData::new(u64::MAX - 1, 0, &Pubkey::default());
-    accounts_db.store_for_tests(0, &[(&Pubkey::new_unique(), &account)]);
-    accounts_db.store_for_tests(0, &[(&Pubkey::new_unique(), &account)]);
+    accounts_db.store_for_tests((0, [(&Pubkey::new_unique(), &account)].as_slice()));
+    accounts_db.store_for_tests((0, [(&Pubkey::new_unique(), &account)].as_slice()));
     accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0]), 0);
 }
 
@@ -6548,8 +6558,8 @@ fn test_calculate_capitalization_overflow_intra_slot() {
 fn test_calculate_capitalization_overflow_inter_slot() {
     let accounts_db = AccountsDb::new_single_for_tests();
     let account = AccountSharedData::new(u64::MAX - 1, 0, &Pubkey::default());
-    accounts_db.store_for_tests(0, &[(&Pubkey::new_unique(), &account)]);
-    accounts_db.store_for_tests(1, &[(&Pubkey::new_unique(), &account)]);
+    accounts_db.store_for_tests((0, [(&Pubkey::new_unique(), &account)].as_slice()));
+    accounts_db.store_for_tests((1, [(&Pubkey::new_unique(), &account)].as_slice()));
     accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0, 1]), 1);
 }
 
@@ -6580,11 +6590,11 @@ fn test_mark_obsolete_accounts_at_startup_purge_slot() {
 
     // Store the same pubkey in multiple slots
     // Store other pubkey in slot0 to ensure slot is not purged
-    accounts_db.store_for_tests(0, &[(&pubkey1, &account), (&pubkey2, &account)]);
+    accounts_db.store_for_tests((0, [(&pubkey1, &account), (&pubkey2, &account)].as_slice()));
     accounts_db.flush_accounts_cache_slot_for_tests(0);
-    accounts_db.store_for_tests(1, &[(&pubkey1, &account)]);
+    accounts_db.store_for_tests((1, [(&pubkey1, &account)].as_slice()));
     accounts_db.flush_accounts_cache_slot_for_tests(1);
-    accounts_db.store_for_tests(2, &[(&pubkey1, &account)]);
+    accounts_db.store_for_tests((2, [(&pubkey1, &account)].as_slice()));
     accounts_db.flush_accounts_cache_slot_for_tests(2);
 
     let pubkeys_with_duplicates_by_bin = vec![vec![pubkey1]];
@@ -6616,7 +6626,10 @@ fn test_mark_obsolete_accounts_at_startup_multiple_bins() {
     let account = AccountSharedData::new(100, 0, &Pubkey::default());
 
     for slot in 0..2 {
-        accounts_db.store_for_tests(slot, &[(&pubkey1, &account), (&pubkey2, &account)]);
+        accounts_db.store_for_tests((
+            slot,
+            [(&pubkey1, &account), (&pubkey2, &account)].as_slice(),
+        ));
         accounts_db.flush_accounts_cache_slot_for_tests(slot);
     }
 

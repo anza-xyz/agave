@@ -1432,7 +1432,7 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
         let some_data_len = 5;
         let some_slot: Slot = 0;
         let account = AccountSharedData::new(1, some_data_len, &key);
-        accounts_db.store_for_tests(some_slot, &[(&key, &account)]);
+        accounts_db.store_for_tests((some_slot, [(&key, &account)].as_slice()));
         accounts_db.add_root_and_flush_write_cache(0);
         accounts_db
     }
@@ -7486,9 +7486,9 @@ impl AccountsDb {
     }
 
     /// callers used to call store_uncached. But, this is not allowed anymore.
-    pub fn store_for_tests(&self, slot: Slot, accounts: &[(&Pubkey, &AccountSharedData)]) {
+    pub fn store_for_tests<'a>(&self, accounts: impl StorableAccounts<'a>) {
         self.store_accounts_unfrozen(
-            (slot, accounts),
+            accounts,
             None,
             UpdateIndexThreadSelection::PoolWithThreshold,
         );
@@ -7502,7 +7502,7 @@ impl AccountsDb {
                 0,
                 AccountSharedData::default().owner(),
             );
-            self.store_for_tests(slot, &[(&pubkeys[idx], &account)]);
+            self.store_for_tests((slot, [(&pubkeys[idx], &account)].as_slice()));
         }
     }
 
@@ -7528,7 +7528,7 @@ impl AccountsDb {
                 AccountSharedData::new((t + 1) as u64, space, AccountSharedData::default().owner());
             pubkeys.push(pubkey);
             assert!(self.load_without_fixed_root(&ancestors, &pubkey).is_none());
-            self.store_for_tests(slot, &[(&pubkey, &account)]);
+            self.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
         }
         for t in 0..num_vote {
             let pubkey = solana_pubkey::new_rand();
@@ -7537,7 +7537,7 @@ impl AccountsDb {
             pubkeys.push(pubkey);
             let ancestors = vec![(slot, 0)].into_iter().collect();
             assert!(self.load_without_fixed_root(&ancestors, &pubkey).is_none());
-            self.store_for_tests(slot, &[(&pubkey, &account)]);
+            self.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
         }
     }
 

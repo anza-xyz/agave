@@ -213,13 +213,13 @@ pub mod tests {
         // Need to add root and flush write cache for each slot to ensure accounts are written
         // to correct slots. Cache flush can skip writes if accounts have already been written to
         // a newer slot
-        accounts.store_for_tests(0, &[(&key1, &account)]);
+        accounts.store_for_tests((0, [(&key1, &account)].as_slice()));
         accounts.add_root_and_flush_write_cache(0);
-        accounts.store_for_tests(1, &[(&key1, &account)]);
+        accounts.store_for_tests((1, [(&key1, &account)].as_slice()));
         accounts.add_root_and_flush_write_cache(1);
 
         // Account with key2 is updated in a single slot, should get notified once
-        accounts.store_for_tests(2, &[(&key2, &account)]);
+        accounts.store_for_tests((2, [(&key2, &account)].as_slice()));
         accounts.add_root_and_flush_write_cache(2);
 
         // Do the notification
