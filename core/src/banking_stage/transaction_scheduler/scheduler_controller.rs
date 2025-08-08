@@ -6,10 +6,7 @@ use {
         receive_and_buffer::{DisconnectedError, ReceiveAndBuffer},
         scheduler::{PreLockFilterAction, Scheduler},
         scheduler_error::SchedulerError,
-        scheduler_metrics::{
-            SchedulerCountMetrics, SchedulerLeaderDetectionMetrics, SchedulerTimingMetrics,
-            SchedulingDetails,
-        },
+        scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics, SchedulingDetails},
     },
     crate::banking_stage::{
         consume_worker::ConsumeWorkerMetrics,
@@ -43,8 +40,6 @@ where
     container: R::Container,
     /// State for scheduling and communicating with worker threads.
     scheduler: S,
-    /// Metrics tracking time for leader bank detection.
-    leader_detection_metrics: SchedulerLeaderDetectionMetrics,
     /// Metrics tracking counts on transactions in different states
     /// over an interval and during a leader slot.
     count_metrics: SchedulerCountMetrics,
@@ -75,7 +70,6 @@ where
             bank_forks,
             container: R::Container::with_capacity(TOTAL_BUFFERED_PACKETS),
             scheduler,
-            leader_detection_metrics: SchedulerLeaderDetectionMetrics::default(),
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
             worker_metrics,
@@ -100,9 +94,7 @@ where
             self.timing_metrics.update(|timing_metrics| {
                 timing_metrics.decision_time_us += decision_time_us;
             });
-            let new_leader_slot = decision.bank_start().map(|b| b.working_bank.slot());
-            self.leader_detection_metrics
-                .update_and_maybe_report(decision.bank_start());
+            let new_leader_slot = decision.bank().map(|b| b.slot());
             self.count_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
             self.timing_metrics
@@ -139,16 +131,11 @@ where
         decision: &BufferedPacketsDecision,
     ) -> Result<(), SchedulerError> {
         match decision {
-            BufferedPacketsDecision::Consume(bank_start) => {
+            BufferedPacketsDecision::Consume(bank) => {
                 let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
                     &mut self.container,
                     |txs, results| {
-                        Self::pre_graph_filter(
-                            txs,
-                            results,
-                            &bank_start.working_bank,
-                            MAX_PROCESSING_AGE,
-                        )
+                        Self::pre_graph_filter(txs, results, bank, MAX_PROCESSING_AGE)
                     },
                     |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
                 )?);
@@ -340,22 +327,19 @@ mod tests {
         solana_fee_calculator::FeeRateGovernor,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::{
-            blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
-            get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
-        },
+        solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::Message,
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
-        solana_poh::poh_recorder::PohRecorder,
-        solana_poh_config::PohConfig,
+        solana_poh::poh_recorder::{
+            SharedLeaderFirstTickHeight, SharedTickHeight, SharedWorkingBank,
+        },
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
         solana_runtime_transaction::transaction_meta::StaticMeta,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::Transaction,
-        std::sync::{atomic::AtomicBool, Arc, RwLock},
-        tempfile::TempDir,
+        std::sync::{Arc, RwLock},
         test_case::test_case,
     };
 
@@ -368,10 +352,8 @@ mod tests {
     struct TestFrame<Tx> {
         bank: Arc<Bank>,
         mint_keypair: Keypair,
-        _ledger_path: TempDir,
-        poh_recorder: Arc<RwLock<PohRecorder>>,
         banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
-
+        shared_working_bank: SharedWorkingBank,
         consume_work_receivers: Vec<Receiver<ConsumeWork<Tx>>>,
         finished_consume_work_sender: Sender<FinishedConsumeWork<Tx>>,
     }
@@ -409,22 +391,15 @@ mod tests {
         genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
 
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path())
-            .expect("Expected to be able to open database ledger");
-        let (poh_recorder, _entry_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
+        let shared_working_bank = SharedWorkingBank::empty();
+        let shared_tick_height = SharedTickHeight::new(0);
+        let shared_leader_first_tick_height = SharedLeaderFirstTickHeight::new(None);
+
+        let decision_maker = DecisionMaker::new(
+            shared_working_bank.clone(),
+            shared_tick_height,
+            shared_leader_first_tick_height,
         );
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-        let decision_maker = DecisionMaker::new(poh_recorder.clone());
 
         let (banking_packet_sender, banking_packet_receiver) = unbounded();
         let receive_and_buffer =
@@ -436,8 +411,7 @@ mod tests {
         let test_frame = TestFrame {
             bank,
             mint_keypair,
-            _ledger_path: ledger_path,
-            poh_recorder,
+            shared_working_bank,
             banking_packet_sender,
             consume_work_receivers,
             finished_consume_work_sender,
@@ -554,16 +528,13 @@ mod tests {
         let TestFrame {
             bank,
             mint_keypair,
-            poh_recorder,
+            shared_working_bank,
             banking_packet_sender,
             consume_work_receivers,
             ..
         } = &test_frame;
 
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
+        shared_working_bank.store(bank.clone());
 
         // Send packet batch to the scheduler - should do nothing until we become the leader.
         let tx1 = create_and_fund_prioritized_transfer(
@@ -614,16 +585,13 @@ mod tests {
         let TestFrame {
             bank,
             mint_keypair,
-            poh_recorder,
+            shared_working_bank,
             banking_packet_sender,
             consume_work_receivers,
             ..
         } = &test_frame;
 
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
+        shared_working_bank.store(bank.clone());
 
         let pk = Pubkey::new_unique();
         let tx1 = create_and_fund_prioritized_transfer(
@@ -677,16 +645,13 @@ mod tests {
         let TestFrame {
             bank,
             mint_keypair,
-            poh_recorder,
+            shared_working_bank,
             banking_packet_sender,
             consume_work_receivers,
             ..
         } = &test_frame;
 
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
+        shared_working_bank.store(bank.clone());
 
         // Send multiple batches - all get scheduled
         let txs1 = (0..2 * TARGET_NUM_TRANSACTIONS_PER_BATCH)
@@ -745,16 +710,13 @@ mod tests {
         let TestFrame {
             bank,
             mint_keypair,
-            poh_recorder,
+            shared_working_bank,
             banking_packet_sender,
             consume_work_receivers,
             ..
         } = &test_frame;
 
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
+        shared_working_bank.store(bank.clone());
 
         // Send 4 transactions w/o conflicts. 2 should be scheduled on each thread
         let txs = (0..4)
@@ -816,17 +778,14 @@ mod tests {
         let TestFrame {
             bank,
             mint_keypair,
-            poh_recorder,
+            shared_working_bank,
             banking_packet_sender,
             consume_work_receivers,
             finished_consume_work_sender,
             ..
         } = &test_frame;
 
-        poh_recorder
-            .write()
-            .unwrap()
-            .set_bank_for_test(bank.clone());
+        shared_working_bank.store(bank.clone());
 
         // Send packet batch to the scheduler - should do nothing until we become the leader.
         let tx1 = create_and_fund_prioritized_transfer(
