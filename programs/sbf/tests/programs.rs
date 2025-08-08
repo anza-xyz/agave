@@ -1446,7 +1446,7 @@ fn assert_instruction_count() {
             ("solana_sbf_rust_128bit", 801),
             ("solana_sbf_rust_alloc", 4983),
             ("solana_sbf_rust_custom_heap", 303),
-            ("solana_sbf_rust_dep_crate", 3),
+            ("solana_sbf_rust_dep_crate", 22),
             ("solana_sbf_rust_iter", 1414),
             ("solana_sbf_rust_many_args", 1287),
             ("solana_sbf_rust_mem", 1298),
