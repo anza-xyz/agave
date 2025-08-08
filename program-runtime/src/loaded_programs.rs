@@ -1065,7 +1065,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     /// and returns which program accounts the accounts DB needs to load.
     pub fn extract(
         &self,
-        search_for: &mut Vec<(Pubkey, ProgramCacheMatchCriteria)>,
+        search_for: &mut Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)>,
         loaded_programs_for_tx_batch: &mut ProgramCacheForTxBatch,
         increment_usage_counter: bool,
         count_hits_and_misses: bool,
@@ -1079,7 +1079,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 entries,
                 loading_entries,
             } => {
-                search_for.retain(|(key, match_criteria)| {
+                search_for.retain(|(key, match_criteria, _slot)| {
                     if let Some(second_level) = entries.get(key) {
                         for entry in second_level.iter().rev() {
                             if entry.deployment_slot <= self.latest_root_slot
@@ -2178,7 +2178,7 @@ mod tests {
         cache: &ProgramCache<TestForkGraphSpecific>,
         loading_slot: Slot,
         keys: &[Pubkey],
-    ) -> Vec<(Pubkey, ProgramCacheMatchCriteria)> {
+    ) -> Vec<(Pubkey, ProgramCacheMatchCriteria, Slot)> {
         let fork_graph = cache.fork_graph.as_ref().unwrap().upgrade().unwrap();
         let locked_fork_graph = fork_graph.read().unwrap();
         let entries = cache.get_flattened_entries_for_tests();
@@ -2194,8 +2194,12 @@ mod tests {
                                 BlockRelation::Equal | BlockRelation::Ancestor,
                             )
                     })
-                    .map(|(program_id, _entry)| {
-                        (*program_id, ProgramCacheMatchCriteria::NoCriteria)
+                    .map(|(program_id, entry)| {
+                        (
+                            *program_id,
+                            ProgramCacheMatchCriteria::NoCriteria,
+                            entry.deployment_slot,
+                        )
                     })
             })
             .collect()
@@ -2216,11 +2220,11 @@ mod tests {
     }
 
     fn match_missing(
-        missing: &[(Pubkey, ProgramCacheMatchCriteria)],
+        missing: &[(Pubkey, ProgramCacheMatchCriteria, Slot)],
         program: &Pubkey,
         expected_result: bool,
     ) -> bool {
-        missing.iter().any(|(key, _)| key == program) == expected_result
+        missing.iter().any(|(key, _, _)| key == program) == expected_result
     }
 
     #[test]
@@ -2559,7 +2563,7 @@ mod tests {
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
-        let mut missing = vec![(program1, ProgramCacheMatchCriteria::NoCriteria)];
+        let mut missing = vec![(program1, ProgramCacheMatchCriteria::NoCriteria, 0)];
         let mut extracted = ProgramCacheForTxBatch::new(0, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_missing(&missing, &program1, true));
