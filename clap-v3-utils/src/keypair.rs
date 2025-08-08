@@ -27,8 +27,9 @@ use {
     solana_presigner::Presigner,
     solana_pubkey::Pubkey,
     solana_remote_wallet::{
+        errors::RemoteWalletError,
         remote_keypair::generate_remote_keypair,
-        remote_wallet::{maybe_wallet_manager, RemoteWalletError, RemoteWalletManager},
+        remote_wallet::{maybe_wallet_manager, RemoteWalletManager},
     },
     solana_seed_derivable::SeedDerivable,
     solana_seed_phrase::generate_seed_from_seed_phrase_and_passphrase,

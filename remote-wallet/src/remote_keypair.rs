@@ -1,11 +1,9 @@
 use {
     crate::{
-        ledger::get_ledger_from_info,
+        errors::RemoteWalletError,
         locator::{Locator, Manufacturer},
-        remote_wallet::{
-            RemoteWallet, RemoteWalletError, RemoteWalletInfo, RemoteWalletManager,
-            RemoteWalletType,
-        },
+        remote_wallet::{RemoteWallet, RemoteWalletInfo, RemoteWalletManager},
+        wallet::{ledger::ledger::get_ledger_from_info, types::RemoteWalletType},
     },
     solana_derivation_path::DerivationPath,
     solana_pubkey::Pubkey,
