@@ -154,7 +154,7 @@ impl<B> FileCreator for IoUringFileCreator<'_, B> {
 }
 
 impl<B> IoUringFileCreator<'_, B> {
-    /// Schedule opening file at `path` with `mode` permissons.
+    /// Schedule opening file at `path` with `mode` permissions.
     ///
     /// Returns key that can be used for scheduling writes for it.
     fn open(
