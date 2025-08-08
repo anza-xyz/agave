@@ -39,7 +39,7 @@ use {
         num::Saturating,
         ops::Deref,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
         },
         thread::{self, Builder, JoinHandle},
@@ -554,6 +554,7 @@ impl BankingStage {
                         .name("solBnkTxSched".to_string())
                         .spawn(move || {
                             let scheduler_controller = SchedulerController::new(
+                                Arc::new(AtomicBool::new(false)),
                                 decision_maker.clone(),
                                 receive_and_buffer,
                                 bank_forks,
