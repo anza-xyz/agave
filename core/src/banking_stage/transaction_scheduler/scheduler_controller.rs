@@ -24,7 +24,10 @@ use {
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         num::Saturating,
-        sync::{Arc, RwLock},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, RwLock,
+        },
     },
 };
 
@@ -34,6 +37,8 @@ where
     R: ReceiveAndBuffer,
     S: Scheduler<R::Transaction>,
 {
+    /// Exit signal for the scheduler thread.
+    exit: Arc<AtomicBool>,
     /// Decision maker for determining what should be done with transactions.
     decision_maker: DecisionMaker,
     receive_and_buffer: R,
@@ -63,6 +68,7 @@ where
     S: Scheduler<R::Transaction>,
 {
     pub fn new(
+        exit: Arc<AtomicBool>,
         decision_maker: DecisionMaker,
         receive_and_buffer: R,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -70,6 +76,7 @@ where
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
     ) -> Self {
         Self {
+            exit,
             decision_maker,
             receive_and_buffer,
             bank_forks,
@@ -84,7 +91,7 @@ where
     }
 
     pub fn run(mut self) -> Result<(), SchedulerError> {
-        loop {
+        while !self.exit.load(Ordering::Relaxed) {
             // BufferedPacketsDecision is shared with legacy BankingStage, which will forward
             // packets. Initially, not renaming these decision variants but the actions taken
             // are different, since new BankingStage will not forward packets.
@@ -448,7 +455,9 @@ mod tests {
             finished_consume_work_receiver,
             PrioGraphSchedulerConfig::default(),
         );
+        let exit = Arc::new(AtomicBool::new(false));
         let scheduler_controller = SchedulerController::new(
+            exit,
             decision_maker,
             receive_and_buffer,
             bank_forks,
