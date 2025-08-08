@@ -918,10 +918,6 @@ impl BorrowedAccount<'_> {
         if !self.is_writable() {
             return Err(InstructionError::ModifiedProgramId);
         }
-        // and only if the account is not executable
-        if self.is_executable_internal() {
-            return Err(InstructionError::ModifiedProgramId);
-        }
         // and only if the data is zero-initialized or empty
         if !is_zeroed(self.get_data()) {
             return Err(InstructionError::ModifiedProgramId);
@@ -951,10 +947,6 @@ impl BorrowedAccount<'_> {
         // The balance of read-only may not change
         if !self.is_writable() {
             return Err(InstructionError::ReadonlyLamportChange);
-        }
-        // The balance of executable accounts may not change
-        if self.is_executable_internal() {
-            return Err(InstructionError::ExecutableLamportChange);
         }
         // don't touch the account if the lamports do not change
         if self.get_lamports() == lamports {
@@ -1136,13 +1128,6 @@ impl BorrowedAccount<'_> {
         self.account.executable()
     }
 
-    /// Feature gating to remove `is_executable` flag related checks
-    #[cfg(not(target_os = "solana"))]
-    #[inline]
-    fn is_executable_internal(&self) -> bool {
-        false
-    }
-
     /// Configures whether this account is executable (transaction wide)
     #[cfg(not(target_os = "solana"))]
     pub fn set_executable(&mut self, is_executable: bool) -> Result<(), InstructionError> {
@@ -1160,10 +1145,6 @@ impl BorrowedAccount<'_> {
         }
         // and only if the account is writable
         if !self.is_writable() {
-            return Err(InstructionError::ExecutableModified);
-        }
-        // one can not clear the executable flag
-        if self.is_executable_internal() && !is_executable {
             return Err(InstructionError::ExecutableModified);
         }
         // don't touch the account if the executable flag does not change
@@ -1216,10 +1197,6 @@ impl BorrowedAccount<'_> {
     /// Returns an error if the account data can not be mutated by the current program
     #[cfg(not(target_os = "solana"))]
     pub fn can_data_be_changed(&self) -> Result<(), InstructionError> {
-        // Only non-executable accounts data can be changed
-        if self.is_executable_internal() {
-            return Err(InstructionError::ExecutableDataModified);
-        }
         // and only if the account is writable
         if !self.is_writable() {
             return Err(InstructionError::ReadonlyDataModified);
