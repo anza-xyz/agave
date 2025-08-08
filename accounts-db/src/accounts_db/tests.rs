@@ -656,8 +656,16 @@ fn run_test_remove_unrooted_slot(is_cached: bool, db: AccountsDb) {
     if is_cached {
         db.store_cached((unrooted_slot, &[(&key, &account0)][..]));
     } else {
-        db.store_for_tests((unrooted_slot, [(&key, &account0)].as_slice()));
+        let file_size = 4096; // value doesn't need to be exact, just big enough to hold account0
+        let storage = db.create_and_insert_store(unrooted_slot, file_size, "");
+        db.store_accounts_frozen(
+            (unrooted_slot, [(&key, &account0)].as_slice()),
+            &storage,
+            UpdateIndexThreadSelection::Inline,
+        );
+        assert!(db.storage.get_slot_storage_entry(unrooted_slot).is_some());
     }
+    assert!(!db.accounts_index.is_alive_root(unrooted_slot));
     assert!(db.accounts_index.contains(&key));
     db.assert_load_account(unrooted_slot, key, 1);
 
