@@ -18,8 +18,7 @@ mod serde_snapshot_tests {
             account_storage_reader::AccountStorageReader,
             accounts::Accounts,
             accounts_db::{
-                get_temp_accounts_paths, test_utils::create_test_accounts, AccountStorageEntry,
-                AccountsDb, AtomicAccountsFileId,
+                get_temp_accounts_paths, AccountStorageEntry, AccountsDb, AtomicAccountsFileId,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             ancestors::Ancestors,
@@ -205,8 +204,13 @@ mod serde_snapshot_tests {
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let slot = 0;
-        let mut pubkeys: Vec<Pubkey> = vec![];
-        create_test_accounts(&accounts, &mut pubkeys, 100, slot);
+        let pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
+            .take(100)
+            .collect();
+        for (i, pubkey) in pubkeys.iter().enumerate() {
+            let account = AccountSharedData::new(i as u64 + 1, 0, &Pubkey::default());
+            accounts.store_accounts_cached((slot, [(pubkey, &account)].as_slice()));
+        }
         check_accounts_local(&accounts, &pubkeys, 100);
         accounts.accounts_db.add_root_and_flush_write_cache(slot);
         let accounts_hash = accounts

@@ -7623,29 +7623,3 @@ impl AccountsDb {
         &self.uncleaned_pubkeys
     }
 }
-
-/// A set of utility functions used for testing and benchmarking
-#[cfg(feature = "dev-context-only-utils")]
-pub mod test_utils {
-    use {super::*, crate::accounts::Accounts};
-
-    pub fn create_test_accounts(
-        accounts: &Accounts,
-        pubkeys: &mut Vec<Pubkey>,
-        num: usize,
-        slot: Slot,
-    ) {
-        let data_size = 0;
-
-        for t in 0..num {
-            let pubkey = solana_pubkey::new_rand();
-            let account = AccountSharedData::new(
-                (t + 1) as u64,
-                data_size,
-                AccountSharedData::default().owner(),
-            );
-            accounts.store_cached((slot, &[(&pubkey, &account)][..]), None);
-            pubkeys.push(pubkey);
-        }
-    }
-}
