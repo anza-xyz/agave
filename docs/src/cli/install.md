@@ -237,8 +237,7 @@ binaries with:
 export PATH=$PWD/bin:$PATH
 ```
 
-You can then run the following command to obtain the same result as with
-prebuilt binaries:
+You can then run the following command to confirm the installation:
 
 ```bash
 agave-install init
