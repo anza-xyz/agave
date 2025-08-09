@@ -1,12 +1,6 @@
 //! The `tpu` module implements the Transaction Processing Unit, a
 //! multi-stage transaction processing pipeline in software.
 
-// allow multiple connections for NAT and any open/close overlap
-#[deprecated(
-    since = "2.2.0",
-    note = "Use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER instead"
-)]
-pub use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER as MAX_QUIC_CONNECTIONS_PER_PEER;
 pub use {
     crate::forwarding_stage::ForwardingClientOption, solana_streamer::quic::DEFAULT_TPU_COALESCE,
 };
