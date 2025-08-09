@@ -246,7 +246,8 @@ pub fn deactivate_features(
             genesis_config.accounts.remove(deactivate_feature_pk);
         } else {
             warn!(
-                "Feature {deactivate_feature_pk:?} set for deactivation is not a known Feature public key"
+                "Feature {deactivate_feature_pk:?} set for deactivation is not a known Feature \
+                 public key"
             );
         }
     }
