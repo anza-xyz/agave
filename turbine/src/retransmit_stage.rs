@@ -613,7 +613,7 @@ impl RetransmitStage {
         };
 
         let retransmit_thread_handle = Builder::new()
-            .name("solRetransmittr".to_string())
+            .name("solRetransmitter".to_string())
             .spawn({
                 move || {
                     let mut shred_buf = Vec::with_capacity(RETRANSMIT_BATCH_SIZE);
