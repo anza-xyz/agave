@@ -33,7 +33,7 @@ solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-svm = { workspace = true }
-solana-timings = { workspace = true }
+solana-svm-timings = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }

@@ -99,6 +99,7 @@ use {
         transaction_commit_result::TransactionCommitResultExtensions,
         transaction_execution_result::ExecutedTransaction,
     },
+    solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_interface::{
         error::SystemError,
@@ -107,7 +108,6 @@ use {
         MAX_PERMITTED_DATA_LENGTH,
     },
     solana_system_transaction as system_transaction, solana_sysvar as sysvar,
-    solana_timings::ExecuteTimings,
     solana_transaction::{
         sanitized::SanitizedTransaction, Transaction, TransactionVerificationMode,
     },
