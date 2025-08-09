@@ -25,7 +25,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm_transaction::svm_message::SVMMessage,
-    std::num::Saturating,
+    std::num::Wrapping,
 };
 
 #[inline(always)]
@@ -141,8 +141,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         let mut blocking_locks = ReadWriteAccountSet::default();
 
         // Track metrics on filter.
-        let mut num_filtered_out = Saturating::<usize>(0);
-        let mut total_filter_time_us = Saturating::<u64>(0);
+        let mut num_filtered_out = Wrapping::<usize>(0);
+        let mut total_filter_time_us = Wrapping::<u64>(0);
 
         let mut window_budget = self.config.look_ahead_window_size;
         let mut chunked_pops = |container: &mut S,
@@ -205,8 +205,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
             self.common.consume_work_senders.len() * self.config.target_transactions_per_batch,
         );
         let mut num_scanned: usize = 0;
-        let mut num_scheduled = Saturating::<usize>(0);
-        let mut num_sent = Saturating::<usize>(0);
+        let mut num_scheduled = Wrapping::<usize>(0);
+        let mut num_sent = Wrapping::<usize>(0);
         let mut num_unschedulable_conflicts: usize = 0;
         let mut num_unschedulable_threads: usize = 0;
         while num_scanned < self.config.max_scanned_transactions_per_scheduling_pass {
@@ -326,9 +326,9 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
             "number of scheduled and sent transactions must match"
         );
 
-        let Saturating(num_scheduled) = num_scheduled;
-        let Saturating(num_filtered_out) = num_filtered_out;
-        let Saturating(total_filter_time_us) = total_filter_time_us;
+        let Wrapping(num_scheduled) = num_scheduled;
+        let Wrapping(num_filtered_out) = num_filtered_out;
+        let Wrapping(total_filter_time_us) = total_filter_time_us;
 
         Ok(SchedulingSummary {
             starting_queue_size,
