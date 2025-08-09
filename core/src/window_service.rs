@@ -11,7 +11,6 @@ use {
         result::{Error, Result},
     },
     agave_feature_set as feature_set,
-    assert_matches::debug_assert_matches,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     rayon::{prelude::*, ThreadPool},
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
@@ -208,9 +207,6 @@ where
         }
         if repair {
             ws_metrics.num_repairs.fetch_add(1, Ordering::Relaxed);
-            debug_assert_matches!(shred, shred::Payload::Unique(_));
-        } else {
-            debug_assert_matches!(shred, shred::Payload::Shared(_));
         }
         let shred = Shred::new_from_serialized_shred(shred).ok()?;
         Some((Cow::Owned(shred), repair))

@@ -21,10 +21,7 @@ use {
         contact_info::Protocol,
     },
     solana_keypair::Keypair,
-    solana_ledger::{
-        blockstore::Blockstore,
-        shred::{self, Shred},
-    },
+    solana_ledger::{blockstore::Blockstore, shred::Shred},
     solana_measure::measure::Measure,
     solana_metrics::{inc_new_counter_error, inc_new_counter_info},
     solana_poh::poh_recorder::WorkingBankEntry,
@@ -553,8 +550,7 @@ pub fn broadcast_shreds(
     let mut quic_send_time = Measure::start("send shreds via quic");
     transmit_stats.total_packets += num_udp_packets + quic_packets.len();
     for (idx, addr) in quic_packets {
-        let shred = shreds[idx].payload();
-        let shred = Bytes::from(shred::Payload::unwrap_or_clone(shred.clone()));
+        let shred = shreds[idx].payload().bytes.clone();
         if let Err(err) = quic_endpoint_sender.blocking_send((addr, shred)) {
             transmit_stats.dropped_packets_quic += 1;
             result = Err(Error::from(err));

@@ -22,7 +22,7 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError},
         blockstore_meta::{DuplicateSlotProof, ErasureMeta},
-        shred::{self, Shred, ShredType},
+        shred::{Shred, ShredType},
     },
     solana_native_token::lamports_to_sol,
     solana_pubkey::Pubkey,
@@ -410,7 +410,7 @@ impl From<Shred> for CliDuplicateShred {
             merkle_root: shred.merkle_root().ok(),
             chained_merkle_root: shred.chained_merkle_root().ok(),
             last_in_slot: shred.last_in_slot(),
-            payload: shred::Payload::unwrap_or_clone(shred.payload().clone()),
+            payload: Vec::from(shred.into_payload().bytes),
         }
     }
 }

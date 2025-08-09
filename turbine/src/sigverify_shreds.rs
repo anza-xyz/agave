@@ -254,7 +254,7 @@ fn run_shred_sigverify<const K: usize>(
             } else {
                 // Share the payload between the retransmit-stage and the
                 // window-service.
-                Either::Left(shred::Payload::from(Arc::new(shred)))
+                Either::Left(shred::Payload::from(shred))
             }
         });
     // Repaired shreds are not retransmitted.

@@ -8892,6 +8892,7 @@ dependencies = [
  "bincode",
  "bitflags 2.9.1",
  "bs58",
+ "bytes",
  "bzip2",
  "chrono",
  "chrono-humanize",

@@ -7,7 +7,7 @@ use {
             common::impl_shred_common,
             dispatch,
             merkle_tree::*,
-            payload::Payload,
+            payload::{Payload, PayloadMutGuard},
             shred_code, shred_data,
             traits::{
                 Shred as ShredTrait, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait,
@@ -77,7 +77,7 @@ pub(crate) enum Shred {
 
 impl Shred {
     dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
-    dispatch!(fn erasure_shard_mut(&mut self) -> Result<&mut [u8], Error>);
+    dispatch!(fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<Range<usize>>, Error>);
     dispatch!(fn merkle_node(&self) -> Result<Hash, Error>);
     dispatch!(fn sanitize(&self) -> Result<(), Error>);
     dispatch!(fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error>);
@@ -362,7 +362,8 @@ macro_rules! impl_merkle_shred {
 
         fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error> {
             let offset = self.chained_merkle_root_offset()?;
-            let Some(buffer) = self.payload.get_mut(offset..offset + SIZE_OF_MERKLE_ROOT) else {
+            let Some(mut buffer) = self.payload.get_mut(offset..offset + SIZE_OF_MERKLE_ROOT)
+            else {
                 return Err(Error::InvalidPayloadSize(self.payload.len()));
             };
             buffer.copy_from_slice(chained_merkle_root.as_ref());
@@ -395,11 +396,11 @@ macro_rules! impl_merkle_shred {
         {
             let proof_size = self.proof_size()?;
             let proof_offset = self.proof_offset()?;
-            let mut cursor = Cursor::new(
-                self.payload
-                    .get_mut(proof_offset..)
-                    .ok_or(Error::InvalidProofSize(proof_size))?,
-            );
+            let mut slice = self
+                .payload
+                .get_mut(proof_offset..)
+                .ok_or(Error::InvalidProofSize(proof_size))?;
+            let mut cursor = Cursor::new(slice.as_mut());
             let proof_size = usize::from(proof_size);
             proof.into_iter().enumerate().try_for_each(|(k, entry)| {
                 if k >= proof_size {
@@ -425,7 +426,7 @@ macro_rules! impl_merkle_shred {
 
         fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error> {
             let offset = self.retransmitter_signature_offset()?;
-            let Some(buffer) = self.payload.get_mut(offset..offset + SIZE_OF_SIGNATURE) else {
+            let Some(mut buffer) = self.payload.get_mut(offset..offset + SIZE_OF_SIGNATURE) else {
                 return Err(Error::InvalidPayloadSize(self.payload.len()));
             };
             buffer.copy_from_slice(signature.as_ref());
@@ -481,7 +482,7 @@ macro_rules! impl_merkle_shred {
         }
 
         // Returns the erasure coded slice as a mutable reference.
-        fn erasure_shard_mut(&mut self) -> Result<&mut [u8], Error> {
+        fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<Range<usize>>, Error> {
             let offsets = self.erasure_shard_offsets()?;
             let payload_size = self.payload.len();
             self.payload
@@ -800,14 +801,16 @@ pub(super) fn recover(
         batch
     };
     // Obtain erasure encoded shards from the shreds and reconstruct shreds.
-    let mut shards: Vec<(&mut [u8], bool)> = shreds
+    let mut shards = shreds
         .iter_mut()
         .zip(&mask)
         .map(|(shred, &mask)| Ok((shred.erasure_shard_mut()?, mask)))
-        .collect::<Result<_, Error>>()?;
+        .collect::<Result<Vec<_>, Error>>()?;
     reed_solomon_cache
         .get(num_data_shreds, num_coding_shreds)?
         .reconstruct(&mut shards)?;
+    // Drop the mut guards to allow further mutation below.
+    drop(shards);
     // Verify and sanitize recovered shreds, re-compute the Merkle tree and set
     // the merkle proof on the recovered shreds.
     let nodes = shreds
@@ -955,7 +958,7 @@ fn make_stub_shred(
             // while their payload is sent to retransmit-stage. Using a shared
             // payload between the two concurrent paths will reduce allocations
             // and memcopies.
-            payload: Payload::from(std::sync::Arc::new(payload)),
+            payload: Payload::from(payload),
         })
     };
     if let Some(chained_merkle_root) = chained_merkle_root {
@@ -1231,11 +1234,11 @@ fn finish_erasure_batch(
     fn write_headers(shred: &mut Shred) -> Result<(), bincode::Error> {
         match shred {
             Shred::ShredCode(shred) => bincode::serialize_into(
-                &mut shred.payload[..],
+                &mut shred.payload.as_mut()[..],
                 &(&shred.common_header, &shred.coding_header),
             ),
             Shred::ShredData(shred) => bincode::serialize_into(
-                &mut shred.payload[..],
+                &mut shred.payload.as_mut()[..],
                 &(&shred.common_header, &shred.data_header),
             ),
         }
@@ -1267,7 +1270,7 @@ fn finish_erasure_batch(
             shreds
                 .iter_mut()
                 .map(Shred::erasure_shard_mut)
-                .collect::<Result<Vec<&mut [u8]>, _>>()?,
+                .collect::<Result<Vec<_>, _>>()?,
         )?;
     // Set the chained_merkle_root for each shred.
     if let Some(chained_merkle_root) = chained_merkle_root {
@@ -1614,12 +1617,6 @@ mod test {
                 }
             });
             assert_eq!(recovered_shreds, removed_shreds);
-            for shred in recovered_shreds {
-                match shred.shred_type() {
-                    ShredType::Code => assert_matches!(shred.payload(), Payload::Unique(_)),
-                    ShredType::Data => assert_matches!(shred.payload(), Payload::Shared(_)),
-                }
-            }
         }
     }
 
@@ -1913,9 +1910,7 @@ mod test {
             })
             .collect();
         assert_eq!(recovered_data_shreds.len(), data_shreds.len());
-        for shred in &recovered_data_shreds {
-            assert_matches!(shred.payload(), Payload::Shared(_));
-        }
+
         for (shred, other) in recovered_data_shreds.into_iter().zip(data_shreds) {
             match shred {
                 Shred::ShredCode(_) => panic!("Invalid shred type!"),
