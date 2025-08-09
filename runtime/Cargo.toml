@@ -90,6 +90,7 @@ solana-account = { workspace = true }
 solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-bucket-map = { workspace = true }
 solana-builtins = { workspace = true }
@@ -172,6 +173,7 @@ solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
+solana-votor-messages = { workspace = true }
 spl-generic-token = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
