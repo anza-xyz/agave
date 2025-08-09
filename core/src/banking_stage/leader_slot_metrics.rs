@@ -6,9 +6,9 @@ use {
         vote_storage::VoteBatchInsertionMetrics,
     },
     solana_clock::Slot,
-    solana_poh::poh_recorder::BankStart,
+    solana_runtime::bank::Bank,
     solana_svm::transaction_error_metrics::*,
-    std::{num::Saturating, time::Instant},
+    std::{num::Saturating, sync::Arc},
 };
 
 /// A summary of what happened to transactions passed to the processing pipeline.
@@ -397,13 +397,13 @@ pub(crate) struct LeaderSlotMetrics {
 }
 
 impl LeaderSlotMetrics {
-    pub(crate) fn new(slot: Slot, bank_creation_time: &Instant) -> Self {
+    pub(crate) fn new(slot: Slot) -> Self {
         Self {
             slot,
             packet_count_metrics: LeaderSlotPacketCountMetrics::new(),
             transaction_error_metrics: TransactionErrorMetrics::new(),
             vote_packet_count_metrics: VotePacketCountMetrics::new(),
-            timing_metrics: LeaderSlotTimingMetrics::new(bank_creation_time),
+            timing_metrics: LeaderSlotTimingMetrics::new(),
             is_reported: false,
         }
     }
@@ -476,9 +476,9 @@ impl LeaderSlotMetricsTracker {
     // Check leader slot, return MetricsTrackerAction to be applied by apply_action()
     pub(crate) fn check_leader_slot_boundary(
         &mut self,
-        bank_start: Option<&BankStart>,
+        bank: Option<&Arc<Bank>>,
     ) -> MetricsTrackerAction {
-        match (self.leader_slot_metrics.as_mut(), bank_start) {
+        match (self.leader_slot_metrics.as_mut(), bank) {
             (None, None) => MetricsTrackerAction::Noop,
 
             (Some(leader_slot_metrics), None) => {
@@ -487,20 +487,16 @@ impl LeaderSlotMetricsTracker {
             }
 
             // Our leader slot has begain, time to create a new slot tracker
-            (None, Some(bank_start)) => {
-                MetricsTrackerAction::NewTracker(Some(LeaderSlotMetrics::new(
-                    bank_start.working_bank.slot(),
-                    &bank_start.bank_creation_time,
-                )))
+            (None, Some(bank)) => {
+                MetricsTrackerAction::NewTracker(Some(LeaderSlotMetrics::new(bank.slot())))
             }
 
-            (Some(leader_slot_metrics), Some(bank_start)) => {
-                if leader_slot_metrics.slot != bank_start.working_bank.slot() {
+            (Some(leader_slot_metrics), Some(bank)) => {
+                if leader_slot_metrics.slot != bank.slot() {
                     // Last slot has ended, new slot has began
                     leader_slot_metrics.mark_slot_end_detected();
                     MetricsTrackerAction::ReportAndNewTracker(Some(LeaderSlotMetrics::new(
-                        bank_start.working_bank.slot(),
-                        &bank_start.bank_creation_time,
+                        bank.slot(),
                     )))
                 } else {
                     MetricsTrackerAction::Noop
@@ -810,19 +806,13 @@ mod tests {
 
     struct TestSlotBoundaryComponents {
         first_bank: Arc<Bank>,
-        first_poh_recorder_bank: BankStart,
         next_bank: Arc<Bank>,
-        next_poh_recorder_bank: BankStart,
         leader_slot_metrics_tracker: LeaderSlotMetricsTracker,
     }
 
     fn setup_test_slot_boundary_banks() -> TestSlotBoundaryComponents {
         let genesis = create_genesis_config(10);
         let first_bank = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
-        let first_poh_recorder_bank = BankStart {
-            working_bank: first_bank.clone(),
-            bank_creation_time: Arc::new(Instant::now()),
-        };
 
         // Create a child descended from the first bank
         let next_bank = Arc::new(Bank::new_from_parent(
@@ -830,18 +820,12 @@ mod tests {
             &Pubkey::new_unique(),
             first_bank.slot() + 1,
         ));
-        let next_poh_recorder_bank = BankStart {
-            working_bank: next_bank.clone(),
-            bank_creation_time: Arc::new(Instant::now()),
-        };
 
         let leader_slot_metrics_tracker = LeaderSlotMetricsTracker::default();
 
         TestSlotBoundaryComponents {
             first_bank,
-            first_poh_recorder_bank,
             next_bank,
-            next_poh_recorder_bank,
             leader_slot_metrics_tracker,
         }
     }
@@ -865,7 +849,7 @@ mod tests {
     #[test]
     pub fn test_update_on_leader_slot_boundary_not_leader_to_leader() {
         let TestSlotBoundaryComponents {
-            first_poh_recorder_bank,
+            first_bank,
             mut leader_slot_metrics_tracker,
             ..
         } = setup_test_slot_boundary_banks();
@@ -873,8 +857,7 @@ mod tests {
         // Test case where the thread has not detected a leader bank, and now sees a leader bank.
         // Metrics should not be reported because leader slot has not ended
         assert!(leader_slot_metrics_tracker.leader_slot_metrics.is_none());
-        let action =
-            leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_poh_recorder_bank));
+        let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_bank));
         assert_eq!(
             mem::discriminant(&MetricsTrackerAction::NewTracker(None)),
             mem::discriminant(&action)
@@ -887,7 +870,6 @@ mod tests {
     pub fn test_update_on_leader_slot_boundary_leader_to_not_leader() {
         let TestSlotBoundaryComponents {
             first_bank,
-            first_poh_recorder_bank,
             mut leader_slot_metrics_tracker,
             ..
         } = setup_test_slot_boundary_banks();
@@ -897,8 +879,7 @@ mod tests {
         // because that leader slot has just ended.
         {
             // Setup first_bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank));
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_bank));
             assert!(leader_slot_metrics_tracker.apply_action(action).is_none());
         }
         {
@@ -928,7 +909,6 @@ mod tests {
     pub fn test_update_on_leader_slot_boundary_leader_to_leader_same_slot() {
         let TestSlotBoundaryComponents {
             first_bank,
-            first_poh_recorder_bank,
             mut leader_slot_metrics_tracker,
             ..
         } = setup_test_slot_boundary_banks();
@@ -937,14 +917,12 @@ mod tests {
         // implying the slot is still running. Metrics should not be reported
         {
             // Setup with first_bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank));
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_bank));
             assert!(leader_slot_metrics_tracker.apply_action(action).is_none());
         }
         {
             // Assert nop-op if same bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank));
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_bank));
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::Noop),
                 mem::discriminant(&action)
@@ -970,9 +948,7 @@ mod tests {
     pub fn test_update_on_leader_slot_boundary_leader_to_leader_bigger_slot() {
         let TestSlotBoundaryComponents {
             first_bank,
-            first_poh_recorder_bank,
             next_bank,
-            next_poh_recorder_bank,
             mut leader_slot_metrics_tracker,
         } = setup_test_slot_boundary_banks();
 
@@ -981,14 +957,12 @@ mod tests {
         // smaller slot
         {
             // Setup with first_bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank));
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_bank));
             assert!(leader_slot_metrics_tracker.apply_action(action).is_none());
         }
         {
             // Assert reporting if new bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&next_poh_recorder_bank));
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&next_bank));
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndNewTracker(None)),
                 mem::discriminant(&action)
@@ -1018,9 +992,7 @@ mod tests {
     pub fn test_update_on_leader_slot_boundary_leader_to_leader_smaller_slot() {
         let TestSlotBoundaryComponents {
             first_bank,
-            first_poh_recorder_bank,
             next_bank,
-            next_poh_recorder_bank,
             mut leader_slot_metrics_tracker,
         } = setup_test_slot_boundary_banks();
         // Test case where the thread has a leader bank, and now detects there's a new leader bank
@@ -1028,14 +1000,12 @@ mod tests {
         // bigger slot
         {
             // Setup with next_bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&next_poh_recorder_bank));
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&next_bank));
             assert!(leader_slot_metrics_tracker.apply_action(action).is_none());
         }
         {
             // Assert reporting if new bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank));
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_bank));
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndNewTracker(None)),
                 mem::discriminant(&action)
