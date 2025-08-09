@@ -1428,13 +1428,13 @@ fn assert_instruction_count() {
             ("alloc", 18572),
             ("sbf_to_sbf", 316),
             ("multiple_static", 210),
-            ("noop", 6),
-            ("noop++", 6),
+            ("noop", 5),
+            ("noop++", 5),
             ("relative_call", 212),
             ("return_data", 1026),
-            ("sanity", 2374),
-            ("sanity++", 2274),
-            ("secp256k1_recover", 25422),
+            ("sanity", 2371),
+            ("sanity++", 2271),
+            ("secp256k1_recover", 25421),
             ("sha", 1446),
             ("struct_pass", 108),
             ("struct_ret", 122),
@@ -1449,14 +1449,14 @@ fn assert_instruction_count() {
             ("solana_sbf_rust_dep_crate", 22),
             ("solana_sbf_rust_iter", 1414),
             ("solana_sbf_rust_many_args", 1287),
-            ("solana_sbf_rust_mem", 1298),
-            ("solana_sbf_rust_membuiltins", 330),
-            ("solana_sbf_rust_noop", 313),
+            ("solana_sbf_rust_mem", 1297),
+            ("solana_sbf_rust_membuiltins", 329),
+            ("solana_sbf_rust_noop", 312),
             ("solana_sbf_rust_param_passing", 109),
             ("solana_sbf_rust_rand", 276),
-            ("solana_sbf_rust_sanity", 18116),
-            ("solana_sbf_rust_secp256k1_recover", 89274),
-            ("solana_sbf_rust_sha", 22811),
+            ("solana_sbf_rust_sanity", 17902),
+            ("solana_sbf_rust_secp256k1_recover", 88670),
+            ("solana_sbf_rust_sha", 22175),
         ]);
     }
 
@@ -1857,7 +1857,7 @@ fn test_program_sbf_invoke_in_same_tx_as_deployment() {
                 // Asserting the instruction number as an upper bound, since the quantity of
                 // instructions depends on the program size, which in turn depends on the SBPF
                 // versions.
-                assert!(instr_no <= 41);
+                assert!(instr_no <= 40);
                 assert_eq!(ty, InstructionError::UnsupportedProgramId);
             } else {
                 panic!("Invalid error type");
