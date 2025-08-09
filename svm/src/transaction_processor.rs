@@ -712,13 +712,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
                 cache_entry.tx_usage_counter.fetch_add(1, Ordering::Relaxed);
             } else if account_loader
-                .account_matches_owners(account_key, PROGRAM_OWNERS)
-                .is_some()
+                .get_account_shared_data(account_key)
+                .map(|(account, _slot)| PROGRAM_OWNERS.contains(account.owner()))
+                .unwrap_or(false)
             {
                 program_accounts_set.insert(*account_key);
             }
         }
-
         program_accounts_set
     }
 
@@ -1040,7 +1040,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) {
         let mut sysvar_cache = self.sysvar_cache.write().unwrap();
         sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
-            if let Some(account) = callbacks.get_account_shared_data(pubkey) {
+            if let Some((account, _slot)) = callbacks.get_account_shared_data(pubkey) {
                 set_sysvar(account.data());
             }
         });
@@ -1160,24 +1160,12 @@ mod tests {
     impl InvokeContextCallback for MockBankCallback {}
 
     impl TransactionProcessingCallback for MockBankCallback {
-        fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-            if let Some(data) = self.account_shared_data.read().unwrap().get(account) {
-                if data.lamports() == 0 {
-                    None
-                } else {
-                    owners.iter().position(|entry| data.owner() == entry)
-                }
-            } else {
-                None
-            }
-        }
-
-        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
             self.account_shared_data
                 .read()
                 .unwrap()
                 .get(pubkey)
-                .cloned()
+                .map(|account| (account.clone(), 0))
         }
 
         fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {

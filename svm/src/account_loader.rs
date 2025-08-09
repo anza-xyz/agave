@@ -14,6 +14,7 @@ use {
         state_traits::StateMut, Account, AccountSharedData, ReadableAccount, WritableAccount,
         PROGRAM_OWNERS,
     },
+    solana_clock::Slot,
     solana_fee_structure::FeeDetails,
     solana_instruction::{BorrowedAccountMeta, BorrowedInstruction},
     solana_instructions_sysvar::construct_instructions_data,
@@ -258,7 +259,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
             };
 
             (option_account, false)
-        } else if let Some(account) = self.callbacks.get_account_shared_data(account_key) {
+        } else if let Some((account, _slot)) = self.callbacks.get_account_shared_data(account_key) {
             (Some(account), true)
         } else {
             (None, false)
@@ -318,14 +319,10 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
 // In general, most accounts we load this way should already be in our accounts store.
 // Once SIMD-0186 is implemented, 100% of accounts will be.
 impl<CB: TransactionProcessingCallback> TransactionProcessingCallback for AccountLoader<'_, CB> {
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
-        self.do_load(pubkey).0
-    }
-
-    fn account_matches_owners(&self, pubkey: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-        self.do_load(pubkey)
-            .0
-            .and_then(|account| owners.iter().position(|entry| entry == account.owner()))
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
+        // The returned last-modification-slot is a dummy value for now,
+        // but will later be used in IndexImplementation::V2 of the global program cache.
+        self.do_load(pubkey).0.map(|account| (account, 0))
     }
 }
 
@@ -890,12 +887,10 @@ mod tests {
     impl InvokeContextCallback for TestCallbacks {}
 
     impl TransactionProcessingCallback for TestCallbacks {
-        fn account_matches_owners(&self, _account: &Pubkey, _owners: &[Pubkey]) -> Option<usize> {
-            None
-        }
-
-        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
-            self.accounts_map.get(pubkey).cloned()
+        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
+            self.accounts_map
+                .get(pubkey)
+                .map(|account| (account.clone(), 0))
         }
 
         fn inspect_account(
@@ -2758,7 +2753,10 @@ mod tests {
 
         let account_loader: AccountLoader<_> = (&mock_bank).into();
         assert_eq!(
-            account_loader.get_account_shared_data(&fee_payer).unwrap(),
+            account_loader
+                .get_account_shared_data(&fee_payer)
+                .unwrap()
+                .0,
             fee_payer_account
         );
 
@@ -2785,7 +2783,10 @@ mod tests {
             fee_payer_account
         );
         assert_eq!(
-            account_loader.get_account_shared_data(&fee_payer).unwrap(),
+            account_loader
+                .get_account_shared_data(&fee_payer)
+                .unwrap()
+                .0,
             fee_payer_account
         );
 
