@@ -850,11 +850,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
         );
-        transaction_context.set_remove_accounts_executable_flag_checks(
-            environment
-                .feature_set
-                .remove_accounts_executable_flag_checks,
-        );
 
         let pre_account_state_info =
             TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);

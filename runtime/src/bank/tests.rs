@@ -7209,7 +7209,6 @@ fn test_invoke_non_program_account_owned_by_a_builtin(
 ) {
     let (genesis_config, mint_keypair) = create_genesis_config(10000000);
     let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.activate_feature(&feature_set::remove_accounts_executable_flag_checks::id());
     if formalize_loaded_transaction_data_size {
         bank.activate_feature(&feature_set::formalize_loaded_transaction_data_size::id());
     }
@@ -11551,11 +11550,7 @@ fn test_deploy_last_epoch_slot() {
         &mut genesis_config,
         agave_feature_set::enable_loader_v4::id(),
     );
-    genesis_config
-        .accounts
-        .remove(&feature_set::remove_accounts_executable_flag_checks::id());
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.activate_feature(&feature_set::remove_accounts_executable_flag_checks::id());
+    let bank = Bank::new_for_tests(&genesis_config);
 
     // go to the last slot in the epoch
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -11657,7 +11652,6 @@ fn test_loader_v3_to_v4_migration(formalize_loaded_transaction_data_size: bool) 
         agave_feature_set::enable_loader_v4::id(),
     );
     let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.activate_feature(&feature_set::remove_accounts_executable_flag_checks::id());
     if formalize_loaded_transaction_data_size {
         bank.activate_feature(&feature_set::formalize_loaded_transaction_data_size::id());
     }
