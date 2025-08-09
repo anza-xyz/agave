@@ -1,26 +1,26 @@
 //! Contains utility functions to create server and client for test purposes.
 use {
-    super::quic::{spawn_server, SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID},
+    super::quic::{ALPN_TPU_PROTOCOL_ID, SpawnNonBlockingServerResult, spawn_server},
     crate::{
         quic::{QuicServerParams, StreamerStats},
         streamer::StakedNodes,
     },
-    crossbeam_channel::{unbounded, Receiver},
+    crossbeam_channel::{Receiver, unbounded},
     quinn::{
-        crypto::rustls::QuicClientConfig, ClientConfig, Connection, EndpointConfig, IdleTimeout,
-        TokioRuntime, TransportConfig,
+        ClientConfig, Connection, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig,
+        crypto::rustls::QuicClientConfig,
     },
     solana_keypair::Keypair,
     solana_net_utils::sockets::{
-        bind_to_localhost_unique, localhost_port_range_for_tests, multi_bind_in_range_with_config,
-        SocketConfiguration as SocketConfig,
+        SocketConfiguration as SocketConfig, bind_to_localhost_unique,
+        localhost_port_range_for_tests, multi_bind_in_range_with_config,
     },
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
         time::{Duration, Instant},
     },
     tokio::{task::JoinHandle, time::sleep},
@@ -164,11 +164,14 @@ pub async fn check_multiple_streams(
     let now = Instant::now();
     let mut total_packets = 0;
     while now.elapsed().as_secs() < 10 {
-        if let Ok(packets) = receiver.try_recv() {
-            total_packets += packets.len();
-            all_packets.push(packets)
-        } else {
-            sleep(Duration::from_secs(1)).await;
+        match receiver.try_recv() {
+            Ok(packets) => {
+                total_packets += packets.len();
+                all_packets.push(packets)
+            }
+            _ => {
+                sleep(Duration::from_secs(1)).await;
+            }
         }
         if total_packets == num_expected_packets {
             break;
