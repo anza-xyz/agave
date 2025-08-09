@@ -9,9 +9,6 @@ use {
     },
 };
 
-#[macro_use]
-extern crate serial_test;
-
 static SBF_TOOLS_INSTALL: AtomicBool = AtomicBool::new(true);
 fn run_cargo_build(crate_name: &str, extra_args: &[&str], fail: bool) {
     let cwd = env::current_dir().expect("Unable to get current working directory");
@@ -54,15 +51,11 @@ fn clean_target(crate_name: &str) {
     fs::remove_dir_all(target).expect("Failed to remove target dir");
 }
 
-#[test]
-#[serial]
 fn test_build() {
     run_cargo_build("noop", &[], false);
     clean_target("noop");
 }
 
-#[test]
-#[serial]
 fn test_dump() {
     // This test requires rustfilt.
     assert_cmd::Command::new("cargo")
@@ -82,8 +75,6 @@ fn test_dump() {
     clean_target("noop");
 }
 
-#[test]
-#[serial]
 fn test_out_dir() {
     run_cargo_build("noop", &["--sbf-out-dir", "tmp_out"], false);
     let cwd = env::current_dir().expect("Unable to get current working directory");
@@ -93,8 +84,6 @@ fn test_out_dir() {
     clean_target("noop");
 }
 
-#[test]
-#[serial]
 fn test_target_dir() {
     let target_dir = "./temp-target-dir";
     run_cargo_build("noop", &["--lto", "--", "--target-dir", target_dir], false);
@@ -109,8 +98,6 @@ fn test_target_dir() {
     fs::remove_dir_all(target_dir).expect("Failed to remove custom target dir");
 }
 
-#[test]
-#[serial]
 fn test_target_and_out_dir() {
     let target_dir = "./temp-target-dir";
     run_cargo_build(
@@ -127,8 +114,6 @@ fn test_target_and_out_dir() {
     fs::remove_dir_all(target_dir).expect("Failed to remove custom target dir");
 }
 
-#[test]
-#[serial]
 fn test_generate_child_script_on_failure() {
     run_cargo_build("fail", &["--generate-child-script-on-failure"], true);
     let cwd = env::current_dir().expect("Unable to get current working directory");
@@ -170,8 +155,6 @@ fn build_noop_and_readelf(arch: &str) -> Assert {
     assert_cmd::Command::new(readelf).args(["-h", bin]).assert()
 }
 
-#[test]
-#[serial]
 fn test_sbpfv0() {
     let assert_v0 = build_noop_and_readelf("v0");
     assert_v0
@@ -182,8 +165,6 @@ fn test_sbpfv0() {
     clean_target("noop");
 }
 
-#[test]
-#[serial]
 fn test_sbpfv1() {
     let assert_v1 = build_noop_and_readelf("v1");
     assert_v1
@@ -194,8 +175,6 @@ fn test_sbpfv1() {
     clean_target("noop");
 }
 
-#[test]
-#[serial]
 fn test_sbpfv2() {
     let assert_v1 = build_noop_and_readelf("v2");
     assert_v1
@@ -206,8 +185,6 @@ fn test_sbpfv2() {
     clean_target("noop");
 }
 
-#[test]
-#[serial]
 fn test_sbpfv3() {
     let assert_v1 = build_noop_and_readelf("v3");
     assert_v1
@@ -218,8 +195,6 @@ fn test_sbpfv3() {
     clean_target("noop");
 }
 
-#[test]
-#[serial]
 fn test_sbpfv4() {
     let assert_v1 = build_noop_and_readelf("v4");
     assert_v1
@@ -230,22 +205,16 @@ fn test_sbpfv4() {
     clean_target("noop");
 }
 
-#[test]
-#[serial]
 fn test_package_metadata_tools_version() {
     run_cargo_build("package-metadata", &[], false);
     clean_target("package-metadata");
 }
 
-#[test]
-#[serial]
 fn test_workspace_metadata_tools_version() {
     run_cargo_build("workspace-metadata", &[], false);
     clean_target("workspace-metadata");
 }
 
-#[test]
-#[serial]
 fn test_corrupted_toolchain() {
     run_cargo_build("noop", &[], false);
 
@@ -305,4 +274,38 @@ fn test_corrupted_toolchain() {
 
     // Revert to the original name, so other tests can run correctly.
     fs::rename(wrong_rust_folder, right_rust_folder).expect("Failed to rename file");
+}
+
+#[test]
+fn cargo_build_sbf_all_tests() {
+    // The cargo-build-sbf tests must download and install the platform tools only once and run
+    // sequentially afterwards.
+    //
+    // The usage of an atomic boolean to prevent multiple tests downloading the tools and the
+    // #[serial] attribute only work when we execute `cargo test`.
+    //
+    // `cargo nextest` used in CI executes each test in a separate process, so the atomic boolean
+    // has no effect, nor does the #[serial] attribute. This causes all tests to download the tools,
+    // locks the toml files, and frequently corrupts the installation. Splitting the repository's
+    // tests in partitions further exacerbates the problem, since the cargo-build-sbf are not even
+    // run in the same machine.
+    //
+    // Creating an omnibus function to execute all tests at once is the simplest solution to that.
+    // It does not use process synchronization to handle the installation, and does not need
+    // any special configuration in nexttest to prevent these tests from being split in partitions.
+
+    test_build();
+    test_dump();
+    test_out_dir();
+    test_target_dir();
+    test_target_and_out_dir();
+    test_generate_child_script_on_failure();
+    test_sbpfv0();
+    test_sbpfv1();
+    test_sbpfv2();
+    test_sbpfv3();
+    test_sbpfv4();
+    test_package_metadata_tools_version();
+    test_workspace_metadata_tools_version();
+    test_corrupted_toolchain();
 }

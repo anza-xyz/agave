@@ -269,7 +269,7 @@ mod test {
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure_for_tests(vec![2], $instruction_accounts, &[]);
+                .configure_for_tests(2, $instruction_accounts, &[]);
             $invoke_context.push().unwrap();
             let $transaction_context = &$invoke_context.transaction_context;
             let $instruction_context = $transaction_context

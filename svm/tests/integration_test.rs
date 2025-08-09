@@ -49,7 +49,7 @@ use {
     solana_transaction_context::TransactionReturnData,
     solana_transaction_error::TransactionError,
     solana_type_overrides::sync::{Arc, RwLock},
-    std::collections::HashMap,
+    std::{collections::HashMap, sync::atomic::Ordering},
     test_case::test_case,
 };
 
@@ -264,7 +264,7 @@ impl SvmTestEnvironment<'_> {
                 let programs_modified_by_tx = &executed_tx.programs_modified_by_tx;
                 if executed_tx.was_successful() && !programs_modified_by_tx.is_empty() {
                     self.batch_processor
-                        .program_cache
+                        .global_program_cache
                         .write()
                         .unwrap()
                         .merge(programs_modified_by_tx);
@@ -278,7 +278,7 @@ impl SvmTestEnvironment<'_> {
     pub fn is_program_blocked(&self, program_id: &Pubkey) -> bool {
         let (_, program_cache_entry) = self
             .batch_processor
-            .program_cache
+            .global_program_cache
             .read()
             .unwrap()
             .get_flattened_entries_for_tests()
@@ -2626,6 +2626,258 @@ fn program_cache_loaderv3_buffer_swap(invoke_changed_program: bool) {
     env.test_entry = test_entry;
     env.execute();
     assert!(env.is_program_blocked(&target));
+}
+
+#[test]
+fn program_cache_stats() {
+    let mut test_entry = SvmTestEntry::default();
+
+    let program_name = "hello-solana";
+    let noop_program = program_address(program_name);
+
+    let fee_payer_keypair = Keypair::new();
+    let fee_payer = fee_payer_keypair.pubkey();
+
+    let mut fee_payer_data = AccountSharedData::default();
+    fee_payer_data.set_lamports(LAMPORTS_PER_SOL * 100);
+    test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+    test_entry
+        .initial_programs
+        .push((program_name.to_string(), DEPLOYMENT_SLOT, Some(fee_payer)));
+
+    let missing_program = Pubkey::new_unique();
+
+    // set up a future upgrade after the first batch
+    let buffer_address = Pubkey::new_unique();
+    {
+        let mut data = bincode::serialize(&UpgradeableLoaderState::Buffer {
+            authority_address: Some(fee_payer),
+        })
+        .unwrap();
+        let mut program_bytecode = load_program(program_name.to_string());
+        data.append(&mut program_bytecode);
+
+        let buffer_account = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            data,
+            bpf_loader_upgradeable::id(),
+            true,
+            u64::MAX,
+        );
+
+        test_entry.add_initial_account(buffer_address, &buffer_account);
+    }
+
+    let make_transaction = |instructions: &[Instruction]| {
+        Transaction::new_signed_with_payer(
+            instructions,
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        )
+    };
+
+    let succesful_noop_instruction = Instruction::new_with_bytes(noop_program, &[], vec![]);
+    let succesful_transfer_instruction =
+        system_instruction::transfer(&fee_payer, &Pubkey::new_unique(), LAMPORTS_PER_SOL);
+    let failing_transfer_instruction =
+        system_instruction::transfer(&fee_payer, &Pubkey::new_unique(), LAMPORTS_PER_SOL * 1000);
+    let fee_only_noop_instruction = Instruction::new_with_bytes(missing_program, &[], vec![]);
+
+    let mut noop_tx_usage = 0;
+    let mut system_tx_usage = 0;
+    let mut successful_transfers = 0;
+
+    test_entry.push_transaction(make_transaction(&[succesful_noop_instruction.clone()]));
+    noop_tx_usage += 1;
+
+    test_entry.push_transaction(make_transaction(&[succesful_transfer_instruction.clone()]));
+    system_tx_usage += 1;
+    successful_transfers += 1;
+
+    test_entry.push_transaction_with_status(
+        make_transaction(&[failing_transfer_instruction.clone()]),
+        ExecutionStatus::ExecutedFailed,
+    );
+    system_tx_usage += 1;
+
+    test_entry.push_transaction(make_transaction(&[
+        succesful_noop_instruction.clone(),
+        succesful_noop_instruction.clone(),
+        succesful_transfer_instruction.clone(),
+        succesful_transfer_instruction.clone(),
+        succesful_noop_instruction.clone(),
+    ]));
+    noop_tx_usage += 1;
+    system_tx_usage += 1;
+    successful_transfers += 2;
+
+    test_entry.push_transaction_with_status(
+        make_transaction(&[
+            failing_transfer_instruction.clone(),
+            succesful_noop_instruction.clone(),
+            succesful_transfer_instruction.clone(),
+        ]),
+        ExecutionStatus::ExecutedFailed,
+    );
+    noop_tx_usage += 1;
+    system_tx_usage += 1;
+
+    // load failure/fee-only does not touch the program cache
+    test_entry.push_transaction_with_status(
+        make_transaction(&[
+            succesful_noop_instruction.clone(),
+            fee_only_noop_instruction.clone(),
+        ]),
+        ExecutionStatus::ProcessedFailed,
+    );
+
+    test_entry.decrease_expected_lamports(
+        &fee_payer,
+        LAMPORTS_PER_SIGNATURE * test_entry.transaction_batch.len() as u64
+            + LAMPORTS_PER_SOL * successful_transfers,
+    );
+
+    // nor does discard
+    test_entry.transaction_batch.push(TransactionBatchItem {
+        transaction: make_transaction(&[succesful_transfer_instruction.clone()]),
+        check_result: Err(TransactionError::BlockhashNotFound),
+        asserts: ExecutionStatus::Discarded.into(),
+    });
+
+    let mut env = SvmTestEnvironment::create(test_entry);
+    env.execute();
+
+    // check all usage stats are as we expect
+    let global_program_cache = env
+        .batch_processor
+        .global_program_cache
+        .read()
+        .unwrap()
+        .get_flattened_entries_for_tests()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>();
+
+    let (_, noop_entry) = global_program_cache
+        .iter()
+        .find(|(pubkey, _)| *pubkey == noop_program)
+        .unwrap();
+
+    assert_eq!(
+        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_tx_usage,
+        "noop_tx_usage matches"
+    );
+
+    let (_, system_entry) = global_program_cache
+        .iter()
+        .find(|(pubkey, _)| *pubkey == system_program::id())
+        .unwrap();
+
+    assert_eq!(
+        system_entry.tx_usage_counter.load(Ordering::Relaxed),
+        system_tx_usage,
+        "system_tx_usage matches"
+    );
+
+    assert!(
+        !global_program_cache
+            .iter()
+            .any(|(pubkey, _)| *pubkey == missing_program),
+        "missing_program is missing"
+    );
+
+    // set up the second batch
+    let mut test_entry = SvmTestEntry {
+        initial_accounts: env.test_entry.final_accounts.clone(),
+        final_accounts: env.test_entry.final_accounts.clone(),
+        ..SvmTestEntry::default()
+    };
+
+    // upgrade the program. this blocks execution but does not create a tombstone
+    // the main thing we are testing is the tx counter is ported across upgrades
+    //
+    // note the upgrade transaction actually counts as a usage, per the existing rules
+    // the program cache must load the program because it has no idea if it will be used for cpi
+    test_entry.push_transaction(Transaction::new_signed_with_payer(
+        &[loaderv3_instruction::upgrade(
+            &noop_program,
+            &buffer_address,
+            &fee_payer,
+            &Pubkey::new_unique(),
+        )],
+        Some(&fee_payer),
+        &[&fee_payer_keypair],
+        Hash::default(),
+    ));
+    noop_tx_usage += 1;
+
+    test_entry.drop_expected_account(buffer_address);
+
+    test_entry.push_transaction_with_status(
+        make_transaction(&[succesful_noop_instruction.clone()]),
+        ExecutionStatus::ExecutedFailed,
+    );
+    noop_tx_usage += 1;
+
+    test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+
+    env.test_entry = test_entry;
+    env.execute();
+
+    let (_, noop_entry) = env
+        .batch_processor
+        .global_program_cache
+        .read()
+        .unwrap()
+        .get_flattened_entries_for_tests()
+        .into_iter()
+        .rev()
+        .find(|(pubkey, _)| *pubkey == noop_program)
+        .unwrap();
+
+    assert_eq!(
+        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_tx_usage,
+        "noop_tx_usage matches"
+    );
+
+    // third batch, this creates a delayed visibility tombstone
+    let mut test_entry = SvmTestEntry {
+        initial_accounts: env.test_entry.final_accounts.clone(),
+        final_accounts: env.test_entry.final_accounts.clone(),
+        ..SvmTestEntry::default()
+    };
+
+    test_entry.push_transaction_with_status(
+        make_transaction(&[succesful_noop_instruction.clone()]),
+        ExecutionStatus::ExecutedFailed,
+    );
+    noop_tx_usage += 1;
+
+    test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+
+    env.test_entry = test_entry;
+    env.execute();
+
+    let (_, noop_entry) = env
+        .batch_processor
+        .global_program_cache
+        .read()
+        .unwrap()
+        .get_flattened_entries_for_tests()
+        .into_iter()
+        .rev()
+        .find(|(pubkey, _)| *pubkey == noop_program)
+        .unwrap();
+
+    assert_eq!(
+        noop_entry.tx_usage_counter.load(Ordering::Relaxed),
+        noop_tx_usage,
+        "noop_tx_usage matches"
+    );
 }
 
 #[derive(Clone, PartialEq, Eq)]

@@ -305,7 +305,7 @@ fn spy(
             .into_iter()
             .map(|x| x.0)
             .collect::<Vec<_>>();
-        tvu_peers = spy_ref.tvu_peers(|q| q.clone());
+        tvu_peers = spy_ref.tvu_peers(ContactInfo::clone);
 
         let found_nodes_by_pubkey = if let Some(pubkeys) = find_nodes_by_pubkey {
             pubkeys

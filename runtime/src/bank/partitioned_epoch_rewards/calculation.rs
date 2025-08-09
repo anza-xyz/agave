@@ -311,8 +311,12 @@ impl Bank {
 
         // Use `EpochStakes` for vote accounts
         let leader_schedule_epoch = self.epoch_schedule().get_leader_schedule_epoch(self.slot());
-        let cached_vote_accounts = self.epoch_stakes(leader_schedule_epoch)
-            .expect("calculation should always run after Bank::update_epoch_stakes(leader_schedule_epoch)")
+        let cached_vote_accounts = self
+            .epoch_stakes(leader_schedule_epoch)
+            .expect(
+                "calculation should always run after \
+                 Bank::update_epoch_stakes(leader_schedule_epoch)",
+            )
             .stakes()
             .vote_accounts();
 
@@ -373,8 +377,8 @@ impl Bank {
                             ) && VoteAccount::try_from(account_from_db.clone()).is_ok()
                             {
                                 panic!(
-                                    "Vote account {} not found in cache, but found in db: {:?}",
-                                    vote_pubkey, account_from_db
+                                    "Vote account {vote_pubkey} not found in cache, but found in \
+                                     db: {account_from_db:?}"
                                 );
                             }
                         }
@@ -422,10 +426,7 @@ impl Bank {
                             commission,
                         });
                     } else {
-                        debug!(
-                            "redeem_rewards() failed for {}: {:?}",
-                            stake_pubkey, redeemed
-                        );
+                        debug!("redeem_rewards() failed for {stake_pubkey}: {redeemed:?}");
                     }
                     None
                 })

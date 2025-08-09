@@ -8,8 +8,11 @@ use {
     solana_clock::Slot,
     solana_nohash_hasher::{BuildNoHashHasher, IntMap},
     std::{
-        ops::Range,
-        sync::{Arc, RwLock},
+        ops::{Index, Range},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, RwLock,
+        },
     },
 };
 
@@ -81,6 +84,14 @@ impl AccountStorage {
             "self.no_shrink_in_progress(): {slot}"
         );
         self.get_slot_storage_entry_shrinking_in_progress_ok(slot)
+    }
+
+    pub(super) fn all_storages(&self) -> Vec<Arc<AccountStorageEntry>> {
+        assert!(self.no_shrink_in_progress());
+        self.map
+            .iter()
+            .map(|item| Arc::clone(item.value()))
+            .collect()
     }
 
     pub(crate) fn replace_storage_with_equivalent(
@@ -339,12 +350,60 @@ impl<'a> AccountStoragesOrderer<'a> {
         }
     }
 
+    pub fn entries_len(&self) -> usize {
+        self.indices.len()
+    }
+
     pub fn iter(&'a self) -> impl ExactSizeIterator<Item = &'a AccountStorageEntry> + 'a {
         self.indices.iter().map(|i| self.storages[*i].as_ref())
     }
 
     pub fn par_iter(&'a self) -> impl IndexedParallelIterator<Item = &'a AccountStorageEntry> + 'a {
         self.indices.par_iter().map(|i| self.storages[*i].as_ref())
+    }
+
+    pub fn into_concurrent_consumer(self) -> AccountStoragesConcurrentConsumer<'a> {
+        AccountStoragesConcurrentConsumer::new(self)
+    }
+}
+
+impl Index<usize> for AccountStoragesOrderer<'_> {
+    type Output = AccountStorageEntry;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.storages[self.indices[index]].as_ref()
+    }
+}
+
+/// A thread-safe, lock-free iterator for consuming `AccountStorageEntry` values
+/// from an `AccountStoragesOrderer` across multiple threads.
+///
+/// Unlike standard iterators, `AccountStoragesConcurrentConsumer`:
+/// - Is **shared** between threads via references (`&self`), not moved.
+/// - Allows safe, parallel consumption where each item is yielded at most once.
+/// - Does **not** implement `Iterator` because it must take `&self` instead of `&mut self`.
+pub struct AccountStoragesConcurrentConsumer<'a> {
+    orderer: AccountStoragesOrderer<'a>,
+    current_index: AtomicUsize,
+}
+
+impl<'a> AccountStoragesConcurrentConsumer<'a> {
+    pub fn new(orderer: AccountStoragesOrderer<'a>) -> Self {
+        Self {
+            orderer,
+            current_index: AtomicUsize::new(0),
+        }
+    }
+
+    /// Takes the next `AccountStorageEntry` moving shared consume position
+    /// until the end of the entries source is reached.
+    pub fn next(&'a self) -> Option<&'a AccountStorageEntry> {
+        let index = self.current_index.fetch_add(1, Ordering::Relaxed);
+        if index < self.orderer.entries_len() {
+            Some(&self.orderer[index])
+        } else {
+            None
+        }
     }
 }
 

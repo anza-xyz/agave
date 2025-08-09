@@ -31,7 +31,7 @@ use {
             rebuild_storages_from_snapshot_dir, serialize_snapshot_data_file,
             verify_and_unarchive_snapshots, ArchiveFormat, BankSnapshotInfo, SnapshotError,
             SnapshotVersion, StorageAndNextAccountsFileId, UnarchivedSnapshots,
-            VerifyEpochStakesError, VerifySlotDeltasError,
+            VerifyEpochStakesError, VerifySlotDeltasError, VerifySlotHistoryError,
         },
         status_cache,
     },
@@ -233,7 +233,7 @@ pub fn bank_from_snapshot_archives(
         exit,
     )?;
     measure_rebuild.stop();
-    info!("{}", measure_rebuild);
+    info!("{measure_rebuild}");
 
     verify_epoch_stakes(&bank)?;
 
@@ -413,7 +413,7 @@ pub fn bank_from_snapshot_dir(
         )?,
         "rebuild storages from snapshot dir"
     );
-    info!("{}", measure_rebuild_storages);
+    info!("{measure_rebuild_storages}");
 
     let next_append_vec_id =
         Arc::try_unwrap(next_append_vec_id).expect("this is the only strong reference");
@@ -441,7 +441,7 @@ pub fn bank_from_snapshot_dir(
         )?,
         "rebuild bank from snapshot"
     );
-    info!("{}", measure_rebuild_bank);
+    info!("{measure_rebuild_bank}");
 
     verify_epoch_stakes(&bank)?;
 
@@ -643,9 +643,7 @@ fn verify_slot_deltas_with_history(
 ) -> std::result::Result<(), VerifySlotDeltasError> {
     // ensure the slot history is valid (as much as possible), since we're using it to verify the
     // slot deltas
-    if slot_history.newest() != bank_slot {
-        return Err(VerifySlotDeltasError::BadSlotHistory);
-    }
+    verify_slot_history(slot_history, bank_slot)?;
 
     // all slots in the slot deltas should be in the bank's slot history
     let slot_missing_from_history = slots_from_slot_deltas
@@ -669,6 +667,22 @@ fn verify_slot_deltas_with_history(
         .find(|slot| !slots_from_slot_deltas.contains(slot));
     if let Some(slot) = slot_missing_from_deltas {
         return Err(VerifySlotDeltasError::SlotNotFoundInDeltas(slot));
+    }
+
+    Ok(())
+}
+
+/// Verify that the snapshot's SlotHistory is not corrupt/invalid
+fn verify_slot_history(
+    slot_history: &SlotHistory,
+    bank_slot: Slot,
+) -> Result<(), VerifySlotHistoryError> {
+    if slot_history.newest() != bank_slot {
+        return Err(VerifySlotHistoryError::InvalidNewestSlot);
+    }
+
+    if slot_history.bits.len() != solana_slot_history::MAX_ENTRIES {
+        return Err(VerifySlotHistoryError::InvalidNumEntries);
     }
 
     Ok(())
@@ -2282,17 +2296,6 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_slot_deltas_with_history_bad_slot_history() {
-        let bank_slot = 444;
-        let result = verify_slot_deltas_with_history(
-            &HashSet::default(),
-            &SlotHistory::default(), // <-- will only have an entry for slot 0
-            bank_slot,
-        );
-        assert_eq!(result, Err(VerifySlotDeltasError::BadSlotHistory));
-    }
-
-    #[test]
     fn test_verify_slot_deltas_with_history_bad_slot_not_in_history() {
         let slots_from_slot_deltas = HashSet::from([
             0, // slot history has slot 0 added by default
@@ -2331,6 +2334,37 @@ mod tests {
             result,
             Err(VerifySlotDeltasError::SlotNotFoundInDeltas(333)),
         );
+    }
+
+    #[test]
+    fn test_verify_slot_history_good() {
+        let mut slot_history = SlotHistory::default();
+        // note: slot history expects slots to be added in numeric order
+        for slot in [0, 111, 222, 333, 444] {
+            slot_history.add(slot);
+        }
+
+        let bank_slot = 444;
+        let result = verify_slot_history(&slot_history, bank_slot);
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn test_verify_slot_history_bad_invalid_newest_slot() {
+        let slot_history = SlotHistory::default();
+        let bank_slot = 444;
+        let result = verify_slot_history(&slot_history, bank_slot);
+        assert_eq!(result, Err(VerifySlotHistoryError::InvalidNewestSlot));
+    }
+
+    #[test]
+    fn test_verify_slot_history_bad_invalid_num_entries() {
+        let mut slot_history = SlotHistory::default();
+        slot_history.bits.truncate(slot_history.bits.len() - 1);
+
+        let bank_slot = 0;
+        let result = verify_slot_history(&slot_history, bank_slot);
+        assert_eq!(result, Err(VerifySlotHistoryError::InvalidNumEntries));
     }
 
     #[test]

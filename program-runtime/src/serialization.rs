@@ -243,7 +243,7 @@ pub fn serialize_parameters(
 
     let (program_id, is_loader_deprecated) = {
         let program_account =
-            instruction_context.try_borrow_last_program_account(transaction_context)?;
+            instruction_context.try_borrow_program_account(transaction_context)?;
         (
             *program_account.get_key(),
             *program_account.get_owner() == bpf_loader_deprecated::id(),
@@ -300,7 +300,7 @@ pub fn deserialize_parameters(
     accounts_metadata: &[SerializedAccountMetadata],
 ) -> Result<(), InstructionError> {
     let is_loader_deprecated = *instruction_context
-        .try_borrow_last_program_account(transaction_context)?
+        .try_borrow_program_account(transaction_context)?
         .get_owner()
         == bpf_loader_deprecated::id();
     let account_lengths = accounts_metadata.iter().map(|a| a.original_data_len);
@@ -774,7 +774,6 @@ mod tests {
                 if append_dup_account {
                     instruction_accounts.push(instruction_accounts.last().cloned().unwrap());
                 }
-                let program_indices = vec![0];
                 let instruction_data = vec![];
 
                 with_mock_invoke_context!(
@@ -786,7 +785,7 @@ mod tests {
                     .transaction_context
                     .get_next_instruction_context_mut()
                     .unwrap()
-                    .configure_for_tests(program_indices, instruction_accounts, &instruction_data);
+                    .configure_for_tests(0, instruction_accounts, &instruction_data);
                 invoke_context.push().unwrap();
                 let instruction_context = invoke_context
                     .transaction_context
@@ -923,14 +922,13 @@ mod tests {
             let instruction_accounts =
                 deduplicated_instruction_accounts(&[1, 1, 2, 3, 4, 4, 5, 6], |index| index >= 4);
             let instruction_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-            let program_indices = vec![0];
             let mut original_accounts = transaction_accounts.clone();
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure_for_tests(program_indices, instruction_accounts, &instruction_data);
+                .configure_for_tests(0, instruction_accounts, &instruction_data);
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1173,14 +1171,13 @@ mod tests {
             let instruction_accounts =
                 deduplicated_instruction_accounts(&[1, 1, 2, 3, 4, 4, 5, 6], |index| index >= 4);
             let instruction_data = vec![];
-            let program_indices = vec![0];
             let mut original_accounts = transaction_accounts.clone();
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure_for_tests(program_indices, instruction_accounts, &instruction_data);
+                .configure_for_tests(0, instruction_accounts, &instruction_data);
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1443,7 +1440,6 @@ mod tests {
             /* max_instruction_stack_depth */ 1,
             /* max_instruction_trace_length */ 1,
         );
-        let program_indices = vec![6];
         let transaction_accounts_indexes = [0, 1, 2, 3, 4, 5];
         let instruction_accounts =
             deduplicated_instruction_accounts(&transaction_accounts_indexes, |index| index > 0);
@@ -1451,7 +1447,7 @@ mod tests {
         transaction_context
             .get_next_instruction_context_mut()
             .unwrap()
-            .configure_for_tests(program_indices, instruction_accounts, &instruction_data);
+            .configure_for_tests(6, instruction_accounts, &instruction_data);
         transaction_context.push().unwrap();
         let instruction_context = transaction_context
             .get_current_instruction_context()

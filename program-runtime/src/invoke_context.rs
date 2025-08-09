@@ -34,7 +34,7 @@ use {
         IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
         MAX_ACCOUNTS_PER_TRANSACTION,
     },
-    solana_type_overrides::sync::{atomic::Ordering, Arc},
+    solana_type_overrides::sync::Arc,
     std::{
         alloc::Layout,
         cell::RefCell,
@@ -252,7 +252,7 @@ impl<'a> InvokeContext<'a> {
                 self.transaction_context.get_instruction_trace_length(),
             )?;
         let program_id = instruction_context
-            .get_last_program_key(self.transaction_context)
+            .get_program_key(self.transaction_context)
             .map_err(|_| InstructionError::UnsupportedProgramId)?;
         if self
             .transaction_context
@@ -266,8 +266,7 @@ impl<'a> InvokeContext<'a> {
                     self.transaction_context
                         .get_instruction_context_at_nesting_level(level)
                         .and_then(|instruction_context| {
-                            instruction_context
-                                .try_borrow_last_program_account(self.transaction_context)
+                            instruction_context.try_borrow_program_account(self.transaction_context)
                         })
                         .map(|program_account| program_account.get_key() == program_id)
                         .unwrap_or(false)
@@ -276,7 +275,7 @@ impl<'a> InvokeContext<'a> {
                 .transaction_context
                 .get_current_instruction_context()
                 .and_then(|instruction_context| {
-                    instruction_context.try_borrow_last_program_account(self.transaction_context)
+                    instruction_context.try_borrow_program_account(self.transaction_context)
                 })
                 .map(|program_account| program_account.get_key() == program_id)
                 .unwrap_or(false);
@@ -461,7 +460,7 @@ impl<'a> InvokeContext<'a> {
         self.transaction_context
             .get_next_instruction_context_mut()?
             .configure(
-                vec![program_account_index],
+                program_account_index,
                 instruction_accounts,
                 transaction_callee_map,
                 &instruction.data,
@@ -475,7 +474,7 @@ impl<'a> InvokeContext<'a> {
         &mut self,
         message: &impl SVMMessage,
         instruction: &SVMInstruction,
-        program_indices: Vec<IndexOfAccount>,
+        program_account_index: IndexOfAccount,
     ) -> Result<(), InstructionError> {
         // We reference accounts by an u8 index, so we have a total of 256 accounts.
         // This algorithm allocates the array on the stack for speed.
@@ -508,7 +507,7 @@ impl<'a> InvokeContext<'a> {
         self.transaction_context
             .get_next_instruction_context_mut()?
             .configure(
-                program_indices,
+                program_account_index,
                 instruction_accounts,
                 transaction_callee_map,
                 instruction.data,
@@ -556,9 +555,8 @@ impl<'a> InvokeContext<'a> {
         let process_executable_chain_time = Measure::start("process_executable_chain_time");
 
         let builtin_id = {
-            debug_assert!(instruction_context.get_number_of_program_accounts() <= 1);
             let borrowed_root_account = instruction_context
-                .try_borrow_program_account(self.transaction_context, 0)
+                .try_borrow_program_account(self.transaction_context)
                 .map_err(|_| InstructionError::UnsupportedProgramId)?;
             let owner_id = borrowed_root_account.get_owner();
             if native_loader::check_id(owner_id) {
@@ -595,9 +593,8 @@ impl<'a> InvokeContext<'a> {
             _ => None,
         }
         .ok_or(InstructionError::UnsupportedProgramId)?;
-        entry.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
 
-        let program_id = *instruction_context.get_last_program_key(self.transaction_context)?;
+        let program_id = *instruction_context.get_program_key(self.transaction_context)?;
         self.transaction_context
             .set_return_data(program_id, Vec::new())?;
         let logger = self.get_log_collector();
@@ -737,7 +734,7 @@ impl<'a> InvokeContext<'a> {
             .get_current_instruction_context()
             .and_then(|instruction_context| {
                 let program_account =
-                    instruction_context.try_borrow_last_program_account(self.transaction_context);
+                    instruction_context.try_borrow_program_account(self.transaction_context);
                 debug_assert!(program_account.is_ok());
                 program_account
             })
@@ -872,7 +869,7 @@ pub fn mock_process_instruction_with_feature_set<
     G: FnMut(&mut InvokeContext),
 >(
     loader_id: &Pubkey,
-    mut program_indices: Vec<IndexOfAccount>,
+    program_index: Option<IndexOfAccount>,
     instruction_data: &[u8],
     mut transaction_accounts: Vec<TransactionAccount>,
     instruction_account_metas: Vec<AccountMeta>,
@@ -896,11 +893,14 @@ pub fn mock_process_instruction_with_feature_set<
             account_meta.is_writable,
         ));
     }
-    if program_indices.is_empty() {
-        program_indices.insert(0, transaction_accounts.len() as IndexOfAccount);
+
+    let program_index = if let Some(index) = program_index {
+        index
+    } else {
         let processor_account = AccountSharedData::new(0, 0, &native_loader::id());
         transaction_accounts.push((*loader_id, processor_account));
-    }
+        transaction_accounts.len().saturating_sub(1) as IndexOfAccount
+    };
     let pop_epoch_schedule_account = if !transaction_accounts
         .iter()
         .any(|(key, _)| *key == sysvar::epoch_schedule::id())
@@ -930,7 +930,7 @@ pub fn mock_process_instruction_with_feature_set<
         .transaction_context
         .get_next_instruction_context_mut()
         .unwrap()
-        .configure_for_tests(program_indices, instruction_accounts, instruction_data);
+        .configure_for_tests(program_index, instruction_accounts, instruction_data);
     let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
     assert_eq!(result, expected_result);
     post_adjustments(&mut invoke_context);
@@ -944,7 +944,7 @@ pub fn mock_process_instruction_with_feature_set<
 
 pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut InvokeContext)>(
     loader_id: &Pubkey,
-    program_indices: Vec<IndexOfAccount>,
+    program_index: Option<IndexOfAccount>,
     instruction_data: &[u8],
     transaction_accounts: Vec<TransactionAccount>,
     instruction_account_metas: Vec<AccountMeta>,
@@ -955,7 +955,7 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
 ) -> Vec<AccountSharedData> {
     mock_process_instruction_with_feature_set(
         loader_id,
-        program_indices,
+        program_index,
         instruction_data,
         transaction_accounts,
         instruction_account_metas,
@@ -1010,7 +1010,7 @@ mod tests {
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
             let instruction_data = instruction_context.get_instruction_data();
-            let program_id = instruction_context.get_last_program_key(transaction_context)?;
+            let program_id = instruction_context.get_program_key(transaction_context)?;
             let instruction_accounts = (0..4)
                 .map(|instruction_account_index| {
                     InstructionAccount::new(instruction_account_index, false, false)
@@ -1068,7 +1068,7 @@ mod tests {
                             .transaction_context
                             .get_next_instruction_context_mut()
                             .unwrap()
-                            .configure_for_tests(vec![3], instruction_accounts, &[]);
+                            .configure_for_tests(3, instruction_accounts, &[]);
                         let result = invoke_context.push();
                         assert_eq!(result, Err(InstructionError::UnbalancedInstruction));
                         result?;
@@ -1142,7 +1142,7 @@ mod tests {
                 .get_next_instruction_context_mut()
                 .unwrap()
                 .configure_for_tests(
-                    vec![one_more_than_max_depth.saturating_add(depth_reached) as IndexOfAccount],
+                    one_more_than_max_depth.saturating_add(depth_reached) as IndexOfAccount,
                     instruction_accounts.clone(),
                     &[],
                 );
@@ -1158,10 +1158,21 @@ mod tests {
     #[test]
     fn test_max_instruction_trace_length() {
         const MAX_INSTRUCTIONS: usize = 8;
-        let mut transaction_context =
-            TransactionContext::new(Vec::new(), Rent::default(), 1, MAX_INSTRUCTIONS);
+        let mut transaction_context = TransactionContext::new(
+            vec![(
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+            )],
+            Rent::default(),
+            1,
+            MAX_INSTRUCTIONS,
+        );
         for _ in 0..MAX_INSTRUCTIONS {
             transaction_context.push().unwrap();
+            transaction_context
+                .get_next_instruction_context_mut()
+                .unwrap()
+                .configure_for_tests(0, vec![InstructionAccount::new(0, false, false)], &[]);
             transaction_context.pop().unwrap();
         }
         assert_eq!(
@@ -1222,7 +1233,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context_mut()
             .unwrap()
-            .configure_for_tests(vec![4], instruction_accounts, &[]);
+            .configure_for_tests(4, instruction_accounts, &[]);
         invoke_context.push().unwrap();
         let inner_instruction =
             Instruction::new_with_bincode(callee_program_id, &instruction, metas.clone());
@@ -1279,7 +1290,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context_mut()
             .unwrap()
-            .configure_for_tests(vec![4], instruction_accounts, &[]);
+            .configure_for_tests(4, instruction_accounts, &[]);
         invoke_context.push().unwrap();
         let inner_instruction = Instruction::new_with_bincode(
             callee_program_id,
@@ -1325,7 +1336,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context_mut()
             .unwrap()
-            .configure_for_tests(vec![0], vec![], &[]);
+            .configure_for_tests(0, vec![], &[]);
         invoke_context.push().unwrap();
         assert_eq!(*invoke_context.get_compute_budget(), execution_budget);
         invoke_context.pop().unwrap();
@@ -1366,7 +1377,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context_mut()
             .unwrap()
-            .configure_for_tests(vec![2], instruction_accounts, &instruction_data);
+            .configure_for_tests(2, instruction_accounts, &instruction_data);
         let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
 
         assert!(result.is_ok());
@@ -1464,7 +1475,7 @@ mod tests {
         let svm_instruction =
             SVMInstruction::from(sanitized.message().instructions().first().unwrap());
         invoke_context
-            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, vec![90])
+            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, 90)
             .unwrap();
 
         test_case_1(&invoke_context);
@@ -1473,7 +1484,7 @@ mod tests {
         let svm_instruction =
             SVMInstruction::from(sanitized.message().instructions().get(1).unwrap());
         invoke_context
-            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, vec![90])
+            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, 90)
             .unwrap();
 
         test_case_2(&invoke_context);
@@ -1536,7 +1547,7 @@ mod tests {
             SVMInstruction::from(sanitized.message().instructions().first().unwrap());
 
         invoke_context
-            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, vec![90])
+            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, 90)
             .unwrap();
 
         {

@@ -12,12 +12,11 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
-        loaded_programs::ProgramCacheEntryType,
+        loaded_programs::{ProgramCacheEntryType, ProgramCacheForTxBatch},
     },
     solana_pubkey::Pubkey,
-    solana_sdk_ids::bpf_loader_upgradeable,
     solana_svm::{
-        account_loader::{CheckedTransactionDetails, TransactionCheckResult},
+        account_loader::{AccountLoader, CheckedTransactionDetails, TransactionCheckResult},
         transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResultExtensions,
         },
@@ -26,9 +25,10 @@ use {
             TransactionProcessingEnvironment,
         },
     },
+    solana_svm_feature_set::SVMFeatureSet,
     solana_timings::ExecuteTimings,
     solana_transaction::{sanitized::SanitizedTransaction, Transaction},
-    std::collections::{HashMap, HashSet},
+    std::collections::HashSet,
 };
 
 mod mock_bank;
@@ -39,18 +39,13 @@ fn program_cache_execution(threads: usize) {
     let batch_processor =
         TransactionBatchProcessor::new(5, 5, Arc::downgrade(&fork_graph), None, None);
 
-    const LOADER: Pubkey = bpf_loader_upgradeable::id();
     let programs = vec![
         deploy_program("hello-solana".to_string(), 0, &mut mock_bank),
         deploy_program("simple-transfer".to_string(), 0, &mut mock_bank),
         deploy_program("clock-sysvar".to_string(), 0, &mut mock_bank),
     ];
 
-    let account_maps: HashMap<Pubkey, (&Pubkey, u64)> = programs
-        .iter()
-        .enumerate()
-        .map(|(idx, key)| (*key, (&LOADER, idx as u64)))
-        .collect();
+    let account_maps: HashSet<Pubkey> = programs.iter().copied().collect();
 
     let ths: Vec<_> = (0..threads)
         .map(|_| {
@@ -63,11 +58,28 @@ fn program_cache_execution(threads: usize) {
             let maps = account_maps.clone();
             let programs = programs.clone();
             thread::spawn(move || {
-                let result = processor.replenish_program_cache(
+                let feature_set = SVMFeatureSet::all_enabled();
+                let account_loader = AccountLoader::new_with_loaded_accounts_capacity(
+                    None,
                     &local_bank,
+                    &feature_set,
+                    0,
+                );
+                let mut result = {
+                    let global_program_cache = processor.global_program_cache.read().unwrap();
+                    ProgramCacheForTxBatch::new_from_cache(
+                        processor.slot,
+                        processor.epoch,
+                        &global_program_cache,
+                    )
+                };
+                processor.replenish_program_cache(
+                    &account_loader,
                     &maps,
+                    &mut result,
                     &mut ExecuteTimings::default(),
                     false,
+                    true,
                     true,
                 );
                 for key in &programs {

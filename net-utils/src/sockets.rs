@@ -268,12 +268,14 @@ pub async fn bind_to_async(ip_addr: IpAddr, port: u16) -> io::Result<TokioUdpSoc
 
 #[cfg(feature = "dev-context-only-utils")]
 pub async fn bind_to_localhost_async() -> io::Result<TokioUdpSocket> {
-    bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0).await
+    let port = unique_port_range_for_tests(1).start;
+    bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), port).await
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 pub async fn bind_to_unspecified_async() -> io::Result<TokioUdpSocket> {
-    bind_to_async(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0).await
+    let port = unique_port_range_for_tests(1).start;
+    bind_to_async(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port).await
 }
 
 pub fn bind_to_with_config(

@@ -25,7 +25,6 @@ dev-context-only-utils = [
     "dep:solana-stake-program",
     "dep:solana-vote-program",
     "solana-account/dev-context-only-utils",
-    "solana-pubkey/rand",
     "solana-transaction/dev-context-only-utils",
 ]
 frozen-abi = [
@@ -85,7 +84,7 @@ solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-nohash-hasher = { workspace = true }
-solana-pubkey = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true, optional = true }
 solana-rent-collector = { workspace = true }

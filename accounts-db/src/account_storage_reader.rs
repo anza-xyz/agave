@@ -32,7 +32,7 @@ impl<'a> AccountStorageReader<'a> {
 
         let mut sorted_obsolete_accounts = storage.get_obsolete_accounts(snapshot_slot);
 
-        // Tiered storage is not compatible with obsolete acocunts at this time
+        // Tiered storage is not compatible with obsolete accounts at this time
         if matches!(storage.accounts, AccountsFile::TieredStorage(_)) {
             assert!(
                 sorted_obsolete_accounts.is_empty(),

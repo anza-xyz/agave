@@ -102,7 +102,7 @@ fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionC
     transaction_context
         .get_next_instruction_context_mut()
         .unwrap()
-        .configure_for_tests(vec![0], instruction_accounts, &instruction_data);
+        .configure_for_tests(0, instruction_accounts, &instruction_data);
     transaction_context.push().unwrap();
     transaction_context
 }

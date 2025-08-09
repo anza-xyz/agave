@@ -1226,12 +1226,12 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "would exceed accounts blocks offset boundary")]
-    fn test_get_acount_meta_from_offset_out_of_bounds() {
+    fn test_get_account_meta_from_offset_out_of_bounds() {
         // Generate a new temp path that is guaranteed to NOT already have a file.
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir
             .path()
-            .join("test_get_acount_meta_from_offset_out_of_bounds");
+            .join("test_get_account_meta_from_offset_out_of_bounds");
 
         let footer = TieredStorageFooter {
             account_meta_format: AccountMetaFormat::Hot,

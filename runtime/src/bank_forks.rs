@@ -224,7 +224,7 @@ impl BankForks {
     }
 
     pub fn install_scheduler_pool(&mut self, pool: InstalledSchedulerPoolArc) {
-        info!("Installed new scheduler_pool into bank_forks: {:?}", pool);
+        info!("Installed new scheduler_pool into bank_forks: {pool:?}");
         assert!(
             self.scheduler_pool.replace(pool).is_none(),
             "Reinstalling scheduler pool isn't supported"
@@ -383,7 +383,8 @@ impl BankForks {
             // Now we have rooted a bank in a new epoch, there are no needs to
             // keep the epoch rewards cache for current epoch any longer.
             info!(
-                "Clearing epoch rewards cache for epoch {old_epoch} after setting root to slot {root}"
+                "Clearing epoch rewards cache for epoch {old_epoch} after setting root to slot \
+                 {root}"
             );
             root_bank.clear_epoch_rewards_cache();
         }

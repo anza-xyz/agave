@@ -23,7 +23,8 @@ use {
             StoredAccountsInfo,
         },
         buffered_reader::{
-            BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufRead as _, Stack,
+            BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufFileRead,
+            RequiredLenBufRead as _, Stack,
         },
         file_io::read_into_buffer,
         is_zero_lamport::IsZeroLamport,
@@ -1000,11 +1001,12 @@ impl AppendVec {
     ///
     /// Prefer scan_accounts_without_data() when account data is not needed,
     /// as it can potentially read less and be faster.
-    pub fn scan_accounts(
-        &self,
+    pub(crate) fn scan_accounts<'a>(
+        &'a self,
+        reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
     ) -> Result<()> {
-        self.scan_accounts_stored_meta(|stored_account_meta| {
+        self.scan_accounts_stored_meta(reader, |stored_account_meta| {
             let offset = stored_account_meta.offset();
             let account = StoredAccountInfo {
                 pubkey: stored_account_meta.pubkey(),
@@ -1023,8 +1025,9 @@ impl AppendVec {
     /// Prefer scan_accounts() when possible, as it does not contain file format
     /// implementation details, and thus potentially can read less and be faster.
     #[allow(clippy::blocks_in_conditions)]
-    pub fn scan_accounts_stored_meta(
-        &self,
+    pub(crate) fn scan_accounts_stored_meta<'a>(
+        &'a self,
+        reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
     ) -> Result<()> {
         match &self.backing {
@@ -1045,18 +1048,8 @@ impl AppendVec {
                 {}
             }
             AppendVecFileBacking::File(file) => {
-                // 128KiB covers a reasonably large distribution of typical account sizes.
-                // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
-                const MIN_CAPACITY: usize = 1024 * 128;
-                const MAX_CAPACITY: usize =
-                    STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
-                const BUFFER_SIZE: usize = PAGE_SIZE * 8;
-                let self_len = self.len();
-                let mut reader = BufReaderWithOverflow::new(
-                    BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self.len(), file),
-                    MIN_CAPACITY.min(self_len),
-                    MAX_CAPACITY.min(self_len),
-                );
+                reader.set_file(file, self.len())?;
+
                 let mut min_buf_len = STORE_META_OVERHEAD;
                 loop {
                     let offset = reader.get_file_offset();
@@ -1208,7 +1201,8 @@ impl AppendVec {
             AppendVecFileBacking::File(file) => {
                 // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
                 const BUFFER_SIZE: usize = PAGE_SIZE * 4;
-                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self_len, file);
+                let mut reader =
+                    BufferedReader::<Stack<BUFFER_SIZE>>::new_stack().with_file(file, self_len);
                 const REQUIRED_READ_LEN: usize =
                     mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>();
                 loop {
@@ -1341,6 +1335,20 @@ impl AppendVec {
             AppendVecFileBacking::Mmap(mmap) => InternalsForArchive::Mmap(mmap),
         }
     }
+}
+
+/// Create a reusable buffered reader tuned for scanning storages with account data.
+pub(crate) fn new_scan_accounts_reader<'a>() -> impl RequiredLenBufFileRead<'a> {
+    // 128KiB covers a reasonably large distribution of typical account sizes.
+    // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
+    const MIN_CAPACITY: usize = 1024 * 128;
+    const MAX_CAPACITY: usize = STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
+    const BUFFER_SIZE: usize = PAGE_SIZE * 8;
+    BufReaderWithOverflow::new(
+        BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(),
+        MIN_CAPACITY,
+        MAX_CAPACITY,
+    )
 }
 
 /// The per-account hash, stored in the AppendVec.
@@ -1703,9 +1711,10 @@ pub mod tests {
         let av_file = AppendVec::new_from_file(&path.path, av_mmap.len(), StorageAccess::File)
             .unwrap()
             .0;
+        let mut reader = new_scan_accounts_reader();
         for av in [&av_mmap, &av_file] {
             let mut index = 0;
-            av.scan_accounts_stored_meta(|v| {
+            av.scan_accounts_stored_meta(&mut reader, |v| {
                 let (pubkey, account) = &test_accounts[index];
                 let recovered = v.to_account_shared_data();
                 assert_eq!(&recovered, account);
@@ -1752,9 +1761,11 @@ pub mod tests {
         assert_eq!(indexes[0], 0);
         assert_eq!(av.accounts_count(), size);
 
+        let mut reader = new_scan_accounts_reader();
+
         let mut sample = 0;
         let now = Instant::now();
-        av.scan_accounts_stored_meta(|v| {
+        av.scan_accounts_stored_meta(&mut reader, |v| {
             let account = create_test_account(sample + 1);
             let recovered = v.to_account_shared_data();
             assert_eq!(recovered, account.1);

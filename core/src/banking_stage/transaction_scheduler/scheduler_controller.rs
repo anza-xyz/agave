@@ -246,7 +246,7 @@ where
 
         const CHUNK_SIZE: usize = 128;
         let mut error_counters = TransactionErrorMetrics::default();
-        let mut num_dropped_on_age_and_status = Saturating::<usize>(0);
+        let mut num_dropped_on_clean = Saturating::<usize>(0);
         for chunk in transaction_ids.chunks(CHUNK_SIZE) {
             let lock_results = vec![Ok(()); chunk.len()];
             let sanitized_txs: Vec<_> = chunk
@@ -268,7 +268,7 @@ where
             // Remove errored transactions
             for (result, id) in check_results.iter().zip(chunk.iter()) {
                 if result.is_err() {
-                    num_dropped_on_age_and_status += 1;
+                    num_dropped_on_clean += 1;
                     self.container.remove_by_id(id.id);
                 }
             }
@@ -284,7 +284,7 @@ where
         }
 
         self.count_metrics.update(|count_metrics| {
-            count_metrics.num_dropped_on_age_and_status += num_dropped_on_age_and_status;
+            count_metrics.num_dropped_on_clean += num_dropped_on_clean;
         });
     }
 

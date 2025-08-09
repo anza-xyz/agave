@@ -509,7 +509,8 @@ mod tests {
         let keypair = Arc::new(Keypair::new());
         let shredder = Shredder::new(slot, slot - 5, 0, 0).unwrap();
         // Create enough entries to make > 1 shred
-        let data_buffer_size = ShredData::capacity(/*merkle_proof_size:*/ None).unwrap();
+        let data_buffer_size =
+            ShredData::capacity(/*merkle_proof_size:*/ Some((6, true, false))).unwrap();
         let num_entries = max_ticks_per_n_shreds(1, Some(data_buffer_size)) + 1;
         let entries: Vec<_> = (0..num_entries)
             .map(|_| {
