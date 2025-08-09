@@ -68,24 +68,12 @@ pub struct MockBankCallback {
 impl InvokeContextCallback for MockBankCallback {}
 
 impl TransactionProcessingCallback for MockBankCallback {
-    fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-        if let Some(data) = self.account_shared_data.read().unwrap().get(account) {
-            if data.lamports() == 0 {
-                None
-            } else {
-                owners.iter().position(|entry| data.owner() == entry)
-            }
-        } else {
-            None
-        }
-    }
-
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
         self.account_shared_data
             .read()
             .unwrap()
             .get(pubkey)
-            .cloned()
+            .map(|account| (account.clone(), 0))
     }
 
     fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {

@@ -63,52 +63,50 @@ pub(crate) fn load_program_from_bytes(
 pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
-) -> Option<ProgramAccountLoadResult> {
-    let program_account = callbacks.get_account_shared_data(pubkey)?;
+) -> Option<(ProgramAccountLoadResult, Slot)> {
+    let (program_account, last_modification_slot) = callbacks.get_account_shared_data(pubkey)?;
 
-    if loader_v4::check_id(program_account.owner()) {
-        return Some(
-            solana_loader_v4_program::get_state(program_account.data())
-                .ok()
-                .and_then(|state| {
-                    (!matches!(state.status, LoaderV4Status::Retracted)).then_some(state.slot)
-                })
-                .map(|slot| ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot))
-                .unwrap_or(ProgramAccountLoadResult::InvalidAccountData(
-                    ProgramCacheEntryOwner::LoaderV4,
-                )),
-        );
-    }
-
-    if bpf_loader_deprecated::check_id(program_account.owner()) {
-        return Some(ProgramAccountLoadResult::ProgramOfLoaderV1(program_account));
-    }
-
-    if bpf_loader::check_id(program_account.owner()) {
-        return Some(ProgramAccountLoadResult::ProgramOfLoaderV2(program_account));
-    }
-
-    if let Ok(UpgradeableLoaderState::Program {
+    let load_result = if loader_v4::check_id(program_account.owner()) {
+        solana_loader_v4_program::get_state(program_account.data())
+            .ok()
+            .and_then(|state| {
+                (!matches!(state.status, LoaderV4Status::Retracted)).then_some(state.slot)
+            })
+            .map(|slot| ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot))
+            .unwrap_or(ProgramAccountLoadResult::InvalidAccountData(
+                ProgramCacheEntryOwner::LoaderV4,
+            ))
+    } else if bpf_loader_deprecated::check_id(program_account.owner()) {
+        ProgramAccountLoadResult::ProgramOfLoaderV1(program_account)
+    } else if bpf_loader::check_id(program_account.owner()) {
+        ProgramAccountLoadResult::ProgramOfLoaderV2(program_account)
+    } else if let Ok(UpgradeableLoaderState::Program {
         programdata_address,
     }) = program_account.state()
     {
-        if let Some(programdata_account) = callbacks.get_account_shared_data(&programdata_address) {
+        if let Some((programdata_account, _slot)) =
+            callbacks.get_account_shared_data(&programdata_address)
+        {
             if let Ok(UpgradeableLoaderState::ProgramData {
                 slot,
                 upgrade_authority_address: _,
             }) = programdata_account.state()
             {
-                return Some(ProgramAccountLoadResult::ProgramOfLoaderV3(
+                ProgramAccountLoadResult::ProgramOfLoaderV3(
                     program_account,
                     programdata_account,
                     slot,
-                ));
+                )
+            } else {
+                ProgramAccountLoadResult::InvalidAccountData(ProgramCacheEntryOwner::LoaderV3)
             }
+        } else {
+            ProgramAccountLoadResult::InvalidAccountData(ProgramCacheEntryOwner::LoaderV3)
         }
-    }
-    Some(ProgramAccountLoadResult::InvalidAccountData(
-        ProgramCacheEntryOwner::LoaderV3,
-    ))
+    } else {
+        ProgramAccountLoadResult::InvalidAccountData(ProgramCacheEntryOwner::LoaderV3)
+    };
+    Some((load_result, last_modification_slot))
 }
 
 /// Loads the program with the given pubkey.
@@ -120,7 +118,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     environments: &ProgramRuntimeEnvironments,
     pubkey: &Pubkey,
-    slot: Slot,
+    current_slot: Slot,
     execute_timings: &mut ExecuteTimings,
     reload: bool,
 ) -> Option<Arc<ProgramCacheEntry>> {
@@ -129,9 +127,10 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
         ..LoadProgramMetrics::default()
     };
 
-    let loaded_program = match load_program_accounts(callbacks, pubkey)? {
+    let (load_result, _last_modification_slot) = load_program_accounts(callbacks, pubkey)?;
+    let loaded_program = match load_result {
         ProgramAccountLoadResult::InvalidAccountData(owner) => Ok(
-            ProgramCacheEntry::new_tombstone(slot, owner, ProgramCacheEntryType::Closed),
+            ProgramCacheEntry::new_tombstone(current_slot, owner, ProgramCacheEntryType::Closed),
         ),
 
         ProgramAccountLoadResult::ProgramOfLoaderV1(program_account) => load_program_from_bytes(
@@ -156,56 +155,60 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
         )
         .map_err(|_| (0, ProgramCacheEntryOwner::LoaderV2)),
 
-        ProgramAccountLoadResult::ProgramOfLoaderV3(program_account, programdata_account, slot) => {
-            programdata_account
-                .data()
-                .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
-                .ok_or(Box::new(InstructionError::InvalidAccountData).into())
-                .and_then(|programdata| {
-                    load_program_from_bytes(
-                        &mut load_program_metrics,
-                        programdata,
-                        program_account.owner(),
-                        program_account
-                            .data()
-                            .len()
-                            .saturating_add(programdata_account.data().len()),
-                        slot,
-                        environments.program_runtime_v1.clone(),
-                        reload,
-                    )
-                })
-                .map_err(|_| (slot, ProgramCacheEntryOwner::LoaderV3))
-        }
-
-        ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot) => program_account
+        ProgramAccountLoadResult::ProgramOfLoaderV3(
+            program_account,
+            programdata_account,
+            deployment_slot,
+        ) => programdata_account
             .data()
-            .get(LoaderV4State::program_data_offset()..)
+            .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
             .ok_or(Box::new(InstructionError::InvalidAccountData).into())
-            .and_then(|elf_bytes| {
+            .and_then(|programdata| {
                 load_program_from_bytes(
                     &mut load_program_metrics,
-                    elf_bytes,
-                    &loader_v4::id(),
-                    program_account.data().len(),
-                    slot,
+                    programdata,
+                    program_account.owner(),
+                    program_account
+                        .data()
+                        .len()
+                        .saturating_add(programdata_account.data().len()),
+                    deployment_slot,
                     environments.program_runtime_v1.clone(),
                     reload,
                 )
             })
-            .map_err(|_| (slot, ProgramCacheEntryOwner::LoaderV4)),
+            .map_err(|_| (deployment_slot, ProgramCacheEntryOwner::LoaderV3)),
+
+        ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, deployment_slot) => {
+            program_account
+                .data()
+                .get(LoaderV4State::program_data_offset()..)
+                .ok_or(Box::new(InstructionError::InvalidAccountData).into())
+                .and_then(|elf_bytes| {
+                    load_program_from_bytes(
+                        &mut load_program_metrics,
+                        elf_bytes,
+                        &loader_v4::id(),
+                        program_account.data().len(),
+                        deployment_slot,
+                        environments.program_runtime_v1.clone(),
+                        reload,
+                    )
+                })
+                .map_err(|_| (deployment_slot, ProgramCacheEntryOwner::LoaderV4))
+        }
     }
-    .unwrap_or_else(|(slot, owner)| {
+    .unwrap_or_else(|(deployment_slot, owner)| {
         let env = environments.program_runtime_v1.clone();
         ProgramCacheEntry::new_tombstone(
-            slot,
+            deployment_slot,
             owner,
             ProgramCacheEntryType::FailedVerification(env),
         )
     });
 
     load_program_metrics.submit_datapoint(&mut execute_timings.details);
-    loaded_program.update_access_slot(slot);
+    loaded_program.update_access_slot(current_slot);
     Some(Arc::new(loaded_program))
 }
 
@@ -217,7 +220,7 @@ pub(crate) fn get_program_modification_slot<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
 ) -> TransactionResult<Slot> {
-    let program = callbacks
+    let (program, _slot) = callbacks
         .get_account_shared_data(pubkey)
         .ok_or(TransactionError::ProgramAccountNotFound)?;
     if bpf_loader_upgradeable::check_id(program.owner()) {
@@ -225,7 +228,7 @@ pub(crate) fn get_program_modification_slot<CB: TransactionProcessingCallback>(
             programdata_address,
         }) = program.state()
         {
-            let programdata = callbacks
+            let (programdata, _slot) = callbacks
                 .get_account_shared_data(&programdata_address)
                 .ok_or(TransactionError::ProgramAccountNotFound)?;
             if let Ok(UpgradeableLoaderState::ProgramData {
@@ -277,25 +280,13 @@ mod tests {
 
     #[derive(Default, Clone)]
     pub(crate) struct MockBankCallback {
-        pub(crate) account_shared_data: RefCell<HashMap<Pubkey, AccountSharedData>>,
+        pub(crate) account_shared_data: RefCell<HashMap<Pubkey, (AccountSharedData, Slot)>>,
     }
 
     impl InvokeContextCallback for MockBankCallback {}
 
     impl TransactionProcessingCallback for MockBankCallback {
-        fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-            if let Some(data) = self.account_shared_data.borrow().get(account) {
-                if data.lamports() == 0 {
-                    None
-                } else {
-                    owners.iter().position(|entry| data.owner() == entry)
-                }
-            } else {
-                None
-            }
-        }
-
-        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
             self.account_shared_data.borrow().get(pubkey).cloned()
         }
 
@@ -304,7 +295,7 @@ mod tests {
             account_data.set_data(name.as_bytes().to_vec());
             self.account_shared_data
                 .borrow_mut()
-                .insert(*program_id, account_data);
+                .insert(*program_id, (account_data, 0));
         }
     }
 
@@ -325,25 +316,25 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData(_))
+            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
         ));
 
         account_data.set_data(Vec::new());
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data);
+            .insert(key, (account_data, 0));
 
         let result = load_program_accounts(&mock_bank, &key);
 
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData(_))
+            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
         ));
     }
 
@@ -356,23 +347,23 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData(_))
+            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
         ));
 
         account_data.set_data(vec![0; 64]);
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
         let result = load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData(_))
+            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
         ));
 
         let loader_data = LoaderV4State {
@@ -389,14 +380,18 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 25));
 
         let result = load_program_accounts(&mock_bank, &key);
 
         match result {
-            Some(ProgramAccountLoadResult::ProgramOfLoaderV4(data, slot)) => {
+            Some((
+                ProgramAccountLoadResult::ProgramOfLoaderV4(data, deployment_slot),
+                last_modification_slot,
+            )) => {
                 assert_eq!(data, account_data);
-                assert_eq!(slot, 25);
+                assert_eq!(deployment_slot, 25);
+                assert_eq!(last_modification_slot, 25);
             }
 
             _ => panic!("Invalid result"),
@@ -412,13 +407,14 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_accounts(&mock_bank, &key);
         match result {
-            Some(ProgramAccountLoadResult::ProgramOfLoaderV1(data))
-            | Some(ProgramAccountLoadResult::ProgramOfLoaderV2(data)) => {
+            Some((ProgramAccountLoadResult::ProgramOfLoaderV1(data), last_modification_slot))
+            | Some((ProgramAccountLoadResult::ProgramOfLoaderV2(data), last_modification_slot)) => {
                 assert_eq!(data, account_data);
+                assert_eq!(last_modification_slot, 0);
             }
             _ => panic!("Invalid result"),
         }
@@ -440,7 +436,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key1, account_data.clone());
+            .insert(key1, (account_data.clone(), 25));
 
         let state = UpgradeableLoaderState::ProgramData {
             slot: 25,
@@ -451,15 +447,19 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key2, account_data2.clone());
+            .insert(key2, (account_data2.clone(), 25));
 
         let result = load_program_accounts(&mock_bank, &key1);
 
         match result {
-            Some(ProgramAccountLoadResult::ProgramOfLoaderV3(data1, data2, slot)) => {
+            Some((
+                ProgramAccountLoadResult::ProgramOfLoaderV3(data1, data2, deployment_slot),
+                last_modification_slot,
+            )) => {
                 assert_eq!(data1, account_data);
                 assert_eq!(data2, account_data2);
-                assert_eq!(slot, 25);
+                assert_eq!(deployment_slot, 25);
+                assert_eq!(last_modification_slot, 25);
             }
 
             _ => panic!("Invalid result"),
@@ -541,7 +541,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_with_pubkey(
             &mock_bank,
@@ -575,7 +575,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         // This should return an error
         let result = load_program_with_pubkey(
@@ -604,7 +604,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_with_pubkey(
             &mock_bank,
@@ -646,7 +646,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key1, account_data.clone());
+            .insert(key1, (account_data.clone(), 0));
 
         let state = UpgradeableLoaderState::ProgramData {
             slot: 0,
@@ -657,7 +657,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key2, account_data2.clone());
+            .insert(key2, (account_data2.clone(), 0));
 
         // This should return an error
         let result = load_program_with_pubkey(
@@ -696,7 +696,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key2, account_data.clone());
+            .insert(key2, (account_data.clone(), 0));
 
         let result = load_program_with_pubkey(
             &mock_bank,
@@ -746,7 +746,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_with_pubkey(
             &mock_bank,
@@ -780,7 +780,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_with_pubkey(
             &mock_bank,
@@ -796,7 +796,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let environments = ProgramRuntimeEnvironments::default();
         let expected = load_program_from_bytes(
@@ -828,7 +828,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         for is_upcoming_env in [false, true] {
             let result = load_program_with_pubkey(
@@ -872,7 +872,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = get_program_modification_slot(&mock_bank, &key);
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
@@ -884,7 +884,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = get_program_modification_slot(&mock_bank, &key);
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
@@ -893,7 +893,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data);
+            .insert(key, (account_data, 0));
 
         let result = get_program_modification_slot(&mock_bank, &key);
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
@@ -917,7 +917,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key1, account_data);
+            .insert(key1, (account_data, 0));
 
         let account_data = AccountSharedData::new_data(
             100,
@@ -931,7 +931,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key2, account_data);
+            .insert(key2, (account_data, 0));
 
         let result = get_program_modification_slot(&mock_bank, &key1);
         assert_eq!(result.unwrap(), 77);
@@ -951,7 +951,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key1, account_data.clone());
+            .insert(key1, (account_data.clone(), 0));
 
         let result = get_program_modification_slot(&mock_bank, &key1);
         assert_eq!(result.unwrap(), 58);
@@ -960,7 +960,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key2, account_data);
+            .insert(key2, (account_data, 0));
 
         let result = get_program_modification_slot(&mock_bank, &key2);
         assert_eq!(result.unwrap(), 0);
