@@ -11468,6 +11468,7 @@ fn test_failed_simulation_load_error() {
     let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
     bank.freeze();
+    let mint_balance = bank.get_account(&mint_keypair.pubkey()).unwrap().lamports();
     let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(
@@ -11480,6 +11481,11 @@ fn test_failed_simulation_load_error() {
             loaded_accounts_data_size: 0,
             return_data: None,
             inner_instructions: None,
+            fee: Some(0),
+            pre_balances: Some(vec![mint_balance, 0]),
+            post_balances: Some(vec![mint_balance, 0]),
+            pre_token_balances: Some(vec![]),
+            post_token_balances: Some(vec![]),
         }
     );
 }
