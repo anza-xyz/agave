@@ -71,7 +71,7 @@ solana-frozen-abi-macro = { version = "=3.0.0", optional = true, features = [
 ] }
 solana-hash = "=2.3.0"
 solana-keypair = "=2.2.1"
-solana-ledger = { workspace = true }
+solana-ledger = { workspace = true, features = ["agave-unstable-api"] }
 solana-logger = "=3.0.0"
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
