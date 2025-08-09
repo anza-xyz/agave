@@ -265,11 +265,11 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-status",
- "solana-type-overrides",
  "solana-unified-scheduler-pool",
  "solana-version",
  "solana-vote",
@@ -380,11 +380,11 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-timings",
  "solana-transaction-context",
- "solana-type-overrides",
  "static_assertions",
  "test-case",
  "thiserror 2.0.12",
@@ -7299,9 +7299,9 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-transaction-context",
- "solana-type-overrides",
  "static_assertions",
  "test-case",
 ]
@@ -9053,9 +9053,9 @@ dependencies = [
  "solana-sbpf",
  "solana-sdk-ids",
  "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-sysvar",
  "solana-transaction-context",
- "solana-type-overrides",
 ]
 
 [[package]]
@@ -9670,13 +9670,13 @@ dependencies = [
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-transaction",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-timings",
  "solana-transaction",
  "solana-transaction-context",
- "solana-type-overrides",
  "test-case",
 ]
 
@@ -10713,10 +10713,10 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-transaction-context",
- "solana-type-overrides",
  "solana-vote-interface",
  "solana-vote-program",
  "test-case",
@@ -10927,6 +10927,7 @@ dependencies = [
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-transaction",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-system-program",
  "solana-system-transaction",
@@ -10936,7 +10937,6 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
- "solana-type-overrides",
  "spl-generic-token",
  "spl-token-interface",
  "test-case",
@@ -10977,6 +10977,15 @@ dependencies = [
  "solana-transaction",
  "static_assertions",
  "test-case",
+]
+
+[[package]]
+name = "solana-svm-type-overrides"
+version = "3.0.0"
+dependencies = [
+ "futures 0.3.31",
+ "rand 0.8.5",
+ "shuttle",
 ]
 
 [[package]]
@@ -11023,10 +11032,10 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-sysvar",
  "solana-transaction-context",
- "solana-type-overrides",
 ]
 
 [[package]]
@@ -11553,15 +11562,6 @@ dependencies = [
  "test-case",
  "thiserror 2.0.12",
  "tokio",
-]
-
-[[package]]
-name = "solana-type-overrides"
-version = "3.0.0"
-dependencies = [
- "futures 0.3.31",
- "rand 0.8.5",
- "shuttle",
 ]
 
 [[package]]

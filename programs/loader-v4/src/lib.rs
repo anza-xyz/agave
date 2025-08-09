@@ -19,8 +19,8 @@ use {
     solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_svm_log_collector::{ic_logger_msg, LogCollector},
+    solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{BorrowedAccount, InstructionContext},
-    solana_type_overrides::sync::Arc,
     std::{cell::RefCell, rc::Rc},
 };
 

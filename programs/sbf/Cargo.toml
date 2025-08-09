@@ -161,12 +161,12 @@ solana-svm-callback = { path = "../../svm-callback", version = "=3.0.0" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=3.0.0" }
 solana-svm-log-collector = { path = "../../svm-log-collector", version = "=3.0.0" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=3.0.0" }
+solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=3.0.0" }
 solana-system-interface = { version = "=1.0", features = ["bincode"] }
 solana-sysvar = "=2.2.2"
 solana-timings = { path = "../../timings", version = "=3.0.0" }
 solana-transaction-context = { path = "../../transaction-context", version = "=3.0.0" }
 solana-transaction-status = { path = "../../transaction-status", version = "=3.0.0" }
-solana-type-overrides = { path = "../../type-overrides", version = "=3.0.0" }
 solana-vote = { path = "../../vote", version = "=3.0.0" }
 solana-vote-program = { path = "../../programs/vote", version = "=3.0.0" }
 thiserror = "1.0"
@@ -239,6 +239,7 @@ solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-svm-type-overrides = { workspace = true }
 solana-system-interface = "1.0"
 solana-sysvar = "2.2.1"
 solana-timings = { workspace = true }
@@ -246,7 +247,6 @@ solana-transaction = "2.2.2"
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-error = "2.2.1"
 solana-transaction-status = { workspace = true }
-solana-type-overrides = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 

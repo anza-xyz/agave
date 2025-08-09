@@ -168,11 +168,11 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-timings",
  "solana-transaction-context",
- "solana-type-overrides",
  "thiserror 2.0.12",
 ]
 
@@ -5846,9 +5846,9 @@ dependencies = [
  "solana-sdk-ids",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-transaction-context",
- "solana-type-overrides",
 ]
 
 [[package]]
@@ -7072,8 +7072,8 @@ dependencies = [
  "solana-sbpf",
  "solana-sdk-ids",
  "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-transaction-context",
- "solana-type-overrides",
 ]
 
 [[package]]
@@ -7505,12 +7505,12 @@ dependencies = [
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-transaction",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-timings",
  "solana-transaction-context",
- "solana-type-overrides",
 ]
 
 [[package]]
@@ -8132,6 +8132,7 @@ dependencies = [
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-transaction",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-sysvar",
  "solana-timings",
@@ -8139,7 +8140,6 @@ dependencies = [
  "solana-transaction-context",
  "solana-transaction-error",
  "solana-transaction-status",
- "solana-type-overrides",
  "solana-vote",
  "solana-vote-program",
 ]
@@ -9106,9 +9106,9 @@ dependencies = [
  "solana-sdk-ids",
  "solana-stake-interface",
  "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-sysvar",
  "solana-transaction-context",
- "solana-type-overrides",
  "solana-vote-interface",
 ]
 
@@ -9256,12 +9256,12 @@ dependencies = [
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-transaction",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-sysvar-id",
  "solana-timings",
  "solana-transaction-context",
  "solana-transaction-error",
- "solana-type-overrides",
  "spl-generic-token",
  "thiserror 2.0.12",
 ]
@@ -9299,6 +9299,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-svm-type-overrides"
+version = "3.0.0"
+dependencies = [
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "solana-system-interface"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9333,10 +9340,10 @@ dependencies = [
  "solana-pubkey",
  "solana-sdk-ids",
  "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-sysvar",
  "solana-transaction-context",
- "solana-type-overrides",
 ]
 
 [[package]]
@@ -9714,13 +9721,6 @@ dependencies = [
  "static_assertions",
  "thiserror 2.0.12",
  "tokio",
-]
-
-[[package]]
-name = "solana-type-overrides"
-version = "3.0.0"
-dependencies = [
- "rand 0.8.5",
 ]
 
 [[package]]

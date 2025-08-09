@@ -106,6 +106,7 @@ members = [
     "svm-feature-set",
     "svm-log-collector",
     "svm-transaction",
+    "svm-type-overrides",
     "syscalls",
     "syscalls/gen-syscall-list",
     "test-validator",
@@ -123,7 +124,6 @@ members = [
     "transaction-status-client-types",
     "transaction-view",
     "turbine",
-    "type-overrides",
     "udp-client",
     "unified-scheduler-logic",
     "unified-scheduler-pool",
@@ -524,6 +524,7 @@ solana-svm-callback = { path = "svm-callback", version = "=3.0.0" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.0.0" }
 solana-svm-log-collector = { path = "svm-log-collector", version = "=3.0.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.0.0" }
+solana-svm-type-overrides = { path = "svm-type-overrides", version = "=3.0.0" }
 solana-system-interface = "1.0"
 solana-system-program = { path = "programs/system", version = "=3.0.0" }
 solana-system-transaction = "2.2.1"
@@ -543,7 +544,6 @@ solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", ver
 solana-transaction-status = { path = "transaction-status", version = "=3.0.0" }
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=3.0.0" }
 solana-turbine = { path = "turbine", version = "=3.0.0" }
-solana-type-overrides = { path = "type-overrides", version = "=3.0.0" }
 solana-udp-client = { path = "udp-client", version = "=3.0.0" }
 solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=3.0.0" }
 solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=3.0.0" }

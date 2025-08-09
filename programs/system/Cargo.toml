@@ -32,10 +32,10 @@ solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["sha2"] }
 solana-sdk-ids = { workspace = true }
 solana-svm-log-collector = { workspace = true }
+solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true, features = ["serde"] }
 solana-sysvar = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
-solana-type-overrides = { workspace = true }
 
 [dev-dependencies]
 agave-feature-set = { workspace = true }
