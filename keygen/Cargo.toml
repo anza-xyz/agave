@@ -30,7 +30,7 @@ solana-keypair = "=2.2.1"
 solana-message = { version = "=2.4.0", features = ["bincode"] }
 solana-pubkey = { version = "=2.4.0", default-features = false }
 solana-remote-wallet = { workspace = true, features = ["default"] }
-solana-seed-derivable = "=2.2.1"
+solana-seed-derivable = "=3.0.0"
 solana-signer = "=2.2.1"
 solana-version = { workspace = true }
 tiny-bip39 = { workspace = true }

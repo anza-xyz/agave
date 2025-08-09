@@ -5914,7 +5914,7 @@ dependencies = [
  "solana-clock",
  "solana-cluster-type",
  "solana-commitment-config",
- "solana-derivation-path",
+ "solana-derivation-path 2.2.1",
  "solana-hash",
  "solana-keypair",
  "solana-message",
@@ -6410,6 +6410,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-derivation-path"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff71743072690fdbdfcdc37700ae1cb77485aaad49019473a81aee099b1e0b8c"
+dependencies = [
+ "derivation-path",
+ "qstring",
+ "uriparse",
+]
+
+[[package]]
 name = "solana-download-utils"
 version = "3.0.0"
 dependencies = [
@@ -6867,9 +6878,9 @@ dependencies = [
  "ed25519-dalek",
  "ed25519-dalek-bip32",
  "rand 0.7.3",
- "solana-derivation-path",
+ "solana-derivation-path 2.2.1",
  "solana-pubkey",
- "solana-seed-derivable",
+ "solana-seed-derivable 2.2.1",
  "solana-seed-phrase",
  "solana-signature",
  "solana-signer",
@@ -6961,7 +6972,7 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-runtime",
  "solana-runtime-transaction",
- "solana-seed-derivable",
+ "solana-seed-derivable 3.0.0",
  "solana-sha256-hasher",
  "solana-shred-version",
  "solana-signature",
@@ -7691,7 +7702,7 @@ dependencies = [
  "parking_lot 0.12.2",
  "qstring",
  "semver",
- "solana-derivation-path",
+ "solana-derivation-path 2.2.1",
  "solana-offchain-message",
  "solana-pubkey",
  "solana-signature",
@@ -8016,7 +8027,7 @@ dependencies = [
  "solana-runtime-transaction",
  "solana-sdk-ids",
  "solana-secp256k1-program",
- "solana-seed-derivable",
+ "solana-seed-derivable 3.0.0",
  "solana-serde",
  "solana-sha256-hasher",
  "solana-signature",
@@ -8910,7 +8921,16 @@ version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3beb82b5adb266c6ea90e5cf3967235644848eac476c5a1f2f9283a143b7c97f"
 dependencies = [
- "solana-derivation-path",
+ "solana-derivation-path 2.2.1",
+]
+
+[[package]]
+name = "solana-seed-derivable"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff7bdb72758e3bec33ed0e2658a920f1f35dfb9ed576b951d20d63cb61ecd95c"
+dependencies = [
+ "solana-derivation-path 3.0.0",
 ]
 
 [[package]]
@@ -9949,11 +9969,11 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "sha3",
- "solana-derivation-path",
+ "solana-derivation-path 2.2.1",
  "solana-instruction",
  "solana-pubkey",
  "solana-sdk-ids",
- "solana-seed-derivable",
+ "solana-seed-derivable 2.2.1",
  "solana-seed-phrase",
  "solana-signature",
  "solana-signer",
@@ -9985,11 +10005,11 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "sha3",
- "solana-derivation-path",
+ "solana-derivation-path 2.2.1",
  "solana-instruction",
  "solana-pubkey",
  "solana-sdk-ids",
- "solana-seed-derivable",
+ "solana-seed-derivable 2.2.1",
  "solana-seed-phrase",
  "solana-signature",
  "solana-signer",
@@ -10034,11 +10054,11 @@ dependencies = [
  "serde_json",
  "sha3",
  "solana-curve25519 3.0.0",
- "solana-derivation-path",
+ "solana-derivation-path 2.2.1",
  "solana-instruction",
  "solana-pubkey",
  "solana-sdk-ids",
- "solana-seed-derivable",
+ "solana-seed-derivable 3.0.0",
  "solana-seed-phrase",
  "solana-signature",
  "solana-signer",
