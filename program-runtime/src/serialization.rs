@@ -1590,7 +1590,7 @@ mod tests {
                 .try_borrow_instruction_account(&transaction_context, index_in_instruction)
                 .unwrap();
             borrowed_account
-                .set_data(vec![0u8; MAX_PERMITTED_DATA_LENGTH as usize])
+                .set_data_from_slice(&vec![0u8; MAX_PERMITTED_DATA_LENGTH as usize])
                 .unwrap();
         }
         assert_eq!(

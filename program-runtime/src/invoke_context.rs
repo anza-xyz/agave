@@ -1090,7 +1090,7 @@ mod tests {
                     }
                     MockInstruction::Resize { new_len } => instruction_context
                         .try_borrow_instruction_account(transaction_context, 0)?
-                        .set_data(vec![0; new_len as usize])?,
+                        .set_data_from_slice(&vec![0; new_len as usize])?,
                 }
             } else {
                 return Err(InstructionError::InvalidInstructionData);
