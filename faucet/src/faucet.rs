@@ -16,7 +16,7 @@ use {
     solana_metrics::datapoint_info,
     solana_native_token::lamports_to_sol,
     solana_packet::PACKET_DATA_SIZE,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_signer::Signer,
     solana_system_interface::instruction::transfer,
     solana_transaction::Transaction,
@@ -90,7 +90,7 @@ pub enum FaucetTransaction {
 pub struct Faucet {
     faucet_keypair: Keypair,
     ip_cache: HashMap<IpAddr, u64>,
-    address_cache: HashMap<Pubkey, u64>,
+    address_cache: HashMap<Pubkey, u64, PubkeyHasherBuilder>,
     pub time_slice: Duration,
     per_time_cap: Option<u64>,
     per_request_cap: Option<u64>,
@@ -134,7 +134,7 @@ impl Faucet {
         Self {
             faucet_keypair,
             ip_cache: HashMap::new(),
-            address_cache: HashMap::new(),
+            address_cache: HashMap::with_hasher(PubkeyHasherBuilder::default()),
             time_slice,
             per_time_cap,
             per_request_cap,
