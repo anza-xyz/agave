@@ -18,6 +18,7 @@ pub mod loader_utils;
 pub mod non_circulating_supply;
 pub mod prioritization_fee;
 pub mod prioritization_fee_cache;
+pub mod rent_collector;
 pub mod runtime_config;
 pub mod serde_snapshot;
 pub mod snapshot_archive_info;

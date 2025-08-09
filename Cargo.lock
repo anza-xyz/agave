@@ -6916,7 +6916,6 @@ dependencies = [
  "solana-pubkey",
  "solana-rayon-threadlimit",
  "solana-rent",
- "solana-rent-collector",
  "solana-reward-info",
  "solana-sdk-ids",
  "solana-sha256-hasher",
@@ -6925,6 +6924,7 @@ dependencies = [
  "solana-slot-hashes",
  "solana-slot-history",
  "solana-stake-program",
+ "solana-svm",
  "solana-svm-transaction",
  "solana-system-interface",
  "solana-sysvar",
@@ -9897,25 +9897,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-rent-collector"
-version = "2.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c1e19f5d5108b0d824244425e43bc78bbb9476e2199e979b0230c9f632d3bf4"
-dependencies = [
- "serde",
- "serde_derive",
- "solana-account",
- "solana-clock",
- "solana-epoch-schedule",
- "solana-frozen-abi",
- "solana-frozen-abi-macro 2.2.1",
- "solana-genesis-config",
- "solana-pubkey",
- "solana-rent",
- "solana-sdk-ids",
-]
-
-[[package]]
 name = "solana-reward-info"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10290,7 +10271,6 @@ dependencies = [
  "solana-pubkey",
  "solana-rayon-threadlimit",
  "solana-rent",
- "solana-rent-collector",
  "solana-reward-info",
  "solana-runtime",
  "solana-runtime-transaction",
@@ -10923,7 +10903,6 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey",
  "solana-rent",
- "solana-rent-collector",
  "solana-sbpf",
  "solana-sdk-ids",
  "solana-secp256k1-program",

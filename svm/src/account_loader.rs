@@ -4,7 +4,9 @@ use {
     crate::{
         account_overrides::AccountOverrides,
         nonce_info::NonceInfo,
-        rent_calculator::{check_rent_state_with_account, get_account_rent_state},
+        rent_calculator::{
+            check_rent_state_with_account, get_account_rent_state, RENT_EXEMPT_RENT_EPOCH,
+        },
         rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::ExecutedTransaction,
@@ -25,7 +27,6 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
     solana_sdk_ids::{
         bpf_loader_upgradeable, native_loader,
         sysvar::{self, slot_history},
@@ -853,7 +854,6 @@ mod tests {
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
         solana_sdk_ids::{
             bpf_loader, bpf_loader_upgradeable, native_loader, system_program, sysvar,
         },

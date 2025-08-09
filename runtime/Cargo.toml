@@ -37,7 +37,6 @@ frozen-abi = [
     "solana-perf/frozen-abi",
     "solana-program-runtime/frozen-abi",
     "solana-rent/frozen-abi",
-    "solana-rent-collector/frozen-abi",
     "solana-stake-interface/frozen-abi",
     "solana-svm/frozen-abi",
     "solana-transaction-error/frozen-abi",
@@ -139,7 +138,6 @@ solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true }
-solana-rent-collector = { workspace = true, features = ["serde"] }
 solana-reward-info = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
