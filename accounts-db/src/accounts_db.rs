@@ -2715,7 +2715,8 @@ impl AccountsDb {
             );
             reclaim_result.1 = reclaimed_offsets;
 
-            if let HandleReclaims::ProcessDeadSlots(purge_stats) = handle_reclaims {
+            if !dead_slots.is_empty() {
+                let HandleReclaims::ProcessDeadSlots(purge_stats) = handle_reclaims;
                 if let Some(expected_single_dead_slot) = expected_single_dead_slot {
                     assert!(dead_slots.len() <= 1);
                     if dead_slots.len() == 1 {
@@ -2729,8 +2730,6 @@ impl AccountsDb {
                     purge_stats,
                     pubkeys_removed_from_accounts_index,
                 );
-            } else {
-                assert!(dead_slots.is_empty());
             }
         }
         reclaim_result
@@ -2834,11 +2833,18 @@ impl AccountsDb {
             return;
         }
         let mut clean_dead_slots = Measure::start("reclaims::clean_dead_slots");
-        self.clean_stored_dead_slots(
-            dead_slots,
-            purged_account_slots,
-            pubkeys_removed_from_accounts_index,
-        );
+
+        if !self.mark_obsolete_accounts
+        {
+            self.clean_stored_dead_slots(
+                dead_slots,
+                purged_account_slots,
+                pubkeys_removed_from_accounts_index,
+            );
+        }
+        else {
+            self.remove_dead_slots_metadata(dead_slots.iter());
+        }
         clean_dead_slots.stop();
 
         let mut purge_removed_slots = Measure::start("reclaims::purge_removed_slots");
@@ -5377,19 +5383,37 @@ impl AccountsDb {
                 flush_stats.num_bytes_flushed.0,
                 "flush_slot_cache",
             );
-            let (store_accounts_timing_inner, store_accounts_total_inner_us) = measure_us!(self
-                .store_accounts_frozen(
-                    (slot, &accounts[..]),
-                    &flushed_store,
-                    UpdateIndexThreadSelection::PoolWithThreshold,
-                ));
+            let (store_accounts_timing_inner, store_accounts_total_inner_us) =
+                if should_flush_f.is_some() && self.mark_obsolete_accounts {
+                    measure_us!(self.store_accounts_flush(
+                        (slot, &accounts[..]),
+                        &flushed_store,
+                        UpsertReclaim::PopulateReclaims,
+                        UpdateIndexThreadSelection::PoolWithThreshold,
+                    ))
+                } else {
+                    measure_us!(self
+                    .store_accounts_frozen(
+                        (slot, &accounts[..]),
+                        &flushed_store,
+                        UpdateIndexThreadSelection::PoolWithThreshold,
+                    ))
+                };
             flush_stats.store_accounts_timing = store_accounts_timing_inner;
             flush_stats.store_accounts_total_us = Saturating(store_accounts_total_inner_us);
 
             // If the above sizing function is correct, just one AppendVec is enough to hold
             // all the data for the slot
-            assert!(self.storage.get_slot_storage_entry(slot).is_some());
             self.reopen_storage_as_readonly_shrinking_in_progress_ok(slot);
+            let storage = self
+                .storage
+                .get_slot_storage_entry(slot)
+                .expect("Storage entry exists after flush");
+
+            // Zero lamport single refs may have been added. Check if this is a candidate for shrink
+            if self.is_candidate_for_shrink(&storage) {
+                self.shrink_candidate_slots.lock().unwrap().insert(slot);
+            }
         }
 
         // Remove this slot from the cache, which will to AccountsDb's new readers should look like an
@@ -6265,9 +6289,6 @@ impl AccountsDb {
         let slot = accounts.target_slot();
         let mut store_accounts_time = Measure::start("store_accounts");
 
-        // Other values for UpsertReclaim are not supported yet
-        assert_eq!(reclaim_handling, UpsertReclaim::IgnoreReclaims);
-
         // Flush the read cache if necessary. This will occur during shrink or clean
         if self.read_only_accounts_cache.can_slot_be_in_cache(slot) {
             (0..accounts.len()).for_each(|index| {
@@ -6317,17 +6338,23 @@ impl AccountsDb {
         // equivalent to asserting there will be no dead slots, is safe.
         let mut handle_reclaims_elapsed = 0;
         if reclaim_handling == UpsertReclaim::PopulateReclaims {
+        if handle_reclaims == UpsertReclaim::ReclaimOldSlots {
+            let purge_stats = PurgeStats::default();
             let mut handle_reclaims_time = Measure::start("handle_reclaims");
             self.handle_reclaims(
                 (!reclaims.is_empty()).then(|| reclaims.iter()),
                 None,
                 &HashSet::default(),
                 // this callsite does NOT process dead slots
-                HandleReclaims::DoNotProcessDeadSlots,
-                MarkAccountsObsolete::No,
+                HandleReclaims::ProcessDeadSlots(&purge_stats),
+                MarkAccountsObsolete::Yes(storage.slot()),
             );
             handle_reclaims_time.stop();
             handle_reclaims_elapsed = handle_reclaims_time.as_us();
+            purge_stats
+                .handle_reclaims_elapsed
+                .store(handle_reclaims_elapsed, Ordering::Relaxed);
+            purge_stats.report("store_accounts_reclaim_stats", None);
             self.stats
                 .store_handle_reclaims
                 .fetch_add(handle_reclaims_elapsed, Ordering::Relaxed);
@@ -6418,11 +6445,16 @@ impl AccountsDb {
 
             let store_id = storage.id();
             for (i, offset) in stored_accounts_info.offsets.iter().enumerate() {
+                let zero_lamport = accounts_and_meta_to_store.is_zero_lamport(i);
                 infos.push(AccountInfo::new(
                     StorageLocation::AppendVec(store_id, *offset),
-                    accounts_and_meta_to_store.is_zero_lamport(i),
+                    zero_lamport,
                 ));
+                if zero_lamport && self.mark_obsolete_accounts {
+                    storage.insert_zero_lamport_single_ref_account_offset(*offset);
+                }
             }
+
             storage.add_accounts(
                 stored_accounts_info.offsets.len(),
                 stored_accounts_info.size,
@@ -7408,7 +7440,6 @@ impl AccountsDb {
 #[derive(Debug, Copy, Clone)]
 enum HandleReclaims<'a> {
     ProcessDeadSlots(&'a PurgeStats),
-    DoNotProcessDeadSlots,
 }
 
 /// Specify whether obsolete accounts should be marked or not during reclaims
