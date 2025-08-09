@@ -143,12 +143,12 @@ use {
         },
     },
     solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_transaction as system_transaction,
     solana_sysvar::{self as sysvar, last_restart_slot::LastRestartSlot, Sysvar},
     solana_sysvar_id::SysvarId,
     solana_time_utils::years_as_slots,
-    solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
         versioned::VersionedTransaction,

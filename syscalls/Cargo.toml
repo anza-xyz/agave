@@ -51,10 +51,10 @@ solana-stable-layout = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
+solana-svm-timings = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
-solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
 

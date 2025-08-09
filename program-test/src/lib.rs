@@ -42,9 +42,9 @@ use {
     },
     solana_signer::Signer,
     solana_svm_log_collector::ic_msg,
+    solana_svm_timings::ExecuteTimings,
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
-    solana_timings::ExecuteTimings,
     solana_vote_program::vote_state::{self, VoteStateV3, VoteStateVersions},
     std::{
         cell::RefCell,

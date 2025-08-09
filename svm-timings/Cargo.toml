@@ -1,7 +1,7 @@
 [package]
-name = "solana-timings"
+name = "solana-svm-timings"
 description = "Solana Execution Timings"
-documentation = "https://docs.rs/solana-timings"
+documentation = "https://docs.rs/solana-svm-timings"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }

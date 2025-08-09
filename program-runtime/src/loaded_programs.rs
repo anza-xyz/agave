@@ -25,7 +25,7 @@ use {
     },
 };
 #[cfg(feature = "metrics")]
-use {solana_measure::measure::Measure, solana_timings::ExecuteDetailsTimings};
+use {solana_measure::measure::Measure, solana_svm_timings::ExecuteDetailsTimings};
 
 pub type ProgramRuntimeEnvironment = Arc<BuiltinProgram<InvokeContext<'static>>>;
 pub const MAX_LOADED_ENTRY_COUNT: usize = 512;
