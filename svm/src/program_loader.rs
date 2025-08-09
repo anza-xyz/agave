@@ -11,9 +11,9 @@ use {
     solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_svm_callback::TransactionProcessingCallback,
+    solana_svm_type_overrides::sync::Arc,
     solana_timings::ExecuteTimings,
     solana_transaction_error::{TransactionError, TransactionResult},
-    solana_type_overrides::sync::Arc,
 };
 
 #[derive(Debug)]

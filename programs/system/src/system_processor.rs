@@ -6,7 +6,6 @@ use {
     log::*,
     solana_bincode::limited_deserialize,
     solana_instruction::error::InstructionError,
-    solana_log_collector::ic_msg,
     solana_nonce as nonce,
     solana_program_runtime::{
         declare_process_instruction, invoke_context::InvokeContext,
@@ -14,6 +13,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::system_program,
+    solana_svm_log_collector::ic_msg,
     solana_system_interface::{
         error::SystemError, instruction::SystemInstruction, MAX_PERMITTED_DATA_LENGTH,
     },

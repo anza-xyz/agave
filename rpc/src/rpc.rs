@@ -4503,7 +4503,6 @@ pub mod tests {
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path,
         },
-        solana_log_collector::ic_logger_msg,
         solana_message::{
             v0::{self, MessageAddressTableLookup},
             Message, MessageHeader, SimpleAddressLoader, VersionedMessage,
@@ -4536,6 +4535,7 @@ pub mod tests {
         solana_sha256_hasher::hash,
         solana_signer::Signer,
         solana_svm::account_loader::TRANSACTION_ACCOUNT_BASE_SIZE,
+        solana_svm_log_collector::ic_logger_msg,
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_system_transaction as system_transaction,
         solana_sysvar::slot_hashes::SlotHashes,
