@@ -106,7 +106,6 @@ mod tests {
     #[test_case(solana_sdk_ids::bpf_loader_deprecated::id(), None)]
     #[test_case(solana_sdk_ids::bpf_loader_upgradeable::id(), None)]
     #[test_case(solana_compute_budget_interface::id(), None)]
-    #[test_case(solana_stake_interface::program::id(), None)]
     #[test_case(solana_system_interface::program::id(), None)]
     #[test_case(solana_vote_interface::program::id(), None)]
     #[test_case(

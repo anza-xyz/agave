@@ -313,20 +313,16 @@ mod tests {
             runtime_config::RuntimeConfig,
         },
         assert_matches::assert_matches,
-        solana_account::{state_traits::StateMut, Account},
+        solana_account::state_traits::StateMut,
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
-        solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
         solana_signer::Signer,
-        solana_stake_interface::{error::StakeError, state::StakeStateV2},
-        solana_system_transaction as system_transaction,
-        solana_transaction::Transaction,
-        solana_vote::vote_transaction,
+        solana_stake_interface::state::StakeStateV2,
         solana_vote_interface::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
-        solana_vote_program::vote_state::{self, TowerSync},
+        solana_vote_program::vote_state::{self},
         std::sync::{Arc, RwLock},
     };
 
@@ -855,125 +851,6 @@ mod tests {
                 assert_eq!(post_cap, pre_cap);
             }
             previous_bank = curr_bank;
-        }
-    }
-
-    /// Test that program execution that attempts to mutate a stake account
-    /// incorrectly should fail during reward period. A credit should succeed,
-    /// but a withdrawal should fail.
-    #[test]
-    fn test_program_execution_restricted_for_stake_account_in_reward_period() {
-        use solana_transaction_error::TransactionError::InstructionError;
-
-        let validator_vote_keypairs = ValidatorVoteKeypairs::new_rand();
-        let validator_keypairs = vec![&validator_vote_keypairs];
-        let GenesisConfigInfo {
-            mut genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_with_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            vec![1_000_000_000; 1],
-        );
-
-        // Add stake account to try to mutate
-        let vote_key = validator_keypairs[0].vote_keypair.pubkey();
-        let vote_account = genesis_config
-            .accounts
-            .iter()
-            .find(|(&address, _)| address == vote_key)
-            .map(|(_, account)| account)
-            .unwrap()
-            .clone();
-
-        let new_stake_signer = Keypair::new();
-        let new_stake_address = new_stake_signer.pubkey();
-        let new_stake_account = Account::from(solana_stake_program::stake_state::create_account(
-            &new_stake_address,
-            &vote_key,
-            &vote_account.into(),
-            &genesis_config.rent,
-            2_000_000_000,
-        ));
-        genesis_config
-            .accounts
-            .extend(vec![(new_stake_address, new_stake_account)]);
-
-        let (mut previous_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let num_slots_in_epoch = previous_bank.get_slots_in_epoch(previous_bank.epoch());
-        assert_eq!(num_slots_in_epoch, 32);
-
-        let transfer_amount = 5_000;
-
-        for slot in 1..=num_slots_in_epoch + 2 {
-            let bank = new_bank_from_parent_with_bank_forks(
-                bank_forks.as_ref(),
-                previous_bank.clone(),
-                &Pubkey::default(),
-                slot,
-            );
-
-            // Fill bank_forks with banks with votes landing in the next slot
-            // So that rewards will be paid out at the epoch boundary, i.e. slot = 32
-            let tower_sync = TowerSync::new_from_slot(slot - 1, previous_bank.hash());
-            let vote = vote_transaction::new_tower_sync_transaction(
-                tower_sync,
-                previous_bank.last_blockhash(),
-                &validator_vote_keypairs.node_keypair,
-                &validator_vote_keypairs.vote_keypair,
-                &validator_vote_keypairs.vote_keypair,
-                None,
-            );
-            bank.process_transaction(&vote).unwrap();
-
-            // Insert a transfer transaction from the mint to new stake account
-            let system_tx = system_transaction::transfer(
-                &mint_keypair,
-                &new_stake_address,
-                transfer_amount,
-                bank.last_blockhash(),
-            );
-            let system_result = bank.process_transaction(&system_tx);
-
-            // Credits should always succeed
-            assert!(system_result.is_ok());
-
-            // Attempt to withdraw from new stake account to the mint
-            let stake_ix = solana_stake_interface::instruction::withdraw(
-                &new_stake_address,
-                &new_stake_address,
-                &mint_keypair.pubkey(),
-                transfer_amount,
-                None,
-            );
-            let stake_tx = Transaction::new_signed_with_payer(
-                &[stake_ix],
-                Some(&mint_keypair.pubkey()),
-                &[&mint_keypair, &new_stake_signer],
-                bank.last_blockhash(),
-            );
-            let stake_result = bank.process_transaction(&stake_tx);
-
-            if slot == num_slots_in_epoch {
-                // When the bank is at the beginning of the new epoch, i.e. slot
-                // 32, StakeError::EpochRewardsActive should be thrown for
-                // actions like StakeInstruction::Withdraw
-                assert_eq!(
-                    stake_result,
-                    Err(InstructionError(0, StakeError::EpochRewardsActive.into()))
-                );
-            } else {
-                // When the bank is outside of reward interval, the withdraw
-                // transaction should not be affected and will succeed.
-                assert!(stake_result.is_ok());
-            }
-
-            // Push a dummy blockhash, so that the latest_blockhash() for the transfer transaction in each
-            // iteration are different. Otherwise, all those transactions will be the same, and will not be
-            // executed by the bank except the first one.
-            bank.register_unique_recent_blockhash_for_test();
-            previous_bank = bank;
         }
     }
 

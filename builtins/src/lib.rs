@@ -64,20 +64,6 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
         program_id: solana_vote_program::id(),
         entrypoint: solana_vote_program::vote_processor::Entrypoint::vm,
     }),
-    BuiltinPrototype {
-        core_bpf_migration_config: Some(CoreBpfMigrationConfig {
-            source_buffer_address: buffer_accounts::stake_program::id(),
-            upgrade_authority_address: None,
-            feature_id: agave_feature_set::migrate_stake_program_to_core_bpf::id(),
-            verified_build_hash: None,
-            migration_target: CoreBpfMigrationTargetType::Builtin,
-            datapoint_name: "migrate_builtin_to_core_bpf_stake_program",
-        }),
-        name: "stake_program",
-        enable_feature_id: None,
-        program_id: solana_stake_program::id(),
-        entrypoint: solana_stake_program::stake_instruction::Entrypoint::vm,
-    },
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
         name: solana_bpf_loader_deprecated_program,
@@ -144,9 +130,6 @@ pub static STATELESS_BUILTINS: &[StatelessBuiltinPrototype] = &[StatelessBuiltin
 
 /// Live source buffer accounts for builtin migrations.
 mod buffer_accounts {
-    pub mod stake_program {
-        solana_pubkey::declare_id!("8t3vv6v99tQA6Gp7fVdsBH66hQMaswH5qsJVqJqo8xvG");
-    }
     pub mod slashing_program {
         use {solana_hash::Hash, solana_pubkey::Pubkey};
 
@@ -370,34 +353,32 @@ mod tests {
             &super::BUILTINS[1].core_bpf_migration_config,
             &Some(super::test_only::vote_program::CONFIG)
         );
-        // Stake has a live migration config, so it has no test-only configs
-        // to test here.
         assert_eq!(
-            &super::BUILTINS[3].core_bpf_migration_config,
+            &super::BUILTINS[2].core_bpf_migration_config,
             &Some(super::test_only::solana_bpf_loader_deprecated_program::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[4].core_bpf_migration_config,
+            &super::BUILTINS[3].core_bpf_migration_config,
             &Some(super::test_only::solana_bpf_loader_program::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[5].core_bpf_migration_config,
+            &super::BUILTINS[4].core_bpf_migration_config,
             &Some(super::test_only::solana_bpf_loader_upgradeable_program::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[6].core_bpf_migration_config,
+            &super::BUILTINS[5].core_bpf_migration_config,
             &Some(super::test_only::compute_budget_program::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[7].core_bpf_migration_config,
+            &super::BUILTINS[6].core_bpf_migration_config,
             &Some(super::test_only::zk_token_proof_program::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[8].core_bpf_migration_config,
+            &super::BUILTINS[7].core_bpf_migration_config,
             &Some(super::test_only::loader_v4::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[9].core_bpf_migration_config,
+            &super::BUILTINS[8].core_bpf_migration_config,
             &Some(super::test_only::zk_elgamal_proof_program::CONFIG)
         );
     }

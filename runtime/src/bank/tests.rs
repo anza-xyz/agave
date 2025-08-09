@@ -3148,6 +3148,8 @@ fn test_bank_cloned_stake_delegations() {
         bank.last_blockhash(),
     );
 
+    // HANA i think this needs the stake program fr, it tests that stake acctounts get added to stakes cache
+    // which is not sometihng we can safely mock by inserting the raw accounts
     bank.process_transaction(&transaction).unwrap();
 
     let stake_delegations = bank.stakes_cache.stakes().stake_delegations().clone();
@@ -5172,6 +5174,8 @@ fn test_bank_hash_consistency() {
         goto_end_of_slot(Arc::clone(&bank));
         if bank.slot == 0 {
             assert_eq!(bank.epoch(), 0);
+            // HANA i need to ask joe about this... i dont know if we really are messing w bankhash
+            // in which case wed need a feature gate. or if this test is misconfigured
             assert_eq!(
                 bank.hash().to_string(),
                 "AyXhbqmPsC46x7MHAuW89pQcNZVrUZnAND6ABWJ24svx",
@@ -5406,7 +5410,7 @@ fn test_shrink_candidate_slots_cached() {
     // No more slots should be shrunk
     assert_eq!(bank2.shrink_candidate_slots(), 0);
     // alive_counts represents the count of alive accounts in the three slots 0,1,2
-    assert_eq!(alive_counts, vec![13, 1, 6]);
+    assert_eq!(alive_counts, vec![12, 1, 6]);
 }
 
 #[test]
@@ -8182,7 +8186,6 @@ fn test_vote_epoch_panic() {
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     let vote_keypair = keypair_from_seed(&[1u8; 32]).unwrap();
-    let stake_keypair = keypair_from_seed(&[2u8; 32]).unwrap();
 
     let mut setup_ixs = Vec::new();
     setup_ixs.extend(vote_instruction::create_account_with_config(
@@ -8200,14 +8203,6 @@ fn test_vote_epoch_panic() {
             ..vote_instruction::CreateVoteAccountConfig::default()
         },
     ));
-    setup_ixs.extend(stake_instruction::create_account_and_delegate_stake(
-        &mint_keypair.pubkey(),
-        &stake_keypair.pubkey(),
-        &vote_keypair.pubkey(),
-        &Authorized::auto(&mint_keypair.pubkey()),
-        &Lockup::default(),
-        1_000_000_000_000,
-    ));
     setup_ixs.push(vote_instruction::withdraw(
         &vote_keypair.pubkey(),
         &mint_keypair.pubkey(),
@@ -8221,7 +8216,7 @@ fn test_vote_epoch_panic() {
     ));
 
     let result = bank.process_transaction(&Transaction::new(
-        &[&mint_keypair, &vote_keypair, &stake_keypair],
+        &[&mint_keypair, &vote_keypair],
         Message::new(&setup_ixs, Some(&mint_keypair.pubkey())),
         bank.last_blockhash(),
     ));
@@ -9811,6 +9806,7 @@ fn test_rent_state_changes_sysvars() {
         &[&mint_keypair, &validator_staking_keypair],
         bank.last_blockhash(),
     );
+    // HANA we can use something else for this. vote program maybe
     let result = bank.process_transaction(&tx);
     assert!(result.is_ok());
 }
