@@ -12,7 +12,6 @@ use {
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount},
     solana_clock::{Clock, Epoch},
     solana_instruction::error::InstructionError,
-    solana_log_collector::ic_msg,
     solana_program_runtime::invoke_context::InvokeContext,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -23,6 +22,7 @@ use {
         stake_flags::StakeFlags,
         tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
     },
+    solana_svm_log_collector::ic_msg,
     solana_sysvar::stake_history::{StakeHistory, StakeHistoryEntry},
     solana_transaction_context::{
         BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,

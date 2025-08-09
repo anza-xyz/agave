@@ -51,7 +51,6 @@ members = [
     "ledger-tool",
     "local-cluster",
     "log-analyzer",
-    "log-collector",
     "measure",
     "memory-management",
     "merkle-tree",
@@ -105,6 +104,7 @@ members = [
     "svm",
     "svm-callback",
     "svm-feature-set",
+    "svm-log-collector",
     "svm-transaction",
     "syscalls",
     "syscalls/gen-syscall-list",
@@ -450,7 +450,6 @@ solana-loader-v3-interface = "5.0.0"
 solana-loader-v4-interface = "2.2.1"
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=3.0.0" }
 solana-local-cluster = { path = "local-cluster", version = "=3.0.0" }
-solana-log-collector = { path = "log-collector", version = "=3.0.0" }
 solana-logger = "3.0.0"
 solana-measure = { path = "measure", version = "=3.0.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=3.0.0" }
@@ -523,6 +522,7 @@ solana-streamer = { path = "streamer", version = "=3.0.0" }
 solana-svm = { path = "svm", version = "=3.0.0" }
 solana-svm-callback = { path = "svm-callback", version = "=3.0.0" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.0.0" }
+solana-svm-log-collector = { path = "svm-log-collector", version = "=3.0.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.0.0" }
 solana-system-interface = "1.0"
 solana-system-program = { path = "programs/system", version = "=3.0.0" }

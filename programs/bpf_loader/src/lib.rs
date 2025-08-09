@@ -10,7 +10,6 @@ use {
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
-    solana_log_collector::{ic_logger_msg, ic_msg, LogCollector},
     solana_measure::measure::Measure,
     solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_runtime::{
@@ -38,6 +37,7 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
+    solana_svm_log_collector::{ic_logger_msg, ic_msg, LogCollector},
     solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
     solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     solana_type_overrides::sync::{atomic::Ordering, Arc},

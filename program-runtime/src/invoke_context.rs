@@ -13,7 +13,6 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
-    solana_log_collector::{ic_msg, LogCollector},
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_sbpf::{
@@ -28,6 +27,7 @@ use {
     },
     solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
+    solana_svm_log_collector::{ic_msg, LogCollector},
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::{
@@ -785,8 +785,8 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         $transaction_accounts:expr $(,)?
     ) => {
         use {
-            solana_log_collector::LogCollector,
             solana_svm_callback::InvokeContextCallback,
+            solana_svm_log_collector::LogCollector,
             $crate::{
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},

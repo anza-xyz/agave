@@ -33,13 +33,13 @@ solana-bpf-loader-program = { workspace = true, features = ["svm-internal"] }
 solana-instruction = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
 solana-loader-v4-interface = { workspace = true, features = ["serde"] }
-solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-svm-log-collector = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-type-overrides = { workspace = true }
 

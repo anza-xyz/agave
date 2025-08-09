@@ -1,7 +1,7 @@
 [package]
-name = "solana-log-collector"
+name = "solana-svm-log-collector"
 description = "Solana log collector"
-documentation = "https://docs.rs/solana-log-collector"
+documentation = "https://docs.rs/solana-svm-log-collector"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
