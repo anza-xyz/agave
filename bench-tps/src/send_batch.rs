@@ -295,14 +295,16 @@ where
                     if failed_verify > 100 && failed_verify > verified_txs {
                         too_many_failures.store(true, Ordering::Relaxed);
                         warn!(
-                            "Too many failed transfers... {remaining_count} remaining, {verified_txs} verified, {failed_verify} failures"
+                            "Too many failed transfers... {remaining_count} remaining, \
+                             {verified_txs} verified, {failed_verify} failures"
                         );
                     }
                     if remaining_count > 0 {
                         let mut time_l = time.lock().unwrap();
                         if time_l.elapsed().as_secs() > 2 {
                             info!(
-                                "Verifying transfers... {remaining_count} remaining, {verified_txs} verified, {failed_verify} failures"
+                                "Verifying transfers... {remaining_count} remaining, \
+                                 {verified_txs} verified, {failed_verify} failures"
                             );
                             *time_l = Instant::now();
                         }
@@ -322,7 +324,8 @@ where
             let failed_verify = failed_verify.load(Ordering::Relaxed);
             let remaining_count = starting_txs.saturating_sub(verified_txs + failed_verify);
             info!(
-                "Verifying transfers... {remaining_count} remaining, {verified_txs} verified, {failed_verify} failures"
+                "Verifying transfers... {remaining_count} remaining, {verified_txs} verified, \
+                 {failed_verify} failures"
             );
             sleep(Duration::from_millis(100));
         }
