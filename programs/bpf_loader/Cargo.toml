@@ -36,7 +36,6 @@ solana-clock = { workspace = true }
 solana-instruction = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["serde"] }
 solana-loader-v4-interface = { workspace = true, features = ["bincode"] }
-solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-packet = { workspace = true }
 solana-program-entrypoint = { workspace = true }
@@ -45,6 +44,7 @@ solana-pubkey = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-svm-feature-set = { workspace = true }
+solana-svm-log-collector = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-type-overrides = { workspace = true }

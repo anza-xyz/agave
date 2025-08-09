@@ -25,9 +25,7 @@ use {
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, ProcessedSiblingInstruction},
-    solana_keccak_hasher as keccak,
-    solana_log_collector::{ic_logger_msg, ic_msg},
-    solana_poseidon as poseidon,
+    solana_keccak_hasher as keccak, solana_poseidon as poseidon,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
@@ -47,6 +45,7 @@ use {
     },
     solana_sha256_hasher::Hasher,
     solana_svm_feature_set::SVMFeatureSet,
+    solana_svm_log_collector::{ic_logger_msg, ic_msg},
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,

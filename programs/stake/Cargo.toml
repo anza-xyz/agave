@@ -26,7 +26,6 @@ solana-clock = { workspace = true }
 solana-config-program-client = { workspace = true, features = ["serde"] }
 solana-genesis-config = { workspace = true }
 solana-instruction = { workspace = true }
-solana-log-collector = { workspace = true }
 solana-native-token = { workspace = true }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
@@ -34,6 +33,7 @@ solana-pubkey = { workspace = true, features = ["sha2"] }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-stake-interface = { workspace = true }
+solana-svm-log-collector = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-type-overrides = { workspace = true }

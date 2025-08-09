@@ -24,7 +24,6 @@ use {
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
-    solana_log_collector::LogCollector,
     solana_measure::{measure::Measure, measure_us},
     solana_message::{
         compiled_instruction::CompiledInstruction,
@@ -49,6 +48,7 @@ use {
     solana_sdk_ids::system_program,
     solana_svm_callback::TransactionProcessingCallback,
     solana_svm_feature_set::SVMFeatureSet,
+    solana_svm_log_collector::LogCollector,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_transaction_context::{ExecutionRecord, TransactionContext},

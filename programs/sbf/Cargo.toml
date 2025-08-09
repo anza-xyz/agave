@@ -131,7 +131,6 @@ solana-instruction = "=2.3.0"
 solana-instructions-sysvar = "=2.2.2"
 solana-keccak-hasher = { version = "=2.2.1", features = ["sha3"] }
 solana-ledger = { path = "../../ledger", version = "=3.0.0" }
-solana-log-collector = { path = "../../log-collector", version = "=3.0.0" }
 solana-logger = "=2.3.1"
 solana-measure = { path = "../../measure", version = "=3.0.0" }
 solana-msg = "=2.2.1"
@@ -160,6 +159,7 @@ solana-stake-interface = { version = "=1.2.1", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=3.0.0" }
 solana-svm-callback = { path = "../../svm-callback", version = "=3.0.0" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=3.0.0" }
+solana-svm-log-collector = { path = "../../svm-log-collector", version = "=3.0.0" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=3.0.0" }
 solana-system-interface = { version = "=1.0", features = ["bincode"] }
 solana-sysvar = "=2.2.2"
@@ -215,7 +215,6 @@ solana-keypair = "2.2.1"
 solana-ledger = { workspace = true }
 solana-loader-v3-interface = "5.0.0"
 solana-loader-v4-interface = "2.2.1"
-solana-log-collector = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = "2.3.0"
@@ -238,6 +237,7 @@ solana-stake-interface = "1.2.1"
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
+solana-svm-log-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = "1.0"
 solana-sysvar = "2.2.1"
