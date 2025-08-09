@@ -86,7 +86,7 @@ impl Default for Config<'_> {
 }
 
 pub fn is_version_string(arg: &str) -> Result<(), String> {
-    let semver_re = Regex::new(r"^v?[0-9]+\.[0-9]+(\.[0-9]+)?").unwrap();
+    let semver_re = Regex::new(r"^v?[0-9]+\.[0-9]+(\.[0-9]+)?$").unwrap();
     if semver_re.is_match(arg) {
         return Ok(());
     }
