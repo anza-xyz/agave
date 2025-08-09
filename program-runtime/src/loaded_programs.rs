@@ -10,7 +10,7 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
-    solana_type_overrides::{
+    solana_svm_type_overrides::{
         rand::{thread_rng, Rng},
         sync::{
             atomic::{AtomicU64, Ordering},

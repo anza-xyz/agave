@@ -59,11 +59,11 @@ use {
         transaction_processor::ExecutionRecordingConfig,
     },
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_type_overrides::rand,
     solana_system_interface::{program as system_program, MAX_PERMITTED_DATA_LENGTH},
     solana_timings::ExecuteTimings,
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
-    solana_type_overrides::rand,
     std::{
         assert_eq,
         cell::RefCell,
