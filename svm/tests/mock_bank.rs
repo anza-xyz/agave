@@ -29,8 +29,8 @@ use {
     solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_type_overrides::sync::{Arc, RwLock},
     solana_sysvar_id::SysvarId,
-    solana_type_overrides::sync::{Arc, RwLock},
     std::{
         cmp::Ordering,
         collections::HashMap,

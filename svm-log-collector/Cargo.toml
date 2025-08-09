@@ -1,7 +1,7 @@
 [package]
-name = "solana-timings"
-description = "Solana Execution Timings"
-documentation = "https://docs.rs/solana-timings"
+name = "solana-svm-log-collector"
+description = "Solana log collector"
+documentation = "https://docs.rs/solana-svm-log-collector"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -13,6 +13,4 @@ edition = { workspace = true }
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-eager = { workspace = true }
-enum-iterator = { workspace = true }
-solana-pubkey = { workspace = true }
+log = { workspace = true }

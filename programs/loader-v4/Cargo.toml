@@ -18,9 +18,9 @@ name = "solana_loader_v4_program"
 [features]
 agave-unstable-api = []
 shuttle-test = [
-    "solana-type-overrides/shuttle-test",
     "solana-program-runtime/shuttle-test",
     "solana-sbpf/shuttle-test",
+    "solana-svm-type-overrides/shuttle-test",
 ]
 svm-internal = []
 
@@ -33,15 +33,15 @@ solana-bpf-loader-program = { workspace = true, features = ["svm-internal"] }
 solana-instruction = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
 solana-loader-v4-interface = { workspace = true, features = ["serde"] }
-solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-svm-type-overrides = { workspace = true }
 solana-transaction-context = { workspace = true }
-solana-type-overrides = { workspace = true }
 
 [dev-dependencies]
 bincode = { workspace = true }
