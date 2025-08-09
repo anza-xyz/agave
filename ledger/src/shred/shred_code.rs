@@ -134,7 +134,7 @@ pub(super) fn sanitize<T: ShredCodeTrait>(shred: &T) -> Result<(), Error> {
     }
     let common_header = shred.common_header();
     let coding_header = shred.coding_header();
-    if common_header.index as usize >= MAX_DATA_SHREDS_PER_SLOT.max(MAX_CODE_SHREDS_PER_SLOT) {
+    if common_header.index as usize >= MAX_CODE_SHREDS_PER_SLOT {
         return Err(Error::InvalidShredIndex(
             ShredType::Code,
             common_header.index,
