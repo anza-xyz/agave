@@ -688,7 +688,7 @@ mod serde_snapshot_tests {
             reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access);
         accounts.clean_accounts_for_tests();
 
-        info!("pubkey: {}", pubkey1);
+        info!("pubkey: {pubkey1}");
         accounts.print_accounts_stats("pre_clean");
         accounts.assert_load_account(current_slot, pubkey1, zero_lamport);
         accounts.assert_load_account(current_slot, pubkey2, old_lamport);

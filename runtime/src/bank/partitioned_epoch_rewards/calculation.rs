@@ -373,8 +373,7 @@ impl Bank {
                             ) && VoteAccount::try_from(account_from_db.clone()).is_ok()
                             {
                                 panic!(
-                                    "Vote account {} not found in cache, but found in db: {:?}",
-                                    vote_pubkey, account_from_db
+                                    "Vote account {vote_pubkey} not found in cache, but found in db: {account_from_db:?}"
                                 );
                             }
                         }
@@ -423,8 +422,7 @@ impl Bank {
                         });
                     } else {
                         debug!(
-                            "redeem_rewards() failed for {}: {:?}",
-                            stake_pubkey, redeemed
+                            "redeem_rewards() failed for {stake_pubkey}: {redeemed:?}"
                         );
                     }
                     None

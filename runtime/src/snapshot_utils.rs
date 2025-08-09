@@ -1072,7 +1072,7 @@ fn archive_snapshot(
     // Create the staging directories
     let staging_dir_prefix = TMP_SNAPSHOT_ARCHIVE_PREFIX;
     let staging_dir = tempfile::Builder::new()
-        .prefix(&format!("{}{}-", staging_dir_prefix, snapshot_slot))
+        .prefix(&format!("{staging_dir_prefix}{snapshot_slot}-"))
         .tempdir_in(tar_dir)
         .map_err(|err| E::CreateStagingDir(err, tar_dir.to_path_buf()))?;
     let staging_snapshots_dir = staging_dir.path().join(SNAPSHOTS_DIR);
@@ -1909,7 +1909,7 @@ fn unarchive_snapshot(
                 )?,
                 measure_name
             );
-            info!("{}", measure_untar);
+            info!("{measure_untar}");
             create_snapshot_meta_files_for_unarchived_snapshot(&unpack_dir)?;
 
             Ok(UnarchivedSnapshot {

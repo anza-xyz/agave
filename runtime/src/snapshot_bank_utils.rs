@@ -233,7 +233,7 @@ pub fn bank_from_snapshot_archives(
         exit,
     )?;
     measure_rebuild.stop();
-    info!("{}", measure_rebuild);
+    info!("{measure_rebuild}");
 
     verify_epoch_stakes(&bank)?;
 
@@ -413,7 +413,7 @@ pub fn bank_from_snapshot_dir(
         )?,
         "rebuild storages from snapshot dir"
     );
-    info!("{}", measure_rebuild_storages);
+    info!("{measure_rebuild_storages}");
 
     let next_append_vec_id =
         Arc::try_unwrap(next_append_vec_id).expect("this is the only strong reference");
@@ -441,7 +441,7 @@ pub fn bank_from_snapshot_dir(
         )?,
         "rebuild bank from snapshot"
     );
-    info!("{}", measure_rebuild_bank);
+    info!("{measure_rebuild_bank}");
 
     verify_epoch_stakes(&bank)?;
 

@@ -614,7 +614,7 @@ impl BankWithSchedulerInner {
                 // unconditional context construction for verification is okay here.
                 let context = SchedulingContext::for_verification(self.bank.clone());
                 let mut scheduler = self.scheduler.write().unwrap();
-                trace!("with_active_scheduler: {:?}", scheduler);
+                trace!("with_active_scheduler: {scheduler:?}");
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
                     let scheduler = pool.take_resumed_scheduler(context, result_with_timings);
                     info!(
@@ -674,7 +674,7 @@ impl BankWithSchedulerInner {
                 );
                 (pool, result_with_timings)
             });
-            trace!("timeout_listener: {:?}", scheduler);
+            trace!("timeout_listener: {scheduler:?}");
         })
     }
 
@@ -746,8 +746,7 @@ impl BankWithSchedulerInner {
             thread::current(),
         );
         trace!(
-            "wait_for_scheduler_termination(result_with_timings: {:?})",
-            result_with_timings,
+            "wait_for_scheduler_termination(result_with_timings: {result_with_timings:?})",
         );
 
         result_with_timings
