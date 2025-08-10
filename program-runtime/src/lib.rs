@@ -4,7 +4,7 @@
 
 #[cfg(feature = "metrics")]
 #[macro_use]
-extern crate solana_metrics;
+extern crate solana_svm_metrics;
 
 pub use solana_sbpf;
 pub mod execution_budget;

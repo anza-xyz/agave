@@ -1,0 +1,36 @@
+[package]
+name = "solana-svm-metrics"
+description = "Metrics collection for SVM"
+documentation = "https://docs.rs/solana-svm-metrics"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+name = "solana_svm_metrics"
+
+[dependencies]
+crossbeam-channel = { workspace = true }
+gethostname = { workspace = true }
+log = { workspace = true }
+reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
+solana-cluster-type = { workspace = true }
+solana-sha256-hasher = { workspace = true }
+solana-time-utils = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+bencher = { workspace = true }
+env_logger = { workspace = true }
+rand = { workspace = true }
+serial_test = { workspace = true }
+
+[[bench]]
+name = "metrics"
+harness = false
