@@ -23,3 +23,4 @@ solana-message = { workspace = true }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
+test-case = { workspace = true }
