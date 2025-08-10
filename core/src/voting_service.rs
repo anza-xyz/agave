@@ -13,13 +13,13 @@ use {
         Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, NUM_CONSECUTIVE_LEADER_SLOTS,
     },
     solana_connection_cache::client_connection::ClientConnection,
-    solana_gossip::{{cluster_info::ClusterInfo, epoch_specs::EpochSpecs}, contact_info::Protocol},
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, epoch_specs::EpochSpecs},
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
-    solana_runtime::bank_forks::BankForks,
     solana_pubkey::Pubkey,
     solana_quic_definitions::NotifyKeyUpdate,
+    solana_runtime::bank_forks::BankForks,
     solana_tpu_client_next::{
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
@@ -33,7 +33,7 @@ use {
     std::{
         collections::HashMap,
         iter::once,
-        net::{{SocketAddr, UdpSocket}, UdpSocket},
+        net::{SocketAddr, UdpSocket},
         sync::{Arc, Mutex, RwLock},
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -412,7 +412,10 @@ impl TpuInfo for ClusterTpuInfo {
             .filter_map(|node| {
                 Some((
                     *node.pubkey(),
-                    (node.tpu_vote(Protocol::UDP)?, node.tpu_vote(Protocol::QUIC)?),
+                    (
+                        node.tpu_vote(Protocol::UDP)?,
+                        node.tpu_vote(Protocol::QUIC)?,
+                    ),
                 ))
             })
             .collect();
@@ -535,29 +538,29 @@ impl VotingService {
                 let thread_hdl = Builder::new()
                     .name("solVoteService".to_string())
                     .spawn({
-                let mut mock_alpenglow = alpenglow_socket.map(|s| {
-                    MockAlpenglowConsensus::new(
-                        s,
-                        cluster_info.clone(),
-                        EpochSpecs::from(bank_forks.clone()),
-                    )
-                });
-                {
-                        let cluster_info = cluster_info.clone();
-                        let poh_recorder = poh_recorder.clone();
-                        let tower_storage = tower_storage.clone();
-                        move || {
+                        let mut mock_alpenglow = alpenglow_socket.map(|s| {
+                            MockAlpenglowConsensus::new(
+                                s,
+                                cluster_info.clone(),
+                                EpochSpecs::from(bank_forks.clone()),
+                            )
+                        });
+                        {
+                            let cluster_info = cluster_info.clone();
+                            let poh_recorder = poh_recorder.clone();
+                            let tower_storage = tower_storage.clone();
+                            move || {
                                 for vote_op in vote_receiver.iter() {
-                        // Figure out if we are casting a vote for a new slot, and what slot it is for
-                        let vote_slot = match vote_op {
-                            VoteOp::PushVote {
-                                tx: _,
-                                ref tower_slots,
-                                ..
-                            } => tower_slots.iter().copied().last(),
-                            _ => None,
-                        };
-                        // perform all the normal vote handling routines
+                                    // Figure out if we are casting a vote for a new slot, and what slot it is for
+                                    let vote_slot = match vote_op {
+                                        VoteOp::PushVote {
+                                            tx: _,
+                                            ref tower_slots,
+                                            ..
+                                        } => tower_slots.iter().copied().last(),
+                                        _ => None,
+                                    };
+                                    // perform all the normal vote handling routines
                                     Self::handle_vote(
                                         &cluster_info,
                                         &poh_recorder,
@@ -565,17 +568,18 @@ impl VotingService {
                                         vote_op,
                                         &vote_client,
                                     );
-                        // trigger mock alpenglow vote if we have just cast an actual vote
-                        if let Some(slot) = vote_slot {
-                            if let Some(ag) = mock_alpenglow.as_mut() {
-                                let root_bank = { bank_forks.read().unwrap().root_bank() };
-                                ag.signal_new_slot(slot, &root_bank);
-                            }
-                        }
-                    }
-                    if let Some(ag) = mock_alpenglow {
-                        let _ = ag.join();
-                    }
+                                    // trigger mock alpenglow vote if we have just cast an actual vote
+                                    if let Some(slot) = vote_slot {
+                                        if let Some(ag) = mock_alpenglow.as_mut() {
+                                            let root_bank =
+                                                { bank_forks.read().unwrap().root_bank() };
+                                            ag.signal_new_slot(slot, &root_bank);
+                                        }
+                                    }
+                                }
+                                if let Some(ag) = mock_alpenglow {
+                                    let _ = ag.join();
+                                }
                             }
                         }
                     })

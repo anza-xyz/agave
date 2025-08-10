@@ -1488,7 +1488,6 @@ impl Validator {
         } else {
             None
         };
-            };
 
         let vote_client = if let Some(connection_cache) = &vote_connection_cache {
             VoteClientOption::ConnectionCache(connection_cache.clone())
