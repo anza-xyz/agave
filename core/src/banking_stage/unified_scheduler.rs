@@ -31,12 +31,17 @@ use qualifier_attr::qualifiers;
 use {
     super::{
         decision_maker::{BufferedPacketsDecision, DecisionMaker, DecisionMakerWrapper},
+        immutable_deserialized_packet::FEATURE_SET,
         packet_deserializer::PacketDeserializer,
+        transaction_scheduler::receive_and_buffer::calculate_priority_and_cost,
     },
     crate::banking_trace::Channels,
     agave_banking_stage_ingress_types::BankingPacketBatch,
+    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::bank_forks::BankForks,
+    solana_svm_transaction::svm_message::SVMMessage,
+    solana_unified_scheduler_logic::Index,
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},
     std::{
         num::NonZeroUsize,
@@ -94,7 +99,24 @@ pub(crate) fn ensure_banking_stage_setup(
                         continue;
                     };
 
-                    let index = task_id_base + packet_index;
+                    let Some(compute_budget_limits) = process_compute_budget_instructions(
+                        SVMMessage::program_instructions_iter(transaction.message()),
+                        &FEATURE_SET,
+                    ).ok() else {
+                        continue;
+                    };
+
+                    let (priority, _cost) = calculate_priority_and_cost(
+                        &transaction,
+                        &compute_budget_limits.into(),
+                        &bank,
+                    );
+
+                    let index = {
+                        let reversed_priority = (u64::MAX - priority) as Index;
+                        let task_id = (task_id_base + packet_index) as Index;
+                        reversed_priority << const { Index::BITS / 2 } | task_id
+                    };
 
                     let task = helper.create_new_task(transaction, index, packet_size);
                     helper.send_new_task(task);
