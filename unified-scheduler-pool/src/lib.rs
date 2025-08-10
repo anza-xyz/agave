@@ -49,7 +49,7 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
-        BlockSize,
+        BlockSize, Capability, Index,
         SchedulingMode::{self, BlockProduction, BlockVerification},
         SchedulingStateMachine, Task, UsageQueue,
     },
@@ -82,11 +82,11 @@ use crate::sleepless_testing::BuilderTracked;
 #[allow(dead_code)]
 #[derive(Debug)]
 enum CheckPoint<'a> {
-    NewTask(usize),
-    NewBufferedTask(usize),
-    BufferedTask(usize),
-    TaskHandled(usize),
-    TaskAccumulated(usize, &'a Result<()>),
+    NewTask(Index),
+    NewBufferedTask(Index),
+    BufferedTask(Index),
+    TaskHandled(Index),
+    TaskAccumulated(Index, &'a Result<()>),
     SessionEnding,
     SessionFinished(Option<Slot>),
     SchedulerThreadAborted,
@@ -230,7 +230,7 @@ impl HandlerContext {
     fn usage_queue_loader_for_newly_spawned(&self) -> UsageQueueLoader {
         match self.banking_stage_helper.clone() {
             None => UsageQueueLoader::OwnedBySelf {
-                usage_queue_loader_inner: UsageQueueLoaderInner::default(),
+                usage_queue_loader_inner: UsageQueueLoaderInner::new(Capability::FifoQueueing),
             },
             Some(helper) => UsageQueueLoader::SharedWithBankingStage {
                 banking_stage_helper: helper,
@@ -347,7 +347,7 @@ const BANKING_STAGE_MAX_TASK_ID: usize = usize::MAX / 2;
 impl BankingStageHelper {
     fn new(new_task_sender: Sender<NewTaskPayload>) -> Self {
         Self {
-            usage_queue_loader: UsageQueueLoaderInner::default(),
+            usage_queue_loader: UsageQueueLoaderInner::new(Capability::PriorityQueueing),
             next_task_id: AtomicUsize::default(),
             new_task_sender,
         }
@@ -376,7 +376,7 @@ impl BankingStageHelper {
     pub fn create_new_task(
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
+        index: Index,
         consumed_block_size: BlockSize,
     ) -> Task {
         SchedulingStateMachine::create_block_production_task(
@@ -388,7 +388,11 @@ impl BankingStageHelper {
     }
 
     fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
-        let new_index = self.generate_task_ids(1);
+        let new_index = {
+            let original = executed_task.task.task_index();
+            (original & 0xffff_ffff_ffff_ffff_0000_0000_0000_0000)
+                | (self.generate_task_ids(1) as Index)
+        };
         let consumed_block_size = executed_task.consumed_block_size();
         let transaction = executed_task.into_transaction();
         self.create_new_task(transaction, new_index, consumed_block_size)
@@ -1061,7 +1065,10 @@ impl TaskHandler for DefaultTaskHandler {
             }
         };
         let transaction_indexes = match scheduling_context.mode() {
-            BlockVerification => vec![index],
+            BlockVerification => {
+                // Blcok verification's index should always be within usize.
+                vec![index.try_into().unwrap()]
+            }
             BlockProduction => {
                 // Create a placeholder vec, which will be populated later if
                 // transaction_status_sender is Some(_).
@@ -1346,14 +1353,25 @@ mod chained_channel {
 /// instance destruction is managed via `solScCleaner`. This struct is here to be put outside
 /// `solana-unified-scheduler-logic` for the crate's original intent (separation of concerns from
 /// the pure-logic-only crate). Some practical and mundane pruning will be implemented in this type.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 struct UsageQueueLoaderInner {
+    capability: Capability,
     usage_queues: DashMap<Pubkey, UsageQueue>,
 }
 
 impl UsageQueueLoaderInner {
+    fn new(capability: Capability) -> Self {
+        Self {
+            capability,
+            usage_queues: DashMap::default(),
+        }
+    }
+
     fn load(&self, address: Pubkey) -> UsageQueue {
-        self.usage_queues.entry(address).or_default().clone()
+        self.usage_queues
+            .entry(address)
+            .or_insert_with(|| UsageQueue::new(&self.capability))
+            .clone()
     }
 
     fn count(&self) -> usize {
@@ -2634,7 +2652,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
     fn schedule_execution(
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
+        index: Index,
     ) -> ScheduleResult {
         let task = SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
             self.inner.usage_queue_loader.load(pubkey)
@@ -3311,7 +3329,7 @@ mod tests {
             &TestCheckPoint::AfterSchedulerThreadAborted,
         ]);
 
-        static TASK_COUNT: Mutex<usize> = Mutex::new(0);
+        static TASK_COUNT: Mutex<Index> = Mutex::new(0);
 
         #[derive(Debug)]
         struct CountingHandler;
@@ -3351,7 +3369,7 @@ mod tests {
         // That's because the scheduler needs to be aborted quickly as an expected behavior,
         // leaving some readily-available work untouched. So, schedule rather large number of tasks
         // to make the short-cutting abort code-path win the race easily.
-        const MAX_TASK_COUNT: usize = 100;
+        const MAX_TASK_COUNT: Index = 100;
 
         for i in 0..MAX_TASK_COUNT {
             let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -3679,11 +3697,11 @@ mod tests {
         // Use 2 transactions with different timings to deliberately cover the two code paths of
         // notifying panics in the handler threads, taken conditionally depending on whether the
         // scheduler thread has been aborted already or not.
-        const TX_COUNT: usize = 2;
+        const TX_COUNT: Index = 2;
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool = SchedulerPool::<PooledScheduler<PanickingHandler>, _>::new_dyn(
-            Some(TX_COUNT), // fix to use exactly 2 handlers
+            Some(TX_COUNT.try_into().unwrap()), // fix to use exactly 2 handlers
             None,
             None,
             None,
@@ -3808,8 +3826,8 @@ mod tests {
     ) {
         solana_logger::setup();
 
-        const STALLED_TRANSACTION_INDEX: usize = 0;
-        const BLOCKED_TRANSACTION_INDEX: usize = 1;
+        const STALLED_TRANSACTION_INDEX: Index = 0;
+        const BLOCKED_TRANSACTION_INDEX: Index = 1;
 
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::BufferedTask(BLOCKED_TRANSACTION_INDEX),
@@ -3981,9 +3999,9 @@ mod tests {
     fn test_block_production_scheduler_schedule_execution_retry() {
         solana_logger::setup();
 
-        const ORIGINAL_TRANSACTION_INDEX: usize = 999;
+        const ORIGINAL_TRANSACTION_INDEX: Index = 999;
         // This is 0 because it's the first task id assigned internally by BankingStageHelper
-        const RETRIED_TRANSACTION_INDEX: usize = 0;
+        const RETRIED_TRANSACTION_INDEX: Index = 0;
         const FULL_BLOCK_SLOT: Slot = 1;
 
         let _progress = sleepless_testing::setup(&[
@@ -4219,7 +4237,7 @@ mod tests {
         fn schedule_execution(
             &self,
             transaction: RuntimeTransaction<SanitizedTransaction>,
-            index: usize,
+            index: Index,
         ) -> ScheduleResult {
             let context = self.context().clone();
             let pool = self.3.clone();
@@ -4233,7 +4251,7 @@ mod tests {
                 let mut timings = ExecuteTimings::default();
 
                 let task = SchedulingStateMachine::create_task(transaction, index, &mut |_| {
-                    UsageQueue::default()
+                    UsageQueue::new(&Capability::FifoQueueing)
                 });
 
                 <DefaultTaskHandler as TaskHandler>::handle(
@@ -4472,7 +4490,9 @@ mod tests {
             transaction_recorder: None,
         };
 
-        let task = SchedulingStateMachine::create_task(tx, 0, &mut |_| UsageQueue::default());
+        let task = SchedulingStateMachine::create_task(tx, 0, &mut |_| {
+            UsageQueue::new(&Capability::FifoQueueing)
+        });
         DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
         assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
     }
@@ -4566,8 +4586,9 @@ mod tests {
             transaction_recorder: Some(transaction_recorder),
         };
 
-        let task =
-            SchedulingStateMachine::create_task(tx.clone(), 0, &mut |_| UsageQueue::default());
+        let task = SchedulingStateMachine::create_task(tx.clone(), 0, &mut |_| {
+            UsageQueue::new(&Capability::FifoQueueing)
+        });
 
         // wait until the poh's working bank is cleared.
         // also flush signal_receiver after that.
@@ -4701,7 +4722,7 @@ mod tests {
         fn create_new_unconstrained_task(
             &self,
             transaction: RuntimeTransaction<SanitizedTransaction>,
-            index: usize,
+            index: Index,
         ) -> Task {
             self.create_new_task(transaction, index, NO_CONSUMED_BLOCK_SIZE)
         }
@@ -5183,11 +5204,11 @@ mod tests {
             ..
         } = create_genesis_config_for_block_production(10_000);
 
-        const DISCARDED_TASK_COUNT: usize = 3;
+        const DISCARDED_TASK_COUNT: Index = 3;
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::NewBufferedTask(DISCARDED_TASK_COUNT - 1),
             &CheckPoint::DiscardRequested,
-            &CheckPoint::Discarded(DISCARDED_TASK_COUNT),
+            &CheckPoint::Discarded(DISCARDED_TASK_COUNT.try_into().unwrap()),
             &TestCheckPoint::AfterDiscarded,
         ]);
 

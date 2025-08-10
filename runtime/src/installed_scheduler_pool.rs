@@ -30,7 +30,7 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_unified_scheduler_logic::SchedulingMode,
+    solana_unified_scheduler_logic::{Index, SchedulingMode},
     std::{
         fmt::{self, Debug},
         mem,
@@ -177,7 +177,7 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     fn schedule_execution(
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
+        index: Index,
     ) -> ScheduleResult;
 
     /// Return the error which caused the scheduler to abort.
@@ -514,7 +514,7 @@ impl BankWithScheduler {
     pub fn schedule_transaction_executions(
         &self,
         transactions_with_indexes: impl ExactSizeIterator<
-            Item = (RuntimeTransaction<SanitizedTransaction>, usize),
+            Item = (RuntimeTransaction<SanitizedTransaction>, Index),
         >,
     ) -> Result<()> {
         trace!(
