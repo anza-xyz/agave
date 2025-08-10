@@ -47,14 +47,6 @@ pub enum AccountsFileError {
     TieredStorageError(#[from] TieredStorageError),
 }
 
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum MatchAccountOwnerError {
-    #[error("The account owner does not match with the provided list")]
-    NoMatch,
-    #[error("Unable to load the account")]
-    UnableToLoad,
-}
-
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum StorageAccess {
     /// storages should be accessed by Mmap

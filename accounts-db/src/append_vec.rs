@@ -19,8 +19,7 @@ use {
         account_info::Offset,
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_file::{
-            AccountsFileError, InternalsForArchive, MatchAccountOwnerError, Result, StorageAccess,
-            StoredAccountsInfo,
+            AccountsFileError, InternalsForArchive, Result, StorageAccess, StoredAccountsInfo,
         },
         buffered_reader::{
             BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufFileRead,

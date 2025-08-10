@@ -2,7 +2,6 @@ use {
     crate::{
         account_info::Offset,
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
-        accounts_file::MatchAccountOwnerError,
         tiered_storage::{
             file::TieredReadableFile,
             footer::{AccountMetaFormat, TieredStorageFooter},

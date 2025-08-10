@@ -4,7 +4,7 @@ use {
     crate::{
         account_info::{AccountInfo, Offset},
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
-        accounts_file::{MatchAccountOwnerError, StoredAccountsInfo},
+        accounts_file::StoredAccountsInfo,
         tiered_storage::{
             byte_block,
             file::{TieredReadableFile, TieredWritableFile},
@@ -838,7 +838,7 @@ mod tests {
         },
         assert_matches::assert_matches,
         memoffset::offset_of,
-        rand::{seq::SliceRandom, Rng},
+        rand::Rng,
         solana_account::ReadableAccount,
         solana_clock::{Epoch, Slot},
         solana_hash::Hash,

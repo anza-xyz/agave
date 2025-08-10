@@ -38,10 +38,7 @@ use {
             AccountsStats, CleanAccountsStats, FlushStats, ObsoleteAccountsStats, PurgeStats,
             ShrinkAncientStats, ShrinkStats, ShrinkStatsSub, StoreAccountsTiming,
         },
-        accounts_file::{
-            AccountsFile, AccountsFileError, AccountsFileProvider, MatchAccountOwnerError,
-            StorageAccess,
-        },
+        accounts_file::{AccountsFile, AccountsFileError, AccountsFileProvider, StorageAccess},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             in_mem_accounts_index::StartupStats, AccountSecondaryIndexes, AccountsIndex,
