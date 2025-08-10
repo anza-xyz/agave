@@ -364,7 +364,6 @@ dependencies = [
  "solana-keccak-hasher",
  "solana-last-restart-slot",
  "solana-loader-v3-interface",
- "solana-measure",
  "solana-poseidon",
  "solana-program",
  "solana-program-entrypoint",
@@ -380,6 +379,7 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
+ "solana-svm-measure",
  "solana-svm-timings",
  "solana-svm-type-overrides",
  "solana-sysvar",
@@ -7286,7 +7286,6 @@ dependencies = [
  "solana-last-restart-slot",
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
- "solana-measure",
  "solana-packet",
  "solana-program",
  "solana-program-entrypoint",
@@ -7299,6 +7298,7 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
+ "solana-svm-measure",
  "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-transaction-context",
@@ -9046,13 +9046,13 @@ dependencies = [
  "solana-instruction",
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
- "solana-measure",
  "solana-packet",
  "solana-program-runtime",
  "solana-pubkey",
  "solana-sbpf",
  "solana-sdk-ids",
  "solana-svm-log-collector",
+ "solana-svm-measure",
  "solana-svm-type-overrides",
  "solana-sysvar",
  "solana-transaction-context",
@@ -9656,7 +9656,6 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-last-restart-slot",
- "solana-measure",
  "solana-metrics",
  "solana-program-entrypoint",
  "solana-program-runtime",
@@ -9669,6 +9668,7 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
+ "solana-svm-measure",
  "solana-svm-timings",
  "solana-svm-transaction",
  "solana-svm-type-overrides",
@@ -10904,7 +10904,6 @@ dependencies = [
  "solana-loader-v4-interface",
  "solana-loader-v4-program",
  "solana-logger 3.0.0",
- "solana-measure",
  "solana-message",
  "solana-native-token",
  "solana-nonce",
@@ -10926,6 +10925,7 @@ dependencies = [
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-log-collector",
+ "solana-svm-measure",
  "solana-svm-timings",
  "solana-svm-transaction",
  "solana-svm-type-overrides",
@@ -10963,6 +10963,10 @@ version = "3.0.0"
 dependencies = [
  "log",
 ]
+
+[[package]]
+name = "solana-svm-measure"
+version = "3.0.0"
 
 [[package]]
 name = "solana-svm-timings"

@@ -1,6 +1,6 @@
 use {
-    solana_measure::measure_us,
     solana_program_runtime::invoke_context::InvokeContext,
+    solana_svm_measure::measure_us,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction_context::IndexOfAccount,

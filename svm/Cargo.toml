@@ -56,7 +56,6 @@ solana-instructions-sysvar = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
 solana-loader-v4-interface = { workspace = true }
 solana-loader-v4-program = { workspace = true }
-solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
@@ -70,6 +69,7 @@ solana-sdk-ids = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
+solana-svm-measure = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }

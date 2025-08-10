@@ -13,7 +13,6 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
-    solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
@@ -28,6 +27,7 @@ use {
     solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::{ic_msg, LogCollector},
+    solana_svm_measure::measure::Measure,
     solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
     solana_svm_type_overrides::sync::Arc,

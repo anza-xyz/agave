@@ -45,7 +45,6 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-last-restart-slot = { workspace = true }
-solana-measure = { workspace = true }
 solana-metrics = { workspace = true, optional = true }
 solana-program-entrypoint = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -56,6 +55,7 @@ solana-slot-hashes = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
+solana-svm-measure = { workspace = true }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
