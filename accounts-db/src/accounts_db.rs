@@ -831,36 +831,6 @@ impl LoadedAccountAccessor<'_> {
             }
         }
     }
-
-    fn account_matches_owners(&self, owners: &[Pubkey]) -> Result<usize, MatchAccountOwnerError> {
-        match self {
-            LoadedAccountAccessor::Cached(cached_account) => cached_account
-                .as_ref()
-                .and_then(|cached_account| {
-                    if cached_account.account.is_zero_lamport() {
-                        None
-                    } else {
-                        owners
-                            .iter()
-                            .position(|entry| cached_account.account.owner() == entry)
-                    }
-                })
-                .ok_or(MatchAccountOwnerError::NoMatch),
-            LoadedAccountAccessor::Stored(maybe_storage_entry) => {
-                // storage entry may not be present if slot was cleaned up in
-                // between reading the accounts index and calling this function to
-                // get account meta from the storage entry here
-                maybe_storage_entry
-                    .as_ref()
-                    .map(|(storage_entry, offset)| {
-                        storage_entry
-                            .accounts
-                            .account_matches_owners(*offset, owners)
-                    })
-                    .unwrap_or(Err(MatchAccountOwnerError::UnableToLoad))
-            }
-        }
-    }
 }
 
 pub enum LoadedAccount<'a> {
@@ -4093,47 +4063,6 @@ impl AccountsDb {
         load_hint: LoadHint,
     ) -> Option<(AccountSharedData, Slot)> {
         self.do_load(ancestors, pubkey, None, load_hint, LoadZeroLamports::None)
-    }
-
-    /// Return Ok(index_of_matching_owner) if the account owner at `offset` is one of the pubkeys in `owners`.
-    /// Return Err(MatchAccountOwnerError::NoMatch) if the account has 0 lamports or the owner is not one of
-    /// the pubkeys in `owners`.
-    /// Return Err(MatchAccountOwnerError::UnableToLoad) if the account could not be accessed.
-    pub fn account_matches_owners(
-        &self,
-        ancestors: &Ancestors,
-        account: &Pubkey,
-        owners: &[Pubkey],
-    ) -> Result<usize, MatchAccountOwnerError> {
-        let (slot, storage_location, _maybe_account_accessor) = self
-            .read_index_for_accessor_or_load_slow(ancestors, account, None, false)
-            .ok_or(MatchAccountOwnerError::UnableToLoad)?;
-
-        if !storage_location.is_cached() {
-            let result = self.read_only_accounts_cache.load(*account, slot);
-            if let Some(account) = result {
-                return if account.is_zero_lamport() {
-                    Err(MatchAccountOwnerError::NoMatch)
-                } else {
-                    owners
-                        .iter()
-                        .position(|entry| account.owner() == entry)
-                        .ok_or(MatchAccountOwnerError::NoMatch)
-                };
-            }
-        }
-
-        let (account_accessor, _slot) = self
-            .retry_to_get_account_accessor(
-                slot,
-                storage_location,
-                ancestors,
-                account,
-                None,
-                LoadHint::Unspecified,
-            )
-            .ok_or(MatchAccountOwnerError::UnableToLoad)?;
-        account_accessor.account_matches_owners(owners)
     }
 
     /// load the account with `pubkey` into the read only accounts cache.

@@ -263,28 +263,6 @@ impl AccountsFile {
         }
     }
 
-    pub fn account_matches_owners(
-        &self,
-        offset: usize,
-        owners: &[Pubkey],
-    ) -> std::result::Result<usize, MatchAccountOwnerError> {
-        match self {
-            Self::AppendVec(av) => av.account_matches_owners(offset, owners),
-            // Note: The conversion here is needed as the AccountsDB currently
-            // assumes all offsets are multiple of 8 while TieredStorage uses
-            // IndexOffset that is equivalent to AccountInfo::reduced_offset.
-            Self::TieredStorage(ts) => {
-                let Some(reader) = ts.reader() else {
-                    return Err(MatchAccountOwnerError::UnableToLoad);
-                };
-                reader.account_matches_owners(
-                    IndexOffset(AccountInfo::get_reduced_offset(offset)),
-                    owners,
-                )
-            }
-        }
-    }
-
     /// Return the path of the underlying account file.
     pub fn path(&self) -> &Path {
         match self {

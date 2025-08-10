@@ -893,28 +893,6 @@ impl AppendVec {
         }
     }
 
-    /// Return Ok(index_of_matching_owner) if the account owner at `offset` is one of the pubkeys in `owners`.
-    /// Return Err(MatchAccountOwnerError::NoMatch) if the account has 0 lamports or the owner is not one of
-    /// the pubkeys in `owners`.
-    /// Return Err(MatchAccountOwnerError::UnableToLoad) if the `offset` value causes a data overrun.
-    pub fn account_matches_owners(
-        &self,
-        offset: usize,
-        owners: &[Pubkey],
-    ) -> std::result::Result<usize, MatchAccountOwnerError> {
-        self.get_stored_account_no_data_callback(offset, |stored_account_meta| {
-            if stored_account_meta.lamports() == 0 {
-                Err(MatchAccountOwnerError::NoMatch)
-            } else {
-                owners
-                    .iter()
-                    .position(|entry| stored_account_meta.owner() == entry)
-                    .ok_or(MatchAccountOwnerError::NoMatch)
-            }
-        })
-        .unwrap_or(Err(MatchAccountOwnerError::UnableToLoad))
-    }
-
     #[cfg(test)]
     pub fn get_account_test(
         &self,
@@ -1589,46 +1567,6 @@ pub mod tests {
         let index1 = av.append_account_test(&account1).unwrap();
         assert_eq!(av.get_account_test(index).unwrap(), account);
         assert_eq!(av.get_account_test(index1).unwrap(), account1);
-    }
-
-    #[test]
-    fn test_account_matches_owners() {
-        let path = get_append_vec_path("test_append_data");
-        let av = AppendVec::new(&path.path, true, 1024 * 1024);
-        let owners: Vec<Pubkey> = (0..2).map(|_| Pubkey::new_unique()).collect();
-
-        let mut account = create_test_account(5);
-        account.1.set_owner(owners[0]);
-        let index = av.append_account_test(&account).unwrap();
-        assert_eq!(av.account_matches_owners(index, &owners), Ok(0));
-
-        let mut account1 = create_test_account(6);
-        account1.1.set_owner(owners[1]);
-        let index1 = av.append_account_test(&account1).unwrap();
-        assert_eq!(av.account_matches_owners(index1, &owners), Ok(1));
-        assert_eq!(av.account_matches_owners(index, &owners), Ok(0));
-
-        let mut account2 = create_test_account(6);
-        account2.1.set_owner(Pubkey::new_unique());
-        let index2 = av.append_account_test(&account2).unwrap();
-        assert_eq!(
-            av.account_matches_owners(index2, &owners),
-            Err(MatchAccountOwnerError::NoMatch)
-        );
-
-        // tests for overflow
-        assert_eq!(
-            av.account_matches_owners(usize::MAX - mem::size_of::<StoredMeta>(), &owners),
-            Err(MatchAccountOwnerError::UnableToLoad)
-        );
-
-        assert_eq!(
-            av.account_matches_owners(
-                usize::MAX - mem::size_of::<StoredMeta>() - mem::size_of::<AccountMeta>() + 1,
-                &owners
-            ),
-            Err(MatchAccountOwnerError::UnableToLoad)
-        );
     }
 
     impl AppendVec {
