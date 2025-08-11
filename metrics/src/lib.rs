@@ -1,8 +1,12 @@
 #![allow(clippy::arithmetic_side_effects)]
 pub mod counter;
 pub mod datapoint;
+pub mod influxdb_v1;
 pub mod metrics;
-pub use crate::metrics::{flush, query, set_host_id, set_panic_hook, submit};
+pub use crate::{
+    influxdb_v1::query,
+    metrics::{flush, set_host_id, set_panic_hook, submit},
+};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,

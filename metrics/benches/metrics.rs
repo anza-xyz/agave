@@ -5,7 +5,8 @@ use {
     solana_metrics::{
         counter::CounterPoint,
         datapoint::DataPoint,
-        metrics::{serialize_points, test_mocks::MockMetricsWriter, MetricsAgent},
+        influxdb_v1::serialize_points,
+        metrics::{test_mocks::MockMetricsWriter, MetricsAgent},
     },
     std::{hint::black_box, sync::Arc, time::Duration},
 };
