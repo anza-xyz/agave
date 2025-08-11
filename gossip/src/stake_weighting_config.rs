@@ -1,7 +1,11 @@
-use {serde::Deserialize, solana_account::ReadableAccount, solana_runtime::bank::Bank};
+use {
+    serde::{Deserialize, Serialize},
+    solana_account::ReadableAccount,
+    solana_runtime::bank::Bank,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TimeConstant {
+pub(crate) enum TimeConstant {
     /// IIR time-constant (ms)
     Value(u64),
     /// Use the default time constant.
@@ -11,7 +15,7 @@ pub enum TimeConstant {
 /// Actual on-chain state that controls the weighting of gossip nodes
 #[derive(Serialize, Deserialize, Debug, Default)]
 #[repr(C)]
-pub struct WeightingConfig {
+pub(crate) struct WeightingConfig {
     _version: u8,           // This is part of Record program header
     _authority: [u8; 32],   // This is part of Record program header
     pub weighting_mode: u8, // 0 = Static, 1 = Dynamic
@@ -23,7 +27,7 @@ pub const WEIGHTING_MODE_STATIC: u8 = 0;
 pub const WEIGHTING_MODE_DYNAMIC: u8 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum WeightingConfigTyped {
+pub(crate) enum WeightingConfigTyped {
     Static,
     Dynamic { tc: TimeConstant },
 }
@@ -47,7 +51,7 @@ impl From<&WeightingConfig> for WeightingConfigTyped {
 
 impl WeightingConfig {
     #[cfg(test)]
-    pub fn new_for_test(weighting_mode: u8, tc_ms: u64) -> Self {
+    pub(crate) fn new_for_test(weighting_mode: u8, tc_ms: u64) -> Self {
         Self {
             _version: 0,
             _authority: [0; 32],

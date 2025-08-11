@@ -74,7 +74,7 @@ pub struct CrdsGossipPush {
 impl Default for CrdsGossipPush {
     fn default() -> Self {
         Self {
-            active_set: RwLock::new(PushActiveSet::new_dynamic()),
+            active_set: RwLock::new(PushActiveSet::new_static()),
             crds_cursor: Mutex::default(),
             received_cache: Mutex::new(ReceivedCache::new(2 * CRDS_UNIQUE_PUBKEY_CAPACITY)),
             push_fanout: CRDS_GOSSIP_PUSH_FANOUT,

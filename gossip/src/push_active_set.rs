@@ -67,7 +67,7 @@ fn get_weight(bucket: u64, alpha: u64) -> u64 {
 /// Note: This function is most accurate when `base` is small e.g. < ~25.
 #[inline]
 #[allow(clippy::arithmetic_side_effects)]
-pub fn gossip_interpolate_weight(base: u64, base_squared: u64, alpha: u64) -> u64 {
+fn gossip_interpolate_weight(base: u64, base_squared: u64, alpha: u64) -> u64 {
     let scale = lpf::SCALE.get();
     let t = alpha.saturating_sub(ALPHA_MIN);
     debug_assert!(t <= scale, "interpolation t={} > SCALE={}", t, scale);
@@ -94,10 +94,8 @@ impl PushActiveSet {
         }
     }
 
-    pub(crate) fn new_dynamic() -> Self {
-        Self::new(WeightingMode::from(WeightingConfigTyped::Dynamic {
-            tc: TimeConstant::Default,
-        }))
+    pub(crate) fn new_static() -> Self {
+        Self::new(WeightingMode::Static)
     }
 
     pub(crate) fn apply_cfg(&mut self, cfg: &WeightingConfig) {
@@ -365,6 +363,12 @@ mod tests {
 
     const MAX_STAKE: u64 = (1 << 20) * LAMPORTS_PER_SOL;
 
+    fn push_active_set_new_dynamic() -> PushActiveSet {
+        PushActiveSet::new(WeightingMode::from(WeightingConfigTyped::Dynamic {
+            tc: TimeConstant::Default,
+        }))
+    }
+
     // Helper to generate a stake map given unstaked count
     fn make_stakes(
         nodes: &[Pubkey],
@@ -473,7 +477,7 @@ mod tests {
         let stakes = repeat_with(|| rng.gen_range(1..MAX_STAKE));
         let mut stakes: HashMap<_, _> = nodes.iter().copied().zip(stakes).collect();
         stakes.insert(pubkey, rng.gen_range(1..MAX_STAKE));
-        let mut active_set = PushActiveSet::new_dynamic();
+        let mut active_set = push_active_set_new_dynamic();
         assert!(active_set.entries.iter().all(|entry| entry.0.is_empty()));
         active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, &pubkey);
         assert!(active_set.entries.iter().all(|entry| entry.0.len() == 5));
@@ -593,7 +597,7 @@ mod tests {
     #[test]
     fn test_alpha_converges_to_expected_target() {
         const CLUSTER_SIZE: usize = 415;
-        const TOLERANCE_MILLI: u64 = 10_000; // ±1% of alpha
+        const TOLERANCE_MILLI: u64 = lpf::SCALE.get() / 100; // ±1% of alpha
 
         let mut rng = ChaChaRng::from_seed([77u8; 32]);
         let mut nodes: Vec<Pubkey> = repeat_with(Pubkey::new_unique).take(CLUSTER_SIZE).collect();
@@ -606,7 +610,7 @@ mod tests {
         let stakes = make_stakes(&nodes, num_unstaked, &mut rng);
         let my_pubkey = nodes.pop().unwrap();
 
-        let mut active_set = PushActiveSet::new_dynamic();
+        let mut active_set = push_active_set_new_dynamic();
 
         // Simulate repeated calls to `rotate()` (as would happen every 7.5s)
         // 8 calls (60s) should be enough to converge to the expected target alpha.
@@ -645,13 +649,13 @@ mod tests {
     #[test]
     fn test_alpha_converges_up_and_down() {
         const CLUSTER_SIZE: usize = 415;
-        const TOLERANCE_MILLI: u64 = 10_000; // ±1% of alpha
+        const TOLERANCE_MILLI: u64 = lpf::SCALE.get() / 100; // ±1% of alpha
         const ROTATE_CALLS: usize = 8;
 
         let mut rng = ChaChaRng::from_seed([99u8; 32]);
         let mut nodes: Vec<Pubkey> = repeat_with(Pubkey::new_unique).take(CLUSTER_SIZE).collect();
 
-        let mut active_set = PushActiveSet::new_dynamic();
+        let mut active_set = push_active_set_new_dynamic();
 
         // 0% unstaked → alpha_target = 1,000,000
         let num_unstaked = 0;
@@ -790,7 +794,7 @@ mod tests {
     #[test]
     fn test_apply_cfg_dynamic_to_static() {
         // Dynamic -> Static: Mode switch
-        let mut active_set = PushActiveSet::new_dynamic();
+        let mut active_set = push_active_set_new_dynamic();
         assert!(matches!(active_set.mode, WeightingMode::Dynamic { .. }));
 
         active_set.apply_cfg(&WeightingConfig::new_for_test(WEIGHTING_MODE_STATIC, 0));
@@ -826,7 +830,7 @@ mod tests {
     #[test]
     fn test_apply_cfg_dynamic_to_dynamic_same_tc() {
         // Dynamic -> Dynamic (same tc): No change
-        let mut active_set = PushActiveSet::new_dynamic();
+        let mut active_set = push_active_set_new_dynamic();
         let original_mode = active_set.mode;
 
         let config = WeightingConfig::new_for_test(WEIGHTING_MODE_DYNAMIC, 0);
@@ -839,7 +843,7 @@ mod tests {
     #[test]
     fn test_apply_cfg_dynamic_to_dynamic_different_tc() {
         // Dynamic -> Dynamic (different tc): Update filter parameters
-        let mut active_set = PushActiveSet::new_dynamic();
+        let mut active_set = push_active_set_new_dynamic();
 
         // Change to a different tc value
         let new_tc_ms = 45_000;

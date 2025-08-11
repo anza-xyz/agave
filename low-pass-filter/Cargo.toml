@@ -12,7 +12,6 @@ publish = false
 path = "src/lib.rs"
 
 [features]
-default = []
 agave-unstable-api = []
 
 [dependencies]
