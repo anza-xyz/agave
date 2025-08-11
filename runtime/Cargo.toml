@@ -155,6 +155,7 @@ solana-stake-interface = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
+solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-program = { workspace = true, optional = true }
@@ -162,7 +163,6 @@ solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-time-utils = { workspace = true }
-solana-timings = { workspace = true }
 solana-transaction = { workspace = true, features = ["verify"] }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }

@@ -1,6 +1,5 @@
 use {
     solana_instruction::error::InstructionError,
-    solana_log_collector::ic_msg,
     solana_nonce::{
         self as nonce,
         state::{DurableNonce, State},
@@ -8,6 +7,7 @@ use {
     },
     solana_program_runtime::invoke_context::InvokeContext,
     solana_pubkey::Pubkey,
+    solana_svm_log_collector::ic_msg,
     solana_system_interface::error::SystemError,
     solana_sysvar::rent::Rent,
     solana_transaction_context::{

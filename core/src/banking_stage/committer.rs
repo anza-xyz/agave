@@ -63,7 +63,7 @@ impl Committer {
         batch: &TransactionBatch<impl TransactionWithMeta>,
         processing_results: Vec<TransactionProcessingResult>,
         starting_transaction_index: Option<usize>,
-        bank: &Arc<Bank>,
+        bank: &Bank,
         balance_collector: Option<BalanceCollector>,
         execute_and_commit_timings: &mut LeaderExecuteAndCommitTimings,
         processed_counts: &ProcessedTransactionCounts,
@@ -122,7 +122,7 @@ impl Committer {
     fn collect_balances_and_send_status_batch(
         &self,
         commit_results: Vec<TransactionCommitResult>,
-        bank: &Arc<Bank>,
+        bank: &Bank,
         batch: &TransactionBatch<impl TransactionWithMeta>,
         balance_collector: Option<BalanceCollector>,
         starting_transaction_index: Option<usize>,

@@ -5,16 +5,14 @@ use {
         payload::Payload,
         traits::{Shred, ShredCode as ShredCodeTrait},
         CodingShredHeader, Error, ShredCommonHeader, ShredType, SignedData,
-        DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, SIZE_OF_NONCE,
+        DATA_SHREDS_PER_FEC_BLOCK, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT,
+        SIZE_OF_NONCE,
     },
     solana_hash::Hash,
     solana_packet::PACKET_DATA_SIZE,
     solana_signature::Signature,
     static_assertions::const_assert_eq,
 };
-
-const_assert_eq!(MAX_CODE_SHREDS_PER_SLOT, 32_768);
-pub const MAX_CODE_SHREDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT;
 
 const_assert_eq!(ShredCode::SIZE_OF_PAYLOAD, 1228);
 

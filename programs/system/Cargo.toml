@@ -25,17 +25,17 @@ solana-account = { workspace = true }
 solana-bincode = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
-solana-log-collector = { workspace = true }
 solana-nonce = { workspace = true, features = ["serde"] }
 solana-nonce-account = { workspace = true }
 solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["sha2"] }
 solana-sdk-ids = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true, features = ["serde"] }
 solana-sysvar = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
-solana-type-overrides = { workspace = true }
 
 [dev-dependencies]
 agave-feature-set = { workspace = true }

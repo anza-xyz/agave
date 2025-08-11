@@ -200,8 +200,6 @@ pub struct TransactionContext {
     top_level_instruction_index: usize,
     return_data: TransactionReturnData,
     #[cfg(not(target_os = "solana"))]
-    remove_accounts_executable_flag_checks: bool,
-    #[cfg(not(target_os = "solana"))]
     rent: Rent,
 }
 
@@ -227,14 +225,8 @@ impl TransactionContext {
             instruction_trace: vec![InstructionContext::default()],
             top_level_instruction_index: 0,
             return_data: TransactionReturnData::default(),
-            remove_accounts_executable_flag_checks: true,
             rent,
         }
-    }
-
-    #[cfg(not(target_os = "solana"))]
-    pub fn set_remove_accounts_executable_flag_checks(&mut self, enabled: bool) {
-        self.remove_accounts_executable_flag_checks = enabled;
     }
 
     /// Used in mock_process_instruction
@@ -890,11 +882,6 @@ pub struct BorrowedAccount<'a> {
 }
 
 impl BorrowedAccount<'_> {
-    /// Returns the transaction context
-    pub fn transaction_context(&self) -> &TransactionContext {
-        self.transaction_context
-    }
-
     /// Returns the index of this account (transaction wide)
     #[inline]
     pub fn get_index_in_transaction(&self) -> IndexOfAccount {
@@ -926,10 +913,6 @@ impl BorrowedAccount<'_> {
         if !self.is_writable() {
             return Err(InstructionError::ModifiedProgramId);
         }
-        // and only if the account is not executable
-        if self.is_executable_internal() {
-            return Err(InstructionError::ModifiedProgramId);
-        }
         // and only if the data is zero-initialized or empty
         if !is_zeroed(self.get_data()) {
             return Err(InstructionError::ModifiedProgramId);
@@ -959,10 +942,6 @@ impl BorrowedAccount<'_> {
         // The balance of read-only may not change
         if !self.is_writable() {
             return Err(InstructionError::ReadonlyLamportChange);
-        }
-        // The balance of executable accounts may not change
-        if self.is_executable_internal() {
-            return Err(InstructionError::ExecutableLamportChange);
         }
         // don't touch the account if the lamports do not change
         if self.get_lamports() == lamports {
@@ -1006,24 +985,6 @@ impl BorrowedAccount<'_> {
         self.touch()?;
         self.make_data_mut();
         Ok(self.account.data_as_mut_slice())
-    }
-
-    /// Overwrites the account data and size (transaction wide).
-    ///
-    /// You should always prefer set_data_from_slice(). Calling this method is
-    /// currently safe but requires some special casing during CPI when direct
-    /// account mapping is enabled.
-    #[cfg(all(
-        not(target_os = "solana"),
-        any(test, feature = "dev-context-only-utils")
-    ))]
-    pub fn set_data(&mut self, data: Vec<u8>) -> Result<(), InstructionError> {
-        self.can_data_be_resized(data.len())?;
-        self.touch()?;
-
-        self.update_accounts_resize_delta(data.len())?;
-        self.account.set_data(data);
-        Ok(())
     }
 
     /// Overwrites the account data and size (transaction wide).
@@ -1144,16 +1105,6 @@ impl BorrowedAccount<'_> {
         self.account.executable()
     }
 
-    /// Feature gating to remove `is_executable` flag related checks
-    #[cfg(not(target_os = "solana"))]
-    #[inline]
-    fn is_executable_internal(&self) -> bool {
-        !self
-            .transaction_context
-            .remove_accounts_executable_flag_checks
-            && self.account.executable()
-    }
-
     /// Configures whether this account is executable (transaction wide)
     #[cfg(not(target_os = "solana"))]
     pub fn set_executable(&mut self, is_executable: bool) -> Result<(), InstructionError> {
@@ -1171,10 +1122,6 @@ impl BorrowedAccount<'_> {
         }
         // and only if the account is writable
         if !self.is_writable() {
-            return Err(InstructionError::ExecutableModified);
-        }
-        // one can not clear the executable flag
-        if self.is_executable_internal() && !is_executable {
             return Err(InstructionError::ExecutableModified);
         }
         // don't touch the account if the executable flag does not change
@@ -1227,10 +1174,6 @@ impl BorrowedAccount<'_> {
     /// Returns an error if the account data can not be mutated by the current program
     #[cfg(not(target_os = "solana"))]
     pub fn can_data_be_changed(&self) -> Result<(), InstructionError> {
-        // Only non-executable accounts data can be changed
-        if self.is_executable_internal() {
-            return Err(InstructionError::ExecutableDataModified);
-        }
         // and only if the account is writable
         if !self.is_writable() {
             return Err(InstructionError::ReadonlyDataModified);

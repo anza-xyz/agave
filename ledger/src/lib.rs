@@ -26,7 +26,7 @@ pub mod leader_schedule_cache;
 pub mod leader_schedule_utils;
 pub mod next_slots_iterator;
 pub mod rooted_slot_iterator;
-pub mod shred;
+conditional_mod::conditional_vis_mod!(shred, feature="agave-unstable-api", pub,pub(crate));
 mod shredder;
 pub mod sigverify_shreds;
 pub mod slot_stats;

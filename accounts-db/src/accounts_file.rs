@@ -47,14 +47,6 @@ pub enum AccountsFileError {
     TieredStorageError(#[from] TieredStorageError),
 }
 
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum MatchAccountOwnerError {
-    #[error("The account owner does not match with the provided list")]
-    NoMatch,
-    #[error("Unable to load the account")]
-    UnableToLoad,
-}
-
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum StorageAccess {
     /// storages should be accessed by Mmap
@@ -259,28 +251,6 @@ impl AccountsFile {
                 // IndexOffset that is equivalent to AccountInfo::reduced_offset.
                 let index_offset = IndexOffset(AccountInfo::get_reduced_offset(offset));
                 ts.reader()?.get_account_shared_data(index_offset).ok()?
-            }
-        }
-    }
-
-    pub fn account_matches_owners(
-        &self,
-        offset: usize,
-        owners: &[Pubkey],
-    ) -> std::result::Result<usize, MatchAccountOwnerError> {
-        match self {
-            Self::AppendVec(av) => av.account_matches_owners(offset, owners),
-            // Note: The conversion here is needed as the AccountsDB currently
-            // assumes all offsets are multiple of 8 while TieredStorage uses
-            // IndexOffset that is equivalent to AccountInfo::reduced_offset.
-            Self::TieredStorage(ts) => {
-                let Some(reader) = ts.reader() else {
-                    return Err(MatchAccountOwnerError::UnableToLoad);
-                };
-                reader.account_matches_owners(
-                    IndexOffset(AccountInfo::get_reduced_offset(offset)),
-                    owners,
-                )
             }
         }
     }

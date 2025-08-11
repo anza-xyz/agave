@@ -13,8 +13,6 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
-    solana_log_collector::{ic_msg, LogCollector},
-    solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
@@ -28,13 +26,15 @@ use {
     },
     solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
+    solana_svm_log_collector::{ic_msg, LogCollector},
+    solana_svm_measure::measure::Measure,
+    solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
-    solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
+    solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
         IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
         MAX_ACCOUNTS_PER_TRANSACTION,
     },
-    solana_type_overrides::sync::Arc,
     std::{
         alloc::Layout,
         cell::RefCell,
@@ -444,15 +444,6 @@ impl<'a> InvokeContext<'a> {
                 })?;
             let borrowed_program_account = instruction_context
                 .try_borrow_instruction_account(self.transaction_context, program_account_index)?;
-            #[allow(deprecated)]
-            if !self
-                .get_feature_set()
-                .remove_accounts_executable_flag_checks
-                && !borrowed_program_account.is_executable()
-            {
-                ic_msg!(self, "Account {} is not executable", callee_program_id);
-                return Err(InstructionError::AccountNotExecutable);
-            }
 
             borrowed_program_account.get_index_in_transaction()
         };
@@ -561,21 +552,14 @@ impl<'a> InvokeContext<'a> {
             let owner_id = borrowed_root_account.get_owner();
             if native_loader::check_id(owner_id) {
                 *borrowed_root_account.get_key()
-            } else if self
-                .get_feature_set()
-                .remove_accounts_executable_flag_checks
+            } else if bpf_loader_deprecated::check_id(owner_id)
+                || bpf_loader::check_id(owner_id)
+                || bpf_loader_upgradeable::check_id(owner_id)
+                || loader_v4::check_id(owner_id)
             {
-                if bpf_loader_deprecated::check_id(owner_id)
-                    || bpf_loader::check_id(owner_id)
-                    || bpf_loader_upgradeable::check_id(owner_id)
-                    || loader_v4::check_id(owner_id)
-                {
-                    *owner_id
-                } else {
-                    return Err(InstructionError::UnsupportedProgramId);
-                }
-            } else {
                 *owner_id
+            } else {
+                return Err(InstructionError::UnsupportedProgramId);
             }
         };
 
@@ -785,8 +769,8 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         $transaction_accounts:expr $(,)?
     ) => {
         use {
-            solana_log_collector::LogCollector,
             solana_svm_callback::InvokeContextCallback,
+            solana_svm_log_collector::LogCollector,
             $crate::{
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
@@ -1090,7 +1074,7 @@ mod tests {
                     }
                     MockInstruction::Resize { new_len } => instruction_context
                         .try_borrow_instruction_account(transaction_context, 0)?
-                        .set_data(vec![0; new_len as usize])?,
+                        .set_data_from_slice(&vec![0; new_len as usize])?,
                 }
             } else {
                 return Err(InstructionError::InvalidInstructionData);
