@@ -98,12 +98,12 @@ pub(crate) fn simulate_and_update_compute_unit_limit(
     };
 
     match compute_unit_limit {
-        ComputeUnitLimit::Simulated | ComputeUnitLimit::SimulatedWithExtra(_) => {
+        ComputeUnitLimit::Simulated | ComputeUnitLimit::SimulatedWithExtraPercentage(_) => {
             let base_compute_unit_limit =
                 simulate_for_compute_unit_limit_unchecked(rpc_client, message)?;
 
             let compute_unit_limit =
-                if let ComputeUnitLimit::SimulatedWithExtra(n) = compute_unit_limit {
+                if let ComputeUnitLimit::SimulatedWithExtraPercentage(n) = compute_unit_limit {
                     (base_compute_unit_limit as u64)
                         .saturating_mul(100_u64.saturating_add(*n as u64))
                         .saturating_div(100) as u32
@@ -147,7 +147,7 @@ impl WithComputeUnitConfig for Vec<Instruction> {
                         compute_unit_limit,
                     ));
                 }
-                ComputeUnitLimit::Simulated | ComputeUnitLimit::SimulatedWithExtra(_) => {
+                ComputeUnitLimit::Simulated | ComputeUnitLimit::SimulatedWithExtraPercentage(_) => {
                     // Default to the max compute unit limit because later transactions will be
                     // simulated to get the exact compute units consumed.
                     self.push(ComputeBudgetInstruction::set_compute_unit_limit(

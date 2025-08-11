@@ -1712,7 +1712,9 @@ pub fn process_deactivate_stake_account(
     // DeactivateDelinquent parses a VoteState, which may change between simulation and execution
     let compute_unit_limit = match blockhash_query {
         BlockhashQuery::None(_) | BlockhashQuery::FeeCalculator(_, _) => ComputeUnitLimit::Default,
-        BlockhashQuery::All(_) if deactivate_delinquent => ComputeUnitLimit::SimulatedWithExtra(5),
+        BlockhashQuery::All(_) if deactivate_delinquent => {
+            ComputeUnitLimit::SimulatedWithExtraPercentage(5)
+        }
         BlockhashQuery::All(_) => ComputeUnitLimit::Simulated,
     };
     let ixs = vec![if deactivate_delinquent {
@@ -2810,7 +2812,7 @@ pub fn process_delegate_stake(
     // DelegateStake parses a VoteState, which may change between simulation and execution
     let compute_unit_limit = match blockhash_query {
         BlockhashQuery::None(_) | BlockhashQuery::FeeCalculator(_, _) => ComputeUnitLimit::Default,
-        BlockhashQuery::All(_) => ComputeUnitLimit::SimulatedWithExtra(5),
+        BlockhashQuery::All(_) => ComputeUnitLimit::SimulatedWithExtraPercentage(5),
     };
     let ixs = vec![stake_instruction::delegate_stake(
         stake_account_pubkey,
