@@ -2484,7 +2484,7 @@ impl ReplayStage {
                     );
                 }
             }
-    let highest_super_majority_root = Some(
+            let highest_super_majority_root = Some(
                 block_commitment_cache
                     .read()
                     .unwrap()
