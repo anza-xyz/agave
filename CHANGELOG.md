@@ -40,6 +40,7 @@ Release channels have their own copy of this changelog:
   * `--skip-poh-verify`
 * Deprecated snapshot archive formats have been removed and are no longer loadable.
 * Using `--snapshot-interval-slots 0` to disable generating snapshots has been removed. Use `--no-snapshots` instead.
+* Validator will now bind all ports within provided `--dynamic-port-range`, a minimum of 25 ports are required.
 
 #### Changes
 * `--transaction-structure view` is now the default.
