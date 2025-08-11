@@ -354,19 +354,15 @@ struct ReplayLoopTiming {
 }
 impl ReplayLoopTiming {
     #[allow(clippy::too_many_arguments)]
-    fn update(
+    fn update_non_alpenglow(
         &mut self,
         collect_frozen_banks_elapsed_us: u64,
         compute_bank_stats_elapsed_us: u64,
         select_vote_and_reset_forks_elapsed_us: u64,
-        start_leader_elapsed_us: u64,
         reset_bank_elapsed_us: u64,
         voting_elapsed_us: u64,
         select_forks_elapsed_us: u64,
         compute_slot_stats_elapsed_us: u64,
-        generate_new_bank_forks_elapsed_us: u64,
-        replay_active_banks_elapsed_us: u64,
-        wait_receive_elapsed_us: u64,
         heaviest_fork_failures_elapsed_us: u64,
         bank_count: u64,
         process_ancestor_hashes_duplicate_slots_elapsed_us: u64,
@@ -376,19 +372,15 @@ impl ReplayLoopTiming {
         process_duplicate_slots_elapsed_us: u64,
         repair_correct_slots_elapsed_us: u64,
         retransmit_not_propagated_elapsed_us: u64,
+        start_leader_elapsed_us: u64,
     ) {
-        self.loop_count += 1;
         self.collect_frozen_banks_elapsed_us += collect_frozen_banks_elapsed_us;
         self.compute_bank_stats_elapsed_us += compute_bank_stats_elapsed_us;
         self.select_vote_and_reset_forks_elapsed_us += select_vote_and_reset_forks_elapsed_us;
-        self.start_leader_elapsed_us += start_leader_elapsed_us;
         self.reset_bank_elapsed_us += reset_bank_elapsed_us;
         self.voting_elapsed_us += voting_elapsed_us;
         self.select_forks_elapsed_us += select_forks_elapsed_us;
         self.compute_slot_stats_elapsed_us += compute_slot_stats_elapsed_us;
-        self.generate_new_bank_forks_elapsed_us += generate_new_bank_forks_elapsed_us;
-        self.replay_active_banks_elapsed_us += replay_active_banks_elapsed_us;
-        self.wait_receive_elapsed_us += wait_receive_elapsed_us;
         self.heaviest_fork_failures_elapsed_us += heaviest_fork_failures_elapsed_us;
         self.bank_count += bank_count;
         self.process_ancestor_hashes_duplicate_slots_elapsed_us +=
@@ -401,6 +393,19 @@ impl ReplayLoopTiming {
         self.process_duplicate_slots_elapsed_us += process_duplicate_slots_elapsed_us;
         self.repair_correct_slots_elapsed_us += repair_correct_slots_elapsed_us;
         self.retransmit_not_propagated_elapsed_us += retransmit_not_propagated_elapsed_us;
+        self.start_leader_elapsed_us += start_leader_elapsed_us;
+    }
+
+    fn update_common(
+        &mut self,
+        generate_new_bank_forks_elapsed_us: u64,
+        replay_active_banks_elapsed_us: u64,
+        wait_receive_elapsed_us: u64,
+    ) {
+        self.loop_count += 1;
+        self.generate_new_bank_forks_elapsed_us += generate_new_bank_forks_elapsed_us;
+        self.replay_active_banks_elapsed_us += replay_active_banks_elapsed_us;
+        self.wait_receive_elapsed_us += wait_receive_elapsed_us;
 
         self.maybe_submit();
     }
@@ -619,6 +624,24 @@ impl ReplayStage {
             popular_pruned_forks_receiver,
         } = receivers;
 
+        // Alpenglow migration status
+        let mut is_alpenglow_migration_complete = false;
+        let mut first_alpenglow_slot = bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .feature_set
+            .activated_slot(&agave_feature_set::alpenglow::id());
+        if let Some(first_alpenglow_slot) = first_alpenglow_slot {
+            if bank_forks.read().unwrap().highest_slot() >= first_alpenglow_slot {
+                info!("alpenglow active on startup");
+                Self::initiate_alpenglow_migration(
+                    &poh_recorder,
+                    &mut is_alpenglow_migration_complete,
+                );
+            }
+        }
+
         trace!("replay stage");
         // Start the replay stage loop
         let (lockouts_sender, commitment_service) = AggregateCommitmentService::new(
@@ -629,9 +652,10 @@ impl ReplayStage {
         let run_replay = move || {
             let verify_recyclers = VerifyRecyclers::default();
             let _exit = Finalizer::new(exit.clone());
+
             let mut identity_keypair = cluster_info.keypair().clone();
             let mut my_pubkey = identity_keypair.pubkey();
-            if my_pubkey != tower.node_pubkey {
+            if !is_alpenglow_migration_complete && my_pubkey != tower.node_pubkey {
                 // set-identity was called during the startup procedure, ensure the tower is consistent
                 // before starting the loop. further calls to set-identity will reload the tower in the loop
                 let my_old_pubkey = tower.node_pubkey;
@@ -714,15 +738,18 @@ impl ReplayStage {
                 .expect("new rayon threadpool");
 
             let shared_poh_bank = poh_recorder.read().unwrap().shared_working_bank();
-            Self::reset_poh_recorder(
-                &my_pubkey,
-                &blockstore,
-                working_bank,
-                &mut poh_controller,
-                &leader_schedule_cache,
-            );
-            // initially we wait for poh service to pick up the bank.
-            while poh_controller.has_pending_message() && !exit.load(Ordering::Relaxed) {}
+            if !is_alpenglow_migration_complete {
+                // This reset is handled by Votor instead when alpenglow is active
+                Self::reset_poh_recorder(
+                    &my_pubkey,
+                    &blockstore,
+                    working_bank,
+                    &mut poh_controller,
+                    &leader_schedule_cache,
+                );
+                // initially we wait for poh service to pick up the bank.
+                while poh_controller.has_pending_message() && !exit.load(Ordering::Relaxed) {}
+            }
 
             loop {
                 // Stop getting entries if we get exit signal
@@ -778,418 +805,454 @@ impl ReplayStage {
                     &replay_tx_thread_pool,
                     &prioritization_fee_cache,
                     &mut purge_repair_slot_counter,
-                    Some(&mut tbft_structs),
+                    &poh_recorder,
+                    first_alpenglow_slot,
+                    (!is_alpenglow_migration_complete).then_some(&mut tbft_structs),
+                    &mut is_alpenglow_migration_complete,
                 );
                 replay_active_banks_time.stop();
 
                 let forks_root = bank_forks.read().unwrap().root();
 
-                // Process cluster-agreed versions of duplicate slots for which we potentially
-                // have the wrong version. Our version was dead or pruned.
-                // Signalled by ancestor_hashes_service.
-                let mut process_ancestor_hashes_duplicate_slots_time =
-                    Measure::start("process_ancestor_hashes_duplicate_slots");
-                Self::process_ancestor_hashes_duplicate_slots(
-                    &my_pubkey,
-                    &blockstore,
-                    &ancestor_duplicate_slots_receiver,
-                    &mut tbft_structs.duplicate_slots_tracker,
-                    &tbft_structs.duplicate_confirmed_slots,
-                    &mut tbft_structs.epoch_slots_frozen_slots,
-                    &progress,
-                    &mut tbft_structs.heaviest_subtree_fork_choice,
-                    &bank_forks,
-                    &mut duplicate_slots_to_repair,
-                    &ancestor_hashes_replay_update_sender,
-                    &mut purge_repair_slot_counter,
-                );
-                process_ancestor_hashes_duplicate_slots_time.stop();
-
-                // Check for any newly duplicate confirmed slots detected from gossip / replay
-                // Note: since this is tracked using both gossip & replay votes, stake is not
-                // rolled up from descendants.
-                let mut process_duplicate_confirmed_slots_time =
-                    Measure::start("process_duplicate_confirmed_slots");
-                Self::process_duplicate_confirmed_slots(
-                    &duplicate_confirmed_slots_receiver,
-                    &blockstore,
-                    &mut tbft_structs.duplicate_slots_tracker,
-                    &mut tbft_structs.duplicate_confirmed_slots,
-                    &mut tbft_structs.epoch_slots_frozen_slots,
-                    &bank_forks,
-                    &progress,
-                    &mut tbft_structs.heaviest_subtree_fork_choice,
-                    &mut duplicate_slots_to_repair,
-                    &ancestor_hashes_replay_update_sender,
-                    &mut purge_repair_slot_counter,
-                );
-                process_duplicate_confirmed_slots_time.stop();
-
-                // Ingest any new verified votes from gossip. Important for fork choice
-                // and switching proofs because these may be votes that haven't yet been
-                // included in a block, so we may not have yet observed these votes just
-                // by replaying blocks.
-                let mut process_unfrozen_gossip_verified_vote_hashes_time =
-                    Measure::start("process_gossip_verified_vote_hashes");
-                Self::process_gossip_verified_vote_hashes(
-                    &gossip_verified_vote_hash_receiver,
-                    &mut tbft_structs.unfrozen_gossip_verified_vote_hashes,
-                    &tbft_structs.heaviest_subtree_fork_choice,
-                    &mut latest_validator_votes_for_frozen_banks,
-                );
-                for _ in gossip_verified_vote_hash_receiver.try_iter() {}
-                process_unfrozen_gossip_verified_vote_hashes_time.stop();
-
-                let mut process_popular_pruned_forks_time =
-                    Measure::start("process_popular_pruned_forks_time");
-                // Check for "popular" (52+% stake aggregated across versions/descendants) forks
-                // that are pruned, which would not be detected by normal means.
-                // Signalled by `repair_service`.
-                Self::process_popular_pruned_forks(
-                    &popular_pruned_forks_receiver,
-                    &blockstore,
-                    &mut tbft_structs.duplicate_slots_tracker,
-                    &mut tbft_structs.epoch_slots_frozen_slots,
-                    &bank_forks,
-                    &mut tbft_structs.heaviest_subtree_fork_choice,
-                    &mut duplicate_slots_to_repair,
-                    &ancestor_hashes_replay_update_sender,
-                    &mut purge_repair_slot_counter,
-                );
-                process_popular_pruned_forks_time.stop();
-
-                // Check to remove any duplicated slots from fork choice
-                let mut process_duplicate_slots_time = Measure::start("process_duplicate_slots");
-                if !tpu_has_bank {
-                    Self::process_duplicate_slots(
+                if !is_alpenglow_migration_complete {
+                    // Process cluster-agreed versions of duplicate slots for which we potentially
+                    // have the wrong version. Our version was dead or pruned.
+                    // Signalled by ancestor_hashes_service.
+                    let mut process_ancestor_hashes_duplicate_slots_time =
+                        Measure::start("process_ancestor_hashes_duplicate_slots");
+                    Self::process_ancestor_hashes_duplicate_slots(
+                        &my_pubkey,
                         &blockstore,
-                        &duplicate_slots_receiver,
+                        &ancestor_duplicate_slots_receiver,
                         &mut tbft_structs.duplicate_slots_tracker,
                         &tbft_structs.duplicate_confirmed_slots,
                         &mut tbft_structs.epoch_slots_frozen_slots,
-                        &bank_forks,
                         &progress,
                         &mut tbft_structs.heaviest_subtree_fork_choice,
+                        &bank_forks,
                         &mut duplicate_slots_to_repair,
                         &ancestor_hashes_replay_update_sender,
                         &mut purge_repair_slot_counter,
                     );
-                }
-                process_duplicate_slots_time.stop();
+                    process_ancestor_hashes_duplicate_slots_time.stop();
 
-                let mut collect_frozen_banks_time = Measure::start("frozen_banks");
-                let mut frozen_banks: Vec<_> = bank_forks
-                    .read()
-                    .unwrap()
-                    .frozen_banks()
-                    .filter(|(slot, _bank)| *slot >= forks_root)
-                    .map(|(_slot, bank)| bank)
-                    .collect();
-                collect_frozen_banks_time.stop();
-
-                let mut compute_bank_stats_time = Measure::start("compute_bank_stats");
-                let newly_computed_slot_stats = Self::compute_bank_stats(
-                    &vote_account,
-                    &ancestors,
-                    &mut frozen_banks,
-                    &mut tower,
-                    &mut progress,
-                    &vote_tracker,
-                    &cluster_slots,
-                    &bank_forks,
-                    &mut tbft_structs.heaviest_subtree_fork_choice,
-                    &mut latest_validator_votes_for_frozen_banks,
-                );
-                compute_bank_stats_time.stop();
-
-                let mut compute_slot_stats_time = Measure::start("compute_slot_stats_time");
-                for slot in newly_computed_slot_stats {
-                    let fork_stats = progress.get_fork_stats(slot).unwrap();
-                    let duplicate_confirmed_forks = Self::tower_duplicate_confirmed_forks(
-                        &tower,
-                        &fork_stats.voted_stakes,
-                        fork_stats.total_stake,
-                        &progress,
-                        &bank_forks,
-                    );
-
-                    Self::mark_slots_duplicate_confirmed(
-                        &duplicate_confirmed_forks,
+                    // Check for any newly duplicate confirmed slots detected from gossip / replay
+                    // Note: since this is tracked using both gossip & replay votes, stake is not
+                    // rolled up from descendants.
+                    let mut process_duplicate_confirmed_slots_time =
+                        Measure::start("process_duplicate_confirmed_slots");
+                    Self::process_duplicate_confirmed_slots(
+                        &duplicate_confirmed_slots_receiver,
                         &blockstore,
-                        &bank_forks,
-                        &mut progress,
                         &mut tbft_structs.duplicate_slots_tracker,
-                        &mut tbft_structs.heaviest_subtree_fork_choice,
+                        &mut tbft_structs.duplicate_confirmed_slots,
                         &mut tbft_structs.epoch_slots_frozen_slots,
+                        &bank_forks,
+                        &progress,
+                        &mut tbft_structs.heaviest_subtree_fork_choice,
                         &mut duplicate_slots_to_repair,
                         &ancestor_hashes_replay_update_sender,
                         &mut purge_repair_slot_counter,
-                        &mut tbft_structs.duplicate_confirmed_slots,
                     );
-                }
-                compute_slot_stats_time.stop();
+                    process_duplicate_confirmed_slots_time.stop();
 
-                let mut select_forks_time = Measure::start("select_forks_time");
-                let (heaviest_bank, heaviest_bank_on_same_voted_fork) = tbft_structs
-                    .heaviest_subtree_fork_choice
-                    .select_forks(&frozen_banks, &tower, &progress, &ancestors, &bank_forks);
-                select_forks_time.stop();
-
-                Self::check_for_vote_only_mode(
-                    heaviest_bank.slot(),
-                    forks_root,
-                    &in_vote_only_mode,
-                    &bank_forks,
-                );
-
-                let mut select_vote_and_reset_forks_time =
-                    Measure::start("select_vote_and_reset_forks");
-                let SelectVoteAndResetForkResult {
-                    vote_bank,
-                    reset_bank,
-                    heaviest_fork_failures,
-                } = select_vote_and_reset_forks(
-                    &heaviest_bank,
-                    heaviest_bank_on_same_voted_fork.as_ref(),
-                    &ancestors,
-                    &descendants,
-                    &progress,
-                    &mut tower,
-                    &latest_validator_votes_for_frozen_banks,
-                    &tbft_structs.heaviest_subtree_fork_choice,
-                );
-                select_vote_and_reset_forks_time.stop();
-
-                if vote_bank.is_none() {
-                    Self::maybe_refresh_last_vote(
-                        &mut tower,
-                        &progress,
-                        heaviest_bank_on_same_voted_fork,
-                        &vote_account,
-                        &identity_keypair,
-                        &authorized_voter_keypairs.read().unwrap(),
-                        &mut tracked_vote_transactions,
-                        has_new_vote_been_rooted,
-                        &mut last_vote_refresh_time,
-                        &voting_sender,
-                        wait_to_vote_slot,
+                    // Ingest any new verified votes from gossip. Important for fork choice
+                    // and switching proofs because these may be votes that haven't yet been
+                    // included in a block, so we may not have yet observed these votes just
+                    // by replaying blocks.
+                    let mut process_unfrozen_gossip_verified_vote_hashes_time =
+                        Measure::start("process_gossip_verified_vote_hashes");
+                    Self::process_gossip_verified_vote_hashes(
+                        &gossip_verified_vote_hash_receiver,
+                        &mut tbft_structs.unfrozen_gossip_verified_vote_hashes,
+                        &tbft_structs.heaviest_subtree_fork_choice,
+                        &mut latest_validator_votes_for_frozen_banks,
                     );
-                }
+                    for _ in gossip_verified_vote_hash_receiver.try_iter() {}
+                    process_unfrozen_gossip_verified_vote_hashes_time.stop();
 
-                let mut heaviest_fork_failures_time = Measure::start("heaviest_fork_failures_time");
-                if tower.is_recent(heaviest_bank.slot()) && !heaviest_fork_failures.is_empty() {
-                    Self::log_heaviest_fork_failures(
-                        &heaviest_fork_failures,
-                        &bank_forks,
-                        &tower,
-                        &progress,
-                        &ancestors,
-                        &heaviest_bank,
-                        &mut last_threshold_failure_slot,
-                    );
-                }
-                heaviest_fork_failures_time.stop();
-
-                let mut voting_time = Measure::start("voting_time");
-                // Vote on a fork
-                if let Some((ref vote_bank, ref switch_fork_decision)) = vote_bank {
-                    if let Some(votable_leader) =
-                        leader_schedule_cache.slot_leader_at(vote_bank.slot(), Some(vote_bank))
-                    {
-                        Self::log_leader_change(
-                            &my_pubkey,
-                            vote_bank.slot(),
-                            &mut current_leader,
-                            &votable_leader,
-                        );
-                    }
-
-                    if let Err(e) = Self::handle_votable_bank(
-                        vote_bank,
-                        switch_fork_decision,
-                        &bank_forks,
-                        &mut tower,
-                        &mut progress,
-                        &vote_account,
-                        &identity_keypair,
-                        &authorized_voter_keypairs.read().unwrap(),
+                    let mut process_popular_pruned_forks_time =
+                        Measure::start("process_popular_pruned_forks_time");
+                    // Check for "popular" (52+% stake aggregated across versions/descendants) forks
+                    // that are pruned, which would not be detected by normal means.
+                    // Signalled by `repair_service`.
+                    Self::process_popular_pruned_forks(
+                        &popular_pruned_forks_receiver,
                         &blockstore,
-                        &leader_schedule_cache,
-                        &lockouts_sender,
-                        snapshot_controller.as_deref(),
-                        rpc_subscriptions.as_deref(),
-                        &block_commitment_cache,
-                        &bank_notification_sender,
-                        &mut tracked_vote_transactions,
-                        &mut has_new_vote_been_rooted,
-                        &mut replay_timing,
-                        &voting_sender,
-                        &drop_bank_sender,
-                        wait_to_vote_slot,
-                        &mut tbft_structs,
-                    ) {
-                        error!("Unable to set root: {e}");
-                        return;
-                    }
-                }
-                voting_time.stop();
-
-                let mut reset_bank_time = Measure::start("reset_bank");
-                // Reset onto a fork
-                if let Some(reset_bank) = reset_bank {
-                    if last_reset == reset_bank.last_blockhash() {
-                        let reset_bank_descendants =
-                            Self::get_active_descendants(reset_bank.slot(), &progress, &blockstore);
-                        if reset_bank_descendants != last_reset_bank_descendants {
-                            last_reset_bank_descendants = reset_bank_descendants;
-                            poh_recorder
-                                .write()
-                                .unwrap()
-                                .update_start_bank_active_descendants(&last_reset_bank_descendants);
-                        }
-                    } else {
-                        info!(
-                            "vote bank: {:?} reset bank: {:?}",
-                            vote_bank
-                                .as_ref()
-                                .map(|(b, switch_fork_decision)| (b.slot(), switch_fork_decision)),
-                            reset_bank.slot(),
-                        );
-                        let fork_progress = progress
-                            .get(&reset_bank.slot())
-                            .expect("bank to reset to must exist in progress map");
-                        datapoint_info!(
-                            "blocks_produced",
-                            ("num_blocks_on_fork", fork_progress.num_blocks_on_fork, i64),
-                            (
-                                "num_dropped_blocks_on_fork",
-                                fork_progress.num_dropped_blocks_on_fork,
-                                i64
-                            ),
-                        );
-
-                        if my_pubkey != cluster_info.id() {
-                            identity_keypair = cluster_info.keypair().clone();
-                            let my_old_pubkey = my_pubkey;
-                            my_pubkey = identity_keypair.pubkey();
-
-                            // Load the new identity's tower
-                            tower = match Self::load_tower(
-                                tower_storage.as_ref(),
-                                &my_pubkey,
-                                &vote_account,
-                                &bank_forks,
-                            ) {
-                                Ok(tower) => tower,
-                                Err(err) => {
-                                    error!(
-                                        "Unable to load new tower when attempting to change \
-                                         identity from {my_old_pubkey} to {my_pubkey} on \
-                                         set-identity, Exiting: {err}"
-                                    );
-                                    // drop(_exit) will set the exit flag, eventually tearing down the entire process
-                                    return;
-                                }
-                            };
-                            // Ensure the validator can land votes with the new identity before
-                            // becoming leader
-                            has_new_vote_been_rooted = !wait_for_vote_to_start_leader;
-                            warn!("Identity changed from {my_old_pubkey} to {my_pubkey}");
-                        }
-
-                        if !poh_controller.has_pending_message() {
-                            Self::reset_poh_recorder(
-                                &my_pubkey,
-                                &blockstore,
-                                reset_bank.clone(),
-                                &mut poh_controller,
-                                &leader_schedule_cache,
-                            );
-                            last_reset = reset_bank.last_blockhash();
-                            last_reset_bank_descendants = vec![];
-                        }
-
-                        if let Some(last_voted_slot) = tower.last_voted_slot() {
-                            // If the current heaviest bank is not a descendant of the last voted slot,
-                            // there must be a partition
-                            partition_info.update(
-                                Self::is_partition_detected(
-                                    &ancestors,
-                                    last_voted_slot,
-                                    heaviest_bank.slot(),
-                                ),
-                                heaviest_bank.slot(),
-                                last_voted_slot,
-                                reset_bank.slot(),
-                                heaviest_fork_failures,
-                            );
-                        }
-                    }
-                }
-                reset_bank_time.stop();
-
-                let mut start_leader_time = Measure::start("start_leader_time");
-                let mut dump_then_repair_correct_slots_time =
-                    Measure::start("dump_then_repair_correct_slots_time");
-                // Used for correctness check
-                let poh_bank = shared_poh_bank.load();
-                // Dump any duplicate slots that have been confirmed by the network in
-                // anticipation of repairing the confirmed version of the slot.
-                //
-                // Has to be before `maybe_start_leader()`. Otherwise, `ancestors` and `descendants`
-                // will be outdated, and we cannot assume `poh_bank` will be in either of these maps.
-                Self::dump_then_repair_correct_slots(
-                    &mut duplicate_slots_to_repair,
-                    &mut ancestors,
-                    &mut descendants,
-                    &mut progress,
-                    &bank_forks,
-                    &blockstore,
-                    poh_bank.map(|bank| bank.slot()),
-                    &mut purge_repair_slot_counter,
-                    &dumped_slots_sender,
-                    &my_pubkey,
-                    &leader_schedule_cache,
-                );
-                dump_then_repair_correct_slots_time.stop();
-
-                let mut retransmit_not_propagated_time =
-                    Measure::start("retransmit_not_propagated_time");
-                Self::retransmit_latest_unpropagated_leader_slot(
-                    &poh_recorder,
-                    &retransmit_slots_sender,
-                    &mut progress,
-                );
-                retransmit_not_propagated_time.stop();
-
-                // From this point on, its not safe to use ancestors/descendants since maybe_start_leader
-                // may add a bank that will not included in either of these maps.
-                drop(ancestors);
-                drop(descendants);
-                if !tpu_has_bank && !poh_controller.has_pending_message() {
-                    if let Some(poh_slot) = Self::maybe_start_leader(
-                        &my_pubkey,
+                        &mut tbft_structs.duplicate_slots_tracker,
+                        &mut tbft_structs.epoch_slots_frozen_slots,
                         &bank_forks,
-                        &poh_recorder,
-                        &mut poh_controller,
-                        &leader_schedule_cache,
-                        rpc_subscriptions.as_deref(),
-                        &slot_status_notifier,
-                        &mut progress,
-                        &retransmit_slots_sender,
-                        &mut skipped_slots_info,
-                        &banking_tracer,
-                        has_new_vote_been_rooted,
-                    ) {
-                        Self::log_leader_change(
-                            &my_pubkey,
-                            poh_slot,
-                            &mut current_leader,
-                            &my_pubkey,
+                        &mut tbft_structs.heaviest_subtree_fork_choice,
+                        &mut duplicate_slots_to_repair,
+                        &ancestor_hashes_replay_update_sender,
+                        &mut purge_repair_slot_counter,
+                    );
+                    process_popular_pruned_forks_time.stop();
+
+                    // Check to remove any duplicated slots from fork choice
+                    let mut process_duplicate_slots_time =
+                        Measure::start("process_duplicate_slots");
+                    if !tpu_has_bank {
+                        Self::process_duplicate_slots(
+                            &blockstore,
+                            &duplicate_slots_receiver,
+                            &mut tbft_structs.duplicate_slots_tracker,
+                            &tbft_structs.duplicate_confirmed_slots,
+                            &mut tbft_structs.epoch_slots_frozen_slots,
+                            &bank_forks,
+                            &progress,
+                            &mut tbft_structs.heaviest_subtree_fork_choice,
+                            &mut duplicate_slots_to_repair,
+                            &ancestor_hashes_replay_update_sender,
+                            &mut purge_repair_slot_counter,
                         );
                     }
+                    process_duplicate_slots_time.stop();
+
+                    let mut collect_frozen_banks_time = Measure::start("frozen_banks");
+                    let mut frozen_banks: Vec<_> = bank_forks
+                        .read()
+                        .unwrap()
+                        .frozen_banks()
+                        .filter(|(slot, _bank)| *slot >= forks_root)
+                        .map(|(_slot, bank)| bank)
+                        .collect();
+                    collect_frozen_banks_time.stop();
+
+                    let mut compute_bank_stats_time = Measure::start("compute_bank_stats");
+                    let newly_computed_slot_stats = Self::compute_bank_stats(
+                        &vote_account,
+                        &ancestors,
+                        &mut frozen_banks,
+                        &mut tower,
+                        &mut progress,
+                        &vote_tracker,
+                        &cluster_slots,
+                        &bank_forks,
+                        &mut tbft_structs.heaviest_subtree_fork_choice,
+                        &mut latest_validator_votes_for_frozen_banks,
+                    );
+                    compute_bank_stats_time.stop();
+
+                    let mut compute_slot_stats_time = Measure::start("compute_slot_stats_time");
+                    for slot in newly_computed_slot_stats {
+                        let fork_stats = progress.get_fork_stats(slot).unwrap();
+                        let duplicate_confirmed_forks = Self::tower_duplicate_confirmed_forks(
+                            &tower,
+                            &fork_stats.voted_stakes,
+                            fork_stats.total_stake,
+                            &progress,
+                            &bank_forks,
+                        );
+
+                        Self::mark_slots_duplicate_confirmed(
+                            &duplicate_confirmed_forks,
+                            &blockstore,
+                            &bank_forks,
+                            &mut progress,
+                            &mut tbft_structs.duplicate_slots_tracker,
+                            &mut tbft_structs.heaviest_subtree_fork_choice,
+                            &mut tbft_structs.epoch_slots_frozen_slots,
+                            &mut duplicate_slots_to_repair,
+                            &ancestor_hashes_replay_update_sender,
+                            &mut purge_repair_slot_counter,
+                            &mut tbft_structs.duplicate_confirmed_slots,
+                        );
+                    }
+                    compute_slot_stats_time.stop();
+
+                    let mut select_forks_time = Measure::start("select_forks_time");
+                    let (heaviest_bank, heaviest_bank_on_same_voted_fork) = tbft_structs
+                        .heaviest_subtree_fork_choice
+                        .select_forks(&frozen_banks, &tower, &progress, &ancestors, &bank_forks);
+                    select_forks_time.stop();
+
+                    Self::check_for_vote_only_mode(
+                        heaviest_bank.slot(),
+                        forks_root,
+                        &in_vote_only_mode,
+                        &bank_forks,
+                    );
+
+                    let mut select_vote_and_reset_forks_time =
+                        Measure::start("select_vote_and_reset_forks");
+                    let SelectVoteAndResetForkResult {
+                        vote_bank,
+                        reset_bank,
+                        heaviest_fork_failures,
+                    } = select_vote_and_reset_forks(
+                        &heaviest_bank,
+                        heaviest_bank_on_same_voted_fork.as_ref(),
+                        &ancestors,
+                        &descendants,
+                        &progress,
+                        &mut tower,
+                        &latest_validator_votes_for_frozen_banks,
+                        &tbft_structs.heaviest_subtree_fork_choice,
+                    );
+                    select_vote_and_reset_forks_time.stop();
+
+                    if vote_bank.is_none() {
+                        Self::maybe_refresh_last_vote(
+                            &mut tower,
+                            &progress,
+                            heaviest_bank_on_same_voted_fork,
+                            &vote_account,
+                            &identity_keypair,
+                            &authorized_voter_keypairs.read().unwrap(),
+                            &mut tracked_vote_transactions,
+                            has_new_vote_been_rooted,
+                            &mut last_vote_refresh_time,
+                            &voting_sender,
+                            wait_to_vote_slot,
+                        );
+                    }
+
+                    let mut heaviest_fork_failures_time =
+                        Measure::start("heaviest_fork_failures_time");
+                    if tower.is_recent(heaviest_bank.slot()) && !heaviest_fork_failures.is_empty() {
+                        Self::log_heaviest_fork_failures(
+                            &heaviest_fork_failures,
+                            &bank_forks,
+                            &tower,
+                            &progress,
+                            &ancestors,
+                            &heaviest_bank,
+                            &mut last_threshold_failure_slot,
+                        );
+                    }
+                    heaviest_fork_failures_time.stop();
+
+                    let mut voting_time = Measure::start("voting_time");
+                    // Vote on a fork
+                    if let Some((ref vote_bank, ref switch_fork_decision)) = vote_bank {
+                        if let Some(votable_leader) =
+                            leader_schedule_cache.slot_leader_at(vote_bank.slot(), Some(vote_bank))
+                        {
+                            Self::log_leader_change(
+                                &my_pubkey,
+                                vote_bank.slot(),
+                                &mut current_leader,
+                                &votable_leader,
+                            );
+                        }
+
+                        if let Err(e) = Self::handle_votable_bank(
+                            vote_bank,
+                            switch_fork_decision,
+                            &bank_forks,
+                            &mut tower,
+                            &mut progress,
+                            &vote_account,
+                            &identity_keypair,
+                            &authorized_voter_keypairs.read().unwrap(),
+                            &blockstore,
+                            &leader_schedule_cache,
+                            &lockouts_sender,
+                            snapshot_controller.as_deref(),
+                            rpc_subscriptions.as_deref(),
+                            &block_commitment_cache,
+                            &bank_notification_sender,
+                            &mut tracked_vote_transactions,
+                            &mut has_new_vote_been_rooted,
+                            &mut replay_timing,
+                            &voting_sender,
+                            &drop_bank_sender,
+                            wait_to_vote_slot,
+                            &mut first_alpenglow_slot,
+                            &mut tbft_structs,
+                        ) {
+                            error!("Unable to set root: {e}");
+                            return;
+                        }
+                    }
+                    voting_time.stop();
+
+                    let mut reset_bank_time = Measure::start("reset_bank");
+                    // Reset onto a fork
+                    if let Some(reset_bank) = reset_bank {
+                        if last_reset == reset_bank.last_blockhash() {
+                            let reset_bank_descendants = Self::get_active_descendants(
+                                reset_bank.slot(),
+                                &progress,
+                                &blockstore,
+                            );
+                            if reset_bank_descendants != last_reset_bank_descendants {
+                                last_reset_bank_descendants = reset_bank_descendants;
+                                poh_recorder
+                                    .write()
+                                    .unwrap()
+                                    .update_start_bank_active_descendants(
+                                        &last_reset_bank_descendants,
+                                    );
+                            }
+                        } else {
+                            info!(
+                                "vote bank: {:?} reset bank: {:?}",
+                                vote_bank.as_ref().map(|(b, switch_fork_decision)| (
+                                    b.slot(),
+                                    switch_fork_decision
+                                )),
+                                reset_bank.slot(),
+                            );
+                            let fork_progress = progress
+                                .get(&reset_bank.slot())
+                                .expect("bank to reset to must exist in progress map");
+                            datapoint_info!(
+                                "blocks_produced",
+                                ("num_blocks_on_fork", fork_progress.num_blocks_on_fork, i64),
+                                (
+                                    "num_dropped_blocks_on_fork",
+                                    fork_progress.num_dropped_blocks_on_fork,
+                                    i64
+                                ),
+                            );
+
+                            if my_pubkey != cluster_info.id() {
+                                identity_keypair = cluster_info.keypair().clone();
+                                let my_old_pubkey = my_pubkey;
+                                my_pubkey = identity_keypair.pubkey();
+
+                                // Load the new identity's tower
+                                tower = match Self::load_tower(
+                                    tower_storage.as_ref(),
+                                    &my_pubkey,
+                                    &vote_account,
+                                    &bank_forks,
+                                ) {
+                                    Ok(tower) => tower,
+                                    Err(err) => {
+                                        error!(
+                                            "Unable to load new tower when attempting to change \
+                                         identity from {my_old_pubkey} to {my_pubkey} on
+                                         set-identity, Exiting: {err}"
+                                        );
+                                        // drop(_exit) will set the exit flag, eventually tearing down the entire process
+                                        return;
+                                    }
+                                };
+                                // Ensure the validator can land votes with the new identity before
+                                // becoming leader
+                                has_new_vote_been_rooted = !wait_for_vote_to_start_leader;
+                                warn!("Identity changed from {my_old_pubkey} to {my_pubkey}");
+                            }
+
+                            if !poh_controller.has_pending_message() {
+                                Self::reset_poh_recorder(
+                                    &my_pubkey,
+                                    &blockstore,
+                                    reset_bank.clone(),
+                                    &mut poh_controller,
+                                    &leader_schedule_cache,
+                                );
+                                last_reset = reset_bank.last_blockhash();
+                                last_reset_bank_descendants = vec![];
+                            }
+
+                            if let Some(last_voted_slot) = tower.last_voted_slot() {
+                                // If the current heaviest bank is not a descendant of the last voted slot,
+                                // there must be a partition
+                                partition_info.update(
+                                    Self::is_partition_detected(
+                                        &ancestors,
+                                        last_voted_slot,
+                                        heaviest_bank.slot(),
+                                    ),
+                                    heaviest_bank.slot(),
+                                    last_voted_slot,
+                                    reset_bank.slot(),
+                                    heaviest_fork_failures,
+                                );
+                            }
+                        }
+                    }
+                    reset_bank_time.stop();
+
+                    let mut start_leader_time = Measure::start("start_leader_time");
+                    let mut dump_then_repair_correct_slots_time =
+                        Measure::start("dump_then_repair_correct_slots_time");
+                    // Used for correctness check
+                    let poh_bank = shared_poh_bank.load();
+                    // Dump any duplicate slots that have been confirmed by the network in
+                    // anticipation of repairing the confirmed version of the slot.
+                    //
+                    // Has to be before `maybe_start_leader()`. Otherwise, `ancestors` and `descendants`
+                    // will be outdated, and we cannot assume `poh_bank` will be in either of these maps.
+                    Self::dump_then_repair_correct_slots(
+                        &mut duplicate_slots_to_repair,
+                        &mut ancestors,
+                        &mut descendants,
+                        &mut progress,
+                        &bank_forks,
+                        &blockstore,
+                        poh_bank.map(|bank| bank.slot()),
+                        &mut purge_repair_slot_counter,
+                        &dumped_slots_sender,
+                        &my_pubkey,
+                        &leader_schedule_cache,
+                    );
+                    dump_then_repair_correct_slots_time.stop();
+
+                    let mut retransmit_not_propagated_time =
+                        Measure::start("retransmit_not_propagated_time");
+                    Self::retransmit_latest_unpropagated_leader_slot(
+                        &poh_recorder,
+                        &retransmit_slots_sender,
+                        &mut progress,
+                    );
+                    retransmit_not_propagated_time.stop();
+
+                    // From this point on, its not safe to use ancestors/descendants since maybe_start_leader
+                    // may add a bank that will not included in either of these maps.
+                    drop(ancestors);
+                    drop(descendants);
+                    if !tpu_has_bank && !poh_controller.has_pending_message() {
+                        if let Some(poh_slot) = Self::maybe_start_leader(
+                            &my_pubkey,
+                            &bank_forks,
+                            &poh_recorder,
+                            &mut poh_controller,
+                            &leader_schedule_cache,
+                            rpc_subscriptions.as_deref(),
+                            &slot_status_notifier,
+                            &mut progress,
+                            &retransmit_slots_sender,
+                            &mut skipped_slots_info,
+                            &banking_tracer,
+                            has_new_vote_been_rooted,
+                            &first_alpenglow_slot,
+                            &mut is_alpenglow_migration_complete,
+                        ) {
+                            Self::log_leader_change(
+                                &my_pubkey,
+                                poh_slot,
+                                &mut current_leader,
+                                &my_pubkey,
+                            );
+                        }
+                    }
+                    start_leader_time.stop();
+
+                    replay_timing.update_non_alpenglow(
+                        collect_frozen_banks_time.as_us(),
+                        compute_bank_stats_time.as_us(),
+                        select_vote_and_reset_forks_time.as_us(),
+                        reset_bank_time.as_us(),
+                        voting_time.as_us(),
+                        select_forks_time.as_us(),
+                        compute_slot_stats_time.as_us(),
+                        heaviest_fork_failures_time.as_us(),
+                        u64::from(did_complete_bank),
+                        process_ancestor_hashes_duplicate_slots_time.as_us(),
+                        process_duplicate_confirmed_slots_time.as_us(),
+                        process_unfrozen_gossip_verified_vote_hashes_time.as_us(),
+                        process_popular_pruned_forks_time.as_us(),
+                        process_duplicate_slots_time.as_us(),
+                        dump_then_repair_correct_slots_time.as_us(),
+                        retransmit_not_propagated_time.as_us(),
+                        start_leader_time.as_us(),
+                    );
                 }
-                start_leader_time.stop();
 
                 let mut wait_receive_time = Measure::start("wait_receive_time");
                 if !did_complete_bank {
@@ -1205,27 +1268,10 @@ impl ReplayStage {
                 }
                 wait_receive_time.stop();
 
-                replay_timing.update(
-                    collect_frozen_banks_time.as_us(),
-                    compute_bank_stats_time.as_us(),
-                    select_vote_and_reset_forks_time.as_us(),
-                    start_leader_time.as_us(),
-                    reset_bank_time.as_us(),
-                    voting_time.as_us(),
-                    select_forks_time.as_us(),
-                    compute_slot_stats_time.as_us(),
+                replay_timing.update_common(
                     generate_new_bank_forks_time.as_us(),
                     replay_active_banks_time.as_us(),
                     wait_receive_time.as_us(),
-                    heaviest_fork_failures_time.as_us(),
-                    u64::from(did_complete_bank),
-                    process_ancestor_hashes_duplicate_slots_time.as_us(),
-                    process_duplicate_confirmed_slots_time.as_us(),
-                    process_unfrozen_gossip_verified_vote_hashes_time.as_us(),
-                    process_popular_pruned_forks_time.as_us(),
-                    process_duplicate_slots_time.as_us(),
-                    dump_then_repair_correct_slots_time.as_us(),
-                    retransmit_not_propagated_time.as_us(),
                 );
             }
         };
@@ -2097,11 +2143,13 @@ impl ReplayStage {
         skipped_slots_info: &mut SkippedSlotsInfo,
         banking_tracer: &Arc<BankingTracer>,
         has_new_vote_been_rooted: bool,
+        first_alpenglow_slot: &Option<Slot>,
+        is_alpenglow_migration_complete: &mut bool,
     ) -> Option<Slot> {
         // all the individual calls to poh_recorder.read() are designed to
         // increase granularity, decrease contention
 
-        let (poh_slot, parent_slot) =
+        let (poh_slot, parent_slot) = if !(*is_alpenglow_migration_complete) {
             match poh_recorder.read().unwrap().reached_leader_slot(my_pubkey) {
                 PohLeaderStatus::Reached {
                     poh_slot,
@@ -2111,7 +2159,27 @@ impl ReplayStage {
                     trace!("{my_pubkey} poh_recorder hasn't reached_leader_slot");
                     return None;
                 }
-            };
+            }
+        } else {
+            // Migration is already complete Votor will handle the rest
+            return None;
+        };
+
+        // Check if migration is necessary
+        if let Some(first_alpenglow_slot) = first_alpenglow_slot {
+            if !(*is_alpenglow_migration_complete) && poh_slot >= *first_alpenglow_slot {
+                // Initiate migration
+                // TODO: need to keep the ticks around for parent slots in previous epoch
+                // because reset below will delete those ticks
+                info!(
+                    "initiating alpenglow migration from maybe_start_leader() for slot {}",
+                    poh_slot
+                );
+                Self::initiate_alpenglow_migration(poh_recorder, is_alpenglow_migration_complete);
+                // Votor will handle leader blocks from now on
+                return None;
+            }
+        }
 
         trace!("{my_pubkey} reached_leader_slot");
 
@@ -2400,6 +2468,7 @@ impl ReplayStage {
         voting_sender: &Sender<VoteOp>,
         drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
         wait_to_vote_slot: Option<Slot>,
+        first_alpenglow_slot: &mut Option<Slot>,
         tbft_structs: &mut TowerBFTStructures,
     ) -> Result<(), SetRootError> {
         if bank.is_empty() {
@@ -2409,6 +2478,20 @@ impl ReplayStage {
         let new_root = tower.record_bank_vote(bank);
 
         if let Some(new_root) = new_root {
+            if first_alpenglow_slot.is_none() {
+                if let Some(activation_slot) = bank_forks
+                    .read()
+                    .unwrap()
+                    .root_bank()
+                    .compute_pending_activation_slot(&agave_feature_set::alpenglow::id())
+                {
+                    *first_alpenglow_slot = Some(activation_slot);
+                    info!(
+                        "alpenglow feature detected in root bank {}, to be enabled on slot {}",
+                        new_root, activation_slot,
+                    );
+                }
+            }
             let highest_super_majority_root = Some(
                 block_commitment_cache
                     .read()
@@ -3057,6 +3140,19 @@ impl ReplayStage {
         replay_result
     }
 
+    fn initiate_alpenglow_migration(
+        poh_recorder: &RwLock<PohRecorder>,
+        is_alpenglow_migration_complete: &mut bool,
+    ) {
+        info!("initiating alpenglow migration");
+        // This by itself does not do anything, a follow up PR will enact action to
+        // turn off PoH based on this flag
+        poh_recorder.write().unwrap().is_alpenglow_enabled = true;
+
+        *is_alpenglow_migration_complete = true;
+        info!("alpenglow migration complete!");
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn process_replay_results(
         blockstore: &Blockstore,
@@ -3075,6 +3171,9 @@ impl ReplayStage {
         replay_result_vec: &[ReplaySlotFromBlockstore],
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         my_pubkey: &Pubkey,
+        first_alpenglow_slot: Option<Slot>,
+        poh_recorder: &RwLock<PohRecorder>,
+        is_alpenglow_migration_complete: &mut bool,
         mut tbft_structs: Option<&mut TowerBFTStructures>,
     ) -> bool {
         // TODO: See if processing of blockstore replay results and bank completion can be made thread safe.
@@ -3117,6 +3216,18 @@ impl ReplayStage {
 
             assert_eq!(bank_slot, bank.slot());
             if bank.is_complete() {
+                if let Some(first_alpenglow_slot) = first_alpenglow_slot {
+                    if !*is_alpenglow_migration_complete && bank.slot() >= first_alpenglow_slot {
+                        info!(
+                            "initiating alpenglow migration from replaying bank {}",
+                            bank.slot()
+                        );
+                        Self::initiate_alpenglow_migration(
+                            poh_recorder,
+                            is_alpenglow_migration_complete,
+                        );
+                    }
+                }
                 let mut bank_complete_time = Measure::start("bank_complete_time");
                 let bank_progress = progress
                     .get_mut(&bank.slot())
@@ -3385,7 +3496,10 @@ impl ReplayStage {
         replay_tx_thread_pool: &ThreadPool,
         prioritization_fee_cache: &PrioritizationFeeCache,
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
+        poh_recorder: &RwLock<PohRecorder>,
+        first_alpenglow_slot: Option<Slot>,
         tbft_structs: Option<&mut TowerBFTStructures>,
+        is_alpenglow_migration_complete: &mut bool,
     ) -> bool /* completed a bank */ {
         let active_bank_slots = bank_forks.read().unwrap().active_bank_slots();
         let num_active_banks = active_bank_slots.len();
@@ -3455,6 +3569,9 @@ impl ReplayStage {
             &replay_result_vec,
             purge_repair_slot_counter,
             my_pubkey,
+            first_alpenglow_slot,
+            poh_recorder,
+            is_alpenglow_migration_complete,
             tbft_structs,
         )
     }
@@ -8662,6 +8779,8 @@ pub(crate) mod tests {
             &mut SkippedSlotsInfo::default(),
             &banking_tracer,
             has_new_vote_been_rooted,
+            &None,
+            &mut false,
         )
         .is_none());
     }
@@ -9330,6 +9449,8 @@ pub(crate) mod tests {
             &mut SkippedSlotsInfo::default(),
             &banking_tracer,
             has_new_vote_been_rooted,
+            &None,
+            &mut false,
         )
         .is_none());
 
@@ -9358,6 +9479,8 @@ pub(crate) mod tests {
             &mut SkippedSlotsInfo::default(),
             &banking_tracer,
             has_new_vote_been_rooted,
+            &None,
+            &mut false,
         )
         .is_some());
         wait_for_poh_service(&poh_controller);
@@ -9605,5 +9728,243 @@ pub(crate) mod tests {
             &ancestor_hashes_replay_update_sender,
             &mut PurgeRepairSlotCounter::default(),
         );
+    }
+
+    #[test]
+    fn test_alpenglow_poh_migration_from_leader() {
+        solana_logger::setup();
+
+        let ReplayBlockstoreComponents {
+            blockstore,
+            my_pubkey,
+            leader_schedule_cache,
+            poh_recorder,
+            mut poh_controller,
+            vote_simulator,
+            rpc_subscriptions,
+            ..
+        } = replay_blockstore_components(None, 1, None);
+        let VoteSimulator {
+            bank_forks,
+            mut progress,
+            ..
+        } = vote_simulator;
+        let rpc_subscriptions = Some(rpc_subscriptions);
+
+        let working_bank = bank_forks.read().unwrap().working_bank();
+        assert!(working_bank.is_complete());
+        assert!(working_bank.is_frozen());
+        // Mark startup verification as complete to avoid skipping leader slots
+        working_bank.set_initial_accounts_hash_verification_completed();
+
+        let poh_slot = working_bank.slot() + 2;
+        let alpenglow_slot = working_bank.slot() + 3;
+        let initial_slot = working_bank.slot();
+        let mut is_alpenglow_migration_complete = false;
+
+        // Reset PoH recorder to the completed bank to ensure consistent state
+        ReplayStage::reset_poh_recorder(
+            &my_pubkey,
+            &blockstore,
+            working_bank.clone(),
+            &mut poh_controller,
+            &leader_schedule_cache,
+        );
+
+        // Register just over one slot worth of ticks directly with PoH recorder
+        let num_poh_ticks =
+            (working_bank.ticks_per_slot() * working_bank.hashes_per_tick().unwrap()) + 1;
+        poh_recorder
+            .write()
+            .map(|mut poh_recorder| {
+                for _ in 0..num_poh_ticks + 1 {
+                    poh_recorder.tick();
+                }
+            })
+            .unwrap();
+
+        let poh_recorder = Arc::new(poh_recorder);
+        let (retransmit_slots_sender, _) = unbounded();
+        let (banking_tracer, _) = BankingTracer::new(None).unwrap();
+        let has_new_vote_been_rooted = true;
+
+        // We should start leader for the poh slot, however alpenglow migration should not be started
+        assert!(ReplayStage::maybe_start_leader(
+            &my_pubkey,
+            &bank_forks,
+            &poh_recorder,
+            &mut poh_controller,
+            &leader_schedule_cache,
+            rpc_subscriptions.as_deref(),
+            &None,
+            &mut progress,
+            &retransmit_slots_sender,
+            &mut SkippedSlotsInfo::default(),
+            &banking_tracer,
+            has_new_vote_been_rooted,
+            &None,
+            &mut is_alpenglow_migration_complete,
+        )
+        .is_some());
+        assert!(!is_alpenglow_migration_complete);
+        let working_bank = bank_forks.read().unwrap().working_bank();
+        assert_eq!(working_bank.slot(), poh_slot);
+        assert_eq!(working_bank.parent_slot(), initial_slot);
+
+        // Register another slots worth of ticks  with PoH recorder
+        poh_recorder
+            .write()
+            .map(|mut poh_recorder| {
+                for _ in 0..num_poh_ticks + 1 {
+                    poh_recorder.tick();
+                }
+            })
+            .unwrap();
+
+        // We should now *fail* to start leader for the alpenglow slot,
+        // however the migration must have succeeded
+        assert!(ReplayStage::maybe_start_leader(
+            &my_pubkey,
+            &bank_forks,
+            &poh_recorder,
+            &mut poh_controller,
+            &leader_schedule_cache,
+            rpc_subscriptions.as_deref(),
+            &None,
+            &mut progress,
+            &retransmit_slots_sender,
+            &mut SkippedSlotsInfo::default(),
+            &banking_tracer,
+            has_new_vote_been_rooted,
+            &Some(alpenglow_slot),
+            &mut is_alpenglow_migration_complete,
+        )
+        .is_none());
+        assert!(is_alpenglow_migration_complete);
+        // Working bank should not be updated past the poh slot
+        let working_bank = bank_forks.read().unwrap().working_bank();
+        assert_eq!(working_bank.slot(), poh_slot);
+        assert_eq!(working_bank.parent_slot(), initial_slot);
+    }
+
+    #[test]
+    fn test_alpenglow_poh_migration_from_replay() {
+        solana_logger::setup();
+
+        let ReplayBlockstoreComponents {
+            blockstore,
+            my_pubkey,
+            poh_recorder,
+            vote_simulator,
+            ..
+        } = replay_blockstore_components(Some(tr(0) / tr(1) / tr(2) / tr(3) / tr(4)), 1, None);
+        let VoteSimulator {
+            bank_forks,
+            mut progress,
+            mut latest_validator_votes_for_frozen_banks,
+            mut tbft_structs,
+            ..
+        } = vote_simulator;
+        let (cluster_slots_update_sender, _cluster_slots_update_receiver) = unbounded();
+        let (cost_update_sender, _cost_update_receiver) = unbounded();
+        let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
+            unbounded();
+
+        let poh_slot = bank_forks.read().unwrap().highest_slot() + 1;
+        let first_alpenglow_slot = bank_forks.read().unwrap().highest_slot() + 2;
+        let mut is_alpenglow_migration_complete = false;
+
+        // Finishing the poh slot should not trigger migration
+        let parent_bank = bank_forks.read().unwrap().working_bank();
+        let poh_bank = Bank::new_from_parent(parent_bank, &Pubkey::new_unique(), poh_slot);
+        poh_bank.set_tick_height(poh_bank.max_tick_height());
+        progress.insert(
+            poh_slot,
+            ForkProgress::new_from_bank(
+                &poh_bank,
+                poh_bank.collector_id(),
+                &Pubkey::new_unique(),
+                Some(0),
+                0,
+                0,
+            ),
+        );
+        bank_forks.write().unwrap().insert(poh_bank);
+        let replay_result_vec = vec![ReplaySlotFromBlockstore {
+            is_slot_dead: false,
+            bank_slot: poh_slot,
+            replay_result: None,
+        }];
+
+        ReplayStage::process_replay_results(
+            &blockstore,
+            &bank_forks,
+            &mut progress,
+            None,
+            &None,
+            None,
+            &None,
+            &mut latest_validator_votes_for_frozen_banks,
+            &cluster_slots_update_sender,
+            &cost_update_sender,
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            None,
+            &replay_result_vec,
+            &mut PurgeRepairSlotCounter::default(),
+            &my_pubkey,
+            Some(first_alpenglow_slot),
+            &poh_recorder,
+            &mut is_alpenglow_migration_complete,
+            Some(&mut tbft_structs),
+        );
+        assert!(!is_alpenglow_migration_complete);
+
+        // Finishing the alpenglow slot should now trigger the migration
+        let parent_bank = bank_forks.read().unwrap().working_bank();
+        let ag_bank =
+            Bank::new_from_parent(parent_bank, &Pubkey::new_unique(), first_alpenglow_slot);
+        ag_bank.set_tick_height(ag_bank.max_tick_height());
+        progress.insert(
+            first_alpenglow_slot,
+            ForkProgress::new_from_bank(
+                &ag_bank,
+                ag_bank.collector_id(),
+                &Pubkey::new_unique(),
+                Some(0),
+                0,
+                0,
+            ),
+        );
+        bank_forks.write().unwrap().insert(ag_bank);
+        let replay_result_vec = vec![ReplaySlotFromBlockstore {
+            is_slot_dead: false,
+            bank_slot: first_alpenglow_slot,
+            replay_result: None,
+        }];
+
+        ReplayStage::process_replay_results(
+            &blockstore,
+            &bank_forks,
+            &mut progress,
+            None,
+            &None,
+            None,
+            &None,
+            &mut latest_validator_votes_for_frozen_banks,
+            &cluster_slots_update_sender,
+            &cost_update_sender,
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            None,
+            &replay_result_vec,
+            &mut PurgeRepairSlotCounter::default(),
+            &my_pubkey,
+            Some(first_alpenglow_slot),
+            &poh_recorder,
+            &mut is_alpenglow_migration_complete,
+            Some(&mut tbft_structs),
+        );
+        assert!(is_alpenglow_migration_complete);
     }
 }
