@@ -236,17 +236,26 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     // This is a general purpose function suitable for usage outside initial transaction loading.
     pub(crate) fn load_account(&mut self, account_key: &Pubkey) -> Option<AccountSharedData> {
         match self.do_load(account_key) {
+            // Exists, from AccountLoader.
+            (Some(account), false) => Some(account),
+            // Not allocated, but has an AccountLoader placeholder already.
+            (None, false) => None,
+            // Exists in accounts-db. Store it in AccountLoader for future loads.
             (Some(account), true) => {
                 self.loaded_accounts.insert(*account_key, account.clone());
                 Some(account)
             }
-            (account, false) => account,
-            (None, true) => unreachable!(),
+            // Does not exist and has never been seen.
+            (None, true) => {
+                self.loaded_accounts
+                    .insert(*account_key, AccountSharedData::default());
+                None
+            }
         }
     }
 
     // Internal helper for core loading logic to prevent code duplication. Returns a bool
-    // indicating whether the account came from accounts-db, which allows wrappers with
+    // indicating whether an accounts-db lookup was performed, which allows wrappers with
     // &mut self to insert the account. Wrappers with &self ignore it.
     fn do_load(&self, account_key: &Pubkey) -> (Option<AccountSharedData>, bool) {
         if let Some(account) = self.loaded_accounts.get(account_key) {
@@ -263,7 +272,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         } else if let Some((account, _slot)) = self.callbacks.get_account_shared_data(account_key) {
             (Some(account), true)
         } else {
-            (None, false)
+            (None, true)
         }
     }
 
@@ -843,6 +852,7 @@ mod tests {
             collections::{HashMap, HashSet},
             fs::File,
             io::Read,
+            sync::Arc,
         },
         test_case::test_case,
     };
@@ -2973,5 +2983,63 @@ mod tests {
                 expected_size as u32,
             );
         }
+    }
+
+    #[test]
+    fn test_loader_aliasing() {
+        let mut mock_bank = TestCallbacks::default();
+
+        let hit_address = Pubkey::new_unique();
+        let miss_address = Pubkey::new_unique();
+
+        let expected_hit_account = AccountSharedData::default();
+        mock_bank
+            .accounts_map
+            .insert(hit_address, expected_hit_account.clone());
+
+        let mut account_loader: AccountLoader<_> = (&mock_bank).into();
+
+        // load hits accounts-db, same account is stored
+        account_loader.load_account(&hit_address);
+        let actual_hit_account = account_loader.loaded_accounts.get(&hit_address);
+
+        assert_eq!(actual_hit_account, Some(&expected_hit_account));
+        assert!(Arc::ptr_eq(
+            &actual_hit_account.unwrap().data_clone(),
+            &expected_hit_account.data_clone()
+        ));
+
+        // reload doesnt affect this
+        account_loader.load_account(&hit_address);
+        let actual_hit_account = account_loader.loaded_accounts.get(&hit_address);
+
+        assert_eq!(actual_hit_account, Some(&expected_hit_account));
+        assert!(Arc::ptr_eq(
+            &actual_hit_account.unwrap().data_clone(),
+            &expected_hit_account.data_clone()
+        ));
+
+        // load misses accounts-db, placeholder is inserted
+        account_loader.load_account(&miss_address);
+        let expected_miss_account = account_loader
+            .loaded_accounts
+            .get(&miss_address)
+            .unwrap()
+            .clone();
+
+        assert!(!Arc::ptr_eq(
+            &expected_miss_account.data_clone(),
+            &expected_hit_account.data_clone()
+        ));
+
+        // reload keeps the same placeholder
+        account_loader.load_account(&miss_address);
+        let actual_miss_account = account_loader.loaded_accounts.get(&miss_address);
+
+        assert_eq!(actual_miss_account, Some(&expected_miss_account));
+        assert!(Arc::ptr_eq(
+            &actual_miss_account.unwrap().data_clone(),
+            &expected_miss_account.data_clone()
+        ));
     }
 }
