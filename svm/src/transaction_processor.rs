@@ -768,7 +768,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                 let program_to_store = program_to_load.map(|key| {
                     // Load, verify and compile one program.
-                    let (program, _last_modification_slot) = load_program_with_pubkey(
+                    let (program, last_modification_slot) = load_program_with_pubkey(
                         account_loader,
                         &global_program_cache.get_environments_for_epoch(self.epoch),
                         &key,
@@ -779,7 +779,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     .expect(
                         "called account_loader.get_account_shared_data() with nonexistent account",
                     );
-                    (key, program)
+                    (key, last_modification_slot, program)
                 });
 
                 let task_waiter = Arc::clone(&global_program_cache.loading_task_waiter);
@@ -787,12 +787,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 // Unlock the global cache again.
             };
 
-            if let Some((key, program)) = program_to_store {
+            if let Some((key, last_modification_slot, program)) = program_to_store {
                 program_cache_for_tx_batch.loaded_missing = true;
                 let mut global_program_cache = self.global_program_cache.write().unwrap();
                 // Submit our last completed loading task.
-                if global_program_cache.finish_cooperative_loading_task(self.slot, key, program)
-                    && limit_to_load_programs
+                if global_program_cache.finish_cooperative_loading_task(
+                    self.slot,
+                    key,
+                    last_modification_slot,
+                    program,
+                ) && limit_to_load_programs
                 {
                     // This branch is taken when there is an error in assigning a program to a
                     // cache slot. It is not possible to mock this error for SVM unit
