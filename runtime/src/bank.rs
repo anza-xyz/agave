@@ -1507,7 +1507,7 @@ impl Bank {
                     .read()
                     .unwrap()
                     .get_environments_for_epoch(effective_epoch);
-                if let Some(recompiled) = load_program_with_pubkey(
+                if let Some((recompiled, _last_modification_slot)) = load_program_with_pubkey(
                     self,
                     &environments_for_epoch,
                     &key,
@@ -5955,6 +5955,7 @@ impl Bank {
             &mut ExecuteTimings::default(), // Called by ledger-tool, metrics not accumulated.
             reload,
         )
+        .map(|(loaded_program, _last_modification_slot)| loaded_program)
     }
 
     pub fn withdraw(&self, pubkey: &Pubkey, lamports: u64) -> Result<()> {
