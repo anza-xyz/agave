@@ -3144,6 +3144,7 @@ impl ReplayStage {
         poh_recorder: &RwLock<PohRecorder>,
         is_alpenglow_migration_complete: &mut bool,
     ) {
+        assert!(!*is_alpenglow_migration_complete);
         info!("initiating alpenglow migration");
         // This by itself does not do anything, a follow up PR will enact action to
         // turn off PoH based on this flag
