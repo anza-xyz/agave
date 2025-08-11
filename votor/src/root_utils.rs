@@ -91,7 +91,7 @@ where
         sender
             .sender
             .send((BankNotification::NewRootBank(root_bank), dependency_work))
-            .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
+            .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
 
         if let Some(new_chain) = rooted_slots_with_parents {
             let dependency_work = sender
@@ -101,7 +101,7 @@ where
             sender
                 .sender
                 .send((BankNotification::NewRootedChain(new_chain), dependency_work))
-                .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
+                .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
         }
     }
     info!("{} new root {}", my_pubkey, new_root);
@@ -132,7 +132,7 @@ where
 
     drop_bank_sender
         .send(removed_banks)
-        .unwrap_or_else(|err| warn!("bank drop failed: {:?}", err));
+        .unwrap_or_else(|err| warn!("bank drop failed: {err:?}"));
 
     // Dropping the bank_forks write lock and reacquiring as a read lock is
     // safe because updates to bank_forks are only made by a single thread.
