@@ -67,6 +67,10 @@ pub const SNAPSHOT_STORAGES_FLUSHED_FILENAME: &str = "storages_flushed";
 pub const SNAPSHOT_ACCOUNTS_HARDLINKS: &str = "accounts_hardlinks";
 pub const SNAPSHOT_ARCHIVE_DOWNLOAD_DIR: &str = "remote";
 pub const SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME: &str = "full_snapshot_slot";
+/// When a snapshot is taken of a bank, the state is serialized under this directory.
+/// Specifically in `BANK_SNAPSHOTS_DIR/SLOT/`.
+/// This is also where the bank state is located in the snapshot archive.
+pub const BANK_SNAPSHOTS_DIR: &str = "snapshots";
 pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 const VERSION_STRING_V1_2_0: &str = "1.2.0";
@@ -1061,7 +1065,6 @@ fn archive_snapshot(
     archive_format: ArchiveFormat,
 ) -> Result<SnapshotArchiveInfo> {
     use ArchiveSnapshotPackageError as E;
-    const SNAPSHOTS_DIR: &str = "snapshots";
     const ACCOUNTS_DIR: &str = "accounts";
     info!("Generating snapshot archive for slot {snapshot_slot}, kind: {snapshot_kind:?}");
 
@@ -1079,7 +1082,7 @@ fn archive_snapshot(
         .prefix(&format!("{staging_dir_prefix}{snapshot_slot}-"))
         .tempdir_in(tar_dir)
         .map_err(|err| E::CreateStagingDir(err, tar_dir.to_path_buf()))?;
-    let staging_snapshots_dir = staging_dir.path().join(SNAPSHOTS_DIR);
+    let staging_snapshots_dir = staging_dir.path().join(BANK_SNAPSHOTS_DIR);
 
     let slot_str = snapshot_slot.to_string();
     let staging_snapshot_dir = staging_snapshots_dir.join(&slot_str);
@@ -1139,7 +1142,7 @@ fn archive_snapshot(
                 .append_path_with_name(&staging_version_file, SNAPSHOT_VERSION_FILENAME)
                 .map_err(E::ArchiveVersionFile)?;
             archive
-                .append_dir_all(SNAPSHOTS_DIR, &staging_snapshots_dir)
+                .append_dir_all(BANK_SNAPSHOTS_DIR, &staging_snapshots_dir)
                 .map_err(E::ArchiveSnapshotsDir)?;
 
             let storages_orderer = AccountStoragesOrderer::with_small_to_large_ratio(
@@ -1839,7 +1842,7 @@ fn snapshot_fields_from_files(file_receiver: &Receiver<PathBuf>) -> Result<Snaps
 /// allow new_from_dir() checks to pass.  These checks are not needed for unpacked dirs,
 /// but it is not clean to add another flag to new_from_dir() to skip them.
 fn create_snapshot_meta_files_for_unarchived_snapshot(unpack_dir: impl AsRef<Path>) -> Result<()> {
-    let snapshots_dir = unpack_dir.as_ref().join("snapshots");
+    let snapshots_dir = unpack_dir.as_ref().join(BANK_SNAPSHOTS_DIR);
     if !snapshots_dir.is_dir() {
         return Err(SnapshotError::NoSnapshotSlotDir(snapshots_dir));
     }
@@ -1882,7 +1885,7 @@ fn unarchive_snapshot(
     let unpack_dir = tempfile::Builder::new()
         .prefix(unpacked_snapshots_dir_prefix)
         .tempdir_in(bank_snapshots_dir)?;
-    let unpacked_snapshots_dir = unpack_dir.path().join("snapshots");
+    let unpacked_snapshots_dir = unpack_dir.path().join(BANK_SNAPSHOTS_DIR);
 
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
     let unarchive_handle = streaming_unarchive_snapshot(
@@ -2518,7 +2521,7 @@ pub fn verify_snapshot_archive(
     .unwrap();
 
     // Check snapshots are the same
-    let unpacked_snapshots = unpack_dir.join("snapshots");
+    let unpacked_snapshots = unpack_dir.join(BANK_SNAPSHOTS_DIR);
 
     // Since the unpack code collects all the appendvecs into one directory unpack_account_dir, we need to
     // collect all the appendvecs in account_paths/<slot>/snapshot/ into one directory for later comparison.

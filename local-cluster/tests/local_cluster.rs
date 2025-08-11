@@ -74,7 +74,7 @@ use {
         snapshot_bank_utils,
         snapshot_config::SnapshotConfig,
         snapshot_package::SnapshotKind,
-        snapshot_utils::{self, SnapshotInterval},
+        snapshot_utils::{self, SnapshotInterval, BANK_SNAPSHOTS_DIR},
     },
     solana_signer::Signer,
     solana_stake_interface::{self as stake, state::NEW_WARMUP_COOLDOWN_RATE},
@@ -2321,7 +2321,7 @@ fn test_run_test_load_program_accounts_root() {
 fn create_simple_snapshot_config(ledger_path: &Path) -> SnapshotConfig {
     SnapshotConfig {
         full_snapshot_archives_dir: ledger_path.to_path_buf(),
-        bank_snapshots_dir: ledger_path.join("snapshot"),
+        bank_snapshots_dir: ledger_path.join(BANK_SNAPSHOTS_DIR),
         ..SnapshotConfig::default()
     }
 }

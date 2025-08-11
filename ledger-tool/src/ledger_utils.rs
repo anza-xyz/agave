@@ -35,7 +35,7 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_controller::SnapshotController,
         snapshot_hash::StartingSnapshotHashes,
-        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
+        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs, BANK_SNAPSHOTS_DIR},
     },
     solana_transaction::versioned::VersionedTransaction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
@@ -130,12 +130,12 @@ pub fn load_and_process_ledger(
     transaction_status_sender: Option<TransactionStatusSender>,
 ) -> Result<LoadAndProcessLedgerOutput, LoadAndProcessLedgerError> {
     let bank_snapshots_dir = if blockstore.is_primary_access() {
-        blockstore.ledger_path().join("snapshot")
+        blockstore.ledger_path().join(BANK_SNAPSHOTS_DIR)
     } else {
         blockstore
             .ledger_path()
             .join(LEDGER_TOOL_DIRECTORY)
-            .join("snapshot")
+            .join(BANK_SNAPSHOTS_DIR)
     };
 
     let mut starting_slot = 0; // default start check with genesis
