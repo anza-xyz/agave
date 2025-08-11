@@ -525,16 +525,13 @@ fn minimize_bank_for_snapshot(
     let total_accounts_len = transaction_account_set.len();
     info!("Added {total_accounts_len} accounts from transactions. {transaction_accounts_measure}");
 
-<<<<<<< HEAD
-    SnapshotMinimizer::minimize(bank, snapshot_slot, ending_slot, transaction_account_set);
-=======
     SnapshotMinimizer::minimize(
         bank,
         snapshot_slot,
+        ending_slot,
         transaction_account_set,
         should_recalculate_accounts_lt_hash,
     );
->>>>>>> f6c09ca4e (Adds --recalculate-accounts-lt-hash to `leder-tool create-snapshot` (#7305))
     possibly_incomplete
 }
 

@@ -49,13 +49,9 @@ impl<'a> SnapshotMinimizer<'a> {
     pub fn minimize(
         bank: &'a Bank,
         starting_slot: Slot,
-<<<<<<< HEAD
         ending_slot: Slot,
         transaction_account_set: DashSet<Pubkey>,
-=======
-        transaction_account_set: DashSet<Pubkey>,
         should_recalculate_accounts_lt_hash: bool,
->>>>>>> f6c09ca4e (Adds --recalculate-accounts-lt-hash to `leder-tool create-snapshot` (#7305))
     ) {
         let minimizer = SnapshotMinimizer {
             bank,
@@ -84,11 +80,7 @@ impl<'a> SnapshotMinimizer<'a> {
         minimizer.bank.force_flush_accounts_cache();
         minimizer.bank.set_capitalization();
 
-<<<<<<< HEAD
-        if minimizer.bank.is_accounts_lt_hash_enabled() {
-=======
-        if should_recalculate_accounts_lt_hash {
->>>>>>> f6c09ca4e (Adds --recalculate-accounts-lt-hash to `leder-tool create-snapshot` (#7305))
+        if should_recalculate_accounts_lt_hash && minimizer.bank.is_accounts_lt_hash_enabled() {
             // Since the account state has changed, the accounts lt hash must be recalculated
             let new_accounts_lt_hash = minimizer
                 .accounts_db()
@@ -419,13 +411,8 @@ mod tests {
         },
         dashmap::DashSet,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-<<<<<<< HEAD
-        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
-        solana_genesis_config::{create_genesis_config, GenesisConfig},
-=======
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
-        solana_genesis_config::create_genesis_config,
->>>>>>> f6c09ca4e (Adds --recalculate-accounts-lt-hash to `leder-tool create-snapshot` (#7305))
+        solana_genesis_config::{create_genesis_config, GenesisConfig},
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_pubkey::Pubkey,
         solana_sdk_ids::bpf_loader_upgradeable,
@@ -746,13 +733,9 @@ mod tests {
         SnapshotMinimizer::minimize(
             &bank,
             bank.slot(),
-<<<<<<< HEAD
             bank.slot(),
             DashSet::from_iter([pubkey_to_keep]),
-=======
-            DashSet::from_iter([pubkey_to_keep]),
             should_recalculate_accounts_lt_hash,
->>>>>>> f6c09ca4e (Adds --recalculate-accounts-lt-hash to `leder-tool create-snapshot` (#7305))
         );
 
         // take a snapshot of the minimized bank, then load it
@@ -787,12 +770,8 @@ mod tests {
             false,
             false,
             false,
-<<<<<<< HEAD
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
-=======
             Some(accounts_db_config),
->>>>>>> f6c09ca4e (Adds --recalculate-accounts-lt-hash to `leder-tool create-snapshot` (#7305))
             None,
             Arc::default(),
         )
