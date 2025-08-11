@@ -135,6 +135,7 @@ members = [
     "version",
     "vortexor",
     "vote",
+    "votor",
     "watchtower",
     "wen-restart",
     "xdp",
@@ -556,6 +557,7 @@ solana-version = { path = "version", version = "=3.0.0" }
 solana-vote = { path = "vote", version = "=3.0.0" }
 solana-vote-interface = "2.2.6"
 solana-vote-program = { path = "programs/vote", version = "=3.0.0", default-features = false }
+solana-votor = { path = "votor", version = "=3.0.0" }
 solana-wen-restart = { path = "wen-restart", version = "=3.0.0" }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=3.0.0" }
 solana-zk-keygen = { path = "zk-keygen", version = "=3.0.0" }
