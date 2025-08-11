@@ -157,18 +157,23 @@ pub fn snapshot_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .help("Do not start from a local snapshot if present"),
         Arg::with_name("snapshots")
             .long("snapshots")
-            .alias("snapshot-archive-path")
-            .alias("full-snapshot-archive-path")
             .value_name("DIR")
             .takes_value(true)
             .global(true)
             .help("Use DIR for snapshot location [default: --ledger value]"),
+        Arg::with_name("full_snapshot_archive_path")
+            .long("full-snapshot-archive-path")
+            .alias("snapshot-archive-path")
+            .value_name("DIR")
+            .takes_value(true)
+            .global(true)
+            .help("Use DIR as full snapshot archives location [default: --snapshots value]"),
         Arg::with_name("incremental_snapshot_archive_path")
             .long("incremental-snapshot-archive-path")
             .value_name("DIR")
             .takes_value(true)
             .global(true)
-            .help("Use DIR for separate incremental snapshot location"),
+            .help("Use DIR as incremental snapshot archives location [default: --snapshots value]"),
         Arg::with_name(use_snapshot_archives_at_startup::cli::NAME)
             .long(use_snapshot_archives_at_startup::cli::LONG_ARG)
             .takes_value(true)
