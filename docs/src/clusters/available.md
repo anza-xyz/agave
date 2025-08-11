@@ -6,7 +6,7 @@ pagination_label: Available Solana Clusters
 
 Solana maintains several different clusters with different purposes.
 
-Before you begin, make sure you have first installed the Solana command line tools.
+Before you begin, make sure you have first built the Solana command line tools.
 See [Installing the Solana Command Line Tools](../cli/install.md#build-from-source).
 
 Explorers:
