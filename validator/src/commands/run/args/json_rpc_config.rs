@@ -47,14 +47,12 @@ impl FromClapArgMatches for JsonRpcConfig {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_os = "linux"))]
+    use crate::commands::run::args::tests::verify_args_struct_by_command_run_is_error_with_identity_setup;
     use {
         super::*,
         crate::commands::run::args::{
-            tests::{
-                verify_args_struct_by_command_run_is_error_with_identity_setup,
-                verify_args_struct_by_command_run_with_identity_setup,
-            },
-            RunArgs,
+            tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
         },
         std::net::{Ipv4Addr, SocketAddr},
     };
