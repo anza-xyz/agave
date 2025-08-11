@@ -867,7 +867,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                 let program_to_store = program_to_load.map(|key| {
                     // Load, verify and compile one program.
-                    let (program, _last_modification_slot) = load_program_with_pubkey(
+                    let (program, last_modification_slot) = load_program_with_pubkey(
                         account_loader,
                         program_runtime_environments_for_execution,
                         &key,
@@ -878,7 +878,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     .expect(
                         "called account_loader.get_account_shared_data() with nonexistent account",
                     );
-                    (key, program)
+                    (key, last_modification_slot, program)
                 });
 
                 let task_waiter = Arc::clone(&global_program_cache.loading_task_waiter);
@@ -886,7 +886,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 // Unlock the global cache again.
             };
 
-            if let Some((key, program)) = program_to_store {
+            if let Some((key, last_modification_slot, program)) = program_to_store {
                 program_cache_for_tx_batch.loaded_missing = true;
                 let mut global_program_cache = self.global_program_cache.write().unwrap();
                 // Submit our last completed loading task.
@@ -894,6 +894,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     program_runtime_environments_for_execution,
                     self.slot,
                     key,
+                    last_modification_slot,
                     program,
                 ) && limit_to_load_programs
                 {

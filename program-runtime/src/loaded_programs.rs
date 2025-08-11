@@ -1155,8 +1155,9 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     pub fn finish_cooperative_loading_task(
         &mut self,
         program_runtime_environments: &ProgramRuntimeEnvironments,
-        slot: Slot,
+        current_slot: Slot,
         key: Pubkey,
+        _last_modification_slot: Slot,
         loaded_program: Arc<ProgramCacheEntry>,
     ) -> bool {
         match &mut self.index {
@@ -1164,7 +1165,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 loading_entries, ..
             } => {
                 let loading_thread = loading_entries.get_mut().unwrap().remove(&key);
-                debug_assert_eq!(loading_thread, Some((slot, thread::current().id())));
+                debug_assert_eq!(loading_thread, Some((current_slot, thread::current().id())));
                 // Check that it will be visible to our own fork once inserted
                 if loaded_program.deployment_slot > self.latest_root_slot
                     && !matches!(
@@ -1175,7 +1176,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             .unwrap()
                             .read()
                             .unwrap()
-                            .relationship(loaded_program.deployment_slot, slot),
+                            .relationship(loaded_program.deployment_slot, current_slot),
                         BlockRelation::Equal | BlockRelation::Ancestor
                     )
                 {
