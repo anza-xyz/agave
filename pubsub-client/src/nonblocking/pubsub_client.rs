@@ -172,6 +172,7 @@ use {
         sink::SinkExt,
         stream::{BoxStream, StreamExt},
     },
+    http::Request,
     log::*,
     serde::de::DeserializeOwned,
     serde_json::{json, Map, Value},
@@ -208,7 +209,7 @@ use {
         },
         MaybeTlsStream, WebSocketStream,
     },
-    url::Url,
+    tungstenite::client::IntoClientRequest,
 };
 
 pub type PubsubClientResult<T = ()> = Result<T, PubsubClientError>;
@@ -273,8 +274,18 @@ pub struct PubsubClient {
 
 impl PubsubClient {
     pub async fn new(url: &str) -> PubsubClientResult<Self> {
-        let url = Url::parse(url)?;
-        let (ws, _response) = connect_async(url)
+        let request = url
+            .into_client_request()
+            .map_err(|e| PubsubClientError::ConnectionError(Box::new(e)))?;
+        PubsubClient::new_with_request(request).await
+    }
+
+    /// Create a client from any `Request<T>`, so you can set custom headers/auth/etc.
+    pub async fn new_with_request<T>(request: Request<T>) -> PubsubClientResult<Self>
+    where
+        Request<T>: IntoClientRequest + Unpin,
+    {
+        let (ws, _response) = connect_async(request)
             .await
             .map_err(Box::new)
             .map_err(PubsubClientError::ConnectionError)?;
