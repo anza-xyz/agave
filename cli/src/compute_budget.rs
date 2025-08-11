@@ -104,7 +104,9 @@ pub(crate) fn simulate_and_update_compute_unit_limit(
 
             let compute_unit_limit =
                 if let ComputeUnitLimit::SimulatedWithExtra(n) = compute_unit_limit {
-                    (base_compute_unit_limit as u64 * (100 + *n as u64) / 100) as u32
+                    (base_compute_unit_limit as u64)
+                        .saturating_mul(100_u64.saturating_add(*n as u64))
+                        .saturating_div(100) as u32
                 } else {
                     base_compute_unit_limit
                 };
