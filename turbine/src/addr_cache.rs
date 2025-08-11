@@ -2,9 +2,8 @@ use {
     crate::retransmit_stage::RetransmitSlotStats,
     itertools::Itertools,
     solana_clock::Slot,
-    solana_ledger::{
-        blockstore::MAX_DATA_SHREDS_PER_SLOT,
-        shred::{shred_code::MAX_CODE_SHREDS_PER_SLOT, ShredId, ShredType},
+    solana_ledger::shred::{
+        ShredId, ShredType, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT,
     },
     std::{
         cmp::Reverse,

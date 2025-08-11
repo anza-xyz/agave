@@ -1120,7 +1120,8 @@ mod tests {
 
     impl Accounts {
         pub fn store_for_tests(&self, slot: Slot, pubkey: &Pubkey, account: &AccountSharedData) {
-            self.accounts_db.store_for_tests(slot, &[(pubkey, account)])
+            self.accounts_db
+                .store_for_tests((slot, [(pubkey, account)].as_slice()))
         }
 
         /// useful to adapt tests written prior to introduction of the write cache
@@ -1225,13 +1226,14 @@ mod tests {
         let pubkey = Pubkey::new_unique();
         let account_data = AccountSharedData::new(1, 0, &Pubkey::default());
         let accounts_db = Arc::new(AccountsDb::new_single_for_tests());
-        accounts_db.store_for_tests(
+        accounts_db.store_for_tests((
             0,
-            &[
+            [
                 (&Pubkey::default(), &account_data),
                 (&pubkey, &account_data),
-            ],
-        );
+            ]
+            .as_slice(),
+        ));
 
         let r_tx = sanitized_tx_from_metas(vec![AccountMeta {
             pubkey,
@@ -1339,7 +1341,7 @@ mod tests {
         /* This test assumes pubkey0 < pubkey1 < pubkey2.
          * But the keys created with new_unique() does not guarantee this
          * order because of the endianness.  new_unique() calls add 1 at each
-         * key generaration as the little endian integer.  A pubkey stores its
+         * key generation as the little endian integer.  A pubkey stores its
          * value in a 32-byte array bytes, and its eq-partial trait considers
          * the lower-address bytes more significant, which is the big-endian
          * order.

@@ -1,5 +1,4 @@
 use {
-    crate::Config,
     itertools::Itertools,
     log::{error, info},
     std::{
@@ -60,12 +59,4 @@ where
         .iter()
         .map(|&c| c as char)
         .collect::<String>()
-}
-
-pub(crate) fn rust_target_triple(config: &Config) -> String {
-    if config.arch == "v0" {
-        "sbpf-solana-solana".to_string()
-    } else {
-        format!("sbpf{}-solana-solana", config.arch)
-    }
 }

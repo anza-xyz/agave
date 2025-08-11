@@ -28,7 +28,7 @@ use {
 // Based on transfers seen with `dd bs=SIZE` for NVME drives: values >=64KiB are fine,
 // but usually peak around 256KiB-1MiB. Also compare with particular NVME parameters, e.g.
 // 32 pages (Maximum Data Transfer Size) * page size (MPSMIN = Memory Page Size) = 128KiB.
-const DEFAULT_WRITE_SIZE: usize = 512 * 1024;
+pub const DEFAULT_WRITE_SIZE: usize = 512 * 1024;
 
 // 99.9% of accounts storage files are < 8MiB
 type BacklogVec = SmallVec<[PendingWrite; 8 * 1024 * 1024 / DEFAULT_WRITE_SIZE]>;
@@ -154,7 +154,7 @@ impl<B> FileCreator for IoUringFileCreator<'_, B> {
 }
 
 impl<B> IoUringFileCreator<'_, B> {
-    /// Schedule opening file at `path` with `mode` permissons.
+    /// Schedule opening file at `path` with `mode` permissions.
     ///
     /// Returns key that can be used for scheduling writes for it.
     fn open(

@@ -102,7 +102,7 @@ dependencies = [
  "solana-cli-output",
  "solana-commitment-config",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-pubkey",
  "solana-remote-wallet",
  "solana-rpc-client",
@@ -122,7 +122,7 @@ dependencies = [
  "ahash 0.8.11",
  "solana-epoch-schedule",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-pubkey",
  "solana-sha256-hasher",
@@ -169,7 +169,7 @@ dependencies = [
  "solana-config-program-client",
  "solana-hash",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-message",
  "solana-pubkey",
  "solana-rpc-client",
@@ -244,8 +244,7 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
- "solana-log-collector",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-message",
  "solana-native-token",
@@ -265,11 +264,12 @@ dependencies = [
  "solana-streamer",
  "solana-svm-callback",
  "solana-svm-feature-set",
+ "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-status",
- "solana-type-overrides",
  "solana-unified-scheduler-pool",
  "solana-version",
  "solana-vote",
@@ -296,7 +296,7 @@ dependencies = [
  "solana-ed25519-program",
  "solana-instruction",
  "solana-keccak-hasher",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-message",
  "solana-precompile-error",
  "solana-pubkey",
@@ -311,7 +311,7 @@ version = "3.0.0"
 dependencies = [
  "agave-feature-set",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-message",
  "solana-pubkey",
  "solana-sdk-ids",
@@ -364,8 +364,6 @@ dependencies = [
  "solana-keccak-hasher",
  "solana-last-restart-slot",
  "solana-loader-v3-interface",
- "solana-log-collector",
- "solana-measure",
  "solana-poseidon",
  "solana-program",
  "solana-program-entrypoint",
@@ -380,11 +378,14 @@ dependencies = [
  "solana-stable-layout",
  "solana-svm-callback",
  "solana-svm-feature-set",
+ "solana-svm-log-collector",
+ "solana-svm-measure",
+ "solana-svm-timings",
+ "solana-svm-type-overrides",
  "solana-sysvar",
  "solana-sysvar-id",
- "solana-timings",
  "solana-transaction-context",
- "solana-type-overrides",
+ "static_assertions",
  "test-case",
  "thiserror 2.0.12",
 ]
@@ -484,7 +485,7 @@ dependencies = [
  "solana-inflation",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-metrics",
  "solana-native-token",
  "solana-net-utils",
@@ -545,7 +546,7 @@ dependencies = [
  "solana-cli-config",
  "solana-cli-output",
  "solana-hash",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-metrics",
  "solana-native-token",
  "solana-notifier",
@@ -1529,9 +1530,9 @@ dependencies = [
 
 [[package]]
 name = "bytemuck_derive"
-version = "1.10.0"
+version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "441473f2b4b0459a68628c744bc61d23e730fb00128b841d30fa4bb3972257e4"
+checksum = "4f154e572231cb6ba2bd1176980827e3d5dc04cc183a75dea38109fbdd672d29"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6728,9 +6729,9 @@ dependencies = [
  "solana-account-info",
  "solana-clock",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
  "solana-instruction",
- "solana-logger",
+ "solana-logger 2.3.1",
  "solana-pubkey",
  "solana-sdk-ids",
  "solana-sysvar",
@@ -6772,9 +6773,9 @@ dependencies = [
  "solana-vote-interface",
  "spl-generic-token",
  "spl-pod",
- "spl-token",
  "spl-token-2022-interface",
  "spl-token-group-interface",
+ "spl-token-interface",
  "spl-token-metadata-interface",
  "thiserror 2.0.12",
  "zstd",
@@ -6829,7 +6830,7 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-local-cluster",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-message",
  "solana-native-token",
@@ -6849,7 +6850,7 @@ dependencies = [
  "solana-transaction-status",
  "solana-version",
  "spl-generic-token",
- "spl-token",
+ "spl-token-interface",
  "tikv-jemallocator",
 ]
 
@@ -6901,13 +6902,13 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-fee-calculator",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-genesis-config",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
  "solana-lattice-hash",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-message",
  "solana-metrics",
@@ -6987,7 +6988,7 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-message",
  "solana-perf",
@@ -7128,7 +7129,7 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-local-cluster",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-message",
  "solana-metrics",
@@ -7173,7 +7174,7 @@ dependencies = [
  "solana-connection-cache",
  "solana-hash",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-message",
  "solana-net-utils",
  "solana-pubkey",
@@ -7231,7 +7232,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-sanitize",
  "solana-sha256-hasher",
@@ -7285,8 +7286,6 @@ dependencies = [
  "solana-last-restart-slot",
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
- "solana-log-collector",
- "solana-measure",
  "solana-packet",
  "solana-program",
  "solana-program-entrypoint",
@@ -7298,9 +7297,11 @@ dependencies = [
  "solana-slot-hashes",
  "solana-svm-callback",
  "solana-svm-feature-set",
+ "solana-svm-log-collector",
+ "solana-svm-measure",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-transaction-context",
- "solana-type-overrides",
  "static_assertions",
  "test-case",
 ]
@@ -7340,7 +7341,7 @@ dependencies = [
  "rayon",
  "solana-bucket-map",
  "solana-clock",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-pubkey",
  "tempfile",
@@ -7399,10 +7400,9 @@ dependencies = [
  "regex",
  "reqwest 0.12.22",
  "semver 1.0.26",
- "serial_test",
  "solana-file-download",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "tar",
 ]
 
@@ -7415,7 +7415,7 @@ dependencies = [
  "itertools 0.12.1",
  "log",
  "regex",
- "solana-logger",
+ "solana-logger 3.0.0",
 ]
 
 [[package]]
@@ -7532,7 +7532,7 @@ dependencies = [
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
  "solana-loader-v4-program",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-message",
  "solana-native-token",
  "solana-nonce",
@@ -7673,7 +7673,6 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-streamer",
- "solana-thin-client",
  "solana-time-utils",
  "solana-tpu-client",
  "solana-transaction",
@@ -7695,7 +7694,7 @@ dependencies = [
  "solana-commitment-config",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-merkle-tree",
  "solana-message",
@@ -7894,7 +7893,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rayon",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
@@ -7921,6 +7920,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "bs58",
+ "bytemuck",
  "bytes",
  "chrono",
  "conditional-mod",
@@ -7974,7 +7974,7 @@ dependencies = [
  "solana-fee-calculator",
  "solana-fee-structure",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-genesis-config",
  "solana-geyser-plugin-manager",
  "solana-gossip",
@@ -7984,7 +7984,7 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-message",
  "solana-metrics",
@@ -8019,13 +8019,13 @@ dependencies = [
  "solana-stake-program",
  "solana-streamer",
  "solana-svm",
+ "solana-svm-timings",
  "solana-svm-transaction",
  "solana-system-interface",
  "solana-system-program",
  "solana-system-transaction",
  "solana-sysvar",
  "solana-time-utils",
- "solana-timings",
  "solana-tls-utils",
  "solana-tpu-client",
  "solana-tpu-client-next",
@@ -8076,11 +8076,11 @@ dependencies = [
  "solana-cost-model",
  "solana-fee-structure",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-message",
  "solana-metrics",
  "solana-packet",
@@ -8188,7 +8188,7 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-local-cluster",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-message",
  "solana-net-utils",
@@ -8269,7 +8269,7 @@ dependencies = [
  "solana-entry",
  "solana-hash",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-merkle-tree",
  "solana-message",
@@ -8330,7 +8330,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
@@ -8372,7 +8372,7 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-message",
  "solana-metrics",
  "solana-native-token",
@@ -8453,7 +8453,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
 ]
 
 [[package]]
@@ -8499,7 +8499,7 @@ dependencies = [
  "serde_derive",
  "serde_with",
  "sha2 0.10.9",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
  "thiserror 2.0.12",
 ]
 
@@ -8508,6 +8508,17 @@ name = "solana-frozen-abi-macro"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b83f88a126213cbcb57672c5e70ddb9791eff9b480e9f39fe9285fd2abca66fa"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
+name = "solana-frozen-abi-macro"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d42809b90c84963eb5f2e17afafb1384892341b0d8ec12ae8f4a8c69a96138e4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8542,7 +8553,7 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-native-token",
  "solana-poh-config",
  "solana-pubkey",
@@ -8579,7 +8590,7 @@ dependencies = [
  "solana-hash",
  "solana-inflation",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 2.3.1",
  "solana-poh-config",
  "solana-pubkey",
  "solana-rent",
@@ -8672,11 +8683,11 @@ dependencies = [
  "solana-entry",
  "solana-epoch-schedule",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-metrics",
  "solana-native-token",
@@ -8717,7 +8728,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
 ]
 
 [[package]]
@@ -8735,7 +8746,7 @@ dependencies = [
  "serde_derive",
  "solana-atomic-u64",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
  "solana-sanitize",
  "wasm-bindgen",
 ]
@@ -8749,7 +8760,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
 ]
 
 [[package]]
@@ -8767,7 +8778,7 @@ dependencies = [
  "serde_derive",
  "solana-define-syscall",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
  "solana-pubkey",
  "wasm-bindgen",
 ]
@@ -8884,6 +8895,7 @@ dependencies = [
  "bzip2",
  "chrono",
  "chrono-humanize",
+ "conditional-mod",
  "criterion",
  "crossbeam-channel",
  "dashmap",
@@ -8920,13 +8932,13 @@ dependencies = [
  "solana-entry",
  "solana-epoch-schedule",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-genesis-config",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-message",
  "solana-metrics",
@@ -8952,11 +8964,11 @@ dependencies = [
  "solana-storage-proto",
  "solana-streamer",
  "solana-svm",
+ "solana-svm-timings",
  "solana-svm-transaction",
  "solana-system-interface",
  "solana-system-transaction",
  "solana-time-utils",
- "solana-timings",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
@@ -9035,16 +9047,16 @@ dependencies = [
  "solana-instruction",
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
- "solana-log-collector",
- "solana-measure",
  "solana-packet",
  "solana-program-runtime",
  "solana-pubkey",
  "solana-sbpf",
  "solana-sdk-ids",
+ "solana-svm-log-collector",
+ "solana-svm-measure",
+ "solana-svm-type-overrides",
  "solana-sysvar",
  "solana-transaction-context",
- "solana-type-overrides",
 ]
 
 [[package]]
@@ -9077,7 +9089,7 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-local-cluster",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-message",
  "solana-native-token",
  "solana-net-utils",
@@ -9097,7 +9109,6 @@ dependencies = [
  "solana-streamer",
  "solana-system-interface",
  "solana-system-transaction",
- "solana-thin-client",
  "solana-time-utils",
  "solana-tpu-client",
  "solana-transaction",
@@ -9122,15 +9133,8 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-version",
-]
-
-[[package]]
-name = "solana-log-collector"
-version = "3.0.0"
-dependencies = [
- "log",
 ]
 
 [[package]]
@@ -9140,6 +9144,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db8e777ec1afd733939b532a42492d888ec7c88d8b4127a5d867eb45c6eb5cd5"
 dependencies = [
  "env_logger 0.9.3",
+ "lazy_static",
+ "libc",
+ "log",
+ "signal-hook",
+]
+
+[[package]]
+name = "solana-logger"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef7421d1092680d72065edbf5c7605856719b021bf5f173656c71febcdd5d003"
+dependencies = [
+ "env_logger 0.11.8",
  "lazy_static",
  "libc",
  "log",
@@ -9229,7 +9246,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "solana-logger",
+ "solana-logger 3.0.0",
 ]
 
 [[package]]
@@ -9248,7 +9265,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "socket2 0.6.0",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-serde",
  "tokio",
  "url 2.5.4",
@@ -9325,7 +9342,7 @@ dependencies = [
  "serde_derive",
  "serde_with",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
 ]
 
 [[package]]
@@ -9351,10 +9368,10 @@ dependencies = [
  "serde",
  "solana-clock",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-message",
  "solana-metrics",
  "solana-packet",
@@ -9379,6 +9396,7 @@ dependencies = [
 name = "solana-poh"
 version = "3.0.0"
 dependencies = [
+ "arc-swap",
  "assert_matches",
  "bincode",
  "core_affinity",
@@ -9392,7 +9410,7 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-metrics",
  "solana-perf",
@@ -9418,7 +9436,7 @@ dependencies = [
  "num_cpus",
  "rayon",
  "solana-entry",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-perf",
  "solana-sha256-hasher",
@@ -9622,7 +9640,6 @@ dependencies = [
  "assert_matches",
  "base64 0.22.1",
  "bincode",
- "enum-iterator",
  "itertools 0.12.1",
  "log",
  "percentage",
@@ -9635,12 +9652,11 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-fee-structure",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-instruction",
+ "solana-keypair",
  "solana-last-restart-slot",
- "solana-log-collector",
- "solana-measure",
  "solana-metrics",
  "solana-program-entrypoint",
  "solana-program-runtime",
@@ -9648,19 +9664,21 @@ dependencies = [
  "solana-rent",
  "solana-sbpf",
  "solana-sdk-ids",
+ "solana-signer",
  "solana-slot-hashes",
- "solana-stable-layout",
  "solana-svm-callback",
  "solana-svm-feature-set",
+ "solana-svm-log-collector",
+ "solana-svm-measure",
+ "solana-svm-timings",
  "solana-svm-transaction",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-sysvar",
  "solana-sysvar-id",
- "solana-timings",
+ "solana-transaction",
  "solana-transaction-context",
- "solana-type-overrides",
  "test-case",
- "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -9694,8 +9712,7 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-loader-v3-interface",
- "solana-log-collector",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-message",
  "solana-msg",
  "solana-native-token",
@@ -9714,10 +9731,11 @@ dependencies = [
  "solana-stake-interface",
  "solana-stake-program",
  "solana-svm",
+ "solana-svm-log-collector",
+ "solana-svm-timings",
  "solana-system-interface",
  "solana-sysvar",
  "solana-sysvar-id",
- "solana-timings",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
@@ -9752,7 +9770,7 @@ dependencies = [
  "solana-decode-error",
  "solana-define-syscall",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
  "solana-sanitize",
  "solana-sha256-hasher",
  "wasm-bindgen",
@@ -9800,7 +9818,7 @@ dependencies = [
  "rustls 0.23.31",
  "solana-connection-cache",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
@@ -9866,7 +9884,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
@@ -9884,7 +9902,7 @@ dependencies = [
  "solana-clock",
  "solana-epoch-schedule",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
  "solana-genesis-config",
  "solana-pubkey",
  "solana-rent",
@@ -9948,7 +9966,6 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-ledger",
- "solana-log-collector",
  "solana-measure",
  "solana-message",
  "solana-metrics",
@@ -9981,6 +9998,7 @@ dependencies = [
  "solana-storage-bigtable",
  "solana-streamer",
  "solana-svm",
+ "solana-svm-log-collector",
  "solana-system-interface",
  "solana-system-transaction",
  "solana-sysvar",
@@ -9997,8 +10015,8 @@ dependencies = [
  "solana-vote-program",
  "spl-generic-token",
  "spl-pod",
- "spl-token",
  "spl-token-2022-interface",
+ "spl-token-interface",
  "stream-cancel",
  "symlink",
  "test-case",
@@ -10148,7 +10166,7 @@ dependencies = [
  "solana-connection-cache",
  "solana-hash",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-net-utils",
  "solana-pubkey",
  "solana-pubsub-client",
@@ -10178,6 +10196,7 @@ dependencies = [
  "agave-transaction-view",
  "ahash 0.8.11",
  "aquamarine",
+ "arc-swap",
  "arrayref",
  "assert_matches",
  "base64 0.22.1",
@@ -10239,7 +10258,7 @@ dependencies = [
  "solana-fee-calculator",
  "solana-fee-structure",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-genesis-config",
  "solana-hard-forks",
  "solana-hash",
@@ -10249,7 +10268,7 @@ dependencies = [
  "solana-lattice-hash",
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-message",
  "solana-metrics",
@@ -10282,6 +10301,7 @@ dependencies = [
  "solana-stake-program",
  "solana-svm",
  "solana-svm-callback",
+ "solana-svm-timings",
  "solana-svm-transaction",
  "solana-system-interface",
  "solana-system-program",
@@ -10289,7 +10309,6 @@ dependencies = [
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-time-utils",
- "solana-timings",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
@@ -10468,7 +10487,7 @@ dependencies = [
  "solana-genesis-config",
  "solana-hash",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
@@ -10535,7 +10554,7 @@ checksum = "5c54c66f19b9766a56fa0057d060de8378676cb64987533fa088861858fc5a69"
 dependencies = [
  "serde",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
 ]
 
 [[package]]
@@ -10562,7 +10581,7 @@ dependencies = [
  "serde-big-array",
  "serde_derive",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
  "solana-sanitize",
 ]
 
@@ -10658,7 +10677,7 @@ dependencies = [
  "solana-cpi",
  "solana-decode-error",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
  "solana-instruction",
  "solana-program-error",
  "solana-pubkey",
@@ -10685,7 +10704,6 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-genesis-config",
  "solana-instruction",
- "solana-log-collector",
  "solana-native-token",
  "solana-packet",
  "solana-program-runtime",
@@ -10695,10 +10713,11 @@ dependencies = [
  "solana-stake-interface",
  "solana-svm-callback",
  "solana-svm-feature-set",
+ "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-transaction-context",
- "solana-type-overrides",
  "solana-vote-interface",
  "solana-vote-program",
  "test-case",
@@ -10825,7 +10844,7 @@ dependencies = [
  "smallvec",
  "socket2 0.6.0",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
@@ -10857,12 +10876,10 @@ dependencies = [
  "assert_matches",
  "bincode",
  "ed25519-dalek",
- "itertools 0.12.1",
  "libsecp256k1",
  "log",
  "openssl",
  "percentage",
- "prost",
  "qualifier_attr",
  "rand 0.7.3",
  "serde",
@@ -10879,7 +10896,7 @@ dependencies = [
  "solana-fee-calculator",
  "solana-fee-structure",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-instruction",
  "solana-instructions-sysvar",
@@ -10887,9 +10904,7 @@ dependencies = [
  "solana-loader-v3-interface",
  "solana-loader-v4-interface",
  "solana-loader-v4-program",
- "solana-log-collector",
- "solana-logger",
- "solana-measure",
+ "solana-logger 3.0.0",
  "solana-message",
  "solana-native-token",
  "solana-nonce",
@@ -10907,24 +10922,24 @@ dependencies = [
  "solana-secp256r1-program",
  "solana-signature",
  "solana-signer",
- "solana-slot-hashes",
  "solana-svm",
  "solana-svm-callback",
- "solana-svm-conformance",
  "solana-svm-feature-set",
+ "solana-svm-log-collector",
+ "solana-svm-measure",
+ "solana-svm-timings",
  "solana-svm-transaction",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-system-program",
  "solana-system-transaction",
  "solana-sysvar",
  "solana-sysvar-id",
- "solana-timings",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
- "solana-type-overrides",
  "spl-generic-token",
- "spl-token",
+ "spl-token-interface",
  "test-case",
  "thiserror 2.0.12",
 ]
@@ -10934,22 +10949,34 @@ name = "solana-svm-callback"
 version = "3.0.0"
 dependencies = [
  "solana-account",
+ "solana-clock",
  "solana-precompile-error",
  "solana-pubkey",
 ]
 
 [[package]]
-name = "solana-svm-conformance"
+name = "solana-svm-feature-set"
+version = "3.0.0"
+
+[[package]]
+name = "solana-svm-log-collector"
 version = "3.0.0"
 dependencies = [
- "prost",
- "prost-build",
- "prost-types",
+ "log",
 ]
 
 [[package]]
-name = "solana-svm-feature-set"
+name = "solana-svm-measure"
 version = "3.0.0"
+
+[[package]]
+name = "solana-svm-timings"
+version = "3.0.0"
+dependencies = [
+ "eager",
+ "enum-iterator",
+ "solana-pubkey",
+]
 
 [[package]]
 name = "solana-svm-transaction"
@@ -10965,6 +10992,15 @@ dependencies = [
  "solana-transaction",
  "static_assertions",
  "test-case",
+]
+
+[[package]]
+name = "solana-svm-type-overrides"
+version = "3.0.0"
+dependencies = [
+ "futures 0.3.31",
+ "rand 0.8.5",
+ "shuttle",
 ]
 
 [[package]]
@@ -11000,7 +11036,6 @@ dependencies = [
  "solana-fee-calculator",
  "solana-hash",
  "solana-instruction",
- "solana-log-collector",
  "solana-nonce",
  "solana-nonce-account",
  "solana-packet",
@@ -11011,10 +11046,11 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-svm-callback",
  "solana-svm-feature-set",
+ "solana-svm-log-collector",
+ "solana-svm-type-overrides",
  "solana-system-interface",
  "solana-sysvar",
  "solana-transaction-context",
- "solana-type-overrides",
 ]
 
 [[package]]
@@ -11108,7 +11144,7 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-message",
  "solana-native-token",
  "solana-net-utils",
@@ -11129,47 +11165,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-thin-client"
-version = "3.0.0"
-dependencies = [
- "bincode",
- "log",
- "rayon",
- "solana-account",
- "solana-client-traits",
- "solana-clock",
- "solana-commitment-config",
- "solana-connection-cache",
- "solana-epoch-info",
- "solana-hash",
- "solana-instruction",
- "solana-keypair",
- "solana-logger",
- "solana-message",
- "solana-pubkey",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-signature",
- "solana-signer",
- "solana-system-interface",
- "solana-transaction",
- "solana-transaction-error",
-]
-
-[[package]]
 name = "solana-time-utils"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6af261afb0e8c39252a04d026e3ea9c405342b08c871a2ad8aa5448e068c784c"
-
-[[package]]
-name = "solana-timings"
-version = "3.0.0"
-dependencies = [
- "eager",
- "enum-iterator",
- "solana-pubkey",
-]
 
 [[package]]
 name = "solana-tls-utils"
@@ -11206,9 +11205,11 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-message",
  "solana-native-token",
+ "solana-program-error",
+ "solana-program-pack",
  "solana-pubkey",
  "solana-remote-wallet",
  "solana-rpc-client",
@@ -11224,7 +11225,7 @@ dependencies = [
  "solana-transaction-status",
  "solana-version",
  "spl-associated-token-account-interface",
- "spl-token",
+ "spl-token-interface",
  "tempfile",
  "thiserror 2.0.12",
 ]
@@ -11322,6 +11323,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tokio-util 0.7.16",
+ "tracing",
 ]
 
 [[package]]
@@ -11392,7 +11394,7 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-local-cluster",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-message",
  "solana-net-utils",
@@ -11418,7 +11420,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
  "solana-instruction",
  "solana-sanitize",
 ]
@@ -11478,10 +11480,10 @@ dependencies = [
  "solana-vote-interface",
  "spl-associated-token-account-interface",
  "spl-memo-interface",
- "spl-token",
  "spl-token-2022-interface",
  "spl-token-confidential-transfer-proof-extraction",
  "spl-token-group-interface",
+ "spl-token-interface",
  "spl-token-metadata-interface",
  "thiserror 2.0.12",
 ]
@@ -11541,7 +11543,7 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-metrics",
  "solana-native-token",
@@ -11566,15 +11568,6 @@ dependencies = [
  "test-case",
  "thiserror 2.0.12",
  "tokio",
-]
-
-[[package]]
-name = "solana-type-overrides"
-version = "3.0.0"
-dependencies = [
- "futures 0.3.31",
- "rand 0.8.5",
- "shuttle",
 ]
 
 [[package]]
@@ -11627,15 +11620,15 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-metrics",
  "solana-poh",
  "solana-pubkey",
  "solana-runtime",
  "solana-runtime-transaction",
  "solana-svm",
+ "solana-svm-timings",
  "solana-system-transaction",
- "solana-timings",
  "solana-transaction",
  "solana-transaction-error",
  "solana-unified-scheduler-logic",
@@ -11670,7 +11663,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-sanitize",
  "solana-serde-varint",
 ]
@@ -11711,7 +11704,7 @@ dependencies = [
  "solana-core",
  "solana-keypair",
  "solana-local-cluster",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-measure",
  "solana-metrics",
  "solana-native-token",
@@ -11745,11 +11738,11 @@ dependencies = [
  "solana-bincode",
  "solana-clock",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-packet",
  "solana-pubkey",
  "solana-sdk-ids",
@@ -11779,7 +11772,7 @@ dependencies = [
  "solana-clock",
  "solana-decode-error",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 2.2.1",
  "solana-hash",
  "solana-instruction",
  "solana-pubkey",
@@ -11810,11 +11803,11 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-fee-calculator",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
+ "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-metrics",
  "solana-packet",
  "solana-program-runtime",
@@ -11853,14 +11846,14 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger",
+ "solana-logger 3.0.0",
  "solana-pubkey",
  "solana-runtime",
  "solana-shred-version",
  "solana-signer",
  "solana-streamer",
+ "solana-svm-timings",
  "solana-time-utils",
- "solana-timings",
  "solana-vote",
  "solana-vote-interface",
  "solana-vote-program",
@@ -11878,9 +11871,9 @@ dependencies = [
  "num-derive",
  "num-traits",
  "solana-instruction",
- "solana-log-collector",
  "solana-program-runtime",
  "solana-sdk-ids",
+ "solana-svm-log-collector",
  "solana-zk-sdk 3.0.0",
 ]
 
@@ -12005,9 +11998,9 @@ dependencies = [
  "num-derive",
  "num-traits",
  "solana-instruction",
- "solana-log-collector",
  "solana-program-runtime",
  "solana-sdk-ids",
+ "solana-svm-log-collector",
  "solana-zk-token-sdk",
 ]
 
@@ -12161,34 +12154,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spl-token"
-version = "8.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "053067c6a82c705004f91dae058b11b4780407e9ccd6799dc9e7d0fab5f242da"
-dependencies = [
- "arrayref",
- "bytemuck",
- "num-derive",
- "num-traits",
- "num_enum",
- "solana-account-info",
- "solana-cpi",
- "solana-decode-error",
- "solana-instruction",
- "solana-msg",
- "solana-program-entrypoint",
- "solana-program-error",
- "solana-program-memory",
- "solana-program-option",
- "solana-program-pack",
- "solana-pubkey",
- "solana-rent",
- "solana-sdk-ids",
- "solana-sysvar",
- "thiserror 2.0.12",
-]
-
-[[package]]
 name = "spl-token-2022-interface"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12265,6 +12230,26 @@ dependencies = [
  "solana-pubkey",
  "spl-discriminator",
  "spl-pod",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "spl-token-interface"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06e0c2d4e38ef5834cf7fb1b592b8a8c6eab8485f5ac7a04a151b502c63a0aaa"
+dependencies = [
+ "arrayref",
+ "bytemuck",
+ "num-derive",
+ "num-traits",
+ "num_enum",
+ "solana-instruction",
+ "solana-program-error",
+ "solana-program-option",
+ "solana-program-pack",
+ "solana-pubkey",
+ "solana-sdk-ids",
  "thiserror 2.0.12",
 ]
 

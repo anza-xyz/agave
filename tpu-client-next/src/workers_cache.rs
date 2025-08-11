@@ -4,10 +4,9 @@
 
 use {
     crate::{
-        connection_worker::ConnectionWorker, transaction_batch::TransactionBatch,
+        connection_worker::ConnectionWorker, logging::debug, transaction_batch::TransactionBatch,
         SendTransactionStats,
     },
-    log::*,
     lru::LruCache,
     quinn::Endpoint,
     std::{net::SocketAddr, sync::Arc, time::Duration},

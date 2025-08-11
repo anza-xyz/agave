@@ -25,9 +25,7 @@ use {
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, ProcessedSiblingInstruction},
-    solana_keccak_hasher as keccak,
-    solana_log_collector::{ic_logger_msg, ic_msg},
-    solana_poseidon as poseidon,
+    solana_keccak_hasher as keccak, solana_poseidon as poseidon,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
@@ -47,11 +45,12 @@ use {
     },
     solana_sha256_hasher::Hasher,
     solana_svm_feature_set::SVMFeatureSet,
+    solana_svm_log_collector::{ic_logger_msg, ic_msg},
+    solana_svm_timings::ExecuteTimings,
+    solana_svm_type_overrides::sync::Arc,
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
-    solana_timings::ExecuteTimings,
     solana_transaction_context::IndexOfAccount,
-    solana_type_overrides::sync::Arc,
     std::{
         alloc::Layout,
         marker::PhantomData,
@@ -345,7 +344,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         sanitize_user_provided_values: true,
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
-        aligned_memory_mapping: !feature_set.bpf_account_data_direct_mapping,
+        aligned_memory_mapping: !feature_set.stricter_abi_and_runtime_constraints,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
     let mut result = BuiltinProgram::new_loader(config);
@@ -1462,7 +1461,7 @@ declare_builtin_function!(
         let program_id = *transaction_context
             .get_current_instruction_context()
             .and_then(|instruction_context| {
-                instruction_context.get_last_program_key(transaction_context)
+                instruction_context.get_program_key(transaction_context)
             })?;
 
         transaction_context.set_return_data(program_id, return_data)?;
@@ -1582,7 +1581,7 @@ declare_builtin_function!(
                 let _ = result_header;
 
                 *program_id = *instruction_context
-                    .get_last_program_key(invoke_context.transaction_context)?;
+                    .get_program_key(invoke_context.transaction_context)?;
                 data.clone_from_slice(instruction_context.get_instruction_data());
                 let account_metas = (0..instruction_context.get_number_of_instruction_accounts())
                     .map(|instruction_account_index| {
@@ -2223,7 +2222,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure(vec![0, 1], vec![], &[]);
+                .configure_for_tests(1, vec![], &[]);
             $invoke_context.push().unwrap();
         };
     }
@@ -4448,7 +4447,6 @@ mod tests {
             {
                 let instruction_accounts = vec![InstructionAccount::new(
                     index_in_trace.saturating_add(1) as IndexOfAccount,
-                    0,
                     false,
                     false,
                 )];
@@ -4456,7 +4454,7 @@ mod tests {
                     .transaction_context
                     .get_next_instruction_context_mut()
                     .unwrap()
-                    .configure(vec![0], instruction_accounts, &[index_in_trace as u8]);
+                    .configure_for_tests(0, instruction_accounts, &[index_in_trace as u8]);
                 invoke_context.transaction_context.push().unwrap();
             }
         }

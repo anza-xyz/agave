@@ -3,27 +3,31 @@ use {
         DEFAULT_TICKS_PER_SLOT, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
         HOLD_TRANSACTIONS_SLOT_OFFSET,
     },
-    solana_poh::poh_recorder::{BankStart, PohRecorder},
+    solana_poh::poh_recorder::PohRecorder,
+    solana_runtime::bank::Bank,
     solana_unified_scheduler_pool::{BankingStageMonitor, BankingStageStatus},
     std::{
-        sync::{atomic::{AtomicBool, Ordering::Relaxed}, Arc, RwLock},
+        sync::{
+            atomic::{AtomicBool, Ordering::Relaxed},
+            Arc, RwLock,
+        },
         time::{Duration, Instant},
     },
 };
 
 #[derive(Debug, Clone)]
 pub enum BufferedPacketsDecision {
-    Consume(BankStart),
+    Consume(Arc<Bank>),
     Forward,
     ForwardAndHold,
     Hold,
 }
 
 impl BufferedPacketsDecision {
-    /// Returns the `BankStart` if the decision is `Consume`. Otherwise, returns `None`.
-    pub fn bank_start(&self) -> Option<&BankStart> {
+    /// Returns the `Bank` if the decision is `Consume`. Otherwise, returns `None`.
+    pub fn bank(&self) -> Option<&Arc<Bank>> {
         match self {
-            Self::Consume(bank_start) => Some(bank_start),
+            Self::Consume(bank) => Some(bank),
             _ => None,
         }
     }
@@ -68,7 +72,7 @@ impl DecisionMaker {
         {
             let poh_recorder = self.poh_recorder.read().unwrap();
             decision = Self::consume_or_forward_packets(
-                || Self::bank_start(&poh_recorder),
+                || Self::bank(&poh_recorder),
                 || Self::would_be_leader_shortly(&poh_recorder),
                 || Self::would_be_leader(&poh_recorder),
             );
@@ -78,15 +82,15 @@ impl DecisionMaker {
     }
 
     fn consume_or_forward_packets(
-        bank_start_fn: impl FnOnce() -> Option<BankStart>,
+        bank_fn: impl FnOnce() -> Option<Arc<Bank>>,
         would_be_leader_shortly_fn: impl FnOnce() -> bool,
         would_be_leader_fn: impl FnOnce() -> bool,
     ) -> BufferedPacketsDecision {
         // If has active bank, then immediately process buffered packets
         // otherwise, based on leader schedule to either forward or hold packets
-        if let Some(bank_start) = bank_start_fn() {
+        if let Some(bank) = bank_fn() {
             // If the bank is available, this node is the leader
-            BufferedPacketsDecision::Consume(bank_start)
+            BufferedPacketsDecision::Consume(bank)
         } else if would_be_leader_shortly_fn() {
             // If the node will be the leader soon, hold the packets for now
             BufferedPacketsDecision::Hold
@@ -100,10 +104,8 @@ impl DecisionMaker {
         }
     }
 
-    fn bank_start(poh_recorder: &PohRecorder) -> Option<BankStart> {
-        poh_recorder
-            .bank_start()
-            .filter(|bank_start| bank_start.should_working_bank_still_be_processing_txs())
+    fn bank(poh_recorder: &PohRecorder) -> Option<Arc<Bank>> {
+        poh_recorder.bank()
     }
 
     fn would_be_leader_shortly(poh_recorder: &PohRecorder) -> bool {
@@ -126,7 +128,12 @@ pub(crate) struct DecisionMakerWrapper {
 impl DecisionMakerWrapper {
     pub(crate) fn new(decision_maker: DecisionMaker) -> Self {
         // Clone-off before hand to avoid lock contentions.
-        let is_exited = decision_maker.poh_recorder.read().unwrap().is_exited.clone();
+        let is_exited = decision_maker
+            .poh_recorder
+            .read()
+            .unwrap()
+            .is_exited
+            .clone();
 
         Self {
             is_exited,
@@ -163,25 +170,16 @@ mod tests {
         std::{
             env::temp_dir,
             sync::{atomic::Ordering, Arc},
-            time::Instant,
         },
     };
 
     #[test]
     fn test_buffered_packet_decision_bank_start() {
         let bank = Arc::new(Bank::default_for_tests());
-        let bank_start = BankStart {
-            working_bank: bank,
-            bank_creation_time: Arc::new(Instant::now()),
-        };
-        assert!(BufferedPacketsDecision::Consume(bank_start)
-            .bank_start()
-            .is_some());
-        assert!(BufferedPacketsDecision::Forward.bank_start().is_none());
-        assert!(BufferedPacketsDecision::ForwardAndHold
-            .bank_start()
-            .is_none());
-        assert!(BufferedPacketsDecision::Hold.bank_start().is_none());
+        assert!(BufferedPacketsDecision::Consume(bank).bank().is_some());
+        assert!(BufferedPacketsDecision::Forward.bank().is_none());
+        assert!(BufferedPacketsDecision::ForwardAndHold.bank().is_none());
+        assert!(BufferedPacketsDecision::Hold.bank().is_none());
     }
 
     #[test]
@@ -257,14 +255,10 @@ mod tests {
     #[test]
     fn test_should_process_or_forward_packets() {
         let bank = Arc::new(Bank::default_for_tests());
-        let bank_start = Some(BankStart {
-            working_bank: bank,
-            bank_creation_time: Arc::new(Instant::now()),
-        });
         // having active bank allows to consume immediately
         assert_matches!(
             DecisionMaker::consume_or_forward_packets(
-                || bank_start.clone(),
+                || Some(bank.clone()),
                 || panic!("should not be called"),
                 || panic!("should not be called"),
             ),
@@ -272,11 +266,7 @@ mod tests {
         );
         // Leader other than me, forward the packets
         assert_matches!(
-            DecisionMaker::consume_or_forward_packets(
-                || None,
-                || false,
-                || false,
-            ),
+            DecisionMaker::consume_or_forward_packets(|| None, || false, || false,),
             BufferedPacketsDecision::Forward
         );
         // Will be leader shortly, hold the packets
@@ -290,11 +280,7 @@ mod tests {
         );
         // Will be leader (not shortly), forward and hold
         assert_matches!(
-            DecisionMaker::consume_or_forward_packets(
-                || None,
-                || false,
-                || true,
-            ),
+            DecisionMaker::consume_or_forward_packets(|| None, || false, || true,),
             BufferedPacketsDecision::ForwardAndHold
         );
     }

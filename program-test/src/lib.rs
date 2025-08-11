@@ -23,7 +23,6 @@ use {
         Instruction,
     },
     solana_keypair::Keypair,
-    solana_log_collector::ic_msg,
     solana_native_token::sol_to_lamports,
     solana_poh_config::PohConfig,
     solana_program_entrypoint::{deserialize, SUCCESS},
@@ -42,9 +41,10 @@ use {
         runtime_config::RuntimeConfig,
     },
     solana_signer::Signer,
+    solana_svm_log_collector::ic_msg,
+    solana_svm_timings::ExecuteTimings,
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
-    solana_timings::ExecuteTimings,
     solana_vote_program::vote_state::{self, VoteStateV3, VoteStateVersions},
     std::{
         cell::RefCell,
@@ -116,7 +116,7 @@ pub fn invoke_builtin_function(
     invoke_context.consume_checked(1)?;
 
     let log_collector = invoke_context.get_log_collector();
-    let program_id = instruction_context.get_last_program_key(transaction_context)?;
+    let program_id = instruction_context.get_program_key(transaction_context)?;
     stable_log::program_invoke(
         &log_collector,
         program_id,
@@ -133,7 +133,8 @@ pub fn invoke_builtin_function(
     let (mut parameter_bytes, _regions, _account_lengths) = serialize_parameters(
         transaction_context,
         instruction_context,
-        false, // direct_mapping // There is no VM so direct mapping can not be implemented here
+        false, // There is no VM so stricter_abi_and_runtime_constraints can not be implemented here
+        false, // There is no VM so account_data_direct_mapping can not be implemented here
         mask_out_rent_epoch_in_vm_serialization,
     )?;
 
@@ -256,7 +257,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             .get_current_instruction_context()
             .unwrap();
         let caller = instruction_context
-            .get_last_program_key(transaction_context)
+            .get_program_key(transaction_context)
             .unwrap();
 
         stable_log::program_invoke(
@@ -425,7 +426,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             .get_current_instruction_context()
             .unwrap();
         let caller = *instruction_context
-            .get_last_program_key(transaction_context)
+            .get_program_key(transaction_context)
             .unwrap();
         transaction_context
             .set_return_data(caller, data.to_vec())

@@ -73,7 +73,6 @@ cat > "$CONFIG_FILE" <<EOF
     { "source": "/validator/best-practices/security", "destination": "/operations/best-practices/security" },
     { "source": "/validator/overview/running-validator-or-rpc-node", "destination": "/operations/validator-or-rpc-node" },
     { "source": "/validator/overview/validator-prerequisites", "destination": "/operations/prerequisites" },
-    { "source": "/validator/overview/validator-initiatives", "destination": "/operations/validator-initiatives" },
     { "source": "/running-validator/validator-reqs", "destination": "/operations/requirements" },
     { "source": "/running-validator/validator-troubleshoot", "destination": "/operations/guides/validator-troubleshoot" },
     { "source": "/running-validator/validator-start", "destination": "/operations/guides/validator-start" },
@@ -107,7 +106,7 @@ cat > "$CONFIG_FILE" <<EOF
     { "destination": "https://solana.com/docs/core/cpi", "source": "/developing/programming-model/calling-between-programs" },
     { "destination": "https://solana.com/docs/core/runtime", "source": "/developing/programming-model/runtime" },
     { "destination": "https://solana.com/docs/core/transactions", "source": "/developing/programming-model/transactions" },
-    { "destination": "https://solana.com/docs/core/transactions/fees", "source": "/developing/intro/transaction_fees" },
+    { "destination": "https://solana.com/docs/core/fees", "source": "/developing/intro/transaction_fees" },
     { "destination": "https://solana.com/docs/core/transactions/confirmation", "source": "/developing/transaction_confirmation" },
     { "destination": "https://solana.com/docs/core/transactions/versions", "source": "/developing/versioned-transactions" },
     { "destination": "https://solana.com/docs/core/transactions/retry", "source": "/integrations/retrying-transactions" },
@@ -122,7 +121,7 @@ cat > "$CONFIG_FILE" <<EOF
     { "destination": "https://solana.com/docs/programs/examples", "source": "/developing/on-chain-programs/examples" },
     { "destination": "https://solana.com/docs/programs/faq", "source": "/developing/on-chain-programs/faq" },
     { "destination": "https://solana.com/docs/programs/limitations", "source": "/developing/on-chain-programs/limitations" },
-    { "destination": "https://solana.com/docs/programs/lang-rust", "source": "/developing/on-chain-programs/developing-rust" },
+    { "destination": "https://solana.com/docs/programs/rust", "source": "/developing/on-chain-programs/developing-rust" },
     { "destination": "https://solana.com/docs/programs/lang-c", "source": "/developing/on-chain-programs/developing-c" },
     { "destination": "https://solana.com/docs/clients/javascript-reference", "source": "/developing/clients/javascript-reference" },
     { "destination": "https://solana.com/docs/clients/javascript", "source": "/developing/clients/javascript-api" },
@@ -142,7 +141,7 @@ cat > "$CONFIG_FILE" <<EOF
     { "destination": "https://solana.com/docs/intro/history", "source": "/history" },
     { "destination": "https://solana.com/docs/intro/wallets", "source": "/wallet-guide/support" },
     { "destination": "https://solana.com/docs/intro/wallets", "source": "/wallet-guide" },
-    { "destination": "https://solana.com/docs/intro", "source": "/introduction" }
+    { "destination": "https://solana.com/docs", "source": "/introduction" }
   ]
 }
 EOF

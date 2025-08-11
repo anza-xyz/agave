@@ -410,7 +410,7 @@ fn verify_packets(
     solana_perf::sigverify::mark_disabled(packets, &out);
 }
 
-// Returns pubkey of leaders for shred slots refrenced in the packets.
+// Returns pubkey of leaders for shred slots referenced in the packets.
 // Marks packets as discard if:
 //   - fails to deserialize the shred slot.
 //   - slot leader is unknown.

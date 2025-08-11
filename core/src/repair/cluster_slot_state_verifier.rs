@@ -1584,7 +1584,7 @@ mod test {
         let (vote_simulator, blockstore) = setup_forks_from_tree(forks, 1, None);
         let descendants = vote_simulator.bank_forks.read().unwrap().descendants();
         InitialState {
-            heaviest_subtree_fork_choice: vote_simulator.heaviest_subtree_fork_choice,
+            heaviest_subtree_fork_choice: vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             progress: vote_simulator.progress,
             descendants,
             bank_forks: vote_simulator.bank_forks,

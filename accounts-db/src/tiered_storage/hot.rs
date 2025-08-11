@@ -4,7 +4,7 @@ use {
     crate::{
         account_info::{AccountInfo, Offset},
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
-        accounts_file::{MatchAccountOwnerError, StoredAccountsInfo},
+        accounts_file::StoredAccountsInfo,
         tiered_storage::{
             byte_block,
             file::{TieredReadableFile, TieredWritableFile},
@@ -440,38 +440,6 @@ impl HotStorageReader {
             .get_owner_address(&self.mmap, &self.footer, owner_offset)
     }
 
-    /// Returns Ok(index_of_matching_owner) if the account owner at
-    /// `account_offset` is one of the pubkeys in `owners`.
-    ///
-    /// Returns Err(MatchAccountOwnerError::NoMatch) if the account has 0
-    /// lamports or the owner is not one of the pubkeys in `owners`.
-    ///
-    /// Returns Err(MatchAccountOwnerError::UnableToLoad) if there is any internal
-    /// error that causes the data unable to load, including `account_offset`
-    /// causes a data overrun.
-    pub fn account_matches_owners(
-        &self,
-        account_offset: HotAccountOffset,
-        owners: &[Pubkey],
-    ) -> Result<usize, MatchAccountOwnerError> {
-        let account_meta = self
-            .get_account_meta_from_offset(account_offset)
-            .map_err(|_| MatchAccountOwnerError::UnableToLoad)?;
-
-        if account_meta.lamports() == 0 {
-            Err(MatchAccountOwnerError::NoMatch)
-        } else {
-            let account_owner = self
-                .get_owner_address(account_meta.owner_offset())
-                .map_err(|_| MatchAccountOwnerError::UnableToLoad)?;
-
-            owners
-                .iter()
-                .position(|candidate| account_owner == candidate)
-                .ok_or(MatchAccountOwnerError::NoMatch)
-        }
-    }
-
     /// Returns the size of the account block based on its account offset
     /// and index offset.
     ///
@@ -870,7 +838,7 @@ mod tests {
         },
         assert_matches::assert_matches,
         memoffset::offset_of,
-        rand::{seq::SliceRandom, Rng},
+        rand::Rng,
         solana_account::ReadableAccount,
         solana_clock::{Epoch, Slot},
         solana_hash::Hash,
@@ -1226,12 +1194,12 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "would exceed accounts blocks offset boundary")]
-    fn test_get_acount_meta_from_offset_out_of_bounds() {
+    fn test_get_account_meta_from_offset_out_of_bounds() {
         // Generate a new temp path that is guaranteed to NOT already have a file.
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir
             .path()
-            .join("test_get_acount_meta_from_offset_out_of_bounds");
+            .join("test_get_account_meta_from_offset_out_of_bounds");
 
         let footer = TieredStorageFooter {
             account_meta_format: AccountMetaFormat::Hot,
@@ -1354,115 +1322,6 @@ mod tests {
                     .get_owner_address(OwnerOffset(i as u32))
                     .unwrap(),
                 address,
-            );
-        }
-    }
-
-    #[test]
-    fn test_account_matches_owners() {
-        // Generate a new temp path that is guaranteed to NOT already have a file.
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join("test_hot_storage_get_owner_address");
-        const NUM_OWNERS: u32 = 10;
-
-        let owner_addresses: Vec<_> = std::iter::repeat_with(Pubkey::new_unique)
-            .take(NUM_OWNERS as usize)
-            .collect();
-
-        const NUM_ACCOUNTS: u32 = 30;
-        let mut rng = rand::thread_rng();
-
-        let hot_account_metas: Vec<_> = std::iter::repeat_with({
-            || {
-                HotAccountMeta::new()
-                    .with_lamports(rng.gen_range(1..u64::MAX))
-                    .with_owner_offset(OwnerOffset(rng.gen_range(0..NUM_OWNERS)))
-            }
-        })
-        .take(NUM_ACCOUNTS as usize)
-        .collect();
-        let mut footer = TieredStorageFooter {
-            account_meta_format: AccountMetaFormat::Hot,
-            account_entry_count: NUM_ACCOUNTS,
-            owner_count: NUM_OWNERS,
-            ..TieredStorageFooter::default()
-        };
-        let account_offsets: Vec<_>;
-
-        {
-            let mut file = TieredWritableFile::new(&path).unwrap();
-            let mut current_offset = 0;
-
-            account_offsets = hot_account_metas
-                .iter()
-                .map(|meta| {
-                    let prev_offset = current_offset;
-                    current_offset += file.write_pod(meta).unwrap();
-                    HotAccountOffset::new(prev_offset).unwrap()
-                })
-                .collect();
-            footer.index_block_offset = current_offset as u64;
-            // Typically, the owners block is stored after index block, but
-            // since we don't write index block in this test, so we have
-            // the owners_block_offset set to the end of the accounts blocks.
-            footer.owners_block_offset = footer.index_block_offset;
-
-            let mut owners_table = OwnersTable::default();
-            owner_addresses.iter().for_each(|owner_address| {
-                owners_table.insert(owner_address);
-            });
-            footer
-                .owners_block_format
-                .write_owners_block(&mut file, &owners_table)
-                .unwrap();
-
-            // while the test only focuses on account metas, writing a footer
-            // here is necessary to make it a valid tiered-storage file.
-            footer.write_footer_block(&mut file).unwrap();
-        }
-
-        let file = TieredReadableFile::new(&path).unwrap();
-        let hot_storage = HotStorageReader::new(file).unwrap();
-
-        // First, verify whether we can find the expected owners.
-        let mut owner_candidates = owner_addresses.clone();
-        owner_candidates.shuffle(&mut rng);
-
-        for (account_offset, account_meta) in account_offsets.iter().zip(hot_account_metas.iter()) {
-            let index = hot_storage
-                .account_matches_owners(*account_offset, &owner_candidates)
-                .unwrap();
-            assert_eq!(
-                owner_candidates[index],
-                owner_addresses[account_meta.owner_offset().0 as usize]
-            );
-        }
-
-        // Second, verify the MatchAccountOwnerError::NoMatch case
-        const NUM_UNMATCHED_OWNERS: usize = 20;
-        let unmatched_candidates: Vec<_> = std::iter::repeat_with(Pubkey::new_unique)
-            .take(NUM_UNMATCHED_OWNERS)
-            .collect();
-
-        for account_offset in account_offsets.iter() {
-            assert_eq!(
-                hot_storage.account_matches_owners(*account_offset, &unmatched_candidates),
-                Err(MatchAccountOwnerError::NoMatch)
-            );
-        }
-
-        // Thirdly, we mixed two candidates and make sure we still find the
-        // matched owner.
-        owner_candidates.extend(unmatched_candidates);
-        owner_candidates.shuffle(&mut rng);
-
-        for (account_offset, account_meta) in account_offsets.iter().zip(hot_account_metas.iter()) {
-            let index = hot_storage
-                .account_matches_owners(*account_offset, &owner_candidates)
-                .unwrap();
-            assert_eq!(
-                owner_candidates[index],
-                owner_addresses[account_meta.owner_offset().0 as usize]
             );
         }
     }

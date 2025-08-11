@@ -1,8 +1,7 @@
 #[derive(Clone, Copy, Default)]
 pub struct SVMFeatureSet {
     pub move_precompile_verification_to_svm: bool,
-    pub remove_accounts_executable_flag_checks: bool,
-    pub bpf_account_data_direct_mapping: bool,
+    pub stricter_abi_and_runtime_constraints: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
     pub enable_loader_v4: bool,
     pub deplete_cu_meter_on_vm_failure: bool,
@@ -44,8 +43,7 @@ impl SVMFeatureSet {
     pub fn all_enabled() -> Self {
         Self {
             move_precompile_verification_to_svm: true,
-            remove_accounts_executable_flag_checks: true,
-            bpf_account_data_direct_mapping: true,
+            stricter_abi_and_runtime_constraints: true,
             enable_bpf_loader_set_authority_checked_ix: true,
             enable_loader_v4: true,
             deplete_cu_meter_on_vm_failure: true,

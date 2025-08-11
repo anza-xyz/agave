@@ -30,6 +30,8 @@ solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
+solana-program-error = { workspace = true }
+solana-program-pack = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-rpc-client = { workspace = true, features = ["default"] }
@@ -42,7 +44,7 @@ solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 spl-associated-token-account-interface = { version = "=1.0.0" }
-spl-token = { version = "=8.0.0", features = ["no-entrypoint"] }
+spl-token-interface = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 

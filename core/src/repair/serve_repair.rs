@@ -2,6 +2,7 @@
 use {
     crate::repair::standard_repair_handler::StandardRepairHandler,
     solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path_auto_delete},
+    solana_runtime::bank_forks::BankForks,
 };
 use {
     crate::{
@@ -40,7 +41,7 @@ use {
         packet::{Packet, PacketBatch, PacketBatchRecycler, PinnedPacketBatch},
     },
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
-    solana_runtime::{bank_forks::BankForks, root_bank_cache::RootBankCache},
+    solana_runtime::bank_forks::SharableBank,
     solana_signature::{Signature, SIGNATURE_BYTES},
     solana_signer::Signer,
     solana_streamer::{
@@ -337,7 +338,7 @@ impl RepairProtocol {
 
 pub struct ServeRepair {
     cluster_info: Arc<ClusterInfo>,
-    root_bank_cache: RootBankCache,
+    root_bank: SharableBank,
     repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
     repair_handler: Box<dyn RepairHandler + Send + Sync>,
 }
@@ -400,13 +401,13 @@ struct RepairRequestWithMeta {
 impl ServeRepair {
     pub fn new(
         cluster_info: Arc<ClusterInfo>,
-        bank_forks: Arc<RwLock<BankForks>>,
+        sharable_root_bank: SharableBank,
         repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
         repair_handler: Box<dyn RepairHandler + Send + Sync>,
     ) -> Self {
         Self {
             cluster_info,
-            root_bank_cache: RootBankCache::new(bank_forks),
+            root_bank: sharable_root_bank,
             repair_whitelist,
             repair_handler,
         }
@@ -421,7 +422,12 @@ impl ServeRepair {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let repair_handler = Box::new(StandardRepairHandler::new(blockstore));
-        Self::new(cluster_info, bank_forks, repair_whitelist, repair_handler)
+        Self::new(
+            cluster_info,
+            bank_forks.read().unwrap().sharable_root_bank(),
+            repair_whitelist,
+            repair_handler,
+        )
     }
 
     pub(crate) fn my_id(&self) -> Pubkey {
@@ -656,7 +662,7 @@ impl ServeRepair {
         let mut total_requests = requests.len();
 
         let socket_addr_space = *self.cluster_info.socket_addr_space();
-        let root_bank = self.root_bank_cache.root_bank();
+        let root_bank = self.root_bank.load();
         let epoch_staked_nodes = root_bank.epoch_staked_nodes(root_bank.epoch());
         let identity_keypair = self.cluster_info.keypair().clone();
         let my_id = identity_keypair.pubkey();

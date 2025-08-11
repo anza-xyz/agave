@@ -51,28 +51,6 @@ impl ShredData {
         }
     }
 
-    pub(super) fn new_from_data(
-        slot: Slot,
-        index: u32,
-        parent_offset: u16,
-        data: &[u8],
-        flags: ShredFlags,
-        reference_tick: u8,
-        version: u16,
-        fec_set_index: u32,
-    ) -> Self {
-        Self::from(legacy::ShredData::new_from_data(
-            slot,
-            index,
-            parent_offset,
-            data,
-            flags,
-            reference_tick,
-            version,
-            fec_set_index,
-        ))
-    }
-
     pub(super) fn last_in_slot(&self) -> bool {
         let flags = self.data_header().flags;
         flags.contains(ShredFlags::LAST_SHRED_IN_SLOT)
@@ -124,7 +102,7 @@ impl ShredData {
         )>,
     ) -> Result<usize, Error> {
         match merkle_variant {
-            None => Ok(legacy::ShredData::CAPACITY),
+            None => Err(Error::InvalidShredVariant),
             Some((proof_size, chained, resigned)) => {
                 debug_assert!(chained || !resigned);
                 merkle::ShredData::capacity(proof_size, chained, resigned)

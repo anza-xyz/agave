@@ -1,6 +1,6 @@
 //! Contains utility functions to create server and client for test purposes.
 use {
-    super::quic::{spawn_server_multi, SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID},
+    super::quic::{spawn_server, SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID},
     crate::{
         quic::{QuicServerParams, StreamerStats},
         streamer::StakedNodes,
@@ -97,7 +97,7 @@ pub fn setup_quic_server_with_sockets(
         stats,
         thread: handle,
         max_concurrent_connections: _,
-    } = spawn_server_multi(
+    } = spawn_server(
         "quic_streamer_test",
         sockets,
         &keypair,

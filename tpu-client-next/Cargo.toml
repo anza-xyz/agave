@@ -12,11 +12,14 @@ edition = { workspace = true }
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
+default = ["log"]
+log = ["dep:log"]
+tracing = ["dep:tracing"]
 metrics = ["dep:solana-metrics"]
 
 [dependencies]
 async-trait = { workspace = true }
-log = { workspace = true }
+log = { workspace = true, optional = true }
 lru = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
@@ -34,6 +37,7 @@ solana-tpu-client = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 crossbeam-channel = { workspace = true }

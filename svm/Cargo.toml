@@ -27,16 +27,15 @@ frozen-abi = [
     "solana-program-runtime/frozen-abi",
 ]
 shuttle-test = [
-    "solana-type-overrides/shuttle-test",
-    "solana-program-runtime/shuttle-test",
     "solana-bpf-loader-program/shuttle-test",
     "solana-loader-v4-program/shuttle-test",
+    "solana-program-runtime/shuttle-test",
+    "solana-svm-type-overrides/shuttle-test",
 ]
 svm-internal = []
 
 [dependencies]
 ahash = { workspace = true }
-itertools = { workspace = true }
 log = { workspace = true }
 percentage = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
@@ -57,8 +56,6 @@ solana-instructions-sysvar = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
 solana-loader-v4-interface = { workspace = true }
 solana-loader-v4-program = { workspace = true }
-solana-log-collector = { workspace = true }
-solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
@@ -69,16 +66,17 @@ solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-rent-collector = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-slot-hashes = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-svm-measure = { workspace = true }
+solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar-id = { workspace = true }
-solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
-solana-type-overrides = { workspace = true }
 spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
 
@@ -91,7 +89,6 @@ bincode = { workspace = true }
 ed25519-dalek = { workspace = true }
 libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
-prost = { workspace = true }
 rand0-7 = { workspace = true }
 shuttle = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
@@ -116,13 +113,12 @@ solana-signature = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-svm = { path = ".", features = ["dev-context-only-utils", "svm-internal"] }
-solana-svm-conformance = { workspace = true }
 solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
-spl-token = { workspace = true }
+spl-token-interface = { workspace = true }
 test-case = { workspace = true }
 
 [lints]

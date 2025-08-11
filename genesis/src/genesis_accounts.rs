@@ -228,7 +228,7 @@ fn add_stakes(
         .sum::<u64>()
 }
 
-/// Add acounts that should be present in genesis; skip for development clusters
+/// Add accounts that should be present in genesis; skip for development clusters
 pub fn add_genesis_accounts(genesis_config: &mut GenesisConfig, mut issued_lamports: u64) {
     if genesis_config.cluster_type == ClusterType::Development {
         return;

@@ -159,7 +159,7 @@ fn process_instruction(
 ) -> Vec<AccountSharedData> {
     mock_process_instruction(
         &id(),
-        Vec::new(),
+        None,
         instruction_data,
         transaction_accounts,
         instruction_accounts,
@@ -180,7 +180,7 @@ fn process_deprecated_instruction(
     deprecated_feature_set.deactivate(&deprecate_legacy_vote_ixs::id());
     mock_process_instruction_with_feature_set(
         &id(),
-        Vec::new(),
+        None,
         instruction_data,
         transaction_accounts,
         instruction_accounts,

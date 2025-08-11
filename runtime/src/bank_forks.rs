@@ -9,6 +9,7 @@ use {
         },
         snapshot_controller::SnapshotController,
     },
+    arc_swap::ArcSwap,
     log::*,
     solana_clock::{BankId, Slot},
     solana_hash::Hash,
@@ -43,6 +44,19 @@ impl ReadOnlyAtomicSlot {
     }
 }
 
+#[derive(Clone)]
+pub struct SharableBank(Arc<ArcSwap<Bank>>);
+
+impl SharableBank {
+    pub fn load(&self) -> Arc<Bank> {
+        self.0.load_full()
+    }
+
+    fn store(&self, bank: Arc<Bank>) {
+        self.0.store(bank);
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum SetRootError {}
 
@@ -69,6 +83,7 @@ pub struct BankForks {
     banks: HashMap<Slot, BankWithScheduler>,
     descendants: HashMap<Slot, HashSet<Slot>>,
     root: Arc<AtomicSlot>,
+    root_bank: SharableBank,
     in_vote_only_mode: Arc<AtomicBool>,
     highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
@@ -115,6 +130,7 @@ impl BankForks {
 
         let bank_forks = Arc::new(RwLock::new(Self {
             root: Arc::new(AtomicSlot::new(root_slot)),
+            root_bank: SharableBank(Arc::new(ArcSwap::from(Arc::clone(&root_bank)))),
             banks,
             descendants,
             in_vote_only_mode: Arc::new(AtomicBool::new(false)),
@@ -199,12 +215,16 @@ impl BankForks {
         self.get(slot).map(|bank| bank.hash())
     }
 
+    pub fn sharable_root_bank(&self) -> SharableBank {
+        self.root_bank.clone()
+    }
+
     pub fn root_bank(&self) -> Arc<Bank> {
-        self[self.root()].clone()
+        self.root_bank.load()
     }
 
     pub fn install_scheduler_pool(&mut self, pool: InstalledSchedulerPoolArc) {
-        info!("Installed new scheduler_pool into bank_forks: {:?}", pool);
+        info!("Installed new scheduler_pool into bank_forks: {pool:?}");
         assert!(
             self.scheduler_pool.replace(pool).is_none(),
             "Reinstalling scheduler pool isn't supported"
@@ -336,15 +356,18 @@ impl BankForks {
         snapshot_controller: Option<&SnapshotController>,
         highest_super_majority_root: Option<Slot>,
     ) -> Result<(Vec<BankWithScheduler>, SetRootMetrics), SetRootError> {
-        let old_epoch = self.root_bank().epoch();
-        // To support `RootBankCache` (via `ReadOnlyAtomicSlot`) accessing `root` *without* locking
-        // BankForks first *and* from a different thread, this store *must* be at least Release to
-        // ensure atomic ordering correctness.
-        self.root.store(root, Ordering::Release);
+        let old_epoch = self.root_bank.load().epoch();
 
         let root_bank = &self
             .get(root)
             .expect("root bank didn't exist in bank_forks");
+
+        // To support `RootBankCache` (via `ReadOnlyAtomicSlot`) accessing `root` *without* locking
+        // BankForks first *and* from a different thread, this store *must* be at least Release to
+        // ensure atomic ordering correctness.
+        self.root.store(root, Ordering::Release);
+        self.root_bank.store(Arc::clone(root_bank));
+
         let new_epoch = root_bank.epoch();
         if old_epoch != new_epoch {
             info!(
@@ -360,7 +383,8 @@ impl BankForks {
             // Now we have rooted a bank in a new epoch, there are no needs to
             // keep the epoch rewards cache for current epoch any longer.
             info!(
-                "Clearing epoch rewards cache for epoch {old_epoch} after setting root to slot {root}"
+                "Clearing epoch rewards cache for epoch {old_epoch} after setting root to slot \
+                 {root}"
             );
             root_bank.clear_epoch_rewards_cache();
         }

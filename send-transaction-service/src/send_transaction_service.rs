@@ -317,6 +317,7 @@ impl SendTransactionService {
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         debug!("Starting send-transaction-service::retry_thread.");
+        let root_bank = bank_forks.read().unwrap().sharable_root_bank();
         let retry_interval_ms_default = MAX_RETRY_SLEEP_MS.min(config.retry_rate_ms);
         let mut retry_interval_ms = retry_interval_ms_default;
         Builder::new()
@@ -336,7 +337,7 @@ impl SendTransactionService {
                         .store(transactions.len() as u64, Ordering::Relaxed);
                     let (root_bank, working_bank) = {
                         let bank_forks = bank_forks.read().unwrap();
-                        (bank_forks.root_bank(), bank_forks.working_bank())
+                        (root_bank.load(), bank_forks.working_bank())
                     };
 
                     let result = Self::process_transactions(

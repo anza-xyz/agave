@@ -44,9 +44,9 @@ solana-transaction-status-client-types = { workspace = true }
 solana-vote-interface = { workspace = true }
 spl-associated-token-account-interface = { workspace = true, features = ["borsh"] }
 spl-memo-interface = { workspace = true }
-spl-token = { workspace = true, features = ["no-entrypoint"] }
 spl-token-2022-interface = { workspace = true }
 spl-token-group-interface = { workspace = true }
+spl-token-interface = { workspace = true }
 spl-token-metadata-interface = { workspace = true }
 thiserror = { workspace = true }
 

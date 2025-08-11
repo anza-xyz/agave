@@ -9,8 +9,8 @@
 //! Yet, it also allows to implement custom leader estimation.
 
 use {
+    crate::logging::error,
     async_trait::async_trait,
-    log::*,
     solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_connection_cache::connection_cache::Protocol,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,

@@ -51,7 +51,6 @@ members = [
     "ledger-tool",
     "local-cluster",
     "log-analyzer",
-    "log-collector",
     "measure",
     "memory-management",
     "merkle-tree",
@@ -104,15 +103,16 @@ members = [
     "streamer",
     "svm",
     "svm-callback",
-    "svm-conformance",
     "svm-feature-set",
+    "svm-log-collector",
+    "svm-measure",
+    "svm-timings",
     "svm-transaction",
+    "svm-type-overrides",
     "syscalls",
     "syscalls/gen-syscall-list",
     "test-validator",
-    "thin-client",
     "thread-manager",
-    "timings",
     "tls-utils",
     "tokens",
     "tps-client",
@@ -125,7 +125,6 @@ members = [
     "transaction-status-client-types",
     "transaction-view",
     "turbine",
-    "type-overrides",
     "udp-client",
     "unified-scheduler-logic",
     "unified-scheduler-pool",
@@ -142,7 +141,7 @@ members = [
     "zk-token-sdk",
 ]
 
-exclude = ["programs/sbf", "svm/examples", "svm/tests/example-programs"]
+exclude = ["programs/sbf", "svm/tests/example-programs"]
 
 resolver = "2"
 
@@ -218,7 +217,7 @@ bs58 = { version = "0.5.1", default-features = false }
 bv = "0.11.1"
 byte-unit = "4.0.19"
 bytemuck = "1.23.1"
-bytemuck_derive = "1.10.0"
+bytemuck_derive = "1.10.1"
 bytes = "1.10"
 bzip2 = "0.4.4"
 caps = "0.5.5"
@@ -431,7 +430,7 @@ solana-fee-calculator = "2.2.1"
 solana-fee-structure = "2.3.0"
 solana-file-download = "2.2.2"
 solana-frozen-abi = "2.3.0"
-solana-frozen-abi-macro = "2.2.1"
+solana-frozen-abi-macro = "3.0.0"
 solana-genesis = { path = "genesis", version = "=3.0.0" }
 solana-genesis-config = "2.3.0"
 solana-genesis-utils = { path = "genesis-utils", version = "=3.0.0" }
@@ -452,8 +451,7 @@ solana-loader-v3-interface = "5.0.0"
 solana-loader-v4-interface = "2.2.1"
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=3.0.0" }
 solana-local-cluster = { path = "local-cluster", version = "=3.0.0" }
-solana-log-collector = { path = "log-collector", version = "=3.0.0" }
-solana-logger = "2.3.1"
+solana-logger = "3.0.0"
 solana-measure = { path = "measure", version = "=3.0.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=3.0.0" }
 solana-message = "2.4.0"
@@ -524,18 +522,19 @@ solana-storage-proto = { path = "storage-proto", version = "=3.0.0" }
 solana-streamer = { path = "streamer", version = "=3.0.0" }
 solana-svm = { path = "svm", version = "=3.0.0" }
 solana-svm-callback = { path = "svm-callback", version = "=3.0.0" }
-solana-svm-conformance = { path = "svm-conformance", version = "=3.0.0" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.0.0" }
+solana-svm-log-collector = { path = "svm-log-collector", version = "=3.0.0" }
+solana-svm-measure = { path = "svm-measure", version = "=3.0.0" }
+solana-svm-timings = { path = "svm-timings", version = "=3.0.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.0.0" }
+solana-svm-type-overrides = { path = "svm-type-overrides", version = "=3.0.0" }
 solana-system-interface = "1.0"
 solana-system-program = { path = "programs/system", version = "=3.0.0" }
 solana-system-transaction = "2.2.1"
 solana-sysvar = "2.2.2"
 solana-sysvar-id = "2.2.1"
 solana-test-validator = { path = "test-validator", version = "=3.0.0" }
-solana-thin-client = { path = "thin-client", version = "=3.0.0" }
 solana-time-utils = "2.2.1"
-solana-timings = { path = "timings", version = "=3.0.0" }
 solana-tls-utils = { path = "tls-utils", version = "=3.0.0" }
 solana-tps-client = { path = "tps-client", version = "=3.0.0" }
 solana-tpu-client = { path = "tpu-client", version = "=3.0.0", default-features = false }
@@ -547,7 +546,6 @@ solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", ver
 solana-transaction-status = { path = "transaction-status", version = "=3.0.0" }
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=3.0.0" }
 solana-turbine = { path = "turbine", version = "=3.0.0" }
-solana-type-overrides = { path = "type-overrides", version = "=3.0.0" }
 solana-udp-client = { path = "udp-client", version = "=3.0.0" }
 solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=3.0.0" }
 solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=3.0.0" }
@@ -566,10 +564,10 @@ spl-associated-token-account-interface = "1.0.0"
 spl-generic-token = "1.0.1"
 spl-memo-interface = "1.0.0"
 spl-pod = "0.5.1"
-spl-token = "8.0.0"
 spl-token-2022-interface = "1.0.0"
 spl-token-confidential-transfer-proof-extraction = "0.4.0"
 spl-token-group-interface = "0.6.0"
+spl-token-interface = "1.0.0"
 spl-token-metadata-interface = "0.7.0"
 static_assertions = "1.1.0"
 stream-cancel = "0.8.2"
@@ -597,6 +595,7 @@ toml = "0.8.12"
 tonic = "0.9.2"
 tonic-build = "0.9.2"
 tower = "0.5.2"
+tracing = "0.1"
 trait-set = "0.3.0"
 trees = "0.4.2"
 tungstenite = "0.20.1"

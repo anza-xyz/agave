@@ -49,12 +49,13 @@ use {
     },
     solana_gossip::{
         cluster_info::{
-            ClusterInfo, Node, DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
+            ClusterInfo, DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
         },
         contact_info::ContactInfo,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         gossip_service::GossipService,
+        node::Node,
     },
     solana_hard_forks::HardForks,
     solana_hash::Hash,
@@ -1300,7 +1301,7 @@ impl Validator {
         let serve_repair = config.repair_handler_type.create_serve_repair(
             blockstore.clone(),
             cluster_info.clone(),
-            bank_forks.clone(),
+            bank_forks.read().unwrap().sharable_root_bank(),
             config.repair_whitelist.clone(),
         );
         let (repair_request_quic_sender, repair_request_quic_receiver) = unbounded();
@@ -1476,6 +1477,15 @@ impl Validator {
                 (None, None)
             };
 
+        // disable all2all tests if not allowed for a given cluster type
+        let alpenglow_socket = if genesis_config.cluster_type == ClusterType::Testnet
+            || genesis_config.cluster_type == ClusterType::Development
+        {
+            node.sockets.alpenglow
+        } else {
+            None
+        };
+
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
@@ -1486,6 +1496,7 @@ impl Validator {
                 retransmit: node.sockets.retransmit_sockets,
                 fetch: node.sockets.tvu,
                 ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,
+                alpenglow: alpenglow_socket,
             },
             blockstore.clone(),
             ledger_signal_receiver,
@@ -2661,7 +2672,7 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
     // Staked nodes entries will not expire until an epoch after. So it
     // is necessary here to filter for recent entries to establish liveness.
     let peers: HashMap<_, _> = cluster_info
-        .tvu_peers(|q| q.clone())
+        .tvu_peers(ContactInfo::clone)
         .into_iter()
         .filter(|node| {
             let age = now.saturating_sub(node.wallclock());

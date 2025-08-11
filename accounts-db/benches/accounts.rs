@@ -51,10 +51,10 @@ fn bench_delete_dependencies(bencher: &mut Bencher) {
         let account = AccountSharedData::new(i + 1, 0, AccountSharedData::default().owner());
         accounts
             .accounts_db
-            .store_for_tests(i, &[(&pubkey, &account)]);
+            .store_for_tests((i, [(&pubkey, &account)].as_slice()));
         accounts
             .accounts_db
-            .store_for_tests(i, &[(&old_pubkey, &zero_account)]);
+            .store_for_tests((i, [(&old_pubkey, &zero_account)].as_slice()));
         old_pubkey = pubkey;
         accounts.accounts_db.add_root_and_flush_write_cache(i);
     }
@@ -268,7 +268,7 @@ fn bench_load_largest_accounts(b: &mut Bencher) {
         let account = AccountSharedData::new(lamports, 0, &Pubkey::default());
         accounts
             .accounts_db
-            .store_for_tests(0, &[(&pubkey, &account)]);
+            .store_for_tests((0, [(&pubkey, &account)].as_slice()));
     }
     accounts.accounts_db.add_root_and_flush_write_cache(0);
     let ancestors = Ancestors::from(vec![0]);

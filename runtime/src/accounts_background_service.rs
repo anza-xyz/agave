@@ -11,7 +11,6 @@ use {
     crate::{
         bank::{Bank, BankSlotDelta, DropCallback},
         bank_forks::BankForks,
-        snapshot_bank_utils,
         snapshot_controller::SnapshotController,
         snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::SnapshotError,
@@ -284,7 +283,7 @@ impl SnapshotRequestHandler {
         let snapshot_package = SnapshotPackage::new(
             snapshot_kind,
             &snapshot_root_bank,
-            snapshot_bank_utils::get_snapshot_storages(&snapshot_root_bank),
+            snapshot_root_bank.get_snapshot_storages(None),
             status_cache_slot_deltas,
         );
         self.pending_snapshot_packages
@@ -510,10 +509,9 @@ impl AccountsBackgroundService {
                                 Ok(snapshot_slot) => {
                                     assert!(
                                         last_cleaned_slot <= snapshot_slot,
-                                        "last cleaned slot: {last_cleaned_slot}, \
-                                         snapshot request slot: {snapshot_slot}, \
-                                         is startup verification complete: {}, \
-                                         enqueued snapshot requests: {:?}",
+                                        "last cleaned slot: {last_cleaned_slot}, snapshot request \
+                                         slot: {snapshot_slot}, is startup verification complete: \
+                                         {}, enqueued snapshot requests: {:?}",
                                         bank.has_initial_accounts_hash_verification_completed(),
                                         request_handlers
                                             .snapshot_request_handler
@@ -527,8 +525,8 @@ impl AccountsBackgroundService {
                                 }
                                 Err(err) => {
                                     error!(
-                                        "Stopping AccountsBackgroundService! \
-                                         Fatal error while handling snapshot requests: {err}",
+                                        "Stopping AccountsBackgroundService! Fatal error while \
+                                         handling snapshot requests: {err}",
                                     );
                                     exit.store(true, Ordering::Relaxed);
                                     break;

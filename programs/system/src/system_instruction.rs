@@ -1,6 +1,5 @@
 use {
     solana_instruction::error::InstructionError,
-    solana_log_collector::ic_msg,
     solana_nonce::{
         self as nonce,
         state::{DurableNonce, State},
@@ -8,6 +7,7 @@ use {
     },
     solana_program_runtime::invoke_context::InvokeContext,
     solana_pubkey::Pubkey,
+    solana_svm_log_collector::ic_msg,
     solana_system_interface::error::SystemError,
     solana_sysvar::rent::Rent,
     solana_transaction_context::{
@@ -269,7 +269,7 @@ mod test {
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure(vec![2], $instruction_accounts, &[]);
+                .configure_for_tests(2, $instruction_accounts, &[]);
             $invoke_context.push().unwrap();
             let $transaction_context = &$invoke_context.transaction_context;
             let $instruction_context = $transaction_context
@@ -294,8 +294,8 @@ mod test {
                 (system_program::id(), AccountSharedData::default()),
             ];
             let $instruction_accounts = vec![
-                InstructionAccount::new(0, 0, true, true),
-                InstructionAccount::new(1, 1, false, true),
+                InstructionAccount::new(0, true, true),
+                InstructionAccount::new(1, false, true),
             ];
             with_mock_invoke_context!($invoke_context, transaction_context, transaction_accounts);
         };

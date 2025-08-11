@@ -8,14 +8,12 @@ use {
     solana_instruction::Instruction,
     solana_message::Message,
     solana_native_token::lamports_to_sol,
+    solana_program_pack::Pack,
     solana_rpc_client::rpc_client::RpcClient,
     spl_associated_token_account_interface::{
         address::get_associated_token_address, instruction::create_associated_token_account,
     },
-    spl_token::{
-        solana_program::program_pack::Pack,
-        state::{Account as SplTokenAccount, Mint},
-    },
+    spl_token_interface::state::{Account as SplTokenAccount, Mint},
 };
 
 pub fn update_token_args(client: &RpcClient, args: &mut Option<SplTokenArgs>) -> Result<(), Error> {
@@ -56,12 +54,12 @@ pub(crate) fn build_spl_token_instructions(
             &args.fee_payer.pubkey(),
             &wallet_address,
             &spl_token_args.mint,
-            &spl_token::id(),
+            &spl_token_interface::id(),
         ));
     }
     instructions.push(
-        spl_token::instruction::transfer_checked(
-            &spl_token::id(),
+        spl_token_interface::instruction::transfer_checked(
+            &spl_token_interface::id(),
             &spl_token_args.token_account_address,
             &spl_token_args.mint,
             &associated_token_address,

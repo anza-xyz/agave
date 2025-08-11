@@ -27,4 +27,4 @@ check-cfg = [
 [workspace]
 
 [workspace.metadata.solana]
-tools-version = "v1.50"
+tools-version = "v1.51"

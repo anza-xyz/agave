@@ -99,6 +99,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
             });
         }
 
+        #[cfg(debug_assertions)]
         debug_assert!(
             self.common.batches.is_empty(),
             "batches must start empty for scheduling"

@@ -1,8 +1,7 @@
 use {
     crate::{
         bit_vec::BitVec,
-        blockstore::MAX_DATA_SHREDS_PER_SLOT,
-        shred::{self, Shred, ShredType},
+        shred::{self, Shred, ShredType, MAX_DATA_SHREDS_PER_SLOT},
     },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
@@ -22,7 +21,7 @@ bitflags! {
         // 1) S is a rooted slot itself OR
         // 2) S's parent is connected AND S is full (S's complete block present)
         //
-        // 1) is a straightfoward case, roots are finalized blocks on the main fork
+        // 1) is a straightforward case, roots are finalized blocks on the main fork
         // so by definition, they are connected. All roots are connected, but not
         // all connected slots are (or will become) roots.
         //
@@ -40,7 +39,7 @@ bitflags! {
         // CONNECTED is explicitly the first bit to ensure backwards compatibility
         // with the boolean field that ConnectedFlags replaced in SlotMeta.
         const CONNECTED        = 0b0000_0001;
-        // PARENT_CONNECTED IS INTENTIIONALLY UNUSED FOR NOW
+        // PARENT_CONNECTED IS INTENTIONALLY UNUSED FOR NOW
         const PARENT_CONNECTED = 0b1000_0000;
     }
 }
@@ -621,7 +620,7 @@ impl SlotMeta {
 
     /// Mark the meta's parent as connected.
     /// If the meta is also full, the meta is now connected as well. Return a
-    /// boolean indicating whether the meta becamed connected from this call.
+    /// boolean indicating whether the meta became connected from this call.
     pub fn set_parent_connected(&mut self) -> bool {
         // Already connected so nothing to do, bail early
         if self.is_connected() {
@@ -1205,7 +1204,7 @@ mod test {
             bincode::serialize(&with_flags).unwrap()
         );
 
-        // Dserializing WithBool into WithFlags succeeds
+        // Deserializing WithBool into WithFlags succeeds
         assert_eq!(
             with_flags,
             bincode::deserialize::<WithFlags>(&bincode::serialize(&with_bool).unwrap()).unwrap()

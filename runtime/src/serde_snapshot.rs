@@ -340,8 +340,14 @@ impl<T> SnapshotAccountsDbFields<T> {
                 // There must not be any overlap in the slots of storages between the full snapshot and the incremental snapshot
                 incremental_snapshot_storages
                     .iter()
-                    .all(|storage_entry| !full_snapshot_storages.contains_key(storage_entry.0)).then_some(()).ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidData, "Snapshots are incompatible: There are storages for the same slot in both the full snapshot and the incremental snapshot!")
+                    .all(|storage_entry| !full_snapshot_storages.contains_key(storage_entry.0))
+                    .then_some(())
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Snapshots are incompatible: There are storages for the same slot in \
+                             both the full snapshot and the incremental snapshot!",
+                        )
                     })?;
 
                 let mut combined_storages = full_snapshot_storages;
@@ -435,9 +441,7 @@ where
     let deserializable_bank = deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?;
     if !deserializable_bank.unused_epoch_stakes.is_empty() {
         return Err(Box::new(bincode::ErrorKind::Custom(
-            "Expected deserialized bank's unused_epoch_stakes field \
-             to be empty"
-                .to_string(),
+            "Expected deserialized bank's unused_epoch_stakes field to be empty".to_string(),
         )));
     }
     let mut bank_fields = BankFieldsToDeserialize::from(deserializable_bank);

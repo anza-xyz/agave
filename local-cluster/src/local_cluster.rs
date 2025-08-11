@@ -19,9 +19,9 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_genesis_config::{ClusterType, GenesisConfig},
     solana_gossip::{
-        cluster_info::Node,
         contact_info::{ContactInfo, Protocol},
         gossip_service::{discover, discover_validators},
+        node::Node,
     },
     solana_keypair::Keypair,
     solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},

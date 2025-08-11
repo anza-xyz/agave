@@ -86,6 +86,7 @@ pub struct TvuSockets {
     pub repair: UdpSocket,
     pub retransmit: Vec<UdpSocket>,
     pub ancestor_hashes_requests: UdpSocket,
+    pub alpenglow: Option<UdpSocket>,
 }
 
 pub struct TvuConfig {
@@ -180,6 +181,7 @@ impl Tvu {
             fetch: fetch_sockets,
             retransmit: retransmit_sockets,
             ancestor_hashes_requests: ancestor_hashes_socket,
+            alpenglow: alpenglow_socket,
         } = sockets;
 
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
@@ -350,6 +352,8 @@ impl Tvu {
             poh_recorder.clone(),
             tower_storage,
             vote_connection_cache.clone(),
+            alpenglow_socket,
+            bank_forks.clone(),
         );
 
         let warm_quic_cache_service = create_cache_warmer_if_needed(
@@ -459,7 +463,7 @@ pub mod tests {
             repair::quic_endpoint::RepairQuicAsyncSenders,
         },
         serial_test::serial,
-        solana_gossip::cluster_info::{ClusterInfo, Node},
+        solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::BlockstoreSignals,
@@ -553,6 +557,7 @@ pub mod tests {
                     retransmit: target1.sockets.retransmit_sockets,
                     fetch: target1.sockets.tvu,
                     ancestor_hashes_requests: target1.sockets.ancestor_hashes_requests,
+                    alpenglow: target1.sockets.alpenglow,
                 }
             },
             blockstore,

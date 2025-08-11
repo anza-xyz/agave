@@ -4503,7 +4503,6 @@ pub mod tests {
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path,
         },
-        solana_log_collector::ic_logger_msg,
         solana_message::{
             v0::{self, MessageAddressTableLookup},
             Message, MessageHeader, SimpleAddressLoader, VersionedMessage,
@@ -4536,6 +4535,7 @@ pub mod tests {
         solana_sha256_hasher::hash,
         solana_signer::Signer,
         solana_svm::account_loader::TRANSACTION_ACCOUNT_BASE_SIZE,
+        solana_svm_log_collector::ic_logger_msg,
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_system_transaction as system_transaction,
         solana_sysvar::slot_hashes::SlotHashes,
@@ -6255,11 +6255,11 @@ pub mod tests {
 
         // init mint
         let mint_rent_exempt_amount =
-            bank.get_minimum_balance_for_rent_exemption(spl_token::state::Mint::LEN);
+            bank.get_minimum_balance_for_rent_exemption(spl_token_interface::state::Mint::LEN);
         let mint_pubkey = Pubkey::from_str("mint111111111111111111111111111111111111111").unwrap();
-        let mut mint_data = [0u8; spl_token::state::Mint::LEN];
+        let mut mint_data = [0u8; spl_token_interface::state::Mint::LEN];
         Pack::pack_into_slice(
-            &spl_token::state::Mint {
+            &spl_token_interface::state::Mint {
                 mint_authority: COption::None,
                 supply: 0,
                 decimals: 8,
@@ -6271,7 +6271,7 @@ pub mod tests {
         let account = AccountSharedData::create(
             mint_rent_exempt_amount,
             mint_data.into(),
-            spl_token::id(),
+            spl_token_interface::id(),
             false,
             0,
         );
@@ -6279,17 +6279,17 @@ pub mod tests {
 
         // init token account
         let token_account_rent_exempt_amount =
-            bank.get_minimum_balance_for_rent_exemption(spl_token::state::Account::LEN);
+            bank.get_minimum_balance_for_rent_exemption(spl_token_interface::state::Account::LEN);
         let token_account_pubkey = Pubkey::new_unique();
         let owner_pubkey = Pubkey::from_str("owner11111111111111111111111111111111111111").unwrap();
-        let mut token_account_data = [0u8; spl_token::state::Account::LEN];
+        let mut token_account_data = [0u8; spl_token_interface::state::Account::LEN];
         Pack::pack_into_slice(
-            &spl_token::state::Account {
+            &spl_token_interface::state::Account {
                 mint: mint_pubkey,
                 owner: owner_pubkey,
                 amount: 1,
                 delegate: COption::None,
-                state: spl_token::state::AccountState::Initialized,
+                state: spl_token_interface::state::AccountState::Initialized,
                 is_native: COption::None,
                 delegated_amount: 0,
                 close_authority: COption::None,
@@ -6299,7 +6299,7 @@ pub mod tests {
         let account = AccountSharedData::create(
             token_account_rent_exempt_amount,
             token_account_data.into(),
-            spl_token::id(),
+            spl_token_interface::id(),
             false,
             0,
         );
@@ -6366,9 +6366,9 @@ pub mod tests {
                               },
                               "executable": false,
                               "lamports": (token_account_rent_exempt_amount + 1),
-                              "owner": bs58::encode(spl_token::id()).into_string(),
+                              "owner": bs58::encode(spl_token_interface::id()).into_string(),
                               "rentEpoch": u64::MAX,
-                              "space": spl_token::state::Account::LEN
+                              "space": spl_token_interface::state::Account::LEN
                         },
                     ],
                     "err": null,
@@ -8296,7 +8296,7 @@ pub mod tests {
         }
     }
 
-    #[test_case(spl_token::id(), None, None; "spl_token")]
+    #[test_case(spl_token_interface::id(), None, None; "spl_token")]
     #[test_case(spl_token_2022_interface::id(), Some(InterestBearingConfig { pre_update_average_rate: 500.into(), current_rate: 500.into(),..Default::default() }), None; "spl_token_2022_with _interest")]
     #[test_case(spl_token_2022_interface::id(), None, Some(ScaledUiAmountConfig { new_multiplier: 2.0f64.into(), ..Default::default() }); "spl-token-2022 with multiplier")]
     fn test_token_parsing(
@@ -8575,7 +8575,7 @@ pub mod tests {
         let owner = Pubkey::new_unique();
         assert_eq!(
             get_spl_token_owner_filter(
-                &spl_token::id(),
+                &spl_token_interface::id(),
                 &[
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, owner.to_bytes().to_vec())),
                     RpcFilterType::DataSize(165)
