@@ -126,13 +126,13 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     current_slot: Slot,
     execute_timings: &mut ExecuteTimings,
     reload: bool,
-) -> Option<Arc<ProgramCacheEntry>> {
+) -> Option<(Arc<ProgramCacheEntry>, Slot)> {
     let mut load_program_metrics = LoadProgramMetrics {
         program_id: pubkey.to_string(),
         ..LoadProgramMetrics::default()
     };
 
-    let (load_result, _last_modification_slot) = load_program_accounts(callbacks, pubkey)?;
+    let (load_result, last_modification_slot) = load_program_accounts(callbacks, pubkey)?;
     let loaded_program = match load_result {
         ProgramAccountLoadResult::InvalidAccountData(owner) => Ok(
             ProgramCacheEntry::new_tombstone(current_slot, owner, ProgramCacheEntryType::Closed),
@@ -214,7 +214,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
 
     load_program_metrics.submit_datapoint(&mut execute_timings.details);
     loaded_program.update_access_slot(current_slot);
-    Some(Arc::new(loaded_program))
+    Some((Arc::new(loaded_program), last_modification_slot))
 }
 
 /// Find the slot in which the program was most recently modified.
@@ -558,7 +558,7 @@ mod tests {
                     .program_runtime_v1,
             ),
         );
-        assert_eq!(result.unwrap(), Arc::new(loaded_program));
+        assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
     }
 
     #[test]
@@ -591,7 +591,7 @@ mod tests {
                     .program_runtime_v1,
             ),
         );
-        assert_eq!(result.unwrap(), Arc::new(loaded_program));
+        assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
 
         let buffer = load_test_program();
         account_data.set_data(buffer);
@@ -621,7 +621,7 @@ mod tests {
             false,
         );
 
-        assert_eq!(result.unwrap(), Arc::new(expected.unwrap()));
+        assert_eq!(result.unwrap(), (Arc::new(expected.unwrap()), 0));
     }
 
     #[test]
@@ -672,7 +672,7 @@ mod tests {
                     .program_runtime_v1,
             ),
         );
-        assert_eq!(result.unwrap(), Arc::new(loaded_program));
+        assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
 
         let mut buffer = load_test_program();
         let mut header = bincode::serialize(&state).unwrap();
@@ -715,7 +715,7 @@ mod tests {
             environments.program_runtime_v1.clone(),
             false,
         );
-        assert_eq!(result.unwrap(), Arc::new(expected.unwrap()));
+        assert_eq!(result.unwrap(), (Arc::new(expected.unwrap()), 0));
     }
 
     #[test]
@@ -759,7 +759,7 @@ mod tests {
                     .program_runtime_v1,
             ),
         );
-        assert_eq!(result.unwrap(), Arc::new(loaded_program));
+        assert_eq!(result.unwrap(), (Arc::new(loaded_program), 0));
 
         let mut header = account_data.data().to_vec();
         let mut complement =
@@ -801,7 +801,7 @@ mod tests {
             environments.program_runtime_v1.clone(),
             false,
         );
-        assert_eq!(result.unwrap(), Arc::new(expected.unwrap()));
+        assert_eq!(result.unwrap(), (Arc::new(expected.unwrap()), 0));
     }
 
     #[test]
@@ -825,7 +825,7 @@ mod tests {
             .insert(key, (account_data.clone(), 0));
 
         for is_upcoming_env in [false, true] {
-            let result = load_program_with_pubkey(
+            let (result, _last_modification_slot) = load_program_with_pubkey(
                 &mock_bank,
                 &batch_processor.get_environments_for_epoch(is_upcoming_env as u64),
                 &key,
