@@ -776,7 +776,7 @@ mod tests {
         assert_eq!(
             cs.lookup(1).unwrap().get_support_by_pubkey(&pk).unwrap(),
             42,
-            "the stake of the node should be commited to the slot"
+            "the stake of the node should be committed to the slot"
         );
     }
 }
