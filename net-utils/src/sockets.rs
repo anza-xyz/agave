@@ -12,7 +12,7 @@ use {
     },
 };
 // base port for deconflicted allocations
-const BASE_PORT: u16 = 5000;
+const BASE_PORT: u16 = 2000;
 // how much to allocate per individual process.
 // we expect to have at most 64 concurrent tests in CI at any moment on a given host.
 const SLICE_PER_PROCESS: u16 = (u16::MAX - BASE_PORT) / 64;
@@ -26,7 +26,7 @@ const SLICE_PER_PROCESS: u16 = (u16::MAX - BASE_PORT) / 64;
 #[allow(clippy::arithmetic_side_effects)]
 pub fn unique_port_range_for_tests(size: u16) -> Range<u16> {
     static SLICE: AtomicU16 = AtomicU16::new(0);
-    let offset = SLICE.fetch_add(size, Ordering::Relaxed);
+    let offset = SLICE.fetch_add(size, Ordering::SeqCst);
     let start = offset
         + match std::env::var("NEXTEST_TEST_GLOBAL_SLOT") {
             Ok(slot) => {
@@ -44,7 +44,7 @@ pub fn unique_port_range_for_tests(size: u16) -> Range<u16> {
     start..start + size
 }
 
-/// Retrieve a free 20-port slice for unit tests
+/// Retrieve a free 25-port slice for unit tests
 ///
 /// When running under nextest, this will try to provide
 /// a unique slice of port numbers (assuming no other nextest processes
@@ -54,7 +54,7 @@ pub fn unique_port_range_for_tests(size: u16) -> Range<u16> {
 /// When running without nextest, this will only bump an atomic and eventually
 /// panic when it runs out of port numbers to assign.
 pub fn localhost_port_range_for_tests() -> (u16, u16) {
-    let pr = unique_port_range_for_tests(20);
+    let pr = unique_port_range_for_tests(25);
     (pr.start, pr.end)
 }
 
