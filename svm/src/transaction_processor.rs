@@ -867,7 +867,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                 let program_to_store = program_to_load.map(|key| {
                     // Load, verify and compile one program.
-                    let program = load_program_with_pubkey(
+                    let (program, _last_modification_slot) = load_program_with_pubkey(
                         account_loader,
                         program_runtime_environments_for_execution,
                         &key,
