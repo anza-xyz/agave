@@ -201,7 +201,8 @@ impl Node {
         let (alpenglow_port, alpenglow) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
                 .expect("Alpenglow port bind should succeed");
-        // These are client sockets, so the port is set to be 0 because it must be ephimeral.
+        // These are "client" sockets, so they could use ephemeral ports, but we
+        // force them into the provided port_range to simplify the operations.
         let (_, tpu_vote_forwarding_client) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
         let (_, tpu_transaction_forwarding_client) =
