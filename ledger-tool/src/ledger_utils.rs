@@ -129,21 +129,21 @@ pub fn load_and_process_ledger(
     process_options: ProcessOptions,
     transaction_status_sender: Option<TransactionStatusSender>,
 ) -> Result<LoadAndProcessLedgerOutput, LoadAndProcessLedgerError> {
-    let bank_snapshots_dir = if blockstore.is_primary_access() {
-        blockstore.ledger_path().join(BANK_SNAPSHOTS_DIR)
-    } else {
-        blockstore
-            .ledger_path()
-            .join(LEDGER_TOOL_DIRECTORY)
-            .join(BANK_SNAPSHOTS_DIR)
-    };
-
     let mut starting_slot = 0; // default start check with genesis
     let snapshot_config = {
-        let full_snapshot_archives_dir = value_t!(arg_matches, "snapshots", String)
+        let snapshots_dir = value_t!(arg_matches, "snapshots", String)
             .ok()
             .map(PathBuf::from)
             .unwrap_or_else(|| blockstore.ledger_path().to_path_buf());
+        let bank_snapshots_dir = if blockstore.is_primary_access() {
+            snapshots_dir.join(BANK_SNAPSHOTS_DIR)
+        } else {
+            blockstore
+                .ledger_path()
+                .join(LEDGER_TOOL_DIRECTORY)
+                .join(BANK_SNAPSHOTS_DIR)
+        };
+        let full_snapshot_archives_dir = snapshots_dir.clone();
         let incremental_snapshot_archives_dir =
             value_t!(arg_matches, "incremental_snapshot_archive_path", String)
                 .ok()
@@ -170,7 +170,7 @@ pub fn load_and_process_ledger(
             usage,
             full_snapshot_archives_dir,
             incremental_snapshot_archives_dir,
-            bank_snapshots_dir: bank_snapshots_dir.clone(),
+            bank_snapshots_dir,
             ..SnapshotConfig::default()
         }
     };
@@ -256,11 +256,14 @@ pub fn load_and_process_ledger(
     );
     info!("{measure_clean_account_paths}");
 
-    snapshot_utils::purge_incomplete_bank_snapshots(&bank_snapshots_dir);
+    snapshot_utils::purge_incomplete_bank_snapshots(&snapshot_config.bank_snapshots_dir);
 
     info!("Cleaning contents of account snapshot paths: {account_snapshot_paths:?}");
-    clean_orphaned_account_snapshot_dirs(&bank_snapshots_dir, &account_snapshot_paths)
-        .map_err(LoadAndProcessLedgerError::CleanOrphanedAccountSnapshotDirectories)?;
+    clean_orphaned_account_snapshot_dirs(
+        &snapshot_config.bank_snapshots_dir,
+        &account_snapshot_paths,
+    )
+    .map_err(LoadAndProcessLedgerError::CleanOrphanedAccountSnapshotDirectories)?;
 
     let geyser_plugin_active = arg_matches.is_present("geyser_plugin_config");
     let (accounts_update_notifier, transaction_notifier) = if geyser_plugin_active {
