@@ -98,9 +98,16 @@ pub(crate) fn simulate_and_update_compute_unit_limit(
     };
 
     match compute_unit_limit {
-        ComputeUnitLimit::Simulated => {
-            let compute_unit_limit =
+        ComputeUnitLimit::Simulated | ComputeUnitLimit::SimulatedWithExtra(_) => {
+            let base_compute_unit_limit =
                 simulate_for_compute_unit_limit_unchecked(rpc_client, message)?;
+
+            let compute_unit_limit =
+                if let ComputeUnitLimit::SimulatedWithExtra(n) = compute_unit_limit {
+                    (base_compute_unit_limit as u64 * (100 + *n as u64) / 100) as u32
+                } else {
+                    base_compute_unit_limit
+                };
 
             // Overwrite the compute unit limit instruction with the actual units consumed
             message.instructions[compute_unit_limit_ix_index].data =
@@ -138,7 +145,7 @@ impl WithComputeUnitConfig for Vec<Instruction> {
                         compute_unit_limit,
                     ));
                 }
-                ComputeUnitLimit::Simulated => {
+                ComputeUnitLimit::Simulated | ComputeUnitLimit::SimulatedWithExtra(_) => {
                     // Default to the max compute unit limit because later transactions will be
                     // simulated to get the exact compute units consumed.
                     self.push(ComputeBudgetInstruction::set_compute_unit_limit(
