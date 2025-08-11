@@ -486,7 +486,7 @@ impl LeaderSlotMetricsTracker {
                 MetricsTrackerAction::ReportAndResetTracker
             }
 
-            // Our leader slot has begain, time to create a new slot tracker
+            // Our leader slot has begun, time to create a new slot tracker
             (None, Some(bank_start)) => {
                 MetricsTrackerAction::NewTracker(Some(LeaderSlotMetrics::new(
                     bank_start.working_bank.slot(),
@@ -496,7 +496,7 @@ impl LeaderSlotMetricsTracker {
 
             (Some(leader_slot_metrics), Some(bank_start)) => {
                 if leader_slot_metrics.slot != bank_start.working_bank.slot() {
-                    // Last slot has ended, new slot has began
+                    // Last slot has ended, new slot has begun
                     leader_slot_metrics.mark_slot_end_detected();
                     MetricsTrackerAction::ReportAndNewTracker(Some(LeaderSlotMetrics::new(
                         bank_start.working_bank.slot(),
