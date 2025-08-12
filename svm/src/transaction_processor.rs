@@ -1153,6 +1153,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.global_program_cache.write().unwrap().assign_program(
             &self.environments,
             program_id,
+            self.slot,
             Arc::new(builtin),
         );
     }
