@@ -142,6 +142,32 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .long("disable-accounts-disk-index")
         .help("Disable the disk-based accounts index if it is enabled by default."));
 
+    add_arg!(
+        // deprecated in v3.0.0
+        Arg::with_name("gossip_host")
+            .long("gossip-host")
+            .value_name("HOST")
+            .takes_value(true)
+            .validator(solana_net_utils::is_host),
+            replaced_by : "bind-address",
+            usage_warning:"Use --bind-address instead",
+    );
+    add_arg!(
+        // deprecated in v3.0.0
+        Arg::with_name("tpu_disable_quic")
+            .long("tpu-disable-quic")
+            .takes_value(false)
+            .help("Do not use QUIC to send transactions."),
+        usage_warning: "UDP support will be dropped"
+    );
+    add_arg!(
+        // deprecated in v3.0.0
+        Arg::with_name("tpu_enable_udp")
+            .long("tpu-enable-udp")
+            .takes_value(false)
+            .help("Enable UDP for receiving/sending transactions."),
+        usage_warning: "UDP support will be dropped"
+    );
     res
 }
 
@@ -678,15 +704,6 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Gossip port number for the validator"),
         )
         .arg(
-            Arg::with_name("gossip_host")
-                .long("gossip-host")
-                .value_name("HOST")
-                .takes_value(true)
-                .validator(solana_net_utils::is_host)
-                .hidden(hidden_unless_forced())
-                .help("DEPRECATED: Use --bind-address instead."),
-        )
-        .arg(
             Arg::with_name("dynamic_port_range")
                 .long("dynamic-port-range")
                 .value_name("MIN_PORT-MAX_PORT")
@@ -701,7 +718,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
                 .default_value("127.0.0.1")
-                .help("IP address to bind the validator ports [default: 127.0.0.1]"),
+                .help("IP address to bind the validator ports [default: 127.0.0.1]. Can be repeated to specify multihoming options."),
         )
         .arg(
             Arg::with_name("clone_account")

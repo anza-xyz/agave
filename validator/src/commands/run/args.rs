@@ -406,15 +406,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Gossip port number for the validator"),
     )
     .arg(
-        Arg::with_name("gossip_host")
-            .long("gossip-host")
-            .value_name("HOST")
-            .takes_value(true)
-            .validator(solana_net_utils::is_host)
-            .hidden(hidden_unless_forced())
-            .help("DEPRECATED: Use --bind-address instead."),
-    )
-    .arg(
         Arg::with_name("public_tpu_addr")
             .long("public-tpu-address")
             .alias("tpu-host-addr")
@@ -845,20 +836,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(is_parsable::<u64>)
             .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
-    )
-    .arg(
-        Arg::with_name("tpu_disable_quic")
-            .long("tpu-disable-quic")
-            .takes_value(false)
-            .hidden(hidden_unless_forced())
-            .help("DEPRECATED (UDP support will be dropped): Do not use QUIC to send transactions."),
-    )
-    .arg(
-        Arg::with_name("tpu_enable_udp")
-            .long("tpu-enable-udp")
-            .takes_value(false)
-            .hidden(hidden_unless_forced())
-            .help("DEPRECATED (UDP support will be dropped): Enable UDP for receiving/sending transactions."),
     )
     .arg(
         Arg::with_name("tpu_connection_pool_size")
