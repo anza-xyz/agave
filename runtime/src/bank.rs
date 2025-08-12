@@ -3631,6 +3631,7 @@ impl Bank {
                             })
                             .merge(
                                 &self.transaction_processor.environments,
+                                self.slot,
                                 programs_modified_by_tx,
                             );
                     }
