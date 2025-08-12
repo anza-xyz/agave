@@ -61,7 +61,9 @@ use {
     solana_runtime::{
         runtime_config::RuntimeConfig,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
-        snapshot_utils::{self, ArchiveFormat, SnapshotInterval, SnapshotVersion},
+        snapshot_utils::{
+            self, ArchiveFormat, SnapshotInterval, SnapshotVersion, BANK_SNAPSHOTS_DIR,
+        },
     },
     solana_send_transaction_service::send_transaction_service,
     solana_signer::Signer,
@@ -1275,7 +1277,7 @@ fn new_snapshot_config(
         )?;
     }
 
-    let bank_snapshots_dir = snapshots_dir.join("snapshots");
+    let bank_snapshots_dir = snapshots_dir.join(BANK_SNAPSHOTS_DIR);
     fs::create_dir_all(&bank_snapshots_dir).map_err(|err| {
         format!(
             "failed to create bank snapshots directory '{}': {err}",
