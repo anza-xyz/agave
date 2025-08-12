@@ -161,6 +161,172 @@ impl FeatureSet {
     }
 }
 
+impl From<&SVMFeatureSet> for FeatureSet {
+    fn from(svm_features: &SVMFeatureSet) -> Self {
+        let mut active = AHashMap::new();
+        let mut inactive = AHashSet::from_iter((*FEATURE_NAMES).keys().cloned());
+
+        let mut activate_if = |enabled: &bool, feature_id: Pubkey| {
+            if *enabled {
+                inactive.remove(&feature_id);
+                active.insert(feature_id, 0);
+            }
+        };
+
+        let SVMFeatureSet {
+            move_precompile_verification_to_svm,
+            stricter_abi_and_runtime_constraints,
+            enable_bpf_loader_set_authority_checked_ix,
+            enable_loader_v4,
+            deplete_cu_meter_on_vm_failure,
+            abort_on_invalid_curve,
+            blake3_syscall_enabled,
+            curve25519_syscall_enabled,
+            disable_deploy_of_alloc_free_syscall,
+            disable_fees_sysvar,
+            disable_sbpf_v0_execution,
+            enable_alt_bn128_compression_syscall,
+            enable_alt_bn128_syscall,
+            enable_big_mod_exp_syscall,
+            enable_get_epoch_stake_syscall,
+            enable_poseidon_syscall,
+            enable_sbpf_v1_deployment_and_execution,
+            enable_sbpf_v2_deployment_and_execution,
+            enable_sbpf_v3_deployment_and_execution,
+            get_sysvar_syscall_enabled,
+            last_restart_slot_sysvar,
+            reenable_sbpf_v0_execution,
+            remaining_compute_units_syscall_enabled,
+            remove_bpf_loader_incorrect_program_id,
+            move_stake_and_move_lamports_ixs,
+            stake_raise_minimum_delegation_to_1_sol,
+            deprecate_legacy_vote_ixs,
+            mask_out_rent_epoch_in_vm_serialization,
+            simplify_alt_bn128_syscall_error_codes,
+            fix_alt_bn128_multiplication_input_length,
+            loosen_cpi_size_restriction,
+            increase_tx_account_lock_limit,
+            enable_extend_program_checked,
+            formalize_loaded_transaction_data_size,
+            disable_zk_elgamal_proof_program,
+            reenable_zk_elgamal_proof_program,
+            raise_cpi_nesting_limit_to_8,
+        } = svm_features;
+
+        activate_if(
+            move_precompile_verification_to_svm,
+            move_precompile_verification_to_svm::id(),
+        );
+        activate_if(
+            stricter_abi_and_runtime_constraints,
+            stricter_abi_and_runtime_constraints::id(),
+        );
+        activate_if(
+            enable_bpf_loader_set_authority_checked_ix,
+            enable_bpf_loader_set_authority_checked_ix::id(),
+        );
+        activate_if(enable_loader_v4, enable_loader_v4::id());
+        activate_if(
+            deplete_cu_meter_on_vm_failure,
+            deplete_cu_meter_on_vm_failure::id(),
+        );
+        activate_if(abort_on_invalid_curve, abort_on_invalid_curve::id());
+        activate_if(blake3_syscall_enabled, blake3_syscall_enabled::id());
+        activate_if(curve25519_syscall_enabled, curve25519_syscall_enabled::id());
+        activate_if(
+            disable_deploy_of_alloc_free_syscall,
+            disable_deploy_of_alloc_free_syscall::id(),
+        );
+        activate_if(disable_fees_sysvar, disable_fees_sysvar::id());
+        activate_if(disable_sbpf_v0_execution, disable_sbpf_v0_execution::id());
+        activate_if(
+            enable_alt_bn128_compression_syscall,
+            enable_alt_bn128_compression_syscall::id(),
+        );
+        activate_if(enable_alt_bn128_syscall, enable_alt_bn128_syscall::id());
+        activate_if(enable_big_mod_exp_syscall, enable_big_mod_exp_syscall::id());
+        activate_if(
+            enable_get_epoch_stake_syscall,
+            enable_get_epoch_stake_syscall::id(),
+        );
+        activate_if(enable_poseidon_syscall, enable_poseidon_syscall::id());
+        activate_if(
+            enable_sbpf_v1_deployment_and_execution,
+            enable_sbpf_v1_deployment_and_execution::id(),
+        );
+        activate_if(
+            enable_sbpf_v2_deployment_and_execution,
+            enable_sbpf_v2_deployment_and_execution::id(),
+        );
+        activate_if(
+            enable_sbpf_v3_deployment_and_execution,
+            enable_sbpf_v3_deployment_and_execution::id(),
+        );
+        activate_if(get_sysvar_syscall_enabled, get_sysvar_syscall_enabled::id());
+        activate_if(last_restart_slot_sysvar, last_restart_slot_sysvar::id());
+        activate_if(reenable_sbpf_v0_execution, reenable_sbpf_v0_execution::id());
+        activate_if(
+            remaining_compute_units_syscall_enabled,
+            remaining_compute_units_syscall_enabled::id(),
+        );
+        activate_if(
+            remove_bpf_loader_incorrect_program_id,
+            remove_bpf_loader_incorrect_program_id::id(),
+        );
+        activate_if(
+            move_stake_and_move_lamports_ixs,
+            move_stake_and_move_lamports_ixs::id(),
+        );
+        activate_if(
+            stake_raise_minimum_delegation_to_1_sol,
+            stake_raise_minimum_delegation_to_1_sol::id(),
+        );
+        activate_if(deprecate_legacy_vote_ixs, deprecate_legacy_vote_ixs::id());
+        activate_if(
+            mask_out_rent_epoch_in_vm_serialization,
+            mask_out_rent_epoch_in_vm_serialization::id(),
+        );
+        activate_if(
+            simplify_alt_bn128_syscall_error_codes,
+            simplify_alt_bn128_syscall_error_codes::id(),
+        );
+        activate_if(
+            fix_alt_bn128_multiplication_input_length,
+            fix_alt_bn128_multiplication_input_length::id(),
+        );
+        activate_if(
+            loosen_cpi_size_restriction,
+            loosen_cpi_size_restriction::id(),
+        );
+        activate_if(
+            increase_tx_account_lock_limit,
+            increase_tx_account_lock_limit::id(),
+        );
+        activate_if(
+            enable_extend_program_checked,
+            enable_extend_program_checked::id(),
+        );
+        activate_if(
+            formalize_loaded_transaction_data_size,
+            formalize_loaded_transaction_data_size::id(),
+        );
+        activate_if(
+            disable_zk_elgamal_proof_program,
+            disable_zk_elgamal_proof_program::id(),
+        );
+        activate_if(
+            reenable_zk_elgamal_proof_program,
+            reenable_zk_elgamal_proof_program::id(),
+        );
+        activate_if(
+            raise_cpi_nesting_limit_to_8,
+            raise_cpi_nesting_limit_to_8::id(),
+        );
+
+        Self { active, inactive }
+    }
+}
+
 pub mod deprecate_rewards_sysvar {
     solana_pubkey::declare_id!("GaBtBJvmS4Arjj5W1NmFcyvPjsHN38UGYDq2MDwbs9Qu");
 }

@@ -10857,7 +10857,6 @@ dependencies = [
 name = "solana-svm"
 version = "3.0.0"
 dependencies = [
- "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-syscalls",
  "ahash 0.8.11",
