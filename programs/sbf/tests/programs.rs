@@ -52,7 +52,6 @@ use {
     solana_sdk_ids::sysvar::{self as sysvar, clock},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_signer::Signer,
-    solana_stake_interface as stake,
     solana_svm::{
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_execution_result::InnerInstruction,
