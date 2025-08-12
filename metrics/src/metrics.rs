@@ -1,7 +1,7 @@
 //! The `metrics` module enables sending measurements to an `InfluxDB` instance
 
 use {
-    crate::{counter::CounterPoint, datapoint::DataPoint, influxdb_v1},
+    crate::{counter::CounterPoint, datapoint::DataPoint, influxdb_v1, influxdb_v2},
     crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError},
     gethostname::gethostname,
     log::*,
@@ -67,6 +67,30 @@ pub trait MetricsWriter {
     fn write(&self, points: Vec<DataPoint>);
 }
 
+pub struct MetricsWriters {
+    writers: Vec<Box<dyn MetricsWriter + Send + Sync>>,
+}
+
+impl MetricsWriters {
+    pub fn new() -> Self {
+        Self {
+            writers: Vec::new(),
+        }
+    }
+
+    pub fn add_writer<W: MetricsWriter + Send + Sync + 'static>(&mut self, writer: W) {
+        self.writers.push(Box::new(writer));
+    }
+}
+
+impl MetricsWriter for MetricsWriters {
+    fn write(&self, points: Vec<DataPoint>) {
+        for writer in &self.writers {
+            writer.write(points.clone());
+        }
+    }
+}
+
 impl Default for MetricsAgent {
     fn default() -> Self {
         let max_points_per_sec = env::var("SOLANA_METRICS_MAX_POINTS_PER_SECOND")
@@ -76,8 +100,22 @@ impl Default for MetricsAgent {
             })
             .unwrap_or(4000);
 
+        let mut metrics_writers = MetricsWriters::new();
+
+        // v1 is default setting. only disable if explicitly set to false
+        if env::var("SOLANA_METRICS_INFLUXDB_V1").unwrap_or_else(|_| "true".to_string()) != "false"
+        {
+            metrics_writers.add_writer(influxdb_v1::InfluxDbMetricsWriter::new());
+        }
+
+        // v2 is disabled by default. only enable if explicitly set to true
+        if env::var("SOLANA_METRICS_INFLUXDB_V2").unwrap_or_else(|_| "false".to_string()) == "true"
+        {
+            metrics_writers.add_writer(influxdb_v2::Writer::new());
+        }
+
         Self::new(
-            Arc::new(influxdb_v1::InfluxDbMetricsWriter::new()),
+            Arc::new(metrics_writers),
             Duration::from_secs(10),
             max_points_per_sec,
         )
