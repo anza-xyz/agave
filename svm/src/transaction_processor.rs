@@ -1071,10 +1071,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         debug!("Adding program {name} under {program_id:?}");
         callbacks.add_builtin_account(name, &program_id);
         self.builtin_program_ids.write().unwrap().insert(program_id);
-        self.global_program_cache
-            .write()
-            .unwrap()
-            .assign_program(program_id, Arc::new(builtin));
+        self.global_program_cache.write().unwrap().assign_program(
+            program_id,
+            self.slot,
+            Arc::new(builtin),
+        );
         debug!("Added program {name} under {program_id:?}");
     }
 

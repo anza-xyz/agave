@@ -1507,7 +1507,7 @@ impl Bank {
                     .read()
                     .unwrap()
                     .get_environments_for_epoch(effective_epoch);
-                if let Some((recompiled, _last_modification_slot)) = load_program_with_pubkey(
+                if let Some((recompiled, last_modification_slot)) = load_program_with_pubkey(
                     self,
                     &environments_for_epoch,
                     &key,
@@ -1526,7 +1526,7 @@ impl Bank {
                         .global_program_cache
                         .write()
                         .unwrap();
-                    program_cache.assign_program(key, recompiled);
+                    program_cache.assign_program(key, last_modification_slot, recompiled);
                 }
             }
         } else if self.epoch != program_cache.latest_root_epoch
