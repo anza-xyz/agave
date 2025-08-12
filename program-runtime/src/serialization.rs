@@ -675,7 +675,7 @@ mod tests {
     use {
         super::*,
         crate::with_mock_invoke_context,
-        solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_account_info::AccountInfo,
         solana_program_entrypoint::deserialize,
         solana_rent::Rent,
@@ -918,17 +918,27 @@ mod tests {
                         rent_epoch: 3100,
                     }),
                 ),
+                (
+                    program_id,
+                    AccountSharedData::from(Account {
+                        lamports: 0,
+                        data: vec![],
+                        owner: bpf_loader_deprecated::id(),
+                        executable: true,
+                        rent_epoch: 0,
+                    }),
+                ),
             ];
             let instruction_accounts =
                 deduplicated_instruction_accounts(&[1, 1, 2, 3, 4, 4, 5, 6], |index| index >= 4);
             let instruction_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-            let mut original_accounts = transaction_accounts.clone();
+            let original_accounts = transaction_accounts.clone();
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure_for_tests(0, instruction_accounts, &instruction_data);
+                .configure_for_tests(0, instruction_accounts.clone(), &instruction_data);
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1018,18 +1028,16 @@ mod tests {
             }
 
             // check serialize_parameters_unaligned
-            original_accounts
-                .first_mut()
-                .unwrap()
-                .1
-                .set_owner(bpf_loader_deprecated::id());
             invoke_context
                 .transaction_context
-                .get_account_at_index(0)
+                .get_next_instruction_context_mut()
                 .unwrap()
-                .try_borrow_mut()
-                .unwrap()
-                .set_owner(bpf_loader_deprecated::id());
+                .configure_for_tests(7, instruction_accounts, &instruction_data);
+            invoke_context.push().unwrap();
+            let instruction_context = invoke_context
+                .transaction_context
+                .get_current_instruction_context()
+                .unwrap();
 
             let (mut serialized, regions, account_lengths) = serialize_parameters(
                 invoke_context.transaction_context,
@@ -1167,17 +1175,26 @@ mod tests {
                         rent_epoch: 3100,
                     }),
                 ),
+                (
+                    solana_pubkey::new_rand(),
+                    AccountSharedData::from(Account {
+                        lamports: 0,
+                        data: vec![],
+                        owner: bpf_loader_deprecated::id(),
+                        executable: true,
+                        rent_epoch: 0,
+                    }),
+                ),
             ];
             let instruction_accounts =
                 deduplicated_instruction_accounts(&[1, 1, 2, 3, 4, 4, 5, 6], |index| index >= 4);
             let instruction_data = vec![];
-            let mut original_accounts = transaction_accounts.clone();
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure_for_tests(0, instruction_accounts, &instruction_data);
+                .configure_for_tests(0, instruction_accounts.clone(), &instruction_data);
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1218,18 +1235,16 @@ mod tests {
             }
 
             // check serialize_parameters_unaligned
-            original_accounts
-                .first_mut()
-                .unwrap()
-                .1
-                .set_owner(bpf_loader_deprecated::id());
             invoke_context
                 .transaction_context
-                .get_account_at_index(0)
+                .get_next_instruction_context_mut()
                 .unwrap()
-                .try_borrow_mut()
-                .unwrap()
-                .set_owner(bpf_loader_deprecated::id());
+                .configure_for_tests(7, instruction_accounts, &instruction_data);
+            invoke_context.push().unwrap();
+            let instruction_context = invoke_context
+                .transaction_context
+                .get_current_instruction_context()
+                .unwrap();
 
             let (_serialized, regions, _account_lengths) = serialize_parameters(
                 invoke_context.transaction_context,

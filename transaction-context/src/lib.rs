@@ -265,20 +265,6 @@ impl TransactionContext {
     }
 
     /// Searches for an account by its key
-    #[cfg(all(
-        not(target_os = "solana"),
-        any(test, feature = "dev-context-only-utils")
-    ))]
-    pub fn get_account_at_index(
-        &self,
-        index_in_transaction: IndexOfAccount,
-    ) -> Result<&RefCell<AccountSharedData>, InstructionError> {
-        self.accounts
-            .get(index_in_transaction)
-            .ok_or(InstructionError::NotEnoughAccountKeys)
-    }
-
-    /// Searches for an account by its key
     pub fn find_index_of_account(&self, pubkey: &Pubkey) -> Option<IndexOfAccount> {
         self.account_keys
             .iter()
