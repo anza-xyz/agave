@@ -1582,9 +1582,7 @@ impl Validator {
                 .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
             ForwardingClientOption::TpuClientNext((
                 Arc::as_ref(&identity_keypair),
-                tpu_transactions_forwards_client
-                    .take()
-                    .expect("Socket should exist."),
+                &tpu_transactions_forwards_clients,
                 runtime_handle.clone(),
                 cancel_tpu_client_next,
             ))
