@@ -29,7 +29,9 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::sockets::bind_to_localhost_unique,
     solana_poh_config::PohConfig,
+    solana_program_test::programs::core_bpf_programs,
     solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::{
         genesis_utils::{
@@ -249,6 +251,20 @@ impl LocalCluster {
                     .collect()
             }
         };
+
+        let core_programs = core_bpf_programs(&Rent::default(), |_| true);
+        let stake_idx = core_programs
+            .iter()
+            .position(|(key, _)| *key == solana_stake_program::id())
+            .unwrap();
+        let stake_program = core_programs[stake_idx].1.clone();
+        let (stake_programdata_address, stake_programdata) = core_programs[stake_idx + 1].clone();
+        config
+            .additional_accounts
+            .push((solana_stake_program::id(), stake_program));
+        config
+            .additional_accounts
+            .push((stake_programdata_address, stake_programdata));
 
         // Mint used to fund validator identities for non-genesis accounts.
         // Verify we have enough lamports in the mint address to do those transfers.
