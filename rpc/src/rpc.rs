@@ -813,10 +813,12 @@ impl JsonRpcRequestProcessor {
                 // the first block of the epoch
                 if !reward_map.contains_key(&address_string) {
                     let partition_index = hasher.clone().hash_address_to_partition(address);
-                    partition_index_addresses
-                        .entry(partition_index)
-                        .and_modify(|list| list.push(address_string.clone()))
-                        .or_insert(vec![address_string]);
+                    if partition_index < num_partitions {
+                        partition_index_addresses
+                            .entry(partition_index)
+                            .and_modify(|list| list.push(address_string.clone()))
+                            .or_insert(vec![address_string]);
+                    }
                 }
             }
 
