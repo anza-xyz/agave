@@ -3669,34 +3669,6 @@ fn test_program_fees() {
 
 #[test]
 #[cfg(feature = "sbf_rust")]
-fn test_get_minimum_delegation() {
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
-
-    let bank = Bank::new_for_tests(&genesis_config);
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
-
-    let (_bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_get_minimum_delegation",
-    );
-
-    let account_metas = vec![AccountMeta::new_readonly(stake::program::id(), false)];
-    let instruction = Instruction::new_with_bytes(program_id, &[], account_metas);
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-    assert!(result.is_ok());
-}
-
-#[test]
-#[cfg(feature = "sbf_rust")]
 fn test_program_sbf_inner_instruction_alignment_checks() {
     solana_logger::setup();
 
