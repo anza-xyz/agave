@@ -109,6 +109,7 @@ pub struct TransactionAccounts {
     accounts: Vec<RefCell<AccountSharedData>>,
     touched_flags: RefCell<Box<[bool]>>,
     resize_delta: RefCell<i64>,
+    lamports_delta: RefCell<i128>,
 }
 
 impl TransactionAccounts {
@@ -119,15 +120,12 @@ impl TransactionAccounts {
             accounts,
             touched_flags: RefCell::new(touched_flags),
             resize_delta: RefCell::new(0),
+            lamports_delta: RefCell::new(0),
         }
     }
 
     fn len(&self) -> usize {
         self.accounts.len()
-    }
-
-    fn get(&self, index: IndexOfAccount) -> Option<&RefCell<AccountSharedData>> {
-        self.accounts.get(index as usize)
     }
 
     #[cfg(not(target_os = "solana"))]
@@ -194,6 +192,18 @@ impl TransactionAccounts {
             .ok_or(InstructionError::MissingAccount)?
             .try_borrow()
             .map_err(|_| InstructionError::AccountBorrowFailed)
+    }
+
+    fn add_lamports_delta(&self, balance: i128) -> Result<(), InstructionError> {
+        let mut delta = self.lamports_delta.borrow_mut();
+        *delta = delta
+            .checked_add(balance)
+            .ok_or(InstructionError::ArithmeticOverflow)?;
+        Ok(())
+    }
+
+    fn get_lamports_delta(&self) -> i128 {
+        *self.lamports_delta.borrow()
     }
 }
 
@@ -364,29 +374,12 @@ impl TransactionContext {
     #[cfg(not(target_os = "solana"))]
     pub fn push(&mut self) -> Result<(), InstructionError> {
         let nesting_level = self.get_instruction_context_stack_height();
-        let caller_instruction_context = self
-            .instruction_trace
-            .last()
-            .ok_or(InstructionError::CallDepth)?;
-        let callee_instruction_accounts_lamport_sum =
-            self.instruction_accounts_lamport_sum(caller_instruction_context)?;
-        if !self.instruction_stack.is_empty() {
-            let caller_instruction_context = self.get_current_instruction_context()?;
-            let original_caller_instruction_accounts_lamport_sum =
-                caller_instruction_context.instruction_accounts_lamport_sum;
-            let current_caller_instruction_accounts_lamport_sum =
-                self.instruction_accounts_lamport_sum(caller_instruction_context)?;
-            if original_caller_instruction_accounts_lamport_sum
-                != current_caller_instruction_accounts_lamport_sum
-            {
-                return Err(InstructionError::UnbalancedInstruction);
-            }
+        if !self.instruction_stack.is_empty() && self.accounts.get_lamports_delta() != 0 {
+            return Err(InstructionError::UnbalancedInstruction);
         }
         {
             let instruction_context = self.get_next_instruction_context_mut()?;
             instruction_context.nesting_level = nesting_level;
-            instruction_context.instruction_accounts_lamport_sum =
-                callee_instruction_accounts_lamport_sum;
         }
         let index_in_trace = self.get_instruction_trace_length();
         if index_in_trace >= self.instruction_trace_capacity {
@@ -432,11 +425,7 @@ impl TransactionContext {
                                 err
                             }
                         })?;
-                    self.instruction_accounts_lamport_sum(instruction_context)
-                        .map(|instruction_accounts_lamport_sum| {
-                            instruction_context.instruction_accounts_lamport_sum
-                                != instruction_accounts_lamport_sum
-                        })
+                    Ok(self.accounts.get_lamports_delta() != 0)
                 });
         // Always pop, even if we `detected_an_unbalanced_instruction`
         self.instruction_stack.pop();
@@ -463,36 +452,6 @@ impl TransactionContext {
     ) -> Result<(), InstructionError> {
         self.return_data = TransactionReturnData { program_id, data };
         Ok(())
-    }
-
-    /// Calculates the sum of all lamports within an instruction
-    #[cfg(not(target_os = "solana"))]
-    fn instruction_accounts_lamport_sum(
-        &self,
-        instruction_context: &InstructionContext,
-    ) -> Result<u128, InstructionError> {
-        let mut instruction_accounts_lamport_sum: u128 = 0;
-        for instruction_account_index in 0..instruction_context.get_number_of_instruction_accounts()
-        {
-            if instruction_context
-                .is_instruction_account_duplicate(instruction_account_index)?
-                .is_some()
-            {
-                continue; // Skip duplicate account
-            }
-            let index_in_transaction = instruction_context
-                .get_index_of_instruction_account_in_transaction(instruction_account_index)?;
-            instruction_accounts_lamport_sum = (self
-                .accounts
-                .get(index_in_transaction)
-                .ok_or(InstructionError::NotEnoughAccountKeys)?
-                .try_borrow()
-                .map_err(|_| InstructionError::AccountBorrowOutstanding)?
-                .lamports() as u128)
-                .checked_add(instruction_accounts_lamport_sum)
-                .ok_or(InstructionError::ArithmeticOverflow)?;
-        }
-        Ok(instruction_accounts_lamport_sum)
     }
 
     /// Returns the accounts resize delta
@@ -600,7 +559,6 @@ pub struct TransactionReturnData {
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct InstructionContext {
     nesting_level: usize,
-    instruction_accounts_lamport_sum: u128,
     program_account_index_in_tx: IndexOfAccount,
     instruction_accounts: Vec<InstructionAccount>,
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
@@ -935,9 +893,16 @@ impl BorrowedAccount<'_> {
             return Err(InstructionError::ReadonlyLamportChange);
         }
         // don't touch the account if the lamports do not change
-        if self.get_lamports() == lamports {
+        let old_lamports = self.get_lamports();
+        if old_lamports == lamports {
             return Ok(());
         }
+
+        let lamports_balance = (lamports as i128).saturating_sub(old_lamports as i128);
+        self.transaction_context
+            .accounts
+            .add_lamports_delta(lamports_balance)?;
+
         self.touch()?;
         self.account.set_lamports(lamports);
         Ok(())
@@ -1222,6 +1187,7 @@ impl From<TransactionContext> for ExecutionRecord {
             accounts,
             touched_flags,
             resize_delta,
+            ..
         } = Rc::try_unwrap(context.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs");
         let accounts = Vec::from(Pin::into_inner(context.account_keys))
