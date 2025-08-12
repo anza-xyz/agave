@@ -77,7 +77,7 @@ use {
         snapshot_utils::{self, SnapshotInterval},
     },
     solana_signer::Signer,
-    solana_stake_interface::state::NEW_WARMUP_COOLDOWN_RATE,
+    solana_stake_interface::{self as stake, state::NEW_WARMUP_COOLDOWN_RATE},
     solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::program as system_program,
     solana_system_transaction as system_transaction,
@@ -441,6 +441,7 @@ fn test_mainnet_beta_cluster_type() {
     // Programs that are available at epoch 0
     for program_id in [
         &solana_sdk_ids::system_program::id(),
+        &stake::program::id(),
         &solana_vote_program::id(),
         &solana_sdk_ids::bpf_loader_deprecated::id(),
         &solana_sdk_ids::bpf_loader::id(),
