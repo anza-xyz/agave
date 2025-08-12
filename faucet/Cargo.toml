@@ -35,7 +35,7 @@ solana-keypair = "=2.2.1"
 solana-logger = "=3.0.0"
 solana-message = "=2.4.0"
 solana-metrics = { workspace = true }
-solana-native-token = "=2.2.2"
+solana-native-token = "=3.0.0"
 solana-packet = "=2.2.1"
 solana-pubkey = { version = "=2.4.0", features = ["rand"] }
 solana-signer = "=2.2.1"

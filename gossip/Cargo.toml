@@ -78,7 +78,7 @@ solana-logger = "=3.0.0"
 solana-low-pass-filter = { workspace = true, features = ["agave-unstable-api"] }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
-solana-native-token = "=2.2.2"
+solana-native-token = "=3.0.0"
 solana-net-utils = { workspace = true }
 solana-packet = "=2.2.1"
 solana-perf = { workspace = true }
