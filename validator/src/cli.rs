@@ -1,7 +1,6 @@
 use {
     crate::commands,
     clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
-    log::warn,
     solana_accounts_db::{
         accounts_db::{
             DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE, DEFAULT_ACCOUNTS_SHRINK_RATIO,
