@@ -240,10 +240,17 @@ impl Node {
                 .expect("Alpenglow port bind should succeed");
         // These are "client" sockets, so they could use ephemeral ports, but we
         // force them into the provided port_range to simplify the operations.
+
+        // vote forwarding is only bound to primary interface for now
         let (_, tpu_vote_forwarding_client) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
-        let (_, tpu_transaction_forwarding_client) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
+        let tpu_transaction_forwarding_clients =
+        bind_ip_addrs.iter().map(
+            |&addr |{let (_, socket) =
+            bind_in_range_with_config(addr, port_range, socket_config).expect("TPU transaction forwarding client bind on interface {bind_ip_addr} should succeed" );
+            socket
+            }).collect();
+
         let (_, quic_vote_client) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
 
@@ -316,7 +323,7 @@ impl Node {
             tpu_vote_quic,
             tpu_vote_forwarding_client,
             quic_vote_client,
-            tpu_transaction_forwarding_client,
+            tpu_transaction_forwarding_clients,
             rpc_sts_client,
             vortexor_receivers,
         };

@@ -840,7 +840,7 @@ impl Validator {
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
         cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
         let cluster_info = Arc::new(cluster_info);
-        let node_multihoming = NodeMultihoming::from(&node);
+        let node_multihoming = Arc::new(NodeMultihoming::from(&node));
 
         assert!(is_snapshot_config_valid(&config.snapshot_config));
 
@@ -1036,18 +1036,23 @@ impl Validator {
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
-        let mut tpu_transactions_forwards_client =
-            Some(node.sockets.tpu_transaction_forwarding_client);
-
+        let mut tpu_transactions_forwards_client_sockets =
+            Some(node.sockets.tpu_transaction_forwarding_clients);
         let connection_cache = match (config.use_tpu_client_next, use_quic) {
             (false, true) => Some(Arc::new(ConnectionCache::new_with_client_options(
                 "connection_cache_tpu_quic",
                 tpu_connection_pool_size,
-                Some(
-                    tpu_transactions_forwards_client
+                Some({
+                    // this conversion is not beautiful but rust does not allow popping single
+                    // elements from a boxed slice
+                    let socketbox: Box<[_; 1]> = tpu_transactions_forwards_client_sockets
                         .take()
-                        .expect("Socket should exist."),
-                ),
+                        .unwrap()
+                        .try_into()
+                        .expect("Multihoming support for connection cache is not available");
+                    let [sock] = *socketbox;
+                    sock
+                }),
                 Some((
                     &identity_keypair,
                     node.info
@@ -1587,11 +1592,10 @@ impl Validator {
                 .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
             ForwardingClientOption::TpuClientNext((
                 Arc::as_ref(&identity_keypair),
-                tpu_transactions_forwards_client
-                    .take()
-                    .expect("Socket should exist."),
+                tpu_transactions_forwards_client_sockets.take().unwrap(),
                 runtime_handle.clone(),
                 cancel_tpu_client_next,
+                node_multihoming.clone(),
             ))
         };
         let tpu = Tpu::new_with_client(
@@ -1680,7 +1684,7 @@ impl Validator {
             repair_socket: Arc::new(node.sockets.repair),
             outstanding_repair_requests,
             cluster_slots,
-            node: Some(Arc::new(node_multihoming)),
+            node: Some(node_multihoming),
         });
 
         Ok(Self {
