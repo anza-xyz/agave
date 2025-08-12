@@ -529,7 +529,7 @@ solana-svm-measure = { path = "svm-measure", version = "=3.0.0" }
 solana-svm-timings = { path = "svm-timings", version = "=3.0.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.0.0" }
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=3.0.0" }
-solana-system-interface = "1.0"
+solana-system-interface = "2.0"
 solana-system-program = { path = "programs/system", version = "=3.0.0" }
 solana-system-transaction = "2.2.1"
 solana-sysvar = "2.2.2"
