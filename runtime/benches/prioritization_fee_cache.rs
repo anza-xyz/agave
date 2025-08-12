@@ -1,7 +1,5 @@
-#![feature(test)]
-extern crate test;
-
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     rand::{thread_rng, Rng},
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_message::Message,
@@ -16,7 +14,6 @@ use {
     solana_system_interface::instruction as system_instruction,
     solana_transaction::{sanitized::SanitizedTransaction, Transaction},
     std::sync::Arc,
-    test::Bencher,
 };
 const TRANSFER_TRANSACTION_COMPUTE_UNIT: u32 = 200;
 
@@ -38,9 +35,7 @@ fn build_sanitized_transaction(
     RuntimeTransaction::from_transaction_for_tests(transaction)
 }
 
-#[bench]
-#[ignore]
-fn bench_process_transactions_single_slot(bencher: &mut Bencher) {
+fn bench_process_transactions_single_slot(b: &mut Bencher) {
     let prioritization_fee_cache = PrioritizationFeeCache::default();
 
     let bank = Arc::new(Bank::default_for_tests());
@@ -57,7 +52,7 @@ fn bench_process_transactions_single_slot(bencher: &mut Bencher) {
         })
         .collect();
 
-    bencher.iter(|| {
+    b.iter(|| {
         prioritization_fee_cache.update(&bank, transactions.iter());
     });
 }
@@ -91,9 +86,7 @@ fn process_transactions_multiple_slots(banks: &[Arc<Bank>], num_slots: usize, nu
     }
 }
 
-#[bench]
-#[ignore]
-fn bench_process_transactions_multiple_slots(bencher: &mut Bencher) {
+fn bench_process_transactions_multiple_slots(b: &mut Bencher) {
     const NUM_SLOTS: usize = 5;
     const NUM_THREADS: usize = 3;
 
@@ -106,7 +99,14 @@ fn bench_process_transactions_multiple_slots(bencher: &mut Bencher) {
         .map(|n| Arc::new(Bank::new_from_parent(bank.clone(), &collector, n as u64)))
         .collect::<Vec<_>>();
 
-    bencher.iter(|| {
+    b.iter(|| {
         process_transactions_multiple_slots(&banks, NUM_SLOTS, NUM_THREADS);
     });
 }
+
+benchmark_group!(
+    benches,
+    bench_process_transactions_single_slot,
+    bench_process_transactions_multiple_slots
+);
+benchmark_main!(benches);
