@@ -174,6 +174,17 @@ impl TransactionAccounts {
         Ok(())
     }
 
+    fn try_borrow_mut(
+        &self,
+        index: IndexOfAccount,
+    ) -> Result<RefMut<'_, AccountSharedData>, InstructionError> {
+        self.accounts
+            .get(index as usize)
+            .ok_or(InstructionError::MissingAccount)?
+            .try_borrow_mut()
+            .map_err(|_| InstructionError::AccountBorrowFailed)
+    }
+
     pub fn try_borrow(
         &self,
         index: IndexOfAccount,
@@ -387,12 +398,7 @@ impl TransactionContext {
         }
         self.instruction_stack.push(index_in_trace);
         if let Some(index_in_transaction) = self.find_index_of_account(&instructions::id()) {
-            let mut mut_account_ref = self
-                .accounts
-                .get(index_in_transaction)
-                .ok_or(InstructionError::NotEnoughAccountKeys)?
-                .try_borrow_mut()
-                .map_err(|_| InstructionError::AccountBorrowFailed)?;
+            let mut mut_account_ref = self.accounts.try_borrow_mut(index_in_transaction)?;
             if mut_account_ref.owner() != &solana_sdk_ids::sysvar::id() {
                 return Err(InstructionError::InvalidAccountOwner);
             }
@@ -416,10 +422,16 @@ impl TransactionContext {
                 .and_then(|instruction_context| {
                     // Verify all executable accounts have no outstanding refs
                     self.accounts
-                        .get(instruction_context.get_index_of_program_account_in_transaction()?)
-                        .ok_or(InstructionError::NotEnoughAccountKeys)?
-                        .try_borrow_mut()
-                        .map_err(|_| InstructionError::AccountBorrowOutstanding)?;
+                        .try_borrow_mut(
+                            instruction_context.get_index_of_program_account_in_transaction()?,
+                        )
+                        .map_err(|err| {
+                            if err == InstructionError::AccountBorrowFailed {
+                                InstructionError::AccountBorrowOutstanding
+                            } else {
+                                err
+                            }
+                        })?;
                     self.instruction_accounts_lamport_sum(instruction_context)
                         .map(|instruction_accounts_lamport_sum| {
                             instruction_context.instruction_accounts_lamport_sum
@@ -522,11 +534,7 @@ impl TransactionContext {
                 // The four calls below can't really fail. If they fail because of a bug,
                 // whatever is writing will trigger an EbpfError::AccessViolation like
                 // if the region was readonly, and the transaction will fail gracefully.
-                let Some(account) = accounts.accounts.get(index_in_transaction as usize) else {
-                    debug_assert!(false);
-                    return;
-                };
-                let Ok(mut account) = account.try_borrow_mut() else {
+                let Ok(mut account) = accounts.try_borrow_mut(index_in_transaction) else {
                     debug_assert!(false);
                     return;
                 };
@@ -771,10 +779,7 @@ impl InstructionContext {
     ) -> Result<BorrowedAccount<'a>, InstructionError> {
         let account = transaction_context
             .accounts
-            .get(index_in_transaction)
-            .ok_or(InstructionError::MissingAccount)?
-            .try_borrow_mut()
-            .map_err(|_| InstructionError::AccountBorrowFailed)?;
+            .try_borrow_mut(index_in_transaction)?;
         Ok(BorrowedAccount {
             transaction_context,
             instruction_context: self,
