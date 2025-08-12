@@ -238,7 +238,7 @@ dependencies = [
  "solana-ledger",
  "solana-logger 3.0.0",
  "solana-metrics",
- "solana-native-token",
+ "solana-native-token 3.0.0",
  "solana-net-utils",
  "solana-perf",
  "solana-poh",
@@ -5917,7 +5917,7 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-message",
- "solana-native-token",
+ "solana-native-token 3.0.0",
  "solana-presigner",
  "solana-pubkey",
  "solana-remote-wallet",
@@ -5968,7 +5968,7 @@ dependencies = [
  "solana-epoch-info",
  "solana-hash",
  "solana-message",
- "solana-native-token",
+ "solana-native-token 3.0.0",
  "solana-packet",
  "solana-pubkey",
  "solana-rpc-client-api",
@@ -6255,7 +6255,7 @@ dependencies = [
  "solana-measure",
  "solana-message",
  "solana-metrics",
- "solana-native-token",
+ "solana-native-token 3.0.0",
  "solana-net-utils",
  "solana-nonce",
  "solana-nonce-account",
@@ -6545,7 +6545,7 @@ dependencies = [
  "solana-logger 3.0.0",
  "solana-message",
  "solana-metrics",
- "solana-native-token",
+ "solana-native-token 3.0.0",
  "solana-packet",
  "solana-pubkey",
  "solana-signer",
@@ -6620,7 +6620,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-message",
- "solana-native-token",
+ "solana-native-token 2.2.2",
 ]
 
 [[package]]
@@ -6747,7 +6747,7 @@ dependencies = [
  "solana-low-pass-filter",
  "solana-measure",
  "solana-metrics",
- "solana-native-token",
+ "solana-native-token 3.0.0",
  "solana-net-utils",
  "solana-packet",
  "solana-perf",
@@ -6955,7 +6955,7 @@ dependencies = [
  "solana-measure",
  "solana-message",
  "solana-metrics",
- "solana-native-token",
+ "solana-native-token 3.0.0",
  "solana-net-utils",
  "solana-packet",
  "solana-perf",
@@ -7173,6 +7173,12 @@ name = "solana-native-token"
 version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "307fb2f78060995979e9b4f68f833623565ed4e55d3725f100454ce78a99a1a3"
+
+[[package]]
+name = "solana-native-token"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae8dd4c280dca9d046139eb5b7a5ac9ad10403fbd64964c7d7571214950d758f"
 
 [[package]]
 name = "solana-net-utils"
@@ -7399,7 +7405,7 @@ dependencies = [
  "solana-loader-v4-interface",
  "solana-message",
  "solana-msg",
- "solana-native-token",
+ "solana-native-token 2.2.2",
  "solana-nonce",
  "solana-program-entrypoint",
  "solana-program-error",
@@ -7553,7 +7559,7 @@ dependencies = [
  "solana-logger 3.0.0",
  "solana-message",
  "solana-msg",
- "solana-native-token",
+ "solana-native-token 3.0.0",
  "solana-poh-config",
  "solana-program-entrypoint",
  "solana-program-error",
@@ -7766,7 +7772,7 @@ dependencies = [
  "solana-measure",
  "solana-message",
  "solana-metrics",
- "solana-native-token",
+ "solana-native-token 3.0.0",
  "solana-perf",
  "solana-poh",
  "solana-poh-config",
@@ -7982,7 +7988,7 @@ dependencies = [
  "solana-measure",
  "solana-message",
  "solana-metrics",
- "solana-native-token",
+ "solana-native-token 3.0.0",
  "solana-nohash-hasher",
  "solana-nonce",
  "solana-nonce-account",
@@ -9087,7 +9093,7 @@ dependencies = [
  "solana-config-program-client",
  "solana-genesis-config",
  "solana-instruction",
- "solana-native-token",
+ "solana-native-token 3.0.0",
  "solana-packet",
  "solana-program-runtime",
  "solana-pubkey",
@@ -9441,7 +9447,7 @@ dependencies = [
  "solana-loader-v3-interface 5.0.0",
  "solana-logger 3.0.0",
  "solana-message",
- "solana-native-token",
+ "solana-native-token 3.0.0",
  "solana-net-utils",
  "solana-program-test",
  "solana-pubkey",
@@ -9694,7 +9700,7 @@ dependencies = [
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
- "solana-native-token",
+ "solana-native-token 3.0.0",
  "solana-net-utils",
  "solana-perf",
  "solana-poh",
