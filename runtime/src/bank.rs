@@ -1528,7 +1528,7 @@ impl Bank {
             {
                 drop(epoch_boundary_preparation);
                 drop(program_cache);
-                if let Some((recompiled, _last_modification_slot)) = load_program_with_pubkey(
+                if let Some((recompiled, last_modification_slot)) = load_program_with_pubkey(
                     self,
                     &upcoming_environments,
                     &key,
@@ -1547,7 +1547,12 @@ impl Bank {
                         .global_program_cache
                         .write()
                         .unwrap();
-                    program_cache.assign_program(&upcoming_environments, key, recompiled);
+                    program_cache.assign_program(
+                        &upcoming_environments,
+                        key,
+                        last_modification_slot,
+                        recompiled,
+                    );
                 }
             }
         } else if slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch {
