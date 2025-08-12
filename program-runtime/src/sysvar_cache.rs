@@ -12,10 +12,10 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::sysvar,
     solana_slot_hashes::SlotHashes,
+    solana_svm_type_overrides::sync::Arc,
     solana_sysvar::{stake_history::StakeHistory, Sysvar},
     solana_sysvar_id::SysvarId,
     solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
-    solana_type_overrides::sync::Arc,
 };
 
 #[cfg(feature = "frozen-abi")]

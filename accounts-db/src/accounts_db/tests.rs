@@ -656,8 +656,16 @@ fn run_test_remove_unrooted_slot(is_cached: bool, db: AccountsDb) {
     if is_cached {
         db.store_cached((unrooted_slot, &[(&key, &account0)][..]));
     } else {
-        db.store_for_tests((unrooted_slot, [(&key, &account0)].as_slice()));
+        let file_size = 4096; // value doesn't need to be exact, just big enough to hold account0
+        let storage = db.create_and_insert_store(unrooted_slot, file_size, "");
+        db.store_accounts_frozen(
+            (unrooted_slot, [(&key, &account0)].as_slice()),
+            &storage,
+            UpdateIndexThreadSelection::Inline,
+        );
+        assert!(db.storage.get_slot_storage_entry(unrooted_slot).is_some());
     }
+    assert!(!db.accounts_index.is_alive_root(unrooted_slot));
     assert!(db.accounts_index.contains(&key));
     db.assert_load_account(unrooted_slot, key, 1);
 
@@ -2578,8 +2586,6 @@ fn test_select_candidates_by_total_usage_all_clean() {
     assert_eq!(0, next_candidates.len());
 }
 
-const UPSERT_POPULATE_RECLAIMS: UpsertReclaim = UpsertReclaim::PopulateReclaims;
-
 #[test]
 fn test_delete_dependencies() {
     solana_logger::setup();
@@ -2600,7 +2606,7 @@ fn test_delete_dependencies() {
         &AccountSecondaryIndexes::default(),
         info0,
         &mut reclaims,
-        UPSERT_POPULATE_RECLAIMS,
+        UpsertReclaim::IgnoreReclaims,
     );
     accounts_index.upsert(
         1,
@@ -2610,7 +2616,7 @@ fn test_delete_dependencies() {
         &AccountSecondaryIndexes::default(),
         info1,
         &mut reclaims,
-        UPSERT_POPULATE_RECLAIMS,
+        UpsertReclaim::IgnoreReclaims,
     );
     accounts_index.upsert(
         1,
@@ -2620,7 +2626,7 @@ fn test_delete_dependencies() {
         &AccountSecondaryIndexes::default(),
         info1,
         &mut reclaims,
-        UPSERT_POPULATE_RECLAIMS,
+        UpsertReclaim::IgnoreReclaims,
     );
     accounts_index.upsert(
         2,
@@ -2630,7 +2636,7 @@ fn test_delete_dependencies() {
         &AccountSecondaryIndexes::default(),
         info2,
         &mut reclaims,
-        UPSERT_POPULATE_RECLAIMS,
+        UpsertReclaim::IgnoreReclaims,
     );
     accounts_index.upsert(
         2,
@@ -2640,7 +2646,7 @@ fn test_delete_dependencies() {
         &AccountSecondaryIndexes::default(),
         info2,
         &mut reclaims,
-        UPSERT_POPULATE_RECLAIMS,
+        UpsertReclaim::IgnoreReclaims,
     );
     accounts_index.upsert(
         3,
@@ -2650,7 +2656,7 @@ fn test_delete_dependencies() {
         &AccountSecondaryIndexes::default(),
         info3,
         &mut reclaims,
-        UPSERT_POPULATE_RECLAIMS,
+        UpsertReclaim::IgnoreReclaims,
     );
     accounts_index.add_root(0);
     accounts_index.add_root(1);
@@ -3136,100 +3142,6 @@ fn test_load_with_read_only_accounts_cache() {
     // The account shouldn't be added to read_only_cache because it is in write_cache.
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
     assert_eq!(slot, 2);
-}
-
-#[test]
-fn test_account_matches_owners() {
-    let db = Arc::new(AccountsDb::new_single_for_tests());
-
-    let owners: Vec<Pubkey> = (0..2).map(|_| Pubkey::new_unique()).collect();
-
-    let account1_key = Pubkey::new_unique();
-    let account1 = AccountSharedData::new(321, 10, &owners[0]);
-
-    let account2_key = Pubkey::new_unique();
-    let account2 = AccountSharedData::new(1, 1, &owners[1]);
-
-    let account3_key = Pubkey::new_unique();
-    let account3 = AccountSharedData::new(1, 1, &Pubkey::new_unique());
-
-    // Account with 0 lamports
-    let account4_key = Pubkey::new_unique();
-    let account4 = AccountSharedData::new(0, 1, &owners[1]);
-
-    db.store_cached((0, &[(&account1_key, &account1)][..]));
-    db.store_cached((1, &[(&account2_key, &account2)][..]));
-    db.store_cached((2, &[(&account3_key, &account3)][..]));
-    db.store_cached((3, &[(&account4_key, &account4)][..]));
-
-    db.add_root(0);
-    db.add_root(1);
-    db.add_root(2);
-    db.add_root(3);
-
-    // Set the latest full snapshot slot to one that is *older* than the slot account4 is in.
-    // This is required to ensure account4 is not purged during `clean`,
-    // which is required to have account_matches_owners() return NoMatch.
-    db.set_latest_full_snapshot_slot(2);
-
-    // Flush the cache so that the account meta will be read from the storage
-    db.flush_accounts_cache(true, None);
-    db.clean_accounts_for_tests();
-
-    assert_eq!(
-        db.account_matches_owners(&Ancestors::default(), &account1_key, &owners),
-        Ok(0)
-    );
-    assert_eq!(
-        db.account_matches_owners(&Ancestors::default(), &account2_key, &owners),
-        Ok(1)
-    );
-    assert_eq!(
-        db.account_matches_owners(&Ancestors::default(), &account3_key, &owners),
-        Err(MatchAccountOwnerError::NoMatch)
-    );
-    assert_eq!(
-        db.account_matches_owners(&Ancestors::default(), &account4_key, &owners),
-        Err(MatchAccountOwnerError::NoMatch)
-    );
-    assert_eq!(
-        db.account_matches_owners(&Ancestors::default(), &Pubkey::new_unique(), &owners),
-        Err(MatchAccountOwnerError::UnableToLoad)
-    );
-
-    // Flush the cache and load account1 (so that it's in the cache)
-    db.flush_accounts_cache(true, None);
-    db.clean_accounts_for_tests();
-    let _ = db
-        .do_load(
-            &Ancestors::default(),
-            &account1_key,
-            Some(0),
-            LoadHint::Unspecified,
-            LoadZeroLamports::SomeWithZeroLamportAccountForTests,
-        )
-        .unwrap();
-
-    assert_eq!(
-        db.account_matches_owners(&Ancestors::default(), &account1_key, &owners),
-        Ok(0)
-    );
-    assert_eq!(
-        db.account_matches_owners(&Ancestors::default(), &account2_key, &owners),
-        Ok(1)
-    );
-    assert_eq!(
-        db.account_matches_owners(&Ancestors::default(), &account3_key, &owners),
-        Err(MatchAccountOwnerError::NoMatch)
-    );
-    assert_eq!(
-        db.account_matches_owners(&Ancestors::default(), &account4_key, &owners),
-        Err(MatchAccountOwnerError::NoMatch)
-    );
-    assert_eq!(
-        db.account_matches_owners(&Ancestors::default(), &Pubkey::new_unique(), &owners),
-        Err(MatchAccountOwnerError::UnableToLoad)
-    );
 }
 
 /// a test that will accept either answer

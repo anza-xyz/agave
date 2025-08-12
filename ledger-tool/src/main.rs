@@ -512,6 +512,7 @@ fn minimize_bank_for_snapshot(
     bank: &Bank,
     snapshot_slot: Slot,
     ending_slot: Slot,
+    should_recalculate_accounts_lt_hash: bool,
 ) -> bool {
     let ((transaction_account_set, possibly_incomplete), transaction_accounts_measure) = measure_time!(
         blockstore.get_accounts_used_in_range(bank, snapshot_slot, ending_slot),
@@ -520,7 +521,12 @@ fn minimize_bank_for_snapshot(
     let total_accounts_len = transaction_account_set.len();
     info!("Added {total_accounts_len} accounts from transactions. {transaction_accounts_measure}");
 
-    SnapshotMinimizer::minimize(bank, snapshot_slot, transaction_account_set);
+    SnapshotMinimizer::minimize(
+        bank,
+        snapshot_slot,
+        transaction_account_set,
+        should_recalculate_accounts_lt_hash,
+    );
     possibly_incomplete
 }
 
@@ -1462,6 +1468,21 @@ fn main() {
                         .takes_value(true)
                         .value_name("ENDING_SLOT")
                         .help("Ending slot for minimized snapshot creation"),
+                )
+                .arg(
+                    Arg::with_name("recalculate_accounts_lt_hash")
+                        .long("recalculate-accounts-lt-hash")
+                        .takes_value(false)
+                        .help("Recalculate the accounts lt hash for minimized snapshots")
+                        .long_help(
+                            "Recalculate the accounts lt hash for minimized snapshots. \
+                             Without this flag, loading the minimized snapshot will fail \
+                             startup accounts verification because the accounts lt hash will not \
+                             match due to the pruned account state. If not recalculating the \
+                             accounts lt hash, pass `--accounts-db-skip-initial-hash-calculation` \
+                             to `leder-tool verify` in order to bypass this check.",
+                        )
+                        .requires("minimized"),
                 )
                 .arg(
                     Arg::with_name("snapshot_archive_format")
@@ -2410,6 +2431,7 @@ fn main() {
                             &bank,
                             snapshot_slot,
                             ending_slot.unwrap(),
+                            arg_matches.is_present("recalculate_accounts_lt_hash"),
                         )
                     } else {
                         false

@@ -38,10 +38,7 @@ use {
             AccountsStats, CleanAccountsStats, FlushStats, ObsoleteAccountsStats, PurgeStats,
             ShrinkAncientStats, ShrinkStats, ShrinkStatsSub, StoreAccountsTiming,
         },
-        accounts_file::{
-            AccountsFile, AccountsFileError, AccountsFileProvider, MatchAccountOwnerError,
-            StorageAccess,
-        },
+        accounts_file::{AccountsFile, AccountsFileError, AccountsFileProvider, StorageAccess},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             in_mem_accounts_index::StartupStats, AccountSecondaryIndexes, AccountsIndex,
@@ -828,36 +825,6 @@ impl LoadedAccountAccessor<'_> {
                                 callback(LoadedAccount::Stored(account))
                             })
                     })
-            }
-        }
-    }
-
-    fn account_matches_owners(&self, owners: &[Pubkey]) -> Result<usize, MatchAccountOwnerError> {
-        match self {
-            LoadedAccountAccessor::Cached(cached_account) => cached_account
-                .as_ref()
-                .and_then(|cached_account| {
-                    if cached_account.account.is_zero_lamport() {
-                        None
-                    } else {
-                        owners
-                            .iter()
-                            .position(|entry| cached_account.account.owner() == entry)
-                    }
-                })
-                .ok_or(MatchAccountOwnerError::NoMatch),
-            LoadedAccountAccessor::Stored(maybe_storage_entry) => {
-                // storage entry may not be present if slot was cleaned up in
-                // between reading the accounts index and calling this function to
-                // get account meta from the storage entry here
-                maybe_storage_entry
-                    .as_ref()
-                    .map(|(storage_entry, offset)| {
-                        storage_entry
-                            .accounts
-                            .account_matches_owners(*offset, owners)
-                    })
-                    .unwrap_or(Err(MatchAccountOwnerError::UnableToLoad))
             }
         }
     }
@@ -4095,47 +4062,6 @@ impl AccountsDb {
         self.do_load(ancestors, pubkey, None, load_hint, LoadZeroLamports::None)
     }
 
-    /// Return Ok(index_of_matching_owner) if the account owner at `offset` is one of the pubkeys in `owners`.
-    /// Return Err(MatchAccountOwnerError::NoMatch) if the account has 0 lamports or the owner is not one of
-    /// the pubkeys in `owners`.
-    /// Return Err(MatchAccountOwnerError::UnableToLoad) if the account could not be accessed.
-    pub fn account_matches_owners(
-        &self,
-        ancestors: &Ancestors,
-        account: &Pubkey,
-        owners: &[Pubkey],
-    ) -> Result<usize, MatchAccountOwnerError> {
-        let (slot, storage_location, _maybe_account_accessor) = self
-            .read_index_for_accessor_or_load_slow(ancestors, account, None, false)
-            .ok_or(MatchAccountOwnerError::UnableToLoad)?;
-
-        if !storage_location.is_cached() {
-            let result = self.read_only_accounts_cache.load(*account, slot);
-            if let Some(account) = result {
-                return if account.is_zero_lamport() {
-                    Err(MatchAccountOwnerError::NoMatch)
-                } else {
-                    owners
-                        .iter()
-                        .position(|entry| account.owner() == entry)
-                        .ok_or(MatchAccountOwnerError::NoMatch)
-                };
-            }
-        }
-
-        let (account_accessor, _slot) = self
-            .retry_to_get_account_accessor(
-                slot,
-                storage_location,
-                ancestors,
-                account,
-                None,
-                LoadHint::Unspecified,
-            )
-            .ok_or(MatchAccountOwnerError::UnableToLoad)?;
-        account_accessor.account_matches_owners(owners)
-    }
-
     /// load the account with `pubkey` into the read only accounts cache.
     /// The goal is to make subsequent loads (which caller expects to occur) to find the account quickly.
     pub fn load_account_into_read_cache(&self, ancestors: &Ancestors, pubkey: &Pubkey) {
@@ -6286,10 +6212,6 @@ impl AccountsDb {
             .fetch_add(store_accounts_time.as_us(), Ordering::Relaxed);
         let mut update_index_time = Measure::start("update_index");
 
-        // if we are squashing a single slot, then we can expect a single dead slot
-        let expected_single_dead_slot =
-            (!accounts.contains_multiple_slots()).then(|| accounts.target_slot());
-
         // If the cache was flushed, then because `update_index` occurs
         // after the account are stored by the above `store_accounts_to`
         // call and all the accounts are stored, all reads after this point
@@ -6324,7 +6246,7 @@ impl AccountsDb {
             let mut handle_reclaims_time = Measure::start("handle_reclaims");
             self.handle_reclaims(
                 (!reclaims.is_empty()).then(|| reclaims.iter()),
-                expected_single_dead_slot,
+                None,
                 &HashSet::default(),
                 // this callsite does NOT process dead slots
                 HandleReclaims::DoNotProcessDeadSlots,
@@ -7636,31 +7558,5 @@ impl AccountsDb {
 
     pub fn uncleaned_pubkeys(&self) -> &DashMap<Slot, Vec<Pubkey>, BuildNoHashHasher<Slot>> {
         &self.uncleaned_pubkeys
-    }
-}
-
-/// A set of utility functions used for testing and benchmarking
-#[cfg(feature = "dev-context-only-utils")]
-pub mod test_utils {
-    use {super::*, crate::accounts::Accounts};
-
-    pub fn create_test_accounts(
-        accounts: &Accounts,
-        pubkeys: &mut Vec<Pubkey>,
-        num: usize,
-        slot: Slot,
-    ) {
-        let data_size = 0;
-
-        for t in 0..num {
-            let pubkey = solana_pubkey::new_rand();
-            let account = AccountSharedData::new(
-                (t + 1) as u64,
-                data_size,
-                AccountSharedData::default().owner(),
-            );
-            accounts.store_cached((slot, &[(&pubkey, &account)][..]), None);
-            pubkeys.push(pubkey);
-        }
     }
 }

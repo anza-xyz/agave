@@ -509,10 +509,9 @@ impl AccountsBackgroundService {
                                 Ok(snapshot_slot) => {
                                     assert!(
                                         last_cleaned_slot <= snapshot_slot,
-                                        "last cleaned slot: {last_cleaned_slot}, \
-                                         snapshot request slot: {snapshot_slot}, \
-                                         is startup verification complete: {}, \
-                                         enqueued snapshot requests: {:?}",
+                                        "last cleaned slot: {last_cleaned_slot}, snapshot request \
+                                         slot: {snapshot_slot}, is startup verification complete: \
+                                         {}, enqueued snapshot requests: {:?}",
                                         bank.has_initial_accounts_hash_verification_completed(),
                                         request_handlers
                                             .snapshot_request_handler
@@ -526,8 +525,8 @@ impl AccountsBackgroundService {
                                 }
                                 Err(err) => {
                                     error!(
-                                        "Stopping AccountsBackgroundService! \
-                                         Fatal error while handling snapshot requests: {err}",
+                                        "Stopping AccountsBackgroundService! Fatal error while \
+                                         handling snapshot requests: {err}",
                                     );
                                     exit.store(true, Ordering::Relaxed);
                                     break;

@@ -10,9 +10,8 @@ use {
         find_available_ports_in_range,
         sockets::{
             bind_gossip_port_in_range, bind_in_range_with_config, bind_more_with_config,
-            bind_to_with_config, bind_two_in_range_with_offset_and_config,
-            localhost_port_range_for_tests, multi_bind_in_range_with_config,
-            SocketConfiguration as SocketConfig,
+            bind_two_in_range_with_offset_and_config, localhost_port_range_for_tests,
+            multi_bind_in_range_with_config, SocketConfiguration as SocketConfig,
         },
         PortRange,
     },
@@ -202,13 +201,17 @@ impl Node {
         let (alpenglow_port, alpenglow) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
                 .expect("Alpenglow port bind should succeed");
-        // These are client sockets, so the port is set to be 0 because it must be ephimeral.
-        let tpu_vote_forwarding_client =
-            bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
-        let tpu_transaction_forwarding_client =
-            bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
-        let quic_vote_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
-        let rpc_sts_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+        // These are "client" sockets, so they could use ephemeral ports, but we
+        // force them into the provided port_range to simplify the operations.
+        let (_, tpu_vote_forwarding_client) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
+        let (_, tpu_transaction_forwarding_client) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
+        let (_, quic_vote_client) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
+
+        let (_, rpc_sts_client) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
 
         let mut info = ContactInfo::new(
             *pubkey,

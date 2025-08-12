@@ -1,8 +1,8 @@
 use {
-    solana_measure::measure_us,
     solana_program_runtime::invoke_context::InvokeContext,
+    solana_svm_measure::measure_us,
+    solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::IndexOfAccount,
     solana_transaction_error::TransactionError,
 };
@@ -159,7 +159,7 @@ mod tests {
                     MockSystemInstruction::ChangeData { data } => {
                         instruction_context
                             .try_borrow_instruction_account(transaction_context, 1)?
-                            .set_data(vec![data])?;
+                            .set_data_from_slice(&[data])?;
                         Ok(())
                     }
                 }
@@ -394,7 +394,7 @@ mod tests {
                             .try_borrow_instruction_account(transaction_context, 2)?;
                         dup_account.checked_sub_lamports(lamports)?;
                         to_account.checked_add_lamports(lamports)?;
-                        dup_account.set_data(vec![data])?;
+                        dup_account.set_data_from_slice(&[data])?;
                         drop(dup_account);
                         let mut from_account = instruction_context
                             .try_borrow_instruction_account(transaction_context, 0)?;

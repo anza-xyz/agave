@@ -1,7 +1,8 @@
 [package]
-name = "solana-timings"
-description = "Solana Execution Timings"
-documentation = "https://docs.rs/solana-timings"
+name = "solana-svm-measure"
+description = "Timing measurement utilities for SVM"
+documentation = "https://docs.rs/solana-svm-measure"
+readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -11,8 +12,3 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
-
-[dependencies]
-eager = { workspace = true }
-enum-iterator = { workspace = true }
-solana-pubkey = { workspace = true }

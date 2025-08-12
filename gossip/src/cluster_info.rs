@@ -52,8 +52,9 @@ use {
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::shred::Shred,
     solana_net_utils::{
-        bind_in_range, bind_to_unspecified, sockets::bind_gossip_port_in_range, PortRange,
-        VALIDATOR_PORT_RANGE,
+        bind_in_range,
+        sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
+        PortRange, VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
         data_budget::DataBudget,
@@ -2458,7 +2459,7 @@ pub fn push_messages_to_peer_for_tests(
         &PacketBatchRecycler::default(),
         &GossipStats::default(),
     );
-    let sock = bind_to_unspecified().unwrap();
+    let sock = bind_to_localhost_unique().expect("should bind");
     packet::send_to(&packet_batch, &sock, socket_addr_space)?;
     Ok(())
 }

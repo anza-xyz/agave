@@ -30,8 +30,8 @@ solana-ledger = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-shred-version = { workspace = true }
+solana-svm-timings = { workspace = true }
 solana-time-utils = { workspace = true }
-solana-timings = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }

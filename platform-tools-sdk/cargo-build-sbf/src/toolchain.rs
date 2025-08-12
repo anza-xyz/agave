@@ -14,7 +14,7 @@ use {
     tar::Archive,
 };
 
-pub(crate) const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.50";
+pub(crate) const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.51";
 pub(crate) const DEFAULT_RUST_VERSION: &str = "1.84.1";
 
 fn find_installed_platform_tools() -> Vec<String> {

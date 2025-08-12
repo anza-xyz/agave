@@ -5,8 +5,8 @@
 use {
     base64::{prelude::BASE64_STANDARD, Engine},
     itertools::Itertools,
-    solana_log_collector::{ic_logger_msg, LogCollector},
     solana_pubkey::Pubkey,
+    solana_svm_log_collector::{ic_logger_msg, LogCollector},
     std::{cell::RefCell, rc::Rc},
 };
 

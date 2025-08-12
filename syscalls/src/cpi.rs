@@ -3,13 +3,13 @@ use {
     crate::{translate_inner, translate_slice_inner, translate_type_inner},
     solana_instruction::Instruction,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
-    solana_measure::measure::Measure,
     solana_program_runtime::{
         invoke_context::SerializedAccountMetadata,
         serialization::{create_memory_region_of_account, modify_memory_region_of_account},
     },
     solana_sbpf::ebpf,
     solana_stable_layout::stable_instruction::StableInstruction,
+    solana_svm_measure::measure::Measure,
     solana_transaction_context::BorrowedAccount,
     std::mem,
 };

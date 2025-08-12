@@ -51,7 +51,6 @@ members = [
     "ledger-tool",
     "local-cluster",
     "log-analyzer",
-    "log-collector",
     "measure",
     "memory-management",
     "merkle-tree",
@@ -105,12 +104,15 @@ members = [
     "svm",
     "svm-callback",
     "svm-feature-set",
+    "svm-log-collector",
+    "svm-measure",
+    "svm-timings",
     "svm-transaction",
+    "svm-type-overrides",
     "syscalls",
     "syscalls/gen-syscall-list",
     "test-validator",
     "thread-manager",
-    "timings",
     "tls-utils",
     "tokens",
     "tps-client",
@@ -123,7 +125,6 @@ members = [
     "transaction-status-client-types",
     "transaction-view",
     "turbine",
-    "type-overrides",
     "udp-client",
     "unified-scheduler-logic",
     "unified-scheduler-pool",
@@ -241,7 +242,7 @@ ctrlc = "3.4.7"
 curve25519-dalek = { version = "4.1.3", features = ["digest", "rand_core"] }
 dashmap = "5.5.3"
 derivation-path = { version = "0.2.0", default-features = false }
-derive-where = "1.5.0"
+derive-where = "1.6.0"
 derive_more = { version = "1.0.0", features = ["full"] }
 dialoguer = "0.10.4"
 digest = "0.10.7"
@@ -293,7 +294,7 @@ jsonrpc-http-server = "18.0.0"
 jsonrpc-ipc-server = "18.0.0"
 jsonrpc-pubsub = "18.0.0"
 lazy-lru = "0.1.3"
-libc = "0.2.174"
+libc = "0.2.175"
 libloading = "0.7.4"
 libsecp256k1 = { version = "0.6.0", default-features = false, features = [
     "std",
@@ -450,7 +451,6 @@ solana-loader-v3-interface = "5.0.0"
 solana-loader-v4-interface = "2.2.1"
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=3.0.0" }
 solana-local-cluster = { path = "local-cluster", version = "=3.0.0" }
-solana-log-collector = { path = "log-collector", version = "=3.0.0" }
 solana-logger = "3.0.0"
 solana-measure = { path = "measure", version = "=3.0.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=3.0.0" }
@@ -523,7 +523,11 @@ solana-streamer = { path = "streamer", version = "=3.0.0" }
 solana-svm = { path = "svm", version = "=3.0.0" }
 solana-svm-callback = { path = "svm-callback", version = "=3.0.0" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.0.0" }
+solana-svm-log-collector = { path = "svm-log-collector", version = "=3.0.0" }
+solana-svm-measure = { path = "svm-measure", version = "=3.0.0" }
+solana-svm-timings = { path = "svm-timings", version = "=3.0.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.0.0" }
+solana-svm-type-overrides = { path = "svm-type-overrides", version = "=3.0.0" }
 solana-system-interface = "1.0"
 solana-system-program = { path = "programs/system", version = "=3.0.0" }
 solana-system-transaction = "2.2.1"
@@ -531,7 +535,6 @@ solana-sysvar = "2.2.2"
 solana-sysvar-id = "2.2.1"
 solana-test-validator = { path = "test-validator", version = "=3.0.0" }
 solana-time-utils = "2.2.1"
-solana-timings = { path = "timings", version = "=3.0.0" }
 solana-tls-utils = { path = "tls-utils", version = "=3.0.0" }
 solana-tps-client = { path = "tps-client", version = "=3.0.0" }
 solana-tpu-client = { path = "tpu-client", version = "=3.0.0", default-features = false }
@@ -543,7 +546,6 @@ solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", ver
 solana-transaction-status = { path = "transaction-status", version = "=3.0.0" }
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=3.0.0" }
 solana-turbine = { path = "turbine", version = "=3.0.0" }
-solana-type-overrides = { path = "type-overrides", version = "=3.0.0" }
 solana-udp-client = { path = "udp-client", version = "=3.0.0" }
 solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=3.0.0" }
 solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=3.0.0" }

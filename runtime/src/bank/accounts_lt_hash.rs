@@ -526,13 +526,10 @@ mod tests {
             .unwrap();
 
         // store account 5 into this new bank, unchanged
-        bank.rc.accounts.store_cached(
-            (
-                bank.slot(),
-                [(&keypair5.pubkey(), &prev_account5.clone().unwrap())].as_slice(),
-            ),
-            None,
-        );
+        bank.rc.accounts.store_accounts_cached((
+            bank.slot(),
+            [(&keypair5.pubkey(), &prev_account5.clone().unwrap())].as_slice(),
+        ));
 
         // freeze the bank to trigger update_accounts_lt_hash() to run
         bank.freeze();

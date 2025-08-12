@@ -2817,7 +2817,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_RECLAIM_TEST_DEFAULT,
+            UpsertReclaim::PopulateReclaims,
         );
         assert!(gc.is_empty());
         index.upsert(
@@ -2828,7 +2828,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             false,
             &mut gc,
-            UPSERT_RECLAIM_TEST_DEFAULT,
+            UpsertReclaim::PopulateReclaims,
         );
         assert!(gc.is_empty());
         index
@@ -2871,7 +2871,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_RECLAIM_TEST_DEFAULT,
+            UpsertReclaim::PopulateReclaims,
         );
         assert!(gc.is_empty());
         index.upsert(
@@ -2882,7 +2882,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             false,
             &mut gc,
-            UPSERT_RECLAIM_TEST_DEFAULT,
+            UpsertReclaim::PopulateReclaims,
         );
         index.upsert(
             2,
@@ -2892,7 +2892,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_RECLAIM_TEST_DEFAULT,
+            UpsertReclaim::PopulateReclaims,
         );
         index.upsert(
             3,
@@ -2902,7 +2902,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_RECLAIM_TEST_DEFAULT,
+            UpsertReclaim::PopulateReclaims,
         );
         index.add_root(0);
         index.add_root(1);
@@ -2915,7 +2915,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_RECLAIM_TEST_DEFAULT,
+            UpsertReclaim::PopulateReclaims,
         );
 
         // Updating index should not purge older roots, only purges

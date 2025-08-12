@@ -35,7 +35,6 @@ solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
-solana-log-collector = { workspace = true }
 solana-logger = { workspace = true }
 solana-message = { workspace = true }
 solana-msg = { workspace = true }
@@ -53,10 +52,11 @@ solana-signer = { workspace = true }
 solana-stable-layout = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-svm = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-svm-timings = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
-solana-timings = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
