@@ -1200,7 +1200,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
-    pub fn merge(&mut self, modified_entries: &HashMap<Pubkey, Arc<ProgramCacheEntry>>) {
+    pub fn merge(
+        &mut self,
+        _current_slot: Slot,
+        modified_entries: &HashMap<Pubkey, Arc<ProgramCacheEntry>>,
+    ) {
         modified_entries.iter().for_each(|(key, entry)| {
             self.assign_program(*key, entry.clone());
         })
@@ -1472,11 +1476,11 @@ mod tests {
     fn set_tombstone<FG: ForkGraph>(
         cache: &mut ProgramCache<FG>,
         key: Pubkey,
-        slot: Slot,
+        current_slot: Slot,
         reason: ProgramCacheEntryType,
     ) -> Arc<ProgramCacheEntry> {
         let program = Arc::new(ProgramCacheEntry::new_tombstone(
-            slot,
+            current_slot,
             ProgramCacheEntryOwner::LoaderV2,
             reason,
         ));
@@ -1487,9 +1491,13 @@ mod tests {
     fn insert_unloaded_entry<FG: ForkGraph>(
         cache: &mut ProgramCache<FG>,
         key: Pubkey,
-        slot: Slot,
+        current_slot: Slot,
     ) -> Arc<ProgramCacheEntry> {
-        let loaded = new_test_entry_with_usage(slot, slot.saturating_add(1), AtomicU64::default());
+        let loaded = new_test_entry_with_usage(
+            current_slot,
+            current_slot.saturating_add(1),
+            AtomicU64::default(),
+        );
         let unloaded = Arc::new(loaded.to_unloaded().expect("Failed to unload the program"));
         cache.assign_program(key, unloaded.clone());
         unloaded

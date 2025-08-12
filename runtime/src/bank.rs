@@ -3622,7 +3622,7 @@ impl Bank {
                                     .write()
                                     .unwrap()
                             })
-                            .merge(programs_modified_by_tx);
+                            .merge(self.slot, programs_modified_by_tx);
                     }
                 }
             }
