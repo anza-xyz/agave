@@ -55,6 +55,7 @@ fn sink(
 ) -> JoinHandle<()> {
     spawn(move || {
         let mut last_report = Instant::now();
+        let mut last_count = 0;
         while !exit.load(Ordering::Relaxed) {
             if let Ok(packet_batch) = receiver.recv_timeout(SINK_RECEIVE_TIMEOUT) {
                 received_size.fetch_add(packet_batch.len(), Ordering::Relaxed);
@@ -63,8 +64,11 @@ fn sink(
             let count = received_size.load(Ordering::Relaxed);
 
             if verbose && last_report.elapsed() > SINK_REPORT_INTERVAL {
-                println!("Received txns count: {count}");
+                let change = count - last_count;
+                let rate = change as u64 / SINK_REPORT_INTERVAL.as_secs();
+                println!("Received txns count: total: {count}, rate {rate}/s");
                 last_report = Instant::now();
+                last_count = count;
             }
         }
     })
