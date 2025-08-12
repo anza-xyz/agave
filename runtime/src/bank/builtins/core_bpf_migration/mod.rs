@@ -206,6 +206,7 @@ impl Bank {
             .unwrap()
             .merge(
                 &self.transaction_processor.environments,
+                self.slot,
                 &program_cache_for_tx_batch.drain_modified_entries(),
             );
 
