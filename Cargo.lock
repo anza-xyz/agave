@@ -10631,6 +10631,7 @@ dependencies = [
  "solana-keypair",
  "solana-message",
  "solana-native-token",
+ "solana-program-test",
  "solana-pubkey",
  "solana-remote-wallet",
  "solana-rpc-client",
@@ -10640,6 +10641,7 @@ dependencies = [
  "solana-signer",
  "solana-stake-interface",
  "solana-stake-program",
+ "solana-sysvar",
  "solana-transaction",
  "solana-version",
 ]
