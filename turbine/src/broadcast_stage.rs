@@ -10,7 +10,7 @@ use {
     },
     crate::{
         cluster_nodes::{self, ClusterNodes, ClusterNodesCache},
-        xdp::{XdpSender, XdpShredPayload},
+        xdp::XdpSender,
     },
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvError, RecvTimeoutError, Sender},
@@ -452,7 +452,7 @@ pub enum BroadcastSocket<'a> {
 /// turbine retransmit tree for each shred.
 pub fn broadcast_shreds(
     s: BroadcastSocket,
-    shreds: Arc<Vec<Shred>>,
+    shreds: &[Shred],
     cluster_nodes_cache: &ClusterNodesCache<BroadcastStage>,
     last_datapoint_submit: &AtomicInterval,
     transmit_stats: &mut TransmitShredsStats,
@@ -482,14 +482,13 @@ pub fn broadcast_shreds(
     // `Bytes` directly to the XDP thread(s).
     let (packets, quic_packets): (Vec<_>, Vec<_>) = shreds
         .iter()
-        .enumerate()
-        .group_by(|(_, shred)| shred.slot())
+        .group_by(|shred| shred.slot())
         .into_iter()
         .flat_map(|(slot, shreds)| {
             let cluster_nodes =
                 cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
             update_peer_stats(&cluster_nodes, last_datapoint_submit);
-            shreds.filter_map(move |(idx, shred)| {
+            shreds.filter_map(move |shred| {
                 let key = shred.id();
                 let protocol = cluster_nodes::get_broadcast_protocol(&key);
                 cluster_nodes
@@ -500,7 +499,7 @@ pub fn broadcast_shreds(
                         (match protocol {
                             Protocol::QUIC => Either::Right,
                             Protocol::UDP => Either::Left,
-                        })((idx, addr))
+                        })((shred.payload(), addr))
                     })
             })
         })
@@ -511,12 +510,7 @@ pub fn broadcast_shreds(
     match s {
         BroadcastSocket::Udp(s) => {
             let mut send_mmsg_time = Measure::start("send_mmsg");
-            match batch_send(
-                s,
-                packets
-                    .iter()
-                    .map(|(idx, addr)| (shreds[*idx].payload(), *addr)),
-            ) {
+            match batch_send(s, packets) {
                 Ok(()) => (),
                 Err(SendPktsError::IoError(ioerr, num_failed)) => {
                     transmit_stats.dropped_packets_udp += num_failed;
@@ -528,15 +522,8 @@ pub fn broadcast_shreds(
         }
         BroadcastSocket::Xdp(s) => {
             let mut send_xdp_time = Measure::start("send_xdp");
-            for (idx, addr) in packets.into_iter() {
-                if let Err(e) = s.try_send(
-                    idx,
-                    vec![addr],
-                    XdpShredPayload::Shared {
-                        ptr: Arc::clone(&shreds),
-                        index: idx,
-                    },
-                ) {
+            for (idx, (payload, addr)) in packets.into_iter().enumerate() {
+                if let Err(e) = s.try_send(idx, vec![addr], payload.clone()) {
                     log::warn!("xdp channel full: {e:?}");
                     transmit_stats.dropped_packets_xdp += 1;
                     result = Err(Error::XdpChannelFull);
@@ -549,9 +536,8 @@ pub fn broadcast_shreds(
 
     let mut quic_send_time = Measure::start("send shreds via quic");
     transmit_stats.total_packets += num_udp_packets + quic_packets.len();
-    for (idx, addr) in quic_packets {
-        let shred = shreds[idx].payload().bytes.clone();
-        if let Err(err) = quic_endpoint_sender.blocking_send((addr, shred)) {
+    for (payload, addr) in quic_packets {
+        if let Err(err) = quic_endpoint_sender.blocking_send((addr, payload.bytes.clone())) {
             transmit_stats.dropped_packets_quic += 1;
             result = Err(Error::from(err));
         }
