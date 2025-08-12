@@ -184,6 +184,18 @@ mod test {
     }
 
     #[test]
+    fn test_get_builtin_migration_feature_index() {
+        assert!(matches!(
+            get_builtin_migration_feature_index(&Pubkey::new_unique()),
+            BuiltinMigrationFeatureIndex::NotBuiltin
+        ));
+        assert!(matches!(
+            get_builtin_migration_feature_index(&compute_budget::id()),
+            BuiltinMigrationFeatureIndex::BuiltinNoMigrationFeature,
+        ));
+    }
+
+    #[test]
     #[should_panic(expected = "valid index of MIGRATING_BUILTINS_COSTS")]
     fn test_get_migration_feature_id_invalid_index() {
         let _ = get_migration_feature_id(MIGRATING_BUILTINS_COSTS.len() + 1);
