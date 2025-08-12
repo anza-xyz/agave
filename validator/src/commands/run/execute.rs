@@ -354,8 +354,19 @@ pub fn execute(
         .transpose()?
         .unzip();
 
-    let read_cache_limit_bytes = values_of::<usize>(matches, "accounts_db_read_cache_limit_mb")
-        .map(|limits| {
+    let read_cache_limit_bytes =
+        values_of::<usize>(matches, "accounts_db_read_cache_limit").map(|limits| {
+            match limits.len() {
+                2 => (limits[0], limits[1]),
+                _ => {
+                    // clap will enforce two values are given
+                    unreachable!("invalid number of values given to accounts-db-read-cache-limit")
+                }
+            }
+        });
+    // accounts-db-read-cache-limit-mb was deprecated in v3.0.0
+    let read_cache_limit_mb =
+        values_of::<usize>(matches, "accounts_db_read_cache_limit_mb").map(|limits| {
             match limits.len() {
                 // we were given explicit low and high watermark values, so use them
                 2 => (limits[0] * MB, limits[1] * MB),
@@ -369,6 +380,9 @@ pub fn execute(
                 }
             }
         });
+    // clap will enforce only one cli arg is provided, so pick whichever is Some
+    let read_cache_limit_bytes = read_cache_limit_bytes.or(read_cache_limit_mb);
+
     let storage_access = matches
         .value_of("accounts_db_access_storages_method")
         .map(|method| match method {

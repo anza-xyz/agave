@@ -1445,20 +1445,19 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("accounts_db_read_cache_limit_mb")
-            .long("accounts-db-read-cache-limit-mb")
-            .value_name("MAX | LOW,HIGH")
+        Arg::with_name("accounts_db_read_cache_limit")
+            .long("accounts-db-read-cache-limit")
+            .value_name("LOW,HIGH")
             .takes_value(true)
-            .min_values(1)
+            .min_values(2)
             .max_values(2)
             .multiple(false)
             .require_delimiter(true)
-            .help("How large the read cache for account data can become, in mebibytes")
+            .help("How large the read cache for account data can become, in bytes")
             .long_help(
-                "How large the read cache for account data can become, in mebibytes. \
-                 If given a single value, it will be the maximum size for the cache. \
-                 If given a pair of values, they will be the low and high watermarks \
-                 for the cache. When the cache exceeds the high watermark, entries will \
+                "How large the read cache for account data can become, in bytes. \
+                 The values will be the low and high watermarks for the cache. \
+                 When the cache exceeds the high watermark, entries will \
                  be evicted until the size reaches the low watermark."
             )
             .hidden(hidden_unless_forced()),
