@@ -28,7 +28,7 @@ solana-address-lookup-table-interface = { workspace = true, features = [
     "bytemuck",
 ] }
 solana-clock = { workspace = true }
-solana-config-program-client = { workspace = true, features = ["serde"] }
+solana-config-interface = { workspace = true, features = ["serde"] }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }

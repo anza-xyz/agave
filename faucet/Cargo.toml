@@ -29,20 +29,20 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
-solana-hash = "=2.3.0"
-solana-instruction = "=2.3.0"
-solana-keypair = "=2.2.1"
+solana-cli-output = { workspace = true }
+solana-hash = "=3.0.0"
+solana-instruction = "=3.0.0"
+solana-keypair = "=3.0.0"
 solana-logger = "=3.0.0"
-solana-message = "=2.4.0"
+solana-message = "=3.0.0"
 solana-metrics = { workspace = true }
-solana-native-token = "=2.2.2"
-solana-packet = "=2.2.1"
-solana-pubkey = { version = "=2.4.0", features = ["rand"] }
-solana-signer = "=2.2.1"
-solana-system-interface = "=1.0"
-solana-system-transaction = "=2.2.1"
-solana-transaction = "=2.2.3"
+solana-packet = "=3.0.0"
+solana-pubkey = { version = "=3.0.0", features = ["rand"] }
+solana-signer = "=3.0.0"
+solana-system-interface = "=2.0"
+solana-system-transaction = "=3.0.0"
+solana-transaction = "=3.0.0"
 solana-version = { workspace = true }
-spl-memo-interface = { version = "=1.0.0" }
+spl-memo-interface = { version = "=2.0.0" }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
