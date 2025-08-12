@@ -1032,15 +1032,14 @@ impl Validator {
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
-        let mut tpu_transactions_forwards_client =
-            Some(node.sockets.tpu_transaction_forwarding_client);
-
         let connection_cache = match (config.use_tpu_client_next, use_quic) {
             (false, true) => Some(Arc::new(ConnectionCache::new_with_client_options(
                 "connection_cache_tpu_quic",
                 tpu_connection_pool_size,
                 Some(
-                    tpu_transactions_forwards_client
+                    node.sockets
+                        .tpu_transaction_forwarding_clients
+                        .first()
                         .take()
                         .expect("Socket should exist."),
                 ),
