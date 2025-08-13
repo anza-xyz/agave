@@ -1498,8 +1498,13 @@ impl Validator {
 
         let outstanding_repair_requests =
             Arc::<RwLock<repair::repair_service::OutstandingShredRepairs>>::default();
-        let cluster_slots =
-            Arc::new(crate::cluster_slots_service::cluster_slots::ClusterSlots::default());
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let cluster_slots = Arc::new({
+            crate::cluster_slots_service::cluster_slots::ClusterSlots::new(
+                &root_bank,
+                &cluster_info,
+            )
+        });
 
         // If RPC is supported and ConnectionCache is used, pass ConnectionCache for being warmup inside Tvu.
         let connection_cache_for_warmup =
