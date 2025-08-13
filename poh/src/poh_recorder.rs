@@ -190,7 +190,6 @@ pub struct PohRecorder {
 
     // Alpenglow related migration things
     pub is_alpenglow_enabled: bool,
-    pub use_alpenglow_tick_producer: bool,
 }
 
 impl PohRecorder {
@@ -280,7 +279,6 @@ impl PohRecorder {
                 entries: Vec::with_capacity(64),
                 track_transaction_indexes: false,
                 is_alpenglow_enabled: false,
-                use_alpenglow_tick_producer: false,
             },
             working_bank_receiver,
         )
