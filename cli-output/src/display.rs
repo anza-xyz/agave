@@ -862,7 +862,7 @@ Return Data from Program 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR:
 0000:   01 02 03                                             ...
 Rewards:
   Address                                            Type        Amount            New Balance         \0
-  4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi        rent        -◎0.000000100     ◎0.000009900       \0
+  4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi        rent        -◎0.0000001       ◎0.0000099         \0
 ".replace("\\0", "") // replace marker used to subvert trailing whitespace linter on CI
         );
     }
@@ -951,7 +951,7 @@ Return Data from Program 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR:
 0000:   01 02 03                                             ...
 Rewards:
   Address                                            Type        Amount            New Balance         \0
-  CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8        rent        -◎0.000000100     ◎0.000014900       \0
+  CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8        rent        -◎0.0000001       ◎0.0000149         \0
 ".replace("\\0", "") // replace marker used to subvert trailing whitespace linter on CI
         );
     }
