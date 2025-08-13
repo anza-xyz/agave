@@ -223,6 +223,9 @@ impl ComputeBudgetInstructionDetails {
 mod test {
     use {
         super::*,
+        solana_builtins_default_costs::{
+            get_migration_feature_position, BuiltinCost, MigratingBuiltinCost,
+        },
         solana_instruction::Instruction,
         solana_keypair::Keypair,
         solana_message::Message,
@@ -509,5 +512,67 @@ mod test {
                 loaded_accounts_bytes: NonZeroU32::new(val).unwrap(),
             })
         );
+    }
+
+    #[test]
+    fn test_builtin_program_migration() {
+        for (program_id, builtin_cost) in MIGRATING_BUILTINS_COSTS {
+            let BuiltinCost::Migrating(MigratingBuiltinCost {
+                core_bpf_migration_feature: feature_id,
+                position,
+            }) = builtin_cost
+            else {
+                panic!("MIGRATING_BUILTINS_COSTS must only contain BuiltinCost::Migrating");
+            };
+
+            assert_eq!(get_migration_feature_id(*position), feature_id);
+            assert_eq!(get_migration_feature_position(feature_id), *position);
+
+            let tx = build_sanitized_transaction(&[
+                Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+                Instruction::new_with_bincode(*program_id, &(), vec![]),
+            ]);
+
+            let mut expected_details = ComputeBudgetInstructionDetails {
+                num_non_compute_budget_instructions: Saturating(2),
+                num_non_builtin_instructions: Saturating(1),
+                ..ComputeBudgetInstructionDetails::default()
+            };
+            expected_details
+                .migrating_builtin_feature_counters
+                .migrating_builtin[*position] = Saturating(1);
+            let expected_details = Ok(expected_details);
+            let details = ComputeBudgetInstructionDetails::try_from(
+                SVMMessage::program_instructions_iter(&tx),
+            );
+            assert_eq!(details, expected_details);
+            let details = details.unwrap();
+
+            let mut feature_set = FeatureSet::default();
+
+            // migrate bpf program: false;
+            // expect: 1 bpf ix, 1 non-compute-budget builtin, cu-limit = 200K + 3K
+            let cu_limits = details.sanitize_and_convert_to_compute_budget_limits(&feature_set);
+            assert_eq!(
+                cu_limits,
+                Ok(ComputeBudgetLimits {
+                    compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                        + MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
+                    ..ComputeBudgetLimits::default()
+                })
+            );
+
+            // migrate bpf program: true;
+            // expect: 2 bpf ix, cu-limit = 2 * 200K
+            feature_set.activate(feature_id, 0);
+            let cu_limits = details.sanitize_and_convert_to_compute_budget_limits(&feature_set);
+            assert_eq!(
+                cu_limits,
+                Ok(ComputeBudgetLimits {
+                    compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT * 2,
+                    ..ComputeBudgetLimits::default()
+                })
+            );
+        }
     }
 }
