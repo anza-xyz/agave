@@ -1,5 +1,6 @@
 use {
     crossbeam_channel::Sender,
+    log::{info, warn},
     solana_clock::Slot,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_pubkey::Pubkey,
