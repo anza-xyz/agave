@@ -44,7 +44,18 @@ pub struct UdpSocketPair {
 
 pub type PortRange = (u16, u16);
 
+#[cfg(not(debug_assertions))]
+/// Port range available to validator by default
 pub const VALIDATOR_PORT_RANGE: PortRange = (8000, 10_000);
+
+// Sets the port range outside of the region used by other tests to avoid interference
+// This arrangement is not ideal, but can be removed once ConnectionCache is deprecated
+#[cfg(debug_assertions)]
+pub const VALIDATOR_PORT_RANGE: PortRange = (
+    crate::sockets::UNIQUE_ALLOC_BASE_PORT - 512,
+    crate::sockets::UNIQUE_ALLOC_BASE_PORT,
+);
+
 pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 25; // VALIDATOR_PORT_RANGE must be at least this wide
 
 pub(crate) const HEADER_LENGTH: usize = 4;

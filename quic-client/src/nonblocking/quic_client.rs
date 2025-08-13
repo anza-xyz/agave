@@ -78,9 +78,8 @@ impl QuicLazyInitializedEndpoint {
         let mut endpoint = if let Some(endpoint) = &self.client_endpoint {
             endpoint.clone()
         } else {
-            #[cfg(debug_assertions)]
-            let client_socket = sockets::bind_to_localhost_unique().unwrap();
-            #[cfg(not(debug_assertions))]
+            // This will bind to random ports, but VALIDATOR_PORT_RANGE is outside
+            // of the range for CI tests when this is running in CI
             let client_socket = sockets::bind_in_range_with_config(
                 std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
                 solana_net_utils::VALIDATOR_PORT_RANGE,

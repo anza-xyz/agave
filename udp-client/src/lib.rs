@@ -16,7 +16,7 @@ use {
         connection_cache_stats::ConnectionCacheStats,
     },
     solana_keypair::Keypair,
-    solana_net_utils::sockets,
+    solana_net_utils::sockets::{self, SocketConfiguration},
     std::{
         net::{SocketAddr, UdpSocket},
         sync::Arc,
@@ -63,17 +63,16 @@ pub struct UdpConfig {
 
 impl NewConnectionConfig for UdpConfig {
     fn new() -> Result<Self, ClientError> {
-        #[cfg(debug_assertions)]
-        let socket = sockets::bind_to_localhost_unique().map_err(Into::<ClientError>::into)?;
-        #[cfg(not(debug_assertions))]
+        // This will bind to random ports, but VALIDATOR_PORT_RANGE is outside
+        // of the range for CI tests when this is running in CI
         let socket = sockets::bind_in_range_with_config(
             std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
             solana_net_utils::VALIDATOR_PORT_RANGE,
-            SocketConfig::default(),
+            SocketConfiguration::default(),
         )
         .map_err(Into::<ClientError>::into)?;
         Ok(Self {
-            udp_socket: Arc::new(socket),
+            udp_socket: Arc::new(socket.1),
         })
     }
 }
