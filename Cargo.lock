@@ -8889,6 +8889,8 @@ dependencies = [
  "num-traits",
  "serde",
  "serde_derive",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
  "solana-program-error",
 ]
 
@@ -10295,6 +10297,7 @@ dependencies = [
  "solana-hash 3.0.0",
  "solana-inflation",
  "solana-instruction 3.0.0",
+ "solana-instruction-error",
  "solana-keypair 3.0.0",
  "solana-lattice-hash",
  "solana-loader-v3-interface",

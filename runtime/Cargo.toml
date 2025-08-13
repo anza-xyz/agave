@@ -34,6 +34,7 @@ frozen-abi = [
     "solana-hard-forks/frozen-abi",
     "solana-inflation/frozen-abi",
     "solana-instruction/frozen-abi",
+    "solana-instruction-error/frozen-abi",
     "solana-perf/frozen-abi",
     "solana-program-runtime/frozen-abi",
     "solana-rent/frozen-abi",
@@ -190,6 +191,7 @@ rand0-7 = { package = "rand", version = "0.7" }
 rand_chacha = { workspace = true }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
 solana-builtins = { workspace = true, features = ["dev-context-only-utils"] }
+solana-instruction-error = { workspace = true }
 solana-logger = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-runtime = { path = ".", features = ["dev-context-only-utils"] }
