@@ -12,7 +12,7 @@ use {
         keypair::{pubkey_from_path, signer_from_path},
     },
     solana_cli_config::CONFIG_FILE,
-    solana_native_token::sol_to_lamports,
+    solana_native_token::sol_str_to_lamports,
     solana_remote_wallet::remote_wallet::maybe_wallet_manager,
     std::{error::Error, ffi::OsString, process::exit},
 };
@@ -439,7 +439,9 @@ fn parse_distribute_tokens_args(
         fee_payer,
         stake_args: None,
         spl_token_args: None,
-        transfer_amount: value_of(matches, "transfer_amount").map(sol_to_lamports),
+        transfer_amount: matches
+            .value_of("transfer_amount")
+            .and_then(sol_str_to_lamports),
     })
 }
 
@@ -478,7 +480,10 @@ fn parse_create_stake_args(
         .transpose()?;
 
     let stake_args = StakeArgs {
-        unlocked_sol: sol_to_lamports(value_t_or_exit!(matches, "unlocked_sol", f64)),
+        unlocked_sol: matches
+            .value_of("unlocked_sol")
+            .and_then(sol_str_to_lamports)
+            .unwrap(),
         lockup_authority,
         sender_stake_args: None,
     };
@@ -562,7 +567,10 @@ fn parse_distribute_stake_args(
         rent_exempt_reserve: None,
     };
     let stake_args = StakeArgs {
-        unlocked_sol: sol_to_lamports(value_t_or_exit!(matches, "unlocked_sol", f64)),
+        unlocked_sol: matches
+            .value_of("unlocked_sol")
+            .and_then(sol_str_to_lamports)
+            .unwrap(),
         lockup_authority: lockup_authority_address,
         sender_stake_args: Some(sender_stake_args),
     };
