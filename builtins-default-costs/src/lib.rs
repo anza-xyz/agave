@@ -1,5 +1,8 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
+
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::field_qualifiers;
 use {
     agave_feature_set::{self as feature_set},
     ahash::AHashMap,
@@ -11,6 +14,10 @@ use {
 };
 
 #[derive(Clone)]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(core_bpf_migration_feature(pub), position(pub))
+)]
 pub struct MigratingBuiltinCost {
     core_bpf_migration_feature: Pubkey,
     // encoding positional information explicitly for migration feature item,

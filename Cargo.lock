@@ -7373,6 +7373,7 @@ dependencies = [
  "agave-feature-set",
  "ahash 0.8.11",
  "log",
+ "qualifier_attr",
  "rand 0.8.5",
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
