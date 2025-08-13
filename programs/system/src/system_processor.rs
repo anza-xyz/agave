@@ -45,7 +45,10 @@ impl Address {
         invoke_context: &InvokeContext,
     ) -> Result<Self, InstructionError> {
         let base = if let Some((base, seed, owner)) = with_seed {
-            let address_with_seed = Pubkey::create_with_seed(base, seed, owner)?;
+            // The conversion from `PubkeyError` to `InstructionError` through
+            // num-traits is incorrect, but it's the existing behavior.
+            let address_with_seed =
+                Pubkey::create_with_seed(base, seed, owner).map_err(|e| e as u64)?;
             // re-derive the address, must match the supplied address
             if *address != address_with_seed {
                 ic_msg!(
@@ -264,6 +267,8 @@ fn transfer_with_seed(
         );
         return Err(InstructionError::MissingRequiredSignature);
     }
+    // The conversion from `PubkeyError` to `InstructionError` through
+    // num-traits is incorrect, but it's the existing behavior.
     let address_from_seed = Pubkey::create_with_seed(
         transaction_context.get_key_of_account_at_index(
             instruction_context
@@ -271,7 +276,8 @@ fn transfer_with_seed(
         )?,
         from_seed,
         from_owner,
-    )?;
+    )
+    .map_err(|e| e as u64)?;
 
     let from_key = transaction_context.get_key_of_account_at_index(
         instruction_context.get_index_of_instruction_account_in_transaction(from_account_index)?,
