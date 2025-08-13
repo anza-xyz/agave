@@ -27,7 +27,7 @@ fn test_blake3_hasher() {
     let v1: &[u8] = b"flurbos!";
     let vals: &[&[u8]] = &[v0, v1];
     let hash = blake3::hash(&[v0, v1].concat());
-    assert_eq!(hashv(vals).0, *hash.as_bytes());
+    assert_eq!(hashv(vals).as_bytes(), hash.as_bytes());
 }
 
 #[no_mangle]

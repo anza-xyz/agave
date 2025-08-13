@@ -70,11 +70,11 @@ fn test_secp256k1_recover_malleability() {
     let alt_recovery_id = alt_recovery_id.serialize();
 
     let recovered_pubkey =
-        secp256k1_recover(&message_hash.0, recovery_id, &signature_bytes[..]).unwrap();
+        secp256k1_recover(message_hash.as_bytes(), recovery_id, &signature_bytes[..]).unwrap();
     assert_eq!(recovered_pubkey.to_bytes(), pubkey_bytes);
 
     let alt_recovered_pubkey =
-        secp256k1_recover(&message_hash.0, alt_recovery_id, &alt_signature_bytes[..]).unwrap();
+        secp256k1_recover(message_hash.as_bytes(), alt_recovery_id, &alt_signature_bytes[..]).unwrap();
     assert_eq!(alt_recovered_pubkey.to_bytes(), pubkey_bytes);
 }
 

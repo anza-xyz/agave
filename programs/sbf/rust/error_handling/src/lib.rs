@@ -23,10 +23,7 @@ impl From<MyError> for ProgramError {
     }
 }
 impl ToStr for MyError {
-    fn to_str<E>(&self) -> &'static str
-    where
-        E: 'static + ToStr + TryFrom<u32>,
-    {
+    fn to_str(&self) -> &'static str {
         match self {
             MyError::DefaultEnumStart => "Error: Default enum start",
             MyError::TheAnswer => "Error: The Answer",

@@ -10,6 +10,7 @@ use {
     solana_program_error::{ProgramError, ProgramResult},
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
+    solana_stake_interface::{stake_history::{StakeHistory, StakeHistoryGetEntry}, sysvar::stake_history::StakeHistorySysvar},
     solana_sysvar::{
         clock::Clock,
         epoch_rewards::EpochRewards,
@@ -17,8 +18,8 @@ use {
         rent::Rent,
         slot_hashes::{PodSlotHashes, SlotHashes},
         slot_history::SlotHistory,
-        stake_history::{StakeHistory, StakeHistoryGetEntry, StakeHistorySysvar},
         Sysvar,
+        SysvarSerialize,
     },
 };
 
