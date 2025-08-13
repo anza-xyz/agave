@@ -17,6 +17,15 @@ pub struct Config {
 }
 
 impl Config {
+    fn from_env() -> Self {
+        Self {
+            host: env::var("SOLANA_METRICS_INFLUXDB_V2_HOST").unwrap_or_default(),
+            org: env::var("SOLANA_METRICS_INFLUXDB_V2_ORG").unwrap_or_default(),
+            bucket: env::var("SOLANA_METRICS_INFLUXDB_V2_BUCKET").unwrap_or_default(),
+            token: env::var("SOLANA_METRICS_INFLUXDB_V2_TOKEN").unwrap_or_default(),
+        }
+    }
+
     fn complete(&self) -> bool {
         !(self.host.is_empty()
             || self.org.is_empty()
@@ -32,7 +41,7 @@ pub struct Writer {
 
 impl Writer {
     pub fn new() -> Self {
-        let config = get_config();
+        let config = Config::from_env();
         if !config.complete() {
             return Self {
                 url: None,
@@ -91,14 +100,5 @@ impl MetricsWriter for Writer {
         } else {
             warn!("tried to submit points to influxdb v2 but no url was set");
         }
-    }
-}
-
-pub fn get_config() -> Config {
-    Config {
-        host: env::var("SOLANA_METRICS_INFLUXDB_V2_HOST").unwrap_or_default(),
-        org: env::var("SOLANA_METRICS_INFLUXDB_V2_ORG").unwrap_or_default(),
-        bucket: env::var("SOLANA_METRICS_INFLUXDB_V2_BUCKET").unwrap_or_default(),
-        token: env::var("SOLANA_METRICS_INFLUXDB_V2_TOKEN").unwrap_or_default(),
     }
 }
