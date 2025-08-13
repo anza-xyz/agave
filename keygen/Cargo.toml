@@ -17,7 +17,7 @@ name = "solana-keygen"
 path = "src/keygen.rs"
 
 [dependencies]
-bs58 = { workspace = true }
+bs58 = { workspace = true, features = ["std"] }
 clap = { version = "3.1.5", features = ["cargo"] }
 dirs-next = { workspace = true }
 num_cpus = { workspace = true }

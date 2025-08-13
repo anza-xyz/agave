@@ -197,6 +197,7 @@ solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
 solana-sdk-ids = { workspace = true }
+solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 solana-signature = { workspace = true, features = ["std"] }
 solana-stake-interface = { workspace = true, features = ["sysvar"] }
 solana-svm = { workspace = true, features = ["dev-context-only-utils"] }

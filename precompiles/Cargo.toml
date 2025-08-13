@@ -35,7 +35,7 @@ bytemuck = { workspace = true }
 hex = { workspace = true }
 rand0-7 = { workspace = true }
 solana-instruction = { workspace = true }
-solana-keccak-hasher = { workspace = true }
+solana-keccak-hasher = { workspace = true, features = ["sha3"] }
 solana-logger = { workspace = true }
 solana-secp256k1-program = { workspace = true, features = ["bincode"] }
 
