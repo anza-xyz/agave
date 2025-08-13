@@ -134,8 +134,6 @@ where
         .send(removed_banks)
         .unwrap_or_else(|err| warn!("bank drop failed: {err:?}"));
 
-    // Dropping the bank_forks write lock and reacquiring as a read lock is
-    // safe because updates to bank_forks are only made by a single thread.
     let r_bank_forks = bank_forks.read().unwrap();
     callback(&r_bank_forks);
     Ok(())
