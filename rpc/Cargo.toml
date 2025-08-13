@@ -46,8 +46,8 @@ soketto = { workspace = true }
 solana-account = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-accounts-db = { workspace = true }
-solana-client = { workspace = true }
 solana-cli-output = { workspace = true }
+solana-client = { workspace = true }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-entry = { workspace = true }
