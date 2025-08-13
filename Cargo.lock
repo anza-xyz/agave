@@ -8686,6 +8686,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-frozen-abi",
  "solana-frozen-abi-macro 3.0.0",
+ "solana-genesis-config",
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
@@ -9665,7 +9666,6 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-last-restart-slot",
- "solana-metrics",
  "solana-program-entrypoint",
  "solana-program-runtime",
  "solana-pubkey",
@@ -9678,6 +9678,7 @@ dependencies = [
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-measure",
+ "solana-svm-metrics",
  "solana-svm-timings",
  "solana-svm-transaction",
  "solana-svm-type-overrides",
@@ -10357,9 +10358,9 @@ checksum = "61f1bc1357b8188d9c4a3af3fc55276e56987265eb7ad073ae6f8180ee54cecf"
 
 [[package]]
 name = "solana-sbpf"
-version = "0.12.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c35699a914678770339343b8d6e64e19e6c24272d5a13ffe7b8a936b7148d10"
+checksum = "0f224d906c14efc7ed7f42bc5fe9588f3f09db8cabe7f6023adda62a69678e1a"
 dependencies = [
  "byteorder",
  "combine 3.8.1",
@@ -10858,7 +10859,6 @@ name = "solana-svm"
 version = "3.0.0"
 dependencies = [
  "agave-feature-set",
- "agave-reserved-account-keys",
  "agave-syscalls",
  "ahash 0.8.11",
  "assert_matches",
@@ -10955,6 +10955,24 @@ dependencies = [
 [[package]]
 name = "solana-svm-measure"
 version = "3.0.0"
+
+[[package]]
+name = "solana-svm-metrics"
+version = "3.0.0"
+dependencies = [
+ "bencher",
+ "crossbeam-channel",
+ "env_logger 0.11.8",
+ "gethostname",
+ "log",
+ "rand 0.8.5",
+ "reqwest 0.12.22",
+ "serial_test",
+ "solana-cluster-type",
+ "solana-sha256-hasher",
+ "solana-time-utils",
+ "thiserror 2.0.12",
+]
 
 [[package]]
 name = "solana-svm-timings"
@@ -11511,6 +11529,7 @@ dependencies = [
  "bs58",
  "bytes",
  "caps",
+ "conditional-mod",
  "crossbeam-channel",
  "futures 0.3.31",
  "itertools 0.12.1",
@@ -11551,6 +11570,7 @@ dependencies = [
  "solana-tls-utils",
  "solana-transaction",
  "solana-transaction-error",
+ "solana-turbine",
  "static_assertions",
  "test-case",
  "thiserror 2.0.12",

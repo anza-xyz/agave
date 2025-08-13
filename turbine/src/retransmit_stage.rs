@@ -4,7 +4,7 @@ use {
     crate::{
         addr_cache::AddrCache,
         cluster_nodes::{self, ClusterNodes, ClusterNodesCache, Error, MAX_NUM_TURBINE_HOPS},
-        xdp::{XdpSender, XdpShredPayload},
+        xdp::XdpSender,
     },
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvError, TryRecvError},
@@ -430,11 +430,7 @@ fn retransmit_shred(
             RetransmitSocket::Xdp(sender) => {
                 let mut sent = num_addrs;
                 if num_addrs > 0 {
-                    if let Err(e) = sender.try_send(
-                        key.index() as usize,
-                        addrs.to_vec(),
-                        XdpShredPayload::Owned(shred),
-                    ) {
+                    if let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred) {
                         log::warn!("xdp channel full: {e:?}");
                         stats
                             .num_shreds_dropped_xdp_full

@@ -3,15 +3,14 @@ use {
         DEFAULT_TICKS_PER_SLOT, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
         HOLD_TRANSACTIONS_SLOT_OFFSET,
     },
-    solana_poh::poh_recorder::PohRecorder,
+    solana_poh::poh_recorder::{
+        PohRecorder, SharedLeaderFirstTickHeight, SharedTickHeight, SharedWorkingBank,
+    },
     solana_runtime::bank::Bank,
     solana_unified_scheduler_pool::{BankingStageMonitor, BankingStageStatus},
-    std::{
-        sync::{
-            atomic::{AtomicBool, Ordering::Relaxed},
-            Arc, RwLock,
-        },
-        time::{Duration, Instant},
+    std::sync::{
+        atomic::{AtomicBool, Ordering::Relaxed},
+        Arc,
     },
 };
 
@@ -33,89 +32,69 @@ impl BufferedPacketsDecision {
     }
 }
 
-#[derive(Clone, derive_more::Debug)]
+#[derive(Clone)]
 pub struct DecisionMaker {
-    #[debug("{poh_recorder:p}")]
-    poh_recorder: Arc<RwLock<PohRecorder>>,
+    shared_working_bank: SharedWorkingBank,
+    shared_tick_height: SharedTickHeight,
+    shared_leader_first_tick_height: SharedLeaderFirstTickHeight,
+}
 
-    cached_decision: Option<BufferedPacketsDecision>,
-    last_decision_time: Instant,
+impl std::fmt::Debug for DecisionMaker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DecisionMaker")
+            .field("shared_working_bank", &self.shared_working_bank.load())
+            .field("shared_tick_height", &self.shared_tick_height.load())
+            .field(
+                "shared_leader_first_tick_height",
+                &self.shared_leader_first_tick_height.load(),
+            )
+            .finish()
+    }
 }
 
 impl DecisionMaker {
-    pub fn new(poh_recorder: Arc<RwLock<PohRecorder>>) -> Self {
+    pub fn new(
+        shared_working_bank: SharedWorkingBank,
+        shared_tick_height: SharedTickHeight,
+        shared_leader_first_tick_height: SharedLeaderFirstTickHeight,
+    ) -> Self {
         Self {
-            poh_recorder,
-            cached_decision: None,
-            last_decision_time: Instant::now(),
+            shared_working_bank,
+            shared_tick_height,
+            shared_leader_first_tick_height,
         }
     }
 
-    pub(crate) fn make_consume_or_forward_decision(&mut self) -> BufferedPacketsDecision {
-        const CACHE_DURATION: Duration = Duration::from_millis(5);
-        let now = Instant::now();
-
-        // If there is a cached decision that has not expired, return it now.
-        if let Some(decision) = &self.cached_decision {
-            if now.duration_since(self.last_decision_time) < CACHE_DURATION {
-                return decision.clone();
-            }
-        }
-
-        self.last_decision_time = now;
-        self.cached_decision = Some(self.make_consume_or_forward_decision_no_cache());
-        self.cached_decision.as_ref().unwrap().clone()
-    }
-
-    fn make_consume_or_forward_decision_no_cache(&self) -> BufferedPacketsDecision {
-        let decision;
-        {
-            let poh_recorder = self.poh_recorder.read().unwrap();
-            decision = Self::consume_or_forward_packets(
-                || Self::bank(&poh_recorder),
-                || Self::would_be_leader_shortly(&poh_recorder),
-                || Self::would_be_leader(&poh_recorder),
-            );
-        }
-
-        decision
-    }
-
-    fn consume_or_forward_packets(
-        bank_fn: impl FnOnce() -> Option<Arc<Bank>>,
-        would_be_leader_shortly_fn: impl FnOnce() -> bool,
-        would_be_leader_fn: impl FnOnce() -> bool,
-    ) -> BufferedPacketsDecision {
-        // If has active bank, then immediately process buffered packets
-        // otherwise, based on leader schedule to either forward or hold packets
-        if let Some(bank) = bank_fn() {
-            // If the bank is available, this node is the leader
+    pub(crate) fn make_consume_or_forward_decision(&self) -> BufferedPacketsDecision {
+        // Check if there is an active working bank.
+        if let Some(bank) = self.shared_working_bank.load() {
             BufferedPacketsDecision::Consume(bank)
-        } else if would_be_leader_shortly_fn() {
-            // If the node will be the leader soon, hold the packets for now
-            BufferedPacketsDecision::Hold
-        } else if would_be_leader_fn() {
-            // Node will be leader within ~20 slots, hold the transactions in
-            // case it is the only node which produces an accepted slot.
-            BufferedPacketsDecision::ForwardAndHold
+        } else if let Some(first_leader_tick_height) = self.shared_leader_first_tick_height.load() {
+            let current_tick_height = self.shared_tick_height.load();
+            let ticks_until_leader = first_leader_tick_height.saturating_sub(current_tick_height);
+
+            if ticks_until_leader
+                <= (FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET - 1) * DEFAULT_TICKS_PER_SLOT
+            {
+                BufferedPacketsDecision::Hold
+            } else if ticks_until_leader < HOLD_TRANSACTIONS_SLOT_OFFSET * DEFAULT_TICKS_PER_SLOT {
+                BufferedPacketsDecision::ForwardAndHold
+            } else {
+                BufferedPacketsDecision::Forward
+            }
         } else {
-            // If the current node is not the leader, forward the buffered packets
             BufferedPacketsDecision::Forward
         }
     }
+}
 
-    fn bank(poh_recorder: &PohRecorder) -> Option<Arc<Bank>> {
-        poh_recorder.bank()
-    }
-
-    fn would_be_leader_shortly(poh_recorder: &PohRecorder) -> bool {
-        poh_recorder.would_be_leader(
-            (FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET - 1) * DEFAULT_TICKS_PER_SLOT,
+impl From<&PohRecorder> for DecisionMaker {
+    fn from(poh_recorder: &PohRecorder) -> Self {
+        Self::new(
+            poh_recorder.shared_working_bank(),
+            poh_recorder.shared_tick_height(),
+            poh_recorder.shared_leader_first_tick_height(),
         )
-    }
-
-    fn would_be_leader(poh_recorder: &PohRecorder) -> bool {
-        poh_recorder.would_be_leader(HOLD_TRANSACTIONS_SLOT_OFFSET * DEFAULT_TICKS_PER_SLOT)
     }
 }
 
@@ -126,15 +105,7 @@ pub(crate) struct DecisionMakerWrapper {
 }
 
 impl DecisionMakerWrapper {
-    pub(crate) fn new(decision_maker: DecisionMaker) -> Self {
-        // Clone-off before hand to avoid lock contentions.
-        let is_exited = decision_maker
-            .poh_recorder
-            .read()
-            .unwrap()
-            .is_exited
-            .clone();
-
+    pub(crate) fn new(is_exited: Arc<AtomicBool>, decision_maker: DecisionMaker) -> Self {
         Self {
             is_exited,
             decision_maker,
@@ -160,21 +131,11 @@ impl BankingStageMonitor for DecisionMakerWrapper {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        core::panic,
-        solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
-        solana_ledger::{blockstore::Blockstore, genesis_utils::create_genesis_config},
-        solana_poh::poh_recorder::create_test_recorder,
-        solana_pubkey::Pubkey,
-        solana_runtime::bank::Bank,
-        std::{
-            env::temp_dir,
-            sync::{atomic::Ordering, Arc},
-        },
+        super::*, solana_ledger::genesis_utils::create_genesis_config, solana_runtime::bank::Bank,
     };
 
     #[test]
-    fn test_buffered_packet_decision_bank_start() {
+    fn test_buffered_packet_decision_bank() {
         let bank = Arc::new(Bank::default_for_tests());
         assert!(BufferedPacketsDecision::Consume(bank).bank().is_some());
         assert!(BufferedPacketsDecision::Forward.bank().is_none());
@@ -186,41 +147,37 @@ mod tests {
     fn test_make_consume_or_forward_decision() {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        let ledger_path = temp_dir();
-        let blockstore = Arc::new(Blockstore::open(ledger_path.as_path()).unwrap());
-        let (exit, poh_recorder, _transaction_recorder, poh_service, _entry_receiver) =
-            create_test_recorder(bank.clone(), blockstore, None, None);
-        // Drop the poh service immediately to avoid potential ticking
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
 
-        let my_pubkey = Pubkey::new_unique();
-        let decision_maker = DecisionMaker::new(poh_recorder.clone());
-        poh_recorder.write().unwrap().reset(bank.clone(), None);
-        let slot = bank.slot() + 1;
-        let bank = Arc::new(Bank::new_from_parent(bank, &my_pubkey, slot));
+        let mut shared_working_bank = SharedWorkingBank::empty();
+        let shared_tick_height = SharedTickHeight::new(0);
+        let mut shared_leader_first_tick_height = SharedLeaderFirstTickHeight::new(None);
 
-        // Currently Leader - Consume
-        {
-            poh_recorder
-                .write()
-                .unwrap()
-                .set_bank_for_test(bank.clone());
-            let decision = decision_maker.make_consume_or_forward_decision_no_cache();
-            assert_matches!(decision, BufferedPacketsDecision::Consume(_));
-        }
+        let decision_maker = DecisionMaker::new(
+            shared_working_bank.clone(),
+            shared_tick_height.clone(),
+            shared_leader_first_tick_height.clone(),
+        );
+
+        // No active bank, no leader first tick height.
+        assert_matches!(
+            decision_maker.make_consume_or_forward_decision(),
+            BufferedPacketsDecision::Forward
+        );
+
+        // Active bank.
+        shared_working_bank.store(bank.clone());
+        assert_matches!(
+            decision_maker.make_consume_or_forward_decision(),
+            BufferedPacketsDecision::Consume(_)
+        );
+        shared_working_bank.clear();
 
         // Will be leader shortly - Hold
         for next_leader_slot_offset in [0, 1].into_iter() {
             let next_leader_slot = bank.slot() + next_leader_slot_offset;
-            poh_recorder.write().unwrap().reset(
-                bank.clone(),
-                Some((
-                    next_leader_slot,
-                    next_leader_slot + NUM_CONSECUTIVE_LEADER_SLOTS,
-                )),
-            );
-            let decision = decision_maker.make_consume_or_forward_decision_no_cache();
+            shared_leader_first_tick_height.store(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
+
+            let decision = decision_maker.make_consume_or_forward_decision();
             assert!(
                 matches!(decision, BufferedPacketsDecision::Hold),
                 "next_leader_slot_offset: {next_leader_slot_offset}",
@@ -230,58 +187,22 @@ mod tests {
         // Will be leader - ForwardAndHold
         for next_leader_slot_offset in [2, 19].into_iter() {
             let next_leader_slot = bank.slot() + next_leader_slot_offset;
-            poh_recorder.write().unwrap().reset(
-                bank.clone(),
-                Some((
-                    next_leader_slot,
-                    next_leader_slot + NUM_CONSECUTIVE_LEADER_SLOTS + 1,
-                )),
-            );
-            let decision = decision_maker.make_consume_or_forward_decision_no_cache();
+            shared_leader_first_tick_height.store(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
+
+            let decision = decision_maker.make_consume_or_forward_decision();
             assert!(
                 matches!(decision, BufferedPacketsDecision::ForwardAndHold),
                 "next_leader_slot_offset: {next_leader_slot_offset}",
             );
         }
 
-        // Known leader, not me - Forward
-        {
-            poh_recorder.write().unwrap().reset(bank, None);
-            let decision = decision_maker.make_consume_or_forward_decision_no_cache();
-            assert_matches!(decision, BufferedPacketsDecision::Forward);
-        }
-    }
-
-    #[test]
-    fn test_should_process_or_forward_packets() {
-        let bank = Arc::new(Bank::default_for_tests());
-        // having active bank allows to consume immediately
-        assert_matches!(
-            DecisionMaker::consume_or_forward_packets(
-                || Some(bank.clone()),
-                || panic!("should not be called"),
-                || panic!("should not be called"),
-            ),
-            BufferedPacketsDecision::Consume(_)
-        );
-        // Leader other than me, forward the packets
-        assert_matches!(
-            DecisionMaker::consume_or_forward_packets(|| None, || false, || false,),
-            BufferedPacketsDecision::Forward
-        );
-        // Will be leader shortly, hold the packets
-        assert_matches!(
-            DecisionMaker::consume_or_forward_packets(
-                || None,
-                || true,
-                || panic!("should not be called"),
-            ),
-            BufferedPacketsDecision::Hold
-        );
-        // Will be leader (not shortly), forward and hold
-        assert_matches!(
-            DecisionMaker::consume_or_forward_packets(|| None, || false, || true,),
-            BufferedPacketsDecision::ForwardAndHold
+        // Longer period until next leader - Forward
+        let next_leader_slot = 20 + bank.slot();
+        shared_leader_first_tick_height.store(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
+        let decision = decision_maker.make_consume_or_forward_decision();
+        assert!(
+            matches!(decision, BufferedPacketsDecision::Forward),
+            "next_leader_slot: {next_leader_slot}",
         );
     }
 }

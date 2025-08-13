@@ -107,6 +107,7 @@ members = [
     "svm-feature-set",
     "svm-log-collector",
     "svm-measure",
+    "svm-metrics",
     "svm-timings",
     "svm-transaction",
     "svm-type-overrides",
@@ -497,7 +498,7 @@ solana-rpc-client-types = { path = "rpc-client-types", version = "=3.0.0" }
 solana-runtime = { path = "runtime", version = "=3.0.0" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=3.0.0" }
 solana-sanitize = "2.2.1"
-solana-sbpf = "=0.12.1"
+solana-sbpf = "=0.12.2"
 solana-sdk-ids = "2.2.1"
 solana-secp256k1-program = "2.2.3"
 solana-secp256k1-recover = "2.2.1"
@@ -526,6 +527,7 @@ solana-svm-callback = { path = "svm-callback", version = "=3.0.0" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.0.0" }
 solana-svm-log-collector = { path = "svm-log-collector", version = "=3.0.0" }
 solana-svm-measure = { path = "svm-measure", version = "=3.0.0" }
+solana-svm-metrics = { path = "svm-metrics", version = "=3.0.0" }
 solana-svm-timings = { path = "svm-timings", version = "=3.0.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.0.0" }
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=3.0.0" }

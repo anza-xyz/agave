@@ -2381,17 +2381,34 @@ pub mod tests {
                 index.set_startup(Startup::Normal);
             }
         }
-        assert!(gc.is_empty());
+
+        // There should be reclaims if entries are uncached and old slots are being reclaimed
+        let should_have_reclaims =
+            upsert_method == Some(UpsertReclaim::ReclaimOldSlots) && !is_cached;
+
+        if should_have_reclaims {
+            assert!(!gc.is_empty());
+            assert_eq!(gc.len(), 1);
+            assert_eq!(gc[0], (slot0, account_infos[0]));
+        } else {
+            assert!(gc.is_empty());
+        }
+
         index.populate_and_retrieve_duplicate_keys_from_startup(|_slot_keys| {});
 
         let entry = index.get_cloned(&key).unwrap();
         let slot_list = entry.slot_list.read().unwrap();
 
-        assert_eq!(entry.ref_count(), if is_cached { 0 } else { 2 });
-        assert_eq!(
-            slot_list.as_slice(),
-            &[(slot0, account_infos[0]), (slot1, account_infos[1])],
-        );
+        if should_have_reclaims {
+            assert_eq!(entry.ref_count(), 1);
+            assert_eq!(slot_list.as_slice(), &[(slot1, account_infos[1])],);
+        } else {
+            assert_eq!(entry.ref_count(), if is_cached { 0 } else { 2 });
+            assert_eq!(
+                slot_list.as_slice(),
+                &[(slot0, account_infos[0]), (slot1, account_infos[1])],
+            );
+        }
 
         let new_entry = PreAllocatedAccountMapEntry::new(
             slot1,
@@ -2399,12 +2416,13 @@ pub mod tests {
             &index.storage.storage,
             false,
         );
-        assert_eq!(slot_list[1], new_entry.into());
+
+        assert_eq!(slot_list.last().unwrap(), &new_entry.into());
     }
 
     #[test_matrix(
         [false, true],
-        [None, Some(UpsertReclaim::PopulateReclaims)],
+        [None, Some(UpsertReclaim::PopulateReclaims), Some(UpsertReclaim::ReclaimOldSlots)],
         [true, false]
     )]
     fn test_new_entry_and_update_code_paths(

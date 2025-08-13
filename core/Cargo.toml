@@ -158,7 +158,7 @@ solana-tpu-client-next = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
-solana-turbine = { workspace = true }
+solana-turbine = { workspace = true, features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { workspace = true }
 solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }

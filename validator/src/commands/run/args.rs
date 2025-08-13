@@ -23,6 +23,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_pubkey::Pubkey,
+    solana_rpc::rpc::JsonRpcConfig,
     solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
     solana_send_transaction_service::send_transaction_service::{
         MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
@@ -36,7 +37,10 @@ use {
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
 
+pub mod account_secondary_indexes;
 pub mod blockstore_options;
+pub mod json_rpc_config;
+pub mod rpc_bigtable_config;
 pub mod rpc_bootstrap_config;
 
 #[derive(Debug, PartialEq)]
@@ -48,6 +52,7 @@ pub struct RunArgs {
     pub socket_addr_space: SocketAddrSpace,
     pub rpc_bootstrap_config: RpcBootstrapConfig,
     pub blockstore_options: BlockstoreOptions,
+    pub json_rpc_config: JsonRpcConfig,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -95,6 +100,7 @@ impl FromClapArgMatches for RunArgs {
             socket_addr_space,
             rpc_bootstrap_config: RpcBootstrapConfig::from_clap_arg_match(matches)?,
             blockstore_options: BlockstoreOptions::from_clap_arg_match(matches)?,
+            json_rpc_config: JsonRpcConfig::from_clap_arg_match(matches)?,
         })
     }
 }
@@ -1422,20 +1428,19 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("accounts_db_read_cache_limit_mb")
-            .long("accounts-db-read-cache-limit-mb")
-            .value_name("MAX | LOW,HIGH")
+        Arg::with_name("accounts_db_read_cache_limit")
+            .long("accounts-db-read-cache-limit")
+            .value_name("LOW,HIGH")
             .takes_value(true)
-            .min_values(1)
+            .min_values(2)
             .max_values(2)
             .multiple(false)
             .require_delimiter(true)
-            .help("How large the read cache for account data can become, in mebibytes")
+            .help("How large the read cache for account data can become, in bytes")
             .long_help(
-                "How large the read cache for account data can become, in mebibytes. \
-                 If given a single value, it will be the maximum size for the cache. \
-                 If given a pair of values, they will be the low and high watermarks \
-                 for the cache. When the cache exceeds the high watermark, entries will \
+                "How large the read cache for account data can become, in bytes. \
+                 The values will be the low and high watermarks for the cache. \
+                 When the cache exceeds the high watermark, entries will \
                  be evicted until the size reaches the low watermark."
             )
             .hidden(hidden_unless_forced()),
@@ -1705,6 +1710,7 @@ mod tests {
     use {
         super::*,
         crate::cli::thread_args::thread_args,
+        solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
         std::net::{IpAddr, Ipv4Addr},
     };
 
@@ -1723,6 +1729,14 @@ mod tests {
                 socket_addr_space: SocketAddrSpace::Global,
                 rpc_bootstrap_config: RpcBootstrapConfig::default(),
                 blockstore_options: BlockstoreOptions::default(),
+                json_rpc_config: JsonRpcConfig {
+                    health_check_slot_distance: 128,
+                    max_multiple_accounts: Some(100),
+                    rpc_threads: num_cpus::get(),
+                    rpc_blocking_threads: 1.max(num_cpus::get() / 4),
+                    max_request_body_size: Some(MAX_REQUEST_BODY_SIZE),
+                    ..JsonRpcConfig::default()
+                },
             }
         }
     }
@@ -1737,6 +1751,7 @@ mod tests {
                 socket_addr_space: self.socket_addr_space,
                 rpc_bootstrap_config: self.rpc_bootstrap_config.clone(),
                 blockstore_options: self.blockstore_options.clone(),
+                json_rpc_config: self.json_rpc_config.clone(),
             }
         }
     }

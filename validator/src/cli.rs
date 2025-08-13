@@ -127,6 +127,28 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
 
     add_arg!(
         // deprecated in v3.0.0
+        Arg::with_name("accounts_db_read_cache_limit_mb")
+            .long("accounts-db-read-cache-limit-mb")
+            .value_name("MAX | LOW,HIGH")
+            .takes_value(true)
+            .min_values(1)
+            .max_values(2)
+            .multiple(false)
+            .require_delimiter(true)
+            .help("How large the read cache for account data can become, in mebibytes")
+            .long_help(
+                "How large the read cache for account data can become, in mebibytes. \
+                 If given a single value, it will be the maximum size for the cache. \
+                 If given a pair of values, they will be the low and high watermarks \
+                 for the cache. When the cache exceeds the high watermark, entries will \
+                 be evicted until the size reaches the low watermark."
+            )
+            .hidden(hidden_unless_forced())
+            .conflicts_with("accounts_db_read_cache_limit"),
+            replaced_by: "accounts-db-read-cache-limit",
+    );
+    add_arg!(
+        // deprecated in v3.0.0
         Arg::with_name("accounts_hash_cache_path")
             .long("accounts-hash-cache-path")
             .value_name("PATH")

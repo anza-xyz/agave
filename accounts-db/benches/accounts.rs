@@ -89,7 +89,7 @@ where
     )
     .collect();
     let storable_accounts: Vec<_> = pubkeys.iter().zip(accounts_data.iter()).collect();
-    accounts.store_accounts_cached((slot, storable_accounts.as_slice()));
+    accounts.store_accounts_par((slot, storable_accounts.as_slice()), None);
     accounts.add_root(slot);
     accounts
         .accounts_db
@@ -116,7 +116,7 @@ where
         // Write to a different slot than the one being read from. Because
         // there's a new account pubkey being written to every time, will
         // compete for the accounts index lock on every store
-        accounts.store_accounts_cached((slot + 1, new_storable_accounts.as_slice()));
+        accounts.store_accounts_par((slot + 1, new_storable_accounts.as_slice()), None);
     });
 }
 

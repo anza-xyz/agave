@@ -1,11 +1,10 @@
-///
-/// This lib contains both standard imports and imports shuttle.
-/// Shuttle is a Rust crate that facilitates multithreaded testing. It has its own scheduler
-/// and can efficiently detect bugs in concurrent code. The downside is that we need to replace
-/// all imports by those from Shuttle.
-///
-/// Instead of importing from std, rand, and so on, import the following from solana-type-override,
-/// and include the 'shuttle-test' feature in your crate to use shuttle.
+//! This lib contains both standard imports and imports shuttle.
+//! Shuttle is a Rust crate that facilitates multithreaded testing. It has its own scheduler
+//! and can efficiently detect bugs in concurrent code. The downside is that we need to replace
+//! all imports by those from Shuttle.
+//!
+//! Instead of importing from std, rand, and so on, import the following from solana-type-override,
+//! and include the 'shuttle-test' feature in your crate to use shuttle.
 
 #[cfg(feature = "executor")]
 pub mod executor {

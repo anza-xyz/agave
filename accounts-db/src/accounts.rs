@@ -546,8 +546,11 @@ impl Accounts {
         }
     }
 
-    /// Store the accounts into the DB
-    pub fn store_cached<'a>(
+    /// Store `accounts` into the DB
+    ///
+    /// This version updates the accounts index sequentially,
+    /// using the same thread that calls the fn itself.
+    pub fn store_accounts_seq<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
@@ -559,10 +562,18 @@ impl Accounts {
         );
     }
 
-    pub fn store_accounts_cached<'a>(&self, accounts: impl StorableAccounts<'a>) {
+    /// Store `accounts` into the DB
+    ///
+    /// This version updates the accounts index in parallel,
+    /// using the foreground AccountsDb thread pool.
+    pub fn store_accounts_par<'a>(
+        &self,
+        accounts: impl StorableAccounts<'a>,
+        transactions: Option<&'a [&'a SanitizedTransaction]>,
+    ) {
         self.accounts_db.store_accounts_unfrozen(
             accounts,
-            None,
+            transactions,
             UpdateIndexThreadSelection::PoolWithThreshold,
         );
     }

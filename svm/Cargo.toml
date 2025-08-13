@@ -81,7 +81,6 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 agave-feature-set = { workspace = true }
-agave-reserved-account-keys = { workspace = true }
 agave-syscalls = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
