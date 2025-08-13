@@ -5422,28 +5422,6 @@ impl AccountsDb {
             ("total_alive_bytes", total_alive_bytes, i64),
             ("total_alive_ratio", total_alive_ratio, f64),
         );
-        datapoint_info!(
-            "accounts_db-perf-stats",
-            (
-                "delta_hash_num",
-                self.stats.delta_hash_num.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "delta_hash_scan_us",
-                self.stats
-                    .delta_hash_scan_time_total_us
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "delta_hash_accumulate_us",
-                self.stats
-                    .delta_hash_accumulate_time_total_us
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-        );
     }
 
     /// Calculates the accounts lt hash

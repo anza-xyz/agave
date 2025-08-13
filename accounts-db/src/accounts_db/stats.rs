@@ -10,10 +10,6 @@ use {
 
 #[derive(Debug, Default)]
 pub struct AccountsStats {
-    pub delta_hash_scan_time_total_us: AtomicU64,
-    pub delta_hash_accumulate_time_total_us: AtomicU64,
-    pub delta_hash_num: AtomicU64,
-
     pub last_store_report: AtomicInterval,
     pub store_hash_accounts: AtomicU64,
     pub store_accounts: AtomicU64,
