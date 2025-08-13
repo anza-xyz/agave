@@ -62,6 +62,7 @@ solana-bloom = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = "=3.0.0"
+solana-cluster-type = "=3.0.0"
 solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = "=3.0.0"
@@ -71,7 +72,6 @@ solana-frozen-abi = { version = "=3.0.0", optional = true, features = [
 solana-frozen-abi-macro = { version = "=3.0.0", optional = true, features = [
     "frozen-abi",
 ] }
-solana-genesis-config = { workspace = true }
 solana-hash = "=3.0.0"
 solana-keypair = "=3.0.0"
 solana-ledger = { workspace = true, features = ["agave-unstable-api"] }
