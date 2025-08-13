@@ -38,7 +38,7 @@ use {
     },
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
-    solana_native_token::sol_to_lamports,
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::{find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -864,9 +864,9 @@ impl TestValidator {
         let validator_identity = Keypair::new();
         let validator_vote_account = Keypair::new();
         let validator_stake_account = Keypair::new();
-        let validator_identity_lamports = sol_to_lamports(500.);
-        let validator_stake_lamports = sol_to_lamports(1_000_000.);
-        let mint_lamports = sol_to_lamports(500_000_000.);
+        let validator_identity_lamports = 500 * LAMPORTS_PER_SOL;
+        let validator_stake_lamports = 1_000_000 * LAMPORTS_PER_SOL;
+        let mint_lamports = 500_000_000 * LAMPORTS_PER_SOL;
 
         // Only activate features which are not explicitly deactivated.
         let mut feature_set = FeatureSet::default().inactive().clone();
