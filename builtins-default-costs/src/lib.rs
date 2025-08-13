@@ -83,6 +83,8 @@ static_assertions::const_assert_eq!(
     TOTAL_COUNT_BUILTINS
 );
 
+/// MIGRATING_BUILTINS_COSTS is empty as no builtins are presently being migrated.
+/// We leave it and the related scaffolding in place for future planned migrations.
 pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[];
 
 const NON_MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
