@@ -487,18 +487,16 @@ fn process_instruction_inner(
         }
         .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
     } else {
-        let program = instruction_context.try_borrow_program_account(transaction_context)?;
         let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
         let loaded_program = invoke_context
             .program_cache_for_tx_batch
-            .find(program.get_key())
+            .find(program_id)
             .ok_or_else(|| {
                 ic_logger_msg!(log_collector, "Program is not cached");
                 InstructionError::UnsupportedProgramId
             })?;
         get_or_create_executor_time.stop();
         invoke_context.timings.get_or_create_executor_us += get_or_create_executor_time.as_us();
-        drop(program);
         match &loaded_program.program {
             ProgramCacheEntryType::FailedVerification(_)
             | ProgramCacheEntryType::Closed
