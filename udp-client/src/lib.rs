@@ -16,11 +16,9 @@ use {
         connection_cache_stats::ConnectionCacheStats,
     },
     solana_keypair::Keypair,
-    solana_net_utils::sockets::{
-        bind_with_any_port_with_config, SocketConfiguration as SocketConfig,
-    },
+    solana_net_utils::sockets,
     std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+        net::{SocketAddr, UdpSocket},
         sync::Arc,
     },
 };
@@ -65,8 +63,12 @@ pub struct UdpConfig {
 
 impl NewConnectionConfig for UdpConfig {
     fn new() -> Result<Self, ClientError> {
-        let socket = bind_with_any_port_with_config(
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        #[cfg(debug_assertions)]
+        let socket = sockets::bind_to_localhost_unique().map_err(Into::<ClientError>::into)?;
+        #[cfg(not(debug_assertions))]
+        let socket = sockets::bind_in_range_with_config(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            solana_net_utils::VALIDATOR_PORT_RANGE,
             SocketConfig::default(),
         )
         .map_err(Into::<ClientError>::into)?;

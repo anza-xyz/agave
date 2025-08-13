@@ -216,6 +216,7 @@ pub fn bind_in_range_with_config(
     )))
 }
 
+#[deprecated(since = "3.0.0", note = "Please bind to specific ports instead")]
 pub fn bind_with_any_port_with_config(
     ip_addr: IpAddr,
     config: SocketConfiguration,

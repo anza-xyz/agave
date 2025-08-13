@@ -514,9 +514,7 @@ mod tests {
         async_trait::async_trait,
         rand::{Rng, SeedableRng},
         rand_chacha::ChaChaRng,
-        solana_net_utils::sockets::{
-            bind_with_any_port_with_config, SocketConfiguration as SocketConfig,
-        },
+        solana_net_utils::sockets::bind_to_localhost_unique,
         solana_transaction_error::TransportResult,
         std::{
             net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
@@ -573,13 +571,7 @@ mod tests {
     impl Default for MockUdpConfig {
         fn default() -> Self {
             Self {
-                udp_socket: Arc::new(
-                    bind_with_any_port_with_config(
-                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                        SocketConfig::default(),
-                    )
-                    .expect("Unable to bind to UDP socket"),
-                ),
+                udp_socket: Arc::new(bind_to_localhost_unique().unwrap()),
             }
         }
     }
@@ -588,11 +580,7 @@ mod tests {
         fn new() -> Result<Self, ClientError> {
             Ok(Self {
                 udp_socket: Arc::new(
-                    bind_with_any_port_with_config(
-                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                        SocketConfig::default(),
-                    )
-                    .map_err(Into::<ClientError>::into)?,
+                    bind_to_localhost_unique().map_err(Into::<ClientError>::into)?,
                 ),
             })
         }
