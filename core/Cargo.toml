@@ -89,6 +89,7 @@ solana-bloom = { workspace = true }
 solana-builtins-default-costs = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
+solana-cluster-type = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-compute-budget-interface = { workspace = true }

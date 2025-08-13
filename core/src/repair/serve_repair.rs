@@ -25,7 +25,7 @@ use {
         Rng,
     },
     solana_clock::Slot,
-    solana_genesis_config::ClusterType,
+    solana_cluster_type::ClusterType,
     solana_gossip::{
         cluster_info::{ClusterInfo, ClusterInfoError},
         contact_info::{ContactInfo, Protocol},

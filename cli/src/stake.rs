@@ -54,11 +54,11 @@ use {
         self as stake,
         error::StakeError,
         instruction::{self as stake_instruction, LockupArgs},
+        stake_history::StakeHistory,
         state::{Authorized, Lockup, Meta, StakeActivationStatus, StakeAuthorize, StakeStateV2},
         tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
     },
     solana_system_interface::{error::SystemError, instruction as system_instruction},
-    solana_sysvar::stake_history::StakeHistory,
     solana_transaction::Transaction,
     std::{ops::Deref, rc::Rc},
 };

@@ -9766,6 +9766,7 @@ dependencies = [
  "solana-frozen-abi-macro 3.0.0",
  "solana-hash 3.0.0",
  "solana-instruction 3.0.0",
+ "solana-instruction-error",
  "solana-keypair 3.0.0",
  "solana-last-restart-slot",
  "solana-program-entrypoint",
