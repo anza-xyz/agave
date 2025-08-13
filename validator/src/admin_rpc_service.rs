@@ -28,7 +28,7 @@ use {
         collections::{HashMap, HashSet},
         env, error,
         fmt::{self, Display},
-        net::{IpAddr, SocketAddr},
+        net::SocketAddr,
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -222,8 +222,13 @@ pub trait AdminRpc {
     #[rpc(meta, name = "contactInfo")]
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo>;
 
-    #[rpc(meta, name = "setGossipSocket")]
-    fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()>;
+    #[rpc(meta, name = "selectActiveInterface")]
+    fn select_active_interface(
+        &self,
+        meta: Self::Metadata,
+        interface_index: usize,
+        gossip_port: u16,
+    ) -> Result<()>;
 
     #[rpc(meta, name = "repairShredFromPeer")]
     fn repair_shred_from_peer(
@@ -548,31 +553,46 @@ impl AdminRpc for AdminRpcImpl {
         meta.with_post_init(|post_init| Ok(post_init.cluster_info.my_contact_info().into()))
     }
 
-    fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()> {
-        let ip: IpAddr = ip
-            .parse()
-            .map_err(|e| jsonrpc_core::Error::invalid_params(format!("Invalid IP address: {e}")))?;
-        let new_addr = SocketAddr::new(ip, port);
-
+    fn select_active_interface(
+        &self,
+        meta: Self::Metadata,
+        interface_index: usize,
+        gossip_port: u16,
+    ) -> Result<()> {
+        debug!(
+            "select_active_interface received: {}, gossip_port: {}",
+            interface_index, gossip_port
+        );
         meta.with_post_init(|post_init| {
-            if let Some(socket) = &post_init.gossip_socket {
-                let new_socket = bind_to(new_addr.ip(), new_addr.port()).map_err(|e| {
-                    jsonrpc_core::Error::invalid_params(format!("Gossip socket rebind failed: {e}"))
+            let node = post_init.node.as_ref().ok_or_else(|| {
+                jsonrpc_core::Error::invalid_params("`Node` not initialized in post_init")
+            })?;
+
+            let ip_addr = node
+                .bind_ip_addrs
+                .set_active(interface_index)
+                .map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!("Invalid interface index: {}", e))
                 })?;
 
-                // hot-swap new socket
-                socket.swap(new_socket);
+            let gossip_addr = SocketAddr::new(ip_addr, gossip_port);
+            let new_gossip_socket = bind_to(gossip_addr.ip(), gossip_addr.port()).map_err(|e| {
+                jsonrpc_core::Error::invalid_params(format!("Gossip socket rebind failed: {e}"))
+            })?;
 
-                // update gossip socket in cluster info
-                post_init
-                    .cluster_info
-                    .set_gossip_socket(new_addr)
-                    .map_err(|e| {
-                        jsonrpc_core::Error::invalid_params(format!(
-                            "Failed to refresh gossip ContactInfo: {e}"
-                        ))
-                    })?;
-            }
+            // hot-swap new socket
+            node.sockets.gossip.swap(new_gossip_socket);
+
+            // Set the new socket addresses
+            post_init
+                .cluster_info
+                .refresh_sockets(gossip_addr)
+                .map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!("Failed to refresh sockets: {}", e))
+                })?;
+
+            info!("Switched interface to {interface_index} ({ip_addr}); Gossip={gossip_addr}");
+
             Ok(())
         })
     }
@@ -1039,7 +1059,7 @@ mod tests {
                     cluster_slots: Arc::new(
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
-                    gossip_socket: None,
+                    node: None,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,

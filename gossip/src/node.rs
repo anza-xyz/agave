@@ -1,6 +1,6 @@
 use {
     crate::{
-        cluster_info::{BindIpAddrs, NodeConfig, Sockets},
+        cluster_info::{NodeConfig, Sockets},
         contact_info::{
             ContactInfo,
             Protocol::{QUIC, UDP},
@@ -8,6 +8,7 @@ use {
     },
     solana_net_utils::{
         find_available_ports_in_range,
+        multihomed_sockets::BindIpAddrs,
         sockets::{
             bind_gossip_port_in_range, bind_in_range_with_config, bind_more_with_config,
             bind_two_in_range_with_offset_and_config, localhost_port_range_for_tests,
@@ -22,6 +23,7 @@ use {
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
         num::NonZero,
+        sync::Arc,
     },
 };
 
@@ -29,6 +31,7 @@ use {
 pub struct Node {
     pub info: ContactInfo,
     pub sockets: Sockets,
+    pub bind_ip_addrs: Arc<BindIpAddrs>,
 }
 
 impl Node {
@@ -44,7 +47,7 @@ impl Node {
         let port_range = localhost_port_range_for_tests();
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let config = NodeConfig {
-            bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr]).expect("should bind"),
+            bind_ip_addrs: Arc::new(BindIpAddrs::new(vec![bind_ip_addr]).expect("should bind")),
             gossip_port: port_range.0,
             port_range,
             advertised_ip: bind_ip_addr,
@@ -73,7 +76,7 @@ impl Node {
         bind_ip_addr: IpAddr,
     ) -> Self {
         let config = NodeConfig {
-            bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr]).expect("should bind"),
+            bind_ip_addrs: Arc::new(BindIpAddrs::new(vec![bind_ip_addr]).expect("should bind")),
             gossip_port: gossip_addr.port(),
             port_range,
             advertised_ip: bind_ip_addr,
@@ -107,7 +110,7 @@ impl Node {
             num_quic_endpoints,
             vortexor_receiver_addr,
         } = config;
-        let bind_ip_addr = bind_ip_addrs.primary();
+        let bind_ip_addr = bind_ip_addrs.active();
 
         let gossip_addr = SocketAddr::new(advertised_ip, gossip_port);
         let (gossip_port, (gossip, ip_echo)) =
@@ -284,6 +287,33 @@ impl Node {
             vortexor_receivers,
         };
         info!("Bound all network sockets as follows: {:#?}", &sockets);
-        Node { info, sockets }
+        Node {
+            info,
+            sockets,
+            bind_ip_addrs,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SocketsMultihomed {
+    pub gossip: AtomicUdpSocket,
+    // add tvu, retransmit_sockets, etc below
+}
+
+#[derive(Debug, Clone)]
+pub struct NodeMultihoming {
+    pub sockets: SocketsMultihomed,
+    pub bind_ip_addrs: Arc<BindIpAddrs>,
+}
+
+impl From<&Node> for NodeMultihoming {
+    fn from(node: &Node) -> Self {
+        NodeMultihoming {
+            sockets: SocketsMultihomed {
+                gossip: node.sockets.gossip.clone(),
+            },
+            bind_ip_addrs: node.bind_ip_addrs.clone(),
+        }
     }
 }

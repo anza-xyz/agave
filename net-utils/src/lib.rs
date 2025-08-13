@@ -12,6 +12,7 @@
 
 mod ip_echo_client;
 mod ip_echo_server;
+pub mod multihomed_sockets;
 pub mod sockets;
 
 #[cfg(feature = "dev-context-only-utils")]
