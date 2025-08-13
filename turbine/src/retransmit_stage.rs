@@ -430,7 +430,9 @@ fn retransmit_shred(
             RetransmitSocket::Xdp(sender) => {
                 let mut sent = num_addrs;
                 if num_addrs > 0 {
-                    if let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred) {
+                    if let Err(e) =
+                        sender.try_send(key.index() as usize, addrs.to_vec().into(), shred)
+                    {
                         log::warn!("xdp channel full: {e:?}");
                         stats
                             .num_shreds_dropped_xdp_full
