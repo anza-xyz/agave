@@ -1,12 +1,12 @@
 use {
     super::{
         consumer::Consumer,
-        decision_maker::{BufferedPacketsDecision, DecisionMaker},
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         latest_validator_vote_packet::VoteSource,
         leader_slot_metrics::{
             CommittedTransactionsCounts, LeaderSlotMetricsTracker, ProcessTransactionsSummary,
         },
+        leader_status_monitor::{BufferedPacketsDecision, LeaderStatusMonitor},
         packet_receiver::PacketReceiver,
         vote_storage::VoteStorage,
         BankingStageStats, SLOT_BOUNDARY_CHECK_PERIOD,
@@ -46,7 +46,7 @@ mod transaction {
 pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 16;
 
 pub struct VoteWorker {
-    decision_maker: DecisionMaker,
+    leader_status_monitor: LeaderStatusMonitor,
     tpu_receiver: PacketReceiver,
     gossip_receiver: PacketReceiver,
     storage: VoteStorage,
@@ -56,7 +56,7 @@ pub struct VoteWorker {
 
 impl VoteWorker {
     pub fn new(
-        decision_maker: DecisionMaker,
+        leader_status_monitor: LeaderStatusMonitor,
         tpu_receiver: PacketReceiver,
         gossip_receiver: PacketReceiver,
         storage: VoteStorage,
@@ -64,7 +64,7 @@ impl VoteWorker {
         consumer: Consumer,
     ) -> Self {
         Self {
-            decision_maker,
+            leader_status_monitor,
             tpu_receiver,
             gossip_receiver,
             storage,
@@ -119,8 +119,7 @@ impl VoteWorker {
         banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
-        let (decision, make_decision_us) =
-            measure_us!(self.decision_maker.make_consume_or_forward_decision());
+        let (decision, make_decision_us) = measure_us!(self.leader_status_monitor.status());
         let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(decision.bank());
         slot_metrics_tracker.increment_make_decision_us(make_decision_us);
 

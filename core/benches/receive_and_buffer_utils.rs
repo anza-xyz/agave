@@ -5,7 +5,7 @@ use {
     solana_account::AccountSharedData,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_core::banking_stage::{
-        decision_maker::BufferedPacketsDecision,
+        leader_status_monitor::BufferedPacketsDecision,
         packet_deserializer::PacketDeserializer,
         transaction_scheduler::{
             receive_and_buffer::{

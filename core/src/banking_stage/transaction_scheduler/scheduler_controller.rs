@@ -11,7 +11,7 @@ use {
     crate::banking_stage::{
         consume_worker::ConsumeWorkerMetrics,
         consumer::Consumer,
-        decision_maker::{BufferedPacketsDecision, DecisionMaker},
+        leader_status_monitor::{BufferedPacketsDecision, LeaderStatusMonitor},
         transaction_scheduler::transaction_state_container::StateContainer,
         TOTAL_BUFFERED_PACKETS,
     },
@@ -32,7 +32,7 @@ where
     S: Scheduler<R::Transaction>,
 {
     /// Decision maker for determining what should be done with transactions.
-    decision_maker: DecisionMaker,
+    leader_status_monitor: LeaderStatusMonitor,
     receive_and_buffer: R,
     bank_forks: Arc<RwLock<BankForks>>,
     /// Container for transaction state.
@@ -58,14 +58,14 @@ where
     S: Scheduler<R::Transaction>,
 {
     pub fn new(
-        decision_maker: DecisionMaker,
+        leader_status_monitor: LeaderStatusMonitor,
         receive_and_buffer: R,
         bank_forks: Arc<RwLock<BankForks>>,
         scheduler: S,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
     ) -> Self {
         Self {
-            decision_maker,
+            leader_status_monitor,
             receive_and_buffer,
             bank_forks,
             container: R::Container::with_capacity(TOTAL_BUFFERED_PACKETS),
@@ -89,8 +89,7 @@ where
             // `Forward` will drop packets from the buffer instead of forwarding.
             // During receiving, since packets would be dropped from buffer anyway, we can
             // bypass sanitization and buffering and immediately drop the packets.
-            let (decision, decision_time_us) =
-                measure_us!(self.decision_maker.make_consume_or_forward_decision());
+            let (decision, decision_time_us) = measure_us!(self.leader_status_monitor.status());
             self.timing_metrics.update(|timing_metrics| {
                 timing_metrics.decision_time_us += decision_time_us;
             });
@@ -395,7 +394,7 @@ mod tests {
         let shared_tick_height = SharedTickHeight::new(0);
         let shared_leader_first_tick_height = SharedLeaderFirstTickHeight::new(None);
 
-        let decision_maker = DecisionMaker::new(
+        let leader_status_monitor = LeaderStatusMonitor::new(
             shared_working_bank.clone(),
             shared_tick_height,
             shared_leader_first_tick_height,
@@ -423,7 +422,7 @@ mod tests {
             PrioGraphSchedulerConfig::default(),
         );
         let scheduler_controller = SchedulerController::new(
-            decision_maker,
+            leader_status_monitor,
             receive_and_buffer,
             bank_forks,
             scheduler,
@@ -473,9 +472,7 @@ mod tests {
     fn test_receive_then_schedule<R: ReceiveAndBuffer>(
         scheduler_controller: &mut SchedulerController<R, impl Scheduler<R::Transaction>>,
     ) {
-        let decision = scheduler_controller
-            .decision_maker
-            .make_consume_or_forward_decision();
+        let decision = scheduler_controller.leader_status_monitor.status();
         assert!(matches!(decision, BufferedPacketsDecision::Consume(_)));
         assert!(scheduler_controller.receive_completed().is_ok());
 

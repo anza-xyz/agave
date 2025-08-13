@@ -33,15 +33,15 @@ impl BufferedPacketsDecision {
 }
 
 #[derive(Clone)]
-pub struct DecisionMaker {
+pub struct LeaderStatusMonitor {
     shared_working_bank: SharedWorkingBank,
     shared_tick_height: SharedTickHeight,
     shared_leader_first_tick_height: SharedLeaderFirstTickHeight,
 }
 
-impl std::fmt::Debug for DecisionMaker {
+impl std::fmt::Debug for LeaderStatusMonitor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DecisionMaker")
+        f.debug_struct("LeaderStatusMonitor")
             .field("shared_working_bank", &self.shared_working_bank.load())
             .field("shared_tick_height", &self.shared_tick_height.load())
             .field(
@@ -52,7 +52,7 @@ impl std::fmt::Debug for DecisionMaker {
     }
 }
 
-impl DecisionMaker {
+impl LeaderStatusMonitor {
     pub fn new(
         shared_working_bank: SharedWorkingBank,
         shared_tick_height: SharedTickHeight,
@@ -65,7 +65,7 @@ impl DecisionMaker {
         }
     }
 
-    pub(crate) fn make_consume_or_forward_decision(&self) -> BufferedPacketsDecision {
+    pub(crate) fn status(&self) -> BufferedPacketsDecision {
         // Check if there is an active working bank.
         if let Some(bank) = self.shared_working_bank.load() {
             BufferedPacketsDecision::Consume(bank)
@@ -88,7 +88,7 @@ impl DecisionMaker {
     }
 }
 
-impl From<&PohRecorder> for DecisionMaker {
+impl From<&PohRecorder> for LeaderStatusMonitor {
     fn from(poh_recorder: &PohRecorder) -> Self {
         Self::new(
             poh_recorder.shared_working_bank(),
@@ -99,26 +99,29 @@ impl From<&PohRecorder> for DecisionMaker {
 }
 
 #[derive(Debug)]
-pub(crate) struct DecisionMakerWrapper {
+pub(crate) struct LeaderStatusMonitorWrapper {
     is_exited: Arc<AtomicBool>,
-    decision_maker: DecisionMaker,
+    leader_status_monitor: LeaderStatusMonitor,
 }
 
-impl DecisionMakerWrapper {
-    pub(crate) fn new(is_exited: Arc<AtomicBool>, decision_maker: DecisionMaker) -> Self {
+impl LeaderStatusMonitorWrapper {
+    pub(crate) fn new(
+        is_exited: Arc<AtomicBool>,
+        leader_status_monitor: LeaderStatusMonitor,
+    ) -> Self {
         Self {
             is_exited,
-            decision_maker,
+            leader_status_monitor,
         }
     }
 }
 
-impl BankingStageMonitor for DecisionMakerWrapper {
+impl BankingStageMonitor for LeaderStatusMonitorWrapper {
     fn status(&mut self) -> BankingStageStatus {
         if self.is_exited.load(Relaxed) {
             BankingStageStatus::Exited
         } else if matches!(
-            self.decision_maker.make_consume_or_forward_decision(),
+            self.leader_status_monitor.status(),
             BufferedPacketsDecision::Forward,
         ) {
             BankingStageStatus::Inactive
@@ -152,7 +155,7 @@ mod tests {
         let shared_tick_height = SharedTickHeight::new(0);
         let mut shared_leader_first_tick_height = SharedLeaderFirstTickHeight::new(None);
 
-        let decision_maker = DecisionMaker::new(
+        let leader_status_monitor = LeaderStatusMonitor::new(
             shared_working_bank.clone(),
             shared_tick_height.clone(),
             shared_leader_first_tick_height.clone(),
@@ -160,14 +163,14 @@ mod tests {
 
         // No active bank, no leader first tick height.
         assert_matches!(
-            decision_maker.make_consume_or_forward_decision(),
+            leader_status_monitor.status(),
             BufferedPacketsDecision::Forward
         );
 
         // Active bank.
         shared_working_bank.store(bank.clone());
         assert_matches!(
-            decision_maker.make_consume_or_forward_decision(),
+            leader_status_monitor.status(),
             BufferedPacketsDecision::Consume(_)
         );
         shared_working_bank.clear();
@@ -177,7 +180,7 @@ mod tests {
             let next_leader_slot = bank.slot() + next_leader_slot_offset;
             shared_leader_first_tick_height.store(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
 
-            let decision = decision_maker.make_consume_or_forward_decision();
+            let decision = leader_status_monitor.status();
             assert!(
                 matches!(decision, BufferedPacketsDecision::Hold),
                 "next_leader_slot_offset: {next_leader_slot_offset}",
@@ -189,7 +192,7 @@ mod tests {
             let next_leader_slot = bank.slot() + next_leader_slot_offset;
             shared_leader_first_tick_height.store(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
 
-            let decision = decision_maker.make_consume_or_forward_decision();
+            let decision = leader_status_monitor.status();
             assert!(
                 matches!(decision, BufferedPacketsDecision::ForwardAndHold),
                 "next_leader_slot_offset: {next_leader_slot_offset}",
@@ -199,7 +202,7 @@ mod tests {
         // Longer period until next leader - Forward
         let next_leader_slot = 20 + bank.slot();
         shared_leader_first_tick_height.store(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
-        let decision = decision_maker.make_consume_or_forward_decision();
+        let decision = leader_status_monitor.status();
         assert!(
             matches!(decision, BufferedPacketsDecision::Forward),
             "next_leader_slot: {next_leader_slot}",

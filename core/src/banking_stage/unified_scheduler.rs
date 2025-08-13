@@ -30,7 +30,9 @@
 use qualifier_attr::qualifiers;
 use {
     super::{
-        decision_maker::{BufferedPacketsDecision, DecisionMaker, DecisionMakerWrapper},
+        leader_status_monitor::{
+            BufferedPacketsDecision, LeaderStatusMonitor, LeaderStatusMonitorWrapper,
+        },
         packet_deserializer::PacketDeserializer,
     },
     crate::banking_trace::Channels,
@@ -57,19 +59,21 @@ pub(crate) fn ensure_banking_stage_setup(
     let root_bank = bank_forks.read().unwrap().sharable_root_bank();
     let unified_receiver = channels.unified_receiver().clone();
 
-    let (is_exited, decision_maker) = {
+    let (is_exited, leader_status_monitor) = {
         let poh_recorder = poh_recorder.read().unwrap();
         (
             poh_recorder.is_exited.clone(),
-            DecisionMaker::from(poh_recorder.deref()),
+            LeaderStatusMonitor::from(poh_recorder.deref()),
         )
     };
 
-    let banking_stage_monitor =
-        Box::new(DecisionMakerWrapper::new(is_exited, decision_maker.clone()));
+    let banking_stage_monitor = Box::new(LeaderStatusMonitorWrapper::new(
+        is_exited,
+        leader_status_monitor.clone(),
+    ));
     let banking_packet_handler = Box::new(
         move |helper: &BankingStageHelper, batches: BankingPacketBatch| {
-            let decision = decision_maker.make_consume_or_forward_decision();
+            let decision = leader_status_monitor.status();
             if matches!(decision, BufferedPacketsDecision::Forward) {
                 // discard newly-arriving packets. note that already handled packets (thus buffered
                 // by scheduler internally) will be discarded as well via BankingStageMonitor api
