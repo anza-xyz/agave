@@ -1,6 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 pub mod counter;
 pub mod datapoint;
+pub mod influxdb_common;
 pub mod influxdb_v1;
 pub mod influxdb_v2;
 pub mod metrics;
