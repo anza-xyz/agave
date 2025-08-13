@@ -2250,6 +2250,7 @@ mod tests {
             let data_addr = data_cell_addr + mem::size_of::<RcBox<RefCell<&mut [u8]>>>();
 
             #[allow(deprecated)]
+            #[allow(clippy::used_underscore_binding)]
             let info = AccountInfo {
                 key: unsafe { (key_addr as *const Pubkey).as_ref() }.unwrap(),
                 is_signer: self.is_signer,
