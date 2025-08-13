@@ -2,6 +2,7 @@
 //! Secp256k1Recover Syscall test
 
 use {
+    solana_hash::Hash,
     solana_msg::msg,
     solana_program_entrypoint::{custom_heap_default, custom_panic_default},
     solana_secp256k1_recover::secp256k1_recover,
@@ -37,6 +38,14 @@ fn test_secp256k1_recover() {
 /// secp256k1_recover allows malleable signatures
 fn test_secp256k1_recover_malleability() {
     let message = b"hello world";
+    #[cfg(target_os = "solana")]
+    let message_hash = {
+        use sha3::Digest;
+        let mut hasher = sha3::Keccak256::default();
+        hasher.update(message);
+        Hash::new_from_array(hasher.finalize().into())
+    };
+    #[cfg(not(target_os = "solana"))]
     let message_hash = {
         let mut hasher = solana_keccak_hasher::Hasher::default();
         hasher.hash(message);

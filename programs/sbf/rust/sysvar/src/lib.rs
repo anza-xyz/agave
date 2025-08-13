@@ -29,7 +29,7 @@ use {
 #[cfg(target_os = "solana")]
 fn sol_get_sysvar_handler<T>(dst: &mut [u8], offset: u64, length: u64) -> Result<(), ProgramError>
 where
-    T: Sysvar,
+    T: SysvarSerialize,
 {
     let sysvar_id = &T::id() as *const _ as *const u8;
     let var_addr = dst as *mut _ as *mut u8;
@@ -47,7 +47,7 @@ where
 // Double-helper arrangement is easier to write to a mutable slice.
 fn sol_get_sysvar<T>() -> Result<T, ProgramError>
 where
-    T: Sysvar,
+    T: SysvarSerialize,
 {
     #[cfg(target_os = "solana")]
     {
