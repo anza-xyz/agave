@@ -49,7 +49,6 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_svm_type_overrides::sync::Arc,
     solana_sysvar::SysvarSerialize,
-    solana_sysvar_id::SysvarId,
     solana_transaction_context::IndexOfAccount,
     std::{
         alloc::Layout,
@@ -2186,6 +2185,7 @@ mod tests {
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,
         solana_stake_interface::stake_history::{self, StakeHistory, StakeHistoryEntry},
+        solana_sysvar_id::SysvarId,
         solana_transaction_context::InstructionAccount,
         std::{
             hash::{DefaultHasher, Hash, Hasher},

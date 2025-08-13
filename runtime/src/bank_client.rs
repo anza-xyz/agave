@@ -14,7 +14,6 @@ use {
     solana_signer::{signers::Signers, Signer},
     solana_system_interface::instruction as system_instruction,
     solana_sysvar::SysvarSerialize,
-    solana_sysvar_id::SysvarId,
     solana_transaction::{versioned::VersionedTransaction, Transaction},
     solana_transaction_error::{TransportError, TransportResult as Result},
     std::{
@@ -272,7 +271,7 @@ impl BankClient {
         Self::new_shared(Arc::new(bank))
     }
 
-    pub fn set_sysvar_for_tests<T: SysvarSerialize + SysvarId>(&self, sysvar: &T) {
+    pub fn set_sysvar_for_tests<T: SysvarSerialize>(&self, sysvar: &T) {
         self.bank.set_sysvar_for_tests(sysvar);
     }
 
