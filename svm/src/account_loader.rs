@@ -829,7 +829,7 @@ mod tests {
             v0::{LoadedAddresses, LoadedMessage},
             LegacyMessage, Message, MessageHeader, SanitizedMessage,
         },
-        solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_nonce::{self as nonce, versions::Versions as NonceVersions},
         solana_program_runtime::execution_budget::{
             DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
@@ -2112,12 +2112,7 @@ mod tests {
             .insert(recipient, AccountSharedData::default());
         let mut account_loader = (&bank).into();
 
-        let tx = transfer(
-            &mint_keypair,
-            &recipient,
-            sol_to_lamports(1.),
-            last_block_hash,
-        );
+        let tx = transfer(&mint_keypair, &recipient, LAMPORTS_PER_SOL, last_block_hash);
         let num_accounts = tx.message().account_keys.len();
         let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(tx);
         let mut error_metrics = TransactionErrorMetrics::default();
