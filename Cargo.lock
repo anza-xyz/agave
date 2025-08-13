@@ -8686,6 +8686,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-frozen-abi",
  "solana-frozen-abi-macro 3.0.0",
+ "solana-genesis-config",
  "solana-hash",
  "solana-keypair",
  "solana-ledger",

@@ -6740,6 +6740,7 @@ dependencies = [
  "solana-connection-cache",
  "solana-entry",
  "solana-epoch-schedule",
+ "solana-genesis-config",
  "solana-hash",
  "solana-keypair",
  "solana-ledger",

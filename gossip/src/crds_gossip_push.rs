@@ -24,6 +24,7 @@ use {
         stake_weighting_config::{get_gossip_config_from_account, WeightingConfig},
     },
     itertools::Itertools,
+    solana_genesis_config::ClusterType,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
@@ -249,6 +250,12 @@ impl CrdsGossipPush {
         now_ms: u64,
     ) -> Option<WeightingConfig> {
         let bank = maybe_bank_ref?;
+        if !matches!(
+            bank.cluster_type(),
+            ClusterType::Testnet | ClusterType::Development
+        ) {
+            return None;
+        }
         {
             let mut last = self.last_cfg_poll_ms.lock().unwrap();
             if now_ms.saturating_sub(*last) < CONFIG_REFRESH_INTERVAL_MS {
