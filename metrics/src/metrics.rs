@@ -105,7 +105,7 @@ impl Default for MetricsAgent {
         // v1 is default setting. only disable if explicitly set to false
         if env::var("SOLANA_METRICS_INFLUXDB_V1").unwrap_or_else(|_| "true".to_string()) != "false"
         {
-            metrics_writers.add_writer(influxdb_v1::InfluxDbMetricsWriter::new());
+            metrics_writers.add_writer(influxdb_v1::Writer::new());
         }
 
         // v2 is disabled by default. only enable if explicitly set to true

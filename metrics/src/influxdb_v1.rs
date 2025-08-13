@@ -25,11 +25,17 @@ impl MetricsConfig {
     }
 }
 
-pub struct InfluxDbMetricsWriter {
+#[deprecated(
+    since = "3.0.0",
+    note = "DEPRECATED: Use `Writer` instead. This alias will be removed in the future."
+)]
+pub type InfluxDbMetricsWriter = Writer;
+
+pub struct Writer {
     write_url: Option<String>,
 }
 
-impl InfluxDbMetricsWriter {
+impl Writer {
     pub fn new() -> Self {
         Self {
             write_url: Self::build_write_url().ok(),
@@ -56,7 +62,7 @@ impl InfluxDbMetricsWriter {
     }
 }
 
-impl MetricsWriter for InfluxDbMetricsWriter {
+impl MetricsWriter for Writer {
     fn write(&self, points: Vec<DataPoint>) {
         if let Some(ref write_url) = self.write_url {
             debug!("submitting {} points", points.len());
