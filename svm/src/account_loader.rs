@@ -859,7 +859,7 @@ mod tests {
 
     #[derive(Clone)]
     struct TestCallbacks {
-        accounts_map: HashMap<Pubkey, AccountSharedData>,
+        accounts_map: HashMap<Pubkey, (AccountSharedData, Slot)>,
         #[allow(clippy::type_complexity)]
         inspected_accounts:
             RefCell<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>,
@@ -882,7 +882,7 @@ mod tests {
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
             self.accounts_map
                 .get(pubkey)
-                .map(|account| (account.clone(), 0))
+                .map(|(account, slot)| (account.clone(), *slot))
         }
 
         fn inspect_account(
@@ -925,7 +925,7 @@ mod tests {
         let fee_payer_account = accounts[0].1.clone();
         let mut accounts_map = HashMap::new();
         for (pubkey, account) in accounts {
-            accounts_map.insert(*pubkey, account.clone());
+            accounts_map.insert(*pubkey, (account.clone(), 1));
         }
         let callbacks = TestCallbacks {
             accounts_map,
@@ -1241,7 +1241,7 @@ mod tests {
         let mut error_metrics = TransactionErrorMetrics::default();
         let mut accounts_map = HashMap::new();
         for (pubkey, account) in accounts {
-            accounts_map.insert(*pubkey, account.clone());
+            accounts_map.insert(*pubkey, (account.clone(), 1));
         }
         let callbacks = TestCallbacks {
             accounts_map,
@@ -1526,7 +1526,7 @@ mod tests {
         fee_payer_account.set_lamports(fee_payer_balance);
         mock_bank
             .accounts_map
-            .insert(fee_payer_address, fee_payer_account.clone());
+            .insert(fee_payer_address, (fee_payer_account.clone(), 1));
         let mut account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -1578,12 +1578,12 @@ mod tests {
             formalize_loaded_transaction_data_size;
         mock_bank
             .accounts_map
-            .insert(native_loader::id(), AccountSharedData::default());
+            .insert(native_loader::id(), (AccountSharedData::default(), 0));
         let mut fee_payer_account = AccountSharedData::default();
         fee_payer_account.set_lamports(200);
         mock_bank
             .accounts_map
-            .insert(key1.pubkey(), fee_payer_account.clone());
+            .insert(key1.pubkey(), (fee_payer_account.clone(), 1));
         let mut account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -1626,7 +1626,7 @@ mod tests {
                         (key1.pubkey(), fee_payer_account),
                         (
                             native_loader::id(),
-                            mock_bank.accounts_map[&native_loader::id()].clone()
+                            mock_bank.accounts_map[&native_loader::id()].0.clone()
                         )
                     ],
                     program_indices: vec![u16::MAX],
@@ -1656,7 +1656,9 @@ mod tests {
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
-        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+        mock_bank
+            .accounts_map
+            .insert(key1.pubkey(), (account_data, 1));
         let mut account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -1698,7 +1700,9 @@ mod tests {
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
-        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+        mock_bank
+            .accounts_map
+            .insert(key1.pubkey(), (account_data, 1));
         let mut account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -1750,13 +1754,15 @@ mod tests {
         account_data.set_owner(native_loader::id());
         account_data.set_lamports(1);
         account_data.set_executable(true);
-        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+        mock_bank
+            .accounts_map
+            .insert(key1.pubkey(), (account_data, 1));
 
         let mut fee_payer_account = AccountSharedData::default();
         fee_payer_account.set_lamports(200);
         mock_bank
             .accounts_map
-            .insert(key2.pubkey(), fee_payer_account.clone());
+            .insert(key2.pubkey(), (fee_payer_account.clone(), 1));
         let mut account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -1794,7 +1800,7 @@ mod tests {
                     (key2.pubkey(), fee_payer_account),
                     (
                         key1.pubkey(),
-                        mock_bank.accounts_map[&key1.pubkey()].clone()
+                        mock_bank.accounts_map[&key1.pubkey()].0.clone()
                     ),
                 ],
                 program_indices: vec![1],
@@ -1823,11 +1829,15 @@ mod tests {
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
-        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+        mock_bank
+            .accounts_map
+            .insert(key1.pubkey(), (account_data, 1));
 
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
-        mock_bank.accounts_map.insert(key2.pubkey(), account_data);
+        mock_bank
+            .accounts_map
+            .insert(key2.pubkey(), (account_data, 1));
         let mut account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -1872,14 +1882,18 @@ mod tests {
         account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(key3.pubkey());
-        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+        mock_bank
+            .accounts_map
+            .insert(key1.pubkey(), (account_data, 1));
 
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
-        mock_bank.accounts_map.insert(key2.pubkey(), account_data);
         mock_bank
             .accounts_map
-            .insert(key3.pubkey(), AccountSharedData::default());
+            .insert(key2.pubkey(), (account_data, 1));
+        mock_bank
+            .accounts_map
+            .insert(key3.pubkey(), (AccountSharedData::default(), 0));
         let mut account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -1931,13 +1945,15 @@ mod tests {
         account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(bpf_loader::id());
-        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+        mock_bank
+            .accounts_map
+            .insert(key1.pubkey(), (account_data, 1));
 
         let mut fee_payer_account = AccountSharedData::default();
         fee_payer_account.set_lamports(200);
         mock_bank
             .accounts_map
-            .insert(key2.pubkey(), fee_payer_account.clone());
+            .insert(key2.pubkey(), (fee_payer_account.clone(), 1));
 
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(1);
@@ -1945,7 +1961,7 @@ mod tests {
         account_data.set_owner(native_loader::id());
         mock_bank
             .accounts_map
-            .insert(bpf_loader::id(), account_data);
+            .insert(bpf_loader::id(), (account_data, 0));
         let mut account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -1983,7 +1999,7 @@ mod tests {
                     (key2.pubkey(), fee_payer_account),
                     (
                         key1.pubkey(),
-                        mock_bank.accounts_map[&key1.pubkey()].clone()
+                        mock_bank.accounts_map[&key1.pubkey()].0.clone()
                     ),
                 ],
                 program_indices: vec![1],
@@ -2027,13 +2043,15 @@ mod tests {
         account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(bpf_loader::id());
-        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+        mock_bank
+            .accounts_map
+            .insert(key1.pubkey(), (account_data, 0));
 
         let mut fee_payer_account = AccountSharedData::default();
         fee_payer_account.set_lamports(200);
         mock_bank
             .accounts_map
-            .insert(key2.pubkey(), fee_payer_account.clone());
+            .insert(key2.pubkey(), (fee_payer_account.clone(), 1));
 
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(1);
@@ -2041,7 +2059,7 @@ mod tests {
         account_data.set_owner(native_loader::id());
         mock_bank
             .accounts_map
-            .insert(bpf_loader::id(), account_data);
+            .insert(bpf_loader::id(), (account_data, 0));
         let mut account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -2081,7 +2099,7 @@ mod tests {
                     (key2.pubkey(), fee_payer_account),
                     (
                         key1.pubkey(),
-                        mock_bank.accounts_map[&key1.pubkey()].clone()
+                        mock_bank.accounts_map[&key1.pubkey()].0.clone()
                     ),
                     (key3.pubkey(), account_data),
                 ],
@@ -2103,13 +2121,14 @@ mod tests {
         system_data.set_executable(true);
         system_data.set_owner(native_loader::id());
         bank.accounts_map
-            .insert(Pubkey::new_from_array([0u8; 32]), system_data);
+            .insert(Pubkey::new_from_array([0u8; 32]), (system_data, 0));
 
         let mut mint_data = AccountSharedData::default();
         mint_data.set_lamports(2);
-        bank.accounts_map.insert(mint_keypair.pubkey(), mint_data);
         bank.accounts_map
-            .insert(recipient, AccountSharedData::default());
+            .insert(mint_keypair.pubkey(), (mint_data, 0));
+        bank.accounts_map
+            .insert(recipient, (AccountSharedData::default(), 1));
         let mut account_loader = (&bank).into();
 
         let tx = transfer(
@@ -2185,13 +2204,15 @@ mod tests {
         account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(bpf_loader::id());
-        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+        mock_bank
+            .accounts_map
+            .insert(key1.pubkey(), (account_data, 0));
 
         let mut fee_payer_account = AccountSharedData::default();
         fee_payer_account.set_lamports(200);
         mock_bank
             .accounts_map
-            .insert(key2.pubkey(), fee_payer_account.clone());
+            .insert(key2.pubkey(), (fee_payer_account.clone(), 1));
 
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(1);
@@ -2199,7 +2220,7 @@ mod tests {
         account_data.set_owner(native_loader::id());
         mock_bank
             .accounts_map
-            .insert(bpf_loader::id(), account_data);
+            .insert(bpf_loader::id(), (account_data, 0));
         let mut account_loader = (&mock_bank).into();
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -2246,11 +2267,11 @@ mod tests {
                 accounts: vec![
                     (
                         key2.pubkey(),
-                        mock_bank.accounts_map[&key2.pubkey()].clone()
+                        mock_bank.accounts_map[&key2.pubkey()].0.clone()
                     ),
                     (
                         key1.pubkey(),
-                        mock_bank.accounts_map[&key1.pubkey()].clone()
+                        mock_bank.accounts_map[&key1.pubkey()].0.clone()
                     ),
                     (key3.pubkey(), account_data),
                 ],
@@ -2361,11 +2382,15 @@ mod tests {
 
         let mut account0 = AccountSharedData::default();
         account0.set_lamports(1_000_000_000);
-        mock_bank.accounts_map.insert(address0, account0.clone());
+        mock_bank
+            .accounts_map
+            .insert(address0, (account0.clone(), 1));
 
         let mut account1 = AccountSharedData::default();
         account1.set_lamports(2_000_000_000);
-        mock_bank.accounts_map.insert(address1, account1.clone());
+        mock_bank
+            .accounts_map
+            .insert(address1, (account1.clone(), 1));
 
         // account2 *not* added to the bank's accounts_map
 
@@ -2373,7 +2398,9 @@ mod tests {
         account3.set_lamports(4_000_000_000);
         account3.set_executable(true);
         account3.set_owner(bpf_loader::id());
-        mock_bank.accounts_map.insert(address3, account3.clone());
+        mock_bank
+            .accounts_map
+            .insert(address3, (account3.clone(), 0));
         let mut account_loader = (&mock_bank).into();
 
         let message = Message {
@@ -2463,7 +2490,9 @@ mod tests {
                 programdata_address: programdata2,
             })
             .unwrap();
-        mock_bank.accounts_map.insert(program2, program2_account);
+        mock_bank
+            .accounts_map
+            .insert(program2, (program2_account, 1));
         let mut programdata2_account = AccountSharedData::default();
         programdata2_account.set_owner(loader_v3);
         programdata2_account.set_lamports(LAMPORTS_PER_SOL);
@@ -2482,7 +2511,7 @@ mod tests {
         programdata2_account.set_data(programdata);
         mock_bank
             .accounts_map
-            .insert(programdata2, programdata2_account);
+            .insert(programdata2, (programdata2_account, 1));
 
         let mut next_size = 1;
         let mut make_account = |pubkey, owner, executable| {
@@ -2495,7 +2524,7 @@ mod tests {
                 u64::MAX,
             );
 
-            mock_bank.accounts_map.insert(pubkey, account.clone());
+            mock_bank.accounts_map.insert(pubkey, (account.clone(), 1));
 
             // accounts are counted at most twice
             // by multiplying account size by 4, we ensure all totals are unique
@@ -2716,7 +2745,7 @@ mod tests {
         let mut mock_bank = TestCallbacks::default();
         mock_bank
             .accounts_map
-            .insert(fee_payer, fee_payer_account.clone());
+            .insert(fee_payer, (fee_payer_account.clone(), 1));
 
         // test without stored account
         let mut account_loader: AccountLoader<_> = (&mock_bank).into();
@@ -2816,7 +2845,9 @@ mod tests {
                 rng.gen(),
                 u64::MAX,
             );
-            mock_bank.accounts_map.insert(Pubkey::new_unique(), account);
+            mock_bank
+                .accounts_map
+                .insert(Pubkey::new_unique(), (account, 1));
         }
 
         // fee-payers
@@ -2830,7 +2861,7 @@ mod tests {
                 rng.gen(),
                 u64::MAX,
             );
-            mock_bank.accounts_map.insert(fee_payer, account);
+            mock_bank.accounts_map.insert(fee_payer, (account, 1));
             fee_payers.push(fee_payer);
         }
 
@@ -2871,7 +2902,7 @@ mod tests {
                         );
                         mock_bank
                             .accounts_map
-                            .insert(programdata_address, programdata_account);
+                            .insert(programdata_address, (programdata_account, 1));
                         loader_owned_accounts.push(programdata_address);
                     }
 
@@ -2884,7 +2915,7 @@ mod tests {
                     }
                 }
 
-                mock_bank.accounts_map.insert(program_id, account);
+                mock_bank.accounts_map.insert(program_id, (account, 1));
                 loader_owned_accounts.push(program_id);
             }
         }
@@ -2935,7 +2966,7 @@ mod tests {
 
             fee_payers.shuffle(&mut rng);
             let fee_payer = fee_payers[0];
-            let fee_payer_account = mock_bank.accounts_map.get(&fee_payer).cloned().unwrap();
+            let fee_payer_account = mock_bank.accounts_map.get(&fee_payer).cloned().unwrap().0;
 
             let transaction = SanitizedTransaction::from_transaction_for_tests(
                 Transaction::new_with_payer(&instructions, Some(&fee_payer)),
@@ -2949,7 +2980,8 @@ mod tests {
                 .collect::<AHashSet<_>>();
 
             for pubkey in transaction.account_keys().iter() {
-                if let Some(account) = mock_bank.accounts_map.get(pubkey) {
+                if let Some((account, _last_modification_slot)) = mock_bank.accounts_map.get(pubkey)
+                {
                     expected_size += TRANSACTION_ACCOUNT_BASE_SIZE + account.data().len();
                 };
 
