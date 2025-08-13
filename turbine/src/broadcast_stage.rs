@@ -468,18 +468,6 @@ pub fn broadcast_shreds(
         let bank_forks = bank_forks.read().unwrap();
         (bank_forks.root_bank(), bank_forks.working_bank())
     };
-    // Implementation note:
-    // We are gathering the indexes of the shreds in the `shreds` vector rather than the shred
-    // payloads themselves. This is because, in the XDP case, the shred payloads will be sent to
-    // the XDP thread(s) via a channel, and the lifetime of the shred payloads must extend to that
-    // of the XDP thread(s).
-    //
-    // Because the `shreds` vector is behind a shared (`Arc`) reference, we must pass that reference
-    // along to the XDP thread(s) via the Xdp channel message payload. This allows us to extend the
-    // lifetime of the shred payloads to the XDP thread(s) without cloning each payload.
-    //
-    // When `shred::Payload` is refactored to use `Bytes`, this can be adjusted to simply pass the payload
-    // `Bytes` directly to the XDP thread(s).
     let (packets, quic_packets): (Vec<_>, Vec<_>) = shreds
         .iter()
         .group_by(|shred| shred.slot())
