@@ -104,7 +104,7 @@ where
                 .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
         }
     }
-    info!("{} new root {}", my_pubkey, new_root);
+    info!("{my_pubkey}: new root {new_root}");
     Ok(())
 }
 
