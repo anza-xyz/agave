@@ -1,7 +1,7 @@
 [package]
-name = "solana-votor"
+name = "agave-votor"
 description = "Blockchain, Rebuilt for Scale"
-documentation = "https://docs.rs/solana-votor"
+documentation = "https://docs.rs/agave-votor"
 readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }

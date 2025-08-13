@@ -536,6 +536,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-votor"
+version = "3.0.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "bs58",
+ "crossbeam-channel",
+ "dashmap",
+ "etcd-client",
+ "itertools 0.12.1",
+ "log",
+ "parking_lot 0.12.3",
+ "qualifier_attr",
+ "rayon",
+ "serde",
+ "serde_bytes",
+ "serde_derive",
+ "solana-accounts-db",
+ "solana-bloom",
+ "solana-clock",
+ "solana-entry",
+ "solana-epoch-schedule",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro 3.0.0",
+ "solana-gossip",
+ "solana-hash",
+ "solana-keypair",
+ "solana-ledger",
+ "solana-logger 3.0.0",
+ "solana-measure",
+ "solana-metrics",
+ "solana-pubkey",
+ "solana-rpc",
+ "solana-runtime",
+ "solana-signature",
+ "solana-signer",
+ "solana-time-utils",
+ "solana-transaction",
+ "test-case",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "agave-watchtower"
 version = "3.0.0"
 dependencies = [
@@ -7903,6 +7946,7 @@ dependencies = [
  "agave-reserved-account-keys",
  "agave-transaction-view",
  "agave-verified-packet-receiver",
+ "agave-votor",
  "ahash 0.8.11",
  "anyhow",
  "arrayvec",
@@ -8030,7 +8074,6 @@ dependencies = [
  "solana-version",
  "solana-vote",
  "solana-vote-program",
- "solana-votor",
  "solana-wen-restart",
  "spl-memo-interface",
  "static_assertions",
@@ -11807,49 +11850,6 @@ dependencies = [
  "solana-vote-interface",
  "test-case",
  "thiserror 2.0.14",
-]
-
-[[package]]
-name = "solana-votor"
-version = "3.0.0"
-dependencies = [
- "anyhow",
- "bincode",
- "bs58",
- "crossbeam-channel",
- "dashmap",
- "etcd-client",
- "itertools 0.12.1",
- "log",
- "parking_lot 0.12.3",
- "qualifier_attr",
- "rayon",
- "serde",
- "serde_bytes",
- "serde_derive",
- "solana-accounts-db",
- "solana-bloom",
- "solana-clock",
- "solana-entry",
- "solana-epoch-schedule",
- "solana-frozen-abi",
- "solana-frozen-abi-macro 3.0.0",
- "solana-gossip",
- "solana-hash",
- "solana-keypair",
- "solana-ledger",
- "solana-logger 3.0.0",
- "solana-measure",
- "solana-metrics",
- "solana-pubkey",
- "solana-rpc",
- "solana-runtime",
- "solana-signature",
- "solana-signer",
- "solana-time-utils",
- "solana-transaction",
- "test-case",
- "thiserror 2.0.12",
 ]
 
 [[package]]

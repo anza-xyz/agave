@@ -279,6 +279,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-votor"
+version = "3.0.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "bs58",
+ "crossbeam-channel",
+ "dashmap",
+ "etcd-client",
+ "itertools 0.12.1",
+ "log",
+ "parking_lot 0.12.2",
+ "qualifier_attr",
+ "rayon",
+ "serde",
+ "serde_bytes",
+ "serde_derive",
+ "solana-accounts-db",
+ "solana-bloom",
+ "solana-clock",
+ "solana-entry",
+ "solana-epoch-schedule",
+ "solana-gossip",
+ "solana-hash",
+ "solana-keypair",
+ "solana-ledger",
+ "solana-logger 3.0.0",
+ "solana-measure",
+ "solana-metrics",
+ "solana-pubkey",
+ "solana-rpc",
+ "solana-runtime",
+ "solana-signature",
+ "solana-signer",
+ "solana-time-utils",
+ "solana-transaction",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "agave-xdp"
 version = "3.0.0"
 dependencies = [
@@ -6189,6 +6229,7 @@ dependencies = [
  "agave-feature-set",
  "agave-transaction-view",
  "agave-verified-packet-receiver",
+ "agave-votor",
  "ahash 0.8.11",
  "anyhow",
  "arrayvec",
@@ -6302,7 +6343,6 @@ dependencies = [
  "solana-version",
  "solana-vote",
  "solana-vote-program",
- "solana-votor",
  "solana-wen-restart",
  "static_assertions",
  "strum",
@@ -9893,46 +9933,6 @@ dependencies = [
  "solana-transaction-context",
  "solana-vote-interface",
  "thiserror 2.0.14",
-]
-
-[[package]]
-name = "solana-votor"
-version = "3.0.0"
-dependencies = [
- "anyhow",
- "bincode",
- "bs58",
- "crossbeam-channel",
- "dashmap",
- "etcd-client",
- "itertools 0.12.1",
- "log",
- "parking_lot 0.12.2",
- "qualifier_attr",
- "rayon",
- "serde",
- "serde_bytes",
- "serde_derive",
- "solana-accounts-db",
- "solana-bloom",
- "solana-clock",
- "solana-entry",
- "solana-epoch-schedule",
- "solana-gossip",
- "solana-hash",
- "solana-keypair",
- "solana-ledger",
- "solana-logger 3.0.0",
- "solana-measure",
- "solana-metrics",
- "solana-pubkey",
- "solana-rpc",
- "solana-runtime",
- "solana-signature",
- "solana-signer",
- "solana-time-utils",
- "solana-transaction",
- "thiserror 2.0.12",
 ]
 
 [[package]]
