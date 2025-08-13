@@ -4,10 +4,6 @@ dir = "target/nextest"
 [test-groups]
 build-sbf = { max-threads = 1 }
 
-[[profile.default.overides]]
-filter = "package(solana-cargo-build-sbf)"
-test-group = "build-sbf"
-
 [profile.ci]
 failure-output = "immediate-final"
 slow-timeout = { period = "60s", terminate-after = 1 }
