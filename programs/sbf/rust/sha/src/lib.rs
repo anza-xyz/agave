@@ -1,7 +1,6 @@
 //! SHA Syscall test
 
 use {
-    solana_hash::Hash,
     solana_msg::msg,
     solana_program_entrypoint::{custom_heap_default, custom_panic_default},
 };
@@ -16,7 +15,7 @@ fn test_sha256_hasher() {
         for val in vals {
             hasher.update(val);
         }
-        Hash::new_from_array(hasher.finalize().into())
+        solana_hash::Hash::new_from_array(hasher.finalize().into())
     };
     #[cfg(not(target_os = "solana"))]
     let hash = {
@@ -37,7 +36,7 @@ fn test_keccak256_hasher() {
         for val in vals {
             hasher.update(val);
         }
-        Hash::new_from_array(hasher.finalize().into())
+        solana_hash::Hash::new_from_array(hasher.finalize().into())
     };
     #[cfg(not(target_os = "solana"))]
     let hash = {
