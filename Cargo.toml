@@ -50,7 +50,6 @@ members = [
     "ledger",
     "ledger-tool",
     "local-cluster",
-    "log-analyzer",
     "low-pass-filter",
     "measure",
     "memory-management",
