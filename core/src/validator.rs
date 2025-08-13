@@ -121,9 +121,7 @@ use {
     solana_signer::Signer,
     solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
     solana_time_utils::timestamp,
-    solana_tpu_client::tpu_client::{
-        DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
-    },
+    solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
     solana_turbine::{
         self,
         broadcast_stage::BroadcastStageType,
@@ -509,8 +507,8 @@ impl ValidatorTpuConfig {
         let vote_quic_server_config = tpu_fwd_quic_server_config.clone();
 
         ValidatorTpuConfig {
-            use_quic: DEFAULT_TPU_USE_QUIC,
-            vote_use_quic: DEFAULT_VOTE_USE_QUIC,
+            use_quic: true,
+            vote_use_quic: true,
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
             tpu_enable_udp,
             tpu_quic_server_config,
