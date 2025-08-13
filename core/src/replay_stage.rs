@@ -2483,8 +2483,7 @@ impl ReplayStage {
                 {
                     *first_alpenglow_slot = Some(activation_slot);
                     info!(
-                        "alpenglow feature detected in root bank {}, to be enabled on slot {}",
-                        new_root, activation_slot,
+                        "alpenglow feature detected in root bank {new_root}, to be enabled on slot {activation_slot}",
                     );
                 }
             }
