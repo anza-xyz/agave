@@ -5,7 +5,7 @@ use {
     solana_account::AccountSharedData,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_core::banking_stage::{
-        leader_status_monitor::BufferedPacketsDecision,
+        leader_status_monitor::LeaderStatus,
         packet_deserializer::PacketDeserializer,
         transaction_scheduler::{
             receive_and_buffer::{
@@ -167,8 +167,8 @@ pub struct ReceiveAndBufferSetup<T: ReceiveAndBuffer> {
     pub container: <T as ReceiveAndBuffer>::Container,
     // receive_and_buffer for sdk or transaction_view
     pub receive_and_buffer: T,
-    // hardcoded for bench to always Consume
-    pub decision: BufferedPacketsDecision,
+    // hardcoded for bench to always Active
+    pub status: LeaderStatus,
 }
 
 pub fn setup_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
@@ -192,7 +192,7 @@ pub fn setup_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
 
     let receive_and_buffer = T::create(receiver, bank_forks);
 
-    let decision = BufferedPacketsDecision::Consume(bank.clone());
+    let status = LeaderStatus::Active(bank.clone());
 
     let txs = generate_transactions(
         num_txs,
@@ -209,6 +209,6 @@ pub fn setup_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
         sender,
         container,
         receive_and_buffer,
-        decision,
+        status,
     }
 }

@@ -6,7 +6,7 @@ use {
         leader_slot_metrics::{
             CommittedTransactionsCounts, LeaderSlotMetricsTracker, ProcessTransactionsSummary,
         },
-        leader_status_monitor::{BufferedPacketsDecision, LeaderStatusMonitor},
+        leader_status_monitor::{LeaderStatus, LeaderStatusMonitor},
         packet_receiver::PacketReceiver,
         vote_storage::VoteStorage,
         BankingStageStats, SLOT_BOUNDARY_CHECK_PERIOD,
@@ -17,7 +17,7 @@ use {
     arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
     solana_accounts_db::account_locks::validate_account_locks,
-    solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
+    solana_clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, HOLD_TRANSACTIONS_SLOT_OFFSET},
     solana_measure::{measure::Measure, measure_us},
     solana_poh::poh_recorder::PohRecorderError,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -119,9 +119,9 @@ impl VoteWorker {
         banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
-        let (decision, make_decision_us) = measure_us!(self.leader_status_monitor.status());
-        let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(decision.bank());
-        slot_metrics_tracker.increment_make_decision_us(make_decision_us);
+        let (status, status_us) = measure_us!(self.leader_status_monitor.status());
+        let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(status.bank());
+        slot_metrics_tracker.increment_make_decision_us(status_us);
 
         // Take metrics action before processing packets (potentially resetting the
         // slot metrics tracker to the next slot) so that we don't count the
@@ -129,8 +129,8 @@ impl VoteWorker {
         // of the previous slot
         slot_metrics_tracker.apply_action(metrics_action);
 
-        match decision {
-            BufferedPacketsDecision::Consume(bank) => {
+        match status {
+            LeaderStatus::Active(bank) => {
                 let (_, consume_buffered_packets_us) = measure_us!(self.consume_buffered_packets(
                     &bank,
                     banking_stage_stats,
@@ -139,20 +139,21 @@ impl VoteWorker {
                 slot_metrics_tracker
                     .increment_consume_buffered_packets_us(consume_buffered_packets_us);
             }
-            BufferedPacketsDecision::Forward => {
+            LeaderStatus::TicksUntilLeader(ticks)
+                if ticks <= HOLD_TRANSACTIONS_SLOT_OFFSET as i64 =>
+            {
+                // get current working bank from bank_forks, use it to sanitize transaction and
+                // load all accounts from address loader;
+                let current_bank = self.bank_forks.read().unwrap().working_bank();
+                self.storage.cache_epoch_boundary_info(&current_bank);
+            }
+            LeaderStatus::TicksUntilLeader(_) | LeaderStatus::WillNotBeLeader => {
                 // get current working bank from bank_forks, use it to sanitize transaction and
                 // load all accounts from address loader;
                 let current_bank = self.bank_forks.read().unwrap().working_bank();
                 self.storage.cache_epoch_boundary_info(&current_bank);
                 self.storage.clear();
             }
-            BufferedPacketsDecision::ForwardAndHold => {
-                // get current working bank from bank_forks, use it to sanitize transaction and
-                // load all accounts from address loader;
-                let current_bank = self.bank_forks.read().unwrap().working_bank();
-                self.storage.cache_epoch_boundary_info(&current_bank);
-            }
-            BufferedPacketsDecision::Hold => {}
         }
     }
 

@@ -25,7 +25,7 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator
         sender,
         mut container,
         mut receive_and_buffer,
-        decision,
+        status,
     }: utils::ReceiveAndBufferSetup<T> = utils::setup_receive_and_buffer(
         num_txs,
         num_instructions_per_tx,
@@ -58,7 +58,7 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator
                         &mut container,
                         &mut timing_metrics,
                         &mut count_metrics,
-                        &decision,
+                        &status,
                     );
                     assert!(res.unwrap() == num_txs && !container.is_empty());
                     black_box(&container);

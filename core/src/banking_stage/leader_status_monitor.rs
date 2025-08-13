@@ -1,8 +1,5 @@
 use {
-    solana_clock::{
-        DEFAULT_TICKS_PER_SLOT, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
-        HOLD_TRANSACTIONS_SLOT_OFFSET,
-    },
+    solana_clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
     solana_poh::poh_recorder::{
         PohRecorder, SharedLeaderFirstTickHeight, SharedTickHeight, SharedWorkingBank,
     },
@@ -14,19 +11,25 @@ use {
     },
 };
 
+pub const HOLD_TRANSACTIONS_TICK_WINDOW: i64 =
+    HOLD_TRANSACTIONS_SLOT_OFFSET as i64 * DEFAULT_TICKS_PER_SLOT as i64;
+
 #[derive(Debug, Clone)]
-pub enum BufferedPacketsDecision {
-    Consume(Arc<Bank>),
-    Forward,
-    ForwardAndHold,
-    Hold,
+pub enum LeaderStatus {
+    /// Currently leader with the given bank.
+    Active(Arc<Bank>),
+    /// The number of ticks until the next leader slot.
+    /// This may be negative if the leader tick is in the past, but we do not
+    /// have a bank ready yet.
+    TicksUntilLeader(i64),
+    WillNotBeLeader,
 }
 
-impl BufferedPacketsDecision {
-    /// Returns the `Bank` if the decision is `Consume`. Otherwise, returns `None`.
+impl LeaderStatus {
+    /// Returns the `Bank` if the status is `Active`. Otherwise, returns `None`.
     pub fn bank(&self) -> Option<&Arc<Bank>> {
         match self {
-            Self::Consume(bank) => Some(bank),
+            Self::Active(bank) => Some(bank),
             _ => None,
         }
     }
@@ -65,25 +68,17 @@ impl LeaderStatusMonitor {
         }
     }
 
-    pub(crate) fn status(&self) -> BufferedPacketsDecision {
-        // Check if there is an active working bank.
+    pub(crate) fn status(&self) -> LeaderStatus {
         if let Some(bank) = self.shared_working_bank.load() {
-            BufferedPacketsDecision::Consume(bank)
+            LeaderStatus::Active(bank)
         } else if let Some(first_leader_tick_height) = self.shared_leader_first_tick_height.load() {
             let current_tick_height = self.shared_tick_height.load();
-            let ticks_until_leader = first_leader_tick_height.saturating_sub(current_tick_height);
-
-            if ticks_until_leader
-                <= (FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET - 1) * DEFAULT_TICKS_PER_SLOT
-            {
-                BufferedPacketsDecision::Hold
-            } else if ticks_until_leader < HOLD_TRANSACTIONS_SLOT_OFFSET * DEFAULT_TICKS_PER_SLOT {
-                BufferedPacketsDecision::ForwardAndHold
-            } else {
-                BufferedPacketsDecision::Forward
-            }
+            // SAFETY: A tick height overflowing i64 would be so far in the future that
+            //         it can be reasonably assumed to never happen.
+            let ticks_until_leader = first_leader_tick_height as i64 - current_tick_height as i64;
+            LeaderStatus::TicksUntilLeader(ticks_until_leader)
         } else {
-            BufferedPacketsDecision::Forward
+            LeaderStatus::WillNotBeLeader
         }
     }
 }
@@ -120,13 +115,18 @@ impl BankingStageMonitor for LeaderStatusMonitorWrapper {
     fn status(&mut self) -> BankingStageStatus {
         if self.is_exited.load(Relaxed) {
             BankingStageStatus::Exited
-        } else if matches!(
-            self.leader_status_monitor.status(),
-            BufferedPacketsDecision::Forward,
-        ) {
-            BankingStageStatus::Inactive
         } else {
-            BankingStageStatus::Active
+            match self.leader_status_monitor.status() {
+                LeaderStatus::Active(_) => BankingStageStatus::Active,
+                LeaderStatus::TicksUntilLeader(ticks) => {
+                    if ticks <= HOLD_TRANSACTIONS_SLOT_OFFSET as i64 {
+                        BankingStageStatus::Active
+                    } else {
+                        BankingStageStatus::Inactive
+                    }
+                }
+                LeaderStatus::WillNotBeLeader => BankingStageStatus::Inactive,
+            }
         }
     }
 }
@@ -138,12 +138,11 @@ mod tests {
     };
 
     #[test]
-    fn test_buffered_packet_decision_bank() {
+    fn test_leader_status_bank() {
         let bank = Arc::new(Bank::default_for_tests());
-        assert!(BufferedPacketsDecision::Consume(bank).bank().is_some());
-        assert!(BufferedPacketsDecision::Forward.bank().is_none());
-        assert!(BufferedPacketsDecision::ForwardAndHold.bank().is_none());
-        assert!(BufferedPacketsDecision::Hold.bank().is_none());
+        assert!(LeaderStatus::Active(bank).bank().is_some());
+        assert!(LeaderStatus::TicksUntilLeader(1).bank().is_none());
+        assert!(LeaderStatus::WillNotBeLeader.bank().is_none());
     }
 
     #[test]
@@ -164,48 +163,25 @@ mod tests {
         // No active bank, no leader first tick height.
         assert_matches!(
             leader_status_monitor.status(),
-            BufferedPacketsDecision::Forward
+            LeaderStatus::WillNotBeLeader
         );
 
         // Active bank.
         shared_working_bank.store(bank.clone());
-        assert_matches!(
-            leader_status_monitor.status(),
-            BufferedPacketsDecision::Consume(_)
-        );
+        assert_matches!(leader_status_monitor.status(), LeaderStatus::Active(_));
         shared_working_bank.clear();
 
-        // Will be leader shortly - Hold
-        for next_leader_slot_offset in [0, 1].into_iter() {
+        // Known ticks until leader.
+        for next_leader_slot_offset in [0, 1, 2, 19].into_iter() {
             let next_leader_slot = bank.slot() + next_leader_slot_offset;
             shared_leader_first_tick_height.store(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
 
             let decision = leader_status_monitor.status();
-            assert!(
-                matches!(decision, BufferedPacketsDecision::Hold),
-                "next_leader_slot_offset: {next_leader_slot_offset}",
-            );
+            let expected_ticks = next_leader_slot_offset as i64 * DEFAULT_TICKS_PER_SLOT as i64;
+            let LeaderStatus::TicksUntilLeader(ticks) = decision else {
+                panic!("expected ticks until leader")
+            };
+            assert_eq!(ticks, expected_ticks);
         }
-
-        // Will be leader - ForwardAndHold
-        for next_leader_slot_offset in [2, 19].into_iter() {
-            let next_leader_slot = bank.slot() + next_leader_slot_offset;
-            shared_leader_first_tick_height.store(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
-
-            let decision = leader_status_monitor.status();
-            assert!(
-                matches!(decision, BufferedPacketsDecision::ForwardAndHold),
-                "next_leader_slot_offset: {next_leader_slot_offset}",
-            );
-        }
-
-        // Longer period until next leader - Forward
-        let next_leader_slot = 20 + bank.slot();
-        shared_leader_first_tick_height.store(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
-        let decision = leader_status_monitor.status();
-        assert!(
-            matches!(decision, BufferedPacketsDecision::Forward),
-            "next_leader_slot: {next_leader_slot}",
-        );
     }
 }
