@@ -751,7 +751,7 @@ pub fn execute(
             info!("OS network limits test passed.");
         } else {
             Err("OS network limit test failed. See \
-                https://docs.solanalabs.com/operations/guides/validator-start#system-tuning"
+                https://docs.anza.xyz/operations/guides/validator-start#system-tuning"
                 .to_string())?;
         }
     }
