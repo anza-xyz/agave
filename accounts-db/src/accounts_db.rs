@@ -298,7 +298,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalTest,
     mark_obsolete_accounts: false,
-    num_clean_threads: None,
+    num_background_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
 };
@@ -320,7 +320,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
     mark_obsolete_accounts: false,
-    num_clean_threads: None,
+    num_background_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
 };
@@ -443,11 +443,11 @@ pub struct AccountsDbConfig {
     pub storage_access: StorageAccess,
     pub scan_filter_for_shrinking: ScanFilter,
     pub mark_obsolete_accounts: bool,
-    /// Number of threads for background cleaning operations (`thread_pool_clean')
-    pub num_clean_threads: Option<NonZeroUsize>,
-    /// Number of threads for foreground operations (`thread_pool`)
+    /// Number of threads for background operations (`thread_pool_background')
+    pub num_background_threads: Option<NonZeroUsize>,
+    /// Number of threads for foreground operations (`thread_pool_foreground`)
     pub num_foreground_threads: Option<NonZeroUsize>,
-    /// Number of threads for background accounts hashing (`thread_pool_hash`)
+    /// Number of threads for background accounts hashing
     pub num_hash_threads: Option<NonZeroUsize>,
 }
 
@@ -1275,10 +1275,10 @@ pub struct AccountsDb {
     /// Starting file size of appendvecs
     file_size: u64,
 
-    /// Foreground thread pool used for par_iter
-    pub thread_pool: ThreadPool,
-    /// Thread pool for AccountsBackgroundServices
-    pub thread_pool_clean: ThreadPool,
+    /// Thread pool for foreground tasks, e.g. transaction processing
+    pub thread_pool_foreground: ThreadPool,
+    /// Thread pool for background tasks, e.g. AccountsBackgroundService and flush/clean/shrink
+    pub thread_pool_background: ThreadPool,
     // number of threads to use for accounts hash verify at startup
     pub num_hash_threads: Option<NonZeroUsize>,
 
@@ -1371,16 +1371,6 @@ pub struct AccountsDb {
 
 pub fn quarter_thread_count() -> usize {
     std::cmp::max(2, num_cpus::get() / 4)
-}
-
-pub fn make_min_priority_thread_pool() -> ThreadPool {
-    // Use lower thread count to reduce priority.
-    let num_threads = quarter_thread_count();
-    rayon::ThreadPoolBuilder::new()
-        .thread_name(|i| format!("solAccountsLo{i:02}"))
-        .num_threads(num_threads)
-        .build()
-        .unwrap()
 }
 
 /// Returns the default number of threads to use for background accounts hashing
@@ -1498,20 +1488,20 @@ impl AccountsDb {
             .num_foreground_threads
             .map(Into::into)
             .unwrap_or_else(default_num_foreground_threads);
-        let thread_pool = rayon::ThreadPoolBuilder::new()
+        let thread_pool_foreground = rayon::ThreadPoolBuilder::new()
             .num_threads(num_foreground_threads)
-            .thread_name(|i| format!("solAccounts{i:02}"))
+            .thread_name(|i| format!("solAcctsDbFg{i:02}"))
             .stack_size(ACCOUNTS_STACK_SIZE)
             .build()
             .expect("new rayon threadpool");
 
-        let num_clean_threads = accounts_db_config
-            .num_clean_threads
+        let num_background_threads = accounts_db_config
+            .num_background_threads
             .map(Into::into)
             .unwrap_or_else(quarter_thread_count);
-        let thread_pool_clean = rayon::ThreadPoolBuilder::new()
-            .thread_name(|i| format!("solAccountsLo{i:02}"))
-            .num_threads(num_clean_threads)
+        let thread_pool_background = rayon::ThreadPoolBuilder::new()
+            .thread_name(|i| format!("solAcctsDbBg{i:02}"))
+            .num_threads(num_background_threads)
             .build()
             .expect("new rayon threadpool");
 
@@ -1545,8 +1535,8 @@ impl AccountsDb {
             exhaustively_verify_refcounts: accounts_db_config.exhaustively_verify_refcounts,
             storage_access: accounts_db_config.storage_access,
             scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
-            thread_pool,
-            thread_pool_clean,
+            thread_pool_foreground,
+            thread_pool_background,
             num_hash_threads: accounts_db_config.num_hash_threads,
             verify_accounts_hash_in_bg: VerifyAccountsHashInBackground::default(),
             active_stats: ActiveStats::default(),
@@ -2020,7 +2010,7 @@ impl AccountsDb {
             // Free to consume all the cores during startup
             dirty_store_routine();
         } else {
-            self.thread_pool_clean.install(|| {
+            self.thread_pool_background.install(|| {
                 dirty_store_routine();
             });
         }
@@ -2188,8 +2178,8 @@ impl AccountsDb {
             if is_startup {
                 self.exhaustively_verify_refcounts(max_clean_root_inclusive);
             } else {
-                // otherwise, use the cleaning thread pool
-                self.thread_pool_clean
+                // otherwise, use the background thread pool
+                self.thread_pool_background
                     .install(|| self.exhaustively_verify_refcounts(max_clean_root_inclusive));
             }
         }
@@ -2341,7 +2331,7 @@ impl AccountsDb {
         if is_startup {
             do_clean_scan();
         } else {
-            self.thread_pool_clean.install(do_clean_scan);
+            self.thread_pool_background.install(do_clean_scan);
         }
         accounts_scan.stop();
         drop(active_guard);
@@ -3055,7 +3045,7 @@ impl AccountsDb {
             .num_duplicated_accounts
             .fetch_add(*num_duplicated_accounts as u64, Ordering::Relaxed);
         let all_are_zero_lamports_collect = Mutex::new(true);
-        self.thread_pool_clean.install(|| {
+        self.thread_pool_background.install(|| {
             stored_accounts
                 .par_chunks(SHRINK_COLLECT_CHUNK_SIZE)
                 .for_each(|stored_accounts| {
@@ -3769,7 +3759,7 @@ impl AccountsDb {
 
         let num_selected = shrink_slots.len();
         let (_, shrink_all_us) = measure_us!({
-            self.thread_pool_clean.install(|| {
+            self.thread_pool_background.install(|| {
                 shrink_slots
                     .into_par_iter()
                     .for_each(|(slot, slot_shrink_candidate)| {
@@ -4006,7 +3996,7 @@ impl AccountsDb {
             // If we see the slot in the cache, then all the account information
             // is in this cached slot
             if slot_cache.len() > SCAN_SLOT_PAR_ITER_THRESHOLD {
-                ScanStorageResult::Cached(self.thread_pool.install(|| {
+                ScanStorageResult::Cached(self.thread_pool_foreground.install(|| {
                     slot_cache
                         .par_iter()
                         .filter_map(|cached_account| {
@@ -5926,7 +5916,7 @@ impl AccountsDb {
         pubkeys_removed_from_accounts_index: &'a PubkeysRemovedFromAccountsIndex,
     ) {
         let batches = 1 + (num_pubkeys / UNREF_ACCOUNTS_BATCH_SIZE);
-        self.thread_pool_clean.install(|| {
+        self.thread_pool_background.install(|| {
             (0..batches).into_par_iter().for_each(|batch| {
                 let skip = batch * UNREF_ACCOUNTS_BATCH_SIZE;
                 self.accounts_index.scan(
@@ -6042,7 +6032,7 @@ impl AccountsDb {
         }
         // get all pubkeys in all dead slots
         let purged_slot_pubkeys: HashSet<(Slot, Pubkey)> = {
-            self.thread_pool_clean.install(|| {
+            self.thread_pool_background.install(|| {
                 stores
                     .into_par_iter()
                     .map(|store| {
@@ -6130,7 +6120,7 @@ impl AccountsDb {
             &accounts,
             UpsertReclaim::PreviousSlotEntryWasCached,
             update_index_thread_selection,
-            &self.thread_pool,
+            &self.thread_pool_foreground,
         );
 
         update_index_time.stop();
@@ -6205,7 +6195,7 @@ impl AccountsDb {
             &accounts,
             reclaim_handling,
             update_index_thread_selection,
-            &self.thread_pool_clean,
+            &self.thread_pool_background,
         );
 
         update_index_time.stop();

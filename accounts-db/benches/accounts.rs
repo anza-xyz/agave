@@ -234,7 +234,7 @@ fn bench_dashmap_par_iter(bencher: &mut Bencher) {
     let (accounts, dashmap) = setup_bench_dashmap_iter();
 
     bencher.iter(|| {
-        test::black_box(accounts.accounts_db.thread_pool.install(|| {
+        test::black_box(accounts.accounts_db.thread_pool_foreground.install(|| {
             dashmap
                 .par_iter()
                 .map(|cached_account| (*cached_account.key(), cached_account.value().1))
