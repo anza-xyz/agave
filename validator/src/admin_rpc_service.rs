@@ -221,8 +221,8 @@ pub trait AdminRpc {
     #[rpc(meta, name = "contactInfo")]
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo>;
 
-    #[rpc(meta, name = "selectPrimaryInterface")]
-    fn select_primary_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()>;
+    #[rpc(meta, name = "selectActiveInterface")]
+    fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()>;
 
     #[rpc(meta, name = "repairShredFromPeer")]
     fn repair_shred_from_peer(
@@ -547,14 +547,14 @@ impl AdminRpc for AdminRpcImpl {
         meta.with_post_init(|post_init| Ok(post_init.cluster_info.my_contact_info().into()))
     }
 
-    fn select_primary_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()> {
-        debug!("select_primary_interface received: {}", interface);
+    fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()> {
+        debug!("select_active_interface received: {}", interface);
         meta.with_post_init(|post_init| {
             let node = post_init.node.as_ref().ok_or_else(|| {
                 jsonrpc_core::Error::invalid_params("`Node` not initialized in post_init")
             })?;
 
-            node.switch_primary_interface(interface, &post_init.cluster_info)
+            node.switch_active_interface(interface, &post_init.cluster_info)
                 .map_err(|e| {
                     jsonrpc_core::Error::invalid_params(format!(
                         "Switching failed due to error {}",

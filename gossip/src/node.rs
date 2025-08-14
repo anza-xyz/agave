@@ -321,7 +321,7 @@ mod multihoming {
     }
 
     impl NodeMultihoming {
-        pub fn switch_primary_interface(
+        pub fn switch_active_interface(
             &self,
             interface: IpAddr,
             cluster_info: &ClusterInfo,
