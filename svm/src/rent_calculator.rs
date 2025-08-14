@@ -48,10 +48,6 @@ pub fn check_rent_state(
             transaction_context
                 .get_key_of_account_at_index(index)
                 .expect(expect_msg),
-            &transaction_context
-                .accounts()
-                .try_borrow(index)
-                .expect(expect_msg),
             index,
         )?;
     }
@@ -67,7 +63,6 @@ pub fn check_rent_state_with_account(
     pre_rent_state: &RentState,
     post_rent_state: &RentState,
     address: &Pubkey,
-    _account_state: &AccountSharedData,
     account_index: IndexOfAccount,
 ) -> TransactionResult<()> {
     if !solana_sdk_ids::incinerator::check_id(address)
