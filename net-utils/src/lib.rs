@@ -241,7 +241,7 @@ pub fn is_host_port(string: String) -> Result<(), String> {
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please use the equivalent struct from solana-net-utils::sockets"
 )]
 #[derive(Clone, Copy, Debug, Default)]
@@ -282,7 +282,7 @@ impl SocketConfig {
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please use the equivalent from solana-net-utils::sockets"
 )]
 #[allow(deprecated)]
@@ -309,7 +309,7 @@ pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpS
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please use the equivalent from solana-net-utils::sockets"
 )]
 #[allow(deprecated)]
@@ -335,7 +335,7 @@ pub fn bind_in_range_with_config(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please use the equivalent from solana-net-utils::sockets"
 )]
 #[allow(deprecated)]
@@ -353,7 +353,7 @@ pub fn bind_with_any_port_with_config(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please use the equivalent from solana-net-utils::sockets"
 )]
 #[allow(deprecated)]
@@ -378,7 +378,7 @@ pub fn multi_bind_in_range_with_config(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please use the eqiuvalent from solana-net-utils::sockets"
 )]
 #[allow(deprecated)]
@@ -401,7 +401,7 @@ pub fn bind_to_unspecified() -> io::Result<UdpSocket> {
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function in favor of sockets::bind_to_with_config"
 )]
 #[allow(deprecated)]
@@ -416,7 +416,7 @@ pub fn bind_to_with_config(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function, it is easy to misuse"
 )]
 #[allow(deprecated)]
@@ -435,7 +435,7 @@ pub fn bind_to_with_config_non_blocking(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function in favor of sockets::bind_common_with_config"
 )]
 /// binds both a UdpSocket and a TcpListener
@@ -445,7 +445,7 @@ pub fn bind_common(ip_addr: IpAddr, port: u16) -> io::Result<(UdpSocket, TcpList
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function in favor of sockets::bind_common_with_config"
 )]
 #[allow(deprecated)]
@@ -464,7 +464,7 @@ pub fn bind_common_with_config(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function, in favor of \
             sockets::bind_two_in_range_with_offset_and_config"
 )]
@@ -485,7 +485,7 @@ pub fn bind_two_in_range_with_offset(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function, in favor of \
             sockets::bind_two_in_range_with_offset_and_config"
 )]
@@ -573,7 +573,7 @@ pub fn find_available_ports_in_range<const N: usize>(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function, in favor of sockets::bind_more_with_config"
 )]
 #[allow(deprecated)]
