@@ -745,7 +745,7 @@ impl InstructionContext {
         &'a self,
         transaction_context: &'b TransactionContext,
         index_in_transaction: IndexOfAccount,
-        index_in_instruction: Option<IndexOfAccount>,
+        index_in_instruction: IndexOfAccount,
     ) -> Result<BorrowedAccount<'a>, InstructionError> {
         let account = transaction_context
             .accounts
@@ -770,7 +770,7 @@ impl InstructionContext {
         self.try_borrow_account(
             transaction_context,
             index_in_transaction,
-            Some(instruction_account_index),
+            instruction_account_index,
         )
     }
 
@@ -836,7 +836,7 @@ pub struct BorrowedAccount<'a> {
     instruction_context: &'a InstructionContext,
     index_in_transaction: IndexOfAccount,
     // Program accounts are not part of the instruction_accounts vector, and thus None
-    index_in_instruction_accounts: Option<IndexOfAccount>,
+    index_in_instruction_accounts: IndexOfAccount,
     account: RefMut<'a, AccountSharedData>,
 }
 
@@ -1107,24 +1107,16 @@ impl BorrowedAccount<'_> {
 
     /// Returns whether this account is a signer (instruction wide)
     pub fn is_signer(&self) -> bool {
-        if let Some(index_in_instruction_accounts) = self.index_in_instruction_accounts {
-            self.instruction_context
-                .is_instruction_account_signer(index_in_instruction_accounts)
-                .unwrap_or_default()
-        } else {
-            false
-        }
+        self.instruction_context
+            .is_instruction_account_signer(self.index_in_instruction_accounts)
+            .unwrap_or_default()
     }
 
     /// Returns whether this account is writable (instruction wide)
     pub fn is_writable(&self) -> bool {
-        if let Some(index_in_instruction_accounts) = self.index_in_instruction_accounts {
-            self.instruction_context
-                .is_instruction_account_writable(index_in_instruction_accounts)
-                .unwrap_or_default()
-        } else {
-            false
-        }
+        self.instruction_context
+            .is_instruction_account_writable(self.index_in_instruction_accounts)
+            .unwrap_or_default()
     }
 
     /// Returns true if the owner of this account is the current `InstructionContext`s last program (instruction wide)
