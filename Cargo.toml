@@ -438,7 +438,7 @@ solana-genesis-utils = { path = "genesis-utils", version = "=3.0.0" }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=3.0.0" }
 solana-gossip = { path = "gossip", version = "=3.0.0" }
 solana-hard-forks = "2.2.1"
-solana-hash = "2.3.0"
+solana-hash = "3.0.0"
 solana-inflation = "2.2.1"
 solana-instruction = "2.3.0"
 solana-instructions-sysvar = "2.2.2"
