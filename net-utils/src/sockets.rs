@@ -126,18 +126,6 @@ impl SocketConfiguration {
     }
 }
 
-#[allow(deprecated)]
-impl From<crate::SocketConfig> for SocketConfiguration {
-    fn from(value: crate::SocketConfig) -> Self {
-        Self {
-            reuseport: value.reuseport,
-            recv_buffer_size: value.recv_buffer_size,
-            send_buffer_size: value.send_buffer_size,
-            non_blocking: false,
-        }
-    }
-}
-
 #[cfg(any(windows, target_os = "ios"))]
 fn set_reuse_port<T>(_socket: &T) -> io::Result<()> {
     Ok(())
