@@ -202,6 +202,22 @@ mod test {
             get_builtin_migration_feature_index(&compute_budget::id()),
             BuiltinMigrationFeatureIndex::BuiltinNoMigrationFeature,
         ));
+        for (program_id, migrating_builtin) in MIGRATING_BUILTINS_COSTS {
+            let feature_index = get_builtin_migration_feature_index(program_id);
+            assert!(matches!(
+                feature_index,
+                BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(_)
+            ));
+            let BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(feature_index) =
+                feature_index
+            else {
+                panic!("expect migrating builtin")
+            };
+            assert_eq!(
+                get_migration_feature_id(feature_index),
+                migrating_builtin.core_bpf_migration_feature().unwrap(),
+            );
+        }
     }
 
     #[test]
