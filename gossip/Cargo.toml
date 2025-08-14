@@ -36,8 +36,8 @@ frozen-abi = [
 agave-unstable-api = ["solana-low-pass-filter/agave-unstable-api"]
 
 [dependencies]
-anyhow = { workspace = true }
 agave-feature-set = { workspace = true }
+anyhow = { workspace = true }
 arrayvec = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
