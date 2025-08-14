@@ -381,11 +381,11 @@ pub(crate) fn process_instruction_inner(
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let program_account = instruction_context.try_borrow_program_account(transaction_context)?;
+    let program_id = instruction_context.get_program_key(transaction_context)?;
+    let owner_id = instruction_context.get_program_owner(transaction_context)?;
 
     // Program Management Instruction
-    if native_loader::check_id(program_account.get_owner()) {
-        drop(program_account);
+    if native_loader::check_id(&owner_id) {
         let program_id = instruction_context.get_program_key(transaction_context)?;
         return if bpf_loader_upgradeable::check_id(program_id) {
             invoke_context.consume_checked(UPGRADEABLE_LOADER_COMPUTE_UNITS)?;
@@ -413,12 +413,11 @@ pub(crate) fn process_instruction_inner(
     let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
     let executor = invoke_context
         .program_cache_for_tx_batch
-        .find(program_account.get_key())
+        .find(program_id)
         .ok_or_else(|| {
             ic_logger_msg!(log_collector, "Program is not cached");
             InstructionError::UnsupportedProgramId
         })?;
-    drop(program_account);
     get_or_create_executor_time.stop();
     invoke_context.timings.get_or_create_executor_us += get_or_create_executor_time.as_us();
 
@@ -1527,14 +1526,9 @@ fn execute<'a, 'b: 'a>(
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let (program_id, is_loader_deprecated) = {
-        let program_account =
-            instruction_context.try_borrow_program_account(transaction_context)?;
-        (
-            *program_account.get_key(),
-            *program_account.get_owner() == bpf_loader_deprecated::id(),
-        )
-    };
+    let program_id = *instruction_context.get_program_key(transaction_context)?;
+    let is_loader_deprecated =
+        instruction_context.get_program_owner(transaction_context)? == bpf_loader_deprecated::id();
     #[cfg(any(target_os = "windows", not(target_arch = "x86_64")))]
     let use_jit = false;
     #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]

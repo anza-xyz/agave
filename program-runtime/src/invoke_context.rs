@@ -538,18 +538,15 @@ impl<'a> InvokeContext<'a> {
         let process_executable_chain_time = Measure::start("process_executable_chain_time");
 
         let builtin_id = {
-            let borrowed_root_account = instruction_context
-                .try_borrow_program_account(self.transaction_context)
-                .map_err(|_| InstructionError::UnsupportedProgramId)?;
-            let owner_id = borrowed_root_account.get_owner();
-            if native_loader::check_id(owner_id) {
-                *borrowed_root_account.get_key()
-            } else if bpf_loader_deprecated::check_id(owner_id)
-                || bpf_loader::check_id(owner_id)
-                || bpf_loader_upgradeable::check_id(owner_id)
-                || loader_v4::check_id(owner_id)
+            let owner_id = instruction_context.get_program_owner(self.transaction_context)?;
+            if native_loader::check_id(&owner_id) {
+                *instruction_context.get_program_key(self.transaction_context)?
+            } else if bpf_loader_deprecated::check_id(&owner_id)
+                || bpf_loader::check_id(&owner_id)
+                || bpf_loader_upgradeable::check_id(&owner_id)
+                || loader_v4::check_id(&owner_id)
             {
-                *owner_id
+                owner_id
             } else {
                 return Err(InstructionError::UnsupportedProgramId);
             }
@@ -709,12 +706,11 @@ impl<'a> InvokeContext<'a> {
         self.transaction_context
             .get_current_instruction_context()
             .and_then(|instruction_context| {
-                let program_account =
-                    instruction_context.try_borrow_program_account(self.transaction_context);
-                debug_assert!(program_account.is_ok());
-                program_account
+                let owner_id = instruction_context.get_program_owner(self.transaction_context);
+                debug_assert!(owner_id.is_ok());
+                owner_id
             })
-            .map(|program_account| *program_account.get_owner() != bpf_loader_deprecated::id())
+            .map(|owner_key| owner_key != bpf_loader_deprecated::id())
             .unwrap_or(true)
     }
 
