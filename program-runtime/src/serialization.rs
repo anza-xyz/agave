@@ -1605,7 +1605,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(
-            transaction_context.accounts_resize_delta().unwrap(),
+            transaction_context.accounts_resize_delta(),
             MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
                 - remaining_allowed_growth as i64,
         );

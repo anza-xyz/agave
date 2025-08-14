@@ -13,7 +13,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
     std::{
-        cell::{Ref, RefCell, RefMut},
+        cell::{Cell, Ref, RefCell, RefMut},
         collections::HashSet,
         pin::Pin,
         rc::Rc,
@@ -110,8 +110,8 @@ pub type TransactionAccount = (Pubkey, AccountSharedData);
 pub struct TransactionAccounts {
     accounts: Vec<RefCell<AccountSharedData>>,
     touched_flags: RefCell<Box<[bool]>>,
-    resize_delta: RefCell<i64>,
-    lamports_delta: RefCell<i128>,
+    resize_delta: Cell<i64>,
+    lamports_delta: Cell<i128>,
 }
 
 impl TransactionAccounts {
@@ -121,8 +121,8 @@ impl TransactionAccounts {
         TransactionAccounts {
             accounts,
             touched_flags: RefCell::new(touched_flags),
-            resize_delta: RefCell::new(0),
-            lamports_delta: RefCell::new(0),
+            resize_delta: Cell::new(0),
+            lamports_delta: Cell::new(0),
         }
     }
 
@@ -145,12 +145,10 @@ impl TransactionAccounts {
         old_len: usize,
         new_len: usize,
     ) -> Result<(), InstructionError> {
-        let mut accounts_resize_delta = self
-            .resize_delta
-            .try_borrow_mut()
-            .map_err(|_| InstructionError::GenericError)?;
-        *accounts_resize_delta =
-            accounts_resize_delta.saturating_add((new_len as i64).saturating_sub(old_len as i64));
+        let accounts_resize_delta = self.resize_delta.get();
+        self.resize_delta.set(
+            accounts_resize_delta.saturating_add((new_len as i64).saturating_sub(old_len as i64)),
+        );
         Ok(())
     }
 
@@ -161,12 +159,7 @@ impl TransactionAccounts {
         }
         // The resize can not exceed the per-transaction maximum
         let length_delta = (new_len as i64).saturating_sub(old_len as i64);
-        if self
-            .resize_delta
-            .try_borrow()
-            .map_err(|_| InstructionError::GenericError)
-            .map(|value_ref| *value_ref)?
-            .saturating_add(length_delta)
+        if self.resize_delta.get().saturating_add(length_delta)
             > MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION
         {
             return Err(InstructionError::MaxAccountsDataAllocationsExceeded);
@@ -198,15 +191,17 @@ impl TransactionAccounts {
     }
 
     fn add_lamports_delta(&self, balance: i128) -> Result<(), InstructionError> {
-        let mut delta = self.lamports_delta.borrow_mut();
-        *delta = delta
-            .checked_add(balance)
-            .ok_or(InstructionError::ArithmeticOverflow)?;
+        let delta = self.lamports_delta.get();
+        self.lamports_delta.set(
+            delta
+                .checked_add(balance)
+                .ok_or(InstructionError::ArithmeticOverflow)?,
+        );
         Ok(())
     }
 
     fn get_lamports_delta(&self) -> i128 {
-        *self.lamports_delta.borrow()
+        self.lamports_delta.get()
     }
 }
 
@@ -496,12 +491,8 @@ impl TransactionContext {
     }
 
     /// Returns the accounts resize delta
-    pub fn accounts_resize_delta(&self) -> Result<i64, InstructionError> {
-        self.accounts
-            .resize_delta
-            .try_borrow()
-            .map_err(|_| InstructionError::GenericError)
-            .map(|value_ref| *value_ref)
+    pub fn accounts_resize_delta(&self) -> i64 {
+        self.accounts.resize_delta.get()
     }
 
     /// Returns a new account data write access handler
@@ -542,16 +533,11 @@ impl TransactionContext {
                     debug_assert!(false);
                     return;
                 }
-                let Ok(remaining_allowed_growth) =
-                    accounts.resize_delta.try_borrow().map(|resize_delta| {
-                        MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION
-                            .saturating_sub(*resize_delta)
-                            .max(0) as usize
-                    })
-                else {
-                    debug_assert!(false);
-                    return;
-                };
+
+                let remaining_allowed_growth =
+                    MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION
+                        .saturating_sub(accounts.resize_delta.get())
+                        .max(0) as usize;
 
                 if requested_length > region.len as usize {
                     // Realloc immediately here to fit the requested access,
@@ -1204,7 +1190,7 @@ impl From<TransactionContext> for ExecutionRecord {
             accounts,
             return_data: context.return_data,
             touched_account_count,
-            accounts_resize_delta: RefCell::into_inner(resize_delta),
+            accounts_resize_delta: Cell::into_inner(resize_delta),
         }
     }
 }
