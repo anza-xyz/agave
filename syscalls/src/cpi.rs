@@ -411,16 +411,14 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         )?
         .to_vec();
 
-        check_instruction_size(account_metas.len(), data.len(), invoke_context)?;
+        check_instruction_size(account_metas.len(), data.len())?;
 
-        if invoke_context.get_feature_set().loosen_cpi_size_restriction {
-            consume_compute_meter(
-                invoke_context,
-                (data.len() as u64)
-                    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                    .unwrap_or(u64::MAX),
-            )?;
-        }
+        consume_compute_meter(
+            invoke_context,
+            (data.len() as u64)
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX),
+        )?;
 
         let mut accounts = Vec::with_capacity(account_metas.len());
         #[allow(clippy::needless_range_loop)]
@@ -612,16 +610,14 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
             translate_slice::<u8>(memory_mapping, ix_c.data_addr, ix_c.data_len, check_aligned)?
                 .to_vec();
 
-        check_instruction_size(ix_c.accounts_len as usize, data.len(), invoke_context)?;
+        check_instruction_size(ix_c.accounts_len as usize, data.len())?;
 
-        if invoke_context.get_feature_set().loosen_cpi_size_restriction {
-            consume_compute_meter(
-                invoke_context,
-                (data.len() as u64)
-                    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                    .unwrap_or(u64::MAX),
-            )?;
-        }
+        consume_compute_meter(
+            invoke_context,
+            (data.len() as u64)
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX),
+        )?;
 
         let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
         #[allow(clippy::needless_range_loop)]
@@ -903,38 +899,25 @@ where
     Ok(accounts)
 }
 
-fn check_instruction_size(
-    num_accounts: usize,
-    data_len: usize,
-    invoke_context: &mut InvokeContext,
-) -> Result<(), Error> {
-    if invoke_context.get_feature_set().loosen_cpi_size_restriction {
-        let data_len = data_len as u64;
-        let max_data_len = MAX_CPI_INSTRUCTION_DATA_LEN;
-        if data_len > max_data_len {
-            return Err(Box::new(SyscallError::MaxInstructionDataLenExceeded {
-                data_len,
-                max_data_len,
-            }));
-        }
-
-        let num_accounts = num_accounts as u64;
-        let max_accounts = MAX_CPI_INSTRUCTION_ACCOUNTS as u64;
-        if num_accounts > max_accounts {
-            return Err(Box::new(SyscallError::MaxInstructionAccountsExceeded {
-                num_accounts,
-                max_accounts,
-            }));
-        }
-    } else {
-        let max_size = invoke_context.get_compute_budget().max_cpi_instruction_size;
-        let size = num_accounts
-            .saturating_mul(size_of::<AccountMeta>())
-            .saturating_add(data_len);
-        if size > max_size {
-            return Err(Box::new(SyscallError::InstructionTooLarge(size, max_size)));
-        }
+fn check_instruction_size(num_accounts: usize, data_len: usize) -> Result<(), Error> {
+    let data_len = data_len as u64;
+    let max_data_len = MAX_CPI_INSTRUCTION_DATA_LEN;
+    if data_len > max_data_len {
+        return Err(Box::new(SyscallError::MaxInstructionDataLenExceeded {
+            data_len,
+            max_data_len,
+        }));
     }
+
+    let num_accounts = num_accounts as u64;
+    let max_accounts = MAX_CPI_INSTRUCTION_ACCOUNTS as u64;
+    if num_accounts > max_accounts {
+        return Err(Box::new(SyscallError::MaxInstructionAccountsExceeded {
+            num_accounts,
+            max_accounts,
+        }));
+    }
+
     Ok(())
 }
 
@@ -942,31 +925,21 @@ fn check_account_infos(
     num_account_infos: usize,
     invoke_context: &mut InvokeContext,
 ) -> Result<(), Error> {
-    if invoke_context.get_feature_set().loosen_cpi_size_restriction {
-        let max_cpi_account_infos = if invoke_context
-            .get_feature_set()
-            .increase_tx_account_lock_limit
-        {
-            MAX_CPI_ACCOUNT_INFOS
-        } else {
-            64
-        };
-        let num_account_infos = num_account_infos as u64;
-        let max_account_infos = max_cpi_account_infos as u64;
-        if num_account_infos > max_account_infos {
-            return Err(Box::new(SyscallError::MaxInstructionAccountInfosExceeded {
-                num_account_infos,
-                max_account_infos,
-            }));
-        }
+    let max_cpi_account_infos = if invoke_context
+        .get_feature_set()
+        .increase_tx_account_lock_limit
+    {
+        MAX_CPI_ACCOUNT_INFOS
     } else {
-        let adjusted_len = num_account_infos.saturating_mul(size_of::<Pubkey>());
-
-        if adjusted_len > invoke_context.get_compute_budget().max_cpi_instruction_size {
-            // Cap the number of account_infos a caller can pass to approximate
-            // maximum that accounts that could be passed in an instruction
-            return Err(Box::new(SyscallError::TooManyAccounts));
-        };
+        64
+    };
+    let num_account_infos = num_account_infos as u64;
+    let max_account_infos = max_cpi_account_infos as u64;
+    if num_account_infos > max_account_infos {
+        return Err(Box::new(SyscallError::MaxInstructionAccountInfosExceeded {
+            num_account_infos,
+            max_account_infos,
+        }));
     }
     Ok(())
 }
