@@ -7,7 +7,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sha256_hasher::Hasher,
     solana_svm_feature_set::SVMFeatureSet,
-    std::sync::LazyLock,
+    std::{env, sync::LazyLock},
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
@@ -89,8 +89,14 @@ impl FeatureSet {
 
     /// All features enabled, useful for testing
     pub fn all_enabled() -> Self {
+        let enable_ag_testing = env::var("ALPENGLOW_TESTING").is_ok();
+        let features = if enable_ag_testing {
+            &FEATURE_NAMES
+        } else {
+            &AG_FEATURE_NAMES
+        };
         Self {
-            active: AHashMap::from_iter((*FEATURE_NAMES).keys().cloned().map(|key| (key, 0))),
+            active: AHashMap::from_iter((*features).keys().cloned().map(|key| (key, 0))),
             inactive: AHashSet::new(),
         }
     }
@@ -1124,6 +1130,12 @@ pub mod raise_account_cu_limit {
 pub mod raise_cpi_nesting_limit_to_8 {
     solana_pubkey::declare_id!("6TkHkRmP7JZy1fdM6fg5uXn76wChQBWGokHBJzrLB3mj");
 }
+
+pub static AG_FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
+    let mut map = FEATURE_NAMES.clone();
+    map.insert(alpenglow::id(), "Enable Alpenglow");
+    map
+});
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
