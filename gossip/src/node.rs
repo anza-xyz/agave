@@ -326,13 +326,19 @@ mod multihoming {
             interface: IpAddr,
             cluster_info: &ClusterInfo,
         ) -> Result<(), String> {
+            if self.bind_ip_addrs.active() == interface {
+                return Err(String::from("Specified interface already selected"));
+            }
             // check the validity of the provided address
             let Some((interface_index, &new_ip_addr)) = self
                 .bind_ip_addrs
                 .iter()
                 .find_position(|&e| *e == interface)
             else {
-                return Err(String::from("Invalid interface address provided"));
+                let addrs: &[IpAddr] = &self.bind_ip_addrs;
+                return Err(format!(
+                    "Invalid interface address provided, registered interfaces are {addrs:?}",
+                ));
             };
             // update gossip socket
             {
