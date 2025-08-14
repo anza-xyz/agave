@@ -68,7 +68,6 @@ use {
     solana_signature::Signature,
     solana_signer::Signer,
     solana_streamer::{
-        atomic_udp_socket::AtomicUdpSocket,
         packet,
         socket::SocketAddrSpace,
         streamer::{ChannelSend, PacketBatchReceiver},
@@ -215,6 +214,10 @@ impl ClusterInfo {
 
     pub fn set_bind_ip_addrs(&mut self, ip_addrs: Arc<BindIpAddrs>) {
         self.bind_ip_addrs = ip_addrs;
+    }
+
+    pub fn bind_ip_addrs(&self) -> Arc<BindIpAddrs> {
+        self.bind_ip_addrs.clone()
     }
 
     fn refresh_push_active_set(
@@ -2353,7 +2356,7 @@ impl ClusterInfo {
 
 #[derive(Debug)]
 pub struct Sockets {
-    pub gossip: AtomicUdpSocket,
+    pub gossip: Vec<Arc<UdpSocket>>,
     pub ip_echo: Option<TcpListener>,
     pub tvu: Vec<UdpSocket>,
     pub tvu_quic: UdpSocket,
@@ -2853,9 +2856,15 @@ mod tests {
     }
 
     fn check_node_sockets(node: &Node, ip: IpAddr, range: (u16, u16)) {
-        check_socket(&node.sockets.gossip.load(), ip, range);
         check_socket(&node.sockets.repair, ip, range);
         check_socket(&node.sockets.tvu_quic, ip, range);
+        let gossip_sockets: Vec<UdpSocket> = node
+            .sockets
+            .gossip
+            .iter()
+            .map(|socket| socket.try_clone().unwrap())
+            .collect();
+        check_sockets(&gossip_sockets, ip, range);
 
         check_sockets(&node.sockets.tvu, ip, range);
         check_sockets(&node.sockets.tpu, ip, range);
@@ -2907,7 +2916,15 @@ mod tests {
 
         check_node_sockets(&node, ip, port_range);
 
-        assert_eq!(node.sockets.gossip.local_addr().unwrap().port(), port);
+        let gossip_sockets: Vec<UdpSocket> = node
+            .sockets
+            .gossip
+            .iter()
+            .map(|socket| socket.try_clone().unwrap())
+            .collect();
+        for socket in gossip_sockets.iter() {
+            assert_eq!(socket.local_addr().unwrap().port(), port);
+        }
     }
 
     //test that all cluster_info objects only generate signed messages

@@ -18,7 +18,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_quic_definitions::QUIC_PORT_OFFSET,
-    solana_streamer::{atomic_udp_socket::AtomicUdpSocket, quic::DEFAULT_QUIC_ENDPOINTS},
+    solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
     solana_time_utils::timestamp,
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -112,10 +112,17 @@ impl Node {
         } = config;
         let bind_ip_addr = bind_ip_addrs.active();
 
-        let gossip_addr = SocketAddr::new(advertised_ip, gossip_port);
-        let (gossip_port, (gossip, ip_echo)) =
-            bind_gossip_port_in_range(&gossip_addr, port_range, bind_ip_addr);
-
+        let mut gossip_sockets = Vec::with_capacity(bind_ip_addrs.len());
+        let mut gossip_ports = Vec::with_capacity(bind_ip_addrs.len());
+        let mut ip_echo_sockets = Vec::with_capacity(bind_ip_addrs.len());
+        for ip in bind_ip_addrs.iter() {
+            let gossip_addr = SocketAddr::new(*ip, gossip_port);
+            let (port, (gossip, ip_echo)) =
+                bind_gossip_port_in_range(&gossip_addr, port_range, *ip);
+            gossip_sockets.push(gossip);
+            gossip_ports.push(port);
+            ip_echo_sockets.push(ip_echo);
+        }
         let socket_config = SocketConfig::default();
 
         let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
@@ -222,7 +229,7 @@ impl Node {
             0u16,        // shred_version
         );
 
-        info.set_gossip((advertised_ip, gossip_port)).unwrap();
+        info.set_gossip((advertised_ip, gossip_ports[0])).unwrap();
         info.set_tvu(UDP, (advertised_ip, tvu_port)).unwrap();
         info.set_tvu(QUIC, (advertised_ip, tvu_quic_port)).unwrap();
         info.set_tpu(public_tpu_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_port)))
@@ -262,7 +269,7 @@ impl Node {
         trace!("new ContactInfo: {info:?}");
         let sockets = Sockets {
             alpenglow: Some(alpenglow),
-            gossip: AtomicUdpSocket::new(gossip),
+            gossip: gossip_sockets.into_iter().map(Arc::new).collect(),
             tvu: tvu_sockets,
             tvu_quic,
             tpu: tpu_sockets,
@@ -274,7 +281,7 @@ impl Node {
             retransmit_sockets,
             serve_repair,
             serve_repair_quic,
-            ip_echo: Some(ip_echo),
+            ip_echo: ip_echo_sockets.into_iter().next(),
             ancestor_hashes_requests,
             ancestor_hashes_requests_quic,
             tpu_quic,
@@ -299,18 +306,16 @@ impl Node {
 mod multihoming {
     use {
         crate::{cluster_info::ClusterInfo, node::Node},
-        itertools::Itertools,
-        solana_net_utils::{multihomed_sockets::BindIpAddrs, sockets::bind_to},
-        solana_streamer::atomic_udp_socket::AtomicUdpSocket,
+        solana_net_utils::multihomed_sockets::BindIpAddrs,
         std::{
-            net::{IpAddr, SocketAddr},
+            net::{IpAddr, UdpSocket},
             sync::Arc,
         },
     };
 
     #[derive(Debug, Clone)]
     pub struct SocketsMultihomed {
-        pub gossip: AtomicUdpSocket,
+        pub gossip: Vec<Arc<UdpSocket>>,
         // add tvu, retransmit_sockets, etc below
     }
 
@@ -330,35 +335,26 @@ mod multihoming {
                 return Err(String::from("Specified interface already selected"));
             }
             // check the validity of the provided address
-            let Some((interface_index, &new_ip_addr)) = self
+            let interface_index = self
                 .bind_ip_addrs
                 .iter()
-                .find_position(|&e| *e == interface)
-            else {
-                let addrs: &[IpAddr] = &self.bind_ip_addrs;
-                return Err(format!(
-                    "Invalid interface address provided, registered interfaces are {addrs:?}",
-                ));
-            };
-            // update gossip socket
-            {
-                let current_gossip_addr = self
-                    .sockets
-                    .gossip
-                    .local_addr()
-                    .map_err(|e| e.to_string())?;
-                // create new gossip socket
-                let gossip_addr = SocketAddr::new(new_ip_addr, current_gossip_addr.port());
-                let new_gossip_socket =
-                    bind_to(gossip_addr.ip(), gossip_addr.port()).map_err(|e| e.to_string())?;
-                // Set the new gossip address in contact-info
-                cluster_info
-                    .set_gossip_socket(gossip_addr)
-                    .map_err(|e| e.to_string())?;
-                // swap in the new gossip socket
-                self.sockets.gossip.swap(new_gossip_socket);
-            }
+                .position(|&e| e == interface)
+                .ok_or_else(|| {
+                    let addrs: &[IpAddr] = &self.bind_ip_addrs;
+                    format!(
+                        "Invalid interface address provided, registered interfaces are {addrs:?}",
+                    )
+                })?;
 
+            // update gossip socket
+            let gossip_addr = self.sockets.gossip[interface_index]
+                .local_addr()
+                .map_err(|e| e.to_string())?;
+            // Set the new gossip address in contact-info
+            cluster_info
+                .set_gossip_socket(gossip_addr)
+                .map_err(|e| e.to_string())?;
+    
             // This will never fail since we have checked index validity above
             let _new_ip_addr = self
                 .bind_ip_addrs
