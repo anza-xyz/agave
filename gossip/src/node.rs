@@ -295,25 +295,73 @@ impl Node {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct SocketsMultihomed {
-    pub gossip: AtomicUdpSocket,
-    // add tvu, retransmit_sockets, etc below
-}
+#[cfg(feature = "agave-unstable-api")]
+mod multihoming {
+    use {
+        crate::{cluster_info::ClusterInfo, node::Node},
+        solana_net_utils::{multihomed_sockets::BindIpAddrs, sockets::bind_to},
+        solana_streamer::atomic_udp_socket::AtomicUdpSocket,
+        std::{
+            net::{IpAddr, SocketAddr},
+            sync::Arc,
+        },
+    };
 
-#[derive(Debug, Clone)]
-pub struct NodeMultihoming {
-    pub sockets: SocketsMultihomed,
-    pub bind_ip_addrs: Arc<BindIpAddrs>,
-}
+    #[derive(Debug, Clone)]
+    pub struct SocketsMultihomed {
+        pub gossip: AtomicUdpSocket,
+        // add tvu, retransmit_sockets, etc below
+    }
 
-impl From<&Node> for NodeMultihoming {
-    fn from(node: &Node) -> Self {
-        NodeMultihoming {
-            sockets: SocketsMultihomed {
-                gossip: node.sockets.gossip.clone(),
-            },
-            bind_ip_addrs: node.bind_ip_addrs.clone(),
+    #[derive(Debug, Clone)]
+    pub struct NodeMultihoming {
+        pub sockets: SocketsMultihomed,
+        pub bind_ip_addrs: Arc<BindIpAddrs>,
+    }
+
+    impl NodeMultihoming {
+        pub fn rebind_at_index(
+            &self,
+            interface_index: usize,
+            cluster_info: &ClusterInfo,
+        ) -> anyhow::Result<IpAddr> {
+            // check the validity of the provided index
+            let new_ip_addr = self
+                .bind_ip_addrs
+                .get(interface_index)
+                .ok_or(anyhow::anyhow!("Invalid index provided"))?;
+            // update gossip socket
+            {
+                let current_gossip_addr = self.sockets.gossip.local_addr()?;
+                // create new gossip socket
+                let gossip_addr = SocketAddr::new(*new_ip_addr, current_gossip_addr.port());
+                let new_gossip_socket = bind_to(gossip_addr.ip(), gossip_addr.port())?;
+                // Set the new gossip address in contact-info
+                cluster_info.set_gossip_socket(gossip_addr)?;
+                // swap in the new gossip socket
+                self.sockets.gossip.swap(new_gossip_socket);
+            }
+
+            // This will never fail since we have checked index validity above
+            let new_ip_addr = self
+                .bind_ip_addrs
+                .set_active(interface_index)
+                .expect("Interface index out of range");
+            Ok(new_ip_addr)
+        }
+    }
+
+    impl From<&Node> for NodeMultihoming {
+        fn from(node: &Node) -> Self {
+            NodeMultihoming {
+                sockets: SocketsMultihomed {
+                    gossip: node.sockets.gossip.clone(),
+                },
+                bind_ip_addrs: node.bind_ip_addrs.clone(),
+            }
         }
     }
 }
+
+#[cfg(feature = "agave-unstable-api")]
+pub use multihoming::*;

@@ -397,13 +397,6 @@ impl ClusterInfo {
         self.refresh_my_gossip_contact_info();
     }
 
-    // Refresh all socket addresses in my ContactInfo
-    // TODO: add tvu, tpu, etc when implemented
-    pub fn refresh_sockets(&self, gossip_addr: SocketAddr) -> Result<(), ContactInfoError> {
-        self.set_gossip_socket(gossip_addr)?;
-        Ok(())
-    }
-
     pub fn set_gossip_socket(&self, gossip_addr: SocketAddr) -> Result<(), ContactInfoError> {
         self.my_contact_info
             .write()

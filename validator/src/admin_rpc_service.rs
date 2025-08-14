@@ -18,7 +18,6 @@ use {
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
     solana_keypair::{read_keypair_file, Keypair},
-    solana_net_utils::sockets::bind_to,
     solana_pubkey::Pubkey,
     solana_rpc::rpc::verify_pubkey,
     solana_rpc_client_api::{config::RpcAccountIndex, custom_error::RpcCustomError},
@@ -223,12 +222,7 @@ pub trait AdminRpc {
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo>;
 
     #[rpc(meta, name = "selectActiveInterface")]
-    fn select_active_interface(
-        &self,
-        meta: Self::Metadata,
-        interface_index: usize,
-        gossip_port: u16,
-    ) -> Result<()>;
+    fn select_active_interface(&self, meta: Self::Metadata, interface_index: usize) -> Result<()>;
 
     #[rpc(meta, name = "repairShredFromPeer")]
     fn repair_shred_from_peer(
@@ -553,45 +547,23 @@ impl AdminRpc for AdminRpcImpl {
         meta.with_post_init(|post_init| Ok(post_init.cluster_info.my_contact_info().into()))
     }
 
-    fn select_active_interface(
-        &self,
-        meta: Self::Metadata,
-        interface_index: usize,
-        gossip_port: u16,
-    ) -> Result<()> {
-        debug!(
-            "select_active_interface received: {}, gossip_port: {}",
-            interface_index, gossip_port
-        );
+    fn select_active_interface(&self, meta: Self::Metadata, interface_index: usize) -> Result<()> {
+        debug!("select_active_interface received: {}", interface_index);
         meta.with_post_init(|post_init| {
             let node = post_init.node.as_ref().ok_or_else(|| {
                 jsonrpc_core::Error::invalid_params("`Node` not initialized in post_init")
             })?;
 
             let ip_addr = node
-                .bind_ip_addrs
-                .set_active(interface_index)
+                .rebind_at_index(interface_index, &post_init.cluster_info)
                 .map_err(|e| {
-                    jsonrpc_core::Error::invalid_params(format!("Invalid interface index: {}", e))
+                    jsonrpc_core::Error::invalid_params(format!(
+                        "Switching failed due to error {}",
+                        e
+                    ))
                 })?;
 
-            let gossip_addr = SocketAddr::new(ip_addr, gossip_port);
-            let new_gossip_socket = bind_to(gossip_addr.ip(), gossip_addr.port()).map_err(|e| {
-                jsonrpc_core::Error::invalid_params(format!("Gossip socket rebind failed: {e}"))
-            })?;
-
-            // hot-swap new socket
-            node.sockets.gossip.swap(new_gossip_socket);
-
-            // Set the new socket addresses
-            post_init
-                .cluster_info
-                .refresh_sockets(gossip_addr)
-                .map_err(|e| {
-                    jsonrpc_core::Error::invalid_params(format!("Failed to refresh sockets: {}", e))
-                })?;
-
-            info!("Switched interface to {interface_index} ({ip_addr}); Gossip={gossip_addr}");
+            info!("Switched active interface to {interface_index} ({ip_addr}); ");
 
             Ok(())
         })
