@@ -78,7 +78,6 @@ grcov_common_args=(
   --ignore \*.cargo\*
   --ignore \*build.rs
   --ignore bench-tps\*
-  --ignore upload-perf\*
   --ignore bench-streamer\*
   --ignore local-cluster\*
 )
