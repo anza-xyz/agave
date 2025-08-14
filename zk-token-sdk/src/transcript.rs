@@ -17,10 +17,10 @@ pub trait TranscriptProtocol {
     /// Append a domain separator for a length-`n` inner product proof.
     fn innerproduct_domain_separator(&mut self, n: u64);
 
-    /// Append a domain separator for close account proof.
+    /// Append a domain separator for the close account proof.
     fn close_account_proof_domain_separator(&mut self);
 
-    /// Append a domain separator for withdraw proof.
+    /// Append a domain separator for withdrawal proof.
     fn withdraw_proof_domain_separator(&mut self);
 
     /// Append a domain separator for transfer proof.
@@ -70,7 +70,7 @@ pub trait TranscriptProtocol {
     /// Append a domain separator for batched grouped ciphertext validity proof.
     fn batched_grouped_ciphertext_validity_proof_domain_separator(&mut self);
 
-    /// Append a domain separator for fee sigma proof.
+    /// Append a domain separator for the fee sigma proof.
     fn fee_sigma_proof_domain_separator(&mut self);
 
     /// Append a domain separator for public-key proof.
