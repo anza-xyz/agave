@@ -411,7 +411,6 @@ pub fn validate_fee_payer(
         &payer_pre_rent_state,
         &payer_post_rent_state,
         payer_address,
-        payer_account,
         payer_index,
     )
 }
