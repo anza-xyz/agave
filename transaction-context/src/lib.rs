@@ -2,6 +2,8 @@
 #![deny(clippy::indexing_slicing)]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 #[cfg(not(target_os = "solana"))]
 use {solana_account::WritableAccount, solana_rent::Rent};
 use {
@@ -172,6 +174,7 @@ impl TransactionAccounts {
         Ok(())
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn try_borrow_mut(
         &self,
         index: IndexOfAccount,
@@ -724,6 +727,20 @@ impl InstructionContext {
             })
     }
 
+    /// Get the owner of the program account of this instruction
+    pub fn get_program_owner(
+        &self,
+        transaction_context: &TransactionContext,
+    ) -> Result<Pubkey, InstructionError> {
+        self.get_index_of_program_account_in_transaction()
+            .and_then(|index_in_transaction| {
+                transaction_context
+                    .accounts
+                    .try_borrow(index_in_transaction)
+            })
+            .map(|acc| *acc.owner())
+    }
+
     fn try_borrow_account<'a, 'b: 'a>(
         &'a self,
         transaction_context: &'b TransactionContext,
@@ -740,17 +757,6 @@ impl InstructionContext {
             index_in_instruction_accounts: index_in_instruction,
             account,
         })
-    }
-
-    /// Gets the last program account of this Instruction
-    pub fn try_borrow_program_account<'a, 'b: 'a>(
-        &'a self,
-        transaction_context: &'b TransactionContext,
-    ) -> Result<BorrowedAccount<'a>, InstructionError> {
-        let index_in_transaction = self.get_index_of_program_account_in_transaction()?;
-        let result = self.try_borrow_account(transaction_context, index_in_transaction, None);
-        debug_assert!(result.is_ok());
-        result
     }
 
     /// Gets an instruction account of this Instruction
@@ -1297,7 +1303,7 @@ mod tests {
         let result = instruction_context.get_program_key(&transaction_context);
         assert_eq!(result, Err(InstructionError::NotEnoughAccountKeys));
 
-        let result = instruction_context.try_borrow_program_account(&transaction_context);
+        let result = instruction_context.get_program_owner(&transaction_context);
         assert_eq!(result.err(), Some(InstructionError::NotEnoughAccountKeys));
     }
 }

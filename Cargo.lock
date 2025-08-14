@@ -11384,6 +11384,7 @@ name = "solana-transaction-context"
 version = "3.0.0"
 dependencies = [
  "bincode",
+ "qualifier_attr",
  "serde",
  "serde_derive",
  "solana-account",
