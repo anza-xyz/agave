@@ -643,22 +643,20 @@ mod tests {
             },
         },
         solana_signer::Signer,
-        solana_stake_interface::{
-            self as stake, instruction as stake_instruction,
-            state::{Authorized, Lockup, StakeAuthorize, StakeStateV2},
-        },
-        solana_stake_program::stake_state,
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
         solana_vote::vote_transaction::VoteTransaction,
-        solana_vote_program::vote_state::Vote,
+        solana_vote_interface::{
+            instruction::{self as vote_instruction, CreateVoteAccountConfig},
+            program as vote_program,
+            state::{Vote, VoteInit, VoteStateVersions},
+        },
         std::{
             sync::{
                 atomic::{AtomicBool, AtomicU64},
                 RwLock,
             },
-            thread::sleep,
             time::Duration,
         },
     };
@@ -875,11 +873,10 @@ mod tests {
         genesis_config.rent = Rent::default();
         activate_all_features(&mut genesis_config);
 
-        let new_stake_authority = solana_pubkey::new_rand();
-        let stake_authority = Keypair::new();
+        let validator = Keypair::new();
+        let voter = Keypair::new();
         let from = Keypair::new();
-        let stake_account = Keypair::new();
-        let stake_program_id = stake::program::id();
+        let vote_account = Keypair::new();
         let bank = Bank::new_for_tests(&genesis_config);
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -902,7 +899,7 @@ mod tests {
         let encoding = UiAccountEncoding::Base64;
 
         rpc.account_subscribe(
-            stake_account.pubkey().to_string(),
+            vote_account.pubkey().to_string(),
             Some(RpcAccountInfoConfig {
                 commitment: Some(CommitmentConfig::processed()),
                 encoding: Some(encoding),
@@ -913,24 +910,42 @@ mod tests {
         .unwrap();
         rpc.block_until_processed(&rpc_subscriptions);
 
-        let balance = {
+        let (validator_balance, vote_balance) = {
             let bank = bank_forks.read().unwrap().working_bank();
             let rent = &bank.rent_collector().rent;
-            rent.minimum_balance(StakeStateV2::size_of())
+            (
+                rent.minimum_balance(0),
+                rent.minimum_balance(VoteStateVersions::vote_state_size_of(true)),
+            )
         };
+        let balance = validator_balance + vote_balance;
 
         let tx = system_transaction::transfer(&alice, &from.pubkey(), balance, blockhash);
         process_transaction_and_notify(&bank_forks, &tx, &rpc_subscriptions, 1).unwrap();
-        let authorized = Authorized::auto(&stake_authority.pubkey());
-        let ixs = stake_instruction::create_account(
+        let mut ixs = vec![system_instruction::create_account(
             &from.pubkey(),
-            &stake_account.pubkey(),
-            &authorized,
-            &Lockup::default(),
-            balance,
-        );
+            &validator.pubkey(),
+            validator_balance,
+            0,
+            &system_program::id(),
+        )];
+        ixs.append(&mut vote_instruction::create_account_with_config(
+            &from.pubkey(),
+            &vote_account.pubkey(),
+            &VoteInit {
+                node_pubkey: validator.pubkey(),
+                authorized_voter: voter.pubkey(),
+                authorized_withdrawer: Pubkey::new_unique(),
+                ..VoteInit::default()
+            },
+            vote_balance,
+            CreateVoteAccountConfig {
+                space: VoteStateVersions::vote_state_size_of(true) as u64,
+                ..CreateVoteAccountConfig::default()
+            },
+        ));
         let message = Message::new(&ixs, Some(&from.pubkey()));
-        let tx = Transaction::new(&[&from, &stake_account], message, blockhash);
+        let tx = Transaction::new(&[&from, &vote_account, &validator], message, blockhash);
         process_transaction_and_notify(&bank_forks, &tx, &rpc_subscriptions, 1).unwrap();
 
         // Test signature confirmation notification #1
@@ -939,7 +954,7 @@ mod tests {
             .unwrap()
             .get(1)
             .unwrap()
-            .get_account(&stake_account.pubkey())
+            .get_account(&vote_account.pubkey())
             .unwrap();
         let expected_data = account.data();
         let expected = json!({
@@ -949,8 +964,8 @@ mod tests {
                "result": {
                    "context": { "slot": 1 },
                    "value": {
-                       "owner": stake_program_id.to_string(),
-                       "lamports": balance,
+                       "owner": vote_program::id().to_string(),
+                       "lamports": vote_balance,
                        "data": [BASE64_STANDARD.encode(expected_data), encoding],
                        "executable": false,
                        "rentEpoch": u64::MAX,
@@ -965,34 +980,6 @@ mod tests {
         assert_eq!(
             expected,
             serde_json::from_str::<serde_json::Value>(&response).unwrap(),
-        );
-
-        let balance = {
-            let bank = bank_forks.read().unwrap().working_bank();
-            let rent = &bank.rent_collector().rent;
-            rent.minimum_balance(0)
-        };
-        let tx =
-            system_transaction::transfer(&alice, &stake_authority.pubkey(), balance, blockhash);
-        process_transaction_and_notify(&bank_forks, &tx, &rpc_subscriptions, 1).unwrap();
-        sleep(Duration::from_millis(200));
-        let ix = stake_instruction::authorize(
-            &stake_account.pubkey(),
-            &stake_authority.pubkey(),
-            &new_stake_authority,
-            StakeAuthorize::Staker,
-            None,
-        );
-        let message = Message::new(&[ix], Some(&stake_authority.pubkey()));
-        let tx = Transaction::new(&[&stake_authority], message, blockhash);
-        process_transaction_and_notify(&bank_forks, &tx, &rpc_subscriptions, 1).unwrap();
-        sleep(Duration::from_millis(200));
-
-        let bank = bank_forks.read().unwrap()[1].clone();
-        let account = bank.get_account(&stake_account.pubkey()).unwrap();
-        assert_eq!(
-            stake_state::authorized_from(&account).unwrap().staker,
-            new_stake_authority
         );
     }
 
