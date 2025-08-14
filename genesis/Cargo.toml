@@ -47,7 +47,7 @@ solana-logger = "=3.0.0"
 solana-native-token = "=2.2.2"
 solana-poh-config = "=2.2.1"
 solana-pubkey = { version = "=2.4.0", default-features = false }
-solana-rent = "=2.2.1"
+solana-rent = "=3.0.0"
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
