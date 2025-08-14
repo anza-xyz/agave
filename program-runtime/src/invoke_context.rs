@@ -1348,10 +1348,7 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(
-            invoke_context
-                .transaction_context
-                .accounts_resize_delta()
-                .unwrap(),
+            invoke_context.transaction_context.accounts_resize_delta(),
             resize_delta
         );
     }
