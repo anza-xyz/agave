@@ -60,7 +60,7 @@ solana-fee-structure = "=2.3.0"
 solana-hash = "=2.3.0"
 solana-instruction = "=2.3.0"
 solana-keypair = "=2.2.1"
-solana-loader-v3-interface = { version = "=5.0.0", features = ["bincode"] }
+solana-loader-v3-interface = { version = "=6.1.0", features = ["bincode"] }
 solana-loader-v4-interface = "=2.2.1"
 solana-loader-v4-program = { workspace = true }
 solana-logger = "=3.0.0"
