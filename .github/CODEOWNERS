@@ -16,7 +16,6 @@
 /bloom/ @anza-xyz/networking
 /core/src/repair/ @anza-xyz/networking
 /gossip/ @anza-xyz/networking
-/ledger/src/shred/ @anza-xyz/networking
 /net-utils/ @anza-xyz/networking
 /tls-utils/ @anza-xyz/networking
 /turbine/ @anza-xyz/networking
