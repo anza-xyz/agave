@@ -1,11 +1,74 @@
 use std::{
-    net::{IpAddr, Ipv4Addr},
+    net::{IpAddr, Ipv4Addr, UdpSocket},
     ops::Deref,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
 };
+
+pub enum CurrentSocket {
+    Same(Arc<UdpSocket>),
+    Changed(Arc<UdpSocket>),
+}
+
+pub trait SocketProvider {
+    fn current_socket(&self) -> CurrentSocket;
+
+    #[inline]
+    fn current_socket_ref(&self) -> Arc<UdpSocket> {
+        match self.current_socket() {
+            CurrentSocket::Same(sock) | CurrentSocket::Changed(sock) => sock,
+        }
+    }
+}
+
+/// Fixed UDP Socket -> default
+pub struct FixedSocketProvider {
+    socket: Arc<UdpSocket>,
+}
+impl FixedSocketProvider {
+    pub fn new(socket: Arc<UdpSocket>) -> Self {
+        Self { socket }
+    }
+}
+impl SocketProvider for FixedSocketProvider {
+    #[inline]
+    fn current_socket(&self) -> CurrentSocket {
+        CurrentSocket::Same(self.socket.clone())
+    }
+}
+
+pub struct MultihomedSocketProvider {
+    sockets: Vec<Arc<UdpSocket>>,
+    bind_ip_addrs: Arc<BindIpAddrs>,
+    last_index: AtomicUsize,
+}
+
+impl MultihomedSocketProvider {
+    pub fn new(sockets: Vec<Arc<UdpSocket>>, bind_ip_addrs: Arc<BindIpAddrs>) -> Self {
+        Self {
+            sockets,
+            bind_ip_addrs,
+            last_index: AtomicUsize::new(usize::MAX),
+        }
+    }
+}
+
+impl SocketProvider for MultihomedSocketProvider {
+    #[inline]
+    fn current_socket(&self) -> CurrentSocket {
+        let idx = self.bind_ip_addrs.active_index();
+        let last = self.last_index.swap(idx, Ordering::AcqRel);
+
+        let sock = self.sockets[idx].clone();
+        if last == idx {
+            CurrentSocket::Same(sock)
+        } else {
+            CurrentSocket::Changed(sock)
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct BindIpAddrs {
