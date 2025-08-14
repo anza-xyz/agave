@@ -11423,6 +11423,7 @@ dependencies = [
  "solana-time-utils",
  "solana-tls-utils",
  "solana-tpu-client",
+ "solana-tpu-client-next",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util 0.7.16",
