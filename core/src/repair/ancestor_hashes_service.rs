@@ -20,7 +20,7 @@ use {
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     dashmap::{mapref::entry::Entry::Occupied, DashMap},
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
-    solana_genesis_config::ClusterType,
+    solana_cluster_type::ClusterType,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, ping_pong::Pong},
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::blockstore::Blockstore,

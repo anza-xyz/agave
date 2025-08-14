@@ -3,7 +3,7 @@ use {
     solana_program_runtime::execution_budget::SVMTransactionExecutionCost,
 };
 
-fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
+fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
     var_addr: u64,
     check_aligned: bool,

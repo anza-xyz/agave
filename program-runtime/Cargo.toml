@@ -51,6 +51,7 @@ solana-rent = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["bincode", "sysvar"] }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }
@@ -60,7 +61,7 @@ solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-sysvar = { workspace = true }
+solana-sysvar = { workspace = true, features = ["bincode"] }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
 
@@ -68,6 +69,7 @@ solana-transaction-context = { workspace = true }
 assert_matches = { workspace = true }
 solana-account-info = { workspace = true }
 solana-instruction = { workspace = true, features = ["bincode"] }
+solana-instruction-error = { workspace = true, features = ["serde"] }
 solana-keypair = { workspace = true }
 solana-program-runtime = { path = ".", features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }

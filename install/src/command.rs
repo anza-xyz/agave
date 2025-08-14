@@ -9,8 +9,10 @@ use {
     crossbeam_channel::unbounded,
     indicatif::{ProgressBar, ProgressStyle},
     serde_derive::{Deserialize, Serialize},
-    solana_config_interface::instruction::{self as config_instruction},
-    solana_config_program_client::get_config_data,
+    solana_config_interface::{
+        instruction::{self as config_instruction},
+        state::get_config_data,
+    },
     solana_hash::Hash,
     solana_keypair::{read_keypair_file, signable::Signable, Keypair},
     solana_message::Message,

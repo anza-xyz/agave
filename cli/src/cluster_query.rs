@@ -31,7 +31,6 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_message::Message,
-    solana_native_token::lamports_to_sol,
     solana_nonce::state::State as NonceState,
     solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
@@ -1413,7 +1412,10 @@ pub fn process_supply(
 
 pub fn process_total_supply(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessResult {
     let supply = rpc_client.supply()?.value;
-    Ok(format!("{} SOL", lamports_to_sol(supply.total)))
+    Ok(format!(
+        "{} SOL",
+        build_balance_message(supply.total, false, false)
+    ))
 }
 
 pub fn process_get_transaction_count(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessResult {

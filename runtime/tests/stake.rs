@@ -18,10 +18,11 @@ use {
     solana_signer::Signer,
     solana_stake_interface::{
         self as stake, instruction as stake_instruction,
+        stake_history::StakeHistory,
         state::{Authorized, Lockup, StakeStateV2},
+        sysvar,
     },
     solana_stake_program::stake_state,
-    solana_sysvar::{self as sysvar, stake_history::StakeHistory},
     solana_vote_program::{
         vote_instruction,
         vote_state::{TowerSync, VoteInit, VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY},
@@ -423,7 +424,7 @@ fn test_stake_account_lifetime() {
     let account = bank.get_account(&vote_pubkey).expect("account not found");
     let vote_state: VoteStateV3 = StateMut::<VoteStateVersions>::state(&account)
         .expect("couldn't unpack account data")
-        .convert_to_current();
+        .convert_to_v3();
 
     // 1 less vote, as the first vote should have cleared the lockout
     assert_eq!(vote_state.votes.len(), 31);

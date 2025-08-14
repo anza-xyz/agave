@@ -89,6 +89,7 @@ use {
         BankId, Epoch, Slot, SlotIndex, UnixTimestamp, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE,
         MAX_TRANSACTION_FORWARDING_DELAY,
     },
+    solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_cost_model::{block_cost_limits::simd_0286_block_limits, cost_tracker::CostTracker},
@@ -98,7 +99,7 @@ use {
     solana_fee::FeeFeatures,
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::{FeeBudgetLimits, FeeDetails, FeeStructure},
-    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_genesis_config::GenesisConfig,
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_inflation::Inflation,
@@ -122,7 +123,9 @@ use {
     solana_signature::Signature,
     solana_slot_hashes::SlotHashes,
     solana_slot_history::{Check, SlotHistory},
-    solana_stake_interface::state::Delegation,
+    solana_stake_interface::{
+        stake_history::StakeHistory, state::Delegation, sysvar::stake_history,
+    },
     solana_svm::{
         account_loader::LoadedTransaction,
         account_overrides::AccountOverrides,
@@ -146,7 +149,7 @@ use {
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_transaction as system_transaction,
-    solana_sysvar::{self as sysvar, last_restart_slot::LastRestartSlot, Sysvar},
+    solana_sysvar::{self as sysvar, last_restart_slot::LastRestartSlot, SysvarSerialize},
     solana_sysvar_id::SysvarId,
     solana_time_utils::years_as_slots,
     solana_transaction::{
@@ -215,7 +218,7 @@ pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "5dfDCRGWPV7thfoZtLpTJAV8cC93vQUXgTm6BnrfeUsN")
+    frozen_abi(digest = "2mR2EKFguLhheKtDzbFxoQonSmUtM9svd8kkgeKpe2vu")
 )]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
@@ -2129,7 +2132,7 @@ impl Bank {
 
     pub fn set_sysvar_for_tests<T>(&self, sysvar: &T)
     where
-        T: Sysvar + SysvarId,
+        T: SysvarSerialize + SysvarId,
     {
         self.update_sysvar_account(&T::id(), |account| {
             create_account(
@@ -2238,8 +2241,8 @@ impl Bank {
             return;
         }
         // if I'm the first Bank in an epoch, ensure stake_history is updated
-        self.update_sysvar_account(&sysvar::stake_history::id(), |account| {
-            create_account::<sysvar::stake_history::StakeHistory>(
+        self.update_sysvar_account(&stake_history::id(), |account| {
+            create_account::<StakeHistory>(
                 self.stakes_cache.stakes().history(),
                 self.inherit_specially_retained_account_fields(account),
             )
@@ -5317,9 +5320,9 @@ impl Bank {
         // Update activation slot of features in `new_feature_activations`
         for feature_id in new_feature_activations.iter() {
             if let Some(mut account) = self.get_account_with_fixed_root(feature_id) {
-                if let Some(mut feature) = feature::from_account(&account) {
+                if let Some(mut feature) = feature::state::from_account(&account) {
                     feature.activated_at = Some(self.slot());
-                    if feature::to_account(&feature, &mut account).is_some() {
+                    if feature::state::to_account(&feature, &mut account).is_some() {
                         self.store_account(feature_id, &account);
                     }
                     info!("Feature {} activated at slot {}", feature_id, self.slot());
@@ -5393,7 +5396,7 @@ impl Bank {
         for feature_id in self.feature_set.inactive() {
             let mut activated = None;
             if let Some(account) = self.get_account_with_fixed_root(feature_id) {
-                if let Some(feature) = feature::from_account(&account) {
+                if let Some(feature) = feature::state::from_account(&account) {
                     match feature.activated_at {
                         None if include_pending => {
                             // Feature activation is pending
@@ -6077,7 +6080,7 @@ pub mod test_utils {
         let mut vote_account = bank.get_account(vote_pubkey).unwrap_or_default();
         let mut vote_state = vote_state::from(&vote_account).unwrap_or_default();
         vote_state.last_timestamp = timestamp;
-        let versioned = VoteStateVersions::new_current(vote_state);
+        let versioned = VoteStateVersions::new_v3(vote_state);
         vote_state::to(&versioned, &mut vote_account).unwrap();
         bank.store_account(vote_pubkey, &vote_account);
     }

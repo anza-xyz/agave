@@ -837,7 +837,11 @@ mod tests {
                     assert_eq!(account.data(), &account_info.data.borrow()[..]);
                     assert_eq!(account.owner(), account_info.owner);
                     assert_eq!(account.executable(), account_info.executable);
-                    assert_eq!(u64::MAX, account_info.rent_epoch);
+                    #[allow(deprecated)]
+                    {
+                        // Using the sdk entrypoint, the rent-epoch is skipped
+                        assert_eq!(0, account_info._unused);
+                    }
                 }
             }
         }
@@ -991,7 +995,11 @@ mod tests {
                 assert_eq!(account.data(), &account_info.data.borrow()[..]);
                 assert_eq!(account.owner(), account_info.owner);
                 assert_eq!(account.executable(), account_info.executable);
-                assert_eq!(u64::MAX, account_info.rent_epoch);
+                #[allow(deprecated)]
+                {
+                    // Using the sdk entrypoint, the rent-epoch is skipped
+                    assert_eq!(0, account_info._unused);
+                }
 
                 assert_eq!(
                     (*account_info.lamports.borrow() as *const u64).align_offset(BPF_ALIGN_OF_U128),
@@ -1076,7 +1084,10 @@ mod tests {
                 assert_eq!(account.data(), &account_info.data.borrow()[..]);
                 assert_eq!(account.owner(), account_info.owner);
                 assert_eq!(account.executable(), account_info.executable);
-                assert_eq!(u64::MAX, account_info.rent_epoch);
+                #[allow(deprecated)]
+                {
+                    assert_eq!(u64::MAX, account_info._unused);
+                }
             }
 
             deserialize_parameters(
@@ -1217,21 +1228,11 @@ mod tests {
             };
 
             for account_info in de_accounts {
-                let index_in_transaction = invoke_context
-                    .transaction_context
-                    .find_index_of_account(account_info.key)
-                    .unwrap();
-                let account = invoke_context
-                    .transaction_context
-                    .accounts()
-                    .try_borrow(index_in_transaction)
-                    .unwrap();
-                let expected_rent_epoch = if mask_out_rent_epoch_in_vm_serialization {
-                    u64::MAX
-                } else {
-                    account.rent_epoch()
-                };
-                assert_eq!(expected_rent_epoch, account_info.rent_epoch);
+                // Using program-entrypoint, the rent-epoch will always be 0
+                #[allow(deprecated)]
+                {
+                    assert_eq!(0, account_info._unused);
+                }
             }
 
             // check serialize_parameters_unaligned
@@ -1276,7 +1277,10 @@ mod tests {
                 } else {
                     account.rent_epoch()
                 };
-                assert_eq!(expected_rent_epoch, account_info.rent_epoch);
+                #[allow(deprecated)]
+                {
+                    assert_eq!(expected_rent_epoch, account_info._unused);
+                }
             }
         }
     }
@@ -1369,9 +1373,10 @@ mod tests {
                 let executable = Ptr::<u8>::read_possibly_unaligned(input, offset) != 0;
                 offset += size_of::<u8>();
 
-                let rent_epoch = Ptr::<u64>::read_possibly_unaligned(input, offset);
+                let unused = Ptr::<u64>::read_possibly_unaligned(input, offset);
                 offset += size_of::<u64>();
 
+                #[allow(deprecated)]
                 accounts.push(AccountInfo {
                     key,
                     is_signer,
@@ -1380,7 +1385,7 @@ mod tests {
                     data,
                     owner,
                     executable,
-                    rent_epoch,
+                    _unused: unused,
                 });
             } else {
                 // duplicate account, clone the original

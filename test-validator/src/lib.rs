@@ -25,7 +25,7 @@ use {
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
     solana_gossip::{
-        cluster_info::{BindIpAddrs, ClusterInfo, NodeConfig},
+        cluster_info::{ClusterInfo, NodeConfig},
         contact_info::Protocol,
         node::Node,
     },
@@ -38,8 +38,8 @@ use {
     },
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
-    solana_native_token::sol_to_lamports,
-    solana_net_utils::{find_available_ports_in_range, PortRange},
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_net_utils::{find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
@@ -864,9 +864,9 @@ impl TestValidator {
         let validator_identity = Keypair::new();
         let validator_vote_account = Keypair::new();
         let validator_stake_account = Keypair::new();
-        let validator_identity_lamports = sol_to_lamports(500.);
-        let validator_stake_lamports = sol_to_lamports(1_000_000.);
-        let mint_lamports = sol_to_lamports(500_000_000.);
+        let validator_identity_lamports = 500 * LAMPORTS_PER_SOL;
+        let validator_stake_lamports = 1_000_000 * LAMPORTS_PER_SOL;
+        let mint_lamports = 500_000_000 * LAMPORTS_PER_SOL;
 
         // Only activate features which are not explicitly deactivated.
         let mut feature_set = FeatureSet::default().inactive().clone();
@@ -1036,7 +1036,7 @@ impl TestValidator {
         let node = {
             let bind_ip_addr = config.node_config.bind_ip_addr;
             let validator_node_config = NodeConfig {
-                bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr])?,
+                bind_ip_addrs: Arc::new(BindIpAddrs::new(vec![bind_ip_addr])?),
                 gossip_port: config.node_config.gossip_addr.port(),
                 port_range: config.node_config.port_range,
                 advertised_ip: bind_ip_addr,

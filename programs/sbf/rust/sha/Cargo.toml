@@ -13,11 +13,14 @@ crate-type = ["cdylib"]
 
 [dependencies]
 blake3 = { workspace = true }
-solana-blake3-hasher = { workspace = true }
-solana-keccak-hasher = { workspace = true }
+sha2 = { workspace = true }
+sha3 = { workspace = true }
+solana-blake3-hasher = { workspace = true, features = ["blake3"] }
+solana-hash = { workspace = true }
+solana-keccak-hasher = { workspace = true, features = ["sha3"] }
 solana-msg = { workspace = true }
 solana-program-entrypoint = { workspace = true }
-solana-sha256-hasher = { workspace = true }
+solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 
 [lints]
 workspace = true

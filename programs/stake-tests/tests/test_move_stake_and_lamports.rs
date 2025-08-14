@@ -18,10 +18,11 @@ use {
         self as stake,
         error::StakeError,
         instruction as ixn, program as stake_program,
+        stake_history::StakeHistory,
         state::{Authorized, Lockup, Meta, Stake, StakeStateV2},
     },
     solana_system_interface::{instruction as system_instruction, program as system_program},
-    solana_sysvar::{clock::Clock, stake_history::StakeHistory},
+    solana_sysvar::clock::Clock,
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     solana_vote_program::{

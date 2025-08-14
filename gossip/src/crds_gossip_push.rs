@@ -24,7 +24,7 @@ use {
         stake_weighting_config::{get_gossip_config_from_account, WeightingConfig},
     },
     itertools::Itertools,
-    solana_genesis_config::ClusterType,
+    solana_cluster_type::ClusterType,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,

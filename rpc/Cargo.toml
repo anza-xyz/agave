@@ -46,6 +46,7 @@ soketto = { workspace = true }
 solana-account = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-accounts-db = { workspace = true }
+solana-cli-output = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
@@ -106,6 +107,7 @@ tokio-util = { workspace = true, features = ["codec", "compat"] }
 agave-reserved-account-keys = { workspace = true }
 serial_test = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
+solana-cluster-type = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-fee-structure = { workspace = true }

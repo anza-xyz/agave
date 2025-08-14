@@ -5,7 +5,7 @@ use {
     solana_sdk_ids::sysvar,
     solana_sysvar::{
         epoch_rewards::{self, EpochRewards},
-        Sysvar,
+        SysvarSerialize,
     },
 };
 

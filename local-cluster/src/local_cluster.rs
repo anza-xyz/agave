@@ -11,13 +11,14 @@ use {
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{Slot, DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT},
+    solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_core::{
         consensus::tower_storage::FileTowerStorage,
         validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
     solana_epoch_schedule::EpochSchedule,
-    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_genesis_config::GenesisConfig,
     solana_gossip::{
         contact_info::{ContactInfo, Protocol},
         gossip_service::{discover, discover_validators},

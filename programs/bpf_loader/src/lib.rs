@@ -606,10 +606,13 @@ fn process_loader_upgradeable_instruction(
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
             let caller_program_id = instruction_context.get_program_key(transaction_context)?;
+            // The conversion from `PubkeyError` to `InstructionError` through
+            // num-traits is incorrect, but it's the existing behavior.
             let signers = [[new_program_id.as_ref(), &[bump_seed]]]
                 .iter()
                 .map(|seeds| Pubkey::create_program_address(seeds, caller_program_id))
-                .collect::<Result<Vec<Pubkey>, solana_pubkey::PubkeyError>>()?;
+                .collect::<Result<Vec<Pubkey>, solana_pubkey::PubkeyError>>()
+                .map_err(|e| e as u64)?;
             invoke_context.native_invoke(instruction, signers.as_slice())?;
 
             // Load and verify the program bits

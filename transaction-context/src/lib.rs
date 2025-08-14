@@ -817,6 +817,15 @@ impl InstructionContext {
     pub fn instruction_accounts(&self) -> &[InstructionAccount] {
         &self.instruction_accounts
     }
+
+    pub fn get_key_of_instruction_account<'a>(
+        &self,
+        index_in_instruction: IndexOfAccount,
+        transaction_context: &'a TransactionContext,
+    ) -> Result<&'a Pubkey, InstructionError> {
+        self.get_index_of_instruction_account_in_transaction(index_in_instruction)
+            .and_then(|idx| transaction_context.get_key_of_account_at_index(idx))
+    }
 }
 
 /// Shared account borrowed from the TransactionContext and an InstructionContext.

@@ -17,7 +17,7 @@ use {
 #[cfg(feature = "dev-context-only-utils")]
 use {
     bincode,
-    solana_vote_interface::state::{VoteState, VoteStateVersions},
+    solana_vote_interface::state::{VoteStateV3, VoteStateVersions},
 };
 
 mod field_frames;
@@ -154,10 +154,9 @@ impl VoteStateView {
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-impl From<VoteState> for VoteStateView {
-    fn from(vote_state: VoteState) -> Self {
-        let vote_account_data =
-            bincode::serialize(&VoteStateVersions::new_current(vote_state)).unwrap();
+impl From<VoteStateV3> for VoteStateView {
+    fn from(vote_state: VoteStateV3) -> Self {
+        let vote_account_data = bincode::serialize(&VoteStateVersions::new_v3(vote_state)).unwrap();
         VoteStateView::try_new(Arc::new(vote_account_data)).unwrap()
     }
 }
@@ -231,15 +230,15 @@ mod tests {
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
             state::{
-                vote_state_1_14_11::VoteState1_14_11, LandedVote, VoteInit, VoteState,
+                vote_state_1_14_11::VoteState1_14_11, LandedVote, VoteInit, VoteStateV3,
                 VoteStateVersions, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
             },
         },
         std::collections::VecDeque,
     };
 
-    fn new_test_vote_state() -> VoteState {
-        let mut target_vote_state = VoteState::new(
+    fn new_test_vote_state() -> VoteStateV3 {
+        let mut target_vote_state = VoteStateV3::new(
             &VoteInit {
                 node_pubkey: Pubkey::new_unique(),
                 authorized_voter: Pubkey::new_unique(),
@@ -277,8 +276,7 @@ mod tests {
     #[test]
     fn test_vote_state_view_v3() {
         let target_vote_state = new_test_vote_state();
-        let target_vote_state_versions =
-            VoteStateVersions::Current(Box::new(target_vote_state.clone()));
+        let target_vote_state_versions = VoteStateVersions::V3(Box::new(target_vote_state.clone()));
         let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_v3(&vote_state_view, &target_vote_state);
@@ -286,9 +284,8 @@ mod tests {
 
     #[test]
     fn test_vote_state_view_v3_default() {
-        let target_vote_state = VoteState::default();
-        let target_vote_state_versions =
-            VoteStateVersions::Current(Box::new(target_vote_state.clone()));
+        let target_vote_state = VoteStateV3::default();
+        let target_vote_state_versions = VoteStateVersions::V3(Box::new(target_vote_state.clone()));
         let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_v3(&vote_state_view, &target_vote_state);
@@ -298,12 +295,12 @@ mod tests {
     fn test_vote_state_view_v3_arbitrary() {
         // variant
         // provide 4x the minimum struct size in bytes to ensure we typically touch every field
-        let struct_bytes_x4 = VoteState::size_of() * 4;
+        let struct_bytes_x4 = VoteStateV3::size_of() * 4;
         for _ in 0..100 {
             let raw_data: Vec<u8> = (0..struct_bytes_x4).map(|_| rand::random::<u8>()).collect();
             let mut unstructured = Unstructured::new(&raw_data);
 
-            let mut target_vote_state = VoteState::arbitrary(&mut unstructured).unwrap();
+            let mut target_vote_state = VoteStateV3::arbitrary(&mut unstructured).unwrap();
             target_vote_state.votes.truncate(MAX_LOCKOUT_HISTORY);
             target_vote_state
                 .epoch_credits
@@ -313,7 +310,7 @@ mod tests {
             }
 
             let target_vote_state_versions =
-                VoteStateVersions::Current(Box::new(target_vote_state.clone()));
+                VoteStateVersions::V3(Box::new(target_vote_state.clone()));
             let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
             let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
             assert_eq_vote_state_v3(&vote_state_view, &target_vote_state);
@@ -371,7 +368,7 @@ mod tests {
         }
     }
 
-    fn assert_eq_vote_state_v3(vote_state_view: &VoteStateView, vote_state: &VoteState) {
+    fn assert_eq_vote_state_v3(vote_state_view: &VoteStateView, vote_state: &VoteStateV3) {
         assert_eq!(vote_state_view.node_pubkey(), &vote_state.node_pubkey);
         assert_eq!(vote_state_view.commission(), vote_state.commission);
         let view_votes = vote_state_view.votes_iter().collect::<Vec<_>>();

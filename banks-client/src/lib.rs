@@ -25,7 +25,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_signature::Signature,
-    solana_sysvar::Sysvar,
+    solana_sysvar::SysvarSerialize,
     solana_transaction::versioned::VersionedTransaction,
     tarpc::{
         client::{self, NewClient, RequestDispatch},
@@ -182,7 +182,7 @@ impl BanksClient {
     }
 
     /// Return the cluster Sysvar
-    pub async fn get_sysvar<T: Sysvar>(&self) -> Result<T, BanksClientError> {
+    pub async fn get_sysvar<T: SysvarSerialize>(&self) -> Result<T, BanksClientError> {
         let sysvar = self
             .get_account(T::id())
             .await?

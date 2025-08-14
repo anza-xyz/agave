@@ -266,18 +266,18 @@ impl<'a> InvokeContext<'a> {
                     self.transaction_context
                         .get_instruction_context_at_nesting_level(level)
                         .and_then(|instruction_context| {
-                            instruction_context.try_borrow_program_account(self.transaction_context)
+                            instruction_context.get_program_key(self.transaction_context)
                         })
-                        .map(|program_account| program_account.get_key() == program_id)
+                        .map(|program_key| program_key == program_id)
                         .unwrap_or(false)
                 });
             let is_last = self
                 .transaction_context
                 .get_current_instruction_context()
                 .and_then(|instruction_context| {
-                    instruction_context.try_borrow_program_account(self.transaction_context)
+                    instruction_context.get_program_key(self.transaction_context)
                 })
-                .map(|program_account| program_account.get_key() == program_id)
+                .map(|program_key| program_key == program_id)
                 .unwrap_or(false);
             if contains && !is_last {
                 // Reentrancy not allowed unless caller is calling itself
@@ -406,30 +406,27 @@ impl<'a> InvokeContext<'a> {
                 let index_in_caller = instruction_context.get_index_of_account_in_instruction(
                     instruction_account.index_in_transaction,
                 )?;
-                let borrowed_account = instruction_context
-                    .try_borrow_instruction_account(self.transaction_context, index_in_caller)?;
+
+                // This unwrap is safe because instruction.accounts.len() == instruction_accounts.len()
+                let account_key = &instruction.accounts.get(current_index).unwrap().pubkey;
+                // get_index_of_account_in_instruction has already checked if the index is valid.
+                let caller_instruction_account = instruction_context
+                    .instruction_accounts()
+                    .get(index_in_caller as usize)
+                    .unwrap();
 
                 // Readonly in caller cannot become writable in callee
-                if instruction_account.is_writable() && !borrowed_account.is_writable() {
-                    ic_msg!(
-                        self,
-                        "{}'s writable privilege escalated",
-                        borrowed_account.get_key(),
-                    );
+                if instruction_account.is_writable() && !caller_instruction_account.is_writable() {
+                    ic_msg!(self, "{}'s writable privilege escalated", account_key,);
                     return Err(InstructionError::PrivilegeEscalation);
                 }
 
                 // To be signed in the callee,
                 // it must be either signed in the caller or by the program
                 if instruction_account.is_signer()
-                    && !(borrowed_account.is_signer()
-                        || signers.contains(borrowed_account.get_key()))
+                    && !(caller_instruction_account.is_signer() || signers.contains(account_key))
                 {
-                    ic_msg!(
-                        self,
-                        "{}'s signer privilege escalated",
-                        borrowed_account.get_key()
-                    );
+                    ic_msg!(self, "{}'s signer privilege escalated", account_key,);
                     return Err(InstructionError::PrivilegeEscalation);
                 }
             }
@@ -442,10 +439,9 @@ impl<'a> InvokeContext<'a> {
                     ic_msg!(self, "Unknown program {}", callee_program_id);
                     InstructionError::MissingAccount
                 })?;
-            let borrowed_program_account = instruction_context
-                .try_borrow_instruction_account(self.transaction_context, program_account_index)?;
 
-            borrowed_program_account.get_index_in_transaction()
+            instruction_context
+                .get_index_of_instruction_account_in_transaction(program_account_index)?
         };
 
         self.transaction_context
@@ -1010,9 +1006,7 @@ mod tests {
                 instruction_context
                     .try_borrow_instruction_account(transaction_context, 1)?
                     .get_owner(),
-                instruction_context
-                    .try_borrow_instruction_account(transaction_context, 0)?
-                    .get_key()
+                instruction_context.get_key_of_instruction_account(0, transaction_context)?
             );
 
             if let Ok(instruction) = bincode::deserialize(instruction_data) {

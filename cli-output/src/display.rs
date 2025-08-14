@@ -10,7 +10,6 @@ use {
     solana_clock::UnixTimestamp,
     solana_hash::Hash,
     solana_message::{compiled_instruction::CompiledInstruction, v0::MessageAddressTableLookup},
-    solana_native_token::lamports_to_sol,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_stake_interface as stake,
@@ -52,7 +51,8 @@ pub fn build_balance_message_with_config(
     let value = if config.use_lamports_unit {
         lamports.to_string()
     } else {
-        let sol = lamports_to_sol(lamports);
+        const LAMPORTS_PER_SOL_F64: f64 = 1_000_000_000.;
+        let sol = lamports as f64 / LAMPORTS_PER_SOL_F64;
         let sol_str = format!("{sol:.9}");
         if config.trim_trailing_zeros {
             sol_str
@@ -530,8 +530,8 @@ fn write_rewards<W: io::Write>(
                         "-".to_string()
                     },
                     sign,
-                    lamports_to_sol(reward.lamports.unsigned_abs()),
-                    lamports_to_sol(reward.post_balance)
+                    build_balance_message(reward.lamports.unsigned_abs(), false, false),
+                    build_balance_message(reward.post_balance, false, false)
                 )?;
             }
         }
@@ -556,7 +556,12 @@ fn write_status<W: io::Write>(
 }
 
 fn write_fees<W: io::Write>(w: &mut W, transaction_fee: u64, prefix: &str) -> io::Result<()> {
-    writeln!(w, "{}  Fee: ◎{}", prefix, lamports_to_sol(transaction_fee))
+    writeln!(
+        w,
+        "{}  Fee: ◎{}",
+        prefix,
+        build_balance_message(transaction_fee, false, false)
+    )
 }
 
 fn write_balances<W: io::Write>(
@@ -580,7 +585,7 @@ fn write_balances<W: io::Write>(
                 "{}  Account {} balance: ◎{}",
                 prefix,
                 i,
-                lamports_to_sol(*pre)
+                build_balance_message(*pre, false, false)
             )?;
         } else {
             writeln!(
@@ -588,8 +593,8 @@ fn write_balances<W: io::Write>(
                 "{}  Account {} balance: ◎{} -> ◎{}",
                 prefix,
                 i,
-                lamports_to_sol(*pre),
-                lamports_to_sol(*post)
+                build_balance_message(*pre, false, false),
+                build_balance_message(*post, false, false)
             )?;
         }
     }
@@ -740,7 +745,7 @@ mod test {
         let secret = ed25519_dalek::SecretKey::from_bytes(&[0u8; 32]).unwrap();
         let public = ed25519_dalek::PublicKey::from(&secret);
         let keypair = ed25519_dalek::Keypair { secret, public };
-        Keypair::from_bytes(&keypair.to_bytes()).unwrap()
+        Keypair::try_from(keypair.to_bytes().as_ref()).unwrap()
     }
 
     fn new_test_v0_transaction() -> VersionedTransaction {
@@ -857,7 +862,7 @@ Return Data from Program 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR:
 0000:   01 02 03                                             ...
 Rewards:
   Address                                            Type        Amount            New Balance         \0
-  4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi        rent        -◎0.000000100     ◎0.000009900       \0
+  4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi        rent        -◎0.0000001       ◎0.0000099         \0
 ".replace("\\0", "") // replace marker used to subvert trailing whitespace linter on CI
         );
     }
@@ -946,7 +951,7 @@ Return Data from Program 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR:
 0000:   01 02 03                                             ...
 Rewards:
   Address                                            Type        Amount            New Balance         \0
-  CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8        rent        -◎0.000000100     ◎0.000014900       \0
+  CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8        rent        -◎0.0000001       ◎0.0000149         \0
 ".replace("\\0", "") // replace marker used to subvert trailing whitespace linter on CI
         );
     }

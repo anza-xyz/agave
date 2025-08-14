@@ -364,31 +364,35 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             let builtins = self.builtin_program_ids.read().unwrap().clone();
 
-            self.replenish_program_cache(
-                &account_loader,
-                &builtins,
-                &mut program_cache_for_tx_batch,
-                &mut execute_timings,
-                config.check_program_modification_slot,
-                config.limit_to_load_programs,
-                false, // increment_usage_counter
-            );
-
-            if program_cache_for_tx_batch.hit_max_limit {
-                return LoadAndExecuteSanitizedTransactionsOutput {
-                    error_metrics,
-                    execute_timings,
-                    processing_results: (0..sanitized_txs.len())
-                        .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
-                        .collect(),
-                    // If we abort the batch and balance recording is enabled, no balances should be
-                    // collected. If this is a leader thread, no batch will be committed.
-                    balance_collector: None,
-                };
-            }
+            let ((), program_cache_us) = measure_us!({
+                self.replenish_program_cache(
+                    &account_loader,
+                    &builtins,
+                    &mut program_cache_for_tx_batch,
+                    &mut execute_timings,
+                    config.check_program_modification_slot,
+                    config.limit_to_load_programs,
+                    false, // increment_usage_counter
+                );
+            });
+            execute_timings
+                .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
 
             program_cache_for_tx_batch
         };
+
+        if program_cache_for_tx_batch.hit_max_limit {
+            return LoadAndExecuteSanitizedTransactionsOutput {
+                error_metrics,
+                execute_timings,
+                processing_results: (0..sanitized_txs.len())
+                    .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
+                    .collect(),
+                // If we abort the batch and balance recording is enabled, no balances should be
+                // collected. If this is a leader thread, no batch will be committed.
+                balance_collector: None,
+            };
+        }
 
         let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
 
@@ -455,24 +459,24 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             config.limit_to_load_programs,
                             true, // increment_usage_counter
                         );
-
-                        if program_cache_for_tx_batch.hit_max_limit {
-                            return LoadAndExecuteSanitizedTransactionsOutput {
-                                error_metrics,
-                                execute_timings,
-                                processing_results: (0..sanitized_txs.len())
-                                    .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
-                                    .collect(),
-                                // If we abort the batch and balance recording is enabled, no balances should be
-                                // collected. If this is a leader thread, no batch will be committed.
-                                balance_collector: None,
-                            };
-                        }
                     });
                     execute_timings.saturating_add_in_place(
                         ExecuteTimingType::ProgramCacheUs,
                         program_cache_us,
                     );
+
+                    if program_cache_for_tx_batch.hit_max_limit {
+                        return LoadAndExecuteSanitizedTransactionsOutput {
+                            error_metrics,
+                            execute_timings,
+                            processing_results: (0..sanitized_txs.len())
+                                .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
+                                .collect(),
+                            // If we abort the batch and balance recording is enabled, no balances should be
+                            // collected. If this is a leader thread, no batch will be committed.
+                            balance_collector: None,
+                        };
+                    }
 
                     let executed_tx = self.execute_loaded_transaction(
                         callbacks,
