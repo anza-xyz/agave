@@ -29,7 +29,7 @@ pub(crate) mod tests {
         validator_identity_account: &Keypair,
         amount: u64,
     ) {
-        let voter_pubkey = vote_account.pubkey();
+        let vote_pubkey = vote_account.pubkey();
         fn process_instructions<T: Signers>(bank: &Bank, keypairs: &T, ixs: &[Instruction]) {
             let tx = Transaction::new_signed_with_payer(
                 ixs,
@@ -45,11 +45,11 @@ pub(crate) mod tests {
             &[from_account, vote_account, validator_identity_account],
             &vote_instruction::create_account_with_config(
                 &from_account.pubkey(),
-                &voter_pubkey,
+                &vote_pubkey,
                 &VoteInit {
                     node_pubkey: validator_identity_account.pubkey(),
-                    authorized_voter: voter_pubkey,
-                    authorized_withdrawer: voter_pubkey,
+                    authorized_voter: vote_pubkey,
+                    authorized_withdrawer: vote_pubkey,
                     commission: 0,
                 },
                 amount,
@@ -70,7 +70,7 @@ pub(crate) mod tests {
             },
             Stake {
                 delegation: Delegation {
-                    voter_pubkey,
+                    voter_pubkey: vote_pubkey,
                     stake: amount,
                     deactivation_epoch: u64::MAX,
                     ..Delegation::default()
