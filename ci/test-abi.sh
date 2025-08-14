@@ -3,6 +3,8 @@
 # Easily run the ABI tests for the entire repo or a subset
 #
 
-here=$(dirname "$0")
+here="$(dirname "$0")"
+cargo="$(readlink -f "${here}/../cargo")"
+
 set -x
-exec "${here}/cargo" nightly test --features frozen-abi --lib -- test_abi_ --nocapture
+exec "$cargo" nightly test --features frozen-abi --lib -- test_abi_ --nocapture
