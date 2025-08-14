@@ -37,7 +37,6 @@ agave-unstable-api = ["solana-low-pass-filter/agave-unstable-api"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
-anyhow = { workspace = true }
 arrayvec = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
@@ -106,6 +105,7 @@ static_assertions = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+anyhow = { workspace = true }
 bs58 = { workspace = true }
 criterion = { workspace = true }
 num_cpus = { workspace = true }

@@ -27,7 +27,7 @@ use {
         collections::{HashMap, HashSet},
         env, error,
         fmt::{self, Display},
-        net::SocketAddr,
+        net::{IpAddr, SocketAddr},
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -221,8 +221,8 @@ pub trait AdminRpc {
     #[rpc(meta, name = "contactInfo")]
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo>;
 
-    #[rpc(meta, name = "selectActiveInterface")]
-    fn select_active_interface(&self, meta: Self::Metadata, interface_index: usize) -> Result<()>;
+    #[rpc(meta, name = "selectPrimaryInterface")]
+    fn select_primary_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()>;
 
     #[rpc(meta, name = "repairShredFromPeer")]
     fn repair_shred_from_peer(
@@ -547,24 +547,21 @@ impl AdminRpc for AdminRpcImpl {
         meta.with_post_init(|post_init| Ok(post_init.cluster_info.my_contact_info().into()))
     }
 
-    fn select_active_interface(&self, meta: Self::Metadata, interface_index: usize) -> Result<()> {
-        debug!("select_active_interface received: {}", interface_index);
+    fn select_primary_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()> {
+        debug!("select_primary_interface received: {}", interface);
         meta.with_post_init(|post_init| {
             let node = post_init.node.as_ref().ok_or_else(|| {
                 jsonrpc_core::Error::invalid_params("`Node` not initialized in post_init")
             })?;
 
-            let ip_addr = node
-                .rebind_at_index(interface_index, &post_init.cluster_info)
+            node.switch_primary_interface(interface, &post_init.cluster_info)
                 .map_err(|e| {
                     jsonrpc_core::Error::invalid_params(format!(
                         "Switching failed due to error {}",
                         e
                     ))
                 })?;
-
-            info!("Switched active interface to {interface_index} ({ip_addr}); ");
-
+            info!("Switched primary interface to {interface}");
             Ok(())
         })
     }
