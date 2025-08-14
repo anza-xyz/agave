@@ -315,7 +315,7 @@ dependencies = [
  "solana-signer",
  "solana-time-utils",
  "solana-transaction",
- "thiserror 2.0.12",
+ "thiserror 2.0.14",
 ]
 
 [[package]]
