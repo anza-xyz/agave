@@ -21,7 +21,7 @@ pub struct ProofContextState<T: Pod> {
 
 // `bytemuck::Pod` cannot be derived for generic structs unless the struct is marked
 // `repr(packed)`, which may cause unnecessary complications when referencing its fields. Directly
-// mark `ProofContextState` as `Zeroable` and `Pod` since since none of its fields has an alignment
+// mark `ProofContextState` as `Zeroable` and `Pod` since none of its fields have an alignment
 // requirement greater than 1 and therefore, guaranteed to be `packed`.
 unsafe impl<T: Pod> Zeroable for ProofContextState<T> {}
 unsafe impl<T: Pod> Pod for ProofContextState<T> {}
