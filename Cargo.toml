@@ -533,7 +533,7 @@ solana-svm-type-overrides = { path = "svm-type-overrides", version = "=3.0.0" }
 solana-system-interface = "1.0"
 solana-system-program = { path = "programs/system", version = "=3.0.0" }
 solana-system-transaction = "2.2.1"
-solana-sysvar = "2.2.2"
+solana-sysvar = "3.0.0"
 solana-sysvar-id = "2.2.1"
 solana-test-validator = { path = "test-validator", version = "=3.0.0" }
 solana-time-utils = "2.2.1"
