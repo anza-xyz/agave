@@ -758,7 +758,7 @@ mod tests {
 
     #[test]
     fn test_vote_state_view_unsupported_version() {
-        let vote_data = Arc::new(3u32.to_le_bytes().to_vec());
+        let vote_data = Arc::new(4u32.to_le_bytes().to_vec());
         let vote_state_view_err = VoteStateView::try_new(vote_data).unwrap_err();
         assert_eq!(vote_state_view_err, VoteStateViewError::UnsupportedVersion);
     }
