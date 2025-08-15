@@ -366,7 +366,7 @@ impl<'a> InvokeContext<'a> {
                         instruction_account.set_is_writable(
                             instruction_account.is_writable() || account_meta.is_writable,
                         );
-                        instruction_account.clone()
+                        *instruction_account
                     };
                     instruction_accounts.push(cloned_account);
                 } else {

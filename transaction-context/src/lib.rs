@@ -63,7 +63,7 @@ pub type IndexOfAccount = u16;
 /// This data structure is supposed to be shared with programs in ABIv2, so do not modify it
 /// without consulting SIMD-0177.
 #[repr(C)]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InstructionAccount {
     /// Points to the account and its key in the `TransactionContext`
     pub index_in_transaction: IndexOfAccount,
@@ -727,37 +727,27 @@ impl InstructionContext {
             .map(|acc| *acc.owner())
     }
 
-    fn try_borrow_account<'a, 'b: 'a>(
-        &'a self,
-        transaction_context: &'b TransactionContext,
-        index_in_transaction: IndexOfAccount,
-        index_in_instruction: IndexOfAccount,
-    ) -> Result<BorrowedAccount<'a>, InstructionError> {
-        let account = transaction_context
-            .accounts
-            .try_borrow_mut(index_in_transaction)?;
-        Ok(BorrowedAccount {
-            transaction_context,
-            instruction_context: self,
-            index_in_transaction,
-            index_in_instruction_accounts: index_in_instruction,
-            account,
-        })
-    }
-
     /// Gets an instruction account of this Instruction
     pub fn try_borrow_instruction_account<'a, 'b: 'a>(
         &'a self,
         transaction_context: &'b TransactionContext,
-        instruction_account_index: IndexOfAccount,
+        index_in_instruction: IndexOfAccount,
     ) -> Result<BorrowedAccount<'a>, InstructionError> {
-        let index_in_transaction =
-            self.get_index_of_instruction_account_in_transaction(instruction_account_index)?;
-        self.try_borrow_account(
+        let instruction_account = *self
+            .instruction_accounts
+            .get(index_in_instruction as usize)
+            .ok_or(InstructionError::NotEnoughAccountKeys)?;
+
+        let account = transaction_context
+            .accounts
+            .try_borrow_mut(instruction_account.index_in_transaction)?;
+
+        Ok(BorrowedAccount {
             transaction_context,
-            index_in_transaction,
-            instruction_account_index,
-        )
+            instruction_account,
+            account,
+            ix_program_account_idx: self.program_account_index_in_tx,
+        })
     }
 
     /// Returns whether an instruction account is a signer
@@ -819,25 +809,23 @@ impl InstructionContext {
 #[derive(Debug)]
 pub struct BorrowedAccount<'a> {
     transaction_context: &'a TransactionContext,
-    instruction_context: &'a InstructionContext,
-    index_in_transaction: IndexOfAccount,
-    // Program accounts are not part of the instruction_accounts vector, and thus None
-    index_in_instruction_accounts: IndexOfAccount,
     account: RefMut<'a, AccountSharedData>,
+    instruction_account: InstructionAccount,
+    ix_program_account_idx: IndexOfAccount,
 }
 
 impl BorrowedAccount<'_> {
     /// Returns the index of this account (transaction wide)
     #[inline]
     pub fn get_index_in_transaction(&self) -> IndexOfAccount {
-        self.index_in_transaction
+        self.instruction_account.index_in_transaction
     }
 
     /// Returns the public key of this account (transaction wide)
     #[inline]
     pub fn get_key(&self) -> &Pubkey {
         self.transaction_context
-            .get_key_of_account_at_index(self.index_in_transaction)
+            .get_key_of_account_at_index(self.instruction_account.index_in_transaction)
             .unwrap()
     }
 
@@ -1093,23 +1081,19 @@ impl BorrowedAccount<'_> {
 
     /// Returns whether this account is a signer (instruction wide)
     pub fn is_signer(&self) -> bool {
-        self.instruction_context
-            .is_instruction_account_signer(self.index_in_instruction_accounts)
-            .unwrap_or_default()
+        self.instruction_account.is_signer()
     }
 
     /// Returns whether this account is writable (instruction wide)
     pub fn is_writable(&self) -> bool {
-        self.instruction_context
-            .is_instruction_account_writable(self.index_in_instruction_accounts)
-            .unwrap_or_default()
+        self.instruction_account.is_writable()
     }
 
     /// Returns true if the owner of this account is the current `InstructionContext`s last program (instruction wide)
     pub fn is_owned_by_current_program(&self) -> bool {
-        self.instruction_context
-            .get_program_key(self.transaction_context)
-            .map(|key| key == self.get_owner())
+        self.transaction_context
+            .get_key_of_account_at_index(self.ix_program_account_idx)
+            .map(|program_key| program_key == self.get_owner())
             .unwrap_or_default()
     }
 
@@ -1145,7 +1129,7 @@ impl BorrowedAccount<'_> {
     fn touch(&self) -> Result<(), InstructionError> {
         self.transaction_context
             .accounts
-            .touch(self.index_in_transaction)
+            .touch(self.instruction_account.index_in_transaction)
     }
 
     #[cfg(not(target_os = "solana"))]
