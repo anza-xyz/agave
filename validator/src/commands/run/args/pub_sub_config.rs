@@ -1,7 +1,6 @@
 use {
     crate::commands::{FromClapArgMatches, Result},
     clap::{value_t, ArgMatches},
-    solana_rayon_threadlimit::get_thread_count,
     solana_rpc::rpc_pubsub_service::PubSubConfig,
     std::num::NonZeroUsize,
 };
@@ -19,13 +18,9 @@ impl FromClapArgMatches for PubSubConfig {
             queue_capacity_items: value_t!(matches, "rpc_pubsub_queue_capacity_items", usize)?,
             queue_capacity_bytes: value_t!(matches, "rpc_pubsub_queue_capacity_bytes", usize)?,
             worker_threads: value_t!(matches, "rpc_pubsub_worker_threads", usize)?,
-            notification_threads: value_t!(
-                matches,
-                "rpc_pubsub_notification_threads",
-                NonZeroUsize
-            )
-            .ok()
-            .or(Some(NonZeroUsize::new(get_thread_count()).unwrap())),
+            notification_threads: value_t!(matches, "rpc_pubsub_notification_threads", usize)
+                .ok()
+                .and_then(NonZeroUsize::new),
         })
     }
 }

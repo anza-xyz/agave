@@ -1713,12 +1713,8 @@ mod tests {
     use {
         super::*,
         crate::cli::thread_args::thread_args,
-        solana_rayon_threadlimit::get_thread_count,
         solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
-        std::{
-            net::{IpAddr, Ipv4Addr},
-            num::NonZeroUsize,
-        },
+        std::net::{IpAddr, Ipv4Addr},
     };
 
     impl Default for RunArgs {
@@ -1746,8 +1742,9 @@ mod tests {
                 },
                 pub_sub_config: PubSubConfig {
                     worker_threads: 4,
-                    notification_threads: Some(NonZeroUsize::new(get_thread_count()).unwrap()),
-                    queue_capacity_items: solana_rpc::rpc_pubsub_service::DEFAULT_QUEUE_CAPACITY_ITEMS,
+                    notification_threads: None,
+                    queue_capacity_items:
+                        solana_rpc::rpc_pubsub_service::DEFAULT_QUEUE_CAPACITY_ITEMS,
                     ..PubSubConfig::default_for_tests()
                 },
             }
