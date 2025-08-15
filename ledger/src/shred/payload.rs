@@ -1,71 +1,66 @@
-use std::{
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 use {
     crate::shred::Nonce,
-    solana_perf::packet::{
-        bytes::{BufMut, BytesMut},
-        BytesPacket, Meta, Packet,
+    solana_perf::packet::{bytes::BufMut, BytesPacket, Meta, Packet},
+};
+use {
+    bytes::{Bytes, BytesMut},
+    std::{
+        mem,
+        ops::{Bound, Deref, DerefMut, RangeBounds, RangeFull},
+        slice::SliceIndex,
     },
-    std::mem,
 };
 
 #[derive(Clone, Debug, Eq)]
-pub enum Payload {
-    Shared(Arc<Vec<u8>>),
-    Unique(Vec<u8>),
-}
-
-macro_rules! make_mut {
-    ($self:ident) => {
-        match $self {
-            Self::Shared(bytes) => Arc::make_mut(bytes),
-            Self::Unique(bytes) => bytes,
-        }
-    };
-}
-
-macro_rules! dispatch {
-    ($vis:vis fn $name:ident(&self $(, $arg:ident : $ty:ty)?) $(-> $out:ty)?) => {
-        #[inline]
-        $vis fn $name(&self $(, $arg:$ty)?) $(-> $out)? {
-            match self {
-                Self::Shared(bytes) => bytes.$name($($arg, )?),
-                Self::Unique(bytes) => bytes.$name($($arg, )?),
-            }
-        }
-    };
-    ($vis:vis fn $name:ident(&mut self $(, $arg:ident : $ty:ty)*) $(-> $out:ty)?) => {
-        #[inline]
-        $vis fn $name(&mut self $(, $arg:$ty)*) $(-> $out)? {
-            make_mut!(self).$name($($arg, )*)
-        }
-    }
+pub struct Payload {
+    pub bytes: Bytes,
 }
 
 impl Payload {
+    /// Convert the payload's inner [`Bytes`] into a [`BytesMut`], consuming the [`Payload`].
+    ///
+    /// If the payload is unique (single reference), this will return a [`BytesMut`] with the
+    /// contents of the payload without copying. If the payload is not unique, this will make a copy
+    /// of the payload in a new [`BytesMut`]. As such, take care to avoid performing this conversion
+    /// if the payload is not unique.
     #[inline]
-    pub(crate) fn resize(&mut self, size: usize, byte: u8) {
-        if self.len() != size {
-            make_mut!(self).resize(size, byte);
-        }
+    pub fn into_bytes_mut(self) -> BytesMut {
+        self.bytes.into()
+    }
+
+    /// Get a mutable reference via [`PayloadMutGuard`] to the payload's _full_ inner bytes.
+    /// See [`Payload::get_mut`] for selecting a subset of the payload's inner bytes.
+    ///
+    /// If the payload is unique (single reference), this will not perform any copying. Otherwise it
+    /// will. As such, take care to avoid performing this conversion if the payload is not unique.
+    #[inline]
+    pub fn as_mut(&mut self) -> PayloadMutGuard<'_, RangeFull> {
+        PayloadMutGuard::new(self, ..)
     }
 
     #[inline]
-    pub(crate) fn truncate(&mut self, size: usize) {
-        if self.len() > size {
-            make_mut!(self).truncate(size);
+    /// Get a mutable reference via [`PayloadMutGuard`] to a subset of the payload's inner bytes.
+    ///
+    /// If the payload is unique (single reference), this will not perform any copying. Otherwise it
+    /// will. As such, take care to avoid performing this conversion if the payload is not unique.
+    pub fn get_mut<I>(&mut self, index: I) -> Option<PayloadMutGuard<'_, I>>
+    where
+        I: RangeBounds<usize>,
+    {
+        match index.end_bound() {
+            Bound::Included(&end) if end >= self.bytes.len() => None,
+            Bound::Excluded(&end) if end > self.bytes.len() => None,
+            _ => Some(PayloadMutGuard::new(self, index)),
         }
     }
 
+    /// Shortens the buffer, keeping the first `len` bytes and dropping the rest.
+    ///
+    /// See [`Bytes::truncate`].
     #[inline]
-    pub fn unwrap_or_clone(this: Self) -> Vec<u8> {
-        match this {
-            Self::Shared(bytes) => Arc::unwrap_or_clone(bytes),
-            Self::Unique(bytes) => bytes,
-        }
+    pub fn truncate(&mut self, len: usize) {
+        self.bytes.truncate(len);
     }
 }
 
@@ -137,26 +132,147 @@ impl PartialEq for Payload {
 impl From<Vec<u8>> for Payload {
     #[inline]
     fn from(bytes: Vec<u8>) -> Self {
-        Self::Unique(bytes)
+        Self {
+            bytes: Bytes::from(bytes),
+        }
     }
 }
 
-impl From<Arc<Vec<u8>>> for Payload {
+impl From<Bytes> for Payload {
     #[inline]
-    fn from(bytes: Arc<Vec<u8>>) -> Self {
-        Self::Shared(bytes)
+    fn from(bytes: Bytes) -> Self {
+        Self { bytes }
+    }
+}
+
+impl From<BytesMut> for Payload {
+    #[inline]
+    fn from(bytes: BytesMut) -> Self {
+        Self {
+            bytes: bytes.freeze(),
+        }
     }
 }
 
 impl AsRef<[u8]> for Payload {
-    dispatch!(fn as_ref(&self) -> &[u8]);
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self.bytes.as_ref()
+    }
 }
 
 impl Deref for Payload {
     type Target = [u8];
-    dispatch!(fn deref(&self) -> &Self::Target);
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.bytes.deref()
+    }
 }
 
-impl DerefMut for Payload {
-    dispatch!(fn deref_mut(&mut self) -> &mut Self::Target);
+/// Convenience wrapper around [`Payload`] and a [`BytesMut`] into that payload's bytes.
+///
+/// [`Bytes`] is immutable, yet it's desirable to be able to "simulate" mutability for quick
+/// inline updates when buildilng shreds, especially to minimize code changes at the time of this
+/// refactor. Given that references to shreds are not propagated until a shred is fully constructed,
+/// we should not incur any copying overhead when using this guard to facilitate mutability during
+/// shred construction.
+///
+/// # How it works
+///
+/// Upon construction, the guard converts the payload's [`Bytes`] into a [`BytesMut`], temporarily
+/// replacing the payload's internal bytes reference with an empty [`Bytes`] (which does not
+/// allocate). This will not perform any copying if the payload is unique (single reference).
+///
+/// The guard will then provide a mutable reference to the bytes via [`DerefMut`] and [`AsMut`]
+/// implementations, which forward indexing to the underlying [`BytesMut`].
+///
+/// The guard has a specialized [`Drop`] implementation that will write back the mutated bytes to the
+/// payload, effectively "simulating" typical mutability semantics.
+pub struct PayloadMutGuard<'a, I> {
+    payload: &'a mut Payload,
+    bytes_mut: BytesMut,
+    slice_index: I,
+}
+
+impl<'a, I> PayloadMutGuard<'a, I> {
+    #[inline]
+    pub fn new(payload: &'a mut Payload, slice_index: I) -> Self {
+        let bytes_mut: BytesMut = mem::take(&mut payload.bytes).into();
+        Self {
+            payload,
+            bytes_mut,
+            slice_index,
+        }
+    }
+}
+
+impl<I> Drop for PayloadMutGuard<'_, I> {
+    #[inline]
+    fn drop(&mut self) {
+        self.payload.bytes = mem::take(&mut self.bytes_mut).freeze();
+    }
+}
+
+impl<I> Deref for PayloadMutGuard<'_, I>
+where
+    I: SliceIndex<[u8]> + Clone,
+{
+    type Target = <I as SliceIndex<[u8]>>::Output;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.bytes_mut[self.slice_index.clone()]
+    }
+}
+
+impl<I> DerefMut for PayloadMutGuard<'_, I>
+where
+    I: SliceIndex<[u8]> + Clone,
+{
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.bytes_mut[self.slice_index.clone()]
+    }
+}
+
+impl<I> AsMut<[u8]> for PayloadMutGuard<'_, I>
+where
+    I: SliceIndex<[u8], Output = [u8]> + Clone,
+{
+    #[inline]
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.bytes_mut[self.slice_index.clone()]
+    }
+}
+
+impl<I> AsRef<[u8]> for PayloadMutGuard<'_, I>
+where
+    I: SliceIndex<[u8], Output = [u8]> + Clone,
+{
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes_mut[self.slice_index.clone()]
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::Payload;
+
+    #[test]
+    fn test_guard_write_back() {
+        let mut payload = Payload::from(vec![1, 2, 3, 4, 5]);
+        {
+            let mut guard = payload.get_mut(..).unwrap();
+            assert_eq!(guard[0], 1);
+            assert_eq!(guard[1], 2);
+            guard[0] = 10;
+            guard[1] = 20;
+            assert_eq!(guard[0], 10);
+            assert_eq!(guard[1], 20);
+        }
+
+        assert_eq!(payload.bytes[..], vec![10, 20, 3, 4, 5]);
+    }
 }

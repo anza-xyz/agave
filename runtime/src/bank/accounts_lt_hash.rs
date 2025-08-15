@@ -193,7 +193,7 @@ impl Bank {
             .rc
             .accounts
             .accounts_db
-            .thread_pool
+            .thread_pool_foreground
             .install(do_calculate_delta_lt_hash);
 
         let total_time = measure_total.end_as_duration();
@@ -406,7 +406,10 @@ mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::{self as pubkey, Pubkey},
         solana_signer::Signer as _,
-        std::{cmp, collections::HashMap, iter, ops::RangeFull, str::FromStr as _, sync::Arc},
+        std::{
+            cmp, collections::HashMap, iter, num::NonZeroUsize, ops::RangeFull, str::FromStr as _,
+            sync::Arc,
+        },
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
     };
@@ -523,13 +526,7 @@ mod tests {
             .unwrap();
 
         // store account 5 into this new bank, unchanged
-        bank.rc.accounts.store_cached(
-            (
-                bank.slot(),
-                [(&keypair5.pubkey(), &prev_account5.clone().unwrap())].as_slice(),
-            ),
-            None,
-        );
+        bank.store_account(&keypair5.pubkey(), prev_account5.as_ref().unwrap());
 
         // freeze the bank to trigger update_accounts_lt_hash() to run
         bank.freeze();
@@ -832,19 +829,14 @@ mod tests {
 
         // get all the lt hashes for each version of all accounts
         let mut stored_accounts_map = HashMap::<_, Vec<_>>::new();
-        for storage in &storages {
-            storage
-                .accounts
-                .scan_accounts(|_offset, account| {
-                    let pubkey = account.pubkey();
-                    let account_lt_hash = AccountsDb::lt_hash_account(&account, pubkey);
-                    stored_accounts_map
-                        .entry(*pubkey)
-                        .or_default()
-                        .push(account_lt_hash)
-                })
-                .expect("must scan accounts storage");
-        }
+        AccountsDb::scan_accounts_from_storages(&storages, |_offset, account| {
+            let pubkey = account.pubkey();
+            let account_lt_hash = AccountsDb::lt_hash_account(&account, pubkey);
+            stored_accounts_map
+                .entry(*pubkey)
+                .or_default()
+                .push(account_lt_hash)
+        });
 
         // calculate the duplicates lt hash by skipping the first version (latest) of each account,
         // and then mixing together all the rest
@@ -871,6 +863,7 @@ mod tests {
                 &storages,
                 &duplicates_lt_hash,
                 bank.slot(),
+                NonZeroUsize::new(2).unwrap(),
             );
         assert_eq!(
             expected_accounts_lt_hash,
@@ -1163,6 +1156,7 @@ mod tests {
                 storages.as_slice(),
                 &DuplicatesLtHash::default(),
                 bank.slot(),
+                NonZeroUsize::new(2).unwrap(),
             );
 
         // Ensure that the hash is the same as before since the obsolete account updates in slot0
@@ -1177,6 +1171,7 @@ mod tests {
                 storages.as_slice(),
                 &DuplicatesLtHash::default(),
                 bank.slot() + 1,
+                NonZeroUsize::new(2).unwrap(),
             );
 
         // The hashes should be different now as pubkey1 account will not be included in the hash

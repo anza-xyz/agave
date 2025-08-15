@@ -6,7 +6,7 @@ use {
     },
     crossbeam_channel::{Receiver, RecvError, SendError, Sender},
     solana_measure::measure_us,
-    solana_poh::leader_bank_notifier::LeaderBankNotifier,
+    solana_poh::poh_recorder::SharedWorkingBank,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
@@ -16,7 +16,7 @@ use {
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc,
         },
-        time::Duration,
+        time::{Duration, Instant},
     },
     thiserror::Error,
 };
@@ -30,27 +30,30 @@ pub enum ConsumeWorkerError<Tx> {
 }
 
 pub(crate) struct ConsumeWorker<Tx> {
+    exit: Arc<AtomicBool>,
     consume_receiver: Receiver<ConsumeWork<Tx>>,
     consumer: Consumer,
     consumed_sender: Sender<FinishedConsumeWork<Tx>>,
 
-    leader_bank_notifier: Arc<LeaderBankNotifier>,
+    shared_working_bank: SharedWorkingBank,
     metrics: Arc<ConsumeWorkerMetrics>,
 }
 
 impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     pub fn new(
         id: u32,
+        exit: Arc<AtomicBool>,
         consume_receiver: Receiver<ConsumeWork<Tx>>,
         consumer: Consumer,
         consumed_sender: Sender<FinishedConsumeWork<Tx>>,
-        leader_bank_notifier: Arc<LeaderBankNotifier>,
+        shared_working_bank: SharedWorkingBank,
     ) -> Self {
         Self {
+            exit,
             consume_receiver,
             consumer,
             consumed_sender,
-            leader_bank_notifier,
+            shared_working_bank,
             metrics: Arc::new(ConsumeWorkerMetrics::new(id)),
         }
     }
@@ -60,14 +63,15 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 
     pub fn run(self) -> Result<(), ConsumeWorkerError<Tx>> {
-        loop {
+        while !self.exit.load(Ordering::Relaxed) {
             let work = self.consume_receiver.recv()?;
             self.consume_loop(work)?;
         }
+        Ok(())
     }
 
     fn consume_loop(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
-        let (maybe_consume_bank, get_bank_us) = measure_us!(self.get_consume_bank());
+        let (maybe_consume_bank, get_bank_us) = measure_us!(self.working_bank_with_timeout());
         let Some(mut bank) = maybe_consume_bank else {
             self.metrics
                 .timing_metrics
@@ -81,11 +85,16 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             .fetch_add(get_bank_us, Ordering::Relaxed);
 
         for work in try_drain_iter(work, &self.consume_receiver) {
+            if self.exit.load(Ordering::Relaxed) {
+                return Ok(());
+            }
             if bank.is_complete() || {
-                // check if the bank got interrupted before completion
-                self.get_consume_bank_id() != Some(bank.bank_id())
+                // if working bank has changed, then try to get a new bank.
+                self.working_bank()
+                    .map(|working_bank| Arc::ptr_eq(&working_bank, &bank))
+                    .unwrap_or(true)
             } {
-                let (maybe_new_bank, get_bank_us) = measure_us!(self.get_consume_bank());
+                let (maybe_new_bank, get_bank_us) = measure_us!(self.working_bank_with_timeout());
                 if let Some(new_bank) = maybe_new_bank {
                     self.metrics
                         .timing_metrics
@@ -130,21 +139,31 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         Ok(())
     }
 
-    /// Try to get a bank for consuming.
-    fn get_consume_bank(&self) -> Option<Arc<Bank>> {
-        self.leader_bank_notifier
-            .get_or_wait_for_in_progress(Duration::from_millis(50))
-            .upgrade()
+    /// Get the current poh working bank with a timeout - if the Bank is
+    /// not available within the timeout, return None.
+    fn working_bank_with_timeout(&self) -> Option<Arc<Bank>> {
+        const TIMEOUT: Duration = Duration::from_millis(50);
+        let now = Instant::now();
+        while now.elapsed() < TIMEOUT {
+            if let Some(bank) = self.working_bank() {
+                return Some(bank);
+            }
+        }
+
+        None
     }
 
-    /// Try to get the id for the bank that should be used for consuming
-    fn get_consume_bank_id(&self) -> Option<u64> {
-        self.leader_bank_notifier.get_current_bank_id()
+    /// Get the current poh working bank without a timeout.
+    fn working_bank(&self) -> Option<Arc<Bank>> {
+        self.shared_working_bank.load()
     }
 
     /// Retry current batch and all outstanding batches.
     fn retry_drain(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
         for work in try_drain_iter(work, &self.consume_receiver) {
+            if self.exit.load(Ordering::Relaxed) {
+                return Ok(());
+            }
             self.retry(work)?;
         }
         Ok(())
@@ -842,10 +861,11 @@ mod tests {
         let (consumed_sender, consumed_receiver) = unbounded();
         let worker = ConsumeWorker::new(
             0,
+            Arc::new(AtomicBool::new(false)),
             consume_receiver,
             consumer,
             consumed_sender,
-            poh_recorder.read().unwrap().new_leader_bank_notifier(),
+            poh_recorder.read().unwrap().shared_working_bank(),
         );
 
         (

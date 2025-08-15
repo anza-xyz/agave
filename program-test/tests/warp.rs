@@ -19,14 +19,12 @@ use {
     solana_signer::Signer,
     solana_stake_interface::{
         instruction as stake_instruction,
+        stake_history::StakeHistory,
         state::{StakeActivationStatus, StakeStateV2},
+        sysvar::stake_history,
     },
     solana_stake_program::stake_state,
-    solana_sysvar::{
-        clock,
-        stake_history::{self, StakeHistory},
-        Sysvar,
-    },
+    solana_sysvar::{clock, SysvarSerialize},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     solana_vote_program::vote_state,

@@ -386,7 +386,7 @@ impl TransactionViewReceiveAndBuffer {
 
         let mut num_received = 0usize;
         let mut num_buffered = 0usize;
-        let mut num_dropped_on_status_age_checks = 0usize;
+        let mut num_dropped_on_transaction_checks = 0usize;
         let mut num_dropped_on_capacity = 0usize;
         let mut num_dropped_on_receive = 0usize;
 
@@ -421,7 +421,7 @@ impl TransactionViewReceiveAndBuffer {
                     .zip(transaction_priority_ids.iter())
                 {
                     if result.is_err() {
-                        num_dropped_on_status_age_checks += 1;
+                        num_dropped_on_transaction_checks += 1;
                         container.remove_by_id(priority_id.id);
                         continue;
                     }
@@ -434,7 +434,7 @@ impl TransactionViewReceiveAndBuffer {
                         &mut error_counters,
                     ) {
                         *result = Err(err);
-                        num_dropped_on_status_age_checks += 1;
+                        num_dropped_on_transaction_checks += 1;
                         container.remove_by_id(priority_id.id);
                         continue;
                     }
@@ -504,9 +504,10 @@ impl TransactionViewReceiveAndBuffer {
         count_metrics.update(|count_metrics| {
             count_metrics.num_received += num_received;
             count_metrics.num_buffered += num_buffered;
-            count_metrics.num_dropped_on_age_and_status += num_dropped_on_status_age_checks;
             count_metrics.num_dropped_on_capacity += num_dropped_on_capacity;
             count_metrics.num_dropped_on_receive += num_dropped_on_receive;
+            count_metrics.num_dropped_on_receive_transaction_checks +=
+                num_dropped_on_transaction_checks;
         });
 
         num_received

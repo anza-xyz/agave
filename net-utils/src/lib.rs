@@ -12,6 +12,7 @@
 
 mod ip_echo_client;
 mod ip_echo_server;
+pub mod multihomed_sockets;
 pub mod sockets;
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -44,8 +45,19 @@ pub struct UdpSocketPair {
 
 pub type PortRange = (u16, u16);
 
+#[cfg(not(debug_assertions))]
+/// Port range available to validator by default
 pub const VALIDATOR_PORT_RANGE: PortRange = (8000, 10_000);
-pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 17; // VALIDATOR_PORT_RANGE must be at least this wide
+
+// Sets the port range outside of the region used by other tests to avoid interference
+// This arrangement is not ideal, but can be removed once ConnectionCache is deprecated
+#[cfg(debug_assertions)]
+pub const VALIDATOR_PORT_RANGE: PortRange = (
+    crate::sockets::UNIQUE_ALLOC_BASE_PORT - 512,
+    crate::sockets::UNIQUE_ALLOC_BASE_PORT,
+);
+
+pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 25; // VALIDATOR_PORT_RANGE must be at least this wide
 
 pub(crate) const HEADER_LENGTH: usize = 4;
 pub(crate) const IP_ECHO_SERVER_RESPONSE_LENGTH: usize = HEADER_LENGTH + 23;
@@ -240,7 +252,7 @@ pub fn is_host_port(string: String) -> Result<(), String> {
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please use the equivalent struct from solana-net-utils::sockets"
 )]
 #[derive(Clone, Copy, Debug, Default)]
@@ -281,7 +293,7 @@ impl SocketConfig {
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please use the equivalent from solana-net-utils::sockets"
 )]
 #[allow(deprecated)]
@@ -308,7 +320,7 @@ pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpS
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please use the equivalent from solana-net-utils::sockets"
 )]
 #[allow(deprecated)]
@@ -334,7 +346,7 @@ pub fn bind_in_range_with_config(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please use the equivalent from solana-net-utils::sockets"
 )]
 #[allow(deprecated)]
@@ -352,7 +364,7 @@ pub fn bind_with_any_port_with_config(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please use the equivalent from solana-net-utils::sockets"
 )]
 #[allow(deprecated)]
@@ -377,7 +389,7 @@ pub fn multi_bind_in_range_with_config(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please use the eqiuvalent from solana-net-utils::sockets"
 )]
 #[allow(deprecated)]
@@ -400,7 +412,7 @@ pub fn bind_to_unspecified() -> io::Result<UdpSocket> {
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function in favor of sockets::bind_to_with_config"
 )]
 #[allow(deprecated)]
@@ -415,7 +427,7 @@ pub fn bind_to_with_config(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function, it is easy to misuse"
 )]
 #[allow(deprecated)]
@@ -434,7 +446,7 @@ pub fn bind_to_with_config_non_blocking(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function in favor of sockets::bind_common_with_config"
 )]
 /// binds both a UdpSocket and a TcpListener
@@ -444,7 +456,7 @@ pub fn bind_common(ip_addr: IpAddr, port: u16) -> io::Result<(UdpSocket, TcpList
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function in favor of sockets::bind_common_with_config"
 )]
 #[allow(deprecated)]
@@ -463,7 +475,7 @@ pub fn bind_common_with_config(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function, in favor of \
             sockets::bind_two_in_range_with_offset_and_config"
 )]
@@ -484,7 +496,7 @@ pub fn bind_two_in_range_with_offset(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function, in favor of \
             sockets::bind_two_in_range_with_offset_and_config"
 )]
@@ -537,7 +549,7 @@ pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Re
 
 /// Searches for several ports on a given binding ip_addr in the provided range.
 ///
-/// This will start at a random point in the range provided, and search sequencially.
+/// This will start at a random point in the range provided, and search sequentially.
 /// If it can not find anything, an Error is returned.
 pub fn find_available_ports_in_range<const N: usize>(
     ip_addr: IpAddr,
@@ -572,7 +584,7 @@ pub fn find_available_ports_in_range<const N: usize>(
 }
 
 #[deprecated(
-    since = "2.3.2",
+    since = "3.0.0",
     note = "Please avoid this function, in favor of sockets::bind_more_with_config"
 )]
 #[allow(deprecated)]
@@ -603,6 +615,7 @@ pub fn bind_more_with_config(
 mod tests {
     use {
         super::*,
+        crate::sockets::unique_port_range_for_tests,
         ip_echo_server::IpEchoServerResponse,
         itertools::Itertools,
         std::{net::Ipv4Addr, time::Duration},
@@ -748,14 +761,16 @@ mod tests {
     #[test]
     fn test_bind_in_range_nil() {
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        bind_in_range(ip_addr, (2000, 2000)).unwrap_err();
-        bind_in_range(ip_addr, (2000, 1999)).unwrap_err();
+        let range = sockets::unique_port_range_for_tests(2);
+        bind_in_range(ip_addr, (range.end, range.end)).unwrap_err();
+        bind_in_range(ip_addr, (range.end, range.start)).unwrap_err();
     }
 
     #[test]
     fn test_find_available_port_in_range() {
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let (pr_s, pr_e) = sockets::localhost_port_range_for_tests();
+        let range = sockets::unique_port_range_for_tests(4);
+        let (pr_s, pr_e) = (range.start, range.end);
         assert_eq!(
             find_available_port_in_range(ip_addr, (pr_s, pr_s + 1)).unwrap(),
             pr_s
@@ -784,12 +799,11 @@ mod tests {
     #[test]
     fn test_bind_common_in_range() {
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let (pr_s, pr_e) = sockets::localhost_port_range_for_tests();
+        let range = sockets::unique_port_range_for_tests(5);
         let config = SocketConfig::default();
         let (port, _sockets) =
-            bind_common_in_range_with_config(ip_addr, (pr_s, pr_e), config).unwrap();
-        assert!((pr_s..pr_e).contains(&port));
-
+            bind_common_in_range_with_config(ip_addr, (range.start, range.end), config).unwrap();
+        assert!(range.contains(&port));
         bind_common_in_range_with_config(ip_addr, (port, port + 1), config).unwrap_err();
     }
 
@@ -889,16 +903,18 @@ mod tests {
     fn test_verify_ports_udp_unreachable() {
         solana_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let port_range = sockets::localhost_port_range_for_tests();
+        let port_range = unique_port_range_for_tests(2);
         let config = SocketConfig::default();
         let (_server_port, (server_udp_socket, _server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, port_range, config).unwrap();
+            bind_common_in_range_with_config(ip_addr, (port_range.start, port_range.end), config)
+                .unwrap();
 
         // make the socket unreachable by not running the ip echo server!
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
 
         let (_correct_client_port, (client_udp_socket, _client_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, port_range, config).unwrap();
+            bind_common_in_range_with_config(ip_addr, (port_range.start, port_range.end), config)
+                .unwrap();
 
         let rt = runtime();
         assert!(!rt.block_on(ip_echo_client::verify_all_reachable_udp(
@@ -917,13 +933,16 @@ mod tests {
         let mut tcp_listeners = vec![];
         let mut udp_sockets = vec![];
 
+        let port_range = unique_port_range_for_tests(1);
         let (_server_port, (_, server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (2200, 2300), config).unwrap();
+            bind_common_in_range_with_config(ip_addr, (port_range.start, port_range.end), config)
+                .unwrap();
         for _ in 0..MAX_PORT_VERIFY_THREADS * 2 {
+            let port_range = unique_port_range_for_tests(1);
             let (_client_port, (client_udp_socket, client_tcp_listener)) =
                 bind_common_in_range_with_config(
                     ip_addr,
-                    (2300, 2300 + (MAX_PORT_VERIFY_THREADS * 3) as u16),
+                    (port_range.start, port_range.end),
                     config,
                 )
                 .unwrap();
@@ -961,18 +980,24 @@ mod tests {
         solana_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let offset = 6;
+        let port_range = unique_port_range_for_tests(10);
         if let Ok(((port1, _), (port2, _))) =
-            bind_two_in_range_with_offset(ip_addr, (1024, 65535), offset)
+            bind_two_in_range_with_offset(ip_addr, (port_range.start, port_range.end), offset)
         {
             assert!(port2 == port1 + offset);
         }
-        let offset = 42;
+        let offset = 7;
         if let Ok(((port1, _), (port2, _))) =
-            bind_two_in_range_with_offset(ip_addr, (1024, 65535), offset)
+            bind_two_in_range_with_offset(ip_addr, (port_range.start, port_range.end), offset)
         {
             assert!(port2 == port1 + offset);
         }
-        assert!(bind_two_in_range_with_offset(ip_addr, (1024, 1044), offset).is_err());
+        assert!(bind_two_in_range_with_offset(
+            ip_addr,
+            (port_range.start, port_range.start + 5),
+            offset
+        )
+        .is_err());
     }
 
     #[test]
@@ -980,7 +1005,9 @@ mod tests {
         let ip_addr: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let config = SocketConfig::default(); //reuseport is false by default
 
-        let result = multi_bind_in_range_with_config(ip_addr, (2010, 2110), config, 2);
+        let port_range = unique_port_range_for_tests(3);
+        let result =
+            multi_bind_in_range_with_config(ip_addr, (port_range.start, port_range.end), config, 2);
 
         assert!(
             result.is_err(),
@@ -995,9 +1022,10 @@ mod tests {
         let ip_a = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let ip_b = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
 
-        let server_ports = sockets::localhost_port_range_for_tests();
+        let port_range = sockets::localhost_port_range_for_tests();
+
         let (_srv_udp_port, (srv_udp_sock, srv_tcp_listener)) =
-            bind_common_in_range_with_config(ip_a, server_ports, config).unwrap();
+            bind_common_in_range_with_config(ip_a, port_range, config).unwrap();
 
         let ip_echo_server_addr = srv_udp_sock.local_addr().unwrap();
         let _runtime = ip_echo_server(
@@ -1007,18 +1035,10 @@ mod tests {
         );
 
         let mut udp_sockets = Vec::new();
-        let (_p1, (sock_a, _tl_a)) = bind_common_in_range_with_config(
-            ip_a,
-            sockets::localhost_port_range_for_tests(),
-            config,
-        )
-        .unwrap();
-        let (_p2, (sock_b, _tl_b)) = bind_common_in_range_with_config(
-            ip_b,
-            sockets::localhost_port_range_for_tests(),
-            config,
-        )
-        .unwrap();
+        let (_p1, (sock_a, _tl_a)) =
+            bind_common_in_range_with_config(ip_a, port_range, config).unwrap();
+        let (_p2, (sock_b, _tl_b)) =
+            bind_common_in_range_with_config(ip_b, port_range, config).unwrap();
 
         udp_sockets.push(sock_a);
         udp_sockets.push(sock_b);

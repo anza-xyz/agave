@@ -5,6 +5,7 @@ use {
     super::leader_updater::LeaderUpdater,
     crate::{
         connection_worker::DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
+        logging::{debug, warn},
         quic_networking::{
             create_client_config, create_client_endpoint, QuicClientCertificate, QuicError,
         },
@@ -13,7 +14,6 @@ use {
         SendTransactionStats,
     },
     async_trait::async_trait,
-    log::*,
     quinn::{ClientConfig, Endpoint},
     solana_keypair::Keypair,
     std::{

@@ -31,6 +31,7 @@ pub mod epoch_slots;
 pub mod epoch_specs;
 pub mod gossip_error;
 pub mod gossip_service;
+pub mod node;
 #[macro_use]
 mod tlv;
 #[macro_use]
@@ -40,6 +41,7 @@ mod protocol;
 mod push_active_set;
 mod received_cache;
 pub mod restart_crds_values;
+pub mod stake_weighting_config;
 pub mod weighted_shuffle;
 
 #[macro_use]

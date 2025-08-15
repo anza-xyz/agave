@@ -1,8 +1,8 @@
 use {
-    solana_measure::measure_us,
     solana_program_runtime::invoke_context::InvokeContext,
+    solana_svm_measure::measure_us,
+    solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::IndexOfAccount,
     solana_transaction_error::TransactionError,
 };
@@ -14,19 +14,19 @@ use {
 /// The accounts are committed back to the bank only if every instruction succeeds.
 pub(crate) fn process_message(
     message: &impl SVMMessage,
-    program_indices: &[Vec<IndexOfAccount>],
+    program_indices: &[IndexOfAccount],
     invoke_context: &mut InvokeContext,
     execute_timings: &mut ExecuteTimings,
     accumulated_consumed_units: &mut u64,
 ) -> Result<(), TransactionError> {
     debug_assert_eq!(program_indices.len(), message.num_instructions());
-    for (top_level_instruction_index, ((program_id, instruction), program_indices)) in message
+    for (top_level_instruction_index, ((program_id, instruction), program_account_index)) in message
         .program_instructions_iter()
         .zip(program_indices.iter())
         .enumerate()
     {
         invoke_context
-            .prepare_next_top_level_instruction(message, &instruction, program_indices.clone())
+            .prepare_next_top_level_instruction(message, &instruction, *program_account_index)
             .map_err(|err| {
                 TransactionError::InstructionError(top_level_instruction_index as u8, err)
             })?;
@@ -76,7 +76,6 @@ pub(crate) fn process_message(
 mod tests {
     use {
         super::*,
-        agave_reserved_account_keys::ReservedAccountKeys,
         ed25519_dalek::ed25519::signature::Signer,
         openssl::{
             ec::{EcGroup, EcKey},
@@ -109,7 +108,7 @@ mod tests {
         solana_svm_callback::InvokeContextCallback,
         solana_svm_feature_set::SVMFeatureSet,
         solana_transaction_context::TransactionContext,
-        std::sync::Arc,
+        std::{collections::HashSet, sync::Arc},
     };
 
     struct MockCallback {}
@@ -127,8 +126,7 @@ mod tests {
     }
 
     fn new_sanitized_message(message: Message) -> SanitizedMessage {
-        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
-            .unwrap()
+        SanitizedMessage::try_from_legacy_message(message, &HashSet::new()).unwrap()
     }
 
     #[test]
@@ -159,7 +157,7 @@ mod tests {
                     MockSystemInstruction::ChangeData { data } => {
                         instruction_context
                             .try_borrow_instruction_account(transaction_context, 1)?
-                            .set_data(vec![data])?;
+                            .set_data_from_slice(&[data])?;
                         Ok(())
                     }
                 }
@@ -187,7 +185,7 @@ mod tests {
             ),
         ];
         let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3);
-        let program_indices = vec![vec![2]];
+        let program_indices = vec![2];
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_system_program_id,
@@ -394,7 +392,7 @@ mod tests {
                             .try_borrow_instruction_account(transaction_context, 2)?;
                         dup_account.checked_sub_lamports(lamports)?;
                         to_account.checked_add_lamports(lamports)?;
-                        dup_account.set_data(vec![data])?;
+                        dup_account.set_data_from_slice(&[data])?;
                         drop(dup_account);
                         let mut from_account = instruction_context
                             .try_borrow_instruction_account(transaction_context, 0)?;
@@ -423,7 +421,7 @@ mod tests {
             ),
         ];
         let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 3);
-        let program_indices = vec![vec![2]];
+        let program_indices = vec![2];
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_program_id,
@@ -695,7 +693,7 @@ mod tests {
         );
         let result = process_message(
             &message,
-            &[vec![1], vec![2], vec![3], vec![4]],
+            &[1, 2, 3, 4],
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,

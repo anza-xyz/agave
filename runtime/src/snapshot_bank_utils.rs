@@ -31,14 +31,14 @@ use {
             rebuild_storages_from_snapshot_dir, serialize_snapshot_data_file,
             verify_and_unarchive_snapshots, ArchiveFormat, BankSnapshotInfo, SnapshotError,
             SnapshotVersion, StorageAndNextAccountsFileId, UnarchivedSnapshots,
-            VerifyEpochStakesError, VerifySlotDeltasError,
+            VerifyEpochStakesError, VerifySlotDeltasError, VerifySlotHistoryError,
         },
         status_cache,
     },
     bincode::{config::Options, serialize_into},
     log::*,
     solana_accounts_db::{
-        accounts_db::{AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId},
+        accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::remove_dir_contents,
     },
@@ -233,7 +233,7 @@ pub fn bank_from_snapshot_archives(
         exit,
     )?;
     measure_rebuild.stop();
-    info!("{}", measure_rebuild);
+    info!("{measure_rebuild}");
 
     verify_epoch_stakes(&bank)?;
 
@@ -413,7 +413,7 @@ pub fn bank_from_snapshot_dir(
         )?,
         "rebuild storages from snapshot dir"
     );
-    info!("{}", measure_rebuild_storages);
+    info!("{measure_rebuild_storages}");
 
     let next_append_vec_id =
         Arc::try_unwrap(next_append_vec_id).expect("this is the only strong reference");
@@ -441,7 +441,7 @@ pub fn bank_from_snapshot_dir(
         )?,
         "rebuild bank from snapshot"
     );
-    info!("{}", measure_rebuild_bank);
+    info!("{measure_rebuild_bank}");
 
     verify_epoch_stakes(&bank)?;
 
@@ -643,9 +643,7 @@ fn verify_slot_deltas_with_history(
 ) -> std::result::Result<(), VerifySlotDeltasError> {
     // ensure the slot history is valid (as much as possible), since we're using it to verify the
     // slot deltas
-    if slot_history.newest() != bank_slot {
-        return Err(VerifySlotDeltasError::BadSlotHistory);
-    }
+    verify_slot_history(slot_history, bank_slot)?;
 
     // all slots in the slot deltas should be in the bank's slot history
     let slot_missing_from_history = slots_from_slot_deltas
@@ -669,6 +667,22 @@ fn verify_slot_deltas_with_history(
         .find(|slot| !slots_from_slot_deltas.contains(slot));
     if let Some(slot) = slot_missing_from_deltas {
         return Err(VerifySlotDeltasError::SlotNotFoundInDeltas(slot));
+    }
+
+    Ok(())
+}
+
+/// Verify that the snapshot's SlotHistory is not corrupt/invalid
+fn verify_slot_history(
+    slot_history: &SlotHistory,
+    bank_slot: Slot,
+) -> Result<(), VerifySlotHistoryError> {
+    if slot_history.newest() != bank_slot {
+        return Err(VerifySlotHistoryError::InvalidNewestSlot);
+    }
+
+    if slot_history.bits.len() != solana_slot_history::MAX_ENTRIES {
+        return Err(VerifySlotHistoryError::InvalidNumEntries);
     }
 
     Ok(())
@@ -717,23 +731,6 @@ fn _verify_epoch_stakes(
     }
 
     Ok(())
-}
-
-/// Get the snapshot storages for this bank
-pub fn get_snapshot_storages(bank: &Bank) -> Vec<Arc<AccountStorageEntry>> {
-    let mut measure_snapshot_storages = Measure::start("snapshot-storages");
-    let snapshot_storages = bank.get_snapshot_storages(None);
-    measure_snapshot_storages.stop();
-    datapoint_info!(
-        "get_snapshot_storages",
-        (
-            "snapshot-storages-time-ms",
-            measure_snapshot_storages.as_ms(),
-            i64
-        ),
-    );
-
-    snapshot_storages
 }
 
 /// Convenience function to create a full snapshot archive out of any Bank, regardless of state.
@@ -898,7 +895,7 @@ mod tests {
         solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_genesis_config::create_genesis_config,
         solana_keypair::Keypair,
-        solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction::sanitized::SanitizedTransaction,
@@ -1022,16 +1019,16 @@ mod tests {
         let key3 = Keypair::new();
 
         // Create a few accounts
-        let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(2.), &mint_keypair, &key2.pubkey())
+            .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank0.fill_bank_with_ticks_for_tests();
 
@@ -1067,7 +1064,7 @@ mod tests {
         let bank1 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
-            .transfer(sol_to_lamports(1.), &key3, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &key3, &key1.pubkey())
             .unwrap();
 
         bank1.fill_bank_with_ticks_for_tests();
@@ -1124,16 +1121,16 @@ mod tests {
         let key4 = Keypair::new();
         let key5 = Keypair::new();
 
-        let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(2.), &mint_keypair, &key2.pubkey())
+            .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank0.fill_bank_with_ticks_for_tests();
 
@@ -1141,13 +1138,13 @@ mod tests {
         let bank1 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank1
-            .transfer(sol_to_lamports(4.), &mint_keypair, &key4.pubkey())
+            .transfer(4 * LAMPORTS_PER_SOL, &mint_keypair, &key4.pubkey())
             .unwrap();
         bank1
-            .transfer(sol_to_lamports(5.), &mint_keypair, &key5.pubkey())
+            .transfer(5 * LAMPORTS_PER_SOL, &mint_keypair, &key5.pubkey())
             .unwrap();
         bank1.fill_bank_with_ticks_for_tests();
 
@@ -1155,7 +1152,7 @@ mod tests {
         let bank2 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank2.fill_bank_with_ticks_for_tests();
 
@@ -1163,7 +1160,7 @@ mod tests {
         let bank3 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         bank3
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank3.fill_bank_with_ticks_for_tests();
 
@@ -1171,7 +1168,7 @@ mod tests {
         let bank4 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank4.fill_bank_with_ticks_for_tests();
 
@@ -1231,16 +1228,16 @@ mod tests {
         let key4 = Keypair::new();
         let key5 = Keypair::new();
 
-        let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(2.), &mint_keypair, &key2.pubkey())
+            .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank0.fill_bank_with_ticks_for_tests();
 
@@ -1248,13 +1245,13 @@ mod tests {
         let bank1 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank1
-            .transfer(sol_to_lamports(4.), &mint_keypair, &key4.pubkey())
+            .transfer(4 * LAMPORTS_PER_SOL, &mint_keypair, &key4.pubkey())
             .unwrap();
         bank1
-            .transfer(sol_to_lamports(5.), &mint_keypair, &key5.pubkey())
+            .transfer(5 * LAMPORTS_PER_SOL, &mint_keypair, &key5.pubkey())
             .unwrap();
         bank1.fill_bank_with_ticks_for_tests();
 
@@ -1279,7 +1276,7 @@ mod tests {
         let bank2 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank2.fill_bank_with_ticks_for_tests();
 
@@ -1287,7 +1284,7 @@ mod tests {
         let bank3 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         bank3
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank3.fill_bank_with_ticks_for_tests();
 
@@ -1295,7 +1292,7 @@ mod tests {
         let bank4 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank4.fill_bank_with_ticks_for_tests();
 
@@ -1340,16 +1337,16 @@ mod tests {
         let key2 = Keypair::new();
         let key3 = Keypair::new();
 
-        let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(2.), &mint_keypair, &key2.pubkey())
+            .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank0.fill_bank_with_ticks_for_tests();
 
@@ -1357,13 +1354,13 @@ mod tests {
         let bank1 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank1
-            .transfer(sol_to_lamports(2.), &mint_keypair, &key2.pubkey())
+            .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank1
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank1.fill_bank_with_ticks_for_tests();
 
@@ -1388,7 +1385,7 @@ mod tests {
         let bank2 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank2.fill_bank_with_ticks_for_tests();
 
@@ -1396,7 +1393,7 @@ mod tests {
         let bank3 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         bank3
-            .transfer(sol_to_lamports(2.), &mint_keypair, &key2.pubkey())
+            .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank3.fill_bank_with_ticks_for_tests();
 
@@ -1404,7 +1401,7 @@ mod tests {
         let bank4 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank4.fill_bank_with_ticks_for_tests();
 
@@ -1475,11 +1472,12 @@ mod tests {
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
-        let (mut genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (mut genesis_config, mint_keypair) =
+            create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         // test expects 0 transaction fee
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
-        let lamports_to_transfer = sol_to_lamports(123_456.);
+        let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
         let (bank0, bank_forks) = Bank::new_with_paths_for_tests(
             &genesis_config,
             Arc::<RuntimeConfig>::default(),
@@ -1644,7 +1642,7 @@ mod tests {
         let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
 
-        let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0.fill_bank_with_ticks_for_tests();
 
@@ -1671,7 +1669,7 @@ mod tests {
         let bank2 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank2.fill_bank_with_ticks_for_tests();
 
@@ -1895,9 +1893,9 @@ mod tests {
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
-        let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
 
-        let lamports_to_transfer = sol_to_lamports(123_456.);
+        let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
         let bank_test_config = BankTestConfig {
             accounts_db_config: AccountsDbConfig {
                 storage_access,
@@ -2299,17 +2297,6 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_slot_deltas_with_history_bad_slot_history() {
-        let bank_slot = 444;
-        let result = verify_slot_deltas_with_history(
-            &HashSet::default(),
-            &SlotHistory::default(), // <-- will only have an entry for slot 0
-            bank_slot,
-        );
-        assert_eq!(result, Err(VerifySlotDeltasError::BadSlotHistory));
-    }
-
-    #[test]
     fn test_verify_slot_deltas_with_history_bad_slot_not_in_history() {
         let slots_from_slot_deltas = HashSet::from([
             0, // slot history has slot 0 added by default
@@ -2348,6 +2335,37 @@ mod tests {
             result,
             Err(VerifySlotDeltasError::SlotNotFoundInDeltas(333)),
         );
+    }
+
+    #[test]
+    fn test_verify_slot_history_good() {
+        let mut slot_history = SlotHistory::default();
+        // note: slot history expects slots to be added in numeric order
+        for slot in [0, 111, 222, 333, 444] {
+            slot_history.add(slot);
+        }
+
+        let bank_slot = 444;
+        let result = verify_slot_history(&slot_history, bank_slot);
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn test_verify_slot_history_bad_invalid_newest_slot() {
+        let slot_history = SlotHistory::default();
+        let bank_slot = 444;
+        let result = verify_slot_history(&slot_history, bank_slot);
+        assert_eq!(result, Err(VerifySlotHistoryError::InvalidNewestSlot));
+    }
+
+    #[test]
+    fn test_verify_slot_history_bad_invalid_num_entries() {
+        let mut slot_history = SlotHistory::default();
+        slot_history.bits.truncate(slot_history.bits.len() - 1);
+
+        let bank_slot = 0;
+        let result = verify_slot_history(&slot_history, bank_slot);
+        assert_eq!(result, Err(VerifySlotHistoryError::InvalidNumEntries));
     }
 
     #[test]

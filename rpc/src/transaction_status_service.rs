@@ -51,14 +51,14 @@ const TSS_TEST_QUIESCE_SLEEP_TIME_MS: u64 = 50;
 pub struct TransactionStatusService {
     thread_hdl: JoinHandle<()>,
     #[cfg(feature = "dev-context-only-utils")]
-    transaction_status_receiver: Arc<Receiver<TransactionStatusMessage>>,
+    transaction_status_receiver: Receiver<TransactionStatusMessage>,
 }
 
 impl TransactionStatusService {
     const SERVICE_NAME: &str = "TransactionStatusService";
 
     pub fn new(
-        write_transaction_status_receiver: Receiver<TransactionStatusMessage>,
+        transaction_status_receiver: Receiver<TransactionStatusMessage>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         enable_rpc_transaction_history: bool,
         transaction_notifier: Option<TransactionNotifierArc>,
@@ -67,49 +67,49 @@ impl TransactionStatusService {
         depenency_tracker: Option<Arc<DependencyTracker>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let transaction_status_receiver = Arc::new(write_transaction_status_receiver);
-        let transaction_status_receiver_handle = Arc::clone(&transaction_status_receiver);
-
         let thread_hdl = Builder::new()
             .name("solTxStatusWrtr".to_string())
-            .spawn(move || {
-                info!("{} has started", Self::SERVICE_NAME);
-                loop {
-                    if exit.load(Ordering::Relaxed) {
-                        break;
-                    }
-
-                    let message = match transaction_status_receiver_handle
-                        .recv_timeout(Duration::from_secs(1))
-                    {
-                        Ok(message) => message,
-                        Err(err @ RecvTimeoutError::Disconnected) => {
-                            info!("{} is stopping because: {err}", Self::SERVICE_NAME);
+            .spawn({
+                let transaction_status_receiver = transaction_status_receiver.clone();
+                move || {
+                    info!("{} has started", Self::SERVICE_NAME);
+                    loop {
+                        if exit.load(Ordering::Relaxed) {
                             break;
                         }
-                        Err(RecvTimeoutError::Timeout) => {
-                            continue;
-                        }
-                    };
 
-                    match Self::write_transaction_status_batch(
-                        message,
-                        &max_complete_transaction_status_slot,
-                        enable_rpc_transaction_history,
-                        transaction_notifier.clone(),
-                        &blockstore,
-                        enable_extended_tx_metadata_storage,
-                        depenency_tracker.clone(),
-                    ) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            error!("{} is stopping because: {err}", Self::SERVICE_NAME);
-                            exit.store(true, Ordering::Relaxed);
-                            break;
+                        let message = match transaction_status_receiver
+                            .recv_timeout(Duration::from_secs(1))
+                        {
+                            Ok(message) => message,
+                            Err(err @ RecvTimeoutError::Disconnected) => {
+                                info!("{} is stopping because: {err}", Self::SERVICE_NAME);
+                                break;
+                            }
+                            Err(RecvTimeoutError::Timeout) => {
+                                continue;
+                            }
+                        };
+
+                        match Self::write_transaction_status_batch(
+                            message,
+                            &max_complete_transaction_status_slot,
+                            enable_rpc_transaction_history,
+                            transaction_notifier.clone(),
+                            &blockstore,
+                            enable_extended_tx_metadata_storage,
+                            depenency_tracker.clone(),
+                        ) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                error!("{} is stopping because: {err}", Self::SERVICE_NAME);
+                                exit.store(true, Ordering::Relaxed);
+                                break;
+                            }
                         }
                     }
+                    info!("{} has stopped", Self::SERVICE_NAME);
                 }
-                info!("{} has stopped", Self::SERVICE_NAME);
             })
             .unwrap();
         Self {

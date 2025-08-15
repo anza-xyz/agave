@@ -137,7 +137,11 @@ impl Bank {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
             self.slot,
             self.epoch,
-            &self.transaction_processor.program_cache.read().unwrap(),
+            &self
+                .transaction_processor
+                .global_program_cache
+                .read()
+                .unwrap(),
         );
 
         // Configure a dummy `InvokeContext` from the runtime's current
@@ -206,7 +210,7 @@ impl Bank {
         // Update the program cache by merging with `programs_modified`, which
         // should have been updated by the deploy function.
         self.transaction_processor
-            .program_cache
+            .global_program_cache
             .write()
             .unwrap()
             .merge(&program_cache_for_tx_batch.drain_modified_entries());
@@ -592,7 +596,11 @@ pub(crate) mod tests {
                 .contains(&self.target_program_address));
 
             // The cache should contain the target program.
-            let program_cache = bank.transaction_processor.program_cache.read().unwrap();
+            let program_cache = bank
+                .transaction_processor
+                .global_program_cache
+                .read()
+                .unwrap();
             let entries = program_cache.get_flattened_entries(true, true);
             let target_entry = entries
                 .iter()

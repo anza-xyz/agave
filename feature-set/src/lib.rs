@@ -104,9 +104,8 @@ impl FeatureSet {
         SVMFeatureSet {
             move_precompile_verification_to_svm: self
                 .is_active(&move_precompile_verification_to_svm::id()),
-            remove_accounts_executable_flag_checks: self
-                .is_active(&remove_accounts_executable_flag_checks::id()),
-            bpf_account_data_direct_mapping: self.is_active(&bpf_account_data_direct_mapping::id()),
+            stricter_abi_and_runtime_constraints: self
+                .is_active(&stricter_abi_and_runtime_constraints::id()),
             enable_bpf_loader_set_authority_checked_ix: self
                 .is_active(&enable_bpf_loader_set_authority_checked_ix::id()),
             enable_loader_v4: self.is_active(&enable_loader_v4::id()),
@@ -148,7 +147,6 @@ impl FeatureSet {
                 .is_active(&simplify_alt_bn128_syscall_error_codes::id()),
             fix_alt_bn128_multiplication_input_length: self
                 .is_active(&fix_alt_bn128_multiplication_input_length::id()),
-            loosen_cpi_size_restriction: self.is_active(&loosen_cpi_size_restriction::id()),
             increase_tx_account_lock_limit: self.is_active(&increase_tx_account_lock_limit::id()),
             enable_extend_program_checked: self.is_active(&enable_extend_program_checked::id()),
             formalize_loaded_transaction_data_size: self
@@ -752,8 +750,8 @@ pub mod apply_cost_tracker_during_replay {
     solana_pubkey::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
 }
 
-pub mod bpf_account_data_direct_mapping {
-    solana_pubkey::declare_id!("1ncomp1ete111111111111111111111111111111111");
+pub mod stricter_abi_and_runtime_constraints {
+    solana_pubkey::declare_id!("C37iaPi6VE4CZDueU1vL8y6pGp5i8amAbEsF31xzz723");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
@@ -1013,7 +1011,7 @@ pub mod enable_sbpf_v2_deployment_and_execution {
 }
 
 pub mod enable_sbpf_v3_deployment_and_execution {
-    solana_pubkey::declare_id!("GJav1vwg2etvSWraPT96QvYuQJswJTJwtcyARrvkhuV9");
+    solana_pubkey::declare_id!("BUwGLeF3Lxyfv1J1wY8biFHBB2hrk2QhbNftQf3VV3cC");
 }
 
 pub mod remove_accounts_executable_flag_checks {
@@ -1100,6 +1098,8 @@ pub mod formalize_loaded_transaction_data_size {
     solana_pubkey::declare_id!("DeS7sR48ZcFTUmt5FFEVDr1v1bh73aAbZiZq3SYr8Eh8");
 }
 
+// Until alpenglow is fully upstreamed, this is intentionally left out of
+// `FEATURE_NAMES`
 pub mod alpenglow {
     solana_pubkey::declare_id!("mustRekeyVm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
 }
@@ -1279,7 +1279,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (clean_up_delegation_errors::id(), "Return InsufficientDelegation instead of InsufficientFunds or InsufficientStake where applicable #31206"),
         (vote_state_add_vote_latency::id(), "replace Lockout with LandedVote (including vote latency) in vote state #31264"),
         (checked_arithmetic_in_fee_validation::id(), "checked arithmetic in fee validation #31273"),
-        (bpf_account_data_direct_mapping::id(), "use memory regions to map account data into the rbpf vm instead of copying the data"),
+        (stricter_abi_and_runtime_constraints::id(), "use memory regions to map account data into the rbpf vm instead of copying the data"),
         (last_restart_slot_sysvar::id(), "enable new sysvar last_restart_slot"),
         (reduce_stake_warmup_cooldown::id(), "reduce stake warmup cooldown from 25% to 9%"),
         (revise_turbine_epoch_stakes::id(), "revise turbine epoch stakes"),
@@ -1359,7 +1359,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (enshrine_slashing_program::id(), "SIMD-0204: Slashable event verification"),
         (enable_extend_program_checked::id(), "Enable ExtendProgramChecked instruction"),
         (formalize_loaded_transaction_data_size::id(), "SIMD-0186: Loaded transaction data size specification"),
-        (alpenglow::id(), "Enable Alpenglow"),
+        // Intentionally left out until upstreaming is complete (alpenglow::id(), "Enable Alpenglow"),
         (disable_zk_elgamal_proof_program::id(), "Disables zk-elgamal-proof program"),
         (reenable_zk_elgamal_proof_program::id(), "Re-enables zk-elgamal-proof program"),
         (raise_block_limits_to_100m::id(), "SIMD-0286: Raise block limit to 100M"),

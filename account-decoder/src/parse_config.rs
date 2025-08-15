@@ -5,7 +5,7 @@ use {
     },
     bincode::deserialize,
     serde_json::Value,
-    solana_config_program_client::{get_config_data, ConfigKeys},
+    solana_config_interface::state::{get_config_data, ConfigKeys},
     solana_pubkey::Pubkey,
     solana_stake_interface::config::{
         Config as StakeConfig, {self as stake_config},
@@ -101,7 +101,6 @@ mod test {
         bincode::serialize,
         serde_json::json,
         solana_account::{Account, AccountSharedData, ReadableAccount},
-        solana_config_program_client::ConfigKeys,
     };
 
     fn create_config_account<T: serde::Serialize>(

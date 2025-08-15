@@ -45,7 +45,7 @@ pub fn sample_txs<T>(
         let mut txs =
             match client.get_transaction_count_with_commitment(CommitmentConfig::processed()) {
                 Err(e) => {
-                    info!("Couldn't get transaction count {:?}", e);
+                    info!("Couldn't get transaction count {e:?}");
                     sleep(Duration::from_secs(sample_period));
                     continue;
                 }
@@ -53,7 +53,7 @@ pub fn sample_txs<T>(
             };
 
         if txs < last_txs {
-            info!("Expected txs({}) >= last_txs({})", txs, last_txs);
+            info!("Expected txs({txs}) >= last_txs({last_txs})");
             txs = last_txs;
         }
         total_txs = txs - initial_txs;

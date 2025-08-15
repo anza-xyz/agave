@@ -9,10 +9,11 @@ use {
     solana_download_utils::{download_snapshot_archive, DownloadProgressRecord},
     solana_genesis_utils::download_then_check_genesis_hash,
     solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
+        cluster_info::ClusterInfo,
         contact_info::{ContactInfo, Protocol},
         crds_data,
         gossip_service::GossipService,
+        node::Node,
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -192,12 +193,7 @@ fn get_rpc_peers(
             .unwrap_or_default()
     );
 
-    let mut rpc_peers = cluster_info
-        .all_rpc_peers()
-        .into_iter()
-        .filter(|contact_info| contact_info.shred_version() == shred_version)
-        .collect::<Vec<_>>();
-
+    let mut rpc_peers = cluster_info.rpc_peers();
     if bootstrap_config.only_known_rpc {
         rpc_peers.retain(|rpc_peer| {
             is_known_validator(rpc_peer.pubkey(), &validator_config.known_validators)

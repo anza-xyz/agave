@@ -70,7 +70,6 @@ impl TransactionAccountStateInfo {
 mod test {
     use {
         super::*,
-        agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::AccountSharedData,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -82,6 +81,7 @@ mod test {
         solana_signer::Signer,
         solana_transaction_context::TransactionContext,
         solana_transaction_error::TransactionError,
+        std::collections::HashSet,
     };
 
     #[test]
@@ -110,10 +110,8 @@ mod test {
             recent_blockhash: Hash::default(),
         };
 
-        let sanitized_message = SanitizedMessage::Legacy(LegacyMessage::new(
-            message,
-            &ReservedAccountKeys::empty_key_set(),
-        ));
+        let sanitized_message =
+            SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()));
 
         let transaction_accounts = vec![
             (key1.pubkey(), AccountSharedData::default()),
@@ -164,10 +162,8 @@ mod test {
             recent_blockhash: Hash::default(),
         };
 
-        let sanitized_message = SanitizedMessage::Legacy(LegacyMessage::new(
-            message,
-            &ReservedAccountKeys::empty_key_set(),
-        ));
+        let sanitized_message =
+            SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()));
 
         let transaction_accounts = vec![
             (key1.pubkey(), AccountSharedData::default()),

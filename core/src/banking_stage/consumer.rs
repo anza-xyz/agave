@@ -28,7 +28,7 @@ use {
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::TransactionError,
-    std::{num::Saturating, sync::Arc},
+    std::num::Saturating,
 };
 
 /// Consumer will create chunks of transactions from buffer with up to this size.
@@ -94,7 +94,7 @@ impl Consumer {
 
     pub fn process_and_record_transactions(
         &self,
-        bank: &Arc<Bank>,
+        bank: &Bank,
         txs: &[impl TransactionWithMeta],
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
@@ -124,7 +124,7 @@ impl Consumer {
 
     pub fn process_and_record_aged_transactions(
         &self,
-        bank: &Arc<Bank>,
+        bank: &Bank,
         txs: &[impl TransactionWithMeta],
         max_ages: &[MaxAge],
     ) -> ProcessTransactionBatchOutput {
@@ -159,7 +159,7 @@ impl Consumer {
 
     fn process_and_record_transactions_with_pre_results(
         &self,
-        bank: &Arc<Bank>,
+        bank: &Bank,
         txs: &[impl TransactionWithMeta],
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
     ) -> ProcessTransactionBatchOutput {
@@ -227,7 +227,7 @@ impl Consumer {
 
     fn execute_and_commit_transactions_locked(
         &self,
-        bank: &Arc<Bank>,
+        bank: &Bank,
         batch: &TransactionBatch<impl TransactionWithMeta>,
     ) -> ExecuteAndCommitTransactionsOutput {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
@@ -532,7 +532,7 @@ mod tests {
             borrow::Cow,
             sync::{
                 atomic::{AtomicBool, AtomicU64, Ordering},
-                RwLock,
+                Arc, RwLock,
             },
             thread::{Builder, JoinHandle},
             time::Duration,
@@ -1560,7 +1560,7 @@ mod tests {
             mut genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(solana_native_token::sol_to_lamports(1000.0));
+        } = create_slow_genesis_config(solana_native_token::LAMPORTS_PER_SOL * 1000);
         genesis_config.rent.lamports_per_byte_year = 50;
         genesis_config.rent.exemption_threshold = 2.0;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);

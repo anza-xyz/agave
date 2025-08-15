@@ -10,7 +10,7 @@ use {
     solana_keypair::Keypair,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
-    solana_native_token::sol_to_lamports,
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -18,8 +18,8 @@ use {
     solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, secp256k1_program},
     solana_signer::Signer,
     solana_svm::transaction_processor::ExecutionRecordingConfig,
+    solana_svm_timings::ExecuteTimings,
     solana_system_interface::instruction as system_instruction,
-    solana_timings::ExecuteTimings,
     solana_transaction::Transaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::sync::{Arc, RwLock},
@@ -58,7 +58,7 @@ struct TestSetup {
 
 impl TestSetup {
     fn new() -> Self {
-        let (mut genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1.));
+        let (mut genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
         genesis_config.rent = Rent::default();
         Self {
             genesis_config,

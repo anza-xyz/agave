@@ -46,8 +46,8 @@ use {
         },
     },
     solana_shred_version::compute_shred_version,
+    solana_svm_timings::ExecuteTimings,
     solana_time_utils::timestamp,
-    solana_timings::ExecuteTimings,
     solana_vote::vote_transaction::VoteTransaction,
     std::{
         collections::{HashMap, HashSet},

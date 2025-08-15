@@ -43,4 +43,6 @@ pub enum ComputeUnitLimit {
     Static(u32),
     /// Simulate the transaction to find out the compute unit usage
     Simulated,
+    /// Simulate the transaction and add a small percentage to account for potential drift
+    SimulatedWithExtraPercentage(u8),
 }

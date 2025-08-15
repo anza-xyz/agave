@@ -20,7 +20,7 @@ use {
 // Based on transfers seen with `dd bs=SIZE` for NVME drives: values >=64KiB are fine,
 // but peak at 1MiB. Also compare with particular NVME parameters, e.g.
 // 32 pages (Maximum Data Transfer Size) * page size (MPSMIN = Memory Page Size) = 128KiB.
-const DEFAULT_READ_SIZE: usize = 1024 * 1024;
+pub const DEFAULT_READ_SIZE: usize = 1024 * 1024;
 const SQPOLL_IDLE_TIMEOUT: u32 = 50;
 // For large file we don't really use workers as few regularly submitted requests get handled
 // within sqpoll thread. Allow some workers just in case, but limit them.
@@ -88,10 +88,8 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
     ) -> io::Result<Self> {
         let buffer = backing_buffer.as_mut();
         assert!(buffer.len() >= read_capacity, "buffer too small");
-        assert!(
-            buffer.len() % read_capacity == 0,
-            "buffer size must be a multiple of read_capacity"
-        );
+        let read_aligned_buf_len = buffer.len() / read_capacity * read_capacity;
+        let buffer = &mut buffer[..read_aligned_buf_len];
 
         let file = OpenOptions::new()
             .read(true)

@@ -3,7 +3,7 @@ use {
     solana_program_runtime::execution_budget::SVMTransactionExecutionCost,
 };
 
-fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
+fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
     var_addr: u64,
     check_aligned: bool,
@@ -23,7 +23,7 @@ fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
         let var: &mut T = map(var_addr)?;
     );
 
-    // this clone looks unecessary now, but it exists to zero out trailing alignment bytes
+    // this clone looks unnecessary now, but it exists to zero out trailing alignment bytes
     // it is unclear whether this should ever matter
     // but there are tests using MemoryMapping that expect to see this
     // we preserve the previous behavior out of an abundance of caution

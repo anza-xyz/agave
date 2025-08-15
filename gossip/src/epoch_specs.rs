@@ -54,6 +54,12 @@ impl EpochSpecs {
     }
 }
 
+impl Clone for EpochSpecs {
+    fn clone(&self) -> Self {
+        Self::from(self.bank_forks.clone())
+    }
+}
+
 impl From<Arc<RwLock<BankForks>>> for EpochSpecs {
     fn from(bank_forks: Arc<RwLock<BankForks>>) -> Self {
         let (root, root_bank) = {

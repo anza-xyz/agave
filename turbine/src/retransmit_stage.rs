@@ -4,7 +4,7 @@ use {
     crate::{
         addr_cache::AddrCache,
         cluster_nodes::{self, ClusterNodes, ClusterNodesCache, Error, MAX_NUM_TURBINE_HOPS},
-        xdp::{XdpSender, XdpShredPayload},
+        xdp::XdpSender,
     },
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvError, TryRecvError},
@@ -420,7 +420,7 @@ fn retransmit_shred(
     let num_addrs = addrs.len();
     let num_nodes = match cluster_nodes::get_broadcast_protocol(&key) {
         Protocol::QUIC => {
-            let shred = Bytes::from(shred::Payload::unwrap_or_clone(shred));
+            let shred = shred.bytes;
             addrs
                 .iter()
                 .filter_map(|&addr| quic_endpoint_sender.try_send((addr, shred.clone())).ok())
@@ -430,11 +430,7 @@ fn retransmit_shred(
             RetransmitSocket::Xdp(sender) => {
                 let mut sent = num_addrs;
                 if num_addrs > 0 {
-                    if let Err(e) = sender.try_send(
-                        key.index() as usize,
-                        addrs.to_vec(),
-                        XdpShredPayload::Owned(shred),
-                    ) {
+                    if let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred) {
                         log::warn!("xdp channel full: {e:?}");
                         stats
                             .num_shreds_dropped_xdp_full
@@ -853,7 +849,7 @@ mod tests {
         bs58::decode(KEYPAIR)
             .into_vec()
             .as_deref()
-            .map(Keypair::from_bytes)
+            .map(Keypair::try_from)
             .unwrap()
             .unwrap()
     }

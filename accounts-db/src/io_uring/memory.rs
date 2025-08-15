@@ -49,7 +49,7 @@ impl AsMut<[u8]> for LargeBuffer {
 }
 
 impl LargeBuffer {
-    /// Allocare memory buffer optimized for io_uring operations, i.e.
+    /// Allocate memory buffer optimized for io_uring operations, i.e.
     /// using HugeTable when it is available on the host.
     pub fn new(size: usize) -> Self {
         if size > PageAlignedMemory::page_size() {
@@ -198,7 +198,7 @@ impl FixedIoBuffer {
         }
     }
 
-    /// Registed provided buffer as fixed buffer in `io_uring`.
+    /// Register provided buffer as fixed buffer in `io_uring`.
     pub unsafe fn register<S, E: RingOp<S>>(
         buffer: &mut [u8],
         ring: &Ring<S, E>,

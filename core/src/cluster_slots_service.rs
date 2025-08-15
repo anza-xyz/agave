@@ -83,6 +83,11 @@ impl ClusterSlotsService {
         let mut cluster_slots_service_timing = ClusterSlotsServiceTiming::default();
         let mut last_stats = Instant::now();
         let mut epoch_specs = EpochSpecs::from(bank_forks.clone());
+
+        // initialize cluster slots with the current root bank
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        cluster_slots.update(&root_bank, &cluster_info);
+
         while !exit.load(Ordering::Relaxed) {
             let slots = match cluster_slots_update_receiver.recv_timeout(Duration::from_millis(200))
             {
@@ -198,7 +203,7 @@ impl ClusterSlotsService {
 mod test {
     use {
         super::*,
-        solana_gossip::{cluster_info::Node, crds_data::LowestSlot},
+        solana_gossip::{crds_data::LowestSlot, node::Node},
         solana_keypair::Keypair,
         solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,

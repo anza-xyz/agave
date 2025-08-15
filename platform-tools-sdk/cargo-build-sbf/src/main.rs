@@ -7,9 +7,9 @@ use {
         post_processing::post_process,
         toolchain::{
             corrupted_toolchain, generate_toolchain_name, get_base_rust_version, install_tools,
-            DEFAULT_PLATFORM_TOOLS_VERSION,
+            rust_target_triple, DEFAULT_PLATFORM_TOOLS_VERSION,
         },
-        utils::{rust_target_triple, spawn},
+        utils::spawn,
     },
     cargo_metadata::camino::Utf8PathBuf,
     clap::{crate_description, crate_name, crate_version, Arg},
@@ -118,22 +118,6 @@ fn home_dir() -> PathBuf {
                 exit(1);
             }),
     )
-}
-
-fn semver_version(version: &str) -> String {
-    let starts_with_v = version.starts_with('v');
-    let dots = version.as_bytes().iter().fold(
-        0,
-        |n: u32, c| if *c == b'.' { n.saturating_add(1) } else { n },
-    );
-    match (dots, starts_with_v) {
-        (0, false) => format!("{version}.0.0"),
-        (0, true) => format!("{}.0.0", &version[1..]),
-        (1, false) => format!("{version}.0"),
-        (1, true) => format!("{}.0", &version[1..]),
-        (_, false) => version.to_string(),
-        (_, true) => version[1..].to_string(),
-    }
 }
 
 fn prepare_environment(

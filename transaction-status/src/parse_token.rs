@@ -1684,7 +1684,7 @@ mod test {
         let get_account_data_size_ix = get_account_data_size(
             program_id,
             &mint_pubkey,
-            &[], // This emulates the packed data of spl_token::instruction::get_account_data_size
+            &[], // This emulates the packed data of spl_token_interface::instruction::get_account_data_size
         )
         .unwrap();
         let message = Message::new(&[get_account_data_size_ix], None);
@@ -1771,7 +1771,7 @@ mod test {
 
     #[test]
     fn test_parse_token_v3() {
-        test_parse_token(&spl_token::id());
+        test_parse_token(&spl_token_interface::id());
     }
 
     #[test]
@@ -2150,7 +2150,7 @@ mod test {
 
     #[test]
     fn test_not_enough_keys_token_v3() {
-        test_token_ix_not_enough_keys(&spl_token::id());
+        test_token_ix_not_enough_keys(&spl_token_interface::id());
     }
 
     #[test]

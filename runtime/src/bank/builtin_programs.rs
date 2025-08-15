@@ -417,7 +417,7 @@ mod tests_core_bpf_migration {
         // Run `finish_init` to simulate starting up from a snapshot.
         // Clear all builtins to simulate a fresh bank init.
         bank.transaction_processor
-            .program_cache
+            .global_program_cache
             .write()
             .unwrap()
             .remove_programs(
@@ -586,7 +586,7 @@ mod tests_core_bpf_migration {
         // Run `finish_init` to simulate starting up from a snapshot.
         // Clear all builtins to simulate a fresh bank init.
         bank.transaction_processor
-            .program_cache
+            .global_program_cache
             .write()
             .unwrap()
             .remove_programs(

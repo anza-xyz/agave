@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 Please follow the [guidance](#adding-to-this-changelog) at the bottom of this file when making changes
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
-and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backwards-compatibility)
+and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
 * [edge - v3.0](#edge-channel)
@@ -40,6 +40,7 @@ Release channels have their own copy of this changelog:
   * `--skip-poh-verify`
 * Deprecated snapshot archive formats have been removed and are no longer loadable.
 * Using `--snapshot-interval-slots 0` to disable generating snapshots has been removed. Use `--no-snapshots` instead.
+* Validator will now bind all ports within provided `--dynamic-port-range`, including the client ports. A range of at least 25 ports is recommended to avoid failures to bind during startup.
 
 #### Changes
 * `--transaction-structure view` is now the default.

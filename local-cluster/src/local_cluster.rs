@@ -11,23 +11,24 @@ use {
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{Slot, DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT},
+    solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_core::{
         consensus::tower_storage::FileTowerStorage,
         validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
     solana_epoch_schedule::EpochSchedule,
-    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_genesis_config::GenesisConfig,
     solana_gossip::{
-        cluster_info::Node,
         contact_info::{ContactInfo, Protocol},
         gossip_service::{discover, discover_validators},
+        node::Node,
     },
     solana_keypair::Keypair,
     solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::bind_to_unspecified,
+    solana_net_utils::sockets::bind_to_localhost_unique,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -37,6 +38,7 @@ use {
             ValidatorVoteKeypairs,
         },
         snapshot_config::SnapshotConfig,
+        snapshot_utils::BANK_SNAPSHOTS_DIR,
     },
     solana_signer::{signers::Signers, Signer},
     solana_stake_interface::{
@@ -190,7 +192,7 @@ impl LocalCluster {
             snapshot_config.full_snapshot_archives_dir = ledger_path.to_path_buf();
         }
         if snapshot_config.bank_snapshots_dir == dummy {
-            snapshot_config.bank_snapshots_dir = ledger_path.join("snapshot");
+            snapshot_config.bank_snapshots_dir = ledger_path.join(BANK_SNAPSHOTS_DIR);
         }
     }
 
@@ -1136,7 +1138,7 @@ impl Cluster for LocalCluster {
     }
 
     fn send_shreds_to_validator(&self, dup_shreds: Vec<&Shred>, validator_key: &Pubkey) {
-        let send_socket = bind_to_unspecified().unwrap();
+        let send_socket = bind_to_localhost_unique().expect("should bind");
         let validator_tvu = self
             .get_contact_info(validator_key)
             .unwrap()

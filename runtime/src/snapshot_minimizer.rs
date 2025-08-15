@@ -46,7 +46,12 @@ impl<'a> SnapshotMinimizer<'a> {
     ///
     /// This function will modify accounts_db by removing accounts not needed to replay [starting_slot, ending_slot],
     /// and update the bank's capitalization.
-    pub fn minimize(bank: &'a Bank, starting_slot: Slot, transaction_account_set: DashSet<Pubkey>) {
+    pub fn minimize(
+        bank: &'a Bank,
+        starting_slot: Slot,
+        transaction_account_set: DashSet<Pubkey>,
+        should_recalculate_accounts_lt_hash: bool,
+    ) {
         let minimizer = SnapshotMinimizer {
             bank,
             starting_slot,
@@ -71,14 +76,16 @@ impl<'a> SnapshotMinimizer<'a> {
             .bank
             .set_capitalization_for_tests(minimizer.bank.calculate_capitalization_for_tests());
 
-        // Since the account state has changed, the accounts lt hash must be recalculated
-        let new_accounts_lt_hash = minimizer
-            .accounts_db()
-            .calculate_accounts_lt_hash_at_startup_from_index(
-                &minimizer.bank.ancestors,
-                minimizer.bank.slot(),
-            );
-        bank.set_accounts_lt_hash_for_snapshot_minimizer(new_accounts_lt_hash);
+        if should_recalculate_accounts_lt_hash {
+            // Since the account state has changed, the accounts lt hash must be recalculated
+            let new_accounts_lt_hash = minimizer
+                .accounts_db()
+                .calculate_accounts_lt_hash_at_startup_from_index(
+                    &minimizer.bank.ancestors,
+                    minimizer.bank.slot(),
+                );
+            bank.set_accounts_lt_hash_for_snapshot_minimizer(new_accounts_lt_hash);
+        }
     }
 
     /// Helper function to measure time and number of accounts added
@@ -92,7 +99,8 @@ impl<'a> SnapshotMinimizer<'a> {
         let added_accounts = total_accounts_len - initial_accounts_len;
 
         info!(
-            "Added {added_accounts} {name} for total of {total_accounts_len} accounts. get {measure}"
+            "Added {added_accounts} {name} for total of {total_accounts_len} accounts. get \
+             {measure}"
         );
     }
 
@@ -376,7 +384,7 @@ mod tests {
         },
         dashmap::DashSet,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_genesis_config::create_genesis_config,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_pubkey::Pubkey,
@@ -385,6 +393,7 @@ mod tests {
         solana_stake_interface as stake,
         std::sync::Arc,
         tempfile::TempDir,
+        test_case::test_case,
     };
 
     #[test]
@@ -551,7 +560,7 @@ mod tests {
             current_slot += 1;
 
             for (index, pubkey) in pubkeys.iter().enumerate() {
-                accounts.store_for_tests(current_slot, &[(pubkey, &account)]);
+                accounts.store_for_tests((current_slot, [(pubkey, &account)].as_slice()));
 
                 if current_slot % 2 == 0 && index % 100 == 0 {
                     minimized_account_set.insert(*pubkey);
@@ -587,10 +596,11 @@ mod tests {
         ); // snapshot slot is untouched, so still has all 300 accounts
     }
 
-    /// Ensure that minimization recalculates the accounts lt hash correctly
-    /// so the minimized snapshot is loadable.
-    #[test]
-    fn test_minimize_and_accounts_lt_hash() {
+    /// Ensure that minimized snapshots are loadable with and without
+    /// recalculating the accounts lt hash.
+    #[test_case(false)]
+    #[test_case(true)]
+    fn test_minimize_and_recalculate_accounts_lt_hash(should_recalculate_accounts_lt_hash: bool) {
         let genesis_config_info = genesis_utils::create_genesis_config(123_456_789_000_000_000);
         let (bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
@@ -622,7 +632,12 @@ mod tests {
         bank.force_flush_accounts_cache();
 
         // do the minimization
-        SnapshotMinimizer::minimize(&bank, bank.slot(), DashSet::from_iter([pubkey_to_keep]));
+        SnapshotMinimizer::minimize(
+            &bank,
+            bank.slot(),
+            DashSet::from_iter([pubkey_to_keep]),
+            should_recalculate_accounts_lt_hash,
+        );
 
         // take a snapshot of the minimized bank, then load it
         let snapshot_config = SnapshotConfig::default();
@@ -638,6 +653,11 @@ mod tests {
         )
         .unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
+        let accounts_db_config = AccountsDbConfig {
+            // must skip accounts verification if we did not recalculate the accounts lt hash
+            skip_initial_hash_calc: !should_recalculate_accounts_lt_hash,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
         let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
             &bank_snapshots_dir,
@@ -651,7 +671,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            Some(accounts_db_config),
             None,
             Arc::default(),
         )

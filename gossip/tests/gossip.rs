@@ -5,10 +5,11 @@ extern crate log;
 use {
     rayon::iter::*,
     solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
+        cluster_info::ClusterInfo,
         contact_info::{ContactInfo, Protocol},
         crds::Cursor,
         gossip_service::GossipService,
+        node::Node,
     },
     solana_hash::Hash,
     solana_keypair::Keypair,

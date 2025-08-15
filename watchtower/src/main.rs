@@ -12,7 +12,7 @@ use {
     solana_cli_output::display::format_labeled_address,
     solana_hash::Hash,
     solana_metrics::{datapoint_error, datapoint_info},
-    solana_native_token::{sol_to_lamports, Sol},
+    solana_native_token::{sol_str_to_lamports, Sol},
     solana_notifier::{NotificationType, Notifier},
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -197,11 +197,10 @@ fn get_config() -> Config {
 
     let interval = Duration::from_secs(value_t_or_exit!(matches, "interval", u64));
     let unhealthy_threshold = value_t_or_exit!(matches, "unhealthy_threshold", usize);
-    let minimum_validator_identity_balance = sol_to_lamports(value_t_or_exit!(
-        matches,
-        "minimum_validator_identity_balance",
-        f64
-    ));
+    let minimum_validator_identity_balance = matches
+        .value_of("minimum_validator_identity_balance")
+        .and_then(sol_str_to_lamports)
+        .unwrap();
     let json_rpc_urls = values_t!(matches, "json_rpc_urls", String).unwrap_or_else(|_| {
         vec![value_t!(matches, "json_rpc_url", String).unwrap_or_else(|_| config.json_rpc_url)]
     });
@@ -422,7 +421,7 @@ fn validate_endpoints(
         if let Some(common_genesis_hash) = opt_common_genesis_hash {
             if common_genesis_hash != genesis_hash {
                 return Err(
-                    "Endpoints don't aggree on genesis hash, have you mixed up clusters?".into(),
+                    "Endpoints don't agree on genesis hash, have you mixed up clusters?".into(),
                 );
             }
         } else {

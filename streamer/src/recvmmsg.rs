@@ -183,7 +183,7 @@ mod tests {
     use {
         crate::{packet::PACKET_DATA_SIZE, recvmmsg::*},
         solana_net_utils::sockets::{
-            bind_in_range_with_config, localhost_port_range_for_tests,
+            bind_in_range_with_config, localhost_port_range_for_tests, unique_port_range_for_tests,
             SocketConfiguration as SocketConfig,
         },
         std::{
@@ -195,10 +195,20 @@ mod tests {
     type TestConfig = (UdpSocket, SocketAddr, UdpSocket, SocketAddr);
 
     fn test_setup_reader_sender(ip: IpAddr) -> io::Result<TestConfig> {
-        let port_range = localhost_port_range_for_tests();
-        let reader = bind_in_range_with_config(ip, port_range, SocketConfig::default())?.1;
+        let port_range = unique_port_range_for_tests(2);
+        let reader = bind_in_range_with_config(
+            ip,
+            (port_range.start, port_range.end),
+            SocketConfig::default(),
+        )?
+        .1;
         let reader_addr = reader.local_addr()?;
-        let sender = bind_in_range_with_config(ip, port_range, SocketConfig::default())?.1;
+        let sender = bind_in_range_with_config(
+            ip,
+            (port_range.start, port_range.end),
+            SocketConfig::default(),
+        )?
+        .1;
         let sender_addr = sender.local_addr()?;
         Ok((reader, reader_addr, sender, sender_addr))
     }

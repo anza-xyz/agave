@@ -22,7 +22,8 @@ solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-sysvar = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["sysvar"] }
+solana-sysvar = { workspace = true, features = ["bincode"] }
 
 [lints]
 workspace = true

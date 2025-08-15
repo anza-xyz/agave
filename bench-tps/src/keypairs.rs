@@ -25,7 +25,7 @@ where
         let path = Path::new(client_ids_and_stake_file);
         let file = File::open(path).unwrap();
 
-        info!("Reading {}", client_ids_and_stake_file);
+        info!("Reading {client_ids_and_stake_file}");
         let accounts: HashMap<String, Base64Account> = serde_yaml::from_reader(file).unwrap();
         let mut keypairs = vec![];
         let mut last_balance = 0;
@@ -34,7 +34,7 @@ where
             .into_iter()
             .for_each(|(keypair, primordial_account)| {
                 let bytes: Vec<u8> = serde_json::from_str(keypair.as_str()).unwrap();
-                keypairs.push(Keypair::from_bytes(&bytes).unwrap());
+                keypairs.push(Keypair::try_from(bytes.as_ref()).unwrap());
                 last_balance = primordial_account.balance;
             });
 

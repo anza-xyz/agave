@@ -324,7 +324,7 @@ fn main() {
         .unwrap_or_default();
     let num_banking_threads = matches
         .value_of_t::<u32>("num_banking_threads")
-        .unwrap_or_else(|_| BankingStage::num_threads());
+        .unwrap_or_else(|_| BankingStage::default_or_env_num_workers());
     //   a multiple of packet chunk duplicates to avoid races
     let num_chunks = matches.value_of_t::<usize>("num_chunks").unwrap_or(16);
     let packets_per_batch = matches
@@ -333,7 +333,7 @@ fn main() {
     let iterations = matches.value_of_t::<usize>("iterations").unwrap_or(1000);
     let batches_per_iteration = matches
         .value_of_t::<usize>("batches_per_iteration")
-        .unwrap_or(BankingStage::num_threads() as usize);
+        .unwrap_or(BankingStage::default_or_env_num_workers() as usize);
     let write_lock_contention = matches
         .value_of_t::<WriteLockContention>("write_lock_contention")
         .unwrap_or(WriteLockContention::None);

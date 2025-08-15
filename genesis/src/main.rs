@@ -18,6 +18,7 @@ use {
         },
     },
     solana_clock as clock,
+    solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_entry::poh::compute_hashes_per_tick,
     solana_epoch_schedule::EpochSchedule,
@@ -27,12 +28,12 @@ use {
         genesis_accounts::add_genesis_accounts, Base64Account, StakedValidatorAccountInfo,
         ValidatorAccountsFile,
     },
-    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_genesis_config::GenesisConfig,
     solana_inflation::Inflation,
     solana_keypair::{read_keypair_file, Keypair},
     solana_ledger::{blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions},
     solana_loader_v3_interface::state::UpgradeableLoaderState,
-    solana_native_token::sol_to_lamports,
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -65,7 +66,7 @@ fn pubkey_from_str(key_str: &str) -> Result<Pubkey, Box<dyn error::Error>> {
     Pubkey::from_str(key_str).or_else(|_| {
         let bytes: Vec<u8> = serde_json::from_str(key_str)?;
         let keypair =
-            Keypair::from_bytes(&bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
+            Keypair::try_from(bytes.as_ref()).map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(keypair.pubkey())
     })
 }
@@ -313,11 +314,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
 
     // vote account
-    let default_bootstrap_validator_lamports = &sol_to_lamports(500.0)
+    let default_bootstrap_validator_lamports = &(500 * LAMPORTS_PER_SOL)
         .max(VoteStateV3::get_rent_exempt_reserve(&rent))
         .to_string();
     // stake account
-    let default_bootstrap_validator_stake_lamports = &sol_to_lamports(0.5)
+    let default_bootstrap_validator_stake_lamports = &(LAMPORTS_PER_SOL / 2)
         .max(rent.minimum_balance(StakeStateV2::size_of()))
         .to_string();
 
