@@ -14,13 +14,10 @@ use {
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_context::{
         BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
+        MAX_ACCOUNTS_PER_INSTRUCTION,
     },
     std::mem::{self, size_of},
 };
-
-/// Maximum number of instruction accounts that can be serialized into the
-/// SBF VM.
-const MAX_INSTRUCTION_ACCOUNTS: u8 = NON_DUP_MARKER;
 
 /// Modifies the memory mapping in serialization and CPI return for stricter_abi_and_runtime_constraints
 pub fn modify_memory_region_of_account(
@@ -237,7 +234,7 @@ pub fn serialize_parameters(
     InstructionError,
 > {
     let num_ix_accounts = instruction_context.get_number_of_instruction_accounts();
-    if num_ix_accounts > MAX_INSTRUCTION_ACCOUNTS as IndexOfAccount {
+    if num_ix_accounts > MAX_ACCOUNTS_PER_INSTRUCTION as IndexOfAccount {
         return Err(InstructionError::MaxAccountsExceeded);
     }
 
@@ -726,19 +723,19 @@ mod tests {
             } in [
                 TestCase {
                     name: "serialize max accounts with cap",
-                    num_ix_accounts: usize::from(MAX_INSTRUCTION_ACCOUNTS),
+                    num_ix_accounts: MAX_ACCOUNTS_PER_INSTRUCTION,
                     append_dup_account: false,
                     expected_err: None,
                 },
                 TestCase {
                     name: "serialize too many accounts with cap",
-                    num_ix_accounts: usize::from(MAX_INSTRUCTION_ACCOUNTS) + 1,
+                    num_ix_accounts: MAX_ACCOUNTS_PER_INSTRUCTION + 1,
                     append_dup_account: false,
                     expected_err: Some(InstructionError::MaxAccountsExceeded),
                 },
                 TestCase {
                     name: "serialize too many accounts and append dup with cap",
-                    num_ix_accounts: usize::from(MAX_INSTRUCTION_ACCOUNTS),
+                    num_ix_accounts: MAX_ACCOUNTS_PER_INSTRUCTION,
                     append_dup_account: true,
                     expected_err: Some(InstructionError::MaxAccountsExceeded),
                 },

@@ -11346,6 +11346,7 @@ dependencies = [
  "solana-account-info",
  "solana-instruction",
  "solana-instructions-sysvar",
+ "solana-program-entrypoint",
  "solana-pubkey",
  "solana-rent",
  "solana-sbpf",

@@ -954,6 +954,7 @@ mod tests {
         solana_rent::Rent,
         solana_signer::Signer,
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION,
         std::collections::HashSet,
         test_case::test_case,
     };
@@ -1364,7 +1365,7 @@ mod tests {
     fn test_prepare_instruction_maximum_accounts() {
         let mut transaction_accounts: Vec<TransactionAccount> =
             Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
-        let mut account_metas: Vec<AccountMeta> = Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
+        let mut account_metas: Vec<AccountMeta> = Vec::with_capacity(MAX_ACCOUNTS_PER_INSTRUCTION);
 
         // Fee-payer
         let fee_payer = Keypair::new();
@@ -1380,7 +1381,7 @@ mod tests {
         transaction_accounts.push((program_id, program_account));
         account_metas.push(AccountMeta::new_readonly(program_id, false));
 
-        for _ in 2..256 {
+        for _ in 2..MAX_ACCOUNTS_PER_INSTRUCTION {
             let key = Pubkey::new_unique();
             transaction_accounts.push((key, AccountSharedData::new(1, 1, &Pubkey::new_unique())));
             account_metas.push(AccountMeta::new_readonly(key, false));
@@ -1410,7 +1411,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap();
-            for index_in_transaction in 0..256 {
+            for index_in_transaction in 0..MAX_ACCOUNTS_PER_INSTRUCTION as IndexOfAccount {
                 let index_in_instruction = instruction_context
                     .get_index_of_account_in_instruction(index_in_transaction as IndexOfAccount)
                     .unwrap();
@@ -1427,7 +1428,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap();
-            for index_in_transaction in 0..256u16 {
+            for index_in_transaction in 0..MAX_ACCOUNTS_PER_INSTRUCTION as IndexOfAccount {
                 let index_in_instruction = instruction_context
                     .get_index_of_account_in_instruction(index_in_transaction as IndexOfAccount)
                     .unwrap();
@@ -1436,7 +1437,9 @@ mod tests {
                     .unwrap();
                 assert_eq!(
                     index_in_instruction,
-                    255u16.saturating_sub(index_in_transaction)
+                    (MAX_ACCOUNTS_PER_INSTRUCTION as IndexOfAccount)
+                        .saturating_sub(index_in_transaction)
+                        .saturating_sub(1)
                 );
                 assert_eq!(index_in_transaction, other_transaction);
             }
@@ -1476,7 +1479,8 @@ mod tests {
     fn test_duplicated_accounts() {
         let mut transaction_accounts: Vec<TransactionAccount> =
             Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
-        let mut account_metas: Vec<AccountMeta> = Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
+        let mut account_metas: Vec<AccountMeta> =
+            Vec::with_capacity(MAX_ACCOUNTS_PER_INSTRUCTION.saturating_sub(1));
 
         // Fee-payer
         let fee_payer = Keypair::new();
@@ -1492,7 +1496,7 @@ mod tests {
         transaction_accounts.push((program_id, program_account));
         account_metas.push(AccountMeta::new_readonly(program_id, false));
 
-        for i in 2..256 {
+        for i in 2..account_metas.capacity() {
             if i % 2 == 0 {
                 let key = Pubkey::new_unique();
                 transaction_accounts
@@ -1525,7 +1529,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap();
-            for index_in_instruction in 2..256u16 {
+            for index_in_instruction in 2..account_metas.len() as IndexOfAccount {
                 let is_duplicate = instruction_context
                     .is_instruction_account_duplicate(index_in_instruction)
                     .unwrap();
@@ -1552,7 +1556,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap();
-        for index_in_instruction in 1..254u16 {
+        for index_in_instruction in 2..account_metas.len().saturating_sub(1) as u16 {
             let is_duplicate = instruction_context
                 .is_instruction_account_duplicate(index_in_instruction)
                 .unwrap();
