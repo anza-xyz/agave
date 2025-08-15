@@ -1747,7 +1747,8 @@ mod tests {
                 pub_sub_config: PubSubConfig {
                     worker_threads: 4,
                     notification_threads: Some(NonZeroUsize::new(get_thread_count()).unwrap()),
-                    ..PubSubConfig::default()
+                    queue_capacity_items: solana_rpc::rpc_pubsub_service::DEFAULT_QUEUE_CAPACITY_ITEMS,
+                    ..PubSubConfig::default_for_tests()
                 },
             }
         }
