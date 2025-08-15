@@ -1,6 +1,6 @@
 use {
     agave_feature_set::{ed25519_precompile_verify_strict, FeatureSet},
-    ed25519_dalek::{ed25519::signature::Signature, Verifier},
+    ed25519_dalek::{Signature, Verifier},
     solana_ed25519_program::{
         Ed25519SignatureOffsets, PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
         SIGNATURE_OFFSETS_START, SIGNATURE_SERIALIZED_SIZE,
@@ -49,7 +49,7 @@ pub fn verify(
         )?;
 
         let signature =
-            Signature::from_bytes(signature).map_err(|_| PrecompileError::InvalidSignature)?;
+            Signature::try_from(signature).map_err(|_| PrecompileError::InvalidSignature)?;
 
         // Parse out pubkey
         let pubkey = get_data_slice(
@@ -60,7 +60,7 @@ pub fn verify(
             PUBKEY_SERIALIZED_SIZE,
         )?;
 
-        let publickey = ed25519_dalek::PublicKey::from_bytes(pubkey)
+        let publickey = ed25519_dalek::VerifyingKey::try_from(pubkey)
             .map_err(|_| PrecompileError::InvalidPublicKey)?;
 
         // Parse out message
@@ -119,7 +119,7 @@ pub mod tests {
         bytemuck::bytes_of,
         ed25519_dalek::Signer as EdSigner,
         hex,
-        rand0_7::{thread_rng, Rng},
+        rand::{thread_rng, Rng},
         solana_ed25519_program::{
             new_ed25519_instruction_with_signature, offsets_to_ed25519_instruction, DATA_START,
         },
@@ -339,10 +339,10 @@ pub mod tests {
     fn test_ed25519() {
         solana_logger::setup();
 
-        let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let privkey = ed25519_dalek::SigningKey::generate(&mut thread_rng());
         let message_arr = b"hello";
         let signature = privkey.sign(message_arr).to_bytes();
-        let pubkey = privkey.public.to_bytes();
+        let pubkey = privkey.verifying_key().to_bytes();
         let mut instruction =
             new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
         let feature_set = FeatureSet::all_enabled();
@@ -356,7 +356,7 @@ pub mod tests {
         .is_ok());
 
         let index = loop {
-            let index = thread_rng().gen_range(0, instruction.data.len());
+            let index = thread_rng().gen_range(0..instruction.data.len());
             // byte 1 is not used, so this would not cause the verify to fail
             if index != 1 {
                 break index;
@@ -377,7 +377,7 @@ pub mod tests {
     fn test_offsets_to_ed25519_instruction() {
         solana_logger::setup();
 
-        let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let privkey = ed25519_dalek::SigningKey::generate(&mut thread_rng());
         let messages: [&[u8]; 3] = [b"hello", b"IBRL", b"goodbye"];
         let data_start =
             messages.len() * SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
@@ -404,9 +404,9 @@ pub mod tests {
             .unzip();
 
         let mut instruction = offsets_to_ed25519_instruction(&offsets);
-
-        let pubkey = privkey.public.as_ref();
-        instruction.data.extend_from_slice(pubkey);
+        instruction
+            .data
+            .extend_from_slice(privkey.verifying_key().as_ref());
 
         for message in messages {
             let signature = privkey.sign(message).to_bytes();
@@ -425,7 +425,7 @@ pub mod tests {
         .is_ok());
 
         let index = loop {
-            let index = thread_rng().gen_range(0, instruction.data.len());
+            let index = thread_rng().gen_range(0..instruction.data.len());
             // byte 1 is not used, so this would not cause the verify to fail
             if index != 1 {
                 break index;
@@ -447,10 +447,10 @@ pub mod tests {
         solana_logger::setup();
 
         // sig created via ed25519_dalek: both pass
-        let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let privkey = ed25519_dalek::SigningKey::generate(&mut thread_rng());
         let message_arr = b"hello";
         let signature = privkey.sign(message_arr).to_bytes();
-        let pubkey = privkey.public.to_bytes();
+        let pubkey = privkey.verifying_key().to_bytes();
         let instruction = new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
 
         let feature_set = FeatureSet::default();
