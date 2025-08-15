@@ -114,8 +114,7 @@ A release archive is expected to be a tar file compressed with bzip2 with the fo
 The `agave-install` tool is used by the user to install and update their cluster software.
 
 :::info
-
-`agave-install` does not install the `agave-validator` binary, which is required to run a validator node.
+As of v3.0 `agave-install` does not install the `agave-validator` binary, which is required to run a validator node.
 Validator operators are required to [build from source](../cli/install.md#build-from-source).
 
 :::
