@@ -237,13 +237,6 @@ binaries with:
 export PATH=$PWD/bin:$PATH
 ```
 
-You can then run the following command to obtain the same result with
-prebuilt binaries:
-
-```bash
-agave-install init
-```
-
 ## Use Homebrew
 
 This option requires you to have [Homebrew](https://brew.sh/) package manager on
