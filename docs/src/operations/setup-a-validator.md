@@ -390,10 +390,10 @@ On the validator server, switch to the `sol` user:
 su - sol
 ```
 
-## Install The Solana CLI on Remote Machine
+## Install agave-validator on Remote Machine
 
-Your remote machine will need the Solana CLI installed to run the Agave validator
-software. For simplicity, install the cli with user `sol`. Refer again to
+Your remote machine will need `agave-validator` installed to run the Agave validator
+software. For simplicity, install the application with user `sol`. Refer again to
 [build from source](../cli/install.md#build-from-source).
 
 ## Create A Validator Startup Script
