@@ -1345,9 +1345,12 @@ mod tests {
             );
             $invoke_context
                 .transaction_context
-                .get_next_instruction_context_mut()
-                .unwrap()
-                .configure_for_tests($program_account, instruction_accounts, instruction_data);
+                .configure_next_instruction_for_tests(
+                    $program_account,
+                    instruction_accounts,
+                    instruction_data,
+                )
+                .unwrap();
             $invoke_context.push().unwrap();
         };
     }
@@ -1907,16 +1910,15 @@ mod tests {
 
         invoke_context
             .transaction_context
-            .get_next_instruction_context_mut()
-            .unwrap()
-            .configure_for_tests(
+            .configure_next_instruction_for_tests(
                 0,
                 vec![
                     InstructionAccount::new(1, false, true),
                     InstructionAccount::new(1, false, true),
                 ],
                 &[],
-            );
+            )
+            .unwrap();
         let accounts = SyscallInvokeSignedRust::translate_accounts(
             vm_addr,
             1,

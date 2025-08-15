@@ -444,14 +444,12 @@ impl<'a> InvokeContext<'a> {
                 .get_index_of_instruction_account_in_transaction(program_account_index)?
         };
 
-        self.transaction_context
-            .get_next_instruction_context_mut()?
-            .configure(
-                program_account_index,
-                instruction_accounts,
-                transaction_callee_map,
-                &instruction.data,
-            );
+        self.transaction_context.configure_next_instruction(
+            program_account_index,
+            instruction_accounts,
+            transaction_callee_map,
+            &instruction.data,
+        )?;
         Ok(())
     }
 
@@ -491,14 +489,12 @@ impl<'a> InvokeContext<'a> {
             ));
         }
 
-        self.transaction_context
-            .get_next_instruction_context_mut()?
-            .configure(
-                program_account_index,
-                instruction_accounts,
-                transaction_callee_map,
-                instruction.data,
-            );
+        self.transaction_context.configure_next_instruction(
+            program_account_index,
+            instruction_accounts,
+            transaction_callee_map,
+            instruction.data,
+        )?;
         Ok(())
     }
 
@@ -908,9 +904,8 @@ pub fn mock_process_instruction_with_feature_set<
     pre_adjustments(&mut invoke_context);
     invoke_context
         .transaction_context
-        .get_next_instruction_context_mut()
-        .unwrap()
-        .configure_for_tests(program_index, instruction_accounts, instruction_data);
+        .configure_next_instruction_for_tests(program_index, instruction_accounts, instruction_data)
+        .unwrap();
     let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
     assert_eq!(result, expected_result);
     post_adjustments(&mut invoke_context);
@@ -1044,9 +1039,8 @@ mod tests {
                         );
                         invoke_context
                             .transaction_context
-                            .get_next_instruction_context_mut()
-                            .unwrap()
-                            .configure_for_tests(3, instruction_accounts, &[]);
+                            .configure_next_instruction_for_tests(3, instruction_accounts, &[])
+                            .unwrap();
                         let result = invoke_context.push();
                         assert_eq!(result, Err(InstructionError::UnbalancedInstruction));
                         result?;
@@ -1117,13 +1111,12 @@ mod tests {
         for _ in 0..invoke_stack.len() {
             invoke_context
                 .transaction_context
-                .get_next_instruction_context_mut()
-                .unwrap()
-                .configure_for_tests(
+                .configure_next_instruction_for_tests(
                     one_more_than_max_depth.saturating_add(depth_reached) as IndexOfAccount,
                     instruction_accounts.clone(),
                     &[],
-                );
+                )
+                .unwrap();
             if Err(InstructionError::CallDepth) == invoke_context.push() {
                 break;
             }
@@ -1148,9 +1141,12 @@ mod tests {
         for _ in 0..MAX_INSTRUCTIONS {
             transaction_context.push().unwrap();
             transaction_context
-                .get_next_instruction_context_mut()
-                .unwrap()
-                .configure_for_tests(0, vec![InstructionAccount::new(0, false, false)], &[]);
+                .configure_next_instruction_for_tests(
+                    0,
+                    vec![InstructionAccount::new(0, false, false)],
+                    &[],
+                )
+                .unwrap();
             transaction_context.pop().unwrap();
         }
         assert_eq!(
@@ -1209,9 +1205,8 @@ mod tests {
         // Account modification tests
         invoke_context
             .transaction_context
-            .get_next_instruction_context_mut()
-            .unwrap()
-            .configure_for_tests(4, instruction_accounts, &[]);
+            .configure_next_instruction_for_tests(4, instruction_accounts, &[])
+            .unwrap();
         invoke_context.push().unwrap();
         let inner_instruction =
             Instruction::new_with_bincode(callee_program_id, &instruction, metas.clone());
@@ -1266,9 +1261,8 @@ mod tests {
         let compute_units_to_consume = 10;
         invoke_context
             .transaction_context
-            .get_next_instruction_context_mut()
-            .unwrap()
-            .configure_for_tests(4, instruction_accounts, &[]);
+            .configure_next_instruction_for_tests(4, instruction_accounts, &[])
+            .unwrap();
         invoke_context.push().unwrap();
         let inner_instruction = Instruction::new_with_bincode(
             callee_program_id,
@@ -1312,9 +1306,8 @@ mod tests {
 
         invoke_context
             .transaction_context
-            .get_next_instruction_context_mut()
-            .unwrap()
-            .configure_for_tests(0, vec![], &[]);
+            .configure_next_instruction_for_tests(0, vec![], &[])
+            .unwrap();
         invoke_context.push().unwrap();
         assert_eq!(*invoke_context.get_compute_budget(), execution_budget);
         invoke_context.pop().unwrap();
@@ -1353,9 +1346,8 @@ mod tests {
 
         invoke_context
             .transaction_context
-            .get_next_instruction_context_mut()
-            .unwrap()
-            .configure_for_tests(2, instruction_accounts, &instruction_data);
+            .configure_next_instruction_for_tests(2, instruction_accounts, &instruction_data)
+            .unwrap();
         let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
 
         assert!(result.is_ok());

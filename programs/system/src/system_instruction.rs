@@ -267,9 +267,8 @@ mod test {
         ($invoke_context:expr, $transaction_context:ident, $instruction_context:ident, $instruction_accounts:ident) => {
             $invoke_context
                 .transaction_context
-                .get_next_instruction_context_mut()
-                .unwrap()
-                .configure_for_tests(2, $instruction_accounts, &[]);
+                .configure_next_instruction_for_tests(2, $instruction_accounts, &[])
+                .unwrap();
             $invoke_context.push().unwrap();
             let $transaction_context = &$invoke_context.transaction_context;
             let $instruction_context = $transaction_context

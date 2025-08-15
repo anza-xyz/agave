@@ -350,15 +350,51 @@ impl TransactionContext {
         self.get_instruction_context_at_nesting_level(level)
     }
 
-    /// Returns the mutable InstructionContext to configure for the next invocation.
+    /// Configures the next instruction.
     ///
     /// The last InstructionContext is always empty and pre-reserved for the next instruction.
-    pub fn get_next_instruction_context_mut(
+    pub fn configure_next_instruction(
         &mut self,
-    ) -> Result<&mut InstructionContext, InstructionError> {
-        self.instruction_trace
+        program_index: IndexOfAccount,
+        instruction_accounts: Vec<InstructionAccount>,
+        deduplication_map: Vec<u8>,
+        instruction_data: &[u8],
+    ) -> Result<(), InstructionError> {
+        debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
+        let instruction_context = self
+            .instruction_trace
             .last_mut()
-            .ok_or(InstructionError::CallDepth)
+            .ok_or(InstructionError::CallDepth)?;
+        instruction_context.program_account_index_in_tx = program_index;
+        instruction_context.instruction_accounts = instruction_accounts;
+        instruction_context.instruction_data = instruction_data.to_vec();
+        instruction_context.dedup_map = deduplication_map;
+        Ok(())
+    }
+
+    /// A version of `configure_next_instruction` to help creating the deduplication map in tests
+    pub fn configure_next_instruction_for_tests(
+        &mut self,
+        program_index: IndexOfAccount,
+        instruction_accounts: Vec<InstructionAccount>,
+        instruction_data: &[u8],
+    ) -> Result<(), InstructionError> {
+        debug_assert!(instruction_accounts.len() <= MAX_ACCOUNTS_PER_TRANSACTION);
+        let mut dedup_map = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
+        for (idx, account) in instruction_accounts.iter().enumerate() {
+            let index_in_instruction = dedup_map
+                .get_mut(account.index_in_transaction as usize)
+                .unwrap();
+            if *index_in_instruction == u8::MAX {
+                *index_in_instruction = idx as u8;
+            }
+        }
+        self.configure_next_instruction(
+            program_index,
+            instruction_accounts,
+            dedup_map,
+            instruction_data,
+        )
     }
 
     /// Returns the immutable InstructionContext. This function assumes it has already been
@@ -378,7 +414,10 @@ impl TransactionContext {
             return Err(InstructionError::UnbalancedInstruction);
         }
         {
-            let instruction_context = self.get_next_instruction_context_mut()?;
+            let instruction_context = self
+                .instruction_trace
+                .last_mut()
+                .ok_or(InstructionError::CallDepth)?;
             instruction_context.nesting_level = nesting_level;
         }
         let index_in_trace = self.get_instruction_trace_length();
@@ -569,49 +608,6 @@ pub struct InstructionContext {
 }
 
 impl InstructionContext {
-    /// Used together with TransactionContext::get_next_instruction_context()
-    #[cfg(not(target_os = "solana"))]
-    pub fn configure(
-        &mut self,
-        program_index: IndexOfAccount,
-        instruction_accounts: Vec<InstructionAccount>,
-        deduplication_map: Vec<u8>,
-        instruction_data: &[u8],
-    ) {
-        debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
-        self.program_account_index_in_tx = program_index;
-        self.instruction_accounts = instruction_accounts;
-        self.instruction_data = instruction_data.to_vec();
-        self.dedup_map = deduplication_map;
-    }
-
-    /// A version of `fn configure` to help creating the deduplication map in tests
-    #[cfg(not(target_os = "solana"))]
-    pub fn configure_for_tests(
-        &mut self,
-        program_index: IndexOfAccount,
-        instruction_accounts: Vec<InstructionAccount>,
-        instruction_data: &[u8],
-    ) {
-        debug_assert!(instruction_accounts.len() <= MAX_ACCOUNTS_PER_TRANSACTION);
-        let mut dedup_map = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
-        for (idx, account) in instruction_accounts.iter().enumerate() {
-            let index_in_instruction = dedup_map
-                .get_mut(account.index_in_transaction as usize)
-                .unwrap();
-            if *index_in_instruction == u8::MAX {
-                *index_in_instruction = idx as u8;
-            }
-        }
-
-        self.configure(
-            program_index,
-            instruction_accounts,
-            dedup_map,
-            instruction_data,
-        );
-    }
-
     /// How many Instructions were on the stack after this one was pushed
     ///
     /// That is the number of nested parent Instructions plus one (itself).
@@ -1279,17 +1275,7 @@ mod tests {
 
     #[test]
     fn test_invalid_native_loader_index() {
-        let mut instruction_context = InstructionContext::default();
-        instruction_context.configure_for_tests(
-            u16::MAX,
-            vec![InstructionAccount::new(0, false, false)],
-            &[],
-        );
-
-        let result = instruction_context.get_index_of_program_account_in_transaction();
-        assert_eq!(result, Err(InstructionError::NotEnoughAccountKeys));
-
-        let transaction_context = TransactionContext::new(
+        let mut transaction_context = TransactionContext::new(
             vec![(
                 Pubkey::new_unique(),
                 AccountSharedData::new(1, 1, &Pubkey::new_unique()),
@@ -1298,8 +1284,20 @@ mod tests {
             20,
             20,
         );
-        let result = instruction_context.get_program_key(&transaction_context);
 
+        transaction_context
+            .configure_next_instruction_for_tests(
+                u16::MAX,
+                vec![InstructionAccount::new(0, false, false)],
+                &[],
+            )
+            .unwrap();
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+
+        let result = instruction_context.get_index_of_program_account_in_transaction();
+        assert_eq!(result, Err(InstructionError::NotEnoughAccountKeys));
+
+        let result = instruction_context.get_program_key(&transaction_context);
         assert_eq!(result, Err(InstructionError::NotEnoughAccountKeys));
 
         let result = instruction_context.try_borrow_program_account(&transaction_context);
