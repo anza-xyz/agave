@@ -31,7 +31,7 @@ locate the terminal program on your _trusted computer_.
 
 ## Install The Solana CLI Locally
 
-Validator operators are required to install the tools included in the Solana CLI using the [building from source](../cli/install.md#build-from-source).
+Validator operators are required to install the tools included in the Solana CLI using the [installation instructions](../cli/install.md).
 
 Once the Solana CLI is installed, you can return to this document once you are
 able to run two commands and get an answer on your terminal.
