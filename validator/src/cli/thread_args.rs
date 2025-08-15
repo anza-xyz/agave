@@ -10,7 +10,7 @@ use {
 
 // Need this struct to provide &str whose lifetime matches that of the CLAP Arg's
 pub struct DefaultThreadArgs {
-    pub accounts_db_clean_threads: String,
+    pub accounts_db_background_threads: String,
     pub accounts_db_foreground_threads: String,
     pub accounts_db_hash_threads: String,
     pub accounts_index_flush_threads: String,
@@ -31,7 +31,8 @@ pub struct DefaultThreadArgs {
 impl Default for DefaultThreadArgs {
     fn default() -> Self {
         Self {
-            accounts_db_clean_threads: AccountsDbCleanThreadsArg::bounded_default().to_string(),
+            accounts_db_background_threads: AccountsDbBackgroundThreadsArg::bounded_default()
+                .to_string(),
             accounts_db_foreground_threads: AccountsDbForegroundThreadsArg::bounded_default()
                 .to_string(),
             accounts_db_hash_threads: AccountsDbHashThreadsArg::bounded_default().to_string(),
@@ -59,7 +60,7 @@ impl Default for DefaultThreadArgs {
 
 pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
     vec![
-        new_thread_arg::<AccountsDbCleanThreadsArg>(&defaults.accounts_db_clean_threads),
+        new_thread_arg::<AccountsDbBackgroundThreadsArg>(&defaults.accounts_db_background_threads),
         new_thread_arg::<AccountsDbForegroundThreadsArg>(&defaults.accounts_db_foreground_threads),
         new_thread_arg::<AccountsDbHashThreadsArg>(&defaults.accounts_db_hash_threads),
         new_thread_arg::<AccountsIndexFlushThreadsArg>(&defaults.accounts_index_flush_threads),
@@ -94,7 +95,7 @@ fn new_thread_arg<'a, T: ThreadArg>(default: &str) -> Arg<'_, 'a> {
 }
 
 pub struct NumThreadConfig {
-    pub accounts_db_clean_threads: NonZeroUsize,
+    pub accounts_db_background_threads: NonZeroUsize,
     pub accounts_db_foreground_threads: NonZeroUsize,
     pub accounts_db_hash_threads: NonZeroUsize,
     pub accounts_index_flush_threads: NonZeroUsize,
@@ -111,12 +112,15 @@ pub struct NumThreadConfig {
 }
 
 pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
+    let accounts_db_background_threads = {
+        if matches.is_present("accounts_db_clean_threads") {
+            value_t_or_exit!(matches, "accounts_db_clean_threads", NonZeroUsize)
+        } else {
+            value_t_or_exit!(matches, AccountsDbBackgroundThreadsArg::NAME, NonZeroUsize)
+        }
+    };
     NumThreadConfig {
-        accounts_db_clean_threads: value_t_or_exit!(
-            matches,
-            AccountsDbCleanThreadsArg::NAME,
-            NonZeroUsize
-        ),
+        accounts_db_background_threads,
         accounts_db_foreground_threads: value_t_or_exit!(
             matches,
             AccountsDbForegroundThreadsArg::NAME,
@@ -205,10 +209,10 @@ pub trait ThreadArg {
     }
 }
 
-struct AccountsDbCleanThreadsArg;
-impl ThreadArg for AccountsDbCleanThreadsArg {
-    const NAME: &'static str = "accounts_db_clean_threads";
-    const LONG_NAME: &'static str = "accounts-db-clean-threads";
+struct AccountsDbBackgroundThreadsArg;
+impl ThreadArg for AccountsDbBackgroundThreadsArg {
+    const NAME: &'static str = "accounts_db_background_threads";
+    const LONG_NAME: &'static str = "accounts-db-background-threads";
     const HELP: &'static str = "Number of threads to use for AccountsDb background tasks";
 
     fn default() -> usize {
