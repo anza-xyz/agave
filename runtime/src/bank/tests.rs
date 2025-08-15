@@ -55,6 +55,7 @@ use {
     },
     solana_cpi::MAX_RETURN_DATA,
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
+    solana_external_test_programs::core_bpf_programs,
     solana_feature_gate_interface::{self as feature, Feature},
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::FeeStructure,
@@ -3094,7 +3095,21 @@ fn test_bank_cloned_stake_delegations() {
         123_000_000_000,
     );
     genesis_config.rent = Rent::default();
+
+    let core_programs = core_bpf_programs(&genesis_config.rent, |_| true);
+    let stake_idx = core_programs
+        .iter()
+        .position(|(key, _)| *key == solana_stake_program::id())
+        .unwrap();
+    let program = core_programs[stake_idx].1.clone();
+    let (programdata_address, programdata) = core_programs[stake_idx + 1].clone();
+
+    genesis_config.add_account(solana_stake_program::id(), program);
+    genesis_config.add_account(programdata_address, programdata);
+
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    bank.squash();
+    let bank = Bank::new_from_parent(bank, &Pubkey::new_unique(), 1);
 
     let stake_delegations = bank.stakes_cache.stakes().stake_delegations().clone();
     assert_eq!(stake_delegations.len(), 1); // bootstrap validator has

@@ -6528,6 +6528,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-external-test-programs"
+version = "3.0.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "solana-account",
+ "solana-loader-v3-interface 5.0.0",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-sdk-ids",
+ "spl-generic-token",
+]
+
+[[package]]
 name = "solana-faucet"
 version = "3.0.0"
 dependencies = [
@@ -7538,6 +7552,7 @@ dependencies = [
  "solana-compute-budget",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
+ "solana-external-test-programs",
  "solana-fee-calculator",
  "solana-genesis-config",
  "solana-hash",
@@ -9424,6 +9439,7 @@ dependencies = [
  "solana-compute-budget",
  "solana-core",
  "solana-epoch-schedule",
+ "solana-external-test-programs",
  "solana-feature-gate-interface",
  "solana-fee-calculator",
  "solana-geyser-plugin-manager",

@@ -17,6 +17,7 @@ use {
         validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
     solana_epoch_schedule::EpochSchedule,
+    solana_external_test_programs::core_bpf_programs,
     solana_genesis_config::{ClusterType, GenesisConfig},
     solana_gossip::{
         contact_info::{ContactInfo, Protocol},
@@ -29,7 +30,6 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::sockets::bind_to_localhost_unique,
     solana_poh_config::PohConfig,
-    solana_program_test::programs::core_bpf_programs,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,

@@ -15,6 +15,7 @@ use {
     solana_banks_server::banks_server::start_local_server,
     solana_clock::{Epoch, Slot},
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_external_test_programs as programs,
     solana_fee_calculator::{FeeRateGovernor, DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE},
     solana_genesis_config::{ClusterType, GenesisConfig},
     solana_hash::Hash,
@@ -75,8 +76,6 @@ pub use {
     },
     solana_transaction_context::IndexOfAccount,
 };
-
-pub mod programs;
 
 /// Errors from the program test environment
 #[derive(Error, Debug, PartialEq, Eq)]

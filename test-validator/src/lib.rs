@@ -882,11 +882,11 @@ impl TestValidator {
         }
 
         let mut accounts = config.accounts.clone();
-        for (address, account) in solana_program_test::programs::spl_programs(&config.rent) {
+        for (address, account) in solana_external_test_programs::spl_programs(&config.rent) {
             accounts.entry(address).or_insert(account);
         }
         for (address, account) in
-            solana_program_test::programs::core_bpf_programs(&config.rent, |feature_id| {
+            solana_external_test_programs::core_bpf_programs(&config.rent, |feature_id| {
                 feature_set.contains(feature_id)
             })
         {

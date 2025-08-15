@@ -97,6 +97,7 @@ solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-ed25519-program = { workspace = true }
 solana-epoch-schedule = { workspace = true }
+solana-external-test-programs = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }

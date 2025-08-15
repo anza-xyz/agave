@@ -25,7 +25,8 @@ use {
     std::sync::{Arc, RwLock},
 };
 
-const MEMO_PROGRAM_ELF: &[u8] = include_bytes!("../../program-test/src/programs/spl_memo-3.0.0.so");
+const MEMO_PROGRAM_ELF: &[u8] =
+    include_bytes!("../../external-test-programs/src/programs/spl_memo-3.0.0.so");
 
 fn new_bank_from_parent_with_bank_forks(
     bank_forks: &RwLock<BankForks>,

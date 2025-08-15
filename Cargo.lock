@@ -8360,6 +8360,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-external-test-programs"
+version = "3.0.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "solana-account",
+ "solana-loader-v3-interface",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-sdk-ids",
+ "spl-generic-token",
+]
+
+[[package]]
 name = "solana-faucet"
 version = "3.0.0"
 dependencies = [
@@ -9085,6 +9099,7 @@ dependencies = [
  "solana-download-utils",
  "solana-entry",
  "solana-epoch-schedule",
+ "solana-external-test-programs",
  "solana-genesis-config",
  "solana-gossip",
  "solana-hard-forks",
@@ -9097,7 +9112,6 @@ dependencies = [
  "solana-native-token",
  "solana-net-utils",
  "solana-poh-config",
- "solana-program-test",
  "solana-pubkey",
  "solana-pubsub-client",
  "solana-quic-client",
@@ -9711,6 +9725,7 @@ dependencies = [
  "solana-cpi",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
+ "solana-external-test-programs",
  "solana-fee-calculator",
  "solana-genesis-config",
  "solana-hash",
@@ -10239,6 +10254,7 @@ dependencies = [
  "solana-epoch-info",
  "solana-epoch-rewards-hasher",
  "solana-epoch-schedule",
+ "solana-external-test-programs",
  "solana-feature-gate-interface",
  "solana-fee",
  "solana-fee-calculator",
@@ -10628,13 +10644,13 @@ dependencies = [
  "solana-client-traits",
  "solana-clock",
  "solana-commitment-config",
+ "solana-external-test-programs",
  "solana-fee-calculator",
  "solana-genesis-config",
  "solana-instruction",
  "solana-keypair",
  "solana-message",
  "solana-native-token",
- "solana-program-test",
  "solana-pubkey",
  "solana-remote-wallet",
  "solana-rpc-client",
@@ -10857,6 +10873,7 @@ dependencies = [
  "solana-compute-budget-program",
  "solana-ed25519-program",
  "solana-epoch-schedule",
+ "solana-external-test-programs",
  "solana-fee-calculator",
  "solana-fee-structure",
  "solana-frozen-abi",
@@ -11098,6 +11115,7 @@ dependencies = [
  "solana-compute-budget",
  "solana-core",
  "solana-epoch-schedule",
+ "solana-external-test-programs",
  "solana-feature-gate-interface",
  "solana-fee-calculator",
  "solana-geyser-plugin-manager",

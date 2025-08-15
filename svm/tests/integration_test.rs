@@ -12,6 +12,7 @@ use {
     solana_clock::Slot,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_compute_budget_interface::ComputeBudgetInstruction,
+    solana_external_test_programs::spl_programs,
     solana_fee_structure::FeeDetails,
     solana_hash::Hash,
     solana_instruction::{AccountMeta, Instruction},
@@ -3245,17 +3246,12 @@ mod balance_collector {
         super::*,
         rand0_7::prelude::*,
         solana_program_pack::Pack,
-        solana_sdk_ids::bpf_loader,
         spl_generic_token::token_2022,
         spl_token_interface::state::{
             Account as TokenAccount, AccountState as TokenAccountState, Mint,
         },
         test_case::test_case,
     };
-
-    // this could be part of mock_bank but so far nothing but this uses it
-    static SPL_TOKEN_BYTES: &[u8] =
-        include_bytes!("../../program-test/src/programs/spl_token-3.5.0.so");
 
     const STARTING_BALANCE: u64 = LAMPORTS_PER_SOL * 100;
 
@@ -3377,13 +3373,11 @@ mod balance_collector {
             u64::MAX,
         );
 
-        let spl_token = AccountSharedData::create(
-            LAMPORTS_PER_SOL,
-            SPL_TOKEN_BYTES.to_vec(),
-            bpf_loader::id(),
-            true,
-            u64::MAX,
-        );
+        let (_, mut spl_token) = spl_programs(&Rent::default())
+            .into_iter()
+            .find(|(key, _)| *key == spl_token_interface::id())
+            .unwrap();
+        spl_token.set_rent_epoch(u64::MAX);
 
         for _ in 0..100 {
             let mut test_entry = SvmTestEntry::default();

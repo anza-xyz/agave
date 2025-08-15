@@ -35,6 +35,7 @@ members = [
     "dos",
     "download-utils",
     "entry",
+    "external-test-programs",
     "faucet",
     "feature-set",
     "fee",
@@ -421,6 +422,7 @@ solana-epoch-rewards = "2.2.1"
 solana-epoch-rewards-hasher = "2.2.1"
 solana-epoch-schedule = "2.2.1"
 solana-example-mocks = "2.2.1"
+solana-external-test-programs = { path = "external-test-programs", version = "=3.0.0" }
 solana-faucet = { path = "faucet", version = "=3.0.0" }
 solana-feature-gate-client = "0.0.2"
 solana-feature-gate-interface = "2.2.2"

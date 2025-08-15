@@ -30,6 +30,7 @@ solana-commitment-config = { workspace = true }
 solana-core = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
+solana-external-test-programs = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hard-forks = { workspace = true }
@@ -41,7 +42,6 @@ solana-message = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-poh-config = { workspace = true }
-solana-program-test = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }

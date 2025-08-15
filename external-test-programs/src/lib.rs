@@ -1,3 +1,5 @@
+#![allow(clippy::arithmetic_side_effects)]
+
 use {
     solana_account::{Account, AccountSharedData},
     solana_loader_v3_interface::{get_program_data_address, state::UpgradeableLoaderState},
@@ -91,7 +93,7 @@ fn bpf_loader_program_account(program_id: &Pubkey, elf: &[u8], rent: &Rent) -> (
 /// The second tuple is the program data account. It contains the program data
 /// address and an account with the program data - a valid BPF Loader Upgradeable
 /// program data account containing the ELF.
-pub(crate) fn bpf_loader_upgradeable_program_accounts(
+pub fn bpf_loader_upgradeable_program_accounts(
     program_id: &Pubkey,
     elf: &[u8],
     rent: &Rent,
