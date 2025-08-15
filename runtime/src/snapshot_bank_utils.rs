@@ -45,23 +45,60 @@ use {
     solana_builtins::prototype::BuiltinPrototype,
     solana_clock::{Epoch, Slot},
     solana_genesis_config::GenesisConfig,
+    solana_hash::Hash,
+    solana_instruction_error::InstructionError,
     solana_measure::{measure::Measure, measure_time},
     solana_pubkey::Pubkey,
     solana_slot_history::{Check, SlotHistory},
+    solana_transaction_error::TransactionError,
     std::{
         collections::{HashMap, HashSet},
         ops::RangeInclusive,
         path::{Path, PathBuf},
-        sync::{atomic::AtomicBool, Arc},
+        sync::{atomic::AtomicBool, Arc, Mutex},
     },
 };
+
+type SnapshotStatus<T> = HashMap<Hash, (usize, Vec<(status_cache::KeySlice, T)>)>;
+type SnapshotSlotDelta<T> = (Slot, bool, SnapshotStatus<T>);
+type SnapshotBankSlotDelta = SnapshotSlotDelta<Result<(), StatusCacheTransactionError>>;
 
 pub fn serialize_status_cache(
     slot_deltas: &[BankSlotDelta],
     status_cache_path: &Path,
 ) -> snapshot_utils::Result<u64> {
     serialize_snapshot_data_file(status_cache_path, |stream| {
-        serialize_into(stream, slot_deltas)?;
+        let snapshot_slot_deltas = slot_deltas
+            .iter()
+            .map(|slot_delta| {
+                let status_map = slot_delta.2.lock().unwrap();
+                let snapshot_status_map = status_map
+                    .iter()
+                    .map(|(key, value)| {
+                        (
+                            *key,
+                            (
+                                value.0,
+                                value
+                                    .1
+                                    .iter()
+                                    .map(|(key_slice, result)| {
+                                        (
+                                            *key_slice,
+                                            result
+                                                .clone()
+                                                .map_err(StatusCacheTransactionError::from),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>();
+                (slot_delta.0, slot_delta.1, snapshot_status_map)
+            })
+            .collect::<Vec<_>>();
+        serialize_into(stream, &snapshot_slot_deltas)?;
         Ok(())
     })
 }
@@ -565,12 +602,41 @@ fn deserialize_status_cache(
             "Rebuilding status cache from {}",
             status_cache_path.display()
         );
-        let slot_delta: Vec<BankSlotDelta> = bincode::options()
+        let snapshot_slot_deltas: Vec<SnapshotBankSlotDelta> = bincode::options()
             .with_limit(snapshot_utils::MAX_SNAPSHOT_DATA_FILE_SIZE)
             .with_fixint_encoding()
             .allow_trailing_bytes()
             .deserialize_from(stream)?;
-        Ok(slot_delta)
+
+        let slot_deltas = snapshot_slot_deltas
+            .iter()
+            .map(|slot_delta| {
+                let status_map = slot_delta
+                    .2
+                    .iter()
+                    .map(|(key, value)| {
+                        (
+                            *key,
+                            (
+                                value.0,
+                                value
+                                    .1
+                                    .iter()
+                                    .map(|(key_slice, result)| {
+                                        (
+                                            *key_slice,
+                                            result.clone().map_err(TransactionError::from),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>();
+                (slot_delta.0, slot_delta.1, Arc::new(Mutex::new(status_map)))
+            })
+            .collect::<Vec<_>>();
+        Ok(slot_deltas)
     })
 }
 
@@ -869,6 +935,411 @@ pub fn bank_to_incremental_snapshot_archive(
         full_snapshot_slot,
         snapshot_archive_info,
     ))
+}
+
+/// Copy of `TransactionError` that uses a different `InstructionError` type to
+/// contain a string.
+///
+/// Can be removed in favor of normal `TransactionError` once v3.1 has been
+/// adopted and no more snapshots exist with strings.
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+enum StatusCacheTransactionError {
+    AccountInUse,
+    AccountLoadedTwice,
+    AccountNotFound,
+    ProgramAccountNotFound,
+    InsufficientFundsForFee,
+    InvalidAccountForFee,
+    AlreadyProcessed,
+    BlockhashNotFound,
+    InstructionError(u8, StatusCacheInstructionError),
+    CallChainTooDeep,
+    MissingSignatureForFee,
+    InvalidAccountIndex,
+    SignatureFailure,
+    InvalidProgramForExecution,
+    SanitizeFailure,
+    ClusterMaintenance,
+    AccountBorrowOutstanding,
+    WouldExceedMaxBlockCostLimit,
+    UnsupportedVersion,
+    InvalidWritableAccount,
+    WouldExceedMaxAccountCostLimit,
+    WouldExceedAccountDataBlockLimit,
+    TooManyAccountLocks,
+    AddressLookupTableNotFound,
+    InvalidAddressLookupTableOwner,
+    InvalidAddressLookupTableData,
+    InvalidAddressLookupTableIndex,
+    InvalidRentPayingAccount,
+    WouldExceedMaxVoteCostLimit,
+    WouldExceedAccountDataTotalLimit,
+    DuplicateInstruction(u8),
+    InsufficientFundsForRent { account_index: u8 },
+    MaxLoadedAccountsDataSizeExceeded,
+    InvalidLoadedAccountsDataSizeLimit,
+    ResanitizationNeeded,
+    ProgramExecutionTemporarilyRestricted { account_index: u8 },
+    UnbalancedTransaction,
+    ProgramCacheHitMaxLimit,
+    CommitCancelled,
+}
+
+/// Copy of `InstructionError` type in which `BorshIoError` contains a string.
+///
+/// Can be removed in favor of normal `InstructionError` once v3.1 has been
+/// adopted and no more snapshots exist with strings.
+#[cfg_attr(test, derive(strum_macros::FromRepr, strum_macros::EnumIter))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+enum StatusCacheInstructionError {
+    GenericError,
+    InvalidArgument,
+    InvalidInstructionData,
+    InvalidAccountData,
+    AccountDataTooSmall,
+    InsufficientFunds,
+    IncorrectProgramId,
+    MissingRequiredSignature,
+    AccountAlreadyInitialized,
+    UninitializedAccount,
+    UnbalancedInstruction,
+    ModifiedProgramId,
+    ExternalAccountLamportSpend,
+    ExternalAccountDataModified,
+    ReadonlyLamportChange,
+    ReadonlyDataModified,
+    DuplicateAccountIndex,
+    ExecutableModified,
+    RentEpochModified,
+    NotEnoughAccountKeys,
+    AccountDataSizeChanged,
+    AccountNotExecutable,
+    AccountBorrowFailed,
+    AccountBorrowOutstanding,
+    DuplicateAccountOutOfSync,
+    Custom(u32),
+    InvalidError,
+    ExecutableDataModified,
+    ExecutableLamportChange,
+    ExecutableAccountNotRentExempt,
+    UnsupportedProgramId,
+    CallDepth,
+    MissingAccount,
+    ReentrancyNotAllowed,
+    MaxSeedLengthExceeded,
+    InvalidSeeds,
+    InvalidRealloc,
+    ComputationalBudgetExceeded,
+    PrivilegeEscalation,
+    ProgramEnvironmentSetupFailure,
+    ProgramFailedToComplete,
+    ProgramFailedToCompile,
+    Immutable,
+    IncorrectAuthority,
+    BorshIoError(String),
+    AccountNotRentExempt,
+    InvalidAccountOwner,
+    ArithmeticOverflow,
+    UnsupportedSysvar,
+    IllegalOwner,
+    MaxAccountsDataAllocationsExceeded,
+    MaxAccountsExceeded,
+    MaxInstructionTraceLengthExceeded,
+    BuiltinProgramsMustConsumeComputeUnits,
+}
+
+impl From<StatusCacheInstructionError> for InstructionError {
+    fn from(err: StatusCacheInstructionError) -> Self {
+        match err {
+            StatusCacheInstructionError::GenericError => Self::GenericError,
+            StatusCacheInstructionError::InvalidArgument => Self::InvalidArgument,
+            StatusCacheInstructionError::InvalidInstructionData => Self::InvalidInstructionData,
+            StatusCacheInstructionError::InvalidAccountData => Self::InvalidAccountData,
+            StatusCacheInstructionError::AccountDataTooSmall => Self::AccountDataTooSmall,
+            StatusCacheInstructionError::InsufficientFunds => Self::InsufficientFunds,
+            StatusCacheInstructionError::IncorrectProgramId => Self::IncorrectProgramId,
+            StatusCacheInstructionError::MissingRequiredSignature => Self::MissingRequiredSignature,
+            StatusCacheInstructionError::AccountAlreadyInitialized => {
+                Self::AccountAlreadyInitialized
+            }
+            StatusCacheInstructionError::UninitializedAccount => Self::UninitializedAccount,
+            StatusCacheInstructionError::UnbalancedInstruction => Self::UnbalancedInstruction,
+            StatusCacheInstructionError::ModifiedProgramId => Self::ModifiedProgramId,
+            StatusCacheInstructionError::ExternalAccountLamportSpend => {
+                Self::ExternalAccountLamportSpend
+            }
+            StatusCacheInstructionError::ExternalAccountDataModified => {
+                Self::ExternalAccountDataModified
+            }
+            StatusCacheInstructionError::ReadonlyLamportChange => Self::ReadonlyLamportChange,
+            StatusCacheInstructionError::ReadonlyDataModified => Self::ReadonlyDataModified,
+            StatusCacheInstructionError::DuplicateAccountIndex => Self::DuplicateAccountIndex,
+            StatusCacheInstructionError::ExecutableModified => Self::ExecutableModified,
+            StatusCacheInstructionError::RentEpochModified => Self::RentEpochModified,
+            StatusCacheInstructionError::NotEnoughAccountKeys => Self::NotEnoughAccountKeys,
+            StatusCacheInstructionError::AccountDataSizeChanged => Self::AccountDataSizeChanged,
+            StatusCacheInstructionError::AccountNotExecutable => Self::AccountNotExecutable,
+            StatusCacheInstructionError::AccountBorrowFailed => Self::AccountBorrowFailed,
+            StatusCacheInstructionError::AccountBorrowOutstanding => Self::AccountBorrowOutstanding,
+            StatusCacheInstructionError::DuplicateAccountOutOfSync => {
+                Self::DuplicateAccountOutOfSync
+            }
+            StatusCacheInstructionError::Custom(n) => Self::Custom(n),
+            StatusCacheInstructionError::InvalidError => Self::InvalidError,
+            StatusCacheInstructionError::ExecutableDataModified => Self::ExecutableDataModified,
+            StatusCacheInstructionError::ExecutableLamportChange => Self::ExecutableLamportChange,
+            StatusCacheInstructionError::ExecutableAccountNotRentExempt => {
+                Self::ExecutableAccountNotRentExempt
+            }
+            StatusCacheInstructionError::UnsupportedProgramId => Self::UnsupportedProgramId,
+            StatusCacheInstructionError::CallDepth => Self::CallDepth,
+            StatusCacheInstructionError::MissingAccount => Self::MissingAccount,
+            StatusCacheInstructionError::ReentrancyNotAllowed => Self::ReentrancyNotAllowed,
+            StatusCacheInstructionError::MaxSeedLengthExceeded => Self::MaxSeedLengthExceeded,
+            StatusCacheInstructionError::InvalidSeeds => Self::InvalidSeeds,
+            StatusCacheInstructionError::InvalidRealloc => Self::InvalidRealloc,
+            StatusCacheInstructionError::ComputationalBudgetExceeded => {
+                Self::ComputationalBudgetExceeded
+            }
+            StatusCacheInstructionError::PrivilegeEscalation => Self::PrivilegeEscalation,
+            StatusCacheInstructionError::ProgramEnvironmentSetupFailure => {
+                Self::ProgramEnvironmentSetupFailure
+            }
+            StatusCacheInstructionError::ProgramFailedToComplete => Self::ProgramFailedToComplete,
+            StatusCacheInstructionError::ProgramFailedToCompile => Self::ProgramFailedToCompile,
+            StatusCacheInstructionError::Immutable => Self::Immutable,
+            StatusCacheInstructionError::IncorrectAuthority => Self::IncorrectAuthority,
+            StatusCacheInstructionError::BorshIoError(_) => Self::BorshIoError,
+            StatusCacheInstructionError::AccountNotRentExempt => Self::AccountNotRentExempt,
+            StatusCacheInstructionError::InvalidAccountOwner => Self::InvalidAccountOwner,
+            StatusCacheInstructionError::ArithmeticOverflow => Self::ArithmeticOverflow,
+            StatusCacheInstructionError::UnsupportedSysvar => Self::UnsupportedSysvar,
+            StatusCacheInstructionError::IllegalOwner => Self::IllegalOwner,
+            StatusCacheInstructionError::MaxAccountsDataAllocationsExceeded => {
+                Self::MaxAccountsDataAllocationsExceeded
+            }
+            StatusCacheInstructionError::MaxAccountsExceeded => Self::MaxAccountsExceeded,
+            StatusCacheInstructionError::MaxInstructionTraceLengthExceeded => {
+                Self::MaxInstructionTraceLengthExceeded
+            }
+            StatusCacheInstructionError::BuiltinProgramsMustConsumeComputeUnits => {
+                Self::BuiltinProgramsMustConsumeComputeUnits
+            }
+        }
+    }
+}
+
+impl From<InstructionError> for StatusCacheInstructionError {
+    fn from(err: InstructionError) -> Self {
+        match err {
+            InstructionError::GenericError => Self::GenericError,
+            InstructionError::InvalidArgument => Self::InvalidArgument,
+            InstructionError::InvalidInstructionData => Self::InvalidInstructionData,
+            InstructionError::InvalidAccountData => Self::InvalidAccountData,
+            InstructionError::AccountDataTooSmall => Self::AccountDataTooSmall,
+            InstructionError::InsufficientFunds => Self::InsufficientFunds,
+            InstructionError::IncorrectProgramId => Self::IncorrectProgramId,
+            InstructionError::MissingRequiredSignature => Self::MissingRequiredSignature,
+            InstructionError::AccountAlreadyInitialized => Self::AccountAlreadyInitialized,
+            InstructionError::UninitializedAccount => Self::UninitializedAccount,
+            InstructionError::UnbalancedInstruction => Self::UnbalancedInstruction,
+            InstructionError::ModifiedProgramId => Self::ModifiedProgramId,
+            InstructionError::ExternalAccountLamportSpend => Self::ExternalAccountLamportSpend,
+            InstructionError::ExternalAccountDataModified => Self::ExternalAccountDataModified,
+            InstructionError::ReadonlyLamportChange => Self::ReadonlyLamportChange,
+            InstructionError::ReadonlyDataModified => Self::ReadonlyDataModified,
+            InstructionError::DuplicateAccountIndex => Self::DuplicateAccountIndex,
+            InstructionError::ExecutableModified => Self::ExecutableModified,
+            InstructionError::RentEpochModified => Self::RentEpochModified,
+            InstructionError::NotEnoughAccountKeys => Self::NotEnoughAccountKeys,
+            InstructionError::AccountDataSizeChanged => Self::AccountDataSizeChanged,
+            InstructionError::AccountNotExecutable => Self::AccountNotExecutable,
+            InstructionError::AccountBorrowFailed => Self::AccountBorrowFailed,
+            InstructionError::AccountBorrowOutstanding => Self::AccountBorrowOutstanding,
+            InstructionError::DuplicateAccountOutOfSync => Self::DuplicateAccountOutOfSync,
+            InstructionError::Custom(n) => Self::Custom(n),
+            InstructionError::InvalidError => Self::InvalidError,
+            InstructionError::ExecutableDataModified => Self::ExecutableDataModified,
+            InstructionError::ExecutableLamportChange => Self::ExecutableLamportChange,
+            InstructionError::ExecutableAccountNotRentExempt => {
+                Self::ExecutableAccountNotRentExempt
+            }
+            InstructionError::UnsupportedProgramId => Self::UnsupportedProgramId,
+            InstructionError::CallDepth => Self::CallDepth,
+            InstructionError::MissingAccount => Self::MissingAccount,
+            InstructionError::ReentrancyNotAllowed => Self::ReentrancyNotAllowed,
+            InstructionError::MaxSeedLengthExceeded => Self::MaxSeedLengthExceeded,
+            InstructionError::InvalidSeeds => Self::InvalidSeeds,
+            InstructionError::InvalidRealloc => Self::InvalidRealloc,
+            InstructionError::ComputationalBudgetExceeded => Self::ComputationalBudgetExceeded,
+            InstructionError::PrivilegeEscalation => Self::PrivilegeEscalation,
+            InstructionError::ProgramEnvironmentSetupFailure => {
+                Self::ProgramEnvironmentSetupFailure
+            }
+            InstructionError::ProgramFailedToComplete => Self::ProgramFailedToComplete,
+            InstructionError::ProgramFailedToCompile => Self::ProgramFailedToCompile,
+            InstructionError::Immutable => Self::Immutable,
+            InstructionError::IncorrectAuthority => Self::IncorrectAuthority,
+            InstructionError::BorshIoError => Self::BorshIoError(String::new()),
+            InstructionError::AccountNotRentExempt => Self::AccountNotRentExempt,
+            InstructionError::InvalidAccountOwner => Self::InvalidAccountOwner,
+            InstructionError::ArithmeticOverflow => Self::ArithmeticOverflow,
+            InstructionError::UnsupportedSysvar => Self::UnsupportedSysvar,
+            InstructionError::IllegalOwner => Self::IllegalOwner,
+            InstructionError::MaxAccountsDataAllocationsExceeded => {
+                Self::MaxAccountsDataAllocationsExceeded
+            }
+            InstructionError::MaxAccountsExceeded => Self::MaxAccountsExceeded,
+            InstructionError::MaxInstructionTraceLengthExceeded => {
+                Self::MaxInstructionTraceLengthExceeded
+            }
+            InstructionError::BuiltinProgramsMustConsumeComputeUnits => {
+                Self::BuiltinProgramsMustConsumeComputeUnits
+            }
+        }
+    }
+}
+
+impl From<TransactionError> for StatusCacheTransactionError {
+    fn from(err: TransactionError) -> Self {
+        match err {
+            TransactionError::AccountInUse => Self::AccountInUse,
+            TransactionError::AccountLoadedTwice => Self::AccountLoadedTwice,
+            TransactionError::AccountNotFound => Self::AccountNotFound,
+            TransactionError::ProgramAccountNotFound => Self::ProgramAccountNotFound,
+            TransactionError::InsufficientFundsForFee => Self::InsufficientFundsForFee,
+            TransactionError::InvalidAccountForFee => Self::InvalidAccountForFee,
+            TransactionError::AlreadyProcessed => Self::AlreadyProcessed,
+            TransactionError::BlockhashNotFound => Self::BlockhashNotFound,
+            TransactionError::InstructionError(i, inner) => Self::InstructionError(i, inner.into()),
+            TransactionError::CallChainTooDeep => Self::CallChainTooDeep,
+            TransactionError::MissingSignatureForFee => Self::MissingSignatureForFee,
+            TransactionError::InvalidAccountIndex => Self::InvalidAccountIndex,
+            TransactionError::SignatureFailure => Self::SignatureFailure,
+            TransactionError::InvalidProgramForExecution => Self::InvalidProgramForExecution,
+            TransactionError::SanitizeFailure => Self::SanitizeFailure,
+            TransactionError::ClusterMaintenance => Self::ClusterMaintenance,
+            TransactionError::AccountBorrowOutstanding => Self::AccountBorrowOutstanding,
+            TransactionError::WouldExceedMaxBlockCostLimit => Self::WouldExceedMaxBlockCostLimit,
+            TransactionError::UnsupportedVersion => Self::UnsupportedVersion,
+            TransactionError::InvalidWritableAccount => Self::InvalidWritableAccount,
+            TransactionError::WouldExceedMaxAccountCostLimit => {
+                Self::WouldExceedMaxAccountCostLimit
+            }
+            TransactionError::WouldExceedAccountDataBlockLimit => {
+                Self::WouldExceedAccountDataBlockLimit
+            }
+            TransactionError::TooManyAccountLocks => Self::TooManyAccountLocks,
+            TransactionError::AddressLookupTableNotFound => Self::AddressLookupTableNotFound,
+            TransactionError::InvalidAddressLookupTableOwner => {
+                Self::InvalidAddressLookupTableOwner
+            }
+            TransactionError::InvalidAddressLookupTableData => Self::InvalidAddressLookupTableData,
+            TransactionError::InvalidAddressLookupTableIndex => {
+                Self::InvalidAddressLookupTableIndex
+            }
+            TransactionError::InvalidRentPayingAccount => Self::InvalidRentPayingAccount,
+            TransactionError::WouldExceedMaxVoteCostLimit => Self::WouldExceedMaxVoteCostLimit,
+            TransactionError::WouldExceedAccountDataTotalLimit => {
+                Self::WouldExceedAccountDataTotalLimit
+            }
+            TransactionError::DuplicateInstruction(i) => Self::DuplicateInstruction(i),
+            TransactionError::InsufficientFundsForRent { account_index } => {
+                Self::InsufficientFundsForRent { account_index }
+            }
+            TransactionError::MaxLoadedAccountsDataSizeExceeded => {
+                Self::MaxLoadedAccountsDataSizeExceeded
+            }
+            TransactionError::InvalidLoadedAccountsDataSizeLimit => {
+                Self::InvalidLoadedAccountsDataSizeLimit
+            }
+            TransactionError::ResanitizationNeeded => Self::ResanitizationNeeded,
+            TransactionError::ProgramExecutionTemporarilyRestricted { account_index } => {
+                Self::ProgramExecutionTemporarilyRestricted { account_index }
+            }
+            TransactionError::UnbalancedTransaction => Self::UnbalancedTransaction,
+            TransactionError::ProgramCacheHitMaxLimit => Self::ProgramCacheHitMaxLimit,
+            TransactionError::CommitCancelled => Self::CommitCancelled,
+        }
+    }
+}
+
+impl From<StatusCacheTransactionError> for TransactionError {
+    fn from(err: StatusCacheTransactionError) -> Self {
+        match err {
+            StatusCacheTransactionError::AccountInUse => Self::AccountInUse,
+            StatusCacheTransactionError::AccountLoadedTwice => Self::AccountLoadedTwice,
+            StatusCacheTransactionError::AccountNotFound => Self::AccountNotFound,
+            StatusCacheTransactionError::ProgramAccountNotFound => Self::ProgramAccountNotFound,
+            StatusCacheTransactionError::InsufficientFundsForFee => Self::InsufficientFundsForFee,
+            StatusCacheTransactionError::InvalidAccountForFee => Self::InvalidAccountForFee,
+            StatusCacheTransactionError::AlreadyProcessed => Self::AlreadyProcessed,
+            StatusCacheTransactionError::BlockhashNotFound => Self::BlockhashNotFound,
+            StatusCacheTransactionError::InstructionError(i, inner) => {
+                Self::InstructionError(i, inner.into())
+            }
+            StatusCacheTransactionError::CallChainTooDeep => Self::CallChainTooDeep,
+            StatusCacheTransactionError::MissingSignatureForFee => Self::MissingSignatureForFee,
+            StatusCacheTransactionError::InvalidAccountIndex => Self::InvalidAccountIndex,
+            StatusCacheTransactionError::SignatureFailure => Self::SignatureFailure,
+            StatusCacheTransactionError::InvalidProgramForExecution => {
+                Self::InvalidProgramForExecution
+            }
+            StatusCacheTransactionError::SanitizeFailure => Self::SanitizeFailure,
+            StatusCacheTransactionError::ClusterMaintenance => Self::ClusterMaintenance,
+            StatusCacheTransactionError::AccountBorrowOutstanding => Self::AccountBorrowOutstanding,
+            StatusCacheTransactionError::WouldExceedMaxBlockCostLimit => {
+                Self::WouldExceedMaxBlockCostLimit
+            }
+            StatusCacheTransactionError::UnsupportedVersion => Self::UnsupportedVersion,
+            StatusCacheTransactionError::InvalidWritableAccount => Self::InvalidWritableAccount,
+            StatusCacheTransactionError::WouldExceedMaxAccountCostLimit => {
+                Self::WouldExceedMaxAccountCostLimit
+            }
+            StatusCacheTransactionError::WouldExceedAccountDataBlockLimit => {
+                Self::WouldExceedAccountDataBlockLimit
+            }
+            StatusCacheTransactionError::TooManyAccountLocks => Self::TooManyAccountLocks,
+            StatusCacheTransactionError::AddressLookupTableNotFound => {
+                Self::AddressLookupTableNotFound
+            }
+            StatusCacheTransactionError::InvalidAddressLookupTableOwner => {
+                Self::InvalidAddressLookupTableOwner
+            }
+            StatusCacheTransactionError::InvalidAddressLookupTableData => {
+                Self::InvalidAddressLookupTableData
+            }
+            StatusCacheTransactionError::InvalidAddressLookupTableIndex => {
+                Self::InvalidAddressLookupTableIndex
+            }
+            StatusCacheTransactionError::InvalidRentPayingAccount => Self::InvalidRentPayingAccount,
+            StatusCacheTransactionError::WouldExceedMaxVoteCostLimit => {
+                Self::WouldExceedMaxVoteCostLimit
+            }
+            StatusCacheTransactionError::WouldExceedAccountDataTotalLimit => {
+                Self::WouldExceedAccountDataTotalLimit
+            }
+            StatusCacheTransactionError::DuplicateInstruction(i) => Self::DuplicateInstruction(i),
+            StatusCacheTransactionError::InsufficientFundsForRent { account_index } => {
+                Self::InsufficientFundsForRent { account_index }
+            }
+            StatusCacheTransactionError::MaxLoadedAccountsDataSizeExceeded => {
+                Self::MaxLoadedAccountsDataSizeExceeded
+            }
+            StatusCacheTransactionError::InvalidLoadedAccountsDataSizeLimit => {
+                Self::InvalidLoadedAccountsDataSizeLimit
+            }
+            StatusCacheTransactionError::ResanitizationNeeded => Self::ResanitizationNeeded,
+            StatusCacheTransactionError::ProgramExecutionTemporarilyRestricted {
+                account_index,
+            } => Self::ProgramExecutionTemporarilyRestricted { account_index },
+            StatusCacheTransactionError::UnbalancedTransaction => Self::UnbalancedTransaction,
+            StatusCacheTransactionError::ProgramCacheHitMaxLimit => Self::ProgramCacheHitMaxLimit,
+            StatusCacheTransactionError::CommitCancelled => Self::CommitCancelled,
+        }
+    }
 }
 
 #[cfg(test)]

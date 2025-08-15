@@ -119,6 +119,7 @@ solana-hard-forks = { workspace = true, features = ["serde"] }
 solana-hash = { workspace = true }
 solana-inflation = { workspace = true }
 solana-instruction = { workspace = true }
+solana-instruction-error = { workspace = true }
 solana-keypair = { workspace = true, features = ["seed-derivable"] }
 solana-lattice-hash = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
