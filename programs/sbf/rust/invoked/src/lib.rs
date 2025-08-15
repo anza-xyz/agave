@@ -47,6 +47,7 @@ fn process_instruction(
             assert_eq!(accounts[ARGUMENT_INDEX].data_len(), 100);
             assert!(accounts[ARGUMENT_INDEX].is_signer);
             assert!(accounts[ARGUMENT_INDEX].is_writable);
+            assert_eq!(accounts[ARGUMENT_INDEX].rent_epoch, u64::MAX);
             assert!(!accounts[ARGUMENT_INDEX].executable);
             {
                 let data = accounts[ARGUMENT_INDEX].try_borrow_data()?;
@@ -63,12 +64,14 @@ fn process_instruction(
             assert_eq!(accounts[INVOKED_ARGUMENT_INDEX].data_len(), 10);
             assert!(accounts[INVOKED_ARGUMENT_INDEX].is_signer);
             assert!(accounts[INVOKED_ARGUMENT_INDEX].is_writable);
+            assert_eq!(accounts[INVOKED_ARGUMENT_INDEX].rent_epoch, u64::MAX);
             assert!(!accounts[INVOKED_ARGUMENT_INDEX].executable);
 
             assert_eq!(accounts[INVOKED_PROGRAM_INDEX].key, program_id);
             assert_eq!(accounts[INVOKED_PROGRAM_INDEX].owner, &loader_v4::id());
             assert!(!accounts[INVOKED_PROGRAM_INDEX].is_signer);
             assert!(!accounts[INVOKED_PROGRAM_INDEX].is_writable);
+            assert_eq!(accounts[INVOKED_PROGRAM_INDEX].rent_epoch, u64::MAX);
             assert!(accounts[INVOKED_PROGRAM_INDEX].executable);
 
             assert_eq!(
@@ -91,13 +94,10 @@ fn process_instruction(
                 accounts[INVOKED_PROGRAM_INDEX].is_writable,
                 accounts[INVOKED_PROGRAM_DUP_INDEX].is_writable
             );
-            #[allow(deprecated)]
-            {
-                assert_eq!(
-                    accounts[INVOKED_PROGRAM_INDEX]._unused,
-                    accounts[INVOKED_PROGRAM_DUP_INDEX]._unused
-                );
-            }
+            assert_eq!(
+                accounts[INVOKED_PROGRAM_INDEX].rent_epoch,
+                accounts[INVOKED_PROGRAM_DUP_INDEX].rent_epoch
+            );
             assert_eq!(
                 accounts[INVOKED_PROGRAM_INDEX].executable,
                 accounts[INVOKED_PROGRAM_DUP_INDEX].executable

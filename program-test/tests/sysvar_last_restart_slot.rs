@@ -7,9 +7,7 @@ use {
     solana_program_test::{processor, ProgramTest, ProgramTestContext},
     solana_pubkey::Pubkey,
     solana_signer::Signer,
-    solana_sysvar::{
-        last_restart_slot, last_restart_slot::LastRestartSlot, Sysvar, SysvarSerialize,
-    },
+    solana_sysvar::{last_restart_slot, last_restart_slot::LastRestartSlot, Sysvar},
     solana_transaction::Transaction,
 };
 

@@ -849,7 +849,7 @@ mod tests {
         bs58::decode(KEYPAIR)
             .into_vec()
             .as_deref()
-            .map(Keypair::try_from)
+            .map(Keypair::from_bytes)
             .unwrap()
             .unwrap()
     }

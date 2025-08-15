@@ -14,17 +14,16 @@ use {
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
     solana_clock::{Epoch, Slot},
-    solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_fee_calculator::{FeeRateGovernor, DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE},
-    solana_genesis_config::GenesisConfig,
+    solana_genesis_config::{ClusterType, GenesisConfig},
     solana_hash::Hash,
     solana_instruction::{
         error::{InstructionError, UNSUPPORTED_SYSVAR},
         Instruction,
     },
     solana_keypair::Keypair,
-    solana_native_token::LAMPORTS_PER_SOL,
+    solana_native_token::sol_to_lamports,
     solana_poh_config::PohConfig,
     solana_program_entrypoint::{deserialize, SUCCESS},
     solana_program_error::{ProgramError, ProgramResult},
@@ -44,7 +43,7 @@ use {
     solana_signer::Signer,
     solana_svm_log_collector::ic_msg,
     solana_svm_timings::ExecuteTimings,
-    solana_sysvar::SysvarSerialize,
+    solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
     solana_vote_program::vote_state::{self, VoteStateV3, VoteStateVersions},
     std::{
@@ -217,7 +216,7 @@ macro_rules! processor {
     };
 }
 
-fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned + Clone>(
+fn get_sysvar<T: Default + Sysvar + Sized + serde::de::DeserializeOwned + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
     var_addr: *mut u8,
 ) -> u64 {
@@ -613,7 +612,7 @@ impl ProgramTest {
         );
     }
 
-    pub fn add_sysvar_account<S: SysvarSerialize>(&mut self, address: Pubkey, sysvar: &S) {
+    pub fn add_sysvar_account<S: Sysvar>(&mut self, address: Pubkey, sysvar: &S) {
         let account = create_account_shared_data_for_test(sysvar);
         self.add_account(address, account.into());
     }
@@ -802,13 +801,13 @@ impl ProgramTest {
         };
         let bootstrap_validator_pubkey = Pubkey::new_unique();
         let bootstrap_validator_stake_lamports =
-            rent.minimum_balance(VoteStateV3::size_of()) + 1_000_000 * LAMPORTS_PER_SOL;
+            rent.minimum_balance(VoteStateV3::size_of()) + sol_to_lamports(1_000_000.0);
 
         let mint_keypair = Keypair::new();
         let voting_keypair = Keypair::new();
 
         let mut genesis_config = create_genesis_config_with_leader_ex(
-            1_000_000 * LAMPORTS_PER_SOL,
+            sol_to_lamports(1_000_000.0),
             &mint_keypair.pubkey(),
             &bootstrap_validator_pubkey,
             &voting_keypair.pubkey(),
@@ -1109,7 +1108,7 @@ impl ProgramTestContext {
         for _ in 0..number_of_credits {
             vote_state.increment_credits(epoch, 1);
         }
-        let versioned = VoteStateVersions::new_v3(vote_state);
+        let versioned = VoteStateVersions::new_current(vote_state);
         vote_state::to(&versioned, &mut vote_account).unwrap();
         bank.store_account(vote_account_address, &vote_account);
     }
@@ -1132,7 +1131,7 @@ impl ProgramTestContext {
     /// that would be difficult to replicate on a new test cluster. Beware
     /// that it can be used to create states that would not be reachable
     /// under normal conditions!
-    pub fn set_sysvar<T: SysvarId + SysvarSerialize>(&self, sysvar: &T) {
+    pub fn set_sysvar<T: SysvarId + Sysvar>(&self, sysvar: &T) {
         let bank_forks = self.bank_forks.read().unwrap();
         let bank = bank_forks.working_bank();
         bank.set_sysvar_for_tests(sysvar);

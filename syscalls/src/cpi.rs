@@ -1293,6 +1293,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         solana_account::{Account, AccountSharedData, ReadableAccount},
+        solana_clock::Epoch,
         solana_instruction::Instruction,
         solana_program_runtime::{
             invoke_context::{BpfAllocator, SerializedAccountMetadata, SyscallContext},
@@ -2190,7 +2191,7 @@ mod tests {
         data: &'a [u8],
         owner: Pubkey,
         executable: bool,
-        _unused: u64,
+        rent_epoch: Epoch,
     }
 
     impl MockAccountInfo<'_> {
@@ -2203,7 +2204,7 @@ mod tests {
                 data: account.data(),
                 owner: *account.owner(),
                 executable: account.executable(),
-                _unused: account.rent_epoch(),
+                rent_epoch: account.rent_epoch(),
             }
         }
 
@@ -2224,8 +2225,6 @@ mod tests {
             let data_cell_addr = owner_addr + mem::size_of::<Pubkey>();
             let data_addr = data_cell_addr + mem::size_of::<RcBox<RefCell<&mut [u8]>>>();
 
-            #[allow(deprecated)]
-            #[allow(clippy::used_underscore_binding)]
             let info = AccountInfo {
                 key: unsafe { (key_addr as *const Pubkey).as_ref() }.unwrap(),
                 is_signer: self.is_signer,
@@ -2238,7 +2237,7 @@ mod tests {
                 },
                 owner: unsafe { (owner_addr as *const Pubkey).as_ref() }.unwrap(),
                 executable: self.executable,
-                _unused: self._unused,
+                rent_epoch: self.rent_epoch,
             };
 
             unsafe {

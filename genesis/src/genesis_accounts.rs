@@ -3,8 +3,7 @@ use {
         stakes::{create_and_add_stakes, StakerInfo},
         unlocks::UnlockInfo,
     },
-    solana_cluster_type::ClusterType,
-    solana_genesis_config::GenesisConfig,
+    solana_genesis_config::{ClusterType, GenesisConfig},
     solana_native_token::LAMPORTS_PER_SOL,
 };
 

@@ -26,11 +26,12 @@ use {
         offline::*,
     },
     solana_cli_output::{
-        display::build_balance_message, return_signers_with_config, CliEpochVotingHistory,
-        CliLandedVote, CliVoteAccount, ReturnSignersConfig,
+        return_signers_with_config, CliEpochVotingHistory, CliLandedVote, CliVoteAccount,
+        ReturnSignersConfig,
     },
     solana_commitment_config::CommitmentConfig,
     solana_message::Message,
+    solana_native_token::lamports_to_sol,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
@@ -42,7 +43,7 @@ use {
         vote_error::VoteError,
         vote_instruction::{self, withdraw, CreateVoteAccountConfig},
         vote_state::{
-            VoteAuthorize, VoteInit, VoteStateV3, VoteStateVersions, VOTE_CREDITS_MAXIMUM_PER_SLOT,
+            VoteAuthorize, VoteInit, VoteState, VoteStateVersions, VOTE_CREDITS_MAXIMUM_PER_SLOT,
         },
     },
     std::rc::Rc,
@@ -828,7 +829,7 @@ pub fn process_create_vote_account(
     )?;
 
     let required_balance = rpc_client
-        .get_minimum_balance_for_rent_exemption(VoteStateV3::size_of())?
+        .get_minimum_balance_for_rent_exemption(VoteState::size_of())?
         .max(1);
     let amount = SpendAmount::Some(required_balance);
 
@@ -1260,7 +1261,7 @@ pub(crate) fn get_vote_account(
     rpc_client: &RpcClient,
     vote_account_pubkey: &Pubkey,
     commitment_config: CommitmentConfig,
-) -> Result<(Account, VoteStateV3), Box<dyn std::error::Error>> {
+) -> Result<(Account, VoteState), Box<dyn std::error::Error>> {
     let vote_account = rpc_client
         .get_account_with_commitment(vote_account_pubkey, commitment_config)?
         .value
@@ -1274,7 +1275,7 @@ pub(crate) fn get_vote_account(
         ))
         .into());
     }
-    let vote_state = VoteStateV3::deserialize(&vote_account.data).map_err(|_| {
+    let vote_state = VoteState::deserialize(&vote_account.data).map_err(|_| {
         CliError::RpcRequestError(
             "Account data could not be deserialized to vote state".to_string(),
         )
@@ -1428,14 +1429,14 @@ pub fn process_withdraw_from_vote_account(
     if !sign_only {
         let current_balance = rpc_client.get_balance(vote_account_pubkey)?;
         let minimum_balance =
-            rpc_client.get_minimum_balance_for_rent_exemption(VoteStateV3::size_of())?;
+            rpc_client.get_minimum_balance_for_rent_exemption(VoteState::size_of())?;
         if let SpendAmount::Some(withdraw_amount) = withdraw_amount {
             let balance_remaining = current_balance.saturating_sub(withdraw_amount);
             if balance_remaining < minimum_balance && balance_remaining != 0 {
                 return Err(CliError::BadParameter(format!(
                     "Withdraw amount too large. The vote account balance must be at least {} SOL \
                      to remain rent exempt",
-                    build_balance_message(minimum_balance, false, false)
+                    lamports_to_sol(minimum_balance)
                 ))
                 .into());
             }

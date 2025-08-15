@@ -1788,7 +1788,7 @@ pub mod test {
         solana_slot_history::SlotHistory,
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{
-            process_slot_vote_unchecked, Vote, VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            process_slot_vote_unchecked, Vote, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
         std::{
             collections::{HashMap, VecDeque},
@@ -1806,17 +1806,17 @@ pub mod test {
             .iter()
             .map(|(lamports, votes)| {
                 let mut account = AccountSharedData::from(Account {
-                    data: vec![0; VoteStateV3::size_of()],
+                    data: vec![0; VoteState::size_of()],
                     lamports: *lamports,
                     owner: solana_vote_program::id(),
                     ..Account::default()
                 });
-                let mut vote_state = VoteStateV3::default();
+                let mut vote_state = VoteState::default();
                 for slot in *votes {
                     process_slot_vote_unchecked(&mut vote_state, *slot);
                 }
-                VoteStateV3::serialize(
-                    &VoteStateVersions::new_v3(vote_state),
+                VoteState::serialize(
+                    &VoteStateVersions::new_current(vote_state),
                     account.data_as_mut_slice(),
                 )
                 .expect("serialize state");

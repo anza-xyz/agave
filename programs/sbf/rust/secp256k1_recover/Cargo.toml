@@ -13,9 +13,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 libsecp256k1 = { workspace = true }
-sha3 = { workspace = true }
-solana-hash = { workspace = true }
-solana-keccak-hasher = { workspace = true, features = ["sha3"] }
+solana-keccak-hasher = { workspace = true }
 solana-msg = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
