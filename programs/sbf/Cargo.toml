@@ -1,4 +1,3 @@
-
 [package]
 name = "solana-sbf-programs"
 description = "Blockchain, Rebuilt for Scale"
@@ -252,6 +251,15 @@ solana-transaction-error = "3.0.0"
 solana-transaction-status = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+
+# Enable basic optimizations for unittests to trigger const propagation and inlining
+[profile.ci]
+inherits = "test"
+opt-level = 1
+
+# Enable optimizations for procmacros for faster codegen
+[profile.dev.build-override]
+opt-level = 1
 
 [profile.release]
 # The test programs are build in release mode
