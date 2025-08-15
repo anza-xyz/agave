@@ -169,25 +169,27 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
 
         for (addrs, payload) in batched_items.drain(..) {
             for addr in addrs.as_ref() {
-                // loop until we have space for the next packet
-                loop {
-                    completion.sync(true);
-                    // we haven't written any frames so we only need to sync the consumer position
-                    ring.sync(false);
+                if ring.available() == 0 || umem.available() == 0 {
+                    // loop until we have space for the next packet
+                    loop {
+                        completion.sync(true);
+                        // we haven't written any frames so we only need to sync the consumer position
+                        ring.sync(false);
 
-                    // check if any frames were completed
-                    while let Some(frame_offset) = completion.read() {
-                        umem.release(frame_offset);
+                        // check if any frames were completed
+                        while let Some(frame_offset) = completion.read() {
+                            umem.release(frame_offset);
+                        }
+
+                        if ring.available() > 0 && umem.available() > 0 {
+                            // we have space for the next packet, break out of the loop
+                            break;
+                        }
+
+                        // queues are full, if NEEDS_WAKEUP is set kick the driver so hopefully it'll
+                        // complete some work
+                        kick(&ring);
                     }
-
-                    if ring.available() > 0 && umem.available() > 0 {
-                        // we have a frame and a slot in the ring
-                        break;
-                    }
-
-                    // queues are full, if NEEDS_WAKEUP is set kick the driver so hopefully it'll
-                    // complete some work
-                    kick(&ring);
                 }
 
                 // at this point we're guaranteed to have a frame to write the next packet into and
