@@ -24,9 +24,11 @@ pub const MAX_ACCOUNTS_PER_TRANSACTION: usize = 256;
 pub const MAX_ACCOUNTS_PER_INSTRUCTION: usize = 255;
 pub const MAX_INSTRUCTION_DATA_LEN: usize = 10 * 1024;
 pub const MAX_ACCOUNT_DATA_LEN: u64 = 10 * 1024 * 1024;
-// Note: With stricter_abi_and_runtime_constraints programs can grow accounts faster than they intend to,
-// because the AccessViolationHandler might grow an account up to MAX_ACCOUNT_DATA_LEN at once.
+// Note: With stricter_abi_and_runtime_constraints programs can grow accounts
+// faster than they intend to, because the AccessViolationHandler might grow
+// an account up to MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION at once.
 pub const MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION: i64 = MAX_ACCOUNT_DATA_LEN as i64 * 2;
+pub const MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION: usize = 10 * 1_024;
 
 #[cfg(test)]
 static_assertions::const_assert_eq!(
@@ -43,13 +45,10 @@ static_assertions::const_assert_eq!(
     MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION,
     solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
 );
-
-// Inlined to avoid solana_account_info dep
-const MAX_PERMITTED_DATA_INCREASE: usize = 1_024 * 10;
 #[cfg(test)]
 static_assertions::const_assert_eq!(
-    MAX_PERMITTED_DATA_INCREASE,
-    solana_account_info::MAX_PERMITTED_DATA_INCREASE
+    MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION,
+    solana_account_info::MAX_PERMITTED_DATA_INCREASE,
 );
 
 /// Index of an account inside of the TransactionContext or an InstructionContext.
@@ -1018,14 +1017,12 @@ impl BorrowedAccount<'_> {
     fn make_data_mut(&mut self) {
         // if the account is still shared, it means this is the first time we're
         // about to write into it. Make the account mutable by copying it in a
-        // buffer with MAX_PERMITTED_DATA_INCREASE capacity so that if the
+        // buffer with MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION capacity so that if the
         // transaction reallocs, we don't have to copy the whole account data a
         // second time to fullfill the realloc.
-        //
-        // NOTE: The account memory region CoW code in bpf_loader::create_vm() implements the same
-        // logic and must be kept in sync.
         if self.account.is_shared() {
-            self.account.reserve(MAX_PERMITTED_DATA_INCREASE);
+            self.account
+                .reserve(MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION);
         }
     }
 
