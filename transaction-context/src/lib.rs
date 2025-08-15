@@ -23,28 +23,25 @@ pub const MAX_ACCOUNTS_PER_TRANSACTION: usize = 256;
 // one index is used as NON_DUP_MARKER in ABI v0 and v1.
 pub const MAX_ACCOUNTS_PER_INSTRUCTION: usize = 255;
 pub const MAX_INSTRUCTION_DATA_LEN: usize = 10 * 1024;
+pub const MAX_ACCOUNT_DATA_LEN: u64 = 10 * 1024 * 1024;
 
-// Inlined to avoid solana_system_interface dep
 #[cfg(test)]
 static_assertions::const_assert_eq!(
     MAX_ACCOUNTS_PER_INSTRUCTION,
     solana_program_entrypoint::NON_DUP_MARKER as usize,
 );
-
-// Inlined to avoid solana_system_interface dep
-const MAX_PERMITTED_DATA_LENGTH: u64 = 10 * 1024 * 1024;
 #[cfg(test)]
 static_assertions::const_assert_eq!(
-    MAX_PERMITTED_DATA_LENGTH,
-    solana_system_interface::MAX_PERMITTED_DATA_LENGTH
+    MAX_ACCOUNT_DATA_LEN,
+    solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
 );
 
 // Inlined to avoid solana_system_interface dep
 const MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION: i64 =
-    MAX_PERMITTED_DATA_LENGTH as i64 * 2;
+    MAX_ACCOUNT_DATA_LEN as i64 * 2;
 // Note: With stricter_abi_and_runtime_constraints programs can grow accounts faster than they intend to,
 // because the AccessViolationHandler might grow an account up to
-// MAX_PERMITTED_DATA_LENGTH at once.
+// MAX_ACCOUNT_DATA_LEN at once.
 #[cfg(test)]
 static_assertions::const_assert_eq!(
     MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
@@ -162,7 +159,7 @@ impl TransactionAccounts {
 
     fn can_data_be_resized(&self, old_len: usize, new_len: usize) -> Result<(), InstructionError> {
         // The new length can not exceed the maximum permitted length
-        if new_len > MAX_PERMITTED_DATA_LENGTH as usize {
+        if new_len > MAX_ACCOUNT_DATA_LEN as usize {
             return Err(InstructionError::InvalidRealloc);
         }
         // The resize can not exceed the per-transaction maximum
@@ -564,7 +561,7 @@ impl TransactionContext {
                     // account length the program stored in AccountInfo.
                     let old_len = account.data().len();
                     let new_len = (address_space_reserved_for_account as usize)
-                        .min(MAX_PERMITTED_DATA_LENGTH as usize)
+                        .min(MAX_ACCOUNT_DATA_LEN as usize)
                         .min(old_len.saturating_add(remaining_allowed_growth));
                     // The last two min operations ensure the following:
                     debug_assert!(accounts.can_data_be_resized(old_len, new_len).is_ok());
