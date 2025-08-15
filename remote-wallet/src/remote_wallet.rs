@@ -1,93 +1,45 @@
+use crate::transport::transport_trait::Transport;
 #[cfg(feature = "hidapi")]
-use {crate::ledger::is_valid_ledger, parking_lot::Mutex, std::sync::Arc};
 use {
+    crate::errors::RemoteWalletError,
     crate::{
-        ledger::LedgerWallet,
-        ledger_error::LedgerError,
-        locator::{Locator, LocatorError, Manufacturer},
+        locator::{Locator, Manufacturer},
+        wallet::{
+            ledger::ledger::LedgerWallet,
+            types::{Device, RemoteWalletType},
+            WalletProbe,
+        },
     },
     log::*,
     parking_lot::RwLock,
-    solana_derivation_path::{DerivationPath, DerivationPathError},
+    solana_derivation_path::DerivationPath,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
-    solana_signer::SignerError,
     std::{
         rc::Rc,
         time::{Duration, Instant},
     },
-    thiserror::Error,
 };
+#[cfg(feature = "hidapi")]
+use {hidapi::DeviceInfo, parking_lot::Mutex, std::sync::Arc};
 
 const HID_GLOBAL_USAGE_PAGE: u16 = 0xFF00;
 const HID_USB_DEVICE_CLASS: u8 = 0;
 
-/// Remote wallet error.
-#[derive(Error, Debug, Clone)]
-pub enum RemoteWalletError {
-    #[error("hidapi error")]
-    Hid(String),
+// Error messages
+const ERROR_HIDAPI_DISABLED: &str = "hidapi crate compilation disabled in solana-remote-wallet.";
 
-    #[error("device type mismatch")]
-    DeviceTypeMismatch,
+// Logging messages
+const LOG_DEVICE_SINGULAR: &str = "";
+const LOG_DEVICE_PLURAL: &str = "s";
 
-    #[error("device with non-supported product ID or vendor ID was detected")]
-    InvalidDevice,
-
-    #[error(transparent)]
-    DerivationPathError(#[from] DerivationPathError),
-
-    #[error("invalid input: {0}")]
-    InvalidInput(String),
-
-    #[error("invalid path: {0}")]
-    InvalidPath(String),
-
-    #[error(transparent)]
-    LedgerError(#[from] LedgerError),
-
-    #[error("no device found")]
-    NoDeviceFound,
-
-    #[error("protocol error: {0}")]
-    Protocol(&'static str),
-
-    #[error("pubkey not found for given address")]
-    PubkeyNotFound,
-
-    #[error("remote wallet operation rejected by the user")]
-    UserCancel,
-
-    #[error(transparent)]
-    LocatorError(#[from] LocatorError),
-}
-
-#[cfg(feature = "hidapi")]
-impl From<hidapi::HidError> for RemoteWalletError {
-    fn from(err: hidapi::HidError) -> RemoteWalletError {
-        RemoteWalletError::Hid(err.to_string())
-    }
-}
-
-impl From<RemoteWalletError> for SignerError {
-    fn from(err: RemoteWalletError) -> SignerError {
-        match err {
-            RemoteWalletError::Hid(hid_error) => SignerError::Connection(hid_error),
-            RemoteWalletError::DeviceTypeMismatch => SignerError::Connection(err.to_string()),
-            RemoteWalletError::InvalidDevice => SignerError::Connection(err.to_string()),
-            RemoteWalletError::InvalidInput(input) => SignerError::InvalidInput(input),
-            RemoteWalletError::LedgerError(e) => SignerError::Protocol(e.to_string()),
-            RemoteWalletError::NoDeviceFound => SignerError::NoDeviceFound,
-            RemoteWalletError::Protocol(e) => SignerError::Protocol(e.to_string()),
-            RemoteWalletError::UserCancel => {
-                SignerError::UserCancel("remote wallet operation rejected by the user".to_string())
-            }
-            _ => SignerError::Custom(err.to_string()),
-        }
-    }
-}
-
-/// Collection of connected RemoteWallets
+/// Manager for hardware wallet devices
+///
+/// This struct manages the discovery, connection, and interaction with hardware wallets.
+/// It maintains a collection of connected devices and provides methods to access them.
+///
+/// The manager supports multiple hardware wallet types (Ledger, Keystone) and handles
+/// USB HID communication through the hidapi library.
 pub struct RemoteWalletManager {
     #[cfg(feature = "hidapi")]
     usb: Arc<Mutex<hidapi::HidApi>>,
@@ -104,61 +56,85 @@ impl RemoteWalletManager {
         })
     }
 
-    /// Repopulate device list
-    /// Note: this method iterates over and updates all devices
+    /// Repopulate device list by scanning for connected hardware wallets
+    ///
+    /// This method refreshes the USB device list and attempts to connect to all
+    /// supported hardware wallets (Ledger and Keystone). It updates the internal
+    /// device collection and returns the number of newly discovered devices.
+    ///
+    /// Returns the number of devices added (can be negative if devices were removed)
     #[cfg(feature = "hidapi")]
     pub fn update_devices(&self) -> Result<usize, RemoteWalletError> {
         let mut usb = self.usb.lock();
         usb.refresh_devices()?;
-        let devices = usb.device_list();
-        let num_prev_devices = self.devices.read().len();
 
-        let mut detected_devices = vec![];
-        let mut errors = vec![];
-        for device_info in devices.filter(|&device_info| {
-            is_valid_hid_device(device_info.usage_page(), device_info.interface_number())
-                && is_valid_ledger(device_info.vendor_id(), device_info.product_id())
-        }) {
-            match usb.open_path(device_info.path()) {
-                Ok(device) => {
-                    let mut ledger = LedgerWallet::new(device);
-                    let result = ledger.read_device(device_info);
-                    match result {
-                        Ok(info) => {
-                            ledger.pretty_path = info.get_pretty_path();
-                            let path = device_info.path().to_str().unwrap().to_string();
-                            trace!("Found device: {:?}", info);
-                            detected_devices.push(Device {
-                                path,
-                                info,
-                                wallet_type: RemoteWalletType::Ledger(Rc::new(ledger)),
-                            })
-                        }
-                        Err(err) => {
-                            error!("Error connecting to ledger device to read info: {}", err);
-                            errors.push(err)
-                        }
-                    }
-                }
-                Err(err) => error!("Error connecting to ledger device to read info: {}", err),
+        let prev_device_count = self.devices.read().len();
+
+        // Initialize supported wallet probes
+        let probes = self.create_wallet_probes();
+
+        // Filter HID devices and attempt to connect
+        let new_devices = self.discover_and_connect_devices(&mut usb, &probes)?;
+
+        // Update device list
+        *self.devices.write() = new_devices;
+
+        Ok(self.devices.read().len() - prev_device_count)
+    }
+
+    /// Create wallet probes for supported hardware wallets
+    #[cfg(feature = "hidapi")]
+    fn create_wallet_probes(&self) -> Vec<Box<dyn WalletProbe>> {
+        use crate::wallet::ledger::ledger::LedgerProbe;
+        vec![Box::new(LedgerProbe)]
+    }
+
+    /// Discover and connect to supported hardware wallet devices
+    #[cfg(feature = "hidapi")]
+    fn discover_and_connect_devices(
+        &self,
+        usb: &mut hidapi::HidApi,
+        probes: &[Box<dyn WalletProbe>],
+    ) -> Result<Vec<Device>, RemoteWalletError> {
+        let valid_devices: Vec<DeviceInfo> = usb
+            .device_list()
+            .filter(|d| is_valid_hid_device(d.usage_page(), d.interface_number()))
+            .cloned()
+            .collect();
+
+        let connection_results: Vec<Result<Device, RemoteWalletError>> = valid_devices
+            .into_iter()
+            .filter_map(|devinfo| {
+                probes
+                    .iter()
+                    .find(|p| p.is_supported_device(&devinfo))
+                    .map(|p| p.open(usb, devinfo))
+            })
+            .collect();
+
+        // Log connection errors for debugging
+        let (successful_devices, failed_connections): (Vec<_>, Vec<_>) =
+            connection_results.into_iter().partition(Result::is_ok);
+
+        if !failed_connections.is_empty() {
+            debug!(
+                "Failed to connect to {} device(s)",
+                failed_connections.len()
+            );
+            for (i, err) in failed_connections.iter().enumerate() {
+                debug!("Connection error {}: {:?}", i + 1, err);
             }
         }
 
-        let num_curr_devices = detected_devices.len();
-        *self.devices.write() = detected_devices;
-
-        if num_curr_devices == 0 && !errors.is_empty() {
-            return Err(errors[0].clone());
-        }
-
-        Ok(num_curr_devices - num_prev_devices)
+        Ok(successful_devices
+            .into_iter()
+            .filter_map(Result::ok)
+            .collect())
     }
 
     #[cfg(not(feature = "hidapi"))]
     pub fn update_devices(&self) -> Result<usize, RemoteWalletError> {
-        Err(RemoteWalletError::Hid(
-            "hidapi crate compilation disabled in solana-remote-wallet.".to_string(),
-        ))
+        Err(RemoteWalletError::Hid(ERROR_HIDAPI_DISABLED.to_string()))
     }
 
     /// List connected and acknowledged wallets
@@ -166,21 +142,33 @@ impl RemoteWalletManager {
         self.devices.read().iter().map(|d| d.info.clone()).collect()
     }
 
-    /// Get a particular wallet
-    #[allow(unreachable_patterns)]
-    pub fn get_ledger(
+    /// Get a particular wallet by host device path and extract wallet type
+    fn get_wallet_by_path<T, F>(
         &self,
         host_device_path: &str,
-    ) -> Result<Rc<LedgerWallet>, RemoteWalletError> {
+        extractor: F,
+    ) -> Result<T, RemoteWalletError>
+    where
+        F: FnOnce(&RemoteWalletType) -> Result<T, RemoteWalletError>,
+    {
         self.devices
             .read()
             .iter()
             .find(|device| device.info.host_device_path == host_device_path)
             .ok_or(RemoteWalletError::PubkeyNotFound)
-            .and_then(|device| match &device.wallet_type {
-                RemoteWalletType::Ledger(ledger) => Ok(ledger.clone()),
-                _ => Err(RemoteWalletError::DeviceTypeMismatch),
-            })
+            .and_then(|device| extractor(&device.wallet_type))
+    }
+
+    /// Get a particular Ledger wallet
+    #[allow(unreachable_patterns)]
+    pub fn get_ledger(
+        &self,
+        host_device_path: &str,
+    ) -> Result<Rc<LedgerWallet>, RemoteWalletError> {
+        self.get_wallet_by_path(host_device_path, |wallet_type| match wallet_type {
+            RemoteWalletType::Ledger(ledger) => Ok(ledger.clone()),
+            _ => Err(RemoteWalletError::DeviceTypeMismatch),
+        })
     }
 
     /// Get wallet info.
@@ -188,37 +176,123 @@ impl RemoteWalletManager {
         self.devices
             .read()
             .iter()
-            .find(|d| &d.info.pubkey == pubkey)
-            .map(|d| d.info.clone())
+            .find(|device| &device.info.pubkey == pubkey)
+            .map(|device| device.info.clone())
     }
 
-    /// Update devices in maximum `max_polling_duration` if it doesn't succeed
+    /// Get the total number of connected devices
+    pub fn device_count(&self) -> usize {
+        self.devices.read().len()
+    }
+
+    /// Check if any devices are connected
+    pub fn has_devices(&self) -> bool {
+        !self.devices.read().is_empty()
+    }
+
+    /// Get devices by manufacturer
+    pub fn get_devices_by_manufacturer(
+        &self,
+        manufacturer: &Manufacturer,
+    ) -> Vec<RemoteWalletInfo> {
+        self.devices
+            .read()
+            .iter()
+            .filter(|device| &device.info.manufacturer == manufacturer)
+            .map(|device| device.info.clone())
+            .collect()
+    }
+
+    /// Get the first available wallet of any type
+    ///
+    /// This is a convenience method that returns the first connected wallet,
+    /// regardless of its type. Useful when you just need any available wallet.
+    pub fn get_first_available_wallet(&self) -> Option<RemoteWalletInfo> {
+        self.devices
+            .read()
+            .first()
+            .map(|device| device.info.clone())
+    }
+
+    /// Attempt to connect to hardware wallets with polling within a time limit
+    ///
+    /// This method will continuously attempt to discover and connect to hardware wallets
+    /// until either devices are found or the maximum polling duration is exceeded.
+    ///
+    /// Returns `true` if at least one device was successfully connected, `false` otherwise
     pub fn try_connect_polling(&self, max_polling_duration: &Duration) -> bool {
         let start_time = Instant::now();
+        let mut last_device_count = self.devices.read().len();
+
         while start_time.elapsed() <= *max_polling_duration {
-            if let Ok(num_devices) = self.update_devices() {
-                let plural = if num_devices == 1 { "" } else { "s" };
-                trace!("{} Remote Wallet{} found", num_devices, plural);
-                return true;
+            match self.update_devices() {
+                Ok(new_device_count) => {
+                    let current_total = self.devices.read().len();
+                    if current_total > 0 {
+                        let plural = if current_total == 1 {
+                            LOG_DEVICE_SINGULAR
+                        } else {
+                            LOG_DEVICE_PLURAL
+                        };
+                        trace!("{} Remote Wallet{} found", current_total, plural);
+                        return true;
+                    }
+                    last_device_count = current_total;
+                }
+                Err(err) => {
+                    debug!("Error during device discovery: {:?}", err);
+                    // Continue trying despite errors
+                }
             }
+
+            // Small delay to avoid excessive polling
+            std::thread::sleep(Duration::from_millis(100));
         }
+
+        debug!(
+            "Polling timeout reached. No devices found after {:?}",
+            max_polling_duration
+        );
         false
     }
 }
 
-/// `RemoteWallet` trait
+/// Trait for hardware wallet implementations
+///
+/// This trait defines the interface that all hardware wallet implementations must provide.
+/// It includes methods for device initialization, public key derivation, and message signing.
+///
+/// # Type Parameters
+/// * `T` - The device info type (typically `hidapi::DeviceInfo`)
 #[allow(unused_variables)]
 pub trait RemoteWallet<T> {
+    /// Get the human-readable name of this wallet implementation
     fn name(&self) -> &str {
         "unimplemented"
     }
 
-    /// Parse device info and get device base pubkey
+    /// Parse device information and initialize the wallet
+    ///
+    /// This method is called during device discovery to read basic information
+    /// from the hardware wallet and establish communication.
+    ///
+    /// # Arguments
+    /// * `dev_info` - Device information from the USB subsystem
+    ///
+    /// # Returns
+    /// A `RemoteWalletInfo` structure containing device details and base public key
     fn read_device(&mut self, dev_info: &T) -> Result<RemoteWalletInfo, RemoteWalletError> {
         unimplemented!();
     }
 
-    /// Get solana pubkey from a RemoteWallet
+    /// Derive a public key from the hardware wallet
+    ///
+    /// # Arguments
+    /// * `derivation_path` - The BIP32/BIP44 derivation path
+    /// * `confirm_key` - Whether to require user confirmation on the device
+    ///
+    /// # Returns
+    /// The derived Solana public key
     fn get_pubkey(
         &self,
         derivation_path: &DerivationPath,
@@ -227,8 +301,17 @@ pub trait RemoteWallet<T> {
         unimplemented!();
     }
 
-    /// Sign transaction data with wallet managing pubkey at derivation path
-    /// `m/44'/501'/<account>'/<change>'`.
+    /// Sign transaction data with the hardware wallet
+    ///
+    /// Signs raw transaction data using the private key at the specified derivation path.
+    /// The path follows the Solana convention: `m/44'/501'/<account>'/<change>'`.
+    ///
+    /// # Arguments
+    /// * `derivation_path` - The BIP32/BIP44 derivation path for the signing key
+    /// * `data` - The raw transaction data to sign
+    ///
+    /// # Returns
+    /// The signature produced by the hardware wallet
     fn sign_message(
         &self,
         derivation_path: &DerivationPath,
@@ -237,8 +320,17 @@ pub trait RemoteWallet<T> {
         unimplemented!();
     }
 
-    /// Sign off-chain message with wallet managing pubkey at derivation path
-    /// `m/44'/501'/<account>'/<change>'`.
+    /// Sign an off-chain message with the hardware wallet
+    ///
+    /// Signs arbitrary off-chain data using the private key at the specified derivation path.
+    /// This is used for message signing that doesn't involve blockchain transactions.
+    ///
+    /// # Arguments
+    /// * `derivation_path` - The BIP32/BIP44 derivation path for the signing key
+    /// * `message` - The off-chain message data to sign
+    ///
+    /// # Returns
+    /// The signature produced by the hardware wallet
     fn sign_offchain_message(
         &self,
         derivation_path: &DerivationPath,
@@ -248,38 +340,29 @@ pub trait RemoteWallet<T> {
     }
 }
 
-/// `RemoteWallet` device
-#[derive(Debug)]
-pub struct Device {
-    pub(crate) path: String,
-    pub(crate) info: RemoteWalletInfo,
-    pub wallet_type: RemoteWalletType,
-}
-
-/// Remote wallet convenience enum to hold various wallet types
-#[derive(Debug)]
-pub enum RemoteWalletType {
-    Ledger(Rc<LedgerWallet>),
-}
-
-/// Remote wallet information.
+/// Information about a connected hardware wallet device
+///
+/// This structure contains metadata about a hardware wallet device that has been
+/// discovered and connected. It includes device identification, connection details,
+/// and the device's base public key.
 #[derive(Debug, Default, Clone)]
 pub struct RemoteWalletInfo {
-    /// RemoteWallet device model
+    /// Device model name (e.g., "Nano S", "Keystone Pro")
     pub model: String,
-    /// RemoteWallet device manufacturer
+    /// Device manufacturer (Ledger, Keystone, etc.)
     pub manufacturer: Manufacturer,
-    /// RemoteWallet device serial number
+    /// Device serial number for identification
     pub serial: String,
-    /// RemoteWallet host device path
+    /// Host system path to the USB device
     pub host_device_path: String,
-    /// Base pubkey of device at Solana derivation path
+    /// Base public key derived from the device's default derivation path
     pub pubkey: Pubkey,
-    /// Initial read error
+    /// Error encountered during device initialization, if any
     pub error: Option<RemoteWalletError>,
 }
 
 impl RemoteWalletInfo {
+    /// Create RemoteWalletInfo from a Locator
     pub fn parse_locator(locator: Locator) -> Self {
         RemoteWalletInfo {
             manufacturer: locator.manufacturer,
@@ -288,43 +371,106 @@ impl RemoteWalletInfo {
         }
     }
 
+    /// Get a human-readable path string for this device
+    ///
+    /// Returns a string in the format "usb://manufacturer/pubkey" that can be
+    /// used to identify this device in user interfaces or configuration files.
     pub fn get_pretty_path(&self) -> String {
-        format!("usb://{}/{:?}", self.manufacturer, self.pubkey,)
+        format!("usb://{}/{:?}", self.manufacturer, self.pubkey)
     }
 
+    /// Check if this device matches another device for identification purposes
+    ///
+    /// Two devices are considered matching if they have the same manufacturer and
+    /// either the same public key or at least one has a default (unset) public key.
+    /// This allows for flexible matching during device discovery.
     pub(crate) fn matches(&self, other: &Self) -> bool {
         self.manufacturer == other.manufacturer
             && (self.pubkey == other.pubkey
                 || self.pubkey == Pubkey::default()
                 || other.pubkey == Pubkey::default())
     }
+
+    /// Check if this device has an error
+    pub fn has_error(&self) -> bool {
+        self.error.is_some()
+    }
+
+    /// Get the error message if any
+    pub fn error_message(&self) -> Option<String> {
+        self.error.as_ref().map(|e| e.to_string())
+    }
+
+    /// Check if this device is ready for use (no error and valid pubkey)
+    pub fn is_ready(&self) -> bool {
+        self.error.is_none() && self.pubkey != Pubkey::default()
+    }
 }
 
-/// Helper to determine if a device is a valid HID
+/// Helper to determine if a device is a valid HID device for hardware wallets
+///
+/// This function checks if a USB device has the correct HID characteristics
+/// that are commonly used by hardware wallets. It validates either the
+/// HID usage page or the USB device class.
+///
+/// # Arguments
+/// * `usage_page` - The HID usage page identifier
+/// * `interface_number` - The USB interface number/class
+///
+/// # Returns
+/// `true` if the device appears to be a valid HID device for hardware wallets
 pub fn is_valid_hid_device(usage_page: u16, interface_number: i32) -> bool {
     usage_page == HID_GLOBAL_USAGE_PAGE || interface_number == HID_USB_DEVICE_CLASS as i32
 }
 
-/// Helper to initialize hidapi and RemoteWalletManager
+/// Initialize the hardware wallet manager
+///
+/// This function creates a new RemoteWalletManager instance with HID API support.
+/// The manager can be used to discover, connect to, and interact with hardware wallets.
+///
+/// # Returns
+/// A reference-counted RemoteWalletManager instance, or an error if initialization fails
+///
+/// # Errors
+/// Returns an error if HID API initialization fails or if the hidapi feature is disabled
 #[cfg(feature = "hidapi")]
 pub fn initialize_wallet_manager() -> Result<Rc<RemoteWalletManager>, RemoteWalletError> {
     let hidapi = Arc::new(Mutex::new(hidapi::HidApi::new()?));
     Ok(RemoteWalletManager::new(hidapi))
 }
+
+/// Initialize the hardware wallet manager (hidapi disabled)
+///
+/// This version is compiled when the hidapi feature is disabled and always returns an error.
 #[cfg(not(feature = "hidapi"))]
 pub fn initialize_wallet_manager() -> Result<Rc<RemoteWalletManager>, RemoteWalletError> {
-    Err(RemoteWalletError::Hid(
-        "hidapi crate compilation disabled in solana-remote-wallet.".to_string(),
-    ))
+    Err(RemoteWalletError::Hid(ERROR_HIDAPI_DISABLED.to_string()))
 }
 
+/// Create a wallet manager only if hardware wallets are detected
+///
+/// This function initializes a wallet manager and performs an initial device scan.
+/// If no devices are found, it returns `None` to avoid keeping an empty manager.
+/// This is useful for applications that only need wallet functionality when hardware
+/// wallets are actually connected.
+///
+/// Returns `Some(manager)` if devices are found, `None` if no devices are detected
 pub fn maybe_wallet_manager() -> Result<Option<Rc<RemoteWalletManager>>, RemoteWalletError> {
     let wallet_manager = initialize_wallet_manager()?;
-    let device_count = wallet_manager.update_devices()?;
-    if device_count > 0 {
+    let total_devices = wallet_manager.devices.read().len();
+
+    // Perform initial device scan
+    wallet_manager.update_devices()?;
+    let found_devices = wallet_manager.devices.read().len();
+
+    if found_devices > 0 {
+        debug!(
+            "Wallet manager initialized with {} device(s)",
+            found_devices
+        );
         Ok(Some(wallet_manager))
     } else {
-        drop(wallet_manager);
+        debug!("No hardware wallets detected, returning None");
         Ok(None)
     }
 }
