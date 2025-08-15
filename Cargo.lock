@@ -11452,6 +11452,7 @@ dependencies = [
  "solana-account-info",
  "solana-instruction 3.0.0",
  "solana-instructions-sysvar",
+ "solana-program-entrypoint",
  "solana-pubkey 3.0.0",
  "solana-rent",
  "solana-sbpf",

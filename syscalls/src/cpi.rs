@@ -10,18 +10,11 @@ use {
     solana_sbpf::ebpf,
     solana_stable_layout::stable_instruction::StableInstruction,
     solana_svm_measure::measure::Measure,
-    solana_transaction_context::BorrowedAccount,
+    solana_transaction_context::{
+        BorrowedAccount, MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
+    },
     std::mem,
 };
-
-const MAX_CPI_INSTRUCTION_DATA_LEN: u64 = 10 * 1024;
-const MAX_CPI_INSTRUCTION_ACCOUNTS: u8 = u8::MAX;
-
-#[cfg(test)]
-static_assertions::const_assert_eq!(
-    (MAX_CPI_INSTRUCTION_ACCOUNTS as usize).saturating_add(1),
-    solana_transaction_context::MAX_ACCOUNTS_PER_TRANSACTION,
-);
 
 const MAX_CPI_ACCOUNT_INFOS: usize = 128;
 
@@ -900,24 +893,18 @@ where
 }
 
 fn check_instruction_size(num_accounts: usize, data_len: usize) -> Result<(), Error> {
-    let data_len = data_len as u64;
-    let max_data_len = MAX_CPI_INSTRUCTION_DATA_LEN;
-    if data_len > max_data_len {
-        return Err(Box::new(SyscallError::MaxInstructionDataLenExceeded {
-            data_len,
-            max_data_len,
-        }));
-    }
-
-    let num_accounts = num_accounts as u64;
-    let max_accounts = MAX_CPI_INSTRUCTION_ACCOUNTS as u64;
-    if num_accounts > max_accounts {
+    if num_accounts > MAX_ACCOUNTS_PER_INSTRUCTION {
         return Err(Box::new(SyscallError::MaxInstructionAccountsExceeded {
-            num_accounts,
-            max_accounts,
+            num_accounts: num_accounts as u64,
+            max_accounts: MAX_ACCOUNTS_PER_INSTRUCTION as u64,
         }));
     }
-
+    if data_len > MAX_INSTRUCTION_DATA_LEN {
+        return Err(Box::new(SyscallError::MaxInstructionDataLenExceeded {
+            data_len: data_len as u64,
+            max_data_len: MAX_INSTRUCTION_DATA_LEN as u64,
+        }));
+    }
     Ok(())
 }
 

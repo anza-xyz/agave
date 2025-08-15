@@ -18,8 +18,20 @@ use {
     },
 };
 
+pub const MAX_ACCOUNTS_PER_TRANSACTION: usize = 256;
+// This is one less than MAX_ACCOUNTS_PER_TRANSACTION because
+// one index is used as NON_DUP_MARKER in ABI v0 and v1.
+pub const MAX_ACCOUNTS_PER_INSTRUCTION: usize = 255;
+pub const MAX_INSTRUCTION_DATA_LEN: usize = 10 * 1024;
+
 // Inlined to avoid solana_system_interface dep
-#[cfg(not(target_os = "solana"))]
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    MAX_ACCOUNTS_PER_INSTRUCTION,
+    solana_program_entrypoint::NON_DUP_MARKER as usize,
+);
+
+// Inlined to avoid solana_system_interface dep
 const MAX_PERMITTED_DATA_LENGTH: u64 = 10 * 1024 * 1024;
 #[cfg(test)]
 static_assertions::const_assert_eq!(
@@ -28,7 +40,6 @@ static_assertions::const_assert_eq!(
 );
 
 // Inlined to avoid solana_system_interface dep
-#[cfg(not(target_os = "solana"))]
 const MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION: i64 =
     MAX_PERMITTED_DATA_LENGTH as i64 * 2;
 // Note: With stricter_abi_and_runtime_constraints programs can grow accounts faster than they intend to,
@@ -41,15 +52,12 @@ static_assertions::const_assert_eq!(
 );
 
 // Inlined to avoid solana_account_info dep
-#[cfg(not(target_os = "solana"))]
 const MAX_PERMITTED_DATA_INCREASE: usize = 1_024 * 10;
 #[cfg(test)]
 static_assertions::const_assert_eq!(
     MAX_PERMITTED_DATA_INCREASE,
     solana_account_info::MAX_PERMITTED_DATA_INCREASE
 );
-
-pub const MAX_ACCOUNTS_PER_TRANSACTION: usize = 256;
 
 /// Index of an account inside of the TransactionContext or an InstructionContext.
 pub type IndexOfAccount = u16;
@@ -379,7 +387,6 @@ impl TransactionContext {
         instruction_accounts: Vec<InstructionAccount>,
         instruction_data: &[u8],
     ) -> Result<(), InstructionError> {
-        debug_assert!(instruction_accounts.len() <= MAX_ACCOUNTS_PER_TRANSACTION);
         let mut dedup_map = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
         for (idx, account) in instruction_accounts.iter().enumerate() {
             let index_in_instruction = dedup_map
