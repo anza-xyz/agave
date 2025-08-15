@@ -18,6 +18,7 @@ use {
         TOTAL_BUFFERED_PACKETS,
     },
     solana_clock::MAX_PROCESSING_AGE,
+    solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
@@ -27,6 +28,7 @@ use {
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
         },
+        time::{Duration, Instant},
     },
 };
 
@@ -88,9 +90,10 @@ where
 
     pub fn run(mut self) -> Result<(), SchedulerError> {
         let mut most_recent_leader_slot = None;
-        let mut shared_block_cost = None;
+        let mut cost_pacer = None;
 
         while !self.exit.load(Ordering::Relaxed) {
+            let now = Instant::now();
             // BufferedPacketsDecision is shared with legacy BankingStage, which will forward
             // packets. Initially, not renaming these decision variants but the actions taken
             // are different, since new BankingStage will not forward packets.
@@ -115,13 +118,14 @@ where
             if most_recent_leader_slot != new_leader_slot {
                 self.container.flush_held_transactions();
                 most_recent_leader_slot = new_leader_slot;
-                shared_block_cost = decision
-                    .bank()
-                    .map(|b| b.read_cost_tracker().unwrap().shared_block_cost());
+                cost_pacer = decision.bank().map(|b| CostPacer {
+                    shared_block_cost: b.read_cost_tracker().unwrap().shared_block_cost(),
+                    detection_time: now,
+                });
             }
 
             self.receive_completed()?;
-            self.process_transactions(&decision, shared_block_cost.as_ref())?;
+            self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
             if self.receive_and_buffer_packets(&decision).is_err() {
                 break;
             }
@@ -149,12 +153,14 @@ where
     fn process_transactions(
         &mut self,
         decision: &BufferedPacketsDecision,
-        shared_block_cost: Option<&Arc<AtomicU64>>,
+        cost_pacer: Option<&CostPacer>,
+        now: &Instant,
     ) -> Result<(), SchedulerError> {
         match decision {
             BufferedPacketsDecision::Consume(bank) => {
-                let _shared_block_cost =
-                    shared_block_cost.expect("shared_block_cost must be set for Consume decision");
+                let _scheduling_budget = cost_pacer
+                    .expect("cost pacer must be set for Consume")
+                    .scheduling_budget(now);
                 let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
                     &mut self.container,
                     |txs, results| {
@@ -362,6 +368,31 @@ where
     }
 }
 
+struct CostPacer {
+    shared_block_cost: Arc<AtomicU64>,
+    detection_time: Instant,
+}
+
+impl CostPacer {
+    fn scheduling_budget(&self, current_time: &Instant) -> u64 {
+        // Limit for pacing. After this time, schedule as fast as possible.
+        const BLOCK_FILL_TIME: Duration = Duration::from_millis(300);
+        const ALLOCATION_PER_MILLI: u64 = MAX_BLOCK_UNITS / BLOCK_FILL_TIME.as_millis() as u64;
+
+        let time_since = current_time.saturating_duration_since(self.detection_time);
+        if time_since >= BLOCK_FILL_TIME {
+            return MAX_BLOCK_UNITS - self.shared_block_cost.load(Ordering::Acquire);
+        }
+
+        // on millisecond granularity, pace the cost linearly.
+        let millis_since_detection = time_since.as_millis() as u64;
+        let paced_cost = ALLOCATION_PER_MILLI * millis_since_detection;
+
+        // saturating sub since we could be ahead of schedule.
+        paced_cost.saturating_sub(self.shared_block_cost.load(Ordering::Acquire))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -547,8 +578,16 @@ mod tests {
             .map(|n| n.num_received > 0)
             .unwrap_or_default()
         {}
+        let now = Instant::now();
         assert!(scheduler_controller
-            .process_transactions(&decision, Some(&Arc::new(AtomicU64::new(0))))
+            .process_transactions(
+                &decision,
+                Some(&CostPacer {
+                    shared_block_cost: Arc::new(AtomicU64::new(0)),
+                    detection_time: now.checked_sub(Duration::from_millis(400)).unwrap()
+                }),
+                &now
+            )
             .is_ok());
     }
 
