@@ -2,7 +2,6 @@
 use {
     super::*,
     crate::{
-        account_info::StoredSize,
         accounts_file::AccountsFileProvider,
         accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
         ancient_append_vecs,
@@ -1886,10 +1885,6 @@ fn test_stored_readable_account() {
     assert!(accounts_equal(&account, &stored_account));
 }
 
-/// A place holder stored size for a cached entry. We don't need to store the size for cached entries, but we have to pass something.
-/// stored size is only used for shrinking. We don't shrink items in the write cache.
-const CACHE_VIRTUAL_STORED_SIZE: StoredSize = 0;
-
 #[test]
 fn test_hash_stored_account() {
     // Number are just sequential.
@@ -1921,7 +1916,7 @@ fn test_hash_stored_account() {
         account_meta: &account_meta,
         data: &data,
         offset,
-        stored_size: CACHE_VIRTUAL_STORED_SIZE as usize,
+        stored_size: 0,
     };
     let account = stored_account.to_account_shared_data();
 
