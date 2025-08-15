@@ -938,10 +938,7 @@ pub fn bank_to_incremental_snapshot_archive(
 }
 
 /// Copy of `TransactionError` that uses a different `InstructionError` type to
-/// contain a string.
-///
-/// Can be removed in favor of normal `TransactionError` once v3.1 has been
-/// adopted and no more snapshots exist with strings.
+/// contain a string in the BorshIoError variant.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 enum StatusCacheTransactionError {
@@ -986,10 +983,8 @@ enum StatusCacheTransactionError {
     CommitCancelled,
 }
 
-/// Copy of `InstructionError` type in which `BorshIoError` contains a string.
-///
-/// Can be removed in favor of normal `InstructionError` once v3.1 has been
-/// adopted and no more snapshots exist with strings.
+/// Copy of `InstructionError` type in which the `BorshIoError` variant
+/// contains a string.
 #[cfg_attr(test, derive(strum_macros::FromRepr, strum_macros::EnumIter))]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
