@@ -8,7 +8,7 @@ use {
     solana_clock::Slot,
     solana_runtime::bank::Bank,
     solana_svm::transaction_error_metrics::*,
-    std::{num::Saturating, sync::Arc},
+    std::{num::Wrapping, sync::Arc},
 };
 
 /// A summary of what happened to transactions passed to the processing pipeline.
@@ -50,15 +50,15 @@ pub(crate) struct ProcessTransactionsSummary {
 #[derive(Debug, Default, PartialEq)]
 pub struct CommittedTransactionsCounts {
     /// Total number of transactions that were passed as candidates for processing
-    pub attempted_processing_count: Saturating<u64>,
+    pub attempted_processing_count: Wrapping<u64>,
     /// Total number of transactions that made it into the block
-    pub committed_transactions_count: Saturating<u64>,
+    pub committed_transactions_count: Wrapping<u64>,
     /// Total number of transactions that made it into the block where the transactions
     /// output from processing was success/no error.
-    pub committed_transactions_with_successful_result_count: Saturating<u64>,
+    pub committed_transactions_with_successful_result_count: Wrapping<u64>,
     /// All transactions that were processed but then failed record because the
     /// slot ended
-    pub processed_but_failed_commit: Saturating<u64>,
+    pub processed_but_failed_commit: Wrapping<u64>,
 }
 
 impl CommittedTransactionsCounts {
@@ -110,19 +110,19 @@ struct LeaderSlotPacketCountMetrics {
     // total number of transactions that attempted processing in this slot. Should equal the sum
     // of `committed_transactions_count`, `retryable_errored_transaction_count`, and
     // `nonretryable_errored_transactions_count`.
-    transactions_attempted_processing_count: Saturating<u64>,
+    transactions_attempted_processing_count: Wrapping<u64>,
 
     // total number of transactions that were executed and committed into the block
     // on this thread
-    committed_transactions_count: Saturating<u64>,
+    committed_transactions_count: Wrapping<u64>,
 
     // total number of transactions that were executed, got a successful execution output/no error,
     // and were then committed into the block
-    committed_transactions_with_successful_result_count: Saturating<u64>,
+    committed_transactions_with_successful_result_count: Wrapping<u64>,
 
     // total number of transactions that were not executed or failed commit, BUT were added back to the buffered
     // queue because they were retryable errors
-    retryable_errored_transaction_count: Saturating<u64>,
+    retryable_errored_transaction_count: Wrapping<u64>,
 
     // The size of the unprocessed buffer at the end of the slot
     end_of_slot_unprocessed_buffer_len: u64,
@@ -133,27 +133,27 @@ struct LeaderSlotPacketCountMetrics {
 
     // total number of transactions that attempted execution due to some fatal error (too old, duplicate signature, etc.)
     // AND were dropped from the buffered queue
-    nonretryable_errored_transactions_count: Saturating<u64>,
+    nonretryable_errored_transactions_count: Wrapping<u64>,
 
     // total number of transactions that were executed, but failed to be committed into the Poh stream because
     // the block ended. Some of these may be already counted in `nonretryable_errored_transactions_count` if they
     // then hit the age limit after failing to be committed.
-    executed_transactions_failed_commit_count: Saturating<u64>,
+    executed_transactions_failed_commit_count: Wrapping<u64>,
 
     // total number of transactions that were excluded from the block because there were concurrent write locks active.
     // These transactions are added back to the buffered queue and are already counted in
     // `self.retrayble_errored_transaction_count`.
-    account_lock_throttled_transactions_count: Saturating<u64>,
+    account_lock_throttled_transactions_count: Wrapping<u64>,
 
     // total number of transactions that were excluded from the block because their write
     // account locks exceed the limit.
     // These transactions are not retried.
-    account_locks_limit_throttled_transactions_count: Saturating<u64>,
+    account_locks_limit_throttled_transactions_count: Wrapping<u64>,
 
     // total number of transactions that were excluded from the block because they were too expensive
     // according to the cost model. These transactions are added back to the buffered queue and are
     // already counted in `self.retrayble_errored_transaction_count`.
-    cost_model_throttled_transactions_count: Saturating<u64>,
+    cost_model_throttled_transactions_count: Wrapping<u64>,
 }
 
 impl LeaderSlotPacketCountMetrics {
@@ -172,22 +172,22 @@ impl LeaderSlotPacketCountMetrics {
             newly_buffered_packets_count,
             retryable_packets_filtered_count,
             transactions_attempted_processing_count:
-                Saturating(transactions_attempted_processing_count),
-            committed_transactions_count: Saturating(committed_transactions_count),
+                Wrapping(transactions_attempted_processing_count),
+            committed_transactions_count: Wrapping(committed_transactions_count),
             committed_transactions_with_successful_result_count:
-                Saturating(committed_transactions_with_successful_result_count),
-            retryable_errored_transaction_count: Saturating(retryable_errored_transaction_count),
+                Wrapping(committed_transactions_with_successful_result_count),
+            retryable_errored_transaction_count: Wrapping(retryable_errored_transaction_count),
             retryable_packets_count,
             nonretryable_errored_transactions_count:
-                Saturating(nonretryable_errored_transactions_count),
+                Wrapping(nonretryable_errored_transactions_count),
             executed_transactions_failed_commit_count:
-                Saturating(executed_transactions_failed_commit_count),
+                Wrapping(executed_transactions_failed_commit_count),
             account_lock_throttled_transactions_count:
-                Saturating(account_lock_throttled_transactions_count),
+                Wrapping(account_lock_throttled_transactions_count),
             account_locks_limit_throttled_transactions_count:
-                Saturating(account_locks_limit_throttled_transactions_count),
+                Wrapping(account_locks_limit_throttled_transactions_count),
             cost_model_throttled_transactions_count:
-                Saturating(cost_model_throttled_transactions_count),
+                Wrapping(cost_model_throttled_transactions_count),
             end_of_slot_unprocessed_buffer_len,
         } = self;
         datapoint_info!(
@@ -541,11 +541,11 @@ impl LeaderSlotMetricsTracker {
             let &ProcessTransactionsSummary {
                 transaction_counts:
                     CommittedTransactionsCounts {
-                        attempted_processing_count: Saturating(attempted_processing_count),
-                        committed_transactions_count: Saturating(committed_transactions_count),
+                        attempted_processing_count: Wrapping(attempted_processing_count),
+                        committed_transactions_count: Wrapping(committed_transactions_count),
                         committed_transactions_with_successful_result_count:
-                            Saturating(committed_transactions_with_successful_result_count),
-                        processed_but_failed_commit: Saturating(processed_but_failed_commit),
+                            Wrapping(committed_transactions_with_successful_result_count),
+                        processed_but_failed_commit: Wrapping(processed_but_failed_commit),
                     },
                 ref retryable_transaction_indexes,
                 cost_model_throttled_transactions_count,
@@ -643,11 +643,11 @@ impl LeaderSlotMetricsTracker {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
             let metrics = &mut leader_slot_metrics.packet_count_metrics;
             let PacketReceiverStats {
-                passed_sigverify_count: Saturating(passed_sigverify_count),
-                failed_sigverify_count: Saturating(failed_sigverify_count),
-                invalid_vote_count: Saturating(invalid_vote_count),
-                failed_prioritization_count: Saturating(failed_prioritization_count),
-                failed_sanitization_count: Saturating(failed_sanitization_count),
+                passed_sigverify_count: Wrapping(passed_sigverify_count),
+                failed_sigverify_count: Wrapping(failed_sigverify_count),
+                invalid_vote_count: Wrapping(invalid_vote_count),
+                failed_prioritization_count: Wrapping(failed_prioritization_count),
+                failed_sanitization_count: Wrapping(failed_sanitization_count),
             } = stats;
 
             metrics.total_new_valid_packets += passed_sigverify_count;

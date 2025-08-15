@@ -39,7 +39,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::sanitized::{MessageHash, SanitizedTransaction},
     std::{
-        num::Saturating,
+        num::Wrapping,
         sync::{Arc, RwLock},
         time::Instant,
     },
@@ -178,7 +178,7 @@ impl SanitizedTransactionReceiveAndBuffer {
 
         let mut error_counts = TransactionErrorMetrics::default();
         for chunk in packets.chunks(CHUNK_SIZE) {
-            let mut post_sanitization_count = Saturating::<usize>(0);
+            let mut post_sanitization_count = Wrapping::<usize>(0);
             chunk
                 .iter()
                 .filter_map(|packet| {
@@ -220,9 +220,9 @@ impl SanitizedTransactionReceiveAndBuffer {
             );
             let post_lock_validation_count = transactions.len();
 
-            let mut post_transaction_check_count = Saturating::<usize>(0);
-            let mut num_dropped_on_capacity = Saturating::<usize>(0);
-            let mut num_buffered = Saturating::<usize>(0);
+            let mut post_transaction_check_count = Wrapping::<usize>(0);
+            let mut num_dropped_on_capacity = Wrapping::<usize>(0);
+            let mut num_buffered = Wrapping::<usize>(0);
             for (((transaction, max_age), fee_budget_limits), _check_result) in transactions
                 .drain(..)
                 .zip(max_ages.drain(..))
@@ -244,10 +244,10 @@ impl SanitizedTransactionReceiveAndBuffer {
                 num_buffered += 1;
             }
 
-            let Saturating(post_sanitization_count) = post_sanitization_count;
-            let Saturating(post_transaction_check_count) = post_transaction_check_count;
-            let Saturating(num_dropped_on_capacity) = num_dropped_on_capacity;
-            let Saturating(num_buffered) = num_buffered;
+            let Wrapping(post_sanitization_count) = post_sanitization_count;
+            let Wrapping(post_transaction_check_count) = post_transaction_check_count;
+            let Wrapping(num_dropped_on_capacity) = num_dropped_on_capacity;
+            let Wrapping(num_buffered) = num_buffered;
 
             // Update metrics for transactions that were dropped.
             let num_dropped_on_sanitization = chunk.len().saturating_sub(post_sanitization_count);

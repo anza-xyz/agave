@@ -18,7 +18,7 @@ use {
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_transaction_error::TransactionError,
     std::{
-        num::Saturating,
+        num::Wrapping,
         sync::atomic::{AtomicU64, Ordering},
     },
 };
@@ -247,25 +247,25 @@ impl QosService {
         let &BatchedTransactionDetails {
             costs:
                 BatchedTransactionCostDetails {
-                    batched_signature_cost: Saturating(batched_signature_cost),
-                    batched_write_lock_cost: Saturating(batched_write_lock_cost),
-                    batched_data_bytes_cost: Saturating(batched_data_bytes_cost),
+                    batched_signature_cost: Wrapping(batched_signature_cost),
+                    batched_write_lock_cost: Wrapping(batched_write_lock_cost),
+                    batched_data_bytes_cost: Wrapping(batched_data_bytes_cost),
                     batched_loaded_accounts_data_size_cost:
-                        Saturating(batched_loaded_accounts_data_size_cost),
-                    batched_programs_execute_cost: Saturating(batched_programs_execute_cost),
+                        Wrapping(batched_loaded_accounts_data_size_cost),
+                    batched_programs_execute_cost: Wrapping(batched_programs_execute_cost),
                 },
             errors:
                 BatchedTransactionErrorDetails {
                     batched_retried_txs_per_block_limit_count:
-                        Saturating(batched_retried_txs_per_block_limit_count),
+                        Wrapping(batched_retried_txs_per_block_limit_count),
                     batched_retried_txs_per_vote_limit_count:
-                        Saturating(batched_retried_txs_per_vote_limit_count),
+                        Wrapping(batched_retried_txs_per_vote_limit_count),
                     batched_retried_txs_per_account_limit_count:
-                        Saturating(batched_retried_txs_per_account_limit_count),
+                        Wrapping(batched_retried_txs_per_account_limit_count),
                     batched_retried_txs_per_account_data_block_limit_count:
-                        Saturating(batched_retried_txs_per_account_data_block_limit_count),
+                        Wrapping(batched_retried_txs_per_account_data_block_limit_count),
                     batched_dropped_txs_per_account_data_total_limit_count:
-                        Saturating(batched_dropped_txs_per_account_data_total_limit_count),
+                        Wrapping(batched_dropped_txs_per_account_data_total_limit_count),
                 },
         } = batched_transaction_details;
         self.metrics
@@ -950,19 +950,19 @@ mod tests {
         let batched_transaction_details =
             QosService::accumulate_batched_transaction_costs(tx_cost_results.iter());
         assert_eq!(
-            Saturating(expected_signatures),
+            Wrapping(expected_signatures),
             batched_transaction_details.costs.batched_signature_cost
         );
         assert_eq!(
-            Saturating(expected_write_locks),
+            Wrapping(expected_write_locks),
             batched_transaction_details.costs.batched_write_lock_cost
         );
         assert_eq!(
-            Saturating(expected_data_bytes),
+            Wrapping(expected_data_bytes),
             batched_transaction_details.costs.batched_data_bytes_cost
         );
         assert_eq!(
-            Saturating(expected_programs_execution_costs),
+            Wrapping(expected_programs_execution_costs),
             batched_transaction_details
                 .costs
                 .batched_programs_execute_cost

@@ -28,7 +28,7 @@ use {
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::TransactionError,
-    std::num::Saturating,
+    std::num::Wrapping,
 };
 
 /// Consumer will create chunks of transactions from buffer with up to this size.
@@ -361,9 +361,7 @@ impl Consumer {
             starting_transaction_index,
         } = record_transactions_summary;
         execute_and_commit_timings.record_transactions_timings = RecordTransactionsTimings {
-            processing_results_to_transactions_us: Saturating(
-                processing_results_to_transactions_us,
-            ),
+            processing_results_to_transactions_us: Wrapping(processing_results_to_transactions_us),
             ..record_transactions_timings
         };
 

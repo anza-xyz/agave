@@ -10,7 +10,7 @@ use {
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     crossbeam_channel::RecvTimeoutError,
     solana_measure::{measure::Measure, measure_us},
-    std::{num::Saturating, sync::atomic::Ordering, time::Duration},
+    std::{num::Wrapping, sync::atomic::Ordering, time::Duration},
 };
 
 pub struct PacketReceiver {
@@ -88,7 +88,7 @@ impl PacketReceiver {
 
         slot_metrics_tracker.increment_received_packet_counts(packet_stats);
 
-        let mut dropped_packets_count = Saturating(0);
+        let mut dropped_packets_count = Wrapping(0);
         let mut newly_buffered_packets_count = 0;
         let mut newly_buffered_forwarded_packets_count = 0;
         Self::push_unprocessed(
@@ -111,7 +111,7 @@ impl PacketReceiver {
             .receive_and_buffer_packets_count
             .fetch_add(packet_count, Ordering::Relaxed);
         {
-            let Saturating(dropped_packets_count) = dropped_packets_count;
+            let Wrapping(dropped_packets_count) = dropped_packets_count;
             vote_source_counts
                 .dropped_packets_count
                 .fetch_add(dropped_packets_count, Ordering::Relaxed);
@@ -128,7 +128,7 @@ impl PacketReceiver {
         vote_storage: &mut VoteStorage,
         vote_source: VoteSource,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
-        dropped_packets_count: &mut Saturating<usize>,
+        dropped_packets_count: &mut Wrapping<usize>,
         newly_buffered_packets_count: &mut usize,
         newly_buffered_forwarded_packets_count: &mut usize,
         banking_stage_stats: &mut BankingStageStats,

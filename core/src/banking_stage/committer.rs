@@ -21,7 +21,7 @@ use {
         transaction_processing_result::TransactionProcessingResult,
     },
     solana_transaction_error::TransactionError,
-    std::{num::Saturating, sync::Arc},
+    std::{num::Wrapping, sync::Arc},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,13 +136,13 @@ impl Committer {
                 .iter()
                 .map(|tx| tx.as_sanitized_transaction().into_owned())
                 .collect_vec();
-            let mut transaction_index = Saturating(starting_transaction_index.unwrap_or_default());
+            let mut transaction_index = Wrapping(starting_transaction_index.unwrap_or_default());
             let (batch_transaction_indexes, tx_costs): (Vec<_>, Vec<_>) = commit_results
                 .iter()
                 .zip(sanitized_transactions.iter())
                 .map(|(commit_result, tx)| {
                     if let Ok(committed_tx) = commit_result {
-                        let Saturating(this_transaction_index) = transaction_index;
+                        let Wrapping(this_transaction_index) = transaction_index;
                         transaction_index += 1;
 
                         let tx_cost = Some(
