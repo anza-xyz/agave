@@ -11,11 +11,11 @@ use {
     crate::banking_stage::{
         consume_worker::ConsumeWorkerMetrics,
         consumer::Consumer,
-        decision_maker::{BufferedPacketsDecision, DecisionMaker},
+        leader_status_monitor::{LeaderStatus, LeaderStatusMonitor, HOLD_TRANSACTIONS_TICK_WINDOW},
         transaction_scheduler::transaction_state_container::StateContainer,
         TOTAL_BUFFERED_PACKETS,
     },
-    solana_clock::MAX_PROCESSING_AGE,
+    solana_clock::{DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
@@ -32,7 +32,7 @@ where
     S: Scheduler<R::Transaction>,
 {
     /// Decision maker for determining what should be done with transactions.
-    decision_maker: DecisionMaker,
+    leader_status_monitor: LeaderStatusMonitor,
     receive_and_buffer: R,
     bank_forks: Arc<RwLock<BankForks>>,
     /// Container for transaction state.
@@ -58,14 +58,14 @@ where
     S: Scheduler<R::Transaction>,
 {
     pub fn new(
-        decision_maker: DecisionMaker,
+        leader_status_monitor: LeaderStatusMonitor,
         receive_and_buffer: R,
         bank_forks: Arc<RwLock<BankForks>>,
         scheduler: S,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
     ) -> Self {
         Self {
-            decision_maker,
+            leader_status_monitor,
             receive_and_buffer,
             bank_forks,
             container: R::Container::with_capacity(TOTAL_BUFFERED_PACKETS),
@@ -79,30 +79,19 @@ where
 
     pub fn run(mut self) -> Result<(), SchedulerError> {
         loop {
-            // BufferedPacketsDecision is shared with legacy BankingStage, which will forward
-            // packets. Initially, not renaming these decision variants but the actions taken
-            // are different, since new BankingStage will not forward packets.
-            // For `Forward` and `ForwardAndHold`, we want to receive packets but will not
-            // forward them to the next leader. In this case, `ForwardAndHold` is
-            // indistinguishable from `Hold`.
-            //
-            // `Forward` will drop packets from the buffer instead of forwarding.
-            // During receiving, since packets would be dropped from buffer anyway, we can
-            // bypass sanitization and buffering and immediately drop the packets.
-            let (decision, decision_time_us) =
-                measure_us!(self.decision_maker.make_consume_or_forward_decision());
+            let (status, status_time_us) = measure_us!(self.leader_status_monitor.status());
             self.timing_metrics.update(|timing_metrics| {
-                timing_metrics.decision_time_us += decision_time_us;
+                timing_metrics.decision_time_us += status_time_us;
             });
-            let new_leader_slot = decision.bank().map(|b| b.slot());
+            let new_leader_slot = status.bank().map(|b| b.slot());
             self.count_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
             self.timing_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
 
             self.receive_completed()?;
-            self.process_transactions(&decision)?;
-            if self.receive_and_buffer_packets(&decision).is_err() {
+            self.process_transactions(&status)?;
+            if self.receive_and_buffer_packets(&status).is_err() {
                 break;
             }
             // Report metrics only if there is data.
@@ -125,13 +114,10 @@ where
         Ok(())
     }
 
-    /// Process packets based on decision.
-    fn process_transactions(
-        &mut self,
-        decision: &BufferedPacketsDecision,
-    ) -> Result<(), SchedulerError> {
-        match decision {
-            BufferedPacketsDecision::Consume(bank) => {
+    /// Process packets based on status.
+    fn process_transactions(&mut self, status: &LeaderStatus) -> Result<(), SchedulerError> {
+        match status {
+            LeaderStatus::Active(bank) => {
                 let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
                     &mut self.container,
                     |txs, results| {
@@ -155,19 +141,31 @@ where
                 });
                 self.scheduling_details.update(&scheduling_summary);
             }
-            BufferedPacketsDecision::Forward => {
+            LeaderStatus::TicksUntilLeader(ticks) => {
+                if *ticks > HOLD_TRANSACTIONS_TICK_WINDOW {
+                    // outside of the holding window, clear the container.
+                    let (_, clear_time_us) = measure_us!(self.clear_container());
+                    self.timing_metrics.update(|timing_metrics| {
+                        timing_metrics.clear_time_us += clear_time_us;
+                    });
+                } else if *ticks < DEFAULT_TICKS_PER_SLOT as i64 {
+                    // within 1 slot of becoming leader. do nothing.
+                } else {
+                    // within the holding window, but not within 1 slot of becoming leader.
+                    // clean the queue.
+                    let (_, clean_time_us) = measure_us!(self.clean_queue());
+                    self.timing_metrics.update(|timing_metrics| {
+                        timing_metrics.clean_time_us += clean_time_us;
+                    });
+                }
+            }
+            LeaderStatus::WillNotBeLeader => {
+                // will not become leader, clear the container.
                 let (_, clear_time_us) = measure_us!(self.clear_container());
                 self.timing_metrics.update(|timing_metrics| {
                     timing_metrics.clear_time_us += clear_time_us;
                 });
             }
-            BufferedPacketsDecision::ForwardAndHold => {
-                let (_, clean_time_us) = measure_us!(self.clean_queue());
-                self.timing_metrics.update(|timing_metrics| {
-                    timing_metrics.clean_time_us += clean_time_us;
-                });
-            }
-            BufferedPacketsDecision::Hold => {}
         }
 
         Ok(())
@@ -294,13 +292,13 @@ where
     /// Returns whether the packet receiver is still connected.
     fn receive_and_buffer_packets(
         &mut self,
-        decision: &BufferedPacketsDecision,
+        status: &LeaderStatus,
     ) -> Result<usize, DisconnectedError> {
         self.receive_and_buffer.receive_and_buffer_packets(
             &mut self.container,
             &mut self.timing_metrics,
             &mut self.count_metrics,
-            decision,
+            status,
         )
     }
 }
@@ -395,7 +393,7 @@ mod tests {
         let shared_tick_height = SharedTickHeight::new(0);
         let shared_leader_first_tick_height = SharedLeaderFirstTickHeight::new(None);
 
-        let decision_maker = DecisionMaker::new(
+        let leader_status_monitor = LeaderStatusMonitor::new(
             shared_working_bank.clone(),
             shared_tick_height,
             shared_leader_first_tick_height,
@@ -423,7 +421,7 @@ mod tests {
             PrioGraphSchedulerConfig::default(),
         );
         let scheduler_controller = SchedulerController::new(
-            decision_maker,
+            leader_status_monitor,
             receive_and_buffer,
             bank_forks,
             scheduler,
@@ -466,17 +464,11 @@ mod tests {
     // Helper function to let test receive and then schedule packets.
     // The order of operations here is convenient for testing, but does not
     // match the order of operations in the actual scheduler.
-    // The actual scheduler will process immediately after the decision,
-    // in order to keep the decision as recent as possible for processing.
-    // In the tests, the decision will not become stale, so it is more convenient
-    // to receive first and then schedule.
     fn test_receive_then_schedule<R: ReceiveAndBuffer>(
         scheduler_controller: &mut SchedulerController<R, impl Scheduler<R::Transaction>>,
     ) {
-        let decision = scheduler_controller
-            .decision_maker
-            .make_consume_or_forward_decision();
-        assert!(matches!(decision, BufferedPacketsDecision::Consume(_)));
+        let status = scheduler_controller.leader_status_monitor.status();
+        assert!(matches!(status, LeaderStatus::Active(_)));
         assert!(scheduler_controller.receive_completed().is_ok());
 
         // Time is not a reliable way for deterministic testing.
@@ -484,11 +476,11 @@ mod tests {
         // tests from inconsistently timing out and not receiving
         // from the channel.
         while scheduler_controller
-            .receive_and_buffer_packets(&decision)
+            .receive_and_buffer_packets(&status)
             .map(|n| n > 0)
             .unwrap_or_default()
         {}
-        assert!(scheduler_controller.process_transactions(&decision).is_ok());
+        assert!(scheduler_controller.process_transactions(&status).is_ok());
     }
 
     #[test_case(test_create_sanitized_transaction_receive_and_buffer; "Sdk")]

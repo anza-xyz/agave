@@ -11,9 +11,11 @@ use {
         },
     },
     crate::banking_stage::{
-        consumer::Consumer, decision_maker::BufferedPacketsDecision,
+        consumer::Consumer,
         immutable_deserialized_packet::ImmutableDeserializedPacket,
-        packet_deserializer::PacketDeserializer, scheduler_messages::MaxAge,
+        leader_status_monitor::{LeaderStatus, HOLD_TRANSACTIONS_TICK_WINDOW},
+        packet_deserializer::PacketDeserializer,
+        scheduler_messages::MaxAge,
         TransactionStateContainer,
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
@@ -26,7 +28,7 @@ use {
     crossbeam_channel::{RecvTimeoutError, TryRecvError},
     solana_accounts_db::account_locks::validate_account_locks,
     solana_address_lookup_table_interface::state::estimate_last_valid_slot,
-    solana_clock::{Epoch, Slot, MAX_PROCESSING_AGE},
+    solana_clock::{Epoch, Slot, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
     solana_cost_model::cost_model::CostModel,
     solana_fee_structure::FeeBudgetLimits,
     solana_measure::measure_us,
@@ -61,7 +63,7 @@ pub(crate) trait ReceiveAndBuffer {
         container: &mut Self::Container,
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
-        decision: &BufferedPacketsDecision,
+        status: &LeaderStatus,
     ) -> Result<usize, DisconnectedError>;
 }
 
@@ -82,12 +84,12 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
         container: &mut Self::Container,
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
-        decision: &BufferedPacketsDecision,
+        status: &LeaderStatus,
     ) -> Result<usize, DisconnectedError> {
         const MAX_RECEIVE_PACKETS: usize = 5_000;
         const MAX_PACKET_RECEIVE_TIME: Duration = Duration::from_millis(10);
-        let (recv_timeout, should_buffer) = match decision {
-            BufferedPacketsDecision::Consume(_) | BufferedPacketsDecision::Hold => (
+        let (recv_timeout, should_buffer) = match status {
+            LeaderStatus::Active(_) => (
                 if container.is_empty() {
                     MAX_PACKET_RECEIVE_TIME
                 } else {
@@ -95,8 +97,23 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                 },
                 true,
             ),
-            BufferedPacketsDecision::Forward => (MAX_PACKET_RECEIVE_TIME, false),
-            BufferedPacketsDecision::ForwardAndHold => (MAX_PACKET_RECEIVE_TIME, true),
+            LeaderStatus::TicksUntilLeader(ticks) => {
+                if *ticks > HOLD_TRANSACTIONS_TICK_WINDOW {
+                    (MAX_PACKET_RECEIVE_TIME, false)
+                } else if *ticks > DEFAULT_TICKS_PER_SLOT as i64 {
+                    (MAX_PACKET_RECEIVE_TIME, true)
+                } else {
+                    (
+                        if container.is_empty() {
+                            MAX_PACKET_RECEIVE_TIME
+                        } else {
+                            Duration::ZERO
+                        },
+                        true,
+                    )
+                }
+            }
+            LeaderStatus::WillNotBeLeader => (MAX_PACKET_RECEIVE_TIME, false),
         };
 
         let (received_packet_results, receive_time_us) = measure_us!(self
@@ -283,7 +300,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         container: &mut Self::Container,
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
-        decision: &BufferedPacketsDecision,
+        status: &LeaderStatus,
     ) -> Result<usize, DisconnectedError> {
         let (root_bank, working_bank) = {
             let bank_forks = self.bank_forks.read().unwrap();
@@ -303,10 +320,11 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         // the thread sleep until a message is received, or until the timeout.
         // Additionally, only sleep if the container is empty.
         if container.is_empty()
-            && matches!(
-                decision,
-                BufferedPacketsDecision::Forward | BufferedPacketsDecision::ForwardAndHold
-            )
+            && match status {
+                LeaderStatus::Active(_) => false,
+                LeaderStatus::TicksUntilLeader(ticks) => *ticks > HOLD_TRANSACTIONS_TICK_WINDOW,
+                LeaderStatus::WillNotBeLeader => true,
+            }
         {
             // TODO: Is it better to manually sleep instead, avoiding the locking
             //       overhead for wakers? But then risk not waking up when message
@@ -319,7 +337,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                         container,
                         timing_metrics,
                         count_metrics,
-                        decision,
+                        status,
                         &root_bank,
                         &working_bank,
                         packet_batch_message,
@@ -342,7 +360,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                         container,
                         timing_metrics,
                         count_metrics,
-                        decision,
+                        status,
                         &root_bank,
                         &working_bank,
                         packet_batch_message,
@@ -368,13 +386,17 @@ impl TransactionViewReceiveAndBuffer {
         container: &mut TransactionViewStateContainer,
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
-        decision: &BufferedPacketsDecision,
+        status: &LeaderStatus,
         root_bank: &Bank,
         working_bank: &Bank,
         packet_batch_message: BankingPacketBatch,
     ) -> usize {
         // If not holding packets, just drop them immediately without parsing.
-        if matches!(decision, BufferedPacketsDecision::Forward) {
+        if match status {
+            LeaderStatus::Active(_) => false,
+            LeaderStatus::TicksUntilLeader(ticks) => *ticks > HOLD_TRANSACTIONS_TICK_WINDOW,
+            LeaderStatus::WillNotBeLeader => true,
+        } {
             return 0;
         }
 
@@ -774,7 +796,7 @@ mod tests {
             &mut container,
             &mut timing_metrics,
             &mut count_metrics,
-            &BufferedPacketsDecision::Hold,
+            &LeaderStatus::TicksUntilLeader(1),
         );
         assert!(r.is_err());
     }
@@ -809,13 +831,13 @@ mod tests {
                 &mut container,
                 &mut timing_metrics,
                 &mut count_metrics,
-                &BufferedPacketsDecision::Forward, // no packets should be held
+                &LeaderStatus::TicksUntilLeader(HOLD_TRANSACTIONS_TICK_WINDOW + 1), // no packets should be held
             )
             .unwrap();
 
         // Currently the different approaches have slightly different accounting.
         // - sdk: all valid deserializable packets count as received
-        // - view: immediately drops all packets without counting due to decision
+        // - view: immediately drops all packets without counting due to status
         assert_eq!(num_received, expected_num_received);
         verify_container(&mut container, 0);
     }
@@ -854,7 +876,7 @@ mod tests {
                 &mut container,
                 &mut timing_metrics,
                 &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
+                &LeaderStatus::TicksUntilLeader(1),
             )
             .unwrap();
 
@@ -888,7 +910,7 @@ mod tests {
                 &mut container,
                 &mut timing_metrics,
                 &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
+                &LeaderStatus::TicksUntilLeader(1),
             )
             .unwrap();
 
@@ -923,7 +945,7 @@ mod tests {
                 &mut container,
                 &mut timing_metrics,
                 &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
+                &LeaderStatus::TicksUntilLeader(1),
             )
             .unwrap();
 
@@ -960,7 +982,7 @@ mod tests {
                 &mut container,
                 &mut timing_metrics,
                 &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
+                &LeaderStatus::TicksUntilLeader(1),
             )
             .unwrap();
 
@@ -1012,7 +1034,7 @@ mod tests {
                 &mut container,
                 &mut timing_metrics,
                 &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
+                &LeaderStatus::TicksUntilLeader(1),
             )
             .unwrap();
 
@@ -1049,7 +1071,7 @@ mod tests {
                 &mut container,
                 &mut timing_metrics,
                 &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
+                &LeaderStatus::TicksUntilLeader(1),
             )
             .unwrap();
 
@@ -1090,7 +1112,7 @@ mod tests {
                 &mut container,
                 &mut timing_metrics,
                 &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
+                &LeaderStatus::TicksUntilLeader(1),
             )
             .unwrap();
 

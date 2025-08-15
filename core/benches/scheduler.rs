@@ -192,7 +192,7 @@ fn timing_scheduler<T: ReceiveAndBuffer, S: Scheduler<T::Transaction>>(
         sender,
         mut container,
         mut receive_and_buffer,
-        decision,
+        status,
     }: utils::ReceiveAndBufferSetup<T> = setup;
 
     let mut execute_time: Duration = std::time::Duration::ZERO;
@@ -207,7 +207,7 @@ fn timing_scheduler<T: ReceiveAndBuffer, S: Scheduler<T::Transaction>>(
             &mut container,
             &mut timing_metrics,
             &mut count_metrics,
-            &decision,
+            &status,
         );
         assert_eq!(res.unwrap(), num_txs);
         assert!(!container.is_empty());
