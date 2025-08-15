@@ -88,7 +88,10 @@ use {
     solana_sha256_hasher::hash,
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_stake_interface::state::{Authorized, Delegation, Lockup, Stake, StakeStateV2},
+    solana_stake_interface::{
+        instruction as stake_instruction,
+        state::{Authorized, Delegation, Lockup, Stake, StakeStateV2},
+    },
     solana_stake_program::stake_state,
     solana_svm::{
         account_loader::{FeesOnlyTransaction, LoadedTransaction},
@@ -3111,9 +3114,8 @@ fn test_bank_cloned_stake_delegations() {
         )
     };
 
-    // create the vote account
     let vote_keypair = Keypair::new();
-    let instructions = vote_instruction::create_account_with_config(
+    let mut instructions = vote_instruction::create_account_with_config(
         &mint_keypair.pubkey(),
         &vote_keypair.pubkey(),
         &VoteInit {
@@ -3129,37 +3131,28 @@ fn test_bank_cloned_stake_delegations() {
         },
     );
 
+    let stake_keypair = Keypair::new();
+    instructions.extend(stake_instruction::create_account_and_delegate_stake(
+        &mint_keypair.pubkey(),
+        &stake_keypair.pubkey(),
+        &vote_keypair.pubkey(),
+        &Authorized::auto(&stake_keypair.pubkey()),
+        &Lockup::default(),
+        stake_balance,
+    ));
+
     let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
     let transaction = Transaction::new(
-        &[&mint_keypair, &vote_keypair],
+        &[&mint_keypair, &vote_keypair, &stake_keypair],
         message,
         bank.last_blockhash(),
     );
 
     bank.process_transaction(&transaction).unwrap();
 
-    // insert a stake account delegated to it, since we do not have a stake program
-    let stake_pubkey = Pubkey::new_unique();
-    let stake_account = stake_state::create_account_with_activation_epoch(
-        &stake_pubkey,
-        &vote_keypair.pubkey(),
-        &bank.get_account(&vote_keypair.pubkey()).unwrap(),
-        &Rent::default(),
-        stake_balance,
-        bank.epoch(),
-    );
-
-    bank.store_account(&stake_pubkey, &stake_account);
-
-    // the stakes cache is updated by any successful transaction that touches a stake account
-    let transaction =
-        system_transaction::transfer(&mint_keypair, &stake_pubkey, 1, bank.last_blockhash());
-
-    bank.process_transaction(&transaction).unwrap();
-
     let stake_delegations = bank.stakes_cache.stakes().stake_delegations().clone();
     assert_eq!(stake_delegations.len(), 2);
-    assert!(stake_delegations.get(&stake_pubkey).is_some());
+    assert!(stake_delegations.get(&stake_keypair.pubkey()).is_some());
 }
 
 #[test]
