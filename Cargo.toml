@@ -138,6 +138,7 @@ members = [
     "watchtower",
     "wen-restart",
     "xdp",
+    "xtask",
     "zk-keygen",
     "zk-token-sdk",
 ]
