@@ -92,7 +92,7 @@ solana-sanitize = "=3.0.0"
 solana-serde-varint = "=3.0.0"
 solana-sha256-hasher = "=3.0.0"
 solana-short-vec = "=3.0.0"
-solana-signature = { version = "=3.0.0", default-features = false }
+solana-signature = { version = "=3.1.0", default-features = false }
 solana-signer = "=3.0.0"
 solana-streamer = { workspace = true }
 solana-time-utils = "=3.0.0"
@@ -115,7 +115,7 @@ serial_test = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-signature = { version = "=3.0.0", features = ["rand"] }
+solana-signature = { version = "=3.1.0", features = ["rand"] }
 solana-system-transaction = { workspace = true }
 solana-vote-interface = { workspace = true }
 static_assertions = { workspace = true }
