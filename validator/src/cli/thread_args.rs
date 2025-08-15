@@ -209,7 +209,7 @@ struct AccountsDbCleanThreadsArg;
 impl ThreadArg for AccountsDbCleanThreadsArg {
     const NAME: &'static str = "accounts_db_clean_threads";
     const LONG_NAME: &'static str = "accounts-db-clean-threads";
-    const HELP: &'static str = "Number of threads to use for cleaning AccountsDb";
+    const HELP: &'static str = "Number of threads to use for AccountsDb background tasks";
 
     fn default() -> usize {
         accounts_db::quarter_thread_count()
@@ -220,7 +220,8 @@ struct AccountsDbForegroundThreadsArg;
 impl ThreadArg for AccountsDbForegroundThreadsArg {
     const NAME: &'static str = "accounts_db_foreground_threads";
     const LONG_NAME: &'static str = "accounts-db-foreground-threads";
-    const HELP: &'static str = "Number of threads to use for AccountsDb block processing";
+    const HELP: &'static str =
+        "Number of threads to use for AccountsDb foreground tasks, e.g. transaction processing";
 
     fn default() -> usize {
         accounts_db::default_num_foreground_threads()
@@ -231,7 +232,7 @@ struct AccountsDbHashThreadsArg;
 impl ThreadArg for AccountsDbHashThreadsArg {
     const NAME: &'static str = "accounts_db_hash_threads";
     const LONG_NAME: &'static str = "accounts-db-hash-threads";
-    const HELP: &'static str = "Number of threads to use for background accounts hashing";
+    const HELP: &'static str = "Number of threads to use for accounts hash verification at startup";
 
     fn default() -> usize {
         accounts_db::default_num_hash_threads().get()
