@@ -24,7 +24,7 @@ use {
     std::{
         num::Saturating,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
         },
     },
@@ -87,7 +87,9 @@ where
     }
 
     pub fn run(mut self) -> Result<(), SchedulerError> {
-        let mut last_slot = None;
+        let mut most_recent_leader_slot = None;
+        let mut shared_block_cost = None;
+
         while !self.exit.load(Ordering::Relaxed) {
             // BufferedPacketsDecision is shared with legacy BankingStage, which will forward
             // packets. Initially, not renaming these decision variants but the actions taken
@@ -110,12 +112,16 @@ where
             self.timing_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
 
-            self.receive_completed()?;
-            if last_slot != new_leader_slot {
+            if most_recent_leader_slot != new_leader_slot {
                 self.container.flush_held_transactions();
-                last_slot = new_leader_slot;
+                most_recent_leader_slot = new_leader_slot;
+                shared_block_cost = decision
+                    .bank()
+                    .map(|b| b.read_cost_tracker().unwrap().shared_block_cost());
             }
-            self.process_transactions(&decision)?;
+
+            self.receive_completed()?;
+            self.process_transactions(&decision, shared_block_cost.as_ref())?;
             if self.receive_and_buffer_packets(&decision).is_err() {
                 break;
             }
@@ -143,9 +149,12 @@ where
     fn process_transactions(
         &mut self,
         decision: &BufferedPacketsDecision,
+        shared_block_cost: Option<&Arc<AtomicU64>>,
     ) -> Result<(), SchedulerError> {
         match decision {
             BufferedPacketsDecision::Consume(bank) => {
+                let _shared_block_cost =
+                    shared_block_cost.expect("shared_block_cost must be set for Consume decision");
                 let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
                     &mut self.container,
                     |txs, results| {
@@ -538,7 +547,9 @@ mod tests {
             .map(|n| n.num_received > 0)
             .unwrap_or_default()
         {}
-        assert!(scheduler_controller.process_transactions(&decision).is_ok());
+        assert!(scheduler_controller
+            .process_transactions(&decision, Some(&Arc::new(AtomicU64::new(0))))
+            .is_ok());
     }
 
     #[test_case(test_create_sanitized_transaction_receive_and_buffer; "Sdk")]
