@@ -24,6 +24,9 @@ pub const MAX_ACCOUNTS_PER_TRANSACTION: usize = 256;
 pub const MAX_ACCOUNTS_PER_INSTRUCTION: usize = 255;
 pub const MAX_INSTRUCTION_DATA_LEN: usize = 10 * 1024;
 pub const MAX_ACCOUNT_DATA_LEN: u64 = 10 * 1024 * 1024;
+// Note: With stricter_abi_and_runtime_constraints programs can grow accounts faster than they intend to,
+// because the AccessViolationHandler might grow an account up to MAX_ACCOUNT_DATA_LEN at once.
+pub const MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION: i64 = MAX_ACCOUNT_DATA_LEN as i64 * 2;
 
 #[cfg(test)]
 static_assertions::const_assert_eq!(
@@ -35,17 +38,10 @@ static_assertions::const_assert_eq!(
     MAX_ACCOUNT_DATA_LEN,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
 );
-
-// Inlined to avoid solana_system_interface dep
-const MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION: i64 =
-    MAX_ACCOUNT_DATA_LEN as i64 * 2;
-// Note: With stricter_abi_and_runtime_constraints programs can grow accounts faster than they intend to,
-// because the AccessViolationHandler might grow an account up to
-// MAX_ACCOUNT_DATA_LEN at once.
 #[cfg(test)]
 static_assertions::const_assert_eq!(
-    MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
-    solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
+    MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION,
+    solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
 );
 
 // Inlined to avoid solana_account_info dep
@@ -170,7 +166,7 @@ impl TransactionAccounts {
             .map_err(|_| InstructionError::GenericError)
             .map(|value_ref| *value_ref)?
             .saturating_add(length_delta)
-            > MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
+            > MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION
         {
             return Err(InstructionError::MaxAccountsDataAllocationsExceeded);
         }
@@ -546,7 +542,7 @@ impl TransactionContext {
                 }
                 let Ok(remaining_allowed_growth) =
                     accounts.resize_delta.try_borrow().map(|resize_delta| {
-                        MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
+                        MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION
                             .saturating_sub(*resize_delta)
                             .max(0) as usize
                     })
