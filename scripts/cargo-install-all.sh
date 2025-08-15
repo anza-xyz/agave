@@ -61,7 +61,7 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --validator-only ]]; then
       validatorOnly=true
       shift
-    elif [[ $1 = --release-public ]]; then
+    elif [[ $1 = --public-release ]]; then
       publicRelease=true
       shift
     else
