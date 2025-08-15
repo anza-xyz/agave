@@ -9008,9 +9008,9 @@ dependencies = [
 
 [[package]]
 name = "solana-signature"
-version = "3.0.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19bb713a132fe904caa1f86c331d32846048ae517a3ebf52b068ed07a33070db"
+checksum = "4bb8057cc0e9f7b5e89883d49de6f407df655bb6f3a71d0b7baf9986a2218fd9"
 dependencies = [
  "ed25519-dalek 2.2.0",
  "five8",
