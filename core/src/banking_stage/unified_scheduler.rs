@@ -38,7 +38,10 @@ use {
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::bank_forks::BankForks,
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},
-    std::sync::{Arc, RwLock},
+    std::{
+        ops::Deref,
+        sync::{Arc, RwLock},
+    },
 };
 
 #[allow(dead_code)]
@@ -53,8 +56,17 @@ pub(crate) fn ensure_banking_stage_setup(
 ) {
     let root_bank = bank_forks.read().unwrap().sharable_root_bank();
     let unified_receiver = channels.unified_receiver().clone();
-    let mut decision_maker = DecisionMaker::new(poh_recorder.clone());
-    let banking_stage_monitor = Box::new(DecisionMakerWrapper::new(decision_maker.clone()));
+
+    let (is_exited, decision_maker) = {
+        let poh_recorder = poh_recorder.read().unwrap();
+        (
+            poh_recorder.is_exited.clone(),
+            DecisionMaker::from(poh_recorder.deref()),
+        )
+    };
+
+    let banking_stage_monitor =
+        Box::new(DecisionMakerWrapper::new(is_exited, decision_maker.clone()));
     let banking_packet_handler = Box::new(
         move |helper: &BankingStageHelper, batches: BankingPacketBatch| {
             let decision = decision_maker.make_consume_or_forward_decision();

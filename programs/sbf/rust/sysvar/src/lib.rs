@@ -10,6 +10,10 @@ use {
     solana_program_error::{ProgramError, ProgramResult},
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
+    solana_stake_interface::{
+        stake_history::{StakeHistory, StakeHistoryGetEntry},
+        sysvar::stake_history::StakeHistorySysvar,
+    },
     solana_sysvar::{
         clock::Clock,
         epoch_rewards::EpochRewards,
@@ -17,8 +21,7 @@ use {
         rent::Rent,
         slot_hashes::{PodSlotHashes, SlotHashes},
         slot_history::SlotHistory,
-        stake_history::{StakeHistory, StakeHistoryGetEntry, StakeHistorySysvar},
-        Sysvar,
+        Sysvar, SysvarSerialize,
     },
 };
 
@@ -26,7 +29,7 @@ use {
 #[cfg(target_os = "solana")]
 fn sol_get_sysvar_handler<T>(dst: &mut [u8], offset: u64, length: u64) -> Result<(), ProgramError>
 where
-    T: Sysvar,
+    T: SysvarSerialize,
 {
     let sysvar_id = &T::id() as *const _ as *const u8;
     let var_addr = dst as *mut _ as *mut u8;
@@ -44,7 +47,7 @@ where
 // Double-helper arrangement is easier to write to a mutable slice.
 fn sol_get_sysvar<T>() -> Result<T, ProgramError>
 where
-    T: Sysvar,
+    T: SysvarSerialize,
 {
     #[cfg(target_os = "solana")]
     {

@@ -16,6 +16,7 @@ use {
         RequestMiddlewareAction, ServerBuilder,
     },
     regex::Regex,
+    solana_cli_output::display::build_balance_message,
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH,
     solana_gossip::cluster_info::ClusterInfo,
@@ -27,7 +28,6 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_metrics::inc_new_counter_info,
-    solana_native_token::lamports_to_sol,
     solana_perf::thread::renice_this_thread,
     solana_poh::poh_recorder::PohRecorder,
     solana_quic_definitions::NotifyKeyUpdate,
@@ -434,14 +434,14 @@ async fn handle_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<
             let bank = bank_forks.read().unwrap().root_bank();
             let supply_result = calculate_circulating_supply_async(&bank).await;
             match supply_result {
-                Ok(supply) => Some(format!("{}", lamports_to_sol(supply))),
+                Ok(supply) => Some(build_balance_message(supply, false, false)),
                 Err(_) => None,
             }
         }
         "/v0/total-supply" => {
             let bank = bank_forks.read().unwrap().root_bank();
             let total_supply = bank.capitalization();
-            Some(format!("{}", lamports_to_sol(total_supply)))
+            Some(build_balance_message(total_supply, false, false))
         }
         _ => None,
     }
@@ -956,7 +956,8 @@ mod tests {
     use {
         super::*,
         crate::rpc::{create_validator_exit, tests::new_test_cluster_info},
-        solana_genesis_config::{ClusterType, DEFAULT_GENESIS_ARCHIVE},
+        solana_cluster_type::ClusterType,
+        solana_genesis_config::DEFAULT_GENESIS_ARCHIVE,
         solana_ledger::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,

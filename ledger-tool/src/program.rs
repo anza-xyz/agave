@@ -520,13 +520,12 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
 
     invoke_context
         .transaction_context
-        .get_next_instruction_context_mut()
-        .unwrap()
-        .configure_for_tests(
+        .configure_next_instruction_for_tests(
             program_index.saturating_add(1),
             instruction_accounts,
             &instruction_data,
-        );
+        )
+        .unwrap();
     invoke_context.push().unwrap();
     let (_parameter_bytes, regions, account_lengths) = serialize_parameters(
         invoke_context.transaction_context,

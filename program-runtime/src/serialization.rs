@@ -675,7 +675,7 @@ mod tests {
     use {
         super::*,
         crate::with_mock_invoke_context,
-        solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_account_info::AccountInfo,
         solana_program_entrypoint::deserialize,
         solana_rent::Rent,
@@ -783,9 +783,12 @@ mod tests {
                 );
                 invoke_context
                     .transaction_context
-                    .get_next_instruction_context_mut()
-                    .unwrap()
-                    .configure_for_tests(0, instruction_accounts, &instruction_data);
+                    .configure_next_instruction_for_tests(
+                        0,
+                        instruction_accounts,
+                        &instruction_data,
+                    )
+                    .unwrap();
                 invoke_context.push().unwrap();
                 let instruction_context = invoke_context
                     .transaction_context
@@ -837,7 +840,11 @@ mod tests {
                     assert_eq!(account.data(), &account_info.data.borrow()[..]);
                     assert_eq!(account.owner(), account_info.owner);
                     assert_eq!(account.executable(), account_info.executable);
-                    assert_eq!(u64::MAX, account_info.rent_epoch);
+                    #[allow(deprecated)]
+                    {
+                        // Using the sdk entrypoint, the rent-epoch is skipped
+                        assert_eq!(0, account_info._unused);
+                    }
                 }
             }
         }
@@ -918,17 +925,30 @@ mod tests {
                         rent_epoch: 3100,
                     }),
                 ),
+                (
+                    program_id,
+                    AccountSharedData::from(Account {
+                        lamports: 0,
+                        data: vec![],
+                        owner: bpf_loader_deprecated::id(),
+                        executable: true,
+                        rent_epoch: 0,
+                    }),
+                ),
             ];
             let instruction_accounts =
                 deduplicated_instruction_accounts(&[1, 1, 2, 3, 4, 4, 5, 6], |index| index >= 4);
             let instruction_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-            let mut original_accounts = transaction_accounts.clone();
+            let original_accounts = transaction_accounts.clone();
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .transaction_context
-                .get_next_instruction_context_mut()
-                .unwrap()
-                .configure_for_tests(0, instruction_accounts, &instruction_data);
+                .configure_next_instruction_for_tests(
+                    0,
+                    instruction_accounts.clone(),
+                    &instruction_data,
+                )
+                .unwrap();
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -981,7 +1001,11 @@ mod tests {
                 assert_eq!(account.data(), &account_info.data.borrow()[..]);
                 assert_eq!(account.owner(), account_info.owner);
                 assert_eq!(account.executable(), account_info.executable);
-                assert_eq!(u64::MAX, account_info.rent_epoch);
+                #[allow(deprecated)]
+                {
+                    // Using the sdk entrypoint, the rent-epoch is skipped
+                    assert_eq!(0, account_info._unused);
+                }
 
                 assert_eq!(
                     (*account_info.lamports.borrow() as *const u64).align_offset(BPF_ALIGN_OF_U128),
@@ -1018,18 +1042,15 @@ mod tests {
             }
 
             // check serialize_parameters_unaligned
-            original_accounts
-                .first_mut()
-                .unwrap()
-                .1
-                .set_owner(bpf_loader_deprecated::id());
             invoke_context
                 .transaction_context
-                .get_account_at_index(0)
-                .unwrap()
-                .try_borrow_mut()
-                .unwrap()
-                .set_owner(bpf_loader_deprecated::id());
+                .configure_next_instruction_for_tests(7, instruction_accounts, &instruction_data)
+                .unwrap();
+            invoke_context.push().unwrap();
+            let instruction_context = invoke_context
+                .transaction_context
+                .get_current_instruction_context()
+                .unwrap();
 
             let (mut serialized, regions, account_lengths) = serialize_parameters(
                 invoke_context.transaction_context,
@@ -1068,7 +1089,10 @@ mod tests {
                 assert_eq!(account.data(), &account_info.data.borrow()[..]);
                 assert_eq!(account.owner(), account_info.owner);
                 assert_eq!(account.executable(), account_info.executable);
-                assert_eq!(u64::MAX, account_info.rent_epoch);
+                #[allow(deprecated)]
+                {
+                    assert_eq!(u64::MAX, account_info._unused);
+                }
             }
 
             deserialize_parameters(
@@ -1167,17 +1191,29 @@ mod tests {
                         rent_epoch: 3100,
                     }),
                 ),
+                (
+                    solana_pubkey::new_rand(),
+                    AccountSharedData::from(Account {
+                        lamports: 0,
+                        data: vec![],
+                        owner: bpf_loader_deprecated::id(),
+                        executable: true,
+                        rent_epoch: 0,
+                    }),
+                ),
             ];
             let instruction_accounts =
                 deduplicated_instruction_accounts(&[1, 1, 2, 3, 4, 4, 5, 6], |index| index >= 4);
             let instruction_data = vec![];
-            let mut original_accounts = transaction_accounts.clone();
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .transaction_context
-                .get_next_instruction_context_mut()
-                .unwrap()
-                .configure_for_tests(0, instruction_accounts, &instruction_data);
+                .configure_next_instruction_for_tests(
+                    0,
+                    instruction_accounts.clone(),
+                    &instruction_data,
+                )
+                .unwrap();
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1200,36 +1236,23 @@ mod tests {
             };
 
             for account_info in de_accounts {
-                let index_in_transaction = invoke_context
-                    .transaction_context
-                    .find_index_of_account(account_info.key)
-                    .unwrap();
-                let account = invoke_context
-                    .transaction_context
-                    .accounts()
-                    .try_borrow(index_in_transaction)
-                    .unwrap();
-                let expected_rent_epoch = if mask_out_rent_epoch_in_vm_serialization {
-                    u64::MAX
-                } else {
-                    account.rent_epoch()
-                };
-                assert_eq!(expected_rent_epoch, account_info.rent_epoch);
+                // Using program-entrypoint, the rent-epoch will always be 0
+                #[allow(deprecated)]
+                {
+                    assert_eq!(0, account_info._unused);
+                }
             }
 
             // check serialize_parameters_unaligned
-            original_accounts
-                .first_mut()
-                .unwrap()
-                .1
-                .set_owner(bpf_loader_deprecated::id());
             invoke_context
                 .transaction_context
-                .get_account_at_index(0)
-                .unwrap()
-                .try_borrow_mut()
-                .unwrap()
-                .set_owner(bpf_loader_deprecated::id());
+                .configure_next_instruction_for_tests(7, instruction_accounts, &instruction_data)
+                .unwrap();
+            invoke_context.push().unwrap();
+            let instruction_context = invoke_context
+                .transaction_context
+                .get_current_instruction_context()
+                .unwrap();
 
             let (_serialized, regions, _account_lengths) = serialize_parameters(
                 invoke_context.transaction_context,
@@ -1261,7 +1284,10 @@ mod tests {
                 } else {
                     account.rent_epoch()
                 };
-                assert_eq!(expected_rent_epoch, account_info.rent_epoch);
+                #[allow(deprecated)]
+                {
+                    assert_eq!(expected_rent_epoch, account_info._unused);
+                }
             }
         }
     }
@@ -1354,9 +1380,10 @@ mod tests {
                 let executable = Ptr::<u8>::read_possibly_unaligned(input, offset) != 0;
                 offset += size_of::<u8>();
 
-                let rent_epoch = Ptr::<u64>::read_possibly_unaligned(input, offset);
+                let unused = Ptr::<u64>::read_possibly_unaligned(input, offset);
                 offset += size_of::<u64>();
 
+                #[allow(deprecated)]
                 accounts.push(AccountInfo {
                     key,
                     is_signer,
@@ -1365,7 +1392,7 @@ mod tests {
                     data,
                     owner,
                     executable,
-                    rent_epoch,
+                    _unused: unused,
                 });
             } else {
                 // duplicate account, clone the original
@@ -1445,9 +1472,8 @@ mod tests {
             deduplicated_instruction_accounts(&transaction_accounts_indexes, |index| index > 0);
         let instruction_data = [];
         transaction_context
-            .get_next_instruction_context_mut()
-            .unwrap()
-            .configure_for_tests(6, instruction_accounts, &instruction_data);
+            .configure_next_instruction_for_tests(6, instruction_accounts, &instruction_data)
+            .unwrap();
         transaction_context.push().unwrap();
         let instruction_context = transaction_context
             .get_current_instruction_context()

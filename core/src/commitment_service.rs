@@ -467,7 +467,7 @@ mod tests {
         process_slot_vote_unchecked(&mut vote_state1, 3);
         process_slot_vote_unchecked(&mut vote_state1, 5);
         if !with_node_vote_state {
-            let versioned = VoteStateVersions::new_current(vote_state1.clone());
+            let versioned = VoteStateVersions::new_v3(vote_state1.clone());
             vote_state::to(&versioned, &mut vote_account1).unwrap();
             bank.store_account(&pk1, &vote_account1);
         }
@@ -475,19 +475,19 @@ mod tests {
         let mut vote_state2 = vote_state::from(&vote_account2).unwrap();
         process_slot_vote_unchecked(&mut vote_state2, 9);
         process_slot_vote_unchecked(&mut vote_state2, 10);
-        let versioned = VoteStateVersions::new_current(vote_state2);
+        let versioned = VoteStateVersions::new_v3(vote_state2);
         vote_state::to(&versioned, &mut vote_account2).unwrap();
         bank.store_account(&pk2, &vote_account2);
 
         let mut vote_state3 = vote_state::from(&vote_account3).unwrap();
         vote_state3.root_slot = Some(1);
-        let versioned = VoteStateVersions::new_current(vote_state3);
+        let versioned = VoteStateVersions::new_v3(vote_state3);
         vote_state::to(&versioned, &mut vote_account3).unwrap();
         bank.store_account(&pk3, &vote_account3);
 
         let mut vote_state4 = vote_state::from(&vote_account4).unwrap();
         vote_state4.root_slot = Some(2);
-        let versioned = VoteStateVersions::new_current(vote_state4);
+        let versioned = VoteStateVersions::new_v3(vote_state4);
         vote_state::to(&versioned, &mut vote_account4).unwrap();
         bank.store_account(&pk4, &vote_account4);
 

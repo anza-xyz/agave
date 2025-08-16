@@ -48,8 +48,7 @@ use {
     solana_svm_log_collector::{ic_logger_msg, ic_msg},
     solana_svm_timings::ExecuteTimings,
     solana_svm_type_overrides::sync::Arc,
-    solana_sysvar::Sysvar,
-    solana_sysvar_id::SysvarId,
+    solana_sysvar::SysvarSerialize,
     solana_transaction_context::IndexOfAccount,
     std::{
         alloc::Layout,
@@ -2185,7 +2184,8 @@ mod tests {
         solana_sha256_hasher::hashv,
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,
-        solana_sysvar::stake_history::{self, StakeHistory, StakeHistoryEntry},
+        solana_stake_interface::stake_history::{self, StakeHistory, StakeHistoryEntry},
+        solana_sysvar_id::SysvarId,
         solana_transaction_context::InstructionAccount,
         std::{
             hash::{DefaultHasher, Hash, Hasher},
@@ -2220,9 +2220,8 @@ mod tests {
             with_mock_invoke_context!($invoke_context, transaction_context, transaction_accounts);
             $invoke_context
                 .transaction_context
-                .get_next_instruction_context_mut()
-                .unwrap()
-                .configure_for_tests(1, vec![], &[]);
+                .configure_next_instruction_for_tests(1, vec![], &[])
+                .unwrap();
             $invoke_context.push().unwrap();
         };
     }
@@ -4452,9 +4451,12 @@ mod tests {
                 )];
                 invoke_context
                     .transaction_context
-                    .get_next_instruction_context_mut()
-                    .unwrap()
-                    .configure_for_tests(0, instruction_accounts, &[index_in_trace as u8]);
+                    .configure_next_instruction_for_tests(
+                        0,
+                        instruction_accounts,
+                        &[index_in_trace as u8],
+                    )
+                    .unwrap();
                 invoke_context.transaction_context.push().unwrap();
             }
         }

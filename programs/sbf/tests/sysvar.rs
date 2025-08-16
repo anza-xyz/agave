@@ -18,10 +18,8 @@ use {
         stake_history,
     },
     solana_signer::Signer,
-    solana_sysvar::{
-        epoch_rewards,
-        stake_history::{StakeHistory, StakeHistoryEntry},
-    },
+    solana_stake_interface::stake_history::{StakeHistory, StakeHistoryEntry},
+    solana_sysvar::epoch_rewards,
     solana_transaction::Transaction,
 };
 

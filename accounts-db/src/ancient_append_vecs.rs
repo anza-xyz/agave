@@ -655,7 +655,7 @@ impl AccountsDb {
                 Ordering::Relaxed,
             );
 
-        self.thread_pool_clean.install(|| {
+        self.thread_pool_background.install(|| {
             packer.par_iter().for_each(|(target_slot, pack)| {
                 let mut write_ancient_accounts_local = WriteAncientAccounts::default();
                 self.write_one_packed_storage(

@@ -538,7 +538,7 @@ fn process_instruction<'a>(
             let data = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
             let mut lamports = accounts[FROM_INDEX].lamports();
             let from_info =
-                AccountInfo::new(&pubkey, false, true, &mut lamports, data, &owner, false, 0);
+                AccountInfo::new(&pubkey, false, true, &mut lamports, data, &owner, false);
 
             let pubkey = *accounts[DERIVED_KEY1_INDEX].key;
             let owner = *accounts[DERIVED_KEY1_INDEX].owner;
@@ -546,7 +546,7 @@ fn process_instruction<'a>(
             let data = unsafe { std::slice::from_raw_parts_mut(0x300007ff8 as *mut _, 0) };
             let mut lamports = accounts[DERIVED_KEY1_INDEX].lamports();
             let derived_info =
-                AccountInfo::new(&pubkey, false, true, &mut lamports, data, &owner, false, 0);
+                AccountInfo::new(&pubkey, false, true, &mut lamports, data, &owner, false);
 
             let pubkey = *accounts[SYSTEM_PROGRAM_INDEX].key;
             let owner = *accounts[SYSTEM_PROGRAM_INDEX].owner;
@@ -555,7 +555,7 @@ fn process_instruction<'a>(
             let data = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
             let mut lamports = accounts[SYSTEM_PROGRAM_INDEX].lamports();
             let system_info =
-                AccountInfo::new(&pubkey, false, false, &mut lamports, data, &owner, true, 0);
+                AccountInfo::new(&pubkey, false, false, &mut lamports, data, &owner, true);
 
             let instruction = system_instruction::create_account(
                 accounts[FROM_INDEX].key,
@@ -1379,7 +1379,7 @@ fn process_instruction<'a>(
             #[cfg(target_feature = "dynamic-frames")]
             // When we have dynamic frames, the stack grows from the higher addresses, so we
             // compare from zero until the beginning of a function frame.
-            {
+            unsafe {
                 const ZEROED_BYTES_LENGTH: usize = (MAX_CALL_DEPTH - 2) * STACK_FRAME_SIZE;
                 assert_eq!(sol_memcmp(stack, &ZEROS, ZEROED_BYTES_LENGTH), 0);
                 stack[..ZEROED_BYTES_LENGTH].fill(42);

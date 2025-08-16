@@ -327,10 +327,10 @@ mod tests {
             SendTransactionStats,
         },
         quinn::Endpoint,
-        solana_net_utils::{bind_in_range, sockets::localhost_port_range_for_tests},
+        solana_net_utils::sockets::{bind_to_localhost_unique, unique_port_range_for_tests},
         solana_tls_utils::QuicClientCertificate,
         std::{
-            net::{IpAddr, Ipv4Addr, SocketAddr},
+            net::{Ipv4Addr, SocketAddr},
             sync::Arc,
             time::Duration,
         },
@@ -342,10 +342,7 @@ mod tests {
     const TEST_MAX_TIME: Duration = Duration::from_secs(5);
 
     fn create_test_endpoint() -> Endpoint {
-        let port_range = localhost_port_range_for_tests();
-        let socket = bind_in_range(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range)
-            .unwrap()
-            .1;
+        let socket = bind_to_localhost_unique().unwrap();
         let client_config = create_client_config(&QuicClientCertificate::new(None));
         create_client_endpoint(BindTarget::Socket(socket), client_config).unwrap()
     }
@@ -354,8 +351,8 @@ mod tests {
     async fn test_worker_stopped_after_failed_connect() {
         let endpoint = create_test_endpoint();
 
-        let port_range = localhost_port_range_for_tests();
-        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.0);
+        let port_range = unique_port_range_for_tests(2);
+        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);
 
         let worker_channel_size = 1;
         let skip_check_transaction_age = true;
@@ -388,8 +385,8 @@ mod tests {
     async fn test_worker_shutdown() {
         let endpoint = create_test_endpoint();
 
-        let port_range = localhost_port_range_for_tests();
-        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.0);
+        let port_range = unique_port_range_for_tests(2);
+        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);
 
         let worker_channel_size = 1;
         let skip_check_transaction_age = true;
@@ -421,8 +418,8 @@ mod tests {
         let cancel = CancellationToken::new();
         let mut cache = WorkersCache::new(10, cancel.clone());
 
-        let port_range = localhost_port_range_for_tests();
-        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.0);
+        let port_range = unique_port_range_for_tests(2);
+        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);
         let worker_channel_size = 1;
         let skip_check_transaction_age = true;
         let max_reconnect_attempts = 0;

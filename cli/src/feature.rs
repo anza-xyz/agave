@@ -1,8 +1,8 @@
 use {
     crate::{
         cli::{
-            log_instruction_custom_error, CliCommand, CliCommandInfo, CliConfig, CliError,
-            ProcessResult,
+            log_instruction_custom_error, log_instruction_custom_error_to_str, CliCommand,
+            CliCommandInfo, CliConfig, CliError, ProcessResult,
         },
         spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
     },
@@ -19,10 +19,10 @@ use {
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,
     solana_epoch_schedule::EpochSchedule,
-    solana_feature_gate_client::{
-        errors::SolanaFeatureGateError, instructions::RevokePendingActivation,
+    solana_feature_gate_interface::{
+        activate_with_lamports, error::FeatureGateError, from_account,
+        instruction::revoke_pending_activation, Feature,
     },
-    solana_feature_gate_interface::{activate_with_lamports, from_account, Feature},
     solana_message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -31,7 +31,6 @@ use {
         client_error::Error as ClientError, request::MAX_MULTIPLE_ACCOUNTS,
         response::RpcVoteAccountInfo,
     },
-    solana_sdk_ids::{incinerator, system_program},
     solana_system_interface::error::SystemError,
     solana_transaction::Transaction,
     std::{cmp::Ordering, collections::HashMap, fmt, rc::Rc, str::FromStr},
@@ -1086,12 +1085,7 @@ fn process_revoke(
         ComputeUnitLimit::Default,
         |_lamports| {
             Message::new(
-                &[RevokePendingActivation {
-                    feature: feature_id,
-                    incinerator: incinerator::id(),
-                    system_program: system_program::id(),
-                }
-                .instruction()],
+                &[revoke_pending_activation(&feature_id)],
                 Some(&fee_payer.pubkey()),
             )
         },
@@ -1110,5 +1104,5 @@ fn process_revoke(
         config.commitment,
         config.send_transaction_config,
     );
-    log_instruction_custom_error::<SolanaFeatureGateError>(result, config)
+    log_instruction_custom_error_to_str::<FeatureGateError>(result, config)
 }

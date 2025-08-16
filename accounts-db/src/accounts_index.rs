@@ -1798,6 +1798,7 @@ pub mod tests {
             Bound::{Excluded, Included, Unbounded},
             RangeInclusive,
         },
+        test_case::test_matrix,
     };
 
     pub enum SecondaryIndexTypes<'a> {
@@ -2284,10 +2285,10 @@ pub mod tests {
     fn test_new_entry_code_paths_helper<T: IndexValue>(
         account_infos: [T; 2],
         is_cached: bool,
-        upsert: bool,
+        upsert_method: Option<UpsertReclaim>,
         use_disk: bool,
     ) {
-        if is_cached && !upsert {
+        if is_cached && upsert_method.is_none() {
             // This is an illegal combination when we are using queued lazy inserts.
             // Cached items don't ever leave the in-mem cache.
             // But the queued lazy insert code relies on there being nothing in the in-mem cache.
@@ -2307,25 +2308,28 @@ pub mod tests {
         let index = AccountsIndex::<T, T>::new(&config, Arc::default());
         let mut gc = Vec::new();
 
-        if upsert {
-            // insert first entry for pubkey. This will use new_entry_after_update and not call update.
-            index.upsert(
-                slot0,
-                slot0,
-                &key,
-                &AccountSharedData::default(),
-                &AccountSecondaryIndexes::default(),
-                account_infos[0],
-                &mut gc,
-                UPSERT_RECLAIM_TEST_DEFAULT,
-            );
-        } else {
-            let items = vec![(key, account_infos[0])];
-            index.set_startup(Startup::Startup);
-            let expected_len = items.len();
-            let (_, result) = index.insert_new_if_missing_into_primary_index(slot0, items);
-            assert_eq!(result.count, expected_len);
-            index.set_startup(Startup::Normal);
+        match upsert_method {
+            Some(upsert_method) => {
+                // insert first entry for pubkey. This will use new_entry_after_update and not call update.
+                index.upsert(
+                    slot0,
+                    slot0,
+                    &key,
+                    &AccountSharedData::default(),
+                    &AccountSecondaryIndexes::default(),
+                    account_infos[0],
+                    &mut gc,
+                    upsert_method,
+                );
+            }
+            None => {
+                let items = vec![(key, account_infos[0])];
+                index.set_startup(Startup::Startup);
+                let expected_len = items.len();
+                let (_, result) = index.insert_new_if_missing_into_primary_index(slot0, items);
+                assert_eq!(result.count, expected_len);
+                index.set_startup(Startup::Normal);
+            }
         }
         assert!(gc.is_empty());
 
@@ -2348,43 +2352,63 @@ pub mod tests {
             );
         }
 
-        // insert second entry for pubkey. This will use update and NOT use new_entry_after_update.
-        if upsert {
-            index.upsert(
-                slot1,
-                slot1,
-                &key,
-                &AccountSharedData::default(),
-                &AccountSecondaryIndexes::default(),
-                account_infos[1],
-                &mut gc,
-                UPSERT_RECLAIM_TEST_DEFAULT,
-            );
-        } else {
-            // this has the effect of aging out everything in the in-mem cache
-            for _ in 0..5 {
+        match upsert_method {
+            Some(upsert_method) => {
+                // insert second entry for pubkey. This will use update and NOT use new_entry_after_update.
+                index.upsert(
+                    slot1,
+                    slot1,
+                    &key,
+                    &AccountSharedData::default(),
+                    &AccountSecondaryIndexes::default(),
+                    account_infos[1],
+                    &mut gc,
+                    upsert_method,
+                );
+            }
+            None => {
+                // this has the effect of aging out everything in the in-mem cache
+                for _ in 0..5 {
+                    index.set_startup(Startup::Startup);
+                    index.set_startup(Startup::Normal);
+                }
+
+                let items = vec![(key, account_infos[1])];
                 index.set_startup(Startup::Startup);
+                let expected_len = items.len();
+                let (_, result) = index.insert_new_if_missing_into_primary_index(slot1, items);
+                assert_eq!(result.count, expected_len);
                 index.set_startup(Startup::Normal);
             }
-
-            let items = vec![(key, account_infos[1])];
-            index.set_startup(Startup::Startup);
-            let expected_len = items.len();
-            let (_, result) = index.insert_new_if_missing_into_primary_index(slot1, items);
-            assert_eq!(result.count, expected_len);
-            index.set_startup(Startup::Normal);
         }
-        assert!(gc.is_empty());
+
+        // There should be reclaims if entries are uncached and old slots are being reclaimed
+        let should_have_reclaims =
+            upsert_method == Some(UpsertReclaim::ReclaimOldSlots) && !is_cached;
+
+        if should_have_reclaims {
+            assert!(!gc.is_empty());
+            assert_eq!(gc.len(), 1);
+            assert_eq!(gc[0], (slot0, account_infos[0]));
+        } else {
+            assert!(gc.is_empty());
+        }
+
         index.populate_and_retrieve_duplicate_keys_from_startup(|_slot_keys| {});
 
         let entry = index.get_cloned(&key).unwrap();
         let slot_list = entry.slot_list.read().unwrap();
 
-        assert_eq!(entry.ref_count(), if is_cached { 0 } else { 2 });
-        assert_eq!(
-            slot_list.as_slice(),
-            &[(slot0, account_infos[0]), (slot1, account_infos[1])],
-        );
+        if should_have_reclaims {
+            assert_eq!(entry.ref_count(), 1);
+            assert_eq!(slot_list.as_slice(), &[(slot1, account_infos[1])],);
+        } else {
+            assert_eq!(entry.ref_count(), if is_cached { 0 } else { 2 });
+            assert_eq!(
+                slot_list.as_slice(),
+                &[(slot0, account_infos[0]), (slot1, account_infos[1])],
+            );
+        }
 
         let new_entry = PreAllocatedAccountMapEntry::new(
             slot1,
@@ -2392,19 +2416,26 @@ pub mod tests {
             &index.storage.storage,
             false,
         );
-        assert_eq!(slot_list[1], new_entry.into());
+
+        assert_eq!(slot_list.last().unwrap(), &new_entry.into());
     }
 
-    #[test]
-    fn test_new_entry_and_update_code_paths() {
-        for use_disk in [false, true] {
-            for is_upsert in &[false, true] {
-                // account_info type that IS cached
-                test_new_entry_code_paths_helper([1.0, 2.0], true, *is_upsert, use_disk);
-
-                // account_info type that is NOT cached
-                test_new_entry_code_paths_helper([1, 2], false, *is_upsert, use_disk);
-            }
+    #[test_matrix(
+        [false, true],
+        [None, Some(UpsertReclaim::PopulateReclaims), Some(UpsertReclaim::ReclaimOldSlots)],
+        [true, false]
+    )]
+    fn test_new_entry_and_update_code_paths(
+        use_disk: bool,
+        upsert_method: Option<UpsertReclaim>,
+        is_cached: bool,
+    ) {
+        if is_cached {
+            // account_info type that IS cached
+            test_new_entry_code_paths_helper([1.0, 2.0], true, upsert_method, use_disk);
+        } else {
+            // account_info type that is NOT cached
+            test_new_entry_code_paths_helper([1, 2], false, upsert_method, use_disk);
         }
     }
 

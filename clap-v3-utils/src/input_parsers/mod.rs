@@ -9,7 +9,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_keypair::{read_keypair_file, Keypair},
-    solana_native_token::sol_to_lamports,
+    solana_native_token::sol_str_to_lamports,
     solana_pubkey::{Pubkey, MAX_SEED_LEN},
     solana_signer::Signer,
     std::str::FromStr,
@@ -80,7 +80,7 @@ pub fn unix_timestamp_from_rfc3339_datetime(
 )]
 #[allow(deprecated)]
 pub fn lamports_of_sol(matches: &ArgMatches, name: &str) -> Option<u64> {
-    value_of(matches, name).map(sol_to_lamports)
+    matches.value_of(name).and_then(sol_str_to_lamports)
 }
 
 #[deprecated(

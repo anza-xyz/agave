@@ -147,7 +147,6 @@ impl FeatureSet {
                 .is_active(&simplify_alt_bn128_syscall_error_codes::id()),
             fix_alt_bn128_multiplication_input_length: self
                 .is_active(&fix_alt_bn128_multiplication_input_length::id()),
-            loosen_cpi_size_restriction: self.is_active(&loosen_cpi_size_restriction::id()),
             increase_tx_account_lock_limit: self.is_active(&increase_tx_account_lock_limit::id()),
             enable_extend_program_checked: self.is_active(&enable_extend_program_checked::id()),
             formalize_loaded_transaction_data_size: self
@@ -1012,7 +1011,7 @@ pub mod enable_sbpf_v2_deployment_and_execution {
 }
 
 pub mod enable_sbpf_v3_deployment_and_execution {
-    solana_pubkey::declare_id!("GJav1vwg2etvSWraPT96QvYuQJswJTJwtcyARrvkhuV9");
+    solana_pubkey::declare_id!("BUwGLeF3Lxyfv1J1wY8biFHBB2hrk2QhbNftQf3VV3cC");
 }
 
 pub mod remove_accounts_executable_flag_checks {
@@ -1099,6 +1098,8 @@ pub mod formalize_loaded_transaction_data_size {
     solana_pubkey::declare_id!("DeS7sR48ZcFTUmt5FFEVDr1v1bh73aAbZiZq3SYr8Eh8");
 }
 
+// Until alpenglow is fully upstreamed, this is intentionally left out of
+// `FEATURE_NAMES`
 pub mod alpenglow {
     solana_pubkey::declare_id!("mustRekeyVm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
 }
@@ -1358,7 +1359,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (enshrine_slashing_program::id(), "SIMD-0204: Slashable event verification"),
         (enable_extend_program_checked::id(), "Enable ExtendProgramChecked instruction"),
         (formalize_loaded_transaction_data_size::id(), "SIMD-0186: Loaded transaction data size specification"),
-        (alpenglow::id(), "Enable Alpenglow"),
+        // Intentionally left out until upstreaming is complete (alpenglow::id(), "Enable Alpenglow"),
         (disable_zk_elgamal_proof_program::id(), "Disables zk-elgamal-proof program"),
         (reenable_zk_elgamal_proof_program::id(), "Re-enables zk-elgamal-proof program"),
         (raise_block_limits_to_100m::id(), "SIMD-0286: Raise block limit to 100M"),

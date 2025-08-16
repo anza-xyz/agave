@@ -20,6 +20,6 @@ solana-transaction = { workspace = true }
 [dev-dependencies]
 solana-message = { workspace = true, features = ["bincode"] }
 solana-nonce = { workspace = true }
-solana-system-interface = { workspace = true }
+solana-system-interface = { workspace = true, features = ["bincode"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }

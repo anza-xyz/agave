@@ -111,7 +111,6 @@ else
     solana-gossip
     agave-install
     solana-keygen
-    solana-log-analyzer
     solana-net-shaper
     agave-validator
     rbpf-cli

@@ -355,7 +355,7 @@ pub mod tests {
             hasher.result()
         };
 
-        let secp_message = libsecp256k1::Message::parse(&message_hash.0);
+        let secp_message = libsecp256k1::Message::parse(message_hash.as_bytes());
         let (signature, recovery_id) = libsecp256k1::sign(&secp_message, &secret_key);
 
         // Flip the S value in the signature to make a different but valid signature.

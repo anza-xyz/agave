@@ -1004,13 +1004,11 @@ impl Blockstore {
                 match shred.shred_type() {
                     ShredType::Code => {
                         // Don't need Arc overhead here!
-                        debug_assert_matches!(shred.payload(), shred::Payload::Unique(_));
                         recovered_shreds.push(shred.into_payload());
                         None
                     }
                     ShredType::Data => {
                         // Verify that the cloning is cheap here.
-                        debug_assert_matches!(shred.payload(), shred::Payload::Shared(_));
                         recovered_shreds.push(shred.payload().clone());
                         Some(shred)
                     }
@@ -5262,7 +5260,7 @@ fn adjust_ulimit_nofile(enforce_ulimit_nofile: bool) -> Result<()> {
     // usually not enough
     // AppendVecs and disk Account Index are also heavy users of mmapped files.
     // This should be kept in sync with published validator instructions.
-    // https://docs.solanalabs.com/operations/guides/validator-start#increased-memory-mapped-files-limit
+    // https://docs.anza.xyz/operations/guides/validator-start#system-tuning
     let desired_nofile = 1_000_000;
 
     fn get_nofile() -> libc::rlimit {

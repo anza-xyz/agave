@@ -36,10 +36,6 @@ $*"
     "${REPO_ROOT}"/net/net.sh stop
   ) || echo "Error from stopping nodes"
 
-  (
-    analyze_packet_loss
-  ) || echo "Error from packet loss analysis"
-
   execution_step "Deleting Testnet"
   if test -f "${REPO_ROOT}"/net/"${CLOUD_PROVIDER}".sh; then
     "${REPO_ROOT}"/net/"${CLOUD_PROVIDER}".sh delete -p "${TESTNET_TAG}"

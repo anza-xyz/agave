@@ -4,13 +4,13 @@ use {
     solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccount,
-    solana_vote_interface::state::{VoteInit, VoteState, VoteStateVersions},
+    solana_vote_interface::state::{VoteInit, VoteStateV3, VoteStateVersions},
 };
 
 fn new_rand_vote_account<R: Rng>(
     rng: &mut R,
     node_pubkey: Option<Pubkey>,
-) -> (AccountSharedData, VoteState) {
+) -> (AccountSharedData, VoteStateV3) {
     let vote_init = VoteInit {
         node_pubkey: node_pubkey.unwrap_or_else(Pubkey::new_unique),
         authorized_voter: Pubkey::new_unique(),
@@ -24,11 +24,11 @@ fn new_rand_vote_account<R: Rng>(
         leader_schedule_epoch: rng.gen(),
         unix_timestamp: rng.gen(),
     };
-    let mut vote_state = VoteState::new(&vote_init, &clock);
+    let mut vote_state = VoteStateV3::new(&vote_init, &clock);
     vote_state.process_next_vote_slot(0, 0, 1);
     let account = AccountSharedData::new_data(
         rng.gen(), // lamports
-        &VoteStateVersions::new_current(vote_state.clone()),
+        &VoteStateVersions::new_v3(vote_state.clone()),
         &solana_sdk_ids::vote::id(), // owner
     )
     .unwrap();

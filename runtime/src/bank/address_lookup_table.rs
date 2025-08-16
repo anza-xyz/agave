@@ -4,9 +4,10 @@ use {
     solana_clock::Slot,
     solana_message::{
         v0::{LoadedAddresses, MessageAddressTableLookup},
-        AddressLoader, AddressLoaderError,
+        AddressLoader,
     },
     solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
+    solana_transaction_error::AddressLoaderError,
 };
 
 fn into_address_loader_error(err: AddressLookupError) -> AddressLoaderError {

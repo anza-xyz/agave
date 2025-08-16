@@ -7,9 +7,8 @@ use {
     },
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
-    solana_stake_interface::error::StakeError,
+    solana_stake_interface::{error::StakeError, stake_history::StakeHistory},
     solana_stake_program::stake_state::{Stake, StakeStateV2},
-    solana_sysvar::stake_history::StakeHistory,
     solana_vote::vote_state_view::VoteStateView,
 };
 
@@ -255,7 +254,7 @@ fn commission_split(commission: u8, on: u64) -> (u64, u64, bool) {
 #[cfg(test)]
 mod tests {
     use {
-        self::points::null_tracer, super::*, solana_native_token::sol_to_lamports,
+        self::points::null_tracer, super::*, solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey, solana_stake_interface::state::Delegation,
         solana_vote_program::vote_state::VoteStateV3, test_case::test_case,
     };
@@ -676,7 +675,7 @@ mod tests {
         // bootstrap means fully-vested stake at epoch 0 with
         //  10_000_000 SOL is a big but not unreasaonable stake
         let stake = new_stake(
-            sol_to_lamports(10_000_000f64),
+            10_000_000 * LAMPORTS_PER_SOL,
             &Pubkey::default(),
             &vote_state,
             u64::MAX,
