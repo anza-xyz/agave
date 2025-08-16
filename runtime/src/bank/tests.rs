@@ -5203,9 +5203,10 @@ fn test_same_program_id_uses_unique_executable_accounts() {
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let transaction_context = &invoke_context.transaction_context;
         let instruction_context = transaction_context.get_current_instruction_context()?;
-        instruction_context
-            .try_borrow_program_account(transaction_context)?
-            .set_data_length(2)
+        let program_idx = instruction_context.get_index_of_program_account_in_transaction()?;
+        let mut acc = transaction_context.accounts().try_borrow_mut(program_idx)?;
+        acc.set_data(vec![1, 2]);
+        Ok(())
     });
 
     let (genesis_config, mint_keypair) = create_genesis_config(50000);

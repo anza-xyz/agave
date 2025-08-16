@@ -241,14 +241,9 @@ pub fn serialize_parameters(
         return Err(InstructionError::MaxAccountsExceeded);
     }
 
-    let (program_id, is_loader_deprecated) = {
-        let program_account =
-            instruction_context.try_borrow_program_account(transaction_context)?;
-        (
-            *program_account.get_key(),
-            *program_account.get_owner() == bpf_loader_deprecated::id(),
-        )
-    };
+    let program_id = *instruction_context.get_program_key(transaction_context)?;
+    let is_loader_deprecated =
+        instruction_context.get_program_owner(transaction_context)? == bpf_loader_deprecated::id();
 
     let accounts = (0..instruction_context.get_number_of_instruction_accounts())
         .map(|instruction_account_index| {
@@ -299,10 +294,8 @@ pub fn deserialize_parameters(
     buffer: &[u8],
     accounts_metadata: &[SerializedAccountMetadata],
 ) -> Result<(), InstructionError> {
-    let is_loader_deprecated = *instruction_context
-        .try_borrow_program_account(transaction_context)?
-        .get_owner()
-        == bpf_loader_deprecated::id();
+    let is_loader_deprecated =
+        instruction_context.get_program_owner(transaction_context)? == bpf_loader_deprecated::id();
     let account_lengths = accounts_metadata.iter().map(|a| a.original_data_len);
     if is_loader_deprecated {
         deserialize_parameters_unaligned(
@@ -1620,7 +1613,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(
-            transaction_context.accounts_resize_delta().unwrap(),
+            transaction_context.accounts_resize_delta(),
             MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
                 - remaining_allowed_growth as i64,
         );
