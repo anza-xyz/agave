@@ -18,38 +18,38 @@ use {
     },
 };
 
-// Inlined to avoid solana_system_interface dep
-#[cfg(not(target_os = "solana"))]
-const MAX_PERMITTED_DATA_LENGTH: u64 = 10 * 1024 * 1024;
-#[cfg(test)]
-static_assertions::const_assert_eq!(
-    MAX_PERMITTED_DATA_LENGTH,
-    solana_system_interface::MAX_PERMITTED_DATA_LENGTH
-);
-
-// Inlined to avoid solana_system_interface dep
-#[cfg(not(target_os = "solana"))]
-const MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION: i64 =
-    MAX_PERMITTED_DATA_LENGTH as i64 * 2;
-// Note: With stricter_abi_and_runtime_constraints programs can grow accounts faster than they intend to,
-// because the AccessViolationHandler might grow an account up to
-// MAX_PERMITTED_DATA_LENGTH at once.
-#[cfg(test)]
-static_assertions::const_assert_eq!(
-    MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
-    solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
-);
-
-// Inlined to avoid solana_account_info dep
-#[cfg(not(target_os = "solana"))]
-const MAX_PERMITTED_DATA_INCREASE: usize = 1_024 * 10;
-#[cfg(test)]
-static_assertions::const_assert_eq!(
-    MAX_PERMITTED_DATA_INCREASE,
-    solana_account_info::MAX_PERMITTED_DATA_INCREASE
-);
-
 pub const MAX_ACCOUNTS_PER_TRANSACTION: usize = 256;
+// This is one less than MAX_ACCOUNTS_PER_TRANSACTION because
+// one index is used as NON_DUP_MARKER in ABI v0 and v1.
+pub const MAX_ACCOUNTS_PER_INSTRUCTION: usize = 255;
+pub const MAX_INSTRUCTION_DATA_LEN: usize = 10 * 1024;
+pub const MAX_ACCOUNT_DATA_LEN: u64 = 10 * 1024 * 1024;
+// Note: With stricter_abi_and_runtime_constraints programs can grow accounts
+// faster than they intend to, because the AccessViolationHandler might grow
+// an account up to MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION at once.
+pub const MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION: i64 = MAX_ACCOUNT_DATA_LEN as i64 * 2;
+pub const MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION: usize = 10 * 1_024;
+
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    MAX_ACCOUNTS_PER_INSTRUCTION,
+    solana_program_entrypoint::NON_DUP_MARKER as usize,
+);
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    MAX_ACCOUNT_DATA_LEN,
+    solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
+);
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION,
+    solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
+);
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION,
+    solana_account_info::MAX_PERMITTED_DATA_INCREASE,
+);
 
 /// Index of an account inside of the TransactionContext or an InstructionContext.
 pub type IndexOfAccount = u16;
@@ -154,7 +154,7 @@ impl TransactionAccounts {
 
     fn can_data_be_resized(&self, old_len: usize, new_len: usize) -> Result<(), InstructionError> {
         // The new length can not exceed the maximum permitted length
-        if new_len > MAX_PERMITTED_DATA_LENGTH as usize {
+        if new_len > MAX_ACCOUNT_DATA_LEN as usize {
             return Err(InstructionError::InvalidRealloc);
         }
         // The resize can not exceed the per-transaction maximum
@@ -165,7 +165,7 @@ impl TransactionAccounts {
             .map_err(|_| InstructionError::GenericError)
             .map(|value_ref| *value_ref)?
             .saturating_add(length_delta)
-            > MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
+            > MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION
         {
             return Err(InstructionError::MaxAccountsDataAllocationsExceeded);
         }
@@ -379,7 +379,6 @@ impl TransactionContext {
         instruction_accounts: Vec<InstructionAccount>,
         instruction_data: &[u8],
     ) -> Result<(), InstructionError> {
-        debug_assert!(instruction_accounts.len() <= MAX_ACCOUNTS_PER_TRANSACTION);
         let mut dedup_map = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
         for (idx, account) in instruction_accounts.iter().enumerate() {
             let index_in_instruction = dedup_map
@@ -542,7 +541,7 @@ impl TransactionContext {
                 }
                 let Ok(remaining_allowed_growth) =
                     accounts.resize_delta.try_borrow().map(|resize_delta| {
-                        MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
+                        MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION
                             .saturating_sub(*resize_delta)
                             .max(0) as usize
                     })
@@ -557,7 +556,7 @@ impl TransactionContext {
                     // account length the program stored in AccountInfo.
                     let old_len = account.data().len();
                     let new_len = (address_space_reserved_for_account as usize)
-                        .min(MAX_PERMITTED_DATA_LENGTH as usize)
+                        .min(MAX_ACCOUNT_DATA_LEN as usize)
                         .min(old_len.saturating_add(remaining_allowed_growth));
                     // The last two min operations ensure the following:
                     debug_assert!(accounts.can_data_be_resized(old_len, new_len).is_ok());
@@ -1018,14 +1017,12 @@ impl BorrowedAccount<'_> {
     fn make_data_mut(&mut self) {
         // if the account is still shared, it means this is the first time we're
         // about to write into it. Make the account mutable by copying it in a
-        // buffer with MAX_PERMITTED_DATA_INCREASE capacity so that if the
+        // buffer with MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION capacity so that if the
         // transaction reallocs, we don't have to copy the whole account data a
         // second time to fullfill the realloc.
-        //
-        // NOTE: The account memory region CoW code in bpf_loader::create_vm() implements the same
-        // logic and must be kept in sync.
         if self.account.is_shared() {
-            self.account.reserve(MAX_PERMITTED_DATA_INCREASE);
+            self.account
+                .reserve(MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION);
         }
     }
 
