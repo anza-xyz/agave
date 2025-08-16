@@ -45,6 +45,7 @@ agave-banking-stage-ingress-types = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-verified-packet-receiver = { workspace = true }
+agave-votor = { workspace = true, features = ["agave-unstable-api"] }
 ahash = { workspace = true }
 anyhow = { workspace = true }
 arrayvec = { workspace = true }
