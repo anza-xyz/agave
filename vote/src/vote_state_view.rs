@@ -10,7 +10,7 @@ use {
         list_view::ListView,
     },
     core::fmt::Debug,
-    field_frames::{CommissionBpsView, CommissionFrame, CommissionView},
+    field_frames::{CommissionFrame, CommissionView},
     frame_v4::VoteStateFrameV4,
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
@@ -183,12 +183,15 @@ impl VoteStateView {
         CommissionView::new(self.frame.commission_frame(), &self.data[offset..])
     }
 
-    fn block_revenue_commission_view(&self) -> Option<CommissionBpsView> {
+    fn block_revenue_commission_view(&self) -> Option<CommissionView> {
         let offset = self
             .frame
             .simd185_field_offset(Simd185Field::BlockRevenueCommission)?;
         // SAFETY: `frame` was created from `data`.
-        Some(CommissionBpsView::new(&self.data[offset..]))
+        Some(CommissionView::new(
+            CommissionFrame::new_bps(),
+            &self.data[offset..],
+        ))
     }
 
     fn pending_delegator_rewards_view(&self) -> Option<PendingDelegatorRewardsView> {

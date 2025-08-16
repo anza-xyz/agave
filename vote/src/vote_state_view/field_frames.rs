@@ -331,23 +331,6 @@ impl From<&EpochCreditsItem> for (Epoch, u64, u64) {
         (item.epoch(), item.credits(), item.prev_credits())
     }
 }
-pub(super) struct CommissionBpsView<'a> {
-    buffer: &'a [u8],
-}
-
-impl<'a> CommissionBpsView<'a> {
-    pub(super) fn new(buffer: &'a [u8]) -> Self {
-        Self { buffer }
-    }
-}
-
-impl CommissionBpsView<'_> {
-    pub(super) fn commission_bps(&self) -> u16 {
-        let data = unsafe { *(self.buffer.as_ptr() as *const [u8; 2]) };
-        u16::from_le_bytes(data)
-    }
-}
-
 pub(super) struct CommissionView<'a> {
     frame: CommissionFrame,
     buffer: &'a [u8],
