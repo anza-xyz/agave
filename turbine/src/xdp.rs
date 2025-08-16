@@ -55,7 +55,36 @@ impl XdpConfig {
 
 #[derive(Clone)]
 pub struct XdpSender {
-    senders: Vec<Sender<(Vec<SocketAddr>, shred::Payload)>>,
+    senders: Vec<Sender<(XdpAddrs, shred::Payload)>>,
+}
+
+pub enum XdpAddrs {
+    Single(SocketAddr),
+    Multi(Vec<SocketAddr>),
+}
+
+impl From<SocketAddr> for XdpAddrs {
+    #[inline]
+    fn from(addr: SocketAddr) -> Self {
+        XdpAddrs::Single(addr)
+    }
+}
+
+impl From<Vec<SocketAddr>> for XdpAddrs {
+    #[inline]
+    fn from(addrs: Vec<SocketAddr>) -> Self {
+        XdpAddrs::Multi(addrs)
+    }
+}
+
+impl AsRef<[SocketAddr]> for XdpAddrs {
+    #[inline]
+    fn as_ref(&self) -> &[SocketAddr] {
+        match self {
+            XdpAddrs::Single(addr) => std::slice::from_ref(addr),
+            XdpAddrs::Multi(addrs) => addrs,
+        }
+    }
 }
 
 impl XdpSender {
@@ -63,9 +92,9 @@ impl XdpSender {
     pub(crate) fn try_send(
         &self,
         sender_index: usize,
-        addr: Vec<SocketAddr>,
+        addr: XdpAddrs,
         payload: shred::Payload,
-    ) -> Result<(), TrySendError<(Vec<SocketAddr>, shred::Payload)>> {
+    ) -> Result<(), TrySendError<(XdpAddrs, shred::Payload)>> {
         self.senders[sender_index % self.senders.len()].try_send((addr, payload))
     }
 }
