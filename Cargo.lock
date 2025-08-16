@@ -11740,14 +11740,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-upload-perf"
-version = "3.0.0"
-dependencies = [
- "serde_json",
- "solana-metrics",
-]
-
-[[package]]
 name = "solana-validator-exit"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

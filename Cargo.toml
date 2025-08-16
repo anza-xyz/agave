@@ -129,7 +129,6 @@ members = [
     "udp-client",
     "unified-scheduler-logic",
     "unified-scheduler-pool",
-    "upload-perf",
     "validator",
     "verified-packet-receiver",
     "version",

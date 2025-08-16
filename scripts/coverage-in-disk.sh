@@ -108,7 +108,6 @@ find target/cov -type f -name '*.gcda' -newer target/cov/before-test ! -newer ta
     --ignore \*.cargo\*
     --ignore \*build.rs
     --ignore bench-tps\*
-    --ignore upload-perf\*
     --ignore bench-streamer\*
     --ignore local-cluster\*
   )
