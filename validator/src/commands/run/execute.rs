@@ -47,7 +47,6 @@ use {
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
-    solana_logger::redirect_stderr_to_file,
     solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
@@ -95,6 +94,7 @@ pub fn execute(
     solana_version: &str,
     ledger_path: &Path,
     operation: Operation,
+    use_progress_bar: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let run_args = RunArgs::from_clap_arg_match(matches)?;
 
@@ -116,16 +116,6 @@ pub fn execute(
     } = cli::thread_args::parse_num_threads_args(matches);
 
     let identity_keypair = Arc::new(run_args.identity_keypair);
-
-    let logfile = run_args.logfile;
-    let logfile = if logfile == "-" {
-        None
-    } else {
-        println!("log file: {logfile}");
-        Some(logfile)
-    };
-    let use_progress_bar = logfile.is_none();
-    let _logger_thread = redirect_stderr_to_file(logfile);
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
