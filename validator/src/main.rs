@@ -2,11 +2,13 @@
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 use jemallocator::Jemalloc;
 use {
+    crate::commands::{run::args::RunArgs, FromClapArgMatches},
     agave_validator::{
         cli::{app, warn_for_deprecated_arguments, DefaultArgs},
         commands,
     },
     log::error,
+    solana_logger::redirect_stderr_to_file,
     std::{path::PathBuf, process::exit},
 };
 
@@ -19,8 +21,19 @@ pub fn main() {
     let solana_version = solana_version::version!();
     let cli_app = app(solana_version, &default_args);
     let matches = cli_app.get_matches();
-    warn_for_deprecated_arguments(&matches);
+    let logfile = RunArgs::from_clap_arg_match(&matches)
+        .expect("could not get logfile from matches")
+        .logfile;
+    let logfile = if logfile == "-" {
+        None
+    } else {
+        println!("log file: {logfile}");
+        Some(logfile)
+    };
+    let use_progress_bar = logfile.is_none();
+    let _logger_thread = redirect_stderr_to_file(logfile);
 
+    warn_for_deprecated_arguments(&matches);
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
     match matches.subcommand() {
@@ -29,6 +42,7 @@ pub fn main() {
             solana_version,
             &ledger_path,
             commands::run::execute::Operation::Initialize,
+            use_progress_bar,
         )
         .inspect_err(|err| error!("Failed to initialize validator: {err}"))
         .map_err(commands::Error::Dynamic),
@@ -37,6 +51,7 @@ pub fn main() {
             solana_version,
             &ledger_path,
             commands::run::execute::Operation::Run,
+            use_progress_bar,
         )
         .inspect_err(|err| error!("Failed to start validator: {err}"))
         .map_err(commands::Error::Dynamic),
