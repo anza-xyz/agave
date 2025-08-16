@@ -13,8 +13,7 @@ use {
     solana_ledger::shred::{self, should_discard_shred, ShredFetchStats},
     solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{
-        PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef, PinnedPacketBatch,
-        PACKETS_PER_BATCH,
+        BytesPacket, BytesPacketBatch, PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef,
     },
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
@@ -298,7 +297,6 @@ impl ShredFetchStage {
         {
             let (packet_sender, packet_receiver) = unbounded();
             let bank_forks = bank_forks.clone();
-            let recycler = recycler.clone();
             let exit = exit.clone();
             let sender = sender.clone();
             let turbine_disabled = turbine_disabled.clone();
@@ -310,7 +308,6 @@ impl ShredFetchStage {
                             repair_response_quic_receiver,
                             PacketFlags::REPAIR,
                             packet_sender,
-                            recycler,
                             exit,
                         )
                     })
@@ -344,7 +341,6 @@ impl ShredFetchStage {
                         turbine_quic_endpoint_receiver,
                         PacketFlags::empty(),
                         packet_sender,
-                        recycler,
                         exit,
                     )
                 })
@@ -405,7 +401,6 @@ pub(crate) fn receive_quic_datagrams(
     quic_datagrams_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
     flags: PacketFlags,
     sender: Sender<PacketBatch>,
-    recycler: PacketBatchRecycler,
     exit: Arc<AtomicBool>,
 ) {
     const RECV_TIMEOUT: Duration = Duration::from_secs(1);
@@ -416,37 +411,25 @@ pub(crate) fn receive_quic_datagrams(
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => return,
         };
-        let mut packet_batch = PinnedPacketBatch::new_with_recycler(
-            &recycler,
-            PACKETS_PER_BATCH,
-            "receive_quic_datagrams",
-        );
-        unsafe {
-            packet_batch.set_len(PACKETS_PER_BATCH);
-        };
         let deadline = Instant::now() + PACKET_COALESCE_DURATION;
         let entries = std::iter::once(entry).chain(
             std::iter::repeat_with(|| quic_datagrams_receiver.recv_deadline(deadline).ok())
                 .while_some(),
         );
-        let size = entries
+        let packet_batch: BytesPacketBatch = entries
             .filter(|(_, _, bytes)| bytes.len() <= PACKET_DATA_SIZE)
-            .zip(packet_batch.iter_mut())
-            .map(|((_pubkey, addr, bytes), packet)| {
-                *packet.meta_mut() = Meta {
+            .map(|(_pubkey, addr, bytes)| {
+                let meta = Meta {
                     size: bytes.len(),
                     addr: addr.ip(),
                     port: addr.port(),
                     flags,
                 };
-                packet.buffer_mut()[..bytes.len()].copy_from_slice(&bytes);
+                BytesPacket::new(bytes, meta)
             })
-            .count();
-        if size > 0 {
-            packet_batch.truncate(size);
-            if sender.send(packet_batch.into()).is_err() {
-                return; // The receiver end of the channel is disconnected.
-            }
+            .collect();
+        if !packet_batch.is_empty() && sender.send(packet_batch.into()).is_err() {
+            return; // The receiver end of the channel is disconnected.
         }
     }
 }
