@@ -692,6 +692,8 @@ fn test_flush_slots_with_reclaim_old_slots() {
 
     let storage = accounts.create_and_insert_store(new_slot, 4096, "test_flush_slots");
 
+    accounts.accounts_index.add_root(new_slot);
+
     // Flushing this storage directly using _store_accounts_frozen. This is done to pass in UpsertReclaim::ReclaimOldSlots
     accounts._store_accounts_frozen(
         (new_slot, &accounts_list[..]),

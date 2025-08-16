@@ -5663,6 +5663,14 @@ impl AccountsDb {
         let target_slot = accounts.target_slot();
         let len = std::cmp::min(accounts.len(), infos.len());
 
+        // If reclaiming old slots, ensure the target slot is a root
+        // Having an unrooted slot reclaim a rooted version of a slot
+        // could lead to index corruption if the unrooted version is
+        // discarded
+        if reclaim == UpsertReclaim::ReclaimOldSlots {
+            assert!(self.accounts_index.is_alive_root(target_slot));
+        }
+
         let update = |start, end| {
             let mut reclaims = Vec::with_capacity((end - start) / 2);
 
