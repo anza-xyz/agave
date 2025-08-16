@@ -6192,7 +6192,7 @@ impl AccountsDb {
                 None,
                 &HashSet::default(),
                 HandleReclaims::ProcessDeadSlots(&purge_stats),
-                MarkAccountsObsolete::No,
+                MarkAccountsObsolete::Yes(slot),
             );
             handle_reclaims_time.stop();
             handle_reclaims_elapsed = handle_reclaims_time.as_us();

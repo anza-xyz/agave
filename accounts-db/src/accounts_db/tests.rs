@@ -707,6 +707,13 @@ fn test_flush_slots_with_reclaim_old_slots() {
     assert!(accounts.storage.get_slot_storage_entry(0).is_none());
     for slot in 1..5 {
         assert!(accounts.storage.get_slot_storage_entry(slot).is_some());
+
+        // Verify that the obsolete accounts for the remaining slots are correct
+        let storage = accounts.storage.get_slot_storage_entry(slot).unwrap();
+        assert_eq!(
+            storage.get_obsolete_accounts(Some(new_slot)).len() as u64,
+            5 - slot
+        );
     }
     assert!(accounts.storage.get_slot_storage_entry(new_slot).is_some());
 }
