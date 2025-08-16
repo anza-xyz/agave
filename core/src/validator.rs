@@ -25,7 +25,7 @@ use {
         system_monitor_service::{
             verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
         },
-        tpu::{ForwardingClientOption, Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
+        tpu::{ForwardingClientOption, Tpu, DEFAULT_TPU_COALESCE},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
     anyhow::{anyhow, Context, Result},
@@ -1033,8 +1033,12 @@ impl Validator {
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
-        let mut tpu_transactions_forwards_client =
-            Some(node.sockets.tpu_transaction_forwarding_client);
+        let mut tpu_transactions_forwards_client = node
+            .sockets
+            .tpu
+            .transaction_forwarding_client
+            .try_clone()
+            .ok();
 
         let connection_cache = match (config.use_tpu_client_next, use_quic) {
             (false, true) => Some(Arc::new(ConnectionCache::new_with_client_options(
@@ -1597,17 +1601,7 @@ impl Validator {
             transaction_recorder,
             entry_receiver,
             retransmit_slots_receiver,
-            TpuSockets {
-                transactions: node.sockets.tpu,
-                transaction_forwards: node.sockets.tpu_forwards,
-                vote: node.sockets.tpu_vote,
-                broadcast: node.sockets.broadcast,
-                transactions_quic: node.sockets.tpu_quic,
-                transactions_forwards_quic: node.sockets.tpu_forwards_quic,
-                vote_quic: node.sockets.tpu_vote_quic,
-                vote_forwarding_client: node.sockets.tpu_vote_forwarding_client,
-                vortexor_receivers: node.sockets.vortexor_receivers,
-            },
+            node.sockets.tpu,
             rpc_subscriptions.clone(),
             transaction_status_sender,
             entry_notification_sender,
@@ -1738,6 +1732,7 @@ impl Validator {
         info!(
             "local broadcast address: {}",
             node.sockets
+                .tpu
                 .broadcast
                 .first()
                 .unwrap()

@@ -1,10 +1,11 @@
 use {
     crate::{
-        cluster_info::{NodeConfig, Sockets},
+        cluster_info::NodeConfig,
         contact_info::{
             ContactInfo,
             Protocol::{QUIC, UDP},
         },
+        sockets::{Sockets, TpuSockets},
     },
     solana_net_utils::{
         find_available_ports_in_range,
@@ -260,15 +261,24 @@ impl Node {
 
         info!("vortexor_receivers is {vortexor_receivers:?}");
         trace!("new ContactInfo: {info:?}");
+
         let sockets = Sockets {
             alpenglow: Some(alpenglow),
+            tpu: TpuSockets {
+                transactions: tpu_sockets,
+                transaction_forwards: tpu_forwards_sockets,
+                vote: tpu_vote_sockets,
+                broadcast,
+                transactions_quic: tpu_quic,
+                transactions_forwards_quic: tpu_forwards_quic,
+                vote_quic: tpu_vote_quic,
+                vote_forwarding_client: tpu_vote_forwarding_client,
+                transaction_forwarding_client: tpu_transaction_forwarding_client,
+                vortexor_receivers,
+            },
             gossip: AtomicUdpSocket::new(gossip),
             tvu: tvu_sockets,
             tvu_quic,
-            tpu: tpu_sockets,
-            tpu_forwards: tpu_forwards_sockets,
-            tpu_vote: tpu_vote_sockets,
-            broadcast,
             repair,
             repair_quic,
             retransmit_sockets,
@@ -277,14 +287,8 @@ impl Node {
             ip_echo: Some(ip_echo),
             ancestor_hashes_requests,
             ancestor_hashes_requests_quic,
-            tpu_quic,
-            tpu_forwards_quic,
-            tpu_vote_quic,
-            tpu_vote_forwarding_client,
             quic_vote_client,
-            tpu_transaction_forwarding_client,
             rpc_sts_client,
-            vortexor_receivers,
         };
         info!("Bound all network sockets as follows: {:#?}", &sockets);
         Node {

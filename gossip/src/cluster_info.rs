@@ -2858,7 +2858,7 @@ mod tests {
         check_socket(&node.sockets.tvu_quic, ip, range);
 
         check_sockets(&node.sockets.tvu, ip, range);
-        check_sockets(&node.sockets.tpu, ip, range);
+        check_sockets(&node.sockets.tpu.transactions, ip, range);
     }
 
     #[test]
