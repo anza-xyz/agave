@@ -6,14 +6,14 @@ pagination_label: "Validator Guides: Node Failover"
 ---
 
 A simple two machine instance failover method is described here, which allows you to:
-* Upgrade your validator software with virtually no down time, and
+* Upgrade your validator software with virtually no downtime, and
 * Failover to the secondary instance when your monitoring detects a problem with the primary instance
 without any safety issues that would otherwise be associated with running two instances of your validator.
 
 You will need:
 * Two non-delinquent validator nodes
 * Identities that are not associated with a staked vote account on both validators to use when not actively voting
-* Validator startup scripts both modified to use symbolic link as the identity
+* Validator startup scripts both modified to use a symbolic link as the identity
 * Validator startup scripts both modified to include staked identity as authorized voter
 
 ## Setup
@@ -32,7 +32,7 @@ The identity flag and authorized voter flags should be modified on both validato
 Note that `identity.json` is not a real file but a symbolic link we will create shortly.
 However, the authorized voter flag does need to point to the staked identity file (your main identity).
 In this guide, the main identity is renamed to `staked-identity.json` for clarity and simplicity.
-You can certainly name your main identity file however you'd like; just make sure it is specified as an authorized voter as shown below:
+You can certainly name your main identity file however you'd like; make sure it is specified as an authorized voter as shown below:
 
 ```
 exec /home/sol/bin/agave-validator \
@@ -90,7 +90,7 @@ scp /mnt/ledger/tower-1_9-$(solana-keygen pubkey /home/sol/staked-identity.json)
 
 #### Inactive Validator
 * Set identity to your staked identity (requiring the tower)
-* Rewrite symbolic link to reflect this
+* Rewrite the symbolic link to reflect this
 
 ```
 #!/bin/bash
