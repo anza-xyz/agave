@@ -924,7 +924,7 @@ mod tests {
         assert_matches::assert_matches,
         bincode::serialized_size,
         itertools::Itertools,
-        rand::Rng,
+        rand::{thread_rng, Rng, RngCore},
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
         rayon::ThreadPoolBuilder,
         solana_keypair::keypair_from_seed,
@@ -939,6 +939,87 @@ mod tests {
     const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_VARIANT;
     const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
     const OFFSET_OF_SHRED_VARIANT: usize = SIZE_OF_SIGNATURE;
+
+    pub(super) struct TestShredBuilder<'a> {
+        slot: Slot,
+        data_size: usize,
+        is_last_in_slot: bool,
+        rng: Option<&'a mut dyn RngCore>,
+        merkle_root: Option<Hash>,
+        parent_offset: Option<u16>,
+    }
+
+    #[allow(dead_code)]
+    impl<'a> TestShredBuilder<'a> {
+        pub(super) fn new(slot: Slot, data_size: usize, is_last_in_slot: bool) -> Self {
+            Self {
+                slot,
+                data_size,
+                is_last_in_slot,
+                rng: None,
+                merkle_root: None,
+                parent_offset: None,
+            }
+        }
+
+        pub(super) fn with_rng<R: RngCore>(mut self, rng: &'a mut R) -> Self {
+            self.rng = Some(rng);
+            self
+        }
+
+        pub(super) fn with_merkle_root(mut self, root: Hash) -> Self {
+            self.merkle_root = Some(root);
+            self
+        }
+
+        pub(super) fn with_parent_offset(mut self, offset: u16) -> Self {
+            self.parent_offset = Some(
+                self.slot
+                    .saturating_sub(u64::from(offset))
+                    .try_into()
+                    .unwrap(),
+            );
+            self
+        }
+
+        #[allow(unused_mut)]
+        pub(super) fn build(mut self) -> Result<Vec<merkle::Shred>, Error> {
+            let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+
+            let mut default_rng = thread_rng();
+            let rng: &mut dyn RngCore = match self.rng {
+                Some(r) => r,
+                None => &mut default_rng,
+            };
+
+            let merkle_root = self
+                .merkle_root
+                .unwrap_or_else(|| Hash::new_from_array(rng.gen()));
+
+            let parent_offset = self
+                .parent_offset
+                .unwrap_or_else(|| rng.gen_range(1..=u16::try_from(self.slot).unwrap_or(u16::MAX)));
+            let parent_slot = self.slot.checked_sub(u64::from(parent_offset)).unwrap();
+
+            let mut data = vec![0u8; self.data_size];
+            rng.fill(&mut data[..]);
+            merkle::make_shreds_from_data(
+                &thread_pool,
+                &Keypair::new(),
+                Some(merkle_root),
+                &data[..],
+                self.slot,
+                parent_slot,
+                rng.gen(),            // shred_version
+                rng.gen_range(1..64), // reference_tick
+                self.is_last_in_slot,
+                rng.gen_range(0..671), // next_shred_index
+                rng.gen_range(0..781), // next_code_index
+                &ReedSolomonCache::default(),
+                &mut ProcessShredsStats::default(),
+            )
+        }
+    }
 
     pub(super) fn make_merkle_shreds_for_tests<R: Rng>(
         rng: &mut R,
@@ -1089,14 +1170,10 @@ mod tests {
         solana_logger::setup();
         let mut rng = rand::thread_rng();
         let slot = 18_291;
-        let shreds = make_merkle_shreds_for_tests(
-            &mut rng,
-            slot,
-            1200 * 5, // data_size
-            true,     // chained
-            is_last_in_slot,
-        )
-        .unwrap();
+        let shreds = TestShredBuilder::new(slot, 1200 * 5, is_last_in_slot)
+            .with_rng(&mut rng)
+            .build()
+            .unwrap();
         let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
         assert_eq!(shreds.iter().map(Shred::fec_set_index).dedup().count(), 1);
 
