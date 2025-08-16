@@ -198,6 +198,7 @@ impl QosService {
                             compute_units,
                             loaded_accounts_data_size,
                             result: _,
+                            fee_payer_post_balance: _,
                         } => {
                             cost_tracker.update_execution_cost(
                                 tx_cost,
@@ -752,6 +753,7 @@ mod tests {
                     loaded_accounts_data_size: loaded_accounts_data_size
                         + loaded_accounts_data_size_adjustment,
                     result: Ok(()),
+                    fee_payer_post_balance: 0,
                 })
                 .collect();
             let final_txs_cost = total_txs_cost
@@ -883,6 +885,7 @@ mod tests {
                             loaded_accounts_data_size: loaded_accounts_data_size
                                 + loaded_accounts_data_size_adjustment,
                             result: Ok(()),
+                            fee_payer_post_balance: 1,
                         }
                     }
                 })
