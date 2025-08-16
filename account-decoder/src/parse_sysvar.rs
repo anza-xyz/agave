@@ -14,9 +14,11 @@ use {
     solana_sdk_ids::sysvar,
     solana_slot_hashes::SlotHashes,
     solana_slot_history::{self as slot_history, SlotHistory},
-    solana_stake_interface::stake_history::{StakeHistory, StakeHistoryEntry},
     solana_sysvar::{
-        epoch_rewards::EpochRewards, last_restart_slot::LastRestartSlot, rewards::Rewards,
+        epoch_rewards::EpochRewards,
+        last_restart_slot::LastRestartSlot,
+        rewards::Rewards,
+        stake_history::{StakeHistory, StakeHistoryEntry},
     },
 };
 

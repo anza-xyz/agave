@@ -9,10 +9,10 @@ use {
     solana_clap_utils::{
         compute_budget::ComputeUnitLimit, input_parsers::lamports_of_sol, offline::SIGN_ONLY_ARG,
     },
-    solana_cli_output::display::build_balance_message,
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_message::Message,
+    solana_native_token::lamports_to_sol,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
 };
@@ -162,22 +162,22 @@ where
         if from_pubkey == fee_pubkey {
             if from_balance == 0 || from_balance < spend.saturating_add(fee) {
                 return Err(CliError::InsufficientFundsForSpendAndFee(
-                    build_balance_message(spend, false, false),
-                    build_balance_message(fee, false, false),
+                    lamports_to_sol(spend),
+                    lamports_to_sol(fee),
                     *from_pubkey,
                 ));
             }
         } else {
             if from_balance < spend {
                 return Err(CliError::InsufficientFundsForSpend(
-                    build_balance_message(spend, false, false),
+                    lamports_to_sol(spend),
                     *from_pubkey,
                 ));
             }
             if !check_account_for_balance_with_commitment(rpc_client, fee_pubkey, fee, commitment)?
             {
                 return Err(CliError::InsufficientFundsForFee(
-                    build_balance_message(fee, false, false),
+                    lamports_to_sol(fee),
                     *fee_pubkey,
                 ));
             }

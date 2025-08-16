@@ -14,8 +14,8 @@ use {
         is_loadable::IsLoadable as _,
     },
     solana_cli_output::{
-        display::{build_balance_message, writeln_transaction},
-        CliAccount, CliAccountNewConfig, OutputFormat, QuietDisplay, VerboseDisplay,
+        display::writeln_transaction, CliAccount, CliAccountNewConfig, OutputFormat, QuietDisplay,
+        VerboseDisplay,
     },
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -24,6 +24,7 @@ use {
         blockstore_meta::{DuplicateSlotProof, ErasureMeta},
         shred::{Shred, ShredType},
     },
+    solana_native_token::lamports_to_sol,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_transaction::versioned::VersionedTransaction,
@@ -257,14 +258,14 @@ impl fmt::Display for CliBlockWithEntries {
                     format!(
                         "{}◎{:<14.9}",
                         sign,
-                        build_balance_message(reward.lamports.unsigned_abs(), false, false)
+                        lamports_to_sol(reward.lamports.unsigned_abs())
                     ),
                     if reward.post_balance == 0 {
                         "          -                 -".to_string()
                     } else {
                         format!(
                             "◎{:<19.9}  {:>13.9}%",
-                            build_balance_message(reward.post_balance, false, false),
+                            lamports_to_sol(reward.post_balance),
                             (reward.lamports.abs() as f64
                                 / (reward.post_balance as f64 - reward.lamports as f64))
                                 * 100.0
@@ -282,7 +283,7 @@ impl fmt::Display for CliBlockWithEntries {
                 f,
                 "Total Rewards: {}◎{:<12.9}",
                 sign,
-                build_balance_message(total_rewards.unsigned_abs(), false, false)
+                lamports_to_sol(total_rewards.unsigned_abs())
             )?;
         }
         for (index, entry) in self.encoded_confirmed_block.entries.iter().enumerate() {

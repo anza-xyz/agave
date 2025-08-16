@@ -18,16 +18,16 @@ pub fn process_instruction(
     #[derive(Default)]
     struct MemOpSyscalls();
     impl MemOps for MemOpSyscalls {
-        unsafe fn memcpy(&self, dst: &mut [u8], src: &[u8], n: usize) {
+        fn memcpy(&self, dst: &mut [u8], src: &[u8], n: usize) {
             sol_memcpy(dst, src, n)
         }
         unsafe fn memmove(&self, dst: *mut u8, src: *mut u8, n: usize) {
             sol_memmove(dst, src, n)
         }
-        unsafe fn memset(&self, s: &mut [u8], c: u8, n: usize) {
+        fn memset(&self, s: &mut [u8], c: u8, n: usize) {
             sol_memset(s, c, n)
         }
-        unsafe fn memcmp(&self, s1: &[u8], s2: &[u8], n: usize) -> i32 {
+        fn memcmp(&self, s1: &[u8], s2: &[u8], n: usize) -> i32 {
             sol_memcmp(s1, s2, n)
         }
     }
