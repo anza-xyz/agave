@@ -23,7 +23,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_pubkey::Pubkey,
-    solana_rpc::rpc::JsonRpcConfig,
+    solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
     solana_send_transaction_service::send_transaction_service::{
         MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
@@ -40,6 +40,7 @@ const INCLUDE_KEY: &str = "account-index-include-key";
 pub mod account_secondary_indexes;
 pub mod blockstore_options;
 pub mod json_rpc_config;
+pub mod pub_sub_config;
 pub mod rpc_bigtable_config;
 pub mod rpc_bootstrap_config;
 
@@ -53,6 +54,7 @@ pub struct RunArgs {
     pub rpc_bootstrap_config: RpcBootstrapConfig,
     pub blockstore_options: BlockstoreOptions,
     pub json_rpc_config: JsonRpcConfig,
+    pub pub_sub_config: PubSubConfig,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -101,6 +103,7 @@ impl FromClapArgMatches for RunArgs {
             rpc_bootstrap_config: RpcBootstrapConfig::from_clap_arg_match(matches)?,
             blockstore_options: BlockstoreOptions::from_clap_arg_match(matches)?,
             json_rpc_config: JsonRpcConfig::from_clap_arg_match(matches)?,
+            pub_sub_config: PubSubConfig::from_clap_arg_match(matches)?,
         })
     }
 }
@@ -1737,6 +1740,13 @@ mod tests {
                     max_request_body_size: Some(MAX_REQUEST_BODY_SIZE),
                     ..JsonRpcConfig::default()
                 },
+                pub_sub_config: PubSubConfig {
+                    worker_threads: 4,
+                    notification_threads: None,
+                    queue_capacity_items:
+                        solana_rpc::rpc_pubsub_service::DEFAULT_QUEUE_CAPACITY_ITEMS,
+                    ..PubSubConfig::default_for_tests()
+                },
             }
         }
     }
@@ -1752,6 +1762,7 @@ mod tests {
                 rpc_bootstrap_config: self.rpc_bootstrap_config.clone(),
                 blockstore_options: self.blockstore_options.clone(),
                 json_rpc_config: self.json_rpc_config.clone(),
+                pub_sub_config: self.pub_sub_config.clone(),
             }
         }
     }

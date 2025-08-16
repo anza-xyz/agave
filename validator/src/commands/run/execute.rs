@@ -52,7 +52,6 @@ use {
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
-    solana_rpc::rpc_pubsub_service::PubSubConfig,
     solana_runtime::{
         runtime_config::RuntimeConfig,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
@@ -561,29 +560,7 @@ pub fn execute(
                 // https://github.com/solana-labs/solana/issues/12250
             )
         }),
-        pubsub_config: PubSubConfig {
-            enable_block_subscription: matches.is_present("rpc_pubsub_enable_block_subscription"),
-            enable_vote_subscription: matches.is_present("rpc_pubsub_enable_vote_subscription"),
-            max_active_subscriptions: value_t_or_exit!(
-                matches,
-                "rpc_pubsub_max_active_subscriptions",
-                usize
-            ),
-            queue_capacity_items: value_t_or_exit!(
-                matches,
-                "rpc_pubsub_queue_capacity_items",
-                usize
-            ),
-            queue_capacity_bytes: value_t_or_exit!(
-                matches,
-                "rpc_pubsub_queue_capacity_bytes",
-                usize
-            ),
-            worker_threads: value_t_or_exit!(matches, "rpc_pubsub_worker_threads", usize),
-            notification_threads: value_t!(matches, "rpc_pubsub_notification_threads", usize)
-                .ok()
-                .and_then(NonZeroUsize::new),
-        },
+        pubsub_config: run_args.pub_sub_config,
         voting_disabled: matches.is_present("no_voting") || restricted_repair_only_mode,
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),
         known_validators: run_args.known_validators,
