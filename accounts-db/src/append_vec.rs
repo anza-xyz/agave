@@ -1025,7 +1025,7 @@ impl AppendVec {
                 {}
             }
             AppendVecFileBacking::File(file) => {
-                reader.set_file(file, self.len())?;
+                reader.activate_file(file, self.len())?;
 
                 let mut min_buf_len = STORE_META_OVERHEAD;
                 loop {

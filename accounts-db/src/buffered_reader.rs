@@ -74,7 +74,7 @@ pub(crate) trait FileBufRead<'a>: BufRead {
     ///
     /// `read_limit` provides a pre-defined limit on the number of bytes that can be read
     /// from the file (unless EOF is reached).
-    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()>;
+    fn activate_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()>;
 
     /// Returns the current file offset corresponding to the start of the buffer
     /// that will be returned by the next call to `fill_buf`.
@@ -151,7 +151,7 @@ impl<'a, T: Backing> BufferedReader<'a, T> {
 }
 
 impl<'a, T: Backing> FileBufRead<'a> for BufferedReader<'a, T> {
-    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
+    fn activate_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
         self.do_set_file(file, read_limit);
         Ok(())
     }
@@ -350,9 +350,9 @@ impl<R: BufRead> BufRead for BufReaderWithOverflow<R> {
 }
 
 impl<'a, R: FileBufRead<'a>> FileBufRead<'a> for BufReaderWithOverflow<R> {
-    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
+    fn activate_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
         self.overflow_buf.clear();
-        self.reader.set_file(file, read_limit)
+        self.reader.activate_file(file, read_limit)
     }
 
     fn get_file_offset(&self) -> usize {
@@ -413,9 +413,9 @@ pub fn large_file_buf_reader(
         use crate::io_uring::sequential_file_reader::{SequentialFileReader, DEFAULT_READ_SIZE};
 
         let buf_size = buf_size.max(DEFAULT_READ_SIZE);
-        return Ok(Box::new(SequentialFileReader::with_capacity(
-            buf_size, path,
-        )?));
+        let mut reader = SequentialFileReader::with_capacity(buf_size)?;
+        reader.add_path_to_prefetch(path)?;
+        return Ok(Box::new(reader));
     }
     let file = File::open(path)?;
     Ok(Box::new(BufReader::with_capacity(buf_size, file)))
