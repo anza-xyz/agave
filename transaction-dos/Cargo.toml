@@ -11,6 +11,9 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 bincode = { workspace = true }
 clap = { workspace = true }
@@ -43,6 +46,6 @@ solana-version = { workspace = true }
 [dev-dependencies]
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-hash = { workspace = true }
-solana-local-cluster = { workspace = true }
+solana-local-cluster = { workspace = true, features = ["dev-context-only-utils"] }
 solana-poh-config = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
