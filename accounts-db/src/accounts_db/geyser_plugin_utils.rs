@@ -139,8 +139,11 @@ impl AccountsDb {
 pub mod tests {
     use {
         super::*,
-        crate::accounts_update_notifier_interface::{
-            AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
+        crate::{
+            accounts::Accounts,
+            accounts_update_notifier_interface::{
+                AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
+            },
         },
         dashmap::DashMap,
         solana_account::ReadableAccount as _,
@@ -255,12 +258,13 @@ pub mod tests {
 
     #[test]
     fn test_notify_account_at_accounts_update() {
-        let mut accounts = AccountsDb::new_single_for_tests();
+        let mut accounts_db = AccountsDb::default_for_tests();
 
         let notifier = GeyserTestPlugin::default();
-
         let notifier = Arc::new(notifier);
-        accounts.set_geyser_plugin_notifier(Some(notifier.clone()));
+
+        accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
+        let accounts = Accounts::new(Arc::new(accounts_db));
 
         // Account with key1 is updated twice in two different slots -- should only get notified twice.
         // Account with key2 is updated slot0, should get notified once
@@ -270,24 +274,24 @@ pub mod tests {
         let account1 =
             AccountSharedData::new(account1_lamports1, 1, AccountSharedData::default().owner());
         let slot0 = 0;
-        accounts.store_for_tests((slot0, &[(&key1, &account1)][..]));
+        accounts.store_cached((slot0, &[(&key1, &account1)][..]), None);
 
         let key2 = solana_pubkey::new_rand();
         let account2_lamports: u64 = 200;
         let account2 =
             AccountSharedData::new(account2_lamports, 1, AccountSharedData::default().owner());
-        accounts.store_for_tests((slot0, &[(&key2, &account2)][..]));
+        accounts.store_cached((slot0, &[(&key2, &account2)][..]), None);
 
         let account1_lamports2 = 2;
         let slot1 = 1;
         let account1 = AccountSharedData::new(account1_lamports2, 1, account1.owner());
-        accounts.store_for_tests((slot1, &[(&key1, &account1)][..]));
+        accounts.store_cached((slot1, &[(&key1, &account1)][..]), None);
 
         let key3 = solana_pubkey::new_rand();
         let account3_lamports: u64 = 300;
         let account3 =
             AccountSharedData::new(account3_lamports, 1, AccountSharedData::default().owner());
-        accounts.store_for_tests((slot1, &[(&key3, &account3)][..]));
+        accounts.store_cached((slot1, &[(&key3, &account3)][..]), None);
 
         assert_eq!(notifier.accounts_notified.get(&key1).unwrap().len(), 2);
         assert_eq!(
