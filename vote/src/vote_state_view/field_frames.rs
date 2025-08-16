@@ -2,7 +2,8 @@ use {
     super::{list_view::ListView, Result, VoteStateViewError},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    std::io::BufRead,
+    solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+    std::io::{BufRead, Read},
 };
 
 pub(super) trait ListFrame {
@@ -116,6 +117,65 @@ impl ListFrame for LockoutListFrame {
 
     fn len(&self) -> usize {
         self.len as usize
+    }
+}
+
+pub(super) struct BlsPubkeyCompressedView<'a> {
+    frame: BlsPubkeyCompressedFrame,
+    buffer: &'a [u8],
+}
+
+impl<'a> BlsPubkeyCompressedView<'a> {
+    pub(super) fn new(frame: BlsPubkeyCompressedFrame, buffer: &'a [u8]) -> Self {
+        Self { frame, buffer }
+    }
+}
+
+impl BlsPubkeyCompressedView<'_> {
+    pub(super) fn pubkey(&self) -> Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]> {
+        if !self.frame.has_pubkey {
+            None
+        } else {
+            let mut cursor = std::io::Cursor::new(self.buffer);
+            cursor.consume(1);
+            let mut buf = [0; BLS_PUBLIC_KEY_COMPRESSED_SIZE];
+            cursor.read_exact(&mut buf).unwrap();
+            Some(buf)
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+pub(super) struct BlsPubkeyCompressedFrame {
+    pub(super) has_pubkey: bool,
+}
+
+impl BlsPubkeyCompressedFrame {
+    pub(super) fn total_size(&self) -> usize {
+        1 + self.size()
+    }
+
+    pub(super) fn size(&self) -> usize {
+        if self.has_pubkey {
+            BLS_PUBLIC_KEY_COMPRESSED_SIZE
+        } else {
+            0
+        }
+    }
+
+    pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
+        let byte = solana_serialize_utils::cursor::read_u8(cursor)
+            .map_err(|_err| VoteStateViewError::AccountDataTooSmall)?;
+        let has_pubkey = match byte {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(VoteStateViewError::InvalidBlsPubkeyCompressedOption),
+        }?;
+
+        let frame = Self { has_pubkey };
+        cursor.consume(frame.size());
+        Ok(frame)
     }
 }
 
@@ -271,6 +331,68 @@ impl From<&EpochCreditsItem> for (Epoch, u64, u64) {
         (item.epoch(), item.credits(), item.prev_credits())
     }
 }
+pub(super) struct CommissionView<'a> {
+    frame: CommissionFrame,
+    buffer: &'a [u8],
+}
+
+impl<'a> CommissionView<'a> {
+    pub(super) fn new(frame: CommissionFrame, buffer: &'a [u8]) -> Self {
+        Self { frame, buffer }
+    }
+}
+
+impl CommissionView<'_> {
+    pub(super) fn commission_percent(&self) -> u8 {
+        if !self.frame.use_bps {
+            self.buffer[0]
+        } else {
+            let data = unsafe { *(self.buffer.as_ptr() as *const [u8; 2]) };
+            let bps = u16::from_le_bytes(data);
+            let percent = (bps / 100).min(u8::MAX as u16);
+            percent as u8
+        }
+    }
+
+    pub(super) fn commission_bps(&self) -> u16 {
+        if !self.frame.use_bps {
+            100 * self.buffer[0] as u16
+        } else {
+            let data = unsafe { *(self.buffer.as_ptr() as *const [u8; 2]) };
+            u16::from_le_bytes(data)
+        }
+    }
+}
+
+pub(super) struct CommissionFrame {
+    use_bps: bool,
+}
+
+impl CommissionFrame {
+    pub(super) const fn new_percent() -> Self {
+        Self { use_bps: false }
+    }
+    pub(super) const fn new_bps() -> Self {
+        Self { use_bps: true }
+    }
+}
+
+pub(super) struct PendingDelegatorRewardsView<'a> {
+    buffer: &'a [u8],
+}
+
+impl<'a> PendingDelegatorRewardsView<'a> {
+    pub(super) fn new(buffer: &'a [u8]) -> Self {
+        Self { buffer }
+    }
+}
+
+impl PendingDelegatorRewardsView<'_> {
+    pub(super) fn value(&self) -> u64 {
+        let data = unsafe { *(self.buffer.as_ptr() as *const [u8; 8]) };
+        u64::from_le_bytes(data)
+    }
+}
 
 pub(super) struct RootSlotView<'a> {
     frame: RootSlotFrame,
@@ -348,6 +470,19 @@ mod tests {
     use {super::*, solana_vote_interface::state::CircBuf};
 
     #[test]
+    fn test_bls_pubkey_view() {
+        let frame = BlsPubkeyCompressedFrame { has_pubkey: true };
+        let buffer = [1; 49]; // 1 byte for has_pubkey + 48 bytes for the pubkey
+        let view = BlsPubkeyCompressedView::new(frame, &buffer);
+        assert!(view.pubkey().is_some());
+
+        let frame = BlsPubkeyCompressedFrame { has_pubkey: false };
+        let buffer = [0; 1];
+        let view = BlsPubkeyCompressedView::new(frame, &buffer);
+        assert!(view.pubkey().is_none());
+    }
+
+    #[test]
     fn test_prior_voters_total_size() {
         #[repr(C)]
         pub(super) struct PriorVotersItem {
@@ -361,5 +496,37 @@ mod tests {
             core::mem::size_of::<u64>() /* idx */ +
             core::mem::size_of::<bool>() /* is_empty */;
         assert_eq!(PriorVotersFrame::total_size(), expected_total_size);
+    }
+
+    #[test]
+    fn test_commission_view() {
+        let frame = CommissionFrame::new_percent();
+        let buffer = [0; 1];
+        let commission_view = CommissionView::new(frame, &buffer);
+        assert_eq!(commission_view.commission_percent(), 0);
+
+        // base case
+        let frame = CommissionFrame::new_bps();
+        let buffer = [0, 0];
+        let commission_view = CommissionView::new(frame, &buffer);
+        assert_eq!(commission_view.commission_percent(), 0);
+
+        // 1% commission
+        let frame = CommissionFrame::new_bps();
+        let buffer = 100u16.to_le_bytes();
+        let commission_view = CommissionView::new(frame, &buffer);
+        assert_eq!(commission_view.commission_percent(), 1);
+
+        // round down to 1%
+        let frame = CommissionFrame::new_bps();
+        let buffer = 101u16.to_le_bytes();
+        let commission_view = CommissionView::new(frame, &buffer);
+        assert_eq!(commission_view.commission_percent(), 1);
+
+        // over u8 max
+        let frame = CommissionFrame::new_bps();
+        let buffer = u16::MAX.to_le_bytes();
+        let commission_view = CommissionView::new(frame, &buffer);
+        assert_eq!(commission_view.commission_percent(), u8::MAX);
     }
 }
