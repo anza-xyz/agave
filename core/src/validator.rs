@@ -1733,7 +1733,7 @@ impl Validator {
         info!("{:?}", node.info);
         info!(
             "local gossip address: {}",
-            node.sockets.gossip.local_addr().unwrap()
+            node.sockets.gossip[0].local_addr().unwrap()
         );
         info!(
             "local broadcast address: {}",
