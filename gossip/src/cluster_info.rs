@@ -2381,7 +2381,7 @@ pub struct Sockets {
     /// Client-side socket for ForwardingStage vote transactions
     pub tpu_vote_forwarding_client: UdpSocket,
     /// Client-side socket for ForwardingStage non-vote transactions
-    pub tpu_transaction_forwarding_client: UdpSocket,
+    pub tpu_transaction_forwarding_clients: Vec<UdpSocket>,
     /// Socket for alpenglow consensus logic
     pub alpenglow: Option<UdpSocket>,
     /// Connection cache endpoint for QUIC-based Vote

@@ -58,7 +58,14 @@ mod packet_container;
 /// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate.
 pub enum ForwardingClientOption<'a> {
     ConnectionCache(Arc<ConnectionCache>),
-    TpuClientNext((&'a Keypair, UdpSocket, RuntimeHandle, CancellationToken)),
+    TpuClientNext(
+        (
+            &'a Keypair,
+            &'a [UdpSocket],
+            RuntimeHandle,
+            CancellationToken,
+        ),
+    ),
 }
 
 /// Value chosen because it was used historically, at some point
