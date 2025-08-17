@@ -7976,7 +7976,6 @@ dependencies = [
  "solana-hash",
  "solana-inflation",
  "solana-instruction",
- "solana-instruction-error",
  "solana-keypair",
  "solana-lattice-hash",
  "solana-loader-v3-interface 5.0.0",
