@@ -92,10 +92,10 @@ impl XdpSender {
     pub(crate) fn try_send(
         &self,
         sender_index: usize,
-        addr: XdpAddrs,
+        addr: impl Into<XdpAddrs>,
         payload: shred::Payload,
     ) -> Result<(), TrySendError<(XdpAddrs, shred::Payload)>> {
-        self.senders[sender_index % self.senders.len()].try_send((addr, payload))
+        self.senders[sender_index % self.senders.len()].try_send((addr.into(), payload))
     }
 }
 
