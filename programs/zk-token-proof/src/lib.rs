@@ -102,13 +102,10 @@ where
 
     // create context state if additional accounts are provided with the instruction
     if instruction_context.get_number_of_instruction_accounts() > accessed_accounts {
-        let context_state_authority = *instruction_context
-            .try_borrow_instruction_account(
-                transaction_context,
-                accessed_accounts.checked_add(1).unwrap(),
-            )?
-            .get_key();
-
+        let context_state_authority = *instruction_context.get_key_of_instruction_account(
+            accessed_accounts.checked_add(1).unwrap(),
+            transaction_context,
+        )?;
         let mut proof_context_account = instruction_context
             .try_borrow_instruction_account(transaction_context, accessed_accounts)?;
 
@@ -141,21 +138,17 @@ fn process_close_proof_context(invoke_context: &mut InvokeContext) -> Result<(),
     let instruction_context = transaction_context.get_current_instruction_context()?;
 
     let owner_pubkey = {
-        let owner_account =
-            instruction_context.try_borrow_instruction_account(transaction_context, 2)?;
-
-        if !owner_account.is_signer() {
+        if !instruction_context.is_instruction_account_signer(2)? {
             return Err(InstructionError::MissingRequiredSignature);
         }
-        *owner_account.get_key()
-    }; // done with `owner_account`, so drop it to prevent a potential double borrow
 
-    let proof_context_account_pubkey = *instruction_context
-        .try_borrow_instruction_account(transaction_context, 0)?
-        .get_key();
-    let destination_account_pubkey = *instruction_context
-        .try_borrow_instruction_account(transaction_context, 1)?
-        .get_key();
+        *instruction_context.get_program_key(transaction_context)?
+    };
+
+    let proof_context_account_pubkey =
+        *instruction_context.get_key_of_instruction_account(0, transaction_context)?;
+    let destination_account_pubkey =
+        *instruction_context.get_key_of_instruction_account(1, transaction_context)?;
     if proof_context_account_pubkey == destination_account_pubkey {
         return Err(InstructionError::InvalidInstructionData);
     }

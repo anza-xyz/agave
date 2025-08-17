@@ -39,7 +39,7 @@ use {
         num::Saturating,
         ops::Deref,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
         },
         thread::{self, Builder, JoinHandle},
@@ -344,6 +344,7 @@ pub struct BatchedTransactionErrorDetails {
 
 pub struct BankingStage {
     vote_thread_hdl: JoinHandle<()>,
+    non_vote_exit_signal: Arc<AtomicBool>,
     non_vote_thread_hdls: Vec<JoinHandle<()>>,
 }
 
@@ -432,7 +433,7 @@ impl BankingStage {
             block_production_method,
             BlockProductionMethod::CentralSchedulerGreedy
         );
-        let non_vote_thread_hdls = Self::new_central_scheduler(
+        let (non_vote_exit_signal, non_vote_thread_hdls) = Self::new_central_scheduler(
             transaction_struct,
             use_greedy_scheduler,
             num_workers,
@@ -446,6 +447,7 @@ impl BankingStage {
 
         Self {
             vote_thread_hdl,
+            non_vote_exit_signal,
             non_vote_thread_hdls,
         }
     }
@@ -460,7 +462,7 @@ impl BankingStage {
         bank_forks: Arc<RwLock<BankForks>>,
         committer: Committer,
         log_messages_bytes_limit: Option<usize>,
-    ) -> Vec<JoinHandle<()>> {
+    ) -> (Arc<AtomicBool>, Vec<JoinHandle<()>>) {
         match transaction_struct {
             TransactionStructure::Sdk => {
                 let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
@@ -506,7 +508,10 @@ impl BankingStage {
         bank_forks: Arc<RwLock<BankForks>>,
         committer: Committer,
         log_messages_bytes_limit: Option<usize>,
-    ) -> Vec<JoinHandle<()>> {
+    ) -> (Arc<AtomicBool>, Vec<JoinHandle<()>>) {
+        // Create an exit signal for the scheduler and workers
+        let exit = Arc::new(AtomicBool::new(false));
+
         // + 1 for scheduler thread
         let mut thread_hdls = Vec::with_capacity(num_workers as usize + 1);
 
@@ -522,6 +527,7 @@ impl BankingStage {
             let id = (index as u32).saturating_add(NUM_VOTE_PROCESSING_THREADS);
             let consume_worker = ConsumeWorker::new(
                 id,
+                exit.clone(),
                 work_receiver,
                 Consumer::new(
                     committer.clone(),
@@ -549,12 +555,14 @@ impl BankingStage {
         // assignment without introducing `dyn`.
         macro_rules! spawn_scheduler {
             ($scheduler:ident) => {
+                let exit = exit.clone();
                 thread_hdls.push(
                     Builder::new()
                         .name("solBnkTxSched".to_string())
                         .spawn(move || {
                             let scheduler_controller = SchedulerController::new(
-                                decision_maker.clone(),
+                                exit,
+                                decision_maker,
                                 receive_and_buffer,
                                 bank_forks,
                                 $scheduler,
@@ -591,7 +599,7 @@ impl BankingStage {
             spawn_scheduler!(scheduler);
         }
 
-        thread_hdls
+        (exit, thread_hdls)
     }
 
     fn spawn_vote_worker(
@@ -642,6 +650,8 @@ impl BankingStage {
 
     pub fn join(self) -> thread::Result<()> {
         self.vote_thread_hdl.join()?;
+
+        self.non_vote_exit_signal.store(true, Ordering::Relaxed);
         for bank_thread_hdl in self.non_vote_thread_hdls {
             bank_thread_hdl.join()?;
         }
@@ -667,7 +677,7 @@ mod tests {
         agave_banking_stage_ingress_types::BankingPacketBatch,
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
-        solana_entry::entry::{self, Entry, EntrySlice},
+        solana_entry::entry::{self, EntrySlice},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
@@ -866,14 +876,9 @@ mod tests {
             &Arc::new(PrioritizationFeeCache::new(0u64)),
         );
 
-        // fund another account so we can send 2 good transactions in a single batch.
-        let keypair = Keypair::new();
-        let fund_tx = system_transaction::transfer(&mint_keypair, &keypair.pubkey(), 2, start_hash);
-        bank.process_transaction(&fund_tx).unwrap();
-
-        // good tx, but no verify
+        // good tx, and no verify
         let to = solana_pubkey::new_rand();
-        let tx_no_ver = system_transaction::transfer(&keypair, &to, 2, start_hash);
+        let tx_no_ver = system_transaction::transfer(&mint_keypair, &to, 2, start_hash);
 
         // good tx
         let to2 = solana_pubkey::new_rand();
@@ -899,41 +904,44 @@ mod tests {
             .send(BankingPacketBatch::new(packet_batches))
             .unwrap();
 
+        // capture the entry receiver until we've received all our entries.
+        let mut entries = Vec::with_capacity(100);
+        loop {
+            if let Ok((_bank, (entry, _))) = entry_receiver.try_recv() {
+                let tx_entry = !entry.transactions.is_empty();
+                entries.push(entry);
+                if tx_entry {
+                    break; // once we have the entry break. don't expect more than one.
+                }
+            }
+            sleep(Duration::from_millis(10));
+        }
+
         drop(non_vote_sender);
         drop(tpu_vote_sender);
         drop(gossip_vote_sender);
-        // wait until banking_stage to finish up all packets
         banking_stage.join().unwrap();
 
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
         drop(poh_recorder);
 
-        let mut blockhash = start_hash;
+        let blockhash = start_hash;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        bank.process_transaction(&fund_tx).unwrap();
-        //receive entries + ticks
-        loop {
-            let entries: Vec<Entry> = entry_receiver
+
+        // receive entries + ticks. The sender has been dropped, so there
+        // are no more entries that will ever come in after the `iter` here.
+        entries.extend(
+            entry_receiver
                 .iter()
-                .map(|(_bank, (entry, _tick_height))| entry)
-                .collect();
+                .map(|(_bank, (entry, _tick_height))| entry),
+        );
 
-            assert!(entries.verify(&blockhash, &entry::thread_pool_for_tests()));
-            if !entries.is_empty() {
-                blockhash = entries.last().unwrap().hash;
-                for entry in entries {
-                    bank.process_entry_transactions(entry.transactions)
-                        .iter()
-                        .for_each(|x| assert_eq!(*x, Ok(())));
-                }
-            }
-
-            if bank.get_balance(&to2) == 1 {
-                break;
-            }
-
-            sleep(Duration::from_millis(200));
+        assert!(entries.verify(&blockhash, &entry::thread_pool_for_tests()));
+        for entry in entries {
+            bank.process_entry_transactions(entry.transactions)
+                .iter()
+                .for_each(|x| assert_eq!(*x, Ok(())));
         }
 
         assert_eq!(bank.get_balance(&to2), 1);

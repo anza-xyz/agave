@@ -1,6 +1,6 @@
 use {
     crate::{
-        cluster_info::{BindIpAddrs, NodeConfig, Sockets},
+        cluster_info::{NodeConfig, Sockets},
         contact_info::{
             ContactInfo,
             Protocol::{QUIC, UDP},
@@ -8,6 +8,7 @@ use {
     },
     solana_net_utils::{
         find_available_ports_in_range,
+        multihomed_sockets::BindIpAddrs,
         sockets::{
             bind_gossip_port_in_range, bind_in_range_with_config, bind_more_with_config,
             bind_two_in_range_with_offset_and_config, localhost_port_range_for_tests,
@@ -22,6 +23,7 @@ use {
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
         num::NonZero,
+        sync::Arc,
     },
 };
 
@@ -29,6 +31,7 @@ use {
 pub struct Node {
     pub info: ContactInfo,
     pub sockets: Sockets,
+    pub bind_ip_addrs: Arc<BindIpAddrs>,
 }
 
 impl Node {
@@ -44,7 +47,7 @@ impl Node {
         let port_range = localhost_port_range_for_tests();
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let config = NodeConfig {
-            bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr]).expect("should bind"),
+            bind_ip_addrs: Arc::new(BindIpAddrs::new(vec![bind_ip_addr]).expect("should bind")),
             gossip_port: port_range.0,
             port_range,
             advertised_ip: bind_ip_addr,
@@ -73,7 +76,7 @@ impl Node {
         bind_ip_addr: IpAddr,
     ) -> Self {
         let config = NodeConfig {
-            bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr]).expect("should bind"),
+            bind_ip_addrs: Arc::new(BindIpAddrs::new(vec![bind_ip_addr]).expect("should bind")),
             gossip_port: gossip_addr.port(),
             port_range,
             advertised_ip: bind_ip_addr,
@@ -107,7 +110,7 @@ impl Node {
             num_quic_endpoints,
             vortexor_receiver_addr,
         } = config;
-        let bind_ip_addr = bind_ip_addrs.primary();
+        let bind_ip_addr = bind_ip_addrs.active();
 
         let gossip_addr = SocketAddr::new(advertised_ip, gossip_port);
         let (gossip_port, (gossip, ip_echo)) =
@@ -284,6 +287,98 @@ impl Node {
             vortexor_receivers,
         };
         info!("Bound all network sockets as follows: {:#?}", &sockets);
-        Node { info, sockets }
+        Node {
+            info,
+            sockets,
+            bind_ip_addrs,
+        }
     }
 }
+
+#[cfg(feature = "agave-unstable-api")]
+mod multihoming {
+    use {
+        crate::{cluster_info::ClusterInfo, node::Node},
+        itertools::Itertools,
+        solana_net_utils::{multihomed_sockets::BindIpAddrs, sockets::bind_to},
+        solana_streamer::atomic_udp_socket::AtomicUdpSocket,
+        std::{
+            net::{IpAddr, SocketAddr},
+            sync::Arc,
+        },
+    };
+
+    #[derive(Debug, Clone)]
+    pub struct SocketsMultihomed {
+        pub gossip: AtomicUdpSocket,
+        // add tvu, retransmit_sockets, etc below
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct NodeMultihoming {
+        pub sockets: SocketsMultihomed,
+        pub bind_ip_addrs: Arc<BindIpAddrs>,
+    }
+
+    impl NodeMultihoming {
+        pub fn switch_active_interface(
+            &self,
+            interface: IpAddr,
+            cluster_info: &ClusterInfo,
+        ) -> Result<(), String> {
+            if self.bind_ip_addrs.active() == interface {
+                return Err(String::from("Specified interface already selected"));
+            }
+            // check the validity of the provided address
+            let Some((interface_index, &new_ip_addr)) = self
+                .bind_ip_addrs
+                .iter()
+                .find_position(|&e| *e == interface)
+            else {
+                let addrs: &[IpAddr] = &self.bind_ip_addrs;
+                return Err(format!(
+                    "Invalid interface address provided, registered interfaces are {addrs:?}",
+                ));
+            };
+            // update gossip socket
+            {
+                let current_gossip_addr = self
+                    .sockets
+                    .gossip
+                    .local_addr()
+                    .map_err(|e| e.to_string())?;
+                // create new gossip socket
+                let gossip_addr = SocketAddr::new(new_ip_addr, current_gossip_addr.port());
+                let new_gossip_socket =
+                    bind_to(gossip_addr.ip(), gossip_addr.port()).map_err(|e| e.to_string())?;
+                // Set the new gossip address in contact-info
+                cluster_info
+                    .set_gossip_socket(gossip_addr)
+                    .map_err(|e| e.to_string())?;
+                // swap in the new gossip socket
+                self.sockets.gossip.swap(new_gossip_socket);
+            }
+
+            // This will never fail since we have checked index validity above
+            let _new_ip_addr = self
+                .bind_ip_addrs
+                .set_active(interface_index)
+                .expect("Interface index out of range");
+            Ok(())
+        }
+    }
+
+    impl From<&Node> for NodeMultihoming {
+        fn from(node: &Node) -> Self {
+            NodeMultihoming {
+                sockets: SocketsMultihomed {
+                    gossip: node.sockets.gossip.clone(),
+                },
+                bind_ip_addrs: node.bind_ip_addrs.clone(),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "agave-unstable-api")]
+pub use multihoming::*;

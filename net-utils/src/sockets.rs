@@ -12,10 +12,10 @@ use {
     },
 };
 // base port for deconflicted allocations
-const BASE_PORT: u16 = 2000;
+pub(crate) const UNIQUE_ALLOC_BASE_PORT: u16 = 2000;
 // how much to allocate per individual process.
 // we expect to have at most 64 concurrent tests in CI at any moment on a given host.
-const SLICE_PER_PROCESS: u16 = (u16::MAX - BASE_PORT) / 64;
+const SLICE_PER_PROCESS: u16 = (u16::MAX - UNIQUE_ALLOC_BASE_PORT) / 64;
 /// When running under nextest, this will try to provide
 /// a unique slice of port numbers (assuming no other nextest processes
 /// are running on the same host) based on NEXTEST_TEST_GLOBAL_SLOT variable
@@ -36,9 +36,9 @@ pub fn unique_port_range_for_tests(size: u16) -> Range<u16> {
                     "Overrunning into the port range of another test! Consider using fewer ports \
                      per test."
                 );
-                BASE_PORT + slot * SLICE_PER_PROCESS
+                UNIQUE_ALLOC_BASE_PORT + slot * SLICE_PER_PROCESS
             }
-            Err(_) => BASE_PORT,
+            Err(_) => UNIQUE_ALLOC_BASE_PORT,
         };
     assert!(start < u16::MAX - size, "Ran out of port numbers!");
     start..start + size
@@ -216,6 +216,7 @@ pub fn bind_in_range_with_config(
     )))
 }
 
+#[deprecated(since = "3.0.0", note = "Please bind to specific ports instead")]
 pub fn bind_with_any_port_with_config(
     ip_addr: IpAddr,
     config: SocketConfiguration,

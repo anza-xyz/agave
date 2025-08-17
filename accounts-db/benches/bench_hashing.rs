@@ -26,7 +26,7 @@ const DATA_SIZES: [usize; 6] = [
 ///
 /// Ensure this constant stays in sync with the value of `META_SIZE` in
 /// AccountsDb::hash_account_helper().
-const META_SIZE: usize = 81;
+const META_SIZE: usize = 73;
 
 fn bench_hash_account(c: &mut Criterion) {
     let lamports = 123_456_789;

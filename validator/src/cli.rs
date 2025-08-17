@@ -127,6 +127,15 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
 
     add_arg!(
         // deprecated in v3.0.0
+        Arg::with_name("accounts_db_clean_threads")
+            .long("accounts-db-clean-threads")
+            .takes_value(true)
+            .value_name("NUMBER")
+            .conflicts_with("accounts_db_background_threads"),
+        replaced_by: "accounts-db-background-threads",
+    );
+    add_arg!(
+        // deprecated in v3.0.0
         Arg::with_name("accounts_db_read_cache_limit_mb")
             .long("accounts-db-read-cache-limit-mb")
             .value_name("MAX | LOW,HIGH")

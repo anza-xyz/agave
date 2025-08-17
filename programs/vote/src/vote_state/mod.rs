@@ -1160,18 +1160,20 @@ mod tests {
         // Create a fake TransactionContext with a fake InstructionContext with a single account which is the
         // vote account that was just created
         let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
-        let transaction_context = TransactionContext::new(
+        let mut transaction_context = TransactionContext::new(
             vec![(id(), processor_account), (node_pubkey, vote_account)],
             rent.clone(),
             0,
             0,
         );
-        let mut instruction_context = InstructionContext::default();
-        instruction_context.configure_for_tests(
-            0,
-            vec![InstructionAccount::new(1, false, true)],
-            &[],
-        );
+        transaction_context
+            .configure_next_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                &[],
+            )
+            .unwrap();
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
 
         // Get the BorrowedAccount from the InstructionContext which is what is used to manipulate and inspect account
         // state
@@ -1309,18 +1311,20 @@ mod tests {
         // Create a fake TransactionContext with a fake InstructionContext with a single account which is the
         // vote account that was just created
         let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
-        let transaction_context = TransactionContext::new(
+        let mut transaction_context = TransactionContext::new(
             vec![(id(), processor_account), (node_pubkey, vote_account)],
             rent,
             0,
             0,
         );
-        let mut instruction_context = InstructionContext::default();
-        instruction_context.configure_for_tests(
-            0,
-            vec![InstructionAccount::new(1, false, true)],
-            &[],
-        );
+        transaction_context
+            .configure_next_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                &[],
+            )
+            .unwrap();
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
 
         // Get the BorrowedAccount from the InstructionContext which is what is used to manipulate and inspect account
         // state

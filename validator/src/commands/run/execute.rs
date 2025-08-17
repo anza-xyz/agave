@@ -37,7 +37,7 @@ use {
         },
     },
     solana_gossip::{
-        cluster_info::{BindIpAddrs, NodeConfig, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS},
+        cluster_info::{NodeConfig, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS},
         contact_info::ContactInfo,
         node::Node,
     },
@@ -48,6 +48,7 @@ use {
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_logger::redirect_stderr_to_file,
+    solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
@@ -98,7 +99,7 @@ pub fn execute(
     let run_args = RunArgs::from_clap_arg_match(matches)?;
 
     let cli::thread_args::NumThreadConfig {
-        accounts_db_clean_threads,
+        accounts_db_background_threads,
         accounts_db_foreground_threads,
         accounts_db_hash_threads,
         accounts_index_flush_threads,
@@ -237,7 +238,7 @@ pub fn execute(
     } else if private_rpc {
         solana_net_utils::parse_host("127.0.0.1").unwrap()
     } else {
-        bind_addresses.primary()
+        bind_addresses.active()
     };
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
@@ -287,7 +288,7 @@ pub fn execute(
     // version can then be deleted from gossip and get_rpc_node above.
     let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
         .ok()
-        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.primary()));
+        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.active()));
 
     let tower_path = value_t!(matches, "tower", PathBuf)
         .ok()
@@ -425,7 +426,7 @@ pub fn execute(
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         storage_access,
         scan_filter_for_shrinking,
-        num_clean_threads: Some(accounts_db_clean_threads),
+        num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         num_hash_threads: Some(accounts_db_hash_threads),
         ..AccountsDbConfig::default()
@@ -751,7 +752,7 @@ pub fn execute(
             info!("OS network limits test passed.");
         } else {
             Err("OS network limit test failed. See \
-                https://docs.solanalabs.com/operations/guides/validator-start#system-tuning"
+                https://docs.anza.xyz/operations/guides/validator-start#system-tuning"
                 .to_string())?;
         }
     }
@@ -795,9 +796,8 @@ pub fn execute(
 
     let advertised_ip = if let Some(ip) = gossip_host {
         ip
-    } else if !bind_addresses.primary().is_unspecified() && !bind_addresses.primary().is_loopback()
-    {
-        bind_addresses.primary()
+    } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
+        bind_addresses.active()
     } else if !entrypoint_addrs.is_empty() {
         let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
         order.shuffle(&mut thread_rng());
@@ -812,7 +812,7 @@ pub fn execute(
                 );
                 solana_net_utils::get_public_ip_addr_with_binding(
                     entrypoint_addr,
-                    bind_addresses.primary(),
+                    bind_addresses.active(),
                 )
                 .map_or_else(
                     |err| {
@@ -827,7 +827,7 @@ pub fn execute(
         IpAddr::V4(Ipv4Addr::LOCALHOST)
     };
     let gossip_port = value_t!(matches, "gossip_port", u16).or_else(|_| {
-        solana_net_utils::find_available_port_in_range(bind_addresses.primary(), (0, 1))
+        solana_net_utils::find_available_port_in_range(bind_addresses.active(), (0, 1))
             .map_err(|err| format!("unable to find an available gossip port: {err}"))
     })?;
 
@@ -881,7 +881,7 @@ pub fn execute(
         advertised_ip,
         gossip_port,
         port_range: dynamic_port_range,
-        bind_ip_addrs: bind_addresses,
+        bind_ip_addrs: Arc::new(bind_addresses),
         public_tpu_addr,
         public_tpu_forwards_addr,
         num_tvu_receive_sockets: tvu_receive_threads,

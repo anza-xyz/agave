@@ -2,7 +2,7 @@
 //!
 //! For more information, see:
 //!
-//! <https://docs.solanalabs.com/implemented-proposals/persistent-account-storage>
+//! <https://docs.anza.xyz/implemented-proposals/persistent-account-storage>
 
 mod meta;
 pub mod test_utils;

@@ -18,7 +18,6 @@ use {
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
     solana_keypair::{read_keypair_file, Keypair},
-    solana_net_utils::sockets::bind_to,
     solana_pubkey::Pubkey,
     solana_rpc::rpc::verify_pubkey,
     solana_rpc_client_api::{config::RpcAccountIndex, custom_error::RpcCustomError},
@@ -222,8 +221,8 @@ pub trait AdminRpc {
     #[rpc(meta, name = "contactInfo")]
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo>;
 
-    #[rpc(meta, name = "setGossipSocket")]
-    fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()>;
+    #[rpc(meta, name = "selectActiveInterface")]
+    fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()>;
 
     #[rpc(meta, name = "repairShredFromPeer")]
     fn repair_shred_from_peer(
@@ -548,31 +547,21 @@ impl AdminRpc for AdminRpcImpl {
         meta.with_post_init(|post_init| Ok(post_init.cluster_info.my_contact_info().into()))
     }
 
-    fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()> {
-        let ip: IpAddr = ip
-            .parse()
-            .map_err(|e| jsonrpc_core::Error::invalid_params(format!("Invalid IP address: {e}")))?;
-        let new_addr = SocketAddr::new(ip, port);
-
+    fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()> {
+        debug!("select_active_interface received: {}", interface);
         meta.with_post_init(|post_init| {
-            if let Some(socket) = &post_init.gossip_socket {
-                let new_socket = bind_to(new_addr.ip(), new_addr.port()).map_err(|e| {
-                    jsonrpc_core::Error::invalid_params(format!("Gossip socket rebind failed: {e}"))
+            let node = post_init.node.as_ref().ok_or_else(|| {
+                jsonrpc_core::Error::invalid_params("`Node` not initialized in post_init")
+            })?;
+
+            node.switch_active_interface(interface, &post_init.cluster_info)
+                .map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!(
+                        "Switching failed due to error {}",
+                        e
+                    ))
                 })?;
-
-                // hot-swap new socket
-                socket.swap(new_socket);
-
-                // update gossip socket in cluster info
-                post_init
-                    .cluster_info
-                    .set_gossip_socket(new_addr)
-                    .map_err(|e| {
-                        jsonrpc_core::Error::invalid_params(format!(
-                            "Failed to refresh gossip ContactInfo: {e}"
-                        ))
-                    })?;
-            }
+            info!("Switched primary interface to {interface}");
             Ok(())
         })
     }
@@ -1039,7 +1028,7 @@ mod tests {
                     cluster_slots: Arc::new(
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
-                    gossip_socket: None,
+                    node: None,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,

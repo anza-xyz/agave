@@ -70,12 +70,12 @@ $ ./cargo test
 
 ### Starting a local testnet
 
-Start your own testnet locally, instructions are in the [online docs](https://docs.solanalabs.com/clusters/benchmark).
+Start your own testnet locally, instructions are in the [online docs](https://docs.anza.xyz/clusters/benchmark).
 
 ### Accessing the remote development cluster
 
 * `devnet` - stable public cluster for development accessible via
-devnet.solana.com. Runs 24/7. Learn more about the [public clusters](https://docs.solanalabs.com/clusters)
+devnet.solana.com. Runs 24/7. Learn more about the [public clusters](https://docs.anza.xyz/clusters)
 
 # Benchmarking
 

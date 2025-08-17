@@ -55,7 +55,7 @@ use {
         contact_info::ContactInfo,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         gossip_service::GossipService,
-        node::Node,
+        node::{Node, NodeMultihoming},
     },
     solana_hard_forks::HardForks,
     solana_hash::Hash,
@@ -834,7 +834,9 @@ impl Validator {
         cluster_info.set_contact_debug_interval(config.contact_debug_interval);
         cluster_info.set_entrypoints(cluster_entrypoints);
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
+        cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
         let cluster_info = Arc::new(cluster_info);
+        let node_multihoming = NodeMultihoming::from(&node);
 
         assert!(is_snapshot_config_valid(&config.snapshot_config));
 
@@ -1673,7 +1675,7 @@ impl Validator {
             repair_socket: Arc::new(node.sockets.repair),
             outstanding_repair_requests,
             cluster_slots,
-            gossip_socket: Some(node.sockets.gossip.clone()),
+            node: Some(Arc::new(node_multihoming)),
         });
 
         Ok(Self {

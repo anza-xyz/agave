@@ -107,7 +107,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-genesis-config = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
-solana-gossip = { workspace = true }
+solana-gossip = { workspace = true, features = ["agave-unstable-api"] }
 solana-hard-forks = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
@@ -158,7 +158,7 @@ solana-tpu-client-next = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
-solana-turbine = { workspace = true }
+solana-turbine = { workspace = true, features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { workspace = true }
 solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }

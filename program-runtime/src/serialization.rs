@@ -783,9 +783,12 @@ mod tests {
                 );
                 invoke_context
                     .transaction_context
-                    .get_next_instruction_context_mut()
-                    .unwrap()
-                    .configure_for_tests(0, instruction_accounts, &instruction_data);
+                    .configure_next_instruction_for_tests(
+                        0,
+                        instruction_accounts,
+                        &instruction_data,
+                    )
+                    .unwrap();
                 invoke_context.push().unwrap();
                 let instruction_context = invoke_context
                     .transaction_context
@@ -936,9 +939,12 @@ mod tests {
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .transaction_context
-                .get_next_instruction_context_mut()
-                .unwrap()
-                .configure_for_tests(0, instruction_accounts.clone(), &instruction_data);
+                .configure_next_instruction_for_tests(
+                    0,
+                    instruction_accounts.clone(),
+                    &instruction_data,
+                )
+                .unwrap();
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1030,9 +1036,8 @@ mod tests {
             // check serialize_parameters_unaligned
             invoke_context
                 .transaction_context
-                .get_next_instruction_context_mut()
-                .unwrap()
-                .configure_for_tests(7, instruction_accounts, &instruction_data);
+                .configure_next_instruction_for_tests(7, instruction_accounts, &instruction_data)
+                .unwrap();
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1192,9 +1197,12 @@ mod tests {
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .transaction_context
-                .get_next_instruction_context_mut()
-                .unwrap()
-                .configure_for_tests(0, instruction_accounts.clone(), &instruction_data);
+                .configure_next_instruction_for_tests(
+                    0,
+                    instruction_accounts.clone(),
+                    &instruction_data,
+                )
+                .unwrap();
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1237,9 +1245,8 @@ mod tests {
             // check serialize_parameters_unaligned
             invoke_context
                 .transaction_context
-                .get_next_instruction_context_mut()
-                .unwrap()
-                .configure_for_tests(7, instruction_accounts, &instruction_data);
+                .configure_next_instruction_for_tests(7, instruction_accounts, &instruction_data)
+                .unwrap();
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1460,9 +1467,8 @@ mod tests {
             deduplicated_instruction_accounts(&transaction_accounts_indexes, |index| index > 0);
         let instruction_data = [];
         transaction_context
-            .get_next_instruction_context_mut()
-            .unwrap()
-            .configure_for_tests(6, instruction_accounts, &instruction_data);
+            .configure_next_instruction_for_tests(6, instruction_accounts, &instruction_data)
+            .unwrap();
         transaction_context.push().unwrap();
         let instruction_context = transaction_context
             .get_current_instruction_context()
