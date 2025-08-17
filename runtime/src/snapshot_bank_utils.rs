@@ -61,6 +61,10 @@ use {
 
 type SnapshotStatus<T> = HashMap<Hash, (usize, Vec<(status_cache::KeySlice, T)>)>;
 type SnapshotSlotDelta<T> = (Slot, bool, SnapshotStatus<T>);
+#[cfg_attr(
+    feature = "frozen-abi",
+    frozen_abi(digest = "FBYTVHPczfBGsrenR1TEHgKDnMt4FXfniTduqj1zf5Au")
+)]
 type SnapshotBankSlotDelta = SnapshotSlotDelta<Result<(), SnapshotTransactionError>>;
 
 pub fn serialize_status_cache(
@@ -934,7 +938,11 @@ pub fn bank_to_incremental_snapshot_archive(
 
 /// Copy of `TransactionError` that uses a different `InstructionError` type to
 /// contain a string in the BorshIoError variant.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    frozen_abi(digest = "2qgqaezvR69GkJdUzaUtUyv8YMDdNUrEuwtDz43iY3mm"),
+    derive(AbiExample, AbiEnumVisitor)
+)]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 enum SnapshotTransactionError {
     AccountInUse,
