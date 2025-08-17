@@ -215,6 +215,8 @@ pub struct StreamerStats {
     pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
     pub(crate) total_incoming_connection_attempts: AtomicUsize,
     pub(crate) quic_endpoints_count: AtomicUsize,
+    pub(crate) incoming_connection_attempts_with_validated_remote_address: AtomicUsize,
+    pub(crate) incoming_connection_attempts_with_unvalidated_remote_address: AtomicUsize,
 }
 
 impl StreamerStats {
@@ -575,6 +577,18 @@ impl StreamerStats {
             (
                 "refused_connections_too_many_open_connections",
                 self.refused_connections_too_many_open_connections
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "incoming_connection_attempts_with_validated_remote_address",
+                self.incoming_connection_attempts_with_validated_remote_address
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "incoming_connection_attempts_with_unvalidated_remote_address",
+                self.incoming_connection_attempts_with_unvalidated_remote_address
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
