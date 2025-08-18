@@ -288,18 +288,19 @@ fn main() {
                 .help(BlockProductionMethod::cli_message()),
         )
         .arg(
+            Arg::with_name("block_production_num_workers")
+                .long("block-production-num-workers")
+                .takes_value(true)
+                .value_name("NUMBER")
+                .help("Number of worker threads to use for block production"),
+        )
+        .arg(
             Arg::with_name("transaction_struct")
                 .long("transaction-structure")
                 .value_name("STRUCT")
                 .takes_value(true)
                 .possible_values(TransactionStructure::cli_names())
                 .help(TransactionStructure::cli_message()),
-        )
-        .arg(
-            Arg::new("num_banking_threads")
-                .long("num-banking-threads")
-                .takes_value(true)
-                .help("Number of threads to use in the banking stage"),
         )
         .arg(
             Arg::new("simulate_mint")
@@ -319,12 +320,12 @@ fn main() {
     let block_production_method = matches
         .value_of_t::<BlockProductionMethod>("block_production_method")
         .unwrap_or_default();
+    let block_production_num_workers = matches
+        .value_of_t::<usize>("block_production_num_workers")
+        .unwrap_or_else(|_| BankingStage::default_num_workers());
     let transaction_struct = matches
         .value_of_t::<TransactionStructure>("transaction_struct")
         .unwrap_or_default();
-    let num_banking_threads = matches
-        .value_of_t::<usize>("num_banking_threads")
-        .unwrap_or_else(|_| BankingStage::default_num_workers());
     //   a multiple of packet chunk duplicates to avoid races
     let num_chunks = matches.value_of_t::<usize>("num_chunks").unwrap_or(16);
     let packets_per_batch = matches
@@ -376,8 +377,8 @@ fn main() {
         .map(|packets_for_single_iteration| packets_for_single_iteration.transactions.len() as u64)
         .sum();
     info!(
-        "threads: {} txs: {}",
-        num_banking_threads, total_num_transactions
+        "worker threads: {} txs: {}",
+        block_production_num_workers, total_num_transactions
     );
 
     // fund all the accounts
@@ -462,7 +463,7 @@ fn main() {
         non_vote_receiver,
         tpu_vote_receiver,
         gossip_vote_receiver,
-        num_banking_threads,
+        block_production_num_workers,
         None,
         replay_vote_sender,
         None,
