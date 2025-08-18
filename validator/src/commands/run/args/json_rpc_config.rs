@@ -55,8 +55,10 @@ mod tests {
             tests::verify_args_struct_by_command_run_with_identity_setup, DefaultArgs, RunArgs,
         },
         solana_rpc::rpc_pubsub_service::PubSubConfig,
-        std::net::{Ipv4Addr, SocketAddr},
-        std::num::NonZeroUsize,
+        std::{
+            net::{Ipv4Addr, SocketAddr},
+            num::NonZeroUsize,
+        },
     };
 
     #[test]
@@ -256,7 +258,13 @@ mod tests {
                 },
                 pub_sub_config: PubSubConfig {
                     notification_threads: Some(
-                        NonZeroUsize::new(default_args.rpc_pubsub_notification_threads.parse::<usize>().unwrap()).unwrap(),
+                        NonZeroUsize::new(
+                            default_args
+                                .rpc_pubsub_notification_threads
+                                .parse::<usize>()
+                                .unwrap(),
+                        )
+                        .unwrap(),
                     ),
                     ..default_run_args.pub_sub_config.clone()
                 },
