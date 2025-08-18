@@ -59,6 +59,7 @@ pub(crate) struct ReceivingStats {
     pub num_dropped_on_already_processed: usize,
     pub num_dropped_on_fee_payer: usize,
     pub num_dropped_on_capacity: usize,
+    pub num_buffered: usize,
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -134,6 +135,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                             .num_dropped_on_already_processed,
                         num_dropped_on_fee_payer: buffer_stats.num_dropped_on_fee_payer,
                         num_dropped_on_capacity: buffer_stats.num_dropped_on_capacity,
+                        num_buffered: buffer_stats.num_buffered,
                     })
                 } else {
                     Ok(ReceivingStats {
@@ -150,6 +152,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                         num_dropped_on_already_processed: 0,
                         num_dropped_on_fee_payer: 0,
                         num_dropped_on_capacity: 0,
+                        num_buffered: 0,
                     })
                 }
             }
@@ -163,6 +166,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                 num_dropped_on_already_processed: 0,
                 num_dropped_on_fee_payer: 0,
                 num_dropped_on_capacity: 0,
+                num_buffered: 0,
             }),
             Err(RecvTimeoutError::Disconnected) => Err(DisconnectedError),
         }
@@ -177,6 +181,7 @@ struct BufferStats {
     num_dropped_on_already_processed: usize,
     num_dropped_on_fee_payer: usize,
     num_dropped_on_capacity: usize,
+    num_buffered: usize,
 }
 
 impl SanitizedTransactionReceiveAndBuffer {
@@ -220,6 +225,7 @@ impl SanitizedTransactionReceiveAndBuffer {
         let mut num_dropped_on_already_processed = 0;
         let mut num_dropped_on_fee_payer = 0;
         let mut num_dropped_on_capacity = 0;
+        let mut num_buffered = 0;
 
         let mut error_counts = TransactionErrorMetrics::default();
         for chunk in packets.chunks(CHUNK_SIZE) {
@@ -303,6 +309,7 @@ impl SanitizedTransactionReceiveAndBuffer {
 
                 let (priority, cost) =
                     calculate_priority_and_cost(&transaction, &fee_budget_limits, &working_bank);
+                num_buffered += 1;
                 if container.insert_new_transaction(transaction, max_age, priority, cost) {
                     num_dropped_on_capacity += 1;
                 }
@@ -317,6 +324,7 @@ impl SanitizedTransactionReceiveAndBuffer {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
+            num_buffered,
         }
     }
 }
@@ -358,6 +366,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         let mut num_dropped_on_already_processed = 0;
         let mut num_dropped_on_fee_payer = 0;
         let mut num_dropped_on_capacity = 0;
+        let mut num_buffered = 0;
 
         // If not leader/unknown, do a blocking-receive initially. This lets
         // the thread sleep until a message is received, or until the timeout.
@@ -392,6 +401,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                     num_dropped_on_already_processed += stats.num_dropped_on_already_processed;
                     num_dropped_on_fee_payer += stats.num_dropped_on_fee_payer;
                     num_dropped_on_capacity += stats.num_dropped_on_capacity;
+                    num_buffered += stats.num_buffered;
                 }
                 Err(RecvTimeoutError::Timeout) => timed_out = true,
                 Err(RecvTimeoutError::Disconnected) => {
@@ -423,6 +433,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                         num_dropped_on_already_processed += stats.num_dropped_on_already_processed;
                         num_dropped_on_fee_payer += stats.num_dropped_on_fee_payer;
                         num_dropped_on_capacity += stats.num_dropped_on_capacity;
+                        num_buffered += stats.num_buffered;
                     }
                     Err(TryRecvError::Empty) => {}
                     Err(TryRecvError::Disconnected) => {
@@ -444,6 +455,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
+            num_buffered,
         })
     }
 }
@@ -458,6 +470,7 @@ struct PacketBatchHandlingStats {
     num_dropped_on_already_processed: usize,
     num_dropped_on_fee_payer: usize,
     num_dropped_on_capacity: usize,
+    num_buffered: usize,
 }
 
 enum PacketHandlingError {
@@ -492,6 +505,7 @@ impl TransactionViewReceiveAndBuffer {
         let mut num_dropped_on_already_processed = 0;
         let mut num_dropped_on_fee_payer = 0;
         let mut num_dropped_on_capacity = 0;
+        let mut num_buffered = 0;
 
         let mut check_and_push_to_queue =
             |container: &mut TransactionViewStateContainer,
@@ -544,6 +558,8 @@ impl TransactionViewReceiveAndBuffer {
                         container.remove_by_id(priority_id.id);
                         continue;
                     }
+
+                    num_buffered += 1;
                 }
                 // Push non-errored transaction into queue.
                 num_dropped_on_capacity += container.push_ids_into_queue(
@@ -628,6 +644,7 @@ impl TransactionViewReceiveAndBuffer {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
+            num_buffered,
         }
     }
 
@@ -923,6 +940,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
+            num_buffered,
         } = receive_and_buffer
             .receive_and_buffer_packets(
                 &mut container,
@@ -939,6 +957,7 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
         verify_container(&mut container, 0);
     }
 
@@ -979,6 +998,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
+            num_buffered,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -992,6 +1012,7 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
 
         verify_container(&mut container, 0);
     }
@@ -1024,6 +1045,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
+            num_buffered,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1037,6 +1059,7 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
 
         verify_container(&mut container, 0);
     }
@@ -1068,6 +1091,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
+            num_buffered,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1081,6 +1105,7 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
 
         verify_container(&mut container, 0);
     }
@@ -1117,6 +1142,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
+            num_buffered,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1130,6 +1156,7 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 1);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
 
         verify_container(&mut container, 0);
     }
@@ -1181,6 +1208,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
+            num_buffered,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1194,6 +1222,7 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
 
         verify_container(&mut container, 0);
     }
@@ -1230,6 +1259,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
+            num_buffered,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1243,6 +1273,7 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 1);
 
         verify_container(&mut container, 1);
     }
@@ -1283,6 +1314,7 @@ mod tests {
             num_dropped_on_already_processed,
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
+            num_buffered,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1296,6 +1328,7 @@ mod tests {
         assert_eq!(num_dropped_on_already_processed, 0);
         assert_eq!(num_dropped_on_fee_payer, 0);
         assert!(num_dropped_on_capacity > 0);
+        assert_eq!(num_buffered, num_transactions);
 
         verify_container(&mut container, TEST_CONTAINER_CAPACITY);
     }
