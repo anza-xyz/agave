@@ -203,7 +203,7 @@ fn timing_scheduler<T: ReceiveAndBuffer, S: Scheduler<T::Transaction>>(
         let res = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &decision)
             .unwrap();
-        assert_eq!(res.num_valid_packets, num_txs);
+        assert_eq!(res.num_received, num_txs);
         assert!(!container.is_empty());
 
         let elapsed = {

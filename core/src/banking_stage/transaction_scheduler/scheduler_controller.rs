@@ -492,7 +492,7 @@ mod tests {
         // from the channel.
         while scheduler_controller
             .receive_and_buffer_packets(&decision)
-            .map(|n| n.num_valid_packets > 0)
+            .map(|n| n.num_received > 0)
             .unwrap_or_default()
         {}
         assert!(scheduler_controller.process_transactions(&decision).is_ok());
