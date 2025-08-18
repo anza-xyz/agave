@@ -7,10 +7,9 @@ use {
         program_data_size, register_builtins, MockBankCallback, MockForkGraph, EXECUTION_EPOCH,
         EXECUTION_SLOT, WALLCLOCK_TIME,
     },
-    agave_feature_set::{self as feature_set, raise_cpi_nesting_limit_to_8, FeatureSet},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS},
     solana_clock::Slot,
-    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
+    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_fee_structure::FeeDetails,
     solana_hash::Hash,
@@ -23,9 +22,11 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_nonce::{self as nonce, state::DurableNonce},
     solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
-    solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
+    solana_program_runtime::execution_budget::{
+        SVMTransactionExecutionAndFeeBudgetLimits, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+    },
     solana_pubkey::Pubkey,
-    solana_sdk_ids::{bpf_loader_upgradeable, native_loader},
+    solana_sdk_ids::{bpf_loader_upgradeable, compute_budget, native_loader},
     solana_signer::Signer,
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
@@ -41,7 +42,8 @@ use {
             TransactionProcessingEnvironment,
         },
     },
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_feature_set::SVMFeatureSet,
+    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
     solana_svm_type_overrides::sync::{Arc, RwLock},
     solana_system_interface::{instruction as system_instruction, program as system_program},
     solana_system_transaction as system_transaction,
@@ -49,12 +51,50 @@ use {
     solana_transaction::{sanitized::SanitizedTransaction, Transaction},
     solana_transaction_context::TransactionReturnData,
     solana_transaction_error::TransactionError,
-    std::{collections::HashMap, sync::atomic::Ordering},
+    std::{collections::HashMap, num::NonZeroU32, sync::atomic::Ordering},
     test_case::test_case,
 };
 
 // This module contains the implementation of TransactionProcessingCallback
 mod mock_bank;
+
+// Local implementation of compute budget processing for tests.
+fn process_test_compute_budget_instructions<'a>(
+    instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
+) -> Result<ComputeBudgetLimits, TransactionError> {
+    let mut loaded_accounts_data_size_limit = None;
+
+    // Scan for compute budget instructions.
+    // Only key on `SetLoadedAccountsDataSizeLimit`.
+    for (program_id, instruction) in instructions {
+        if *program_id == compute_budget::id()
+            && instruction.data.len() >= 5
+            && instruction.data[0] == 4
+        {
+            let size = u32::from_le_bytes([
+                instruction.data[1],
+                instruction.data[2],
+                instruction.data[3],
+                instruction.data[4],
+            ]);
+            loaded_accounts_data_size_limit = Some(size);
+        }
+    }
+
+    let loaded_accounts_bytes =
+        if let Some(requested_loaded_accounts_data_size_limit) = loaded_accounts_data_size_limit {
+            NonZeroU32::new(requested_loaded_accounts_data_size_limit)
+                .ok_or(TransactionError::InvalidLoadedAccountsDataSizeLimit)?
+        } else {
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES
+        }
+        .min(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
+
+    Ok(ComputeBudgetLimits {
+        loaded_accounts_bytes,
+        ..Default::default()
+    })
+}
 
 const DEPLOYMENT_SLOT: u64 = 0;
 const LAMPORTS_PER_SIGNATURE: u64 = 5000;
@@ -114,10 +154,9 @@ impl SvmTestEnvironment<'_> {
             ..Default::default()
         };
 
-        let feature_set = test_entry.feature_set();
         let processing_environment = TransactionProcessingEnvironment {
             blockhash: LAST_BLOCKHASH,
-            feature_set: feature_set.runtime_features(),
+            feature_set: test_entry.feature_set,
             blockhash_lamports_per_signature: LAMPORTS_PER_SIGNATURE,
             ..TransactionProcessingEnvironment::default()
         };
@@ -296,10 +335,10 @@ impl SvmTestEnvironment<'_> {
 }
 
 // container for a transaction batch and all data needed to run and verify it against svm
-#[derive(Clone, Default, Debug)]
+#[derive(Clone)]
 pub struct SvmTestEntry {
-    // features are enabled by default; these will be disabled
-    pub disabled_features: Vec<Pubkey>,
+    // features configuration for this test
+    pub feature_set: SVMFeatureSet,
 
     // until LoaderV4 is live on mainnet, we default to omitting it, but can also test it
     pub with_loader_v4: bool,
@@ -315,6 +354,19 @@ pub struct SvmTestEntry {
 
     // expected final account states, checked after transaction execution
     pub final_accounts: AccountsMap,
+}
+
+impl Default for SvmTestEntry {
+    fn default() -> Self {
+        Self {
+            feature_set: SVMFeatureSet::all_enabled(),
+            with_loader_v4: false,
+            initial_programs: Vec::new(),
+            initial_accounts: HashMap::new(),
+            transaction_batch: Vec::new(),
+            final_accounts: HashMap::new(),
+        }
+    }
 }
 
 impl SvmTestEntry {
@@ -448,9 +500,8 @@ impl SvmTestEntry {
             .map(|item| {
                 let message = SanitizedTransaction::from_transaction_for_tests(item.transaction);
                 let check_result = item.check_result.map(|tx_details| {
-                    let compute_budget_limits = process_compute_budget_instructions(
+                    let compute_budget_limits = process_test_compute_budget_instructions(
                         SVMMessage::program_instructions_iter(&message),
-                        &self.feature_set(),
                     );
                     let signature_count = message
                         .num_transaction_signatures()
@@ -465,8 +516,7 @@ impl SvmTestEntry {
                                 signature_count.saturating_mul(LAMPORTS_PER_SIGNATURE),
                                 v.get_prioritization_fee(),
                             ),
-                            self.feature_set()
-                                .is_active(&raise_cpi_nesting_limit_to_8::id()),
+                            self.feature_set.raise_cpi_nesting_limit_to_8,
                         )
                     });
                     CheckedTransactionDetails::new(tx_details.nonce, compute_budget)
@@ -484,16 +534,6 @@ impl SvmTestEntry {
             .cloned()
             .map(|item| item.asserts)
             .collect()
-    }
-
-    // internal helper to map our feature list to a FeatureSet
-    fn feature_set(&self) -> FeatureSet {
-        let mut feature_set = FeatureSet::all_enabled();
-        for feature_id in &self.disabled_features {
-            feature_set.deactivate(feature_id);
-        }
-
-        feature_set
     }
 }
 
@@ -2204,8 +2244,8 @@ fn simd83_account_reallocate(formalize_loaded_transaction_data_size: bool) -> Ve
     common_test_entry.add_initial_program(program_name);
     if !formalize_loaded_transaction_data_size {
         common_test_entry
-            .disabled_features
-            .push(feature_set::formalize_loaded_transaction_data_size::id());
+            .feature_set
+            .formalize_loaded_transaction_data_size = false;
     }
 
     let fee_payer_keypair = Keypair::new();
@@ -2910,8 +2950,8 @@ fn svm_inspect_nonce_load_failure(
 
     if !formalize_loaded_transaction_data_size {
         test_entry
-            .disabled_features
-            .push(feature_set::formalize_loaded_transaction_data_size::id());
+            .feature_set
+            .formalize_loaded_transaction_data_size = false;
     }
 
     let fee_payer_keypair = Keypair::new();

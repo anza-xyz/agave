@@ -80,7 +80,6 @@ spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-feature-set = { workspace = true }
 agave-syscalls = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
@@ -91,7 +90,7 @@ rand0-7 = { workspace = true }
 shuttle = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-clock = { workspace = true }
-solana-compute-budget-instruction = { workspace = true }
+solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-ed25519-program = { workspace = true }
