@@ -17,21 +17,22 @@ pub struct SetPublicAddressArgs {
 
 impl FromClapArgMatches for SetPublicAddressArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
-        let parse_arg_addr = |arg_name: &str,
-                              arg_long: &str|
-         -> std::result::Result<
-            Option<SocketAddr>,
-            Box<dyn std::error::Error>,
-        > {
-            Ok(matches.value_of(arg_name).map(|host_port| {
-                solana_net_utils::parse_host_port(host_port).map_err(|err| {
-                    format!(
-                        "failed to parse --{arg_long} address. It must be in the HOST:PORT format. {err}"
-                    )
-                })
-            })
-            .transpose()?)
-        };
+        let parse_arg_addr =
+            |arg_name: &str,
+             arg_long: &str|
+             -> std::result::Result<Option<SocketAddr>, Box<dyn std::error::Error>> {
+                Ok(matches
+                    .value_of(arg_name)
+                    .map(|host_port| {
+                        solana_net_utils::parse_host_port(host_port).map_err(|err| {
+                            format!(
+                                "failed to parse --{arg_long} address. It must be in the \
+                                 HOST:PORT format. {err}"
+                            )
+                        })
+                    })
+                    .transpose()?)
+            };
         Ok(SetPublicAddressArgs {
             tpu_addr: parse_arg_addr("tpu_addr", "tpu")?,
             tpu_forwards_addr: parse_arg_addr("tpu_forwards_addr", "tpu-forwards")?,

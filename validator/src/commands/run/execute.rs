@@ -250,7 +250,10 @@ pub fn execute(
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let tpu_use_quic = !matches.is_present("tpu_disable_quic");
     if !tpu_use_quic {
-        warn!("TPU QUIC was disabled via --tpu_disable_quic, this will prevent validator from receiving transactions!");
+        warn!(
+            "TPU QUIC was disabled via --tpu_disable_quic, this will prevent validator from \
+             receiving transactions!"
+        );
     }
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
@@ -710,9 +713,9 @@ pub fn execute(
         BlockVerificationMethod::BlockstoreProcessor => {
             warn!(
                 "The value \"blockstore-processor\" for --block-verification-method has been \
-                deprecated. The value \"blockstore-processor\" is still allowed for now, but \
-                is planned for removal in the near future. To update, either set the value \
-                \"unified-scheduler\" or remove the --block-verification-method argument"
+                 deprecated. The value \"blockstore-processor\" is still allowed for now, but is \
+                 planned for removal in the near future. To update, either set the value \
+                 \"unified-scheduler\" or remove the --block-verification-method argument"
             );
         }
         BlockVerificationMethod::UnifiedScheduler => {}
@@ -767,7 +770,10 @@ pub fn execute(
     let gossip_host = matches
         .value_of("gossip_host")
         .map(|gossip_host| {
-            warn!("--gossip-host is deprecated. Use --bind-address or rely on automatic public IP discovery instead.");
+            warn!(
+                "--gossip-host is deprecated. Use --bind-address or rely on automatic public IP \
+                 discovery instead."
+            );
             solana_net_utils::parse_host(gossip_host)
                 .map_err(|err| format!("failed to parse --gossip-host: {err}"))
         })
@@ -1022,7 +1028,10 @@ pub fn execute(
             ) {
                 // 200 is a special error code, see
                 // https://github.com/solana-foundation/solana-improvement-documents/pull/46
-                error!("Please remove --wen_restart and use --wait_for_supermajority as instructed above");
+                error!(
+                    "Please remove --wen_restart and use --wait_for_supermajority as instructed \
+                     above"
+                );
                 exit(200);
             }
             Err(format!("{err:?}"))
@@ -1080,9 +1089,7 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
             Err(err) => eprintln!("get_cluster_shred_version failed: {entrypoint}, {err}"),
             Ok(0) => eprintln!("entrypoint {entrypoint} returned shred-version zero"),
             Ok(shred_version) => {
-                info!(
-                    "obtained shred-version {shred_version} from {entrypoint}"
-                );
+                info!("obtained shred-version {shred_version} from {entrypoint}");
                 return Some(shred_version);
             }
         }
@@ -1135,10 +1142,9 @@ fn new_snapshot_config(
                     if matches.occurrences_of("full_snapshot_interval_slots") > 0 {
                         warn!(
                             "Incremental snapshots are disabled, yet \
-                             --full-snapshot-interval-slots was specified! \
-                             Note that --full-snapshot-interval-slots is *ignored* \
-                             when incremental snapshots are disabled. \
-                             Use --snapshot-interval-slots instead.",
+                             --full-snapshot-interval-slots was specified! Note that \
+                             --full-snapshot-interval-slots is *ignored* when incremental \
+                             snapshots are disabled. Use --snapshot-interval-slots instead.",
                         );
                     }
                     (
@@ -1166,8 +1172,9 @@ fn new_snapshot_config(
         let full_snapshot_interval_slots = full_snapshot_interval_slots.get();
         if full_snapshot_interval_slots > DEFAULT_SLOTS_PER_EPOCH {
             warn!(
-                "The full snapshot interval is excessively large: {full_snapshot_interval_slots}! This will negatively \
-                impact the background cleanup tasks in accounts-db. Consider a smaller value.",
+                "The full snapshot interval is excessively large: {full_snapshot_interval_slots}! \
+                 This will negatively impact the background cleanup tasks in accounts-db. \
+                 Consider a smaller value.",
             );
         }
     }
@@ -1188,8 +1195,8 @@ fn new_snapshot_config(
         .any(|account_path| account_path == &snapshots_dir)
     {
         Err(
-            "the --accounts and --snapshots paths must be unique since they \
-             both create 'snapshots' subdirectories, otherwise there may be collisions"
+            "the --accounts and --snapshots paths must be unique since they both create \
+             'snapshots' subdirectories, otherwise there may be collisions"
                 .to_string(),
         )?;
     }
@@ -1281,9 +1288,8 @@ fn new_snapshot_config(
 
     if !is_snapshot_config_valid(&snapshot_config) {
         Err(
-            "invalid snapshot configuration provided: snapshot intervals are incompatible. \
-             \n\t- full snapshot interval MUST be larger than incremental snapshot interval \
-             (if enabled)"
+            "invalid snapshot configuration provided: snapshot intervals are incompatible. \n\t- \
+             full snapshot interval MUST be larger than incremental snapshot interval (if enabled)"
                 .to_string(),
         )?;
     }

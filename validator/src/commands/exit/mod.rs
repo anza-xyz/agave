@@ -63,7 +63,8 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .long("force")
                 .takes_value(false)
                 .help(
-                    "Request the validator exit immediately instead of waiting for a restart window",
+                    "Request the validator exit immediately instead of waiting for a restart \
+                     window",
                 ),
         )
         .arg(
@@ -86,9 +87,7 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .validator(is_parsable::<usize>)
                 .value_name("MINUTES")
                 .default_value(DEFAULT_MIN_IDLE_TIME)
-                .help(
-                    "Minimum time that the validator should not be leader before restarting",
-                ),
+                .help("Minimum time that the validator should not be leader before restarting"),
         )
         .arg(
             Arg::with_name("max_delinquent_stake")
@@ -134,8 +133,9 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     // Since PostExitAction::Wait case is opt-in (via --wait-for-exit), the
     // result is checked ONLY in that case to provide a friendlier upgrade
     // path for users who are NOT using --wait-for-exit
-    const WAIT_FOR_EXIT_UNSUPPORTED_ERROR: &str =
-        "remote process exit cannot be waited on. `--wait-for-exit` is not supported by the remote process";
+    const WAIT_FOR_EXIT_UNSUPPORTED_ERROR: &str = "remote process exit cannot be waited on. \
+                                                   `--wait-for-exit` is not supported by the \
+                                                   remote process";
     let post_exit_action = exit_args.post_exit_action.clone();
     let validator_pid = admin_rpc_service::runtime().block_on(async move {
         let admin_client = admin_rpc_service::connect(ledger_path).await?;

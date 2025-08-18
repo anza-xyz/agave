@@ -472,8 +472,8 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(is_url_or_moniker)
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): \
-                     [mainnet-beta, testnet, devnet, localhost]",
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                     testnet, devnet, localhost]",
                 ),
         )
         .arg(
@@ -484,8 +484,8 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .help(
                     "Address of the mint account that will receive tokens created at genesis. If \
-                     the ledger already exists then this parameter is silently ignored \
-                     [default: client keypair]",
+                     the ledger already exists then this parameter is silently ignored [default: \
+                     client keypair]",
                 ),
         )
         .arg(
@@ -716,15 +716,15 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                         .parse::<f64>()
                         .map_err(|err| format!("error parsing '{value}': {err}"))
                         .and_then(|rate| match rate.partial_cmp(&0.0) {
-			    Some(Ordering::Greater) | Some(Ordering::Equal) => Ok(()),
-			    Some(Ordering::Less) | None => Err(String::from("value must be >= 0")),
+                            Some(Ordering::Greater) | Some(Ordering::Equal) => Ok(()),
+                            Some(Ordering::Less) | None => Err(String::from("value must be >= 0")),
                         })
                 })
                 .takes_value(true)
                 .allow_hyphen_values(true)
                 .help(
-                    "Override default inflation with fixed rate. If the ledger already exists then \
-                     this parameter is silently ignored",
+                    "Override default inflation with fixed rate. If the ledger already exists \
+                     then this parameter is silently ignored",
                 ),
         )
         .arg(
@@ -749,7 +749,10 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
                 .default_value("127.0.0.1")
-                .help("IP address to bind the validator ports [default: 127.0.0.1]. Can be repeated to specify multihoming options."),
+                .help(
+                    "IP address to bind the validator ports [default: 127.0.0.1]. Can be repeated \
+                     to specify multihoming options.",
+                ),
         )
         .arg(
             Arg::with_name("clone_account")
@@ -774,9 +777,9 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .multiple(true)
                 .requires("json_rpc_url")
                 .help(
-                    "Copy an address lookup table and all accounts it references from the cluster referenced by the --url \
-                     argument in the genesis configuration. If the ledger already exists then this \
-                     parameter is silently ignored",
+                    "Copy an address lookup table and all accounts it references from the cluster \
+                     referenced by the --url argument in the genesis configuration. If the ledger \
+                     already exists then this parameter is silently ignored",
                 ),
         )
         .arg(
@@ -917,9 +920,9 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(false)
                 .requires("json_rpc_url")
                 .help(
-                    "Copy a feature set from the cluster referenced by the --url \
-                     argument in the genesis configuration. If the ledger \
-                     already exists then this parameter is silently ignored",
+                    "Copy a feature set from the cluster referenced by the --url argument in the \
+                     genesis configuration. If the ledger already exists then this parameter is \
+                     silently ignored",
                 ),
         )
 }
