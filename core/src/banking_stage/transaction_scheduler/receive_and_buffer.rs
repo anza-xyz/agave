@@ -62,6 +62,21 @@ pub(crate) struct ReceivingStats {
     pub num_buffered: usize,
 }
 
+impl ReceivingStats {
+    fn accumulate(&mut self, other: ReceivingStats) {
+        self.num_received += other.num_received;
+        self.num_dropped_without_buffering += other.num_dropped_without_buffering;
+        self.num_dropped_on_sanitization += other.num_dropped_on_sanitization;
+        self.num_dropped_on_lock_validation += other.num_dropped_on_lock_validation;
+        self.num_dropped_on_compute_budget += other.num_dropped_on_compute_budget;
+        self.num_dropped_on_age += other.num_dropped_on_age;
+        self.num_dropped_on_already_processed += other.num_dropped_on_already_processed;
+        self.num_dropped_on_fee_payer += other.num_dropped_on_fee_payer;
+        self.num_dropped_on_capacity += other.num_dropped_on_capacity;
+        self.num_buffered += other.num_buffered;
+    }
+}
+
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) trait ReceiveAndBuffer {
     type Transaction: TransactionWithMeta + Send + Sync;
@@ -355,18 +370,20 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         const TIMEOUT: Duration = Duration::from_millis(10);
         const PACKET_BURST_LIMIT: usize = 1000;
         let start = Instant::now();
-        let mut num_received = 0;
 
         let mut received_message = false;
-        let mut num_dropped_without_buffering = 0;
-        let mut num_dropped_on_sanitization = 0;
-        let mut num_dropped_on_lock_validation = 0;
-        let mut num_dropped_on_compute_budget = 0;
-        let mut num_dropped_on_age = 0;
-        let mut num_dropped_on_already_processed = 0;
-        let mut num_dropped_on_fee_payer = 0;
-        let mut num_dropped_on_capacity = 0;
-        let mut num_buffered = 0;
+        let mut stats = ReceivingStats {
+            num_received: 0,
+            num_dropped_without_buffering: 0,
+            num_dropped_on_sanitization: 0,
+            num_dropped_on_lock_validation: 0,
+            num_dropped_on_compute_budget: 0,
+            num_dropped_on_age: 0,
+            num_dropped_on_already_processed: 0,
+            num_dropped_on_fee_payer: 0,
+            num_dropped_on_capacity: 0,
+            num_buffered: 0,
+        };
 
         // If not leader/unknown, do a blocking-receive initially. This lets
         // the thread sleep until a message is received, or until the timeout.
@@ -385,23 +402,13 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             match self.receiver.recv_timeout(TIMEOUT) {
                 Ok(packet_batch_message) => {
                     received_message = true;
-                    let stats = self.handle_packet_batch_message(
+                    stats.accumulate(self.handle_packet_batch_message(
                         container,
                         decision,
                         &root_bank,
                         &working_bank,
                         packet_batch_message,
-                    );
-                    num_received += stats.num_received;
-                    num_dropped_without_buffering += stats.num_dropped_without_buffering;
-                    num_dropped_on_sanitization += stats.num_dropped_on_sanitization;
-                    num_dropped_on_lock_validation += stats.num_dropped_on_lock_validation;
-                    num_dropped_on_compute_budget += stats.num_dropped_on_compute_budget;
-                    num_dropped_on_age += stats.num_dropped_on_age;
-                    num_dropped_on_already_processed += stats.num_dropped_on_already_processed;
-                    num_dropped_on_fee_payer += stats.num_dropped_on_fee_payer;
-                    num_dropped_on_capacity += stats.num_dropped_on_capacity;
-                    num_buffered += stats.num_buffered;
+                    ));
                 }
                 Err(RecvTimeoutError::Timeout) => timed_out = true,
                 Err(RecvTimeoutError::Disconnected) => {
@@ -413,27 +420,17 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         }
 
         if !timed_out {
-            while start.elapsed() < TIMEOUT && num_received < PACKET_BURST_LIMIT {
+            while start.elapsed() < TIMEOUT && stats.num_received < PACKET_BURST_LIMIT {
                 match self.receiver.try_recv() {
                     Ok(packet_batch_message) => {
                         received_message = true;
-                        let stats = self.handle_packet_batch_message(
+                        stats.accumulate(self.handle_packet_batch_message(
                             container,
                             decision,
                             &root_bank,
                             &working_bank,
                             packet_batch_message,
-                        );
-                        num_received += stats.num_received;
-                        num_dropped_without_buffering += stats.num_dropped_without_buffering;
-                        num_dropped_on_sanitization += stats.num_dropped_on_sanitization;
-                        num_dropped_on_lock_validation += stats.num_dropped_on_lock_validation;
-                        num_dropped_on_compute_budget += stats.num_dropped_on_compute_budget;
-                        num_dropped_on_age += stats.num_dropped_on_age;
-                        num_dropped_on_already_processed += stats.num_dropped_on_already_processed;
-                        num_dropped_on_fee_payer += stats.num_dropped_on_fee_payer;
-                        num_dropped_on_capacity += stats.num_dropped_on_capacity;
-                        num_buffered += stats.num_buffered;
+                        ));
                     }
                     Err(TryRecvError::Empty) => {}
                     Err(TryRecvError::Disconnected) => {
@@ -446,31 +443,18 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         }
 
         Ok(ReceivingStats {
-            num_received,
-            num_dropped_without_buffering,
-            num_dropped_on_sanitization,
-            num_dropped_on_lock_validation,
-            num_dropped_on_compute_budget,
-            num_dropped_on_age,
-            num_dropped_on_already_processed,
-            num_dropped_on_fee_payer,
-            num_dropped_on_capacity,
-            num_buffered,
+            num_received: stats.num_received,
+            num_dropped_without_buffering: stats.num_dropped_without_buffering,
+            num_dropped_on_sanitization: stats.num_dropped_on_sanitization,
+            num_dropped_on_lock_validation: stats.num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget: stats.num_dropped_on_compute_budget,
+            num_dropped_on_age: stats.num_dropped_on_age,
+            num_dropped_on_already_processed: stats.num_dropped_on_already_processed,
+            num_dropped_on_fee_payer: stats.num_dropped_on_fee_payer,
+            num_dropped_on_capacity: stats.num_dropped_on_capacity,
+            num_buffered: stats.num_buffered,
         })
     }
-}
-
-struct PacketBatchHandlingStats {
-    num_received: usize,
-    num_dropped_without_buffering: usize,
-    num_dropped_on_sanitization: usize,
-    num_dropped_on_lock_validation: usize,
-    num_dropped_on_compute_budget: usize,
-    num_dropped_on_age: usize,
-    num_dropped_on_already_processed: usize,
-    num_dropped_on_fee_payer: usize,
-    num_dropped_on_capacity: usize,
-    num_buffered: usize,
 }
 
 enum PacketHandlingError {
@@ -488,7 +472,7 @@ impl TransactionViewReceiveAndBuffer {
         root_bank: &Bank,
         working_bank: &Bank,
         packet_batch_message: BankingPacketBatch,
-    ) -> PacketBatchHandlingStats {
+    ) -> ReceivingStats {
         // If outside holding window, do not parse.
         let should_parse = !matches!(decision, BufferedPacketsDecision::Forward);
 
@@ -634,7 +618,7 @@ impl TransactionViewReceiveAndBuffer {
         // Any remaining packets undergo status/age checks
         check_and_push_to_queue(container, &mut transaction_priority_ids);
 
-        PacketBatchHandlingStats {
+        ReceivingStats {
             num_received,
             num_dropped_without_buffering,
             num_dropped_on_sanitization,
