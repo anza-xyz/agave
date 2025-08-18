@@ -59,6 +59,7 @@ use {
     std::{
         collections::HashMap,
         net::{SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         sync::{atomic::AtomicBool, Arc, RwLock},
         thread::{self, JoinHandle},
         time::Duration,
@@ -150,7 +151,7 @@ impl Tpu {
         vote_quic_server_config: QuicServerParams,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
-        block_production_num_workers: usize,
+        block_production_num_workers: NonZeroUsize,
         transaction_struct: TransactionStructure,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */

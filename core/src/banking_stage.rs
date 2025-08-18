@@ -35,7 +35,7 @@ use {
     },
     solana_time_utils::AtomicInterval,
     std::{
-        num::Saturating,
+        num::{NonZeroUsize, Saturating},
         ops::Deref,
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -79,7 +79,7 @@ conditional_vis_mod!(
 );
 conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
 
-const DEFAULT_NUM_WORKERS: usize = 4;
+const DEFAULT_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
@@ -363,7 +363,7 @@ impl BankingStage {
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
-        num_workers: usize,
+        num_workers: NonZeroUsize,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
@@ -412,7 +412,7 @@ impl BankingStage {
     fn new_central_scheduler(
         transaction_struct: TransactionStructure,
         use_greedy_scheduler: bool,
-        num_workers: usize,
+        num_workers: NonZeroUsize,
         non_vote_receiver: BankingPacketReceiver,
         transaction_recorder: TransactionRecorder,
         poh_recorder: Arc<RwLock<PohRecorder>>,
@@ -459,7 +459,7 @@ impl BankingStage {
     fn spawn_scheduler_and_workers<R: ReceiveAndBuffer + Send + Sync + 'static>(
         receive_and_buffer: R,
         use_greedy_scheduler: bool,
-        num_workers: usize,
+        num_workers: NonZeroUsize,
         transaction_recorder: TransactionRecorder,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -470,6 +470,7 @@ impl BankingStage {
         let exit = Arc::new(AtomicBool::new(false));
 
         // + 1 for scheduler thread
+        let num_workers = num_workers.get();
         let mut thread_hdls = Vec::with_capacity(num_workers + 1);
 
         // Create channels for communication between scheduler and workers
@@ -595,7 +596,7 @@ impl BankingStage {
             .unwrap()
     }
 
-    pub fn default_num_workers() -> usize {
+    pub fn default_num_workers() -> NonZeroUsize {
         DEFAULT_NUM_WORKERS
     }
 

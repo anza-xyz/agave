@@ -144,7 +144,7 @@ fn bench_banking(
     //   a multiple of packet chunk duplicates to avoid races
     const CHUNKS: usize = 8;
     const PACKETS_PER_BATCH: usize = 192;
-    let txes = PACKETS_PER_BATCH * num_threads * CHUNKS;
+    let txes = PACKETS_PER_BATCH * num_threads.get() * CHUNKS;
     let mint_total = 1_000_000_000_000;
     let GenesisConfigInfo {
         mut genesis_config,

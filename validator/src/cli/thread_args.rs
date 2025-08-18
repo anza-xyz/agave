@@ -271,7 +271,7 @@ impl ThreadArg for BlockProductionNumWorkersArg {
     const HELP: &'static str = "Number of worker threads to use for block production";
 
     fn default() -> usize {
-        BankingStage::default_num_workers()
+        BankingStage::default_num_workers().get()
     }
 
     fn min() -> usize {

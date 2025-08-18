@@ -36,6 +36,7 @@ use {
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     std::{
+        num::NonZeroUsize,
         sync::{atomic::Ordering, Arc, RwLock},
         thread::sleep,
         time::{Duration, Instant},
@@ -321,7 +322,7 @@ fn main() {
         .value_of_t::<BlockProductionMethod>("block_production_method")
         .unwrap_or_default();
     let block_production_num_workers = matches
-        .value_of_t::<usize>("block_production_num_workers")
+        .value_of_t::<NonZeroUsize>("block_production_num_workers")
         .unwrap_or_else(|_| BankingStage::default_num_workers());
     let transaction_struct = matches
         .value_of_t::<TransactionStructure>("transaction_struct")
@@ -334,7 +335,7 @@ fn main() {
     let iterations = matches.value_of_t::<usize>("iterations").unwrap_or(1000);
     let batches_per_iteration = matches
         .value_of_t::<usize>("batches_per_iteration")
-        .unwrap_or(BankingStage::default_num_workers());
+        .unwrap_or(BankingStage::default_num_workers().get());
     let write_lock_contention = matches
         .value_of_t::<WriteLockContention>("write_lock_contention")
         .unwrap_or(WriteLockContention::None);

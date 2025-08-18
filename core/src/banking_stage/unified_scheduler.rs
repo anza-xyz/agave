@@ -39,6 +39,7 @@ use {
     solana_runtime::bank_forks::BankForks,
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},
     std::{
+        num::NonZeroUsize,
         ops::Deref,
         sync::{Arc, RwLock},
     },
@@ -52,7 +53,7 @@ pub(crate) fn ensure_banking_stage_setup(
     channels: &Channels,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
     transaction_recorder: TransactionRecorder,
-    num_threads: usize,
+    num_threads: NonZeroUsize,
 ) {
     let root_bank = bank_forks.read().unwrap().sharable_root_bank();
     let unified_receiver = channels.unified_receiver().clone();
@@ -103,7 +104,7 @@ pub(crate) fn ensure_banking_stage_setup(
     );
 
     pool.register_banking_stage(
-        Some(num_threads),
+        Some(num_threads.get()),
         unified_receiver,
         banking_packet_handler,
         transaction_recorder,

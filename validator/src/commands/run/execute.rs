@@ -681,7 +681,7 @@ pub fn execute(
             "block_production_method",
             BlockProductionMethod
         ),
-        block_production_num_workers: block_production_num_workers.get(),
+        block_production_num_workers,
         transaction_struct: value_t_or_exit!(matches, "transaction_struct", TransactionStructure),
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         banking_trace_dir_byte_limit: parse_banking_trace_dir_byte_limit(matches),
