@@ -336,7 +336,7 @@ impl FileCreatorStats {
             .checked_div(self.no_buf_count as usize)
             .unwrap_or_default();
         log::info!(
-            "files creation stats - large buf headroom: {}, no buf count: {},avg pending writes \
+            "files creation stats - large buf headroom: {}, no buf count: {}, avg pending writes \
              at no buf: {avg_writes_at_no_buf}",
             self.large_buf_headroom_count,
             self.no_buf_count,
