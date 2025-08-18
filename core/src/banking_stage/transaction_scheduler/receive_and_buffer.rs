@@ -48,7 +48,9 @@ pub(crate) struct DisconnectedError;
 
 /// Stats/metrics returned by `receive_and_buffer_packets`.
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-pub(crate) struct ReceivingStats {}
+pub(crate) struct ReceivingStats {
+    pub num_valid_packets: usize,
+}
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) trait ReceiveAndBuffer {
@@ -105,12 +107,17 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                 if should_buffer {
                     self.buffer_packets(container, receive_packet_results.deserialized_packets);
                 }
-            }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return Err(DisconnectedError),
-        };
 
-        Ok(ReceivingStats {})
+                Ok(ReceivingStats {
+                    num_valid_packets: receive_packet_results.packet_stats.passed_sigverify_count.0
+                        as usize,
+                })
+            }
+            Err(RecvTimeoutError::Timeout) => Ok(ReceivingStats {
+                num_valid_packets: 0,
+            }),
+            Err(RecvTimeoutError::Disconnected) => Err(DisconnectedError),
+        }
     }
 }
 
@@ -234,8 +241,9 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
 
         // Receive packet batches.
         const TIMEOUT: Duration = Duration::from_millis(10);
-        // const PACKET_BURST_LIMIT: usize = 1000;
+        const PACKET_BURST_LIMIT: usize = 1000;
         let start = Instant::now();
+        let mut num_valid_packets = 0;
         let mut received_message = false;
 
         // If not leader/unknown, do a blocking-receive initially. This lets
@@ -255,13 +263,15 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             match self.receiver.recv_timeout(TIMEOUT) {
                 Ok(packet_batch_message) => {
                     received_message = true;
-                    self.handle_packet_batch_message(
+                    let stats = self.handle_packet_batch_message(
                         container,
                         decision,
                         &root_bank,
                         &working_bank,
                         packet_batch_message,
                     );
+
+                    num_valid_packets += stats.num_valid_packets;
                 }
                 Err(RecvTimeoutError::Timeout) => timed_out = true,
                 Err(RecvTimeoutError::Disconnected) => {
@@ -273,17 +283,18 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         }
 
         if !timed_out {
-            while start.elapsed() < TIMEOUT {
+            while start.elapsed() < TIMEOUT && num_valid_packets < PACKET_BURST_LIMIT {
                 match self.receiver.try_recv() {
                     Ok(packet_batch_message) => {
                         received_message = true;
-                        self.handle_packet_batch_message(
+                        let stats = self.handle_packet_batch_message(
                             container,
                             decision,
                             &root_bank,
                             &working_bank,
                             packet_batch_message,
                         );
+                        num_valid_packets += stats.num_valid_packets;
                     }
                     Err(TryRecvError::Empty) => {}
                     Err(TryRecvError::Disconnected) => {
@@ -295,8 +306,12 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             }
         }
 
-        Ok(ReceivingStats {})
+        Ok(ReceivingStats { num_valid_packets })
     }
+}
+
+struct PacketBatchHandlingStats {
+    num_valid_packets: usize,
 }
 
 impl TransactionViewReceiveAndBuffer {
@@ -308,11 +323,9 @@ impl TransactionViewReceiveAndBuffer {
         root_bank: &Bank,
         working_bank: &Bank,
         packet_batch_message: BankingPacketBatch,
-    ) {
-        // If not holding packets, just drop them immediately without parsing.
-        if matches!(decision, BufferedPacketsDecision::Forward) {
-            return;
-        }
+    ) -> PacketBatchHandlingStats {
+        // If outside holding window, do not parse.
+        let should_parse = !matches!(decision, BufferedPacketsDecision::Forward);
 
         // Sanitize packets, generate IDs, and insert into the container.
         let alt_resolved_slot = root_bank.slot();
@@ -376,11 +389,17 @@ impl TransactionViewReceiveAndBuffer {
                 );
             };
 
+        let mut num_valid_packets = 0;
         for packet_batch in packet_batch_message.iter() {
             for packet in packet_batch.iter() {
                 let Some(packet_data) = packet.data(..) else {
                     continue;
                 };
+
+                num_valid_packets += 1;
+                if !should_parse {
+                    continue;
+                }
 
                 // Reserve free-space to copy packet into, run sanitization checks, and insert.
                 if let Some(transaction_id) =
@@ -415,6 +434,8 @@ impl TransactionViewReceiveAndBuffer {
 
         // Any remaining packets undergo status/age checks
         check_and_push_to_queue(container, &mut transaction_priority_ids);
+
+        PacketBatchHandlingStats { num_valid_packets }
     }
 
     fn try_handle_packet(
@@ -677,14 +698,13 @@ mod tests {
         assert!(r.is_err());
     }
 
-    #[test_case(setup_sanitized_transaction_receive_and_buffer, 1; "testcase-sdk")]
-    #[test_case(setup_transaction_view_receive_and_buffer, 0; "testcase-view")]
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
     fn test_receive_and_buffer_no_hold<R: ReceiveAndBuffer>(
         setup_receive_and_buffer: impl FnOnce(
             Receiver<BankingPacketBatch>,
             Arc<RwLock<BankForks>>,
         ) -> (R, R::Container),
-        _expected_num_received: usize,
     ) {
         let (sender, receiver) = unbounded();
         let (bank_forks, mint_keypair) = test_bank_forks();
@@ -700,17 +720,14 @@ mod tests {
         let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
         sender.send(packet_batches).unwrap();
 
-        let _receiving_stats = receive_and_buffer
+        let receiving_stats = receive_and_buffer
             .receive_and_buffer_packets(
                 &mut container,
                 &BufferedPacketsDecision::Forward, // no packets should be held
             )
             .unwrap();
 
-        // Currently the different approaches have slightly different accounting.
-        // - sdk: all valid deserializable packets count as received
-        // - view: immediately drops all packets without counting due to decision
-        // assert_eq!(num_received, expected_num_received);
+        assert_eq!(receiving_stats.num_valid_packets, 1);
         verify_container(&mut container, 0);
     }
 
@@ -741,22 +758,21 @@ mod tests {
             .set_discard(true);
         sender.send(packet_batches).unwrap();
 
-        let _receiving_stats = receive_and_buffer
+        let receiving_stats = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
-        // assert_eq!(receiving_stats, 0);
+        assert_eq!(receiving_stats.num_valid_packets, 0);
         verify_container(&mut container, 0);
     }
 
-    #[test_case(setup_sanitized_transaction_receive_and_buffer, 0; "testcase-sdk")]
-    #[test_case(setup_transaction_view_receive_and_buffer, 1; "testcase-view")]
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
     fn test_receive_and_buffer_invalid_transaction_format<R: ReceiveAndBuffer>(
         setup_receive_and_buffer: impl FnOnce(
             Receiver<BankingPacketBatch>,
             Arc<RwLock<BankForks>>,
         ) -> (R, R::Container),
-        _expected_num_received: usize,
     ) {
         let (sender, receiver) = unbounded();
         let (bank_forks, _mint_keypair) = test_bank_forks();
@@ -768,14 +784,11 @@ mod tests {
         ]))]);
         sender.send(packet_batches).unwrap();
 
-        let _receiving_stats = receive_and_buffer
+        let receiving_stats = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
-        // Currently the different approaches have slightly different accounting.
-        // - sdk: only valid deserializable packets count as received
-        // - view: all valid packets count as received, even if invalid tx format
-        // assert_eq!(num_received, expected_num_received);
+        assert_eq!(receiving_stats.num_valid_packets, 1);
         verify_container(&mut container, 0);
     }
 
@@ -796,11 +809,11 @@ mod tests {
         let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
         sender.send(packet_batches).unwrap();
 
-        let _receiving_stats = receive_and_buffer
+        let receiving_stats = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
-        // assert_eq!(receiving_stats, 1);
+        assert_eq!(receiving_stats.num_valid_packets, 1);
         verify_container(&mut container, 0);
     }
 
@@ -826,11 +839,11 @@ mod tests {
         let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
         sender.send(packet_batches).unwrap();
 
-        let _receiving_stats = receive_and_buffer
+        let receiving_stats = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
-        // assert_eq!(receiving_stats, 1);
+        assert_eq!(receiving_stats.num_valid_packets, 1);
         verify_container(&mut container, 0);
     }
 
@@ -871,11 +884,11 @@ mod tests {
         let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
         sender.send(packet_batches).unwrap();
 
-        let _receiving_stats = receive_and_buffer
+        let receiving_stats = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
-        // assert_eq!(receiving_stats, 1);
+        assert_eq!(receiving_stats.num_valid_packets, 1);
         verify_container(&mut container, 0);
     }
 
@@ -901,11 +914,11 @@ mod tests {
         let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
         sender.send(packet_batches).unwrap();
 
-        let _receiving_stats = receive_and_buffer
+        let receiving_stats = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
-        // assert_eq!(receiving_stats, 1);
+        assert_eq!(receiving_stats.num_valid_packets, 1);
         verify_container(&mut container, 1);
     }
 
@@ -935,11 +948,11 @@ mod tests {
         let packet_batches = Arc::new(to_packet_batches(&transactions, 17));
         sender.send(packet_batches).unwrap();
 
-        receive_and_buffer
+        let receiving_stats = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
-        // assert_eq!(num_received, num_transactions);
+        assert_eq!(receiving_stats.num_valid_packets, num_transactions);
         verify_container(&mut container, TEST_CONTAINER_CAPACITY);
     }
 }

@@ -51,9 +51,9 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator
 
                 let start = Instant::now();
                 {
-                    let _res =
+                    let res =
                         receive_and_buffer.receive_and_buffer_packets(&mut container, &decision);
-                    // assert!(res.unwrap() == num_txs && !container.is_empty());
+                    assert!(res.unwrap().num_valid_packets == num_txs && !container.is_empty());
                     black_box(&container);
                 }
                 total = total.saturating_add(start.elapsed());
