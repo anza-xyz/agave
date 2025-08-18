@@ -51,7 +51,11 @@ pub(crate) struct DisconnectedError;
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct ReceivingStats {
     pub num_received: usize,
-    pub num_dropped_without_buffering: usize,
+    /// Count of packets that passed sigverify but were dropped
+    /// without further checks because we were outside the holding
+    /// window.
+    pub num_dropped_without_parsing: usize,
+
     pub num_dropped_on_sanitization: usize,
     pub num_dropped_on_lock_validation: usize,
     pub num_dropped_on_compute_budget: usize,
@@ -59,13 +63,14 @@ pub(crate) struct ReceivingStats {
     pub num_dropped_on_already_processed: usize,
     pub num_dropped_on_fee_payer: usize,
     pub num_dropped_on_capacity: usize,
+
     pub num_buffered: usize,
 }
 
 impl ReceivingStats {
     fn accumulate(&mut self, other: ReceivingStats) {
         self.num_received += other.num_received;
-        self.num_dropped_without_buffering += other.num_dropped_without_buffering;
+        self.num_dropped_without_parsing += other.num_dropped_without_parsing;
         self.num_dropped_on_sanitization += other.num_dropped_on_sanitization;
         self.num_dropped_on_lock_validation += other.num_dropped_on_lock_validation;
         self.num_dropped_on_compute_budget += other.num_dropped_on_compute_budget;
@@ -140,7 +145,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                     Ok(ReceivingStats {
                         num_received: receive_packet_results.packet_stats.passed_sigverify_count.0
                             as usize,
-                        num_dropped_without_buffering: 0,
+                        num_dropped_without_parsing: 0,
                         num_dropped_on_sanitization: num_dropped_on_initial_parsing
                             + buffer_stats.num_dropped_on_sanitization,
                         num_dropped_on_lock_validation: buffer_stats.num_dropped_on_lock_validation,
@@ -156,7 +161,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                     Ok(ReceivingStats {
                         num_received: receive_packet_results.packet_stats.passed_sigverify_count.0
                             as usize,
-                        num_dropped_without_buffering: receive_packet_results
+                        num_dropped_without_parsing: receive_packet_results
                             .packet_stats
                             .passed_sigverify_count
                             .0 as usize,
@@ -173,7 +178,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
             }
             Err(RecvTimeoutError::Timeout) => Ok(ReceivingStats {
                 num_received: 0,
-                num_dropped_without_buffering: 0,
+                num_dropped_without_parsing: 0,
                 num_dropped_on_sanitization: 0,
                 num_dropped_on_lock_validation: 0,
                 num_dropped_on_compute_budget: 0,
@@ -374,7 +379,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         let mut received_message = false;
         let mut stats = ReceivingStats {
             num_received: 0,
-            num_dropped_without_buffering: 0,
+            num_dropped_without_parsing: 0,
             num_dropped_on_sanitization: 0,
             num_dropped_on_lock_validation: 0,
             num_dropped_on_compute_budget: 0,
@@ -444,7 +449,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
 
         Ok(ReceivingStats {
             num_received: stats.num_received,
-            num_dropped_without_buffering: stats.num_dropped_without_buffering,
+            num_dropped_without_parsing: stats.num_dropped_without_parsing,
             num_dropped_on_sanitization: stats.num_dropped_on_sanitization,
             num_dropped_on_lock_validation: stats.num_dropped_on_lock_validation,
             num_dropped_on_compute_budget: stats.num_dropped_on_compute_budget,
@@ -620,7 +625,7 @@ impl TransactionViewReceiveAndBuffer {
 
         ReceivingStats {
             num_received,
-            num_dropped_without_buffering,
+            num_dropped_without_parsing: num_dropped_without_buffering,
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
@@ -916,7 +921,7 @@ mod tests {
 
         let ReceivingStats {
             num_received,
-            num_dropped_without_buffering,
+            num_dropped_without_parsing,
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
@@ -933,7 +938,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(num_received, 1);
-        assert_eq!(num_dropped_without_buffering, 1);
+        assert_eq!(num_dropped_without_parsing, 1);
         assert_eq!(num_dropped_on_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
@@ -974,7 +979,7 @@ mod tests {
 
         let ReceivingStats {
             num_received,
-            num_dropped_without_buffering,
+            num_dropped_without_parsing,
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
@@ -988,7 +993,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(num_received, 0);
-        assert_eq!(num_dropped_without_buffering, 0);
+        assert_eq!(num_dropped_without_parsing, 0);
         assert_eq!(num_dropped_on_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
@@ -1021,7 +1026,7 @@ mod tests {
 
         let ReceivingStats {
             num_received,
-            num_dropped_without_buffering,
+            num_dropped_without_parsing,
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
@@ -1035,7 +1040,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(num_received, 1);
-        assert_eq!(num_dropped_without_buffering, 0);
+        assert_eq!(num_dropped_without_parsing, 0);
         assert_eq!(num_dropped_on_sanitization, 1);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
@@ -1067,7 +1072,7 @@ mod tests {
 
         let ReceivingStats {
             num_received,
-            num_dropped_without_buffering,
+            num_dropped_without_parsing,
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
@@ -1081,7 +1086,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(num_received, 1);
-        assert_eq!(num_dropped_without_buffering, 0);
+        assert_eq!(num_dropped_without_parsing, 0);
         assert_eq!(num_dropped_on_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
@@ -1118,7 +1123,7 @@ mod tests {
 
         let ReceivingStats {
             num_received,
-            num_dropped_without_buffering,
+            num_dropped_without_parsing,
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
@@ -1132,7 +1137,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(num_received, 1);
-        assert_eq!(num_dropped_without_buffering, 0);
+        assert_eq!(num_dropped_without_parsing, 0);
         assert_eq!(num_dropped_on_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
@@ -1184,7 +1189,7 @@ mod tests {
 
         let ReceivingStats {
             num_received,
-            num_dropped_without_buffering,
+            num_dropped_without_parsing,
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
@@ -1198,7 +1203,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(num_received, 1);
-        assert_eq!(num_dropped_without_buffering, 0);
+        assert_eq!(num_dropped_without_parsing, 0);
         assert_eq!(num_dropped_on_sanitization, 1);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
@@ -1235,7 +1240,7 @@ mod tests {
 
         let ReceivingStats {
             num_received,
-            num_dropped_without_buffering,
+            num_dropped_without_parsing,
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
@@ -1249,7 +1254,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(num_received, 1);
-        assert_eq!(num_dropped_without_buffering, 0);
+        assert_eq!(num_dropped_without_parsing, 0);
         assert_eq!(num_dropped_on_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
@@ -1290,7 +1295,7 @@ mod tests {
 
         let ReceivingStats {
             num_received,
-            num_dropped_without_buffering,
+            num_dropped_without_parsing,
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
@@ -1304,7 +1309,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(num_received, num_transactions);
-        assert_eq!(num_dropped_without_buffering, 0);
+        assert_eq!(num_dropped_without_parsing, 0);
         assert_eq!(num_dropped_on_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);

@@ -305,8 +305,37 @@ where
         &mut self,
         decision: &BufferedPacketsDecision,
     ) -> Result<ReceivingStats, DisconnectedError> {
-        self.receive_and_buffer
-            .receive_and_buffer_packets(&mut self.container, decision)
+        let receiving_stats = self
+            .receive_and_buffer
+            .receive_and_buffer_packets(&mut self.container, decision)?;
+
+        self.count_metrics.update(|count_metrics| {
+            let ReceivingStats {
+                num_received,
+                num_dropped_without_parsing: num_dropped_without_buffering,
+                num_dropped_on_sanitization,
+                num_dropped_on_lock_validation,
+                num_dropped_on_compute_budget,
+                num_dropped_on_age,
+                num_dropped_on_already_processed,
+                num_dropped_on_fee_payer,
+                num_dropped_on_capacity,
+                num_buffered,
+            } = &receiving_stats;
+
+            count_metrics.num_received += *num_received;
+            count_metrics.num_dropped_on_receive += *num_dropped_without_buffering;
+            count_metrics.num_dropped_on_sanitization += *num_dropped_on_sanitization;
+            count_metrics.num_dropped_on_validate_locks += *num_dropped_on_lock_validation;
+            count_metrics.num_dropped_on_compute_budget += *num_dropped_on_compute_budget;
+            count_metrics.num_dropped_on_receive_age += *num_dropped_on_age;
+            count_metrics.num_dropped_on_receive_already_processed +=
+                *num_dropped_on_already_processed;
+            count_metrics.num_dropped_on_receive_fee_payer += *num_dropped_on_fee_payer;
+            count_metrics.num_dropped_on_capacity += *num_dropped_on_capacity;
+            count_metrics.num_buffered += *num_buffered;
+        });
+        Ok(receiving_stats)
     }
 }
 

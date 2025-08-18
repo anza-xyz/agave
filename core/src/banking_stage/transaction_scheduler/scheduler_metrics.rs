@@ -71,9 +71,14 @@ pub struct SchedulerCountMetricsInner {
     pub num_dropped_on_sanitization: Saturating<usize>,
     /// Number of transactions that were dropped due to failed lock validation.
     pub num_dropped_on_validate_locks: Saturating<usize>,
-    /// Number of transactions that were dropped due to failed transaction
-    /// checks during receive.
-    pub num_dropped_on_receive_transaction_checks: Saturating<usize>,
+    /// Number of transactions that were dropped in checking compute budget configuration.
+    pub num_dropped_on_compute_budget: Saturating<usize>,
+    /// Number of transactions that were dropped due to age/nonce during receive checks.
+    pub num_dropped_on_receive_age: Saturating<usize>,
+    /// Number of transactions that were dropped due to already processed during receive checks.
+    pub num_dropped_on_receive_already_processed: Saturating<usize>,
+    /// Number of transactions that were dropped on fee payer checks during receive checks.
+    pub num_dropped_on_receive_fee_payer: Saturating<usize>,
     /// Number of transactions that were dropped due to clearing.
     pub num_dropped_on_clear: Saturating<usize>,
     /// Number of transactions that were dropped during cleaning.
@@ -126,8 +131,11 @@ impl SchedulerCountMetricsInner {
             num_dropped_on_receive: Saturating(num_dropped_on_receive),
             num_dropped_on_sanitization: Saturating(num_dropped_on_sanitization),
             num_dropped_on_validate_locks: Saturating(num_dropped_on_validate_locks),
-            num_dropped_on_receive_transaction_checks:
-                Saturating(num_dropped_on_receive_transaction_checks),
+            num_dropped_on_compute_budget: Saturating(num_dropped_on_compute_budget),
+            num_dropped_on_receive_age: Saturating(num_dropped_on_receive_age),
+            num_dropped_on_receive_already_processed:
+                Saturating(num_dropped_on_receive_already_processed),
+            num_dropped_on_receive_fee_payer: Saturating(num_dropped_on_receive_fee_payer),
             num_dropped_on_clear: Saturating(num_dropped_on_clear),
             num_dropped_on_clean: Saturating(num_dropped_on_clean),
             num_dropped_on_capacity: Saturating(num_dropped_on_capacity),
@@ -160,8 +168,19 @@ impl SchedulerCountMetricsInner {
                 i64
             ),
             (
-                "num_dropped_on_receive_transaction_checks",
-                num_dropped_on_receive_transaction_checks,
+                "num_dropped_on_compute_budget",
+                num_dropped_on_compute_budget,
+                i64
+            ),
+            ("num_dropped_on_receive_age", num_dropped_on_receive_age, i64),
+            (
+                "num_dropped_on_receive_already_processed",
+                num_dropped_on_receive_already_processed,
+                i64
+            ),
+            (
+                "num_dropped_on_receive_fee_payer",
+                num_dropped_on_receive_fee_payer,
                 i64
             ),
             ("num_dropped_on_clear", num_dropped_on_clear, i64),
@@ -189,13 +208,6 @@ impl SchedulerCountMetricsInner {
             || self.num_schedule_filtered_out != Saturating(0)
             || self.num_finished != Saturating(0)
             || self.num_retryable != Saturating(0)
-            || self.num_dropped_on_receive != Saturating(0)
-            || self.num_dropped_on_sanitization != Saturating(0)
-            || self.num_dropped_on_validate_locks != Saturating(0)
-            || self.num_dropped_on_receive_transaction_checks != Saturating(0)
-            || self.num_dropped_on_clear != Saturating(0)
-            || self.num_dropped_on_clean != Saturating(0)
-            || self.num_dropped_on_capacity != Saturating(0)
     }
 
     fn reset(&mut self) {
@@ -210,7 +222,10 @@ impl SchedulerCountMetricsInner {
         self.num_dropped_on_receive = Saturating(0);
         self.num_dropped_on_sanitization = Saturating(0);
         self.num_dropped_on_validate_locks = Saturating(0);
-        self.num_dropped_on_receive_transaction_checks = Saturating(0);
+        self.num_dropped_on_compute_budget = Saturating(0);
+        self.num_dropped_on_receive_age = Saturating(0);
+        self.num_dropped_on_receive_already_processed = Saturating(0);
+        self.num_dropped_on_receive_fee_payer = Saturating(0);
         self.num_dropped_on_clear = Saturating(0);
         self.num_dropped_on_clean = Saturating(0);
         self.num_dropped_on_capacity = Saturating(0);
