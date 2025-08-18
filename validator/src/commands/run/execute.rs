@@ -103,6 +103,7 @@ pub fn execute(
         accounts_db_foreground_threads,
         accounts_db_hash_threads,
         accounts_index_flush_threads,
+        block_production_num_workers,
         ip_echo_server_threads,
         rayon_global_threads,
         replay_forks_threads,
@@ -113,7 +114,6 @@ pub fn execute(
         tvu_receive_threads,
         tvu_retransmit_threads,
         tvu_sigverify_threads,
-        block_production_num_workers,
     } = cli::thread_args::parse_num_threads_args(matches);
 
     let identity_keypair = Arc::new(run_args.identity_keypair);
