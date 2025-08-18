@@ -2,6 +2,7 @@ use {
     crate::{
         admin_rpc_service::{self, load_staked_nodes_overrides, StakedNodesOverrides},
         bootstrap,
+        clap_ext::ArgMatchesExt,
         cli::{self},
         commands::{run::args::RunArgs, FromClapArgMatches},
         ledger_lockfile, lock_ledger,
@@ -496,7 +497,7 @@ pub fn execute(
         };
 
     let xdp_interface = matches.value_of("retransmit_xdp_interface");
-    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
+    let xdp_zero_copy = matches.check_flag("retransmit_xdp_zero_copy").unwrap();
     let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
         XdpConfig::new(
             xdp_interface,

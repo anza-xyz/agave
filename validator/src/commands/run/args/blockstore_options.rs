@@ -60,12 +60,15 @@ impl FromClapArgMatches for BlockstoreOptions {
 mod tests {
     use {
         super::*,
-        crate::commands::run::args::{
-            tests::{
-                verify_args_struct_by_command_run_is_error_with_identity_setup,
-                verify_args_struct_by_command_run_with_identity_setup,
+        crate::{
+            commands::run::args::{
+                tests::{
+                    verify_args_struct_by_command_run_is_error_with_identity_setup,
+                    verify_args_struct_by_command_run_with_identity_setup,
+                },
+                RunArgs,
             },
-            RunArgs,
+            config_file::ValidatorConfig,
         },
         test_case::test_case,
     };
@@ -92,8 +95,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec!["--wal-recovery-mode", arg_value],
             expected_args,
         );
@@ -102,8 +107,10 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_run_with_wal_recovery_mode_invalid() {
         let default_run_args = crate::commands::run::args::RunArgs::default();
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_is_error_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec!["--wal-recovery-mode", "invalid"],
         );
     }
@@ -127,8 +134,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec!["--rocksdb-ledger-compression", arg_value],
             expected_args,
         );
@@ -137,8 +146,10 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_run_with_rocksdb_ledger_compression_invalid() {
         let default_run_args = crate::commands::run::args::RunArgs::default();
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_is_error_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec!["--rocksdb-ledger-compression", "invalid"],
         );
     }
@@ -156,8 +167,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec!["--rocksdb-perf-sample-interval", "100"],
             expected_args,
         );
@@ -175,8 +188,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--rocksdb-compaction-threads", "1"],
                 expected_args,
             );
@@ -195,8 +210,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--rocksdb-flush-threads", "1"],
                 expected_args,
             );

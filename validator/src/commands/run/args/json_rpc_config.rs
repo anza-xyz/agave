@@ -51,8 +51,11 @@ mod tests {
     use crate::commands::run::args::tests::verify_args_struct_by_command_run_is_error_with_identity_setup;
     use {
         super::*,
-        crate::commands::run::args::{
-            tests::verify_args_struct_by_command_run_with_identity_setup, DefaultArgs, RunArgs,
+        crate::{
+            commands::run::args::{
+                tests::verify_args_struct_by_command_run_with_identity_setup, DefaultArgs, RunArgs,
+            },
+            config_file::ValidatorConfig,
         },
         solana_rpc::rpc_pubsub_service::PubSubConfig,
         std::{
@@ -72,8 +75,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--enable-rpc-transaction-history"],
                 expected_args,
             );
@@ -92,8 +97,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec![
                     "--enable-rpc-transaction-history", // required by enable_extended_tx_metadata_storage
                     "--enable-extended-tx-metadata-storage",
@@ -114,8 +121,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--rpc-faucet-address", "127.0.0.1:8000"],
                 expected_args,
             );
@@ -133,8 +142,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--health-check-slot-distance", "100"],
                 expected_args,
             );
@@ -152,8 +163,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--skip-preflight-health-check"],
                 expected_args,
             );
@@ -171,8 +184,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--rpc-max-multiple-accounts", "9999"],
                 expected_args,
             );
@@ -190,8 +205,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--rpc-threads", "10"],
                 expected_args,
             );
@@ -209,8 +226,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--rpc-blocking-threads", "999"],
                 expected_args,
             );
@@ -229,8 +248,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--rpc-niceness-adjustment", "10"],
                 expected_args,
             );
@@ -270,8 +291,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--full-rpc-api"],
                 expected_args,
             );
@@ -290,8 +313,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec![
                     "--enable-rpc-transaction-history", // required by --rpc-scan-and-fix-roots
                     "--rpc-scan-and-fix-roots",
@@ -313,8 +338,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--rpc-max-request-body-size", "999"],
                 expected_args,
             );

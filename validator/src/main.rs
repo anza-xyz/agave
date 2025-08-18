@@ -5,6 +5,7 @@ use {
     agave_validator::{
         cli::{app, warn_for_deprecated_arguments, DefaultArgs},
         commands,
+        config_file::ValidatorConfig,
     },
     log::error,
     std::{path::PathBuf, process::exit},
@@ -17,7 +18,8 @@ static GLOBAL: Jemalloc = Jemalloc;
 pub fn main() {
     let default_args = DefaultArgs::new();
     let solana_version = solana_version::version!();
-    let cli_app = app(solana_version, &default_args);
+    let validator_config = ValidatorConfig::load_from_default_path();
+    let cli_app = app(solana_version, &default_args, &validator_config);
     let matches = cli_app.get_matches();
     warn_for_deprecated_arguments(&matches);
 

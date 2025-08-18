@@ -56,8 +56,11 @@ impl FromClapArgMatches for RpcBootstrapConfig {
 mod tests {
     use {
         super::*,
-        crate::commands::run::args::{
-            tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
+        crate::{
+            commands::run::args::{
+                tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
+            },
+            config_file::ValidatorConfig,
         },
         solana_pubkey::Pubkey,
         std::{
@@ -78,8 +81,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
+                &validator_config,
                 vec!["--no-genesis-fetch"],
                 expected_args,
             );
@@ -98,8 +103,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
+                &validator_config,
                 vec!["--no-snapshot-fetch"],
                 expected_args,
             );
@@ -122,8 +129,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec![
                     // required by --check-vote-account
                     "--entrypoint",
@@ -151,8 +160,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec![
                     // required by --only-known-rpc
                     "--known-validator",
@@ -176,8 +187,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec![
                     // required by --no-untrusted-rpc
                     "--known-validator",
@@ -201,8 +214,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--no-incremental-snapshots"],
                 expected_args,
             );

@@ -63,8 +63,11 @@ impl FromClapArgMatches for AccountSecondaryIndexes {
 mod tests {
     use {
         super::*,
-        crate::commands::run::args::{
-            tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
+        crate::{
+            commands::run::args::{
+                tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
+            },
+            config_file::ValidatorConfig,
         },
         solana_rpc::rpc::JsonRpcConfig,
         test_case::test_case,
@@ -88,8 +91,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec!["--account-index", arg_value],
             expected_args,
         );
@@ -112,8 +117,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec![
                 "--account-index",
                 "program-id",
@@ -145,8 +152,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec![
                     "--account-index", // required by --account-index-include-key
                     "program-id",
@@ -180,8 +189,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec![
                     "--account-index", // required by --account-index-include-key
                     "program-id",
@@ -216,8 +227,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec![
                     "--account-index", // required by --account-index-exclude-key
                     "program-id",
@@ -251,8 +264,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec![
                     "--account-index", // required by --account-index-exclude-key
                     "program-id",

@@ -1,5 +1,5 @@
 use {
-    crate::commands,
+    crate::{commands, config_file::ValidatorConfig},
     clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_accounts_db::{
         accounts_db::{
@@ -50,7 +50,11 @@ const MAX_SNAPSHOT_DOWNLOAD_ABORT: u32 = 5;
 // with less than 2 ticks per slot.
 const MINIMUM_TICKS_PER_SLOT: u64 = 2;
 
-pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
+pub fn app<'a>(
+    version: &'a str,
+    default_args: &'a DefaultArgs,
+    validator_config: &'a ValidatorConfig,
+) -> App<'a, 'a> {
     let app = App::new(crate_name!())
         .about(crate_description!())
         .version(version)
@@ -75,7 +79,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::wait_for_restart_window::command())
         .subcommand(commands::set_public_address::command());
 
-    commands::run::add_args(app, default_args)
+    commands::run::add_args(app, default_args, validator_config)
         .args(&thread_args(&default_args.thread_args))
         .args(&get_deprecated_arguments())
         .after_help("The default subcommand is run")
