@@ -28,6 +28,7 @@ use {
     solana_clock::{Epoch, Slot, MAX_PROCESSING_AGE},
     solana_cost_model::cost_model::CostModel,
     solana_fee_structure::FeeBudgetLimits,
+    solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
@@ -65,6 +66,9 @@ pub(crate) struct ReceivingStats {
     pub num_dropped_on_capacity: usize,
 
     pub num_buffered: usize,
+
+    pub receive_time_us: u64,
+    pub buffer_time_us: u64,
 }
 
 impl ReceivingStats {
@@ -79,6 +83,9 @@ impl ReceivingStats {
         self.num_dropped_on_fee_payer += other.num_dropped_on_fee_payer;
         self.num_dropped_on_capacity += other.num_dropped_on_capacity;
         self.num_buffered += other.num_buffered;
+
+        self.receive_time_us += other.receive_time_us;
+        self.buffer_time_us += other.buffer_time_us;
     }
 }
 
@@ -128,9 +135,9 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
             BufferedPacketsDecision::ForwardAndHold => (MAX_PACKET_RECEIVE_TIME, true),
         };
 
-        let received_packet_results = self
+        let (received_packet_results, receive_time_us) = measure_us!(self
             .packet_receiver
-            .receive_packets(recv_timeout, MAX_RECEIVE_PACKETS);
+            .receive_packets(recv_timeout, MAX_RECEIVE_PACKETS));
 
         match received_packet_results {
             Ok(receive_packet_results) => {
@@ -140,8 +147,9 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                     let num_dropped_on_initial_parsing =
                         num_received - receive_packet_results.deserialized_packets.len();
 
-                    let buffer_stats =
-                        self.buffer_packets(container, receive_packet_results.deserialized_packets);
+                    let (buffer_stats, buffer_time_us) = measure_us!(
+                        self.buffer_packets(container, receive_packet_results.deserialized_packets)
+                    );
                     Ok(ReceivingStats {
                         num_received: receive_packet_results.packet_stats.passed_sigverify_count.0
                             as usize,
@@ -156,6 +164,8 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                         num_dropped_on_fee_payer: buffer_stats.num_dropped_on_fee_payer,
                         num_dropped_on_capacity: buffer_stats.num_dropped_on_capacity,
                         num_buffered: buffer_stats.num_buffered,
+                        receive_time_us,
+                        buffer_time_us,
                     })
                 } else {
                     Ok(ReceivingStats {
@@ -173,6 +183,8 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                         num_dropped_on_fee_payer: 0,
                         num_dropped_on_capacity: 0,
                         num_buffered: 0,
+                        receive_time_us,
+                        buffer_time_us: 0,
                     })
                 }
             }
@@ -187,6 +199,8 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                 num_dropped_on_fee_payer: 0,
                 num_dropped_on_capacity: 0,
                 num_buffered: 0,
+                receive_time_us,
+                buffer_time_us: 0,
             }),
             Err(RecvTimeoutError::Disconnected) => Err(DisconnectedError),
         }
@@ -388,6 +402,8 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             num_dropped_on_fee_payer: 0,
             num_dropped_on_capacity: 0,
             num_buffered: 0,
+            receive_time_us: 0,
+            buffer_time_us: 0,
         };
 
         // If not leader/unknown, do a blocking-receive initially. This lets
@@ -428,14 +444,16 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             while start.elapsed() < TIMEOUT && stats.num_received < PACKET_BURST_LIMIT {
                 match self.receiver.try_recv() {
                     Ok(packet_batch_message) => {
+                        stats.receive_time_us += start.elapsed().as_micros() as u64;
                         received_message = true;
-                        stats.accumulate(self.handle_packet_batch_message(
+                        let batch_stats = self.handle_packet_batch_message(
                             container,
                             decision,
                             &root_bank,
                             &working_bank,
                             packet_batch_message,
-                        ));
+                        );
+                        stats.accumulate(batch_stats);
                     }
                     Err(TryRecvError::Empty) => {}
                     Err(TryRecvError::Disconnected) => {
@@ -458,6 +476,8 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             num_dropped_on_fee_payer: stats.num_dropped_on_fee_payer,
             num_dropped_on_capacity: stats.num_dropped_on_capacity,
             num_buffered: stats.num_buffered,
+            receive_time_us: stats.receive_time_us,
+            buffer_time_us: stats.buffer_time_us,
         })
     }
 }
@@ -478,6 +498,7 @@ impl TransactionViewReceiveAndBuffer {
         working_bank: &Bank,
         packet_batch_message: BankingPacketBatch,
     ) -> ReceivingStats {
+        let start = Instant::now();
         // If outside holding window, do not parse.
         let should_parse = !matches!(decision, BufferedPacketsDecision::Forward);
 
@@ -634,6 +655,8 @@ impl TransactionViewReceiveAndBuffer {
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
             num_buffered,
+            receive_time_us: 0, // receive is outside this function
+            buffer_time_us: start.elapsed().as_micros() as u64,
         }
     }
 
@@ -930,6 +953,8 @@ mod tests {
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
             num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
         } = receive_and_buffer
             .receive_and_buffer_packets(
                 &mut container,
@@ -988,6 +1013,8 @@ mod tests {
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
             num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1035,6 +1062,8 @@ mod tests {
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
             num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1081,6 +1110,8 @@ mod tests {
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
             num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1132,6 +1163,8 @@ mod tests {
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
             num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1198,6 +1231,8 @@ mod tests {
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
             num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1249,6 +1284,8 @@ mod tests {
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
             num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1304,6 +1341,8 @@ mod tests {
             num_dropped_on_fee_payer,
             num_dropped_on_capacity,
             num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();

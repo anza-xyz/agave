@@ -321,6 +321,8 @@ where
                 num_dropped_on_fee_payer,
                 num_dropped_on_capacity,
                 num_buffered,
+                receive_time_us: _,
+                buffer_time_us: _,
             } = &receiving_stats;
 
             count_metrics.num_received += *num_received;
@@ -335,6 +337,12 @@ where
             count_metrics.num_dropped_on_capacity += *num_dropped_on_capacity;
             count_metrics.num_buffered += *num_buffered;
         });
+
+        self.timing_metrics.update(|timing_metrics| {
+            timing_metrics.receive_time_us += receiving_stats.receive_time_us;
+            timing_metrics.buffer_time_us += receiving_stats.buffer_time_us;
+        });
+
         Ok(receiving_stats)
     }
 }
