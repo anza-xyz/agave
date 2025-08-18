@@ -746,7 +746,7 @@ impl InstructionContext {
             transaction_context,
             instruction_account,
             account,
-            ix_program_account_idx: self.program_account_index_in_tx,
+            index_in_transaction_of_instruction_program: self.program_account_index_in_tx,
         })
     }
 
@@ -811,7 +811,7 @@ pub struct BorrowedAccount<'a> {
     transaction_context: &'a TransactionContext,
     account: RefMut<'a, AccountSharedData>,
     instruction_account: InstructionAccount,
-    ix_program_account_idx: IndexOfAccount,
+    index_in_transaction_of_instruction_program: IndexOfAccount,
 }
 
 impl BorrowedAccount<'_> {
@@ -1092,7 +1092,7 @@ impl BorrowedAccount<'_> {
     /// Returns true if the owner of this account is the current `InstructionContext`s last program (instruction wide)
     pub fn is_owned_by_current_program(&self) -> bool {
         self.transaction_context
-            .get_key_of_account_at_index(self.ix_program_account_idx)
+            .get_key_of_account_at_index(self.index_in_transaction_of_instruction_program)
             .map(|program_key| program_key == self.get_owner())
             .unwrap_or_default()
     }
