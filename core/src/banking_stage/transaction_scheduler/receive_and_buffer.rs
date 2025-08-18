@@ -50,6 +50,7 @@ pub(crate) struct DisconnectedError;
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct ReceivingStats {
     pub num_valid_packets: usize,
+    pub num_dropped_without_buffering: usize,
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -108,13 +109,21 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                     self.buffer_packets(container, receive_packet_results.deserialized_packets);
                 }
 
+                let num_dropped_without_buffering = if should_buffer {
+                    0
+                } else {
+                    receive_packet_results.packet_stats.passed_sigverify_count.0 as usize
+                };
+
                 Ok(ReceivingStats {
                     num_valid_packets: receive_packet_results.packet_stats.passed_sigverify_count.0
                         as usize,
+                    num_dropped_without_buffering,
                 })
             }
             Err(RecvTimeoutError::Timeout) => Ok(ReceivingStats {
                 num_valid_packets: 0,
+                num_dropped_without_buffering: 0,
             }),
             Err(RecvTimeoutError::Disconnected) => Err(DisconnectedError),
         }
@@ -244,7 +253,9 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         const PACKET_BURST_LIMIT: usize = 1000;
         let start = Instant::now();
         let mut num_valid_packets = 0;
+
         let mut received_message = false;
+        let mut num_dropped_without_buffering = 0;
 
         // If not leader/unknown, do a blocking-receive initially. This lets
         // the thread sleep until a message is received, or until the timeout.
@@ -272,6 +283,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                     );
 
                     num_valid_packets += stats.num_valid_packets;
+                    num_dropped_without_buffering += stats.num_dropped_without_buffering;
                 }
                 Err(RecvTimeoutError::Timeout) => timed_out = true,
                 Err(RecvTimeoutError::Disconnected) => {
@@ -295,6 +307,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                             packet_batch_message,
                         );
                         num_valid_packets += stats.num_valid_packets;
+                        num_dropped_without_buffering += stats.num_dropped_without_buffering;
                     }
                     Err(TryRecvError::Empty) => {}
                     Err(TryRecvError::Disconnected) => {
@@ -306,12 +319,16 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             }
         }
 
-        Ok(ReceivingStats { num_valid_packets })
+        Ok(ReceivingStats {
+            num_valid_packets,
+            num_dropped_without_buffering,
+        })
     }
 }
 
 struct PacketBatchHandlingStats {
     num_valid_packets: usize,
+    num_dropped_without_buffering: usize,
 }
 
 impl TransactionViewReceiveAndBuffer {
@@ -390,6 +407,8 @@ impl TransactionViewReceiveAndBuffer {
             };
 
         let mut num_valid_packets = 0;
+        let mut num_dropped_without_buffering = 0;
+
         for packet_batch in packet_batch_message.iter() {
             for packet in packet_batch.iter() {
                 let Some(packet_data) = packet.data(..) else {
@@ -398,6 +417,7 @@ impl TransactionViewReceiveAndBuffer {
 
                 num_valid_packets += 1;
                 if !should_parse {
+                    num_dropped_without_buffering += 1;
                     continue;
                 }
 
@@ -435,7 +455,10 @@ impl TransactionViewReceiveAndBuffer {
         // Any remaining packets undergo status/age checks
         check_and_push_to_queue(container, &mut transaction_priority_ids);
 
-        PacketBatchHandlingStats { num_valid_packets }
+        PacketBatchHandlingStats {
+            num_valid_packets,
+            num_dropped_without_buffering,
+        }
     }
 
     fn try_handle_packet(
@@ -728,6 +751,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(receiving_stats.num_valid_packets, 1);
+        assert_eq!(receiving_stats.num_dropped_without_buffering, 1);
         verify_container(&mut container, 0);
     }
 
@@ -763,6 +787,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(receiving_stats.num_valid_packets, 0);
+        assert_eq!(receiving_stats.num_dropped_without_buffering, 0);
+
         verify_container(&mut container, 0);
     }
 
@@ -789,6 +815,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(receiving_stats.num_valid_packets, 1);
+        assert_eq!(receiving_stats.num_dropped_without_buffering, 0);
+
         verify_container(&mut container, 0);
     }
 
@@ -814,6 +842,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(receiving_stats.num_valid_packets, 1);
+        assert_eq!(receiving_stats.num_dropped_without_buffering, 0);
+
         verify_container(&mut container, 0);
     }
 
@@ -844,6 +874,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(receiving_stats.num_valid_packets, 1);
+        assert_eq!(receiving_stats.num_dropped_without_buffering, 0);
+
         verify_container(&mut container, 0);
     }
 
@@ -889,6 +921,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(receiving_stats.num_valid_packets, 1);
+        assert_eq!(receiving_stats.num_dropped_without_buffering, 0);
+
         verify_container(&mut container, 0);
     }
 
@@ -919,6 +953,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(receiving_stats.num_valid_packets, 1);
+        assert_eq!(receiving_stats.num_dropped_without_buffering, 0);
+
         verify_container(&mut container, 1);
     }
 
@@ -953,6 +989,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(receiving_stats.num_valid_packets, num_transactions);
+        assert_eq!(receiving_stats.num_dropped_without_buffering, 0);
+
         verify_container(&mut container, TEST_CONTAINER_CAPACITY);
     }
 }
