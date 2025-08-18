@@ -108,6 +108,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-low-pass-filter"
+version = "3.0.0"
+
+[[package]]
 name = "agave-precompiles"
 version = "3.0.0"
 dependencies = [
@@ -6753,6 +6757,7 @@ name = "solana-gossip"
 version = "3.0.0"
 dependencies = [
  "agave-feature-set",
+ "agave-low-pass-filter",
  "arrayvec",
  "assert_matches",
  "bincode",
@@ -6786,7 +6791,6 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-logger 3.0.0",
- "solana-low-pass-filter",
  "solana-measure",
  "solana-metrics",
  "solana-native-token",
@@ -7146,10 +7150,6 @@ dependencies = [
  "log",
  "signal-hook",
 ]
-
-[[package]]
-name = "solana-low-pass-filter"
-version = "3.0.0"
 
 [[package]]
 name = "solana-measure"

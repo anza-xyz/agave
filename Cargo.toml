@@ -179,6 +179,7 @@ agave-cargo-registry = { path = "cargo-registry", version = "=3.0.0" }
 agave-feature-set = { path = "feature-set", version = "=3.0.0" }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=3.0.0" }
 agave-io-uring = { path = "io-uring", version = "=3.0.0" }
+agave-low-pass-filter = { path = "low-pass-filter", version = "=3.0.0" }
 agave-precompiles = { path = "precompiles", version = "=3.0.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.0.0" }
 agave-syscalls = { path = "syscalls", version = "=3.0.0" }
@@ -454,7 +455,6 @@ solana-loader-v4-interface = "2.2.1"
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=3.0.0" }
 solana-local-cluster = { path = "local-cluster", version = "=3.0.0" }
 solana-logger = "3.0.0"
-solana-low-pass-filter = { path = "low-pass-filter", version = "=3.0.0" }
 solana-measure = { path = "measure", version = "=3.0.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=3.0.0" }
 solana-message = "2.4.0"
