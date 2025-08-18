@@ -45,6 +45,7 @@ Release channels have their own copy of this changelog:
 #### Changes
 * `--transaction-structure view` is now the default.
 * The default full snapshot interval is now 100,000 slots.
+* `SOLANA_BANKING_THREADS` environment variable is no longer supported. Use `--block-prouduction-num-workers` instead.
 
 ## 2.3.0
 
