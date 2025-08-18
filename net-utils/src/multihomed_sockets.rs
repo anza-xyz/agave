@@ -1,3 +1,4 @@
+#![cfg(feature = "agave-unstable-api")]
 use std::{
     net::{IpAddr, Ipv4Addr, UdpSocket},
     ops::Deref,

@@ -54,10 +54,10 @@ impl GossipService {
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         trace!(
-            "GossipService: id: {}, listening on primary interface: {:?}, total interfaces: {}",
+            "GossipService: id: {}, listening on primary interface: {:?}, all available interfaces: {:?}",
             &cluster_info.id(),
             gossip_sockets[0].local_addr().unwrap(),
-            gossip_sockets.len()
+            gossip_sockets,
         );
         let socket_addr_space = *cluster_info.socket_addr_space();
         let gossip_receiver_stats = Arc::new(StreamerReceiveStats::new("gossip_receiver"));
