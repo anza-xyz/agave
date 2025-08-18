@@ -10,9 +10,7 @@ use {
     solana_svm_log_collector::ic_msg,
     solana_system_interface::error::SystemError,
     solana_sysvar::rent::Rent,
-    solana_transaction_context::{
-        BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
-    },
+    solana_transaction_context::{BorrowedAccount, IndexOfAccount, InstructionContext},
     std::collections::HashSet,
 };
 
@@ -83,7 +81,6 @@ pub(crate) fn withdraw_nonce_account(
     rent: &Rent,
     signers: &HashSet<Pubkey>,
     invoke_context: &InvokeContext,
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
     let mut from = instruction_context.try_borrow_instruction_account(from_account_index)?;
@@ -388,7 +385,6 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
             &instruction_context,
         )
         .unwrap();
@@ -561,7 +557,6 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
             &instruction_context,
         )
         .unwrap();
@@ -606,7 +601,6 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
             &instruction_context,
         );
         assert_eq!(result, Err(InstructionError::MissingRequiredSignature));
@@ -638,7 +632,6 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
             &instruction_context,
         );
         assert_eq!(result, Err(InstructionError::InsufficientFunds));
@@ -674,7 +667,6 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
             &instruction_context,
         )
         .unwrap();
@@ -700,7 +692,6 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
             &instruction_context,
         )
         .unwrap();
@@ -757,7 +748,6 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
             &instruction_context,
         )
         .unwrap();
@@ -791,7 +781,6 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
             &instruction_context,
         )
         .unwrap();
@@ -837,7 +826,6 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
             &instruction_context,
         );
         assert_eq!(result, Err(SystemError::NonceBlockhashNotExpired.into()));
@@ -870,7 +858,6 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
             &instruction_context,
         );
         assert_eq!(result, Err(InstructionError::InsufficientFunds));
@@ -903,7 +890,6 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
             &instruction_context,
         );
         assert_eq!(result, Err(InstructionError::InsufficientFunds));
@@ -936,7 +922,6 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
             &instruction_context,
         );
         assert_eq!(result, Err(InstructionError::InsufficientFunds));

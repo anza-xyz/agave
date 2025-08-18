@@ -17,11 +17,10 @@ use {
         program::id,
         state::{Authorized, Lockup},
     },
-    solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
+    solana_transaction_context::{IndexOfAccount, InstructionContext},
 };
 
 fn get_optional_pubkey<'a>(
-    _transaction_context: &'a TransactionContext,
     instruction_context: &'a InstructionContext,
     instruction_account_index: IndexOfAccount,
     should_be_signer: bool,
@@ -86,8 +85,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 1)?;
             instruction_context.check_number_of_instruction_accounts(3)?;
-            let custodian_pubkey =
-                get_optional_pubkey(transaction_context, &instruction_context, 3, false)?;
+            let custodian_pubkey = get_optional_pubkey(&instruction_context, 3, false)?;
 
             authorize(
                 &mut me,
@@ -103,11 +101,9 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             instruction_context.check_number_of_instruction_accounts(2)?;
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 2)?;
-            let custodian_pubkey =
-                get_optional_pubkey(transaction_context, &instruction_context, 3, false)?;
+            let custodian_pubkey = get_optional_pubkey(&instruction_context, 3, false)?;
 
             authorize_with_seed(
-                transaction_context,
                 &instruction_context,
                 &mut me,
                 1,
@@ -132,7 +128,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             instruction_context.check_number_of_instruction_accounts(5)?;
             drop(me);
             delegate(
-                transaction_context,
                 &instruction_context,
                 0,
                 1,
@@ -148,7 +143,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             drop(me);
             split(
                 invoke_context,
-                transaction_context,
                 &instruction_context,
                 0,
                 lamports,
@@ -169,7 +163,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             drop(me);
             merge(
                 invoke_context,
-                transaction_context,
                 &instruction_context,
                 0,
                 1,
@@ -191,7 +184,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             instruction_context.check_number_of_instruction_accounts(5)?;
             drop(me);
             withdraw(
-                transaction_context,
                 &instruction_context,
                 0,
                 lamports,
@@ -245,8 +237,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if !instruction_context.is_instruction_account_signer(3)? {
                 return Err(InstructionError::MissingRequiredSignature);
             }
-            let custodian_pubkey =
-                get_optional_pubkey(transaction_context, &instruction_context, 4, false)?;
+            let custodian_pubkey = get_optional_pubkey(&instruction_context, 4, false)?;
 
             authorize(
                 &mut me,
@@ -267,11 +258,9 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if !instruction_context.is_instruction_account_signer(3)? {
                 return Err(InstructionError::MissingRequiredSignature);
             }
-            let custodian_pubkey =
-                get_optional_pubkey(transaction_context, &instruction_context, 4, false)?;
+            let custodian_pubkey = get_optional_pubkey(&instruction_context, 4, false)?;
 
             authorize_with_seed(
-                transaction_context,
                 &instruction_context,
                 &mut me,
                 1,
@@ -285,8 +274,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         StakeInstruction::SetLockupChecked(lockup_checked) => {
             let mut me = get_stake_account()?;
-            let custodian_pubkey =
-                get_optional_pubkey(transaction_context, &instruction_context, 2, true)?;
+            let custodian_pubkey = get_optional_pubkey(&instruction_context, 2, true)?;
 
             let lockup = LockupArgs {
                 unix_timestamp: lockup_checked.unix_timestamp,
@@ -310,14 +298,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             instruction_context.check_number_of_instruction_accounts(3)?;
 
             let clock = invoke_context.get_sysvar_cache().get_clock()?;
-            deactivate_delinquent(
-                transaction_context,
-                &instruction_context,
-                &mut me,
-                1,
-                2,
-                clock.epoch,
-            )
+            deactivate_delinquent(&instruction_context, &mut me, 1, 2, clock.epoch)
         }
         #[allow(deprecated)]
         StakeInstruction::Redelegate => {
@@ -326,27 +307,11 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         StakeInstruction::MoveStake(lamports) => {
             instruction_context.check_number_of_instruction_accounts(3)?;
-            move_stake(
-                invoke_context,
-                transaction_context,
-                &instruction_context,
-                0,
-                lamports,
-                1,
-                2,
-            )
+            move_stake(invoke_context, &instruction_context, 0, lamports, 1, 2)
         }
         StakeInstruction::MoveLamports(lamports) => {
             instruction_context.check_number_of_instruction_accounts(3)?;
-            move_lamports(
-                invoke_context,
-                transaction_context,
-                &instruction_context,
-                0,
-                lamports,
-                1,
-                2,
-            )
+            move_lamports(invoke_context, &instruction_context, 0, lamports, 1, 2)
         }
     }
 });

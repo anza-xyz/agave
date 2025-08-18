@@ -24,9 +24,7 @@ use {
     },
     solana_svm_log_collector::ic_msg,
     solana_sysvar::stake_history::{StakeHistory, StakeHistoryEntry},
-    solana_transaction_context::{
-        BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
-    },
+    solana_transaction_context::{BorrowedAccount, IndexOfAccount, InstructionContext},
     solana_vote_interface::state::{VoteState, VoteStateVersions},
     std::{collections::HashSet, convert::TryFrom},
 };
@@ -123,7 +121,6 @@ fn redelegate_stake(
 
 fn move_stake_or_lamports_shared_checks(
     invoke_context: &InvokeContext,
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     source_account: &BorrowedAccount,
     lamports: u64,
@@ -273,7 +270,6 @@ pub fn authorize(
 
 #[allow(clippy::too_many_arguments)]
 pub fn authorize_with_seed(
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stake_account: &mut BorrowedAccount,
     authority_base_index: IndexOfAccount,
@@ -306,7 +302,6 @@ pub fn authorize_with_seed(
 
 #[allow(clippy::too_many_arguments)]
 pub fn delegate(
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stake_account_index: IndexOfAccount,
     vote_account_index: IndexOfAccount,
@@ -391,7 +386,6 @@ pub fn set_lockup(
 
 pub fn split(
     invoke_context: &InvokeContext,
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stake_account_index: IndexOfAccount,
     lamports: u64,
@@ -430,7 +424,6 @@ pub fn split(
             };
             let validated_split_info = validate_split_amount(
                 invoke_context,
-                transaction_context,
                 instruction_context,
                 stake_account_index,
                 split_index,
@@ -496,7 +489,6 @@ pub fn split(
             meta.authorized.check(signers, StakeAuthorize::Staker)?;
             let validated_split_info = validate_split_amount(
                 invoke_context,
-                transaction_context,
                 instruction_context,
                 stake_account_index,
                 split_index,
@@ -539,7 +531,6 @@ pub fn split(
 
 pub fn merge(
     invoke_context: &InvokeContext,
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stake_account_index: IndexOfAccount,
     source_account_index: IndexOfAccount,
@@ -604,7 +595,6 @@ pub fn merge(
 
 pub fn move_stake(
     invoke_context: &InvokeContext,
-    transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     source_account_index: IndexOfAccount,
     lamports: u64,
@@ -619,7 +609,6 @@ pub fn move_stake(
 
     let (source_merge_kind, destination_merge_kind) = move_stake_or_lamports_shared_checks(
         invoke_context,
-        transaction_context,
         instruction_context,
         &source_account,
         lamports,
@@ -739,7 +728,6 @@ pub fn move_stake(
 
 pub fn move_lamports(
     invoke_context: &InvokeContext,
-    transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     source_account_index: IndexOfAccount,
     lamports: u64,
@@ -754,7 +742,6 @@ pub fn move_lamports(
 
     let (source_merge_kind, _) = move_stake_or_lamports_shared_checks(
         invoke_context,
-        transaction_context,
         instruction_context,
         &source_account,
         lamports,
@@ -785,7 +772,6 @@ pub fn move_lamports(
 
 #[allow(clippy::too_many_arguments)]
 pub fn withdraw(
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stake_account_index: IndexOfAccount,
     lamports: u64,
@@ -879,7 +865,6 @@ pub fn withdraw(
 }
 
 pub(crate) fn deactivate_delinquent(
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stake_account: &mut BorrowedAccount,
     delinquent_vote_account_index: IndexOfAccount,
@@ -971,7 +956,6 @@ struct ValidatedSplitInfo {
 /// not, return an error.
 fn validate_split_amount(
     invoke_context: &InvokeContext,
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     source_account_index: IndexOfAccount,
     destination_account_index: IndexOfAccount,

@@ -10,7 +10,7 @@ use {
         sysvar_cache::get_sysvar_with_account_check,
     },
     solana_pubkey::Pubkey,
-    solana_transaction_context::{BorrowedAccount, InstructionContext, TransactionContext},
+    solana_transaction_context::{BorrowedAccount, InstructionContext},
     solana_vote_interface::{instruction::VoteInstruction, program::id, state::VoteAuthorize},
     std::collections::HashSet,
 };
@@ -18,7 +18,6 @@ use {
 fn process_authorize_with_seed_instruction(
     invoke_context: &InvokeContext,
     instruction_context: &InstructionContext,
-    _transaction_context: &TransactionContext,
     vote_account: &mut BorrowedAccount,
     new_authority: &Pubkey,
     authorization_type: VoteAuthorize,
@@ -82,7 +81,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             process_authorize_with_seed_instruction(
                 invoke_context,
                 &instruction_context,
-                transaction_context,
                 &mut me,
                 &args.new_authority,
                 args.authorization_type,
@@ -99,7 +97,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             process_authorize_with_seed_instruction(
                 invoke_context,
                 &instruction_context,
-                transaction_context,
                 &mut me,
                 new_authority,
                 args.authorization_type,
@@ -188,7 +185,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
 
             drop(me);
             vote_state::withdraw(
-                transaction_context,
                 &instruction_context,
                 0,
                 lamports,

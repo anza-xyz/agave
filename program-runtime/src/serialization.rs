@@ -13,8 +13,7 @@ use {
     solana_sdk_ids::bpf_loader_deprecated,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_context::{
-        BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
-        MAX_ACCOUNTS_PER_INSTRUCTION,
+        BorrowedAccount, IndexOfAccount, InstructionContext, MAX_ACCOUNTS_PER_INSTRUCTION,
     },
     std::mem::{self, size_of},
 };
@@ -220,7 +219,6 @@ impl Serializer {
 }
 
 pub fn serialize_parameters(
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
@@ -284,7 +282,6 @@ pub fn serialize_parameters(
 }
 
 pub fn deserialize_parameters(
-    transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
@@ -296,7 +293,6 @@ pub fn deserialize_parameters(
     let account_lengths = accounts_metadata.iter().map(|a| a.original_data_len);
     if is_loader_deprecated {
         deserialize_parameters_unaligned(
-            transaction_context,
             instruction_context,
             stricter_abi_and_runtime_constraints,
             account_data_direct_mapping,
@@ -305,7 +301,6 @@ pub fn deserialize_parameters(
         )
     } else {
         deserialize_parameters_aligned(
-            transaction_context,
             instruction_context,
             stricter_abi_and_runtime_constraints,
             account_data_direct_mapping,
@@ -407,7 +402,6 @@ fn serialize_parameters_unaligned(
 }
 
 fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
@@ -570,7 +564,6 @@ fn serialize_parameters_aligned(
 }
 
 fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
@@ -672,7 +665,7 @@ mod tests {
         solana_sbpf::{memory_region::MemoryMapping, program::SBPFVersion, vm::Config},
         solana_sdk_ids::bpf_loader,
         solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
-        solana_transaction_context::InstructionAccount,
+        solana_transaction_context::{InstructionAccount, TransactionContext},
         std::{
             cell::RefCell,
             mem::transmute,
@@ -786,7 +779,6 @@ mod tests {
                     .unwrap();
 
                 let serialization_result = serialize_parameters(
-                    invoke_context.transaction_context,
                     &instruction_context,
                     stricter_abi_and_runtime_constraints,
                     false, // account_data_direct_mapping
@@ -943,7 +935,6 @@ mod tests {
 
             // check serialize_parameters_aligned
             let (mut serialized, regions, accounts_metadata) = serialize_parameters(
-                invoke_context.transaction_context,
                 &instruction_context,
                 stricter_abi_and_runtime_constraints,
                 false, // account_data_direct_mapping
@@ -1004,7 +995,6 @@ mod tests {
             }
 
             deserialize_parameters(
-                invoke_context.transaction_context,
                 &instruction_context,
                 stricter_abi_and_runtime_constraints,
                 false, // account_data_direct_mapping
@@ -1035,7 +1025,6 @@ mod tests {
                 .unwrap();
 
             let (mut serialized, regions, account_lengths) = serialize_parameters(
-                invoke_context.transaction_context,
                 &instruction_context,
                 stricter_abi_and_runtime_constraints,
                 false, // account_data_direct_mapping
@@ -1075,7 +1064,6 @@ mod tests {
             }
 
             deserialize_parameters(
-                invoke_context.transaction_context,
                 &instruction_context,
                 stricter_abi_and_runtime_constraints,
                 false, // account_data_direct_mapping
@@ -1201,7 +1189,6 @@ mod tests {
 
             // check serialize_parameters_aligned
             let (_serialized, regions, _accounts_metadata) = serialize_parameters(
-                invoke_context.transaction_context,
                 &instruction_context,
                 true,
                 false, // account_data_direct_mapping
@@ -1244,7 +1231,6 @@ mod tests {
                 .unwrap();
 
             let (_serialized, regions, _account_lengths) = serialize_parameters(
-                invoke_context.transaction_context,
                 &instruction_context,
                 true,
                 false, // account_data_direct_mapping

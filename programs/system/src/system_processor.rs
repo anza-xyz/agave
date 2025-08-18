@@ -17,9 +17,7 @@ use {
     solana_system_interface::{
         error::SystemError, instruction::SystemInstruction, MAX_PERMITTED_DATA_LENGTH,
     },
-    solana_transaction_context::{
-        BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
-    },
+    solana_transaction_context::{BorrowedAccount, IndexOfAccount, InstructionContext},
     std::collections::HashSet,
 };
 
@@ -152,7 +150,6 @@ fn create_account(
     owner: &Pubkey,
     signers: &HashSet<Pubkey>,
     invoke_context: &InvokeContext,
-    transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
     // if it looks like the `to` account is already in use, bail
@@ -174,7 +171,6 @@ fn create_account(
         to_account_index,
         lamports,
         invoke_context,
-        transaction_context,
         instruction_context,
     )
 }
@@ -184,7 +180,6 @@ fn transfer_verified(
     to_account_index: IndexOfAccount,
     lamports: u64,
     invoke_context: &InvokeContext,
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
     let mut from = instruction_context.try_borrow_instruction_account(from_account_index)?;
@@ -214,7 +209,6 @@ fn transfer(
     to_account_index: IndexOfAccount,
     lamports: u64,
     invoke_context: &InvokeContext,
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
     if !instruction_context.is_instruction_account_signer(from_account_index)? {
@@ -231,7 +225,6 @@ fn transfer(
         to_account_index,
         lamports,
         invoke_context,
-        transaction_context,
         instruction_context,
     )
 }
@@ -244,7 +237,6 @@ fn transfer_with_seed(
     to_account_index: IndexOfAccount,
     lamports: u64,
     invoke_context: &InvokeContext,
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
     if !instruction_context.is_instruction_account_signer(from_base_account_index)? {
@@ -277,7 +269,6 @@ fn transfer_with_seed(
         to_account_index,
         lamports,
         invoke_context,
-        transaction_context,
         instruction_context,
     )
 }
@@ -315,7 +306,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &owner,
                 &signers,
                 invoke_context,
-                transaction_context,
                 &instruction_context,
             )
         }
@@ -341,7 +331,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &owner,
                 &signers,
                 invoke_context,
-                transaction_context,
                 &instruction_context,
             )
         }
@@ -357,14 +346,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         SystemInstruction::Transfer { lamports } => {
             instruction_context.check_number_of_instruction_accounts(2)?;
-            transfer(
-                0,
-                1,
-                lamports,
-                invoke_context,
-                transaction_context,
-                &instruction_context,
-            )
+            transfer(0, 1, lamports, invoke_context, &instruction_context)
         }
         SystemInstruction::TransferWithSeed {
             lamports,
@@ -380,7 +362,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 2,
                 lamports,
                 invoke_context,
-                transaction_context,
                 &instruction_context,
             )
         }
@@ -419,7 +400,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &rent,
                 &signers,
                 invoke_context,
-                transaction_context,
                 &instruction_context,
             )
         }

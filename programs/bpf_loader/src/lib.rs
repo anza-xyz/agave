@@ -974,12 +974,7 @@ fn process_loader_upgradeable_instruction(
                 UpgradeableLoaderState::Buffer { authority_address } => {
                     instruction_context.check_number_of_instruction_accounts(3)?;
                     drop(close_account);
-                    common_close_account(
-                        &authority_address,
-                        transaction_context,
-                        &instruction_context,
-                        &log_collector,
-                    )?;
+                    common_close_account(&authority_address, &instruction_context, &log_collector)?;
 
                     ic_logger_msg!(log_collector, "Closed Buffer {}", close_key);
                 }
@@ -1021,7 +1016,6 @@ fn process_loader_upgradeable_instruction(
                             drop(program_account);
                             common_close_account(
                                 &authority_address,
-                                transaction_context,
                                 &instruction_context,
                                 &log_collector,
                             )?;
@@ -1416,7 +1410,6 @@ fn common_extend_program(
 
 fn common_close_account(
     authority_address: &Option<Pubkey>,
-    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     log_collector: &Option<Rc<RefCell<LogCollector>>>,
 ) -> Result<(), InstructionError> {
@@ -1473,7 +1466,6 @@ fn execute<'a, 'b: 'a>(
 
     let mut serialize_time = Measure::start("serialize");
     let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(
-        invoke_context.transaction_context,
         &instruction_context,
         stricter_abi_and_runtime_constraints,
         invoke_context.account_data_direct_mapping,
@@ -1638,7 +1630,6 @@ fn execute<'a, 'b: 'a>(
         stricter_abi_and_runtime_constraints: bool,
     ) -> Result<(), InstructionError> {
         serialization::deserialize_parameters(
-            invoke_context.transaction_context,
             &invoke_context
                 .transaction_context
                 .get_current_instruction_context()?,
