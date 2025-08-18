@@ -538,8 +538,8 @@ impl AdminRpc for AdminRpcImpl {
         let mut write_staked_nodes = meta.staked_nodes_overrides.write().unwrap();
         write_staked_nodes.clear();
         write_staked_nodes.extend(loaded_config);
-        info!("Staked nodes overrides loaded from {}", path);
-        debug!("overrides map: {:?}", write_staked_nodes);
+        info!("Staked nodes overrides loaded from {path}");
+        debug!("overrides map: {write_staked_nodes:?}");
         Ok(())
     }
 
@@ -548,7 +548,7 @@ impl AdminRpc for AdminRpcImpl {
     }
 
     fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()> {
-        debug!("select_active_interface received: {}", interface);
+        debug!("select_active_interface received: {interface}");
         meta.with_post_init(|post_init| {
             let node = post_init.node.as_ref().ok_or_else(|| {
                 jsonrpc_core::Error::invalid_params("`Node` not initialized in post_init")
@@ -557,8 +557,7 @@ impl AdminRpc for AdminRpcImpl {
             node.switch_active_interface(interface, &post_init.cluster_info)
                 .map_err(|e| {
                     jsonrpc_core::Error::invalid_params(format!(
-                        "Switching failed due to error {}",
-                        e
+                        "Switching failed due to error {e}"
                     ))
                 })?;
             info!("Switched primary interface to {interface}");
@@ -624,8 +623,7 @@ impl AdminRpc for AdminRpcImpl {
         pubkey_str: String,
     ) -> Result<HashMap<RpcAccountIndex, usize>> {
         debug!(
-            "get_secondary_index_key_size rpc request received: {:?}",
-            pubkey_str
+            "get_secondary_index_key_size rpc request received: {pubkey_str:?}"
         );
         let index_key = verify_pubkey(&pubkey_str)?;
         meta.with_post_init(|post_init| {
@@ -832,7 +830,7 @@ pub fn run(ledger_path: &Path, metadata: AdminRpcRequestMetadata) {
 
             match server {
                 Err(err) => {
-                    warn!("Unable to start admin rpc service: {:?}", err);
+                    warn!("Unable to start admin rpc service: {err:?}");
                 }
                 Ok(server) => {
                     info!("started admin rpc service!");
@@ -919,7 +917,7 @@ where
 pub fn load_staked_nodes_overrides(
     path: &String,
 ) -> std::result::Result<StakedNodesOverrides, Box<dyn error::Error>> {
-    debug!("Loading staked nodes overrides configuration from {}", path);
+    debug!("Loading staked nodes overrides configuration from {path}");
     if Path::new(&path).exists() {
         let file = std::fs::File::open(path)?;
         Ok(serde_yaml::from_reader(file)?)

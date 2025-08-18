@@ -1696,8 +1696,7 @@ fn validators_set(
             if validators_set.contains(identity_pubkey) {
                 return Err(crate::commands::Error::Dynamic(
                     Box::<dyn std::error::Error>::from(format!(
-                        "the validator's identity pubkey cannot be a {arg_name}: {}",
-                        identity_pubkey
+                        "the validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}"
                     )),
                 ));
             }

@@ -234,7 +234,7 @@ pub fn warn_for_deprecated_arguments(matches: &ArgMatches) {
                 }
             }
             // this can not rely on logger since it is not initialized at the time of call
-            eprintln!("{}", msg);
+            eprintln!("{msg}");
         }
     }
 }
