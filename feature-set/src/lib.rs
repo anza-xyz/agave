@@ -1357,7 +1357,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (enshrine_slashing_program::id(), "SIMD-0204: Slashable event verification"),
         (enable_extend_program_checked::id(), "Enable ExtendProgramChecked instruction"),
         (formalize_loaded_transaction_data_size::id(), "SIMD-0186: Loaded transaction data size specification"),
-        (alpenglow::id(), "Enable Alpenglow"),
+        (alpenglow::id(), "SIMD-0326: Alpenglow: new consensus algorithm"),
         (disable_zk_elgamal_proof_program::id(), "Disables zk-elgamal-proof program"),
         (reenable_zk_elgamal_proof_program::id(), "Re-enables zk-elgamal-proof program"),
         (raise_block_limits_to_100m::id(), "SIMD-0286: Raise block limit to 100M"),
