@@ -4537,8 +4537,8 @@ impl AccountsDb {
             if starting_max_root != ending_max_root {
                 warn!(
                     "do_load_with_populate_read_cache() scanning pubkey {pubkey} called with \
-                    fixed max root, but max root changed from {starting_max_root} to \
-                    {ending_max_root} during function call"
+                     fixed max root, but max root changed from {starting_max_root} to \
+                     {ending_max_root} during function call"
                 );
             }
         }

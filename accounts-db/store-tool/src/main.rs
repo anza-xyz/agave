@@ -137,28 +137,31 @@ fn do_inspect(file: impl AsRef<Path>, verbose: bool) -> Result<(), String> {
     let mut num_accounts = Saturating(0usize);
     let mut stored_accounts_size = Saturating(0);
     let mut lamports = Saturating(0);
-    storage.scan_accounts_stored_meta(|account| {
-        if verbose {
-            println!("{account:?}");
-        } else {
-            println!(
-                "{:#0offset_width$x}: {:44}, owner: {:44}, data size: {:data_size_width$}, lamports: {}",
-                account.offset(),
-                account.pubkey().to_string(),
-                account.owner().to_string(),
-                account.data_len(),
-                account.lamports(),
-            );
-        }
-        num_accounts += 1;
-        stored_accounts_size += account.stored_size();
-        lamports += account.lamports();
-    }).map_err(|err| {
-        format!(
-            "failed to scan accounts in file '{}': {err}",
-            file.as_ref().display(),
-        )
-    })?;
+    storage
+        .scan_accounts_stored_meta(|account| {
+            if verbose {
+                println!("{account:?}");
+            } else {
+                println!(
+                    "{:#0offset_width$x}: {:44}, owner: {:44}, data size: {:data_size_width$}, \
+                     lamports: {}",
+                    account.offset(),
+                    account.pubkey().to_string(),
+                    account.owner().to_string(),
+                    account.data_len(),
+                    account.lamports(),
+                );
+            }
+            num_accounts += 1;
+            stored_accounts_size += account.stored_size();
+            lamports += account.lamports();
+        })
+        .map_err(|err| {
+            format!(
+                "failed to scan accounts in file '{}': {err}",
+                file.as_ref().display(),
+            )
+        })?;
 
     println!(
         "number of accounts: {}, stored accounts size: {}, file size: {}, lamports: {}",
@@ -198,19 +201,20 @@ fn do_search(
         let file_size = match fs::metadata(file) {
             Ok(metadata) => metadata.len() as usize,
             Err(err) => {
-                eprintln!(
-                    "failed to get storage metadata '{}': {err}",
-                    file.display(),
-                );
+                eprintln!("failed to get storage metadata '{}': {err}", file.display(),);
                 return;
             }
         };
-        let Ok((storage, _size)) = AccountsFile::new_from_file(file, file_size, StorageAccess::default()).inspect_err(|err| {
-            eprintln!(
-                "failed to open account storage file '{}': {err}",
-                file.display(),
+        let Ok((storage, _size)) =
+            AccountsFile::new_from_file(file, file_size, StorageAccess::default()).inspect_err(
+                |err| {
+                    eprintln!(
+                        "failed to open account storage file '{}': {err}",
+                        file.display(),
+                    )
+                },
             )
-        }) else {
+        else {
             return;
         };
         // By default, when the storage is dropped, the backing file will be removed.
@@ -218,24 +222,31 @@ fn do_search(
         let storage = ManuallyDrop::new(storage);
 
         let file_name = Path::new(file.file_name().expect("path is a file"));
-        storage.scan_accounts_stored_meta(|account| {
-            if addresses.contains(account.pubkey()) {
-                if verbose {
-                    println!("storage: {}, {account:?}", file_name.display());
-                } else {
-                    println!(
-                        "storage: {}, offset: {}, pubkey: {}, owner: {}, data size: {}, lamports: {}",
-                        file_name.display(),
-                        account.offset(),
-                        account.pubkey(),
-                        account.owner(),
-                        account.data_len(),
-                        account.lamports(),
-                    );
+        storage
+            .scan_accounts_stored_meta(|account| {
+                if addresses.contains(account.pubkey()) {
+                    if verbose {
+                        println!("storage: {}, {account:?}", file_name.display());
+                    } else {
+                        println!(
+                            "storage: {}, offset: {}, pubkey: {}, owner: {}, data size: {}, \
+                             lamports: {}",
+                            file_name.display(),
+                            account.offset(),
+                            account.pubkey(),
+                            account.owner(),
+                            account.data_len(),
+                            account.lamports(),
+                        );
+                    }
                 }
-            }
-        }).unwrap_or_else(|err| eprintln!("failed to scan accounts in file '{}': {err}",
-                         file.display()));
+            })
+            .unwrap_or_else(|err| {
+                eprintln!(
+                    "failed to scan accounts in file '{}': {err}",
+                    file.display()
+                )
+            });
     });
 
     Ok(())
