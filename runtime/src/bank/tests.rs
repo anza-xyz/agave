@@ -3409,7 +3409,7 @@ fn test_add_builtin() {
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let transaction_context = &invoke_context.transaction_context;
         let instruction_context = transaction_context.get_current_instruction_context()?;
-        let program_id = instruction_context.get_program_key(transaction_context)?;
+        let program_id = instruction_context.get_program_key()?;
         if mock_vote_program_id() != *program_id {
             return Err(InstructionError::IncorrectProgramId);
         }
@@ -4683,16 +4683,16 @@ fn test_transaction_with_duplicate_accounts_in_instruction() {
         let instruction_data = instruction_context.get_instruction_data();
         let lamports = u64::from_le_bytes(instruction_data.try_into().unwrap());
         instruction_context
-            .try_borrow_instruction_account(transaction_context, 2)?
+            .try_borrow_instruction_account(2)?
             .checked_sub_lamports(lamports)?;
         instruction_context
-            .try_borrow_instruction_account(transaction_context, 1)?
+            .try_borrow_instruction_account(1)?
             .checked_add_lamports(lamports)?;
         instruction_context
-            .try_borrow_instruction_account(transaction_context, 0)?
+            .try_borrow_instruction_account(0)?
             .checked_sub_lamports(lamports)?;
         instruction_context
-            .try_borrow_instruction_account(transaction_context, 1)?
+            .try_borrow_instruction_account(1)?
             .checked_add_lamports(lamports)?;
         Ok(())
     });
@@ -8548,7 +8548,7 @@ fn test_transfer_sysvar() {
         let transaction_context = &invoke_context.transaction_context;
         let instruction_context = transaction_context.get_current_instruction_context()?;
         instruction_context
-            .try_borrow_instruction_account(transaction_context, 1)?
+            .try_borrow_instruction_account(1)?
             .set_data_from_slice(&[0; 40])?;
         Ok(())
     });
@@ -9462,10 +9462,10 @@ declare_process_instruction!(MockTransferBuiltin, 1, |invoke_context| {
         match instruction {
             MockTransferInstruction::Transfer(amount) => {
                 instruction_context
-                    .try_borrow_instruction_account(transaction_context, 1)?
+                    .try_borrow_instruction_account(1)?
                     .checked_sub_lamports(amount)?;
                 instruction_context
-                    .try_borrow_instruction_account(transaction_context, 2)?
+                    .try_borrow_instruction_account(2)?
                     .checked_add_lamports(amount)?;
                 Ok(())
             }
@@ -10139,28 +10139,28 @@ declare_process_instruction!(MockReallocBuiltin, 1, |invoke_context| {
             MockReallocInstruction::Realloc(new_size, new_balance, _) => {
                 // Set data length
                 instruction_context
-                    .try_borrow_instruction_account(transaction_context, 1)?
+                    .try_borrow_instruction_account(1)?
                     .set_data_length(new_size)?;
 
                 // set balance
                 let current_balance = instruction_context
-                    .try_borrow_instruction_account(transaction_context, 1)?
+                    .try_borrow_instruction_account(1)?
                     .get_lamports();
                 let diff_balance = (new_balance as i64).saturating_sub(current_balance as i64);
                 let amount = diff_balance.unsigned_abs();
                 if diff_balance.is_positive() {
                     instruction_context
-                        .try_borrow_instruction_account(transaction_context, 0)?
+                        .try_borrow_instruction_account(0)?
                         .checked_sub_lamports(amount)?;
                     instruction_context
-                        .try_borrow_instruction_account(transaction_context, 1)?
+                        .try_borrow_instruction_account(1)?
                         .set_lamports(new_balance)?;
                 } else {
                     instruction_context
-                        .try_borrow_instruction_account(transaction_context, 0)?
+                        .try_borrow_instruction_account(0)?
                         .checked_add_lamports(amount)?;
                     instruction_context
-                        .try_borrow_instruction_account(transaction_context, 1)?
+                        .try_borrow_instruction_account(1)?
                         .set_lamports(new_balance)?;
                 }
                 Ok(())

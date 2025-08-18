@@ -57,32 +57,33 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
 
     trace!("process_instruction: {data:?}");
 
-    let mut me = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+    let mut me = instruction_context.try_borrow_instruction_account(0)?;
     if *me.get_owner() != id() {
         return Err(InstructionError::InvalidAccountOwner);
     }
 
-    let signers = instruction_context.get_signers(transaction_context)?;
+    let signers = instruction_context.get_signers()?;
     match limited_deserialize(data, solana_packet::PACKET_DATA_SIZE as u64)? {
         VoteInstruction::InitializeAccount(vote_init) => {
-            let rent = get_sysvar_with_account_check::rent(invoke_context, instruction_context, 1)?;
+            let rent =
+                get_sysvar_with_account_check::rent(invoke_context, &instruction_context, 1)?;
             if !rent.is_exempt(me.get_lamports(), me.get_data().len()) {
                 return Err(InstructionError::InsufficientFunds);
             }
             let clock =
-                get_sysvar_with_account_check::clock(invoke_context, instruction_context, 2)?;
+                get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 2)?;
             vote_state::initialize_account(&mut me, &vote_init, &signers, &clock)
         }
         VoteInstruction::Authorize(voter_pubkey, vote_authorize) => {
             let clock =
-                get_sysvar_with_account_check::clock(invoke_context, instruction_context, 1)?;
+                get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 1)?;
             vote_state::authorize(&mut me, &voter_pubkey, vote_authorize, &signers, &clock)
         }
         VoteInstruction::AuthorizeWithSeed(args) => {
             instruction_context.check_number_of_instruction_accounts(3)?;
             process_authorize_with_seed_instruction(
                 invoke_context,
-                instruction_context,
+                &instruction_context,
                 transaction_context,
                 &mut me,
                 &args.new_authority,
@@ -101,7 +102,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             }
             process_authorize_with_seed_instruction(
                 invoke_context,
-                instruction_context,
+                &instruction_context,
                 transaction_context,
                 &mut me,
                 new_authority,
@@ -132,10 +133,13 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if invoke_context.is_deprecate_legacy_vote_ixs_active() {
                 return Err(InstructionError::InvalidInstructionData);
             }
-            let slot_hashes =
-                get_sysvar_with_account_check::slot_hashes(invoke_context, instruction_context, 1)?;
+            let slot_hashes = get_sysvar_with_account_check::slot_hashes(
+                invoke_context,
+                &instruction_context,
+                1,
+            )?;
             let clock =
-                get_sysvar_with_account_check::clock(invoke_context, instruction_context, 2)?;
+                get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 2)?;
             vote_state::process_vote_with_account(&mut me, &slot_hashes, &clock, &vote, &signers)
         }
         VoteInstruction::UpdateVoteState(vote_state_update)
@@ -191,7 +195,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             drop(me);
             vote_state::withdraw(
                 transaction_context,
-                instruction_context,
+                &instruction_context,
                 0,
                 lamports,
                 1,
@@ -209,7 +213,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 return Err(InstructionError::MissingRequiredSignature);
             }
             let clock =
-                get_sysvar_with_account_check::clock(invoke_context, instruction_context, 1)?;
+                get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 1)?;
             vote_state::authorize(&mut me, voter_pubkey, vote_authorize, &signers, &clock)
         }
     }

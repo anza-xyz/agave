@@ -529,7 +529,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     invoke_context.push().unwrap();
     let (_parameter_bytes, regions, account_lengths) = serialize_parameters(
         invoke_context.transaction_context,
-        invoke_context
+        &invoke_context
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),

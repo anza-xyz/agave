@@ -310,7 +310,7 @@ pub fn authorize_with_seed(
 
 #[allow(clippy::too_many_arguments)]
 pub fn delegate(
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stake_account_index: IndexOfAccount,
     vote_account_index: IndexOfAccount,
@@ -319,8 +319,7 @@ pub fn delegate(
     signers: &HashSet<Pubkey>,
     invoke_context: &InvokeContext,
 ) -> Result<(), InstructionError> {
-    let vote_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, vote_account_index)?;
+    let vote_account = instruction_context.try_borrow_instruction_account(vote_account_index)?;
     if *vote_account.get_owner() != solana_sdk_ids::vote::id() {
         return Err(InstructionError::IncorrectProgramId);
     }
@@ -328,8 +327,8 @@ pub fn delegate(
     let vote_state = vote_account.get_state::<VoteStateVersions>();
     drop(vote_account);
 
-    let mut stake_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, stake_account_index)?;
+    let mut stake_account =
+        instruction_context.try_borrow_instruction_account(stake_account_index)?;
     match stake_account.get_state()? {
         StakeStateV2::Initialized(meta) => {
             meta.authorized.check(signers, StakeAuthorize::Staker)?;
@@ -403,8 +402,7 @@ pub fn split(
     split_index: IndexOfAccount,
     signers: &HashSet<Pubkey>,
 ) -> Result<(), InstructionError> {
-    let split =
-        instruction_context.try_borrow_instruction_account(transaction_context, split_index)?;
+    let split = instruction_context.try_borrow_instruction_account(split_index)?;
     if *split.get_owner() != id() {
         return Err(InstructionError::IncorrectProgramId);
     }
@@ -416,8 +414,7 @@ pub fn split(
     }
     let split_lamport_balance = split.get_lamports();
     drop(split);
-    let stake_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, stake_account_index)?;
+    let stake_account = instruction_context.try_borrow_instruction_account(stake_account_index)?;
     if lamports > stake_account.get_lamports() {
         return Err(InstructionError::InsufficientFunds);
     }
@@ -492,12 +489,11 @@ pub fn split(
             let mut split_meta = meta;
             split_meta.rent_exempt_reserve = validated_split_info.destination_rent_exempt_reserve;
 
-            let mut stake_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, stake_account_index)?;
+            let mut stake_account =
+                instruction_context.try_borrow_instruction_account(stake_account_index)?;
             stake_account.set_state(&StakeStateV2::Stake(meta, stake, stake_flags))?;
             drop(stake_account);
-            let mut split = instruction_context
-                .try_borrow_instruction_account(transaction_context, split_index)?;
+            let mut split = instruction_context.try_borrow_instruction_account(split_index)?;
             split.set_state(&StakeStateV2::Stake(split_meta, split_stake, stake_flags))?;
         }
         StakeStateV2::Initialized(meta) => {
@@ -515,8 +511,7 @@ pub fn split(
             )?;
             let mut split_meta = meta;
             split_meta.rent_exempt_reserve = validated_split_info.destination_rent_exempt_reserve;
-            let mut split = instruction_context
-                .try_borrow_instruction_account(transaction_context, split_index)?;
+            let mut split = instruction_context.try_borrow_instruction_account(split_index)?;
             split.set_state(&StakeStateV2::Initialized(split_meta))?;
         }
         StakeStateV2::Uninitialized => {
@@ -532,26 +527,25 @@ pub fn split(
     }
 
     // Deinitialize state upon zero balance
-    let mut stake_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, stake_account_index)?;
+    let mut stake_account =
+        instruction_context.try_borrow_instruction_account(stake_account_index)?;
     if lamports == stake_account.get_lamports() {
         stake_account.set_state(&StakeStateV2::Uninitialized)?;
     }
     drop(stake_account);
 
-    let mut split =
-        instruction_context.try_borrow_instruction_account(transaction_context, split_index)?;
+    let mut split = instruction_context.try_borrow_instruction_account(split_index)?;
     split.checked_add_lamports(lamports)?;
     drop(split);
-    let mut stake_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, stake_account_index)?;
+    let mut stake_account =
+        instruction_context.try_borrow_instruction_account(stake_account_index)?;
     stake_account.checked_sub_lamports(lamports)?;
     Ok(())
 }
 
 pub fn merge(
     invoke_context: &InvokeContext,
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stake_account_index: IndexOfAccount,
     source_account_index: IndexOfAccount,
@@ -559,8 +553,8 @@ pub fn merge(
     stake_history: &StakeHistory,
     signers: &HashSet<Pubkey>,
 ) -> Result<(), InstructionError> {
-    let mut source_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, source_account_index)?;
+    let mut source_account =
+        instruction_context.try_borrow_instruction_account(source_account_index)?;
     // Ensure source isn't spoofed
     if *source_account.get_owner() != id() {
         return Err(InstructionError::IncorrectProgramId);
@@ -572,8 +566,8 @@ pub fn merge(
     {
         return Err(InstructionError::InvalidArgument);
     }
-    let mut stake_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, stake_account_index)?;
+    let mut stake_account =
+        instruction_context.try_borrow_instruction_account(stake_account_index)?;
 
     ic_msg!(invoke_context, "Checking if destination stake is mergeable");
     let stake_merge_kind = MergeKind::get_if_mergeable(
@@ -623,11 +617,11 @@ pub fn move_stake(
     destination_account_index: IndexOfAccount,
     stake_authority_index: IndexOfAccount,
 ) -> Result<(), InstructionError> {
-    let mut source_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, source_account_index)?;
+    let mut source_account =
+        instruction_context.try_borrow_instruction_account(source_account_index)?;
 
-    let mut destination_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, destination_account_index)?;
+    let mut destination_account =
+        instruction_context.try_borrow_instruction_account(destination_account_index)?;
 
     let (source_merge_kind, destination_merge_kind) = move_stake_or_lamports_shared_checks(
         invoke_context,
@@ -758,11 +752,11 @@ pub fn move_lamports(
     destination_account_index: IndexOfAccount,
     stake_authority_index: IndexOfAccount,
 ) -> Result<(), InstructionError> {
-    let mut source_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, source_account_index)?;
+    let mut source_account =
+        instruction_context.try_borrow_instruction_account(source_account_index)?;
 
-    let mut destination_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, destination_account_index)?;
+    let mut destination_account =
+        instruction_context.try_borrow_instruction_account(destination_account_index)?;
 
     let (source_merge_kind, _) = move_stake_or_lamports_shared_checks(
         invoke_context,
@@ -818,8 +812,8 @@ pub fn withdraw(
     let mut signers = HashSet::new();
     signers.insert(*withdraw_authority_pubkey);
 
-    let mut stake_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, stake_account_index)?;
+    let mut stake_account =
+        instruction_context.try_borrow_instruction_account(stake_account_index)?;
     let (lockup, reserve, is_staked) = match stake_account.get_state()? {
         StakeStateV2::Stake(meta, stake, _stake_flag) => {
             meta.authorized
@@ -892,8 +886,7 @@ pub fn withdraw(
 
     stake_account.checked_sub_lamports(lamports)?;
     drop(stake_account);
-    let mut to =
-        instruction_context.try_borrow_instruction_account(transaction_context, to_index)?;
+    let mut to = instruction_context.try_borrow_instruction_account(to_index)?;
     to.checked_add_lamports(lamports)?;
     Ok(())
 }
@@ -910,8 +903,8 @@ pub(crate) fn deactivate_delinquent(
         instruction_context
             .get_index_of_instruction_account_in_transaction(delinquent_vote_account_index)?,
     )?;
-    let delinquent_vote_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, delinquent_vote_account_index)?;
+    let delinquent_vote_account =
+        instruction_context.try_borrow_instruction_account(delinquent_vote_account_index)?;
     if *delinquent_vote_account.get_owner() != solana_sdk_ids::vote::id() {
         return Err(InstructionError::IncorrectProgramId);
     }
@@ -919,8 +912,8 @@ pub(crate) fn deactivate_delinquent(
         .get_state::<VoteStateVersions>()?
         .convert_to_current();
 
-    let reference_vote_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, reference_vote_account_index)?;
+    let reference_vote_account =
+        instruction_context.try_borrow_instruction_account(reference_vote_account_index)?;
     if *reference_vote_account.get_owner() != solana_sdk_ids::vote::id() {
         return Err(InstructionError::IncorrectProgramId);
     }
@@ -993,7 +986,7 @@ struct ValidatedSplitInfo {
 /// not, return an error.
 fn validate_split_amount(
     invoke_context: &InvokeContext,
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     source_account_index: IndexOfAccount,
     destination_account_index: IndexOfAccount,
@@ -1002,12 +995,12 @@ fn validate_split_amount(
     additional_required_lamports: u64,
     source_is_active: bool,
 ) -> Result<ValidatedSplitInfo, InstructionError> {
-    let source_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, source_account_index)?;
+    let source_account =
+        instruction_context.try_borrow_instruction_account(source_account_index)?;
     let source_lamports = source_account.get_lamports();
     drop(source_account);
-    let destination_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, destination_account_index)?;
+    let destination_account =
+        instruction_context.try_borrow_instruction_account(destination_account_index)?;
     let destination_lamports = destination_account.get_lamports();
     let destination_data_len = destination_account.get_data().len();
     drop(destination_account);

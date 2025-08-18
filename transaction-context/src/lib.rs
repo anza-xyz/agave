@@ -53,7 +53,7 @@ static_assertions::const_assert_eq!(
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
 );
 
-/// Index of an account inside of the TransactionContext or an InstructionContext.
+/// Index of an account inside of the transaction or an instruction.
 pub type IndexOfAccount = u16;
 
 /// Contains account meta data which varies between instruction.
@@ -215,7 +215,7 @@ pub struct TransactionContext {
     instruction_stack_capacity: usize,
     instruction_trace_capacity: usize,
     instruction_stack: Vec<usize>,
-    instruction_trace: Vec<InstructionContext>,
+    instruction_trace: Vec<Instruction>,
     top_level_instruction_index: usize,
     return_data: TransactionReturnData,
     #[cfg(not(target_os = "solana"))]
@@ -241,7 +241,7 @@ impl TransactionContext {
             instruction_stack_capacity,
             instruction_trace_capacity,
             instruction_stack: Vec::with_capacity(instruction_stack_capacity),
-            instruction_trace: vec![InstructionContext::default()],
+            instruction_trace: vec![Instruction::default()],
             top_level_instruction_index: 0,
             return_data: TransactionReturnData::default(),
             rent,
@@ -291,34 +291,43 @@ impl TransactionContext {
             .map(|index| index as IndexOfAccount)
     }
 
-    /// Gets the max length of the InstructionContext trace
+    /// Gets the max length of the instruction trace
     pub fn get_instruction_trace_capacity(&self) -> usize {
         self.instruction_trace_capacity
     }
 
     /// Returns the instruction trace length.
     ///
-    /// Not counting the last empty InstructionContext which is always pre-reserved for the next instruction.
+    /// Not counting the last empty instruction which is always pre-reserved for the next instruction.
     /// See also `get_next_instruction_context()`.
     pub fn get_instruction_trace_length(&self) -> usize {
         self.instruction_trace.len().saturating_sub(1)
     }
 
-    /// Gets an InstructionContext by its index in the trace
+    /// Gets a view on an instruction by its index in the trace
     pub fn get_instruction_context_at_index_in_trace(
         &self,
         index_in_trace: usize,
-    ) -> Result<&InstructionContext, InstructionError> {
-        self.instruction_trace
+    ) -> Result<InstructionContext, InstructionError> {
+        let instruction = self
+            .instruction_trace
             .get(index_in_trace)
-            .ok_or(InstructionError::CallDepth)
+            .ok_or(InstructionError::CallDepth)?;
+        Ok(InstructionContext {
+            transaction_context: self,
+            nesting_level: instruction.nesting_level,
+            program_account_index_in_tx: instruction.program_account_index_in_tx,
+            instruction_accounts: &instruction.instruction_accounts,
+            dedup_map: &instruction.dedup_map,
+            instruction_data: &instruction.instruction_data,
+        })
     }
 
-    /// Gets an InstructionContext by its nesting level in the stack
+    /// Gets a view on the instruction by its nesting level in the stack
     pub fn get_instruction_context_at_nesting_level(
         &self,
         nesting_level: usize,
-    ) -> Result<&InstructionContext, InstructionError> {
+    ) -> Result<InstructionContext, InstructionError> {
         let index_in_trace = *self
             .instruction_stack
             .get(nesting_level)
@@ -328,7 +337,7 @@ impl TransactionContext {
         Ok(instruction_context)
     }
 
-    /// Gets the max height of the InstructionContext stack
+    /// Gets the max height of the instruction stack
     pub fn get_instruction_stack_capacity(&self) -> usize {
         self.instruction_stack_capacity
     }
@@ -339,13 +348,25 @@ impl TransactionContext {
         self.instruction_stack.len()
     }
 
-    /// Returns the current InstructionContext
-    pub fn get_current_instruction_context(&self) -> Result<&InstructionContext, InstructionError> {
+    /// Returns a view on the current instruction
+    pub fn get_current_instruction_context(&self) -> Result<InstructionContext, InstructionError> {
         let level = self
             .get_instruction_context_stack_height()
             .checked_sub(1)
             .ok_or(InstructionError::CallDepth)?;
         self.get_instruction_context_at_nesting_level(level)
+    }
+
+    /// Returns a view on the next instruction. This function assumes it has already been
+    /// configured with the correct values in `prepare_next_instruction` or
+    /// `prepare_next_top_level_instruction`
+    pub fn get_next_instruction_context(&self) -> Result<InstructionContext, InstructionError> {
+        let index_in_trace = self
+            .instruction_trace
+            .len()
+            .checked_sub(1)
+            .ok_or(InstructionError::CallDepth)?;
+        self.get_instruction_context_at_index_in_trace(index_in_trace)
     }
 
     /// Configures the next instruction.
@@ -359,14 +380,14 @@ impl TransactionContext {
         instruction_data: &[u8],
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
-        let instruction_context = self
+        let instruction = self
             .instruction_trace
             .last_mut()
             .ok_or(InstructionError::CallDepth)?;
-        instruction_context.program_account_index_in_tx = program_index;
-        instruction_context.instruction_accounts = instruction_accounts;
-        instruction_context.instruction_data = instruction_data.to_vec();
-        instruction_context.dedup_map = deduplication_map;
+        instruction.program_account_index_in_tx = program_index;
+        instruction.instruction_accounts = instruction_accounts;
+        instruction.instruction_data = instruction_data.to_vec();
+        instruction.dedup_map = deduplication_map;
         Ok(())
     }
 
@@ -394,16 +415,7 @@ impl TransactionContext {
         )
     }
 
-    /// Returns the immutable InstructionContext. This function assumes it has already been
-    /// configured with the correct values in `prepare_next_instruction` or
-    /// `prepare_next_top_level_instruction`
-    pub fn get_next_instruction_context(&self) -> Result<&InstructionContext, InstructionError> {
-        self.instruction_trace
-            .last()
-            .ok_or(InstructionError::CallDepth)
-    }
-
-    /// Pushes the next InstructionContext
+    /// Pushes the next instruction
     #[cfg(not(target_os = "solana"))]
     pub fn push(&mut self) -> Result<(), InstructionError> {
         let nesting_level = self.get_instruction_context_stack_height();
@@ -411,17 +423,17 @@ impl TransactionContext {
             return Err(InstructionError::UnbalancedInstruction);
         }
         {
-            let instruction_context = self
+            let instruction = self
                 .instruction_trace
                 .last_mut()
                 .ok_or(InstructionError::CallDepth)?;
-            instruction_context.nesting_level = nesting_level;
+            instruction.nesting_level = nesting_level;
         }
         let index_in_trace = self.get_instruction_trace_length();
         if index_in_trace >= self.instruction_trace_capacity {
             return Err(InstructionError::MaxInstructionTraceLengthExceeded);
         }
-        self.instruction_trace.push(InstructionContext::default());
+        self.instruction_trace.push(Instruction::default());
         if nesting_level >= self.instruction_stack_capacity {
             return Err(InstructionError::CallDepth);
         }
@@ -439,7 +451,7 @@ impl TransactionContext {
         Ok(())
     }
 
-    /// Pops the current InstructionContext
+    /// Pops the current instruction
     #[cfg(not(target_os = "solana"))]
     pub fn pop(&mut self) -> Result<(), InstructionError> {
         if self.instruction_stack.is_empty() {
@@ -475,12 +487,12 @@ impl TransactionContext {
         }
     }
 
-    /// Gets the return data of the current InstructionContext or any above
+    /// Gets the return data of the current instruction or any above
     pub fn get_return_data(&self) -> (&Pubkey, &[u8]) {
         (&self.return_data.program_id, &self.return_data.data)
     }
 
-    /// Set the return data of the current InstructionContext
+    /// Set the return data of the current instruction
     pub fn set_return_data(
         &mut self,
         program_id: Pubkey,
@@ -579,11 +591,9 @@ pub struct TransactionReturnData {
     pub data: Vec<u8>,
 }
 
-/// Loaded instruction shared between runtime and programs.
-///
-/// This context is valid for the entire duration of a (possibly cross program) instruction being processed.
+/// Instruction shared between runtime and programs.
 #[derive(Debug, Clone, Default)]
-pub struct InstructionContext {
+pub struct Instruction {
     nesting_level: usize,
     program_account_index_in_tx: IndexOfAccount,
     instruction_accounts: Vec<InstructionAccount>,
@@ -594,7 +604,19 @@ pub struct InstructionContext {
     instruction_data: Vec<u8>,
 }
 
-impl InstructionContext {
+/// View interface to read instructions.
+#[derive(Debug, Clone)]
+pub struct InstructionContext<'a> {
+    transaction_context: &'a TransactionContext,
+    // The rest of the fields are redundant shortcuts
+    nesting_level: usize,
+    program_account_index_in_tx: IndexOfAccount,
+    instruction_accounts: &'a [InstructionAccount],
+    dedup_map: &'a [u8],
+    instruction_data: &'a [u8],
+}
+
+impl<'a> InstructionContext<'a> {
     /// How many Instructions were on the stack after this one was pushed
     ///
     /// That is the number of nested parent Instructions plus one (itself).
@@ -621,7 +643,7 @@ impl InstructionContext {
 
     /// Data parameter for the programs `process_instruction` handler
     pub fn get_instruction_data(&self) -> &[u8] {
-        &self.instruction_data
+        self.instruction_data
     }
 
     /// Searches for an instruction account by its key
@@ -702,24 +724,19 @@ impl InstructionContext {
     }
 
     /// Gets the key of the last program account of this Instruction
-    pub fn get_program_key<'a, 'b: 'a>(
-        &'a self,
-        transaction_context: &'b TransactionContext,
-    ) -> Result<&'b Pubkey, InstructionError> {
+    pub fn get_program_key(&self) -> Result<&'a Pubkey, InstructionError> {
         self.get_index_of_program_account_in_transaction()
             .and_then(|index_in_transaction| {
-                transaction_context.get_key_of_account_at_index(index_in_transaction)
+                self.transaction_context
+                    .get_key_of_account_at_index(index_in_transaction)
             })
     }
 
     /// Get the owner of the program account of this instruction
-    pub fn get_program_owner(
-        &self,
-        transaction_context: &TransactionContext,
-    ) -> Result<Pubkey, InstructionError> {
+    pub fn get_program_owner(&self) -> Result<Pubkey, InstructionError> {
         self.get_index_of_program_account_in_transaction()
             .and_then(|index_in_transaction| {
-                transaction_context
+                self.transaction_context
                     .accounts
                     .try_borrow(index_in_transaction)
             })
@@ -727,22 +744,22 @@ impl InstructionContext {
     }
 
     /// Gets an instruction account of this Instruction
-    pub fn try_borrow_instruction_account<'a, 'b: 'a>(
-        &'a self,
-        transaction_context: &'b TransactionContext,
+    pub fn try_borrow_instruction_account(
+        &self,
         index_in_instruction: IndexOfAccount,
-    ) -> Result<BorrowedAccount<'a>, InstructionError> {
+    ) -> Result<BorrowedAccount, InstructionError> {
         let instruction_account = *self
             .instruction_accounts
             .get(index_in_instruction as usize)
             .ok_or(InstructionError::NotEnoughAccountKeys)?;
 
-        let account = transaction_context
+        let account = self
+            .transaction_context
             .accounts
             .try_borrow_mut(instruction_account.index_in_transaction)?;
 
         Ok(BorrowedAccount {
-            transaction_context,
+            transaction_context: self.transaction_context,
             instruction_account,
             account,
             index_in_transaction_of_instruction_program: self.program_account_index_in_tx,
@@ -774,15 +791,13 @@ impl InstructionContext {
     }
 
     /// Calculates the set of all keys of signer instruction accounts in this Instruction
-    pub fn get_signers(
-        &self,
-        transaction_context: &TransactionContext,
-    ) -> Result<HashSet<Pubkey>, InstructionError> {
+    pub fn get_signers(&self) -> Result<HashSet<Pubkey>, InstructionError> {
         let mut result = HashSet::new();
         for instruction_account in self.instruction_accounts.iter() {
             if instruction_account.is_signer() {
                 result.insert(
-                    *transaction_context
+                    *self
+                        .transaction_context
                         .get_key_of_account_at_index(instruction_account.index_in_transaction)?,
                 );
             }
@@ -791,16 +806,15 @@ impl InstructionContext {
     }
 
     pub fn instruction_accounts(&self) -> &[InstructionAccount] {
-        &self.instruction_accounts
+        self.instruction_accounts
     }
 
-    pub fn get_key_of_instruction_account<'a>(
+    pub fn get_key_of_instruction_account(
         &self,
         index_in_instruction: IndexOfAccount,
-        transaction_context: &'a TransactionContext,
     ) -> Result<&'a Pubkey, InstructionError> {
         self.get_index_of_instruction_account_in_transaction(index_in_instruction)
-            .and_then(|idx| transaction_context.get_key_of_account_at_index(idx))
+            .and_then(|idx| self.transaction_context.get_key_of_account_at_index(idx))
     }
 }
 
@@ -1261,10 +1275,10 @@ mod tests {
         let result = instruction_context.get_index_of_program_account_in_transaction();
         assert_eq!(result, Err(InstructionError::NotEnoughAccountKeys));
 
-        let result = instruction_context.get_program_key(&transaction_context);
+        let result = instruction_context.get_program_key();
         assert_eq!(result, Err(InstructionError::NotEnoughAccountKeys));
 
-        let result = instruction_context.get_program_owner(&transaction_context);
+        let result = instruction_context.get_program_owner();
         assert_eq!(result.err(), Some(InstructionError::NotEnoughAccountKeys));
     }
 }

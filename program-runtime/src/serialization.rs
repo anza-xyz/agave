@@ -220,7 +220,7 @@ impl Serializer {
 }
 
 pub fn serialize_parameters(
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
@@ -238,9 +238,9 @@ pub fn serialize_parameters(
         return Err(InstructionError::MaxAccountsExceeded);
     }
 
-    let program_id = *instruction_context.get_program_key(transaction_context)?;
+    let program_id = *instruction_context.get_program_key()?;
     let is_loader_deprecated =
-        instruction_context.get_program_owner(transaction_context)? == bpf_loader_deprecated::id();
+        instruction_context.get_program_owner()? == bpf_loader_deprecated::id();
 
     let accounts = (0..instruction_context.get_number_of_instruction_accounts())
         .map(|instruction_account_index| {
@@ -251,7 +251,7 @@ pub fn serialize_parameters(
                 SerializeAccount::Duplicate(index)
             } else {
                 let account = instruction_context
-                    .try_borrow_instruction_account(transaction_context, instruction_account_index)
+                    .try_borrow_instruction_account(instruction_account_index)
                     .unwrap();
                 SerializeAccount::Account(instruction_account_index, account)
             }
@@ -292,7 +292,7 @@ pub fn deserialize_parameters(
     accounts_metadata: &[SerializedAccountMetadata],
 ) -> Result<(), InstructionError> {
     let is_loader_deprecated =
-        instruction_context.get_program_owner(transaction_context)? == bpf_loader_deprecated::id();
+        instruction_context.get_program_owner()? == bpf_loader_deprecated::id();
     let account_lengths = accounts_metadata.iter().map(|a| a.original_data_len);
     if is_loader_deprecated {
         deserialize_parameters_unaligned(
@@ -407,7 +407,7 @@ fn serialize_parameters_unaligned(
 }
 
 fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
@@ -423,8 +423,8 @@ fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
             instruction_context.is_instruction_account_duplicate(instruction_account_index)?;
         start += 1; // is_dup
         if duplicate.is_none() {
-            let mut borrowed_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, instruction_account_index)?;
+            let mut borrowed_account =
+                instruction_context.try_borrow_instruction_account(instruction_account_index)?;
             start += size_of::<u8>(); // is_signer
             start += size_of::<u8>(); // is_writable
             start += size_of::<Pubkey>(); // key
@@ -570,7 +570,7 @@ fn serialize_parameters_aligned(
 }
 
 fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
@@ -588,8 +588,8 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
         if duplicate.is_some() {
             start += 7; // padding to 64-bit aligned
         } else {
-            let mut borrowed_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, instruction_account_index)?;
+            let mut borrowed_account =
+                instruction_context.try_borrow_instruction_account(instruction_account_index)?;
             start += size_of::<u8>() // is_signer
                 + size_of::<u8>() // is_writable
                 + size_of::<u8>() // executable
@@ -787,7 +787,7 @@ mod tests {
 
                 let serialization_result = serialize_parameters(
                     invoke_context.transaction_context,
-                    instruction_context,
+                    &instruction_context,
                     stricter_abi_and_runtime_constraints,
                     false, // account_data_direct_mapping
                     true,  // mask_out_rent_epoch_in_vm_serialization
@@ -944,7 +944,7 @@ mod tests {
             // check serialize_parameters_aligned
             let (mut serialized, regions, accounts_metadata) = serialize_parameters(
                 invoke_context.transaction_context,
-                instruction_context,
+                &instruction_context,
                 stricter_abi_and_runtime_constraints,
                 false, // account_data_direct_mapping
                 true,  // mask_out_rent_epoch_in_vm_serialization
@@ -1005,7 +1005,7 @@ mod tests {
 
             deserialize_parameters(
                 invoke_context.transaction_context,
-                instruction_context,
+                &instruction_context,
                 stricter_abi_and_runtime_constraints,
                 false, // account_data_direct_mapping
                 serialized.as_slice(),
@@ -1036,7 +1036,7 @@ mod tests {
 
             let (mut serialized, regions, account_lengths) = serialize_parameters(
                 invoke_context.transaction_context,
-                instruction_context,
+                &instruction_context,
                 stricter_abi_and_runtime_constraints,
                 false, // account_data_direct_mapping
                 true,  // mask_out_rent_epoch_in_vm_serialization
@@ -1076,7 +1076,7 @@ mod tests {
 
             deserialize_parameters(
                 invoke_context.transaction_context,
-                instruction_context,
+                &instruction_context,
                 stricter_abi_and_runtime_constraints,
                 false, // account_data_direct_mapping
                 serialized.as_slice(),
@@ -1202,7 +1202,7 @@ mod tests {
             // check serialize_parameters_aligned
             let (_serialized, regions, _accounts_metadata) = serialize_parameters(
                 invoke_context.transaction_context,
-                instruction_context,
+                &instruction_context,
                 true,
                 false, // account_data_direct_mapping
                 mask_out_rent_epoch_in_vm_serialization,
@@ -1245,7 +1245,7 @@ mod tests {
 
             let (_serialized, regions, _account_lengths) = serialize_parameters(
                 invoke_context.transaction_context,
-                instruction_context,
+                &instruction_context,
                 true,
                 false, // account_data_direct_mapping
                 mask_out_rent_epoch_in_vm_serialization,
@@ -1475,10 +1475,7 @@ mod tests {
             .map(|(index_in_instruction, account_start_offset)| {
                 create_memory_region_of_account(
                     &mut instruction_context
-                        .try_borrow_instruction_account(
-                            &transaction_context,
-                            index_in_instruction as IndexOfAccount,
-                        )
+                        .try_borrow_instruction_account(index_in_instruction as IndexOfAccount)
                         .unwrap(),
                     *account_start_offset,
                 )
@@ -1598,7 +1595,7 @@ mod tests {
         let remaining_allowed_growth: usize = 0x700;
         for index_in_instruction in 4..6 {
             let mut borrowed_account = instruction_context
-                .try_borrow_instruction_account(&transaction_context, index_in_instruction)
+                .try_borrow_instruction_account(index_in_instruction)
                 .unwrap();
             borrowed_account
                 .set_data_from_slice(&vec![0u8; MAX_PERMITTED_DATA_LENGTH as usize])

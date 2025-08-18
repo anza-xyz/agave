@@ -157,8 +157,7 @@ fn create_account(
 ) -> Result<(), InstructionError> {
     // if it looks like the `to` account is already in use, bail
     {
-        let mut to = instruction_context
-            .try_borrow_instruction_account(transaction_context, to_account_index)?;
+        let mut to = instruction_context.try_borrow_instruction_account(to_account_index)?;
         if to.get_lamports() > 0 {
             ic_msg!(
                 invoke_context,
@@ -185,11 +184,10 @@ fn transfer_verified(
     to_account_index: IndexOfAccount,
     lamports: u64,
     invoke_context: &InvokeContext,
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
-    let mut from = instruction_context
-        .try_borrow_instruction_account(transaction_context, from_account_index)?;
+    let mut from = instruction_context.try_borrow_instruction_account(from_account_index)?;
     if !from.get_data().is_empty() {
         ic_msg!(invoke_context, "Transfer: `from` must not carry data");
         return Err(InstructionError::InvalidArgument);
@@ -206,8 +204,7 @@ fn transfer_verified(
 
     from.checked_sub_lamports(lamports)?;
     drop(from);
-    let mut to = instruction_context
-        .try_borrow_instruction_account(transaction_context, to_account_index)?;
+    let mut to = instruction_context.try_borrow_instruction_account(to_account_index)?;
     to.checked_add_lamports(lamports)?;
     Ok(())
 }
@@ -307,7 +304,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
 
     trace!("process_instruction: {instruction:?}");
 
-    let signers = instruction_context.get_signers(transaction_context)?;
+    let signers = instruction_context.get_signers()?;
     match instruction {
         SystemInstruction::CreateAccount {
             lamports,
@@ -332,7 +329,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &signers,
                 invoke_context,
                 transaction_context,
-                instruction_context,
+                &instruction_context,
             )
         }
         SystemInstruction::CreateAccountWithSeed {
@@ -360,13 +357,12 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &signers,
                 invoke_context,
                 transaction_context,
-                instruction_context,
+                &instruction_context,
             )
         }
         SystemInstruction::Assign { owner } => {
             instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut account =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+            let mut account = instruction_context.try_borrow_instruction_account(0)?;
             let address = Address::create(
                 transaction_context.get_key_of_account_at_index(
                     instruction_context.get_index_of_instruction_account_in_transaction(0)?,
@@ -384,7 +380,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 lamports,
                 invoke_context,
                 transaction_context,
-                instruction_context,
+                &instruction_context,
             )
         }
         SystemInstruction::TransferWithSeed {
@@ -402,17 +398,16 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 lamports,
                 invoke_context,
                 transaction_context,
-                instruction_context,
+                &instruction_context,
             )
         }
         SystemInstruction::AdvanceNonceAccount => {
             instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut me =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+            let mut me = instruction_context.try_borrow_instruction_account(0)?;
             #[allow(deprecated)]
             let recent_blockhashes = get_sysvar_with_account_check::recent_blockhashes(
                 invoke_context,
-                instruction_context,
+                &instruction_context,
                 1,
             )?;
             if recent_blockhashes.is_empty() {
@@ -429,10 +424,11 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             #[allow(deprecated)]
             let _recent_blockhashes = get_sysvar_with_account_check::recent_blockhashes(
                 invoke_context,
-                instruction_context,
+                &instruction_context,
                 2,
             )?;
-            let rent = get_sysvar_with_account_check::rent(invoke_context, instruction_context, 3)?;
+            let rent =
+                get_sysvar_with_account_check::rent(invoke_context, &instruction_context, 3)?;
             withdraw_nonce_account(
                 0,
                 lamports,
@@ -441,17 +437,16 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &signers,
                 invoke_context,
                 transaction_context,
-                instruction_context,
+                &instruction_context,
             )
         }
         SystemInstruction::InitializeNonceAccount(authorized) => {
             instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut me =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+            let mut me = instruction_context.try_borrow_instruction_account(0)?;
             #[allow(deprecated)]
             let recent_blockhashes = get_sysvar_with_account_check::recent_blockhashes(
                 invoke_context,
-                instruction_context,
+                &instruction_context,
                 1,
             )?;
             if recent_blockhashes.is_empty() {
@@ -461,19 +456,18 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 );
                 return Err(SystemError::NonceNoRecentBlockhashes.into());
             }
-            let rent = get_sysvar_with_account_check::rent(invoke_context, instruction_context, 2)?;
+            let rent =
+                get_sysvar_with_account_check::rent(invoke_context, &instruction_context, 2)?;
             initialize_nonce_account(&mut me, &authorized, &rent, invoke_context)
         }
         SystemInstruction::AuthorizeNonceAccount(nonce_authority) => {
             instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut me =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+            let mut me = instruction_context.try_borrow_instruction_account(0)?;
             authorize_nonce_account(&mut me, &nonce_authority, &signers, invoke_context)
         }
         SystemInstruction::UpgradeNonceAccount => {
             instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut nonce_account =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+            let mut nonce_account = instruction_context.try_borrow_instruction_account(0)?;
             if !system_program::check_id(nonce_account.get_owner()) {
                 return Err(InstructionError::InvalidAccountOwner);
             }
@@ -488,8 +482,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         SystemInstruction::Allocate { space } => {
             instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut account =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+            let mut account = instruction_context.try_borrow_instruction_account(0)?;
             let address = Address::create(
                 transaction_context.get_key_of_account_at_index(
                     instruction_context.get_index_of_instruction_account_in_transaction(0)?,
@@ -506,8 +499,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             owner,
         } => {
             instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut account =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+            let mut account = instruction_context.try_borrow_instruction_account(0)?;
             let address = Address::create(
                 transaction_context.get_key_of_account_at_index(
                     instruction_context.get_index_of_instruction_account_in_transaction(0)?,
@@ -526,8 +518,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         SystemInstruction::AssignWithSeed { base, seed, owner } => {
             instruction_context.check_number_of_instruction_accounts(1)?;
-            let mut account =
-                instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+            let mut account = instruction_context.try_borrow_instruction_account(0)?;
             let address = Address::create(
                 transaction_context.get_key_of_account_at_index(
                     instruction_context.get_index_of_instruction_account_in_transaction(0)?,

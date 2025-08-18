@@ -252,7 +252,7 @@ impl<'a> InvokeContext<'a> {
                 self.transaction_context.get_instruction_trace_length(),
             )?;
         let program_id = instruction_context
-            .get_program_key(self.transaction_context)
+            .get_program_key()
             .map_err(|_| InstructionError::UnsupportedProgramId)?;
         if self
             .transaction_context
@@ -265,18 +265,14 @@ impl<'a> InvokeContext<'a> {
                 .any(|level| {
                     self.transaction_context
                         .get_instruction_context_at_nesting_level(level)
-                        .and_then(|instruction_context| {
-                            instruction_context.get_program_key(self.transaction_context)
-                        })
+                        .and_then(|instruction_context| instruction_context.get_program_key())
                         .map(|program_key| program_key == program_id)
                         .unwrap_or(false)
                 });
             let is_last = self
                 .transaction_context
                 .get_current_instruction_context()
-                .and_then(|instruction_context| {
-                    instruction_context.get_program_key(self.transaction_context)
-                })
+                .and_then(|instruction_context| instruction_context.get_program_key())
                 .map(|program_key| program_key == program_id)
                 .unwrap_or(false);
             if contains && !is_last {
@@ -538,9 +534,9 @@ impl<'a> InvokeContext<'a> {
         let process_executable_chain_time = Measure::start("process_executable_chain_time");
 
         let builtin_id = {
-            let owner_id = instruction_context.get_program_owner(self.transaction_context)?;
+            let owner_id = instruction_context.get_program_owner()?;
             if native_loader::check_id(&owner_id) {
-                *instruction_context.get_program_key(self.transaction_context)?
+                *instruction_context.get_program_key()?
             } else if bpf_loader_deprecated::check_id(&owner_id)
                 || bpf_loader::check_id(&owner_id)
                 || bpf_loader_upgradeable::check_id(&owner_id)
@@ -567,7 +563,7 @@ impl<'a> InvokeContext<'a> {
         }
         .ok_or(InstructionError::UnsupportedProgramId)?;
 
-        let program_id = *instruction_context.get_program_key(self.transaction_context)?;
+        let program_id = *instruction_context.get_program_key()?;
         self.transaction_context
             .set_return_data(program_id, Vec::new())?;
         let logger = self.get_log_collector();
@@ -706,7 +702,7 @@ impl<'a> InvokeContext<'a> {
         self.transaction_context
             .get_current_instruction_context()
             .and_then(|instruction_context| {
-                let owner_id = instruction_context.get_program_owner(self.transaction_context);
+                let owner_id = instruction_context.get_program_owner();
                 debug_assert!(owner_id.is_ok());
                 owner_id
             })
@@ -982,7 +978,7 @@ mod tests {
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
             let instruction_data = instruction_context.get_instruction_data();
-            let program_id = instruction_context.get_program_key(transaction_context)?;
+            let program_id = instruction_context.get_program_key()?;
             let instruction_accounts = (0..4)
                 .map(|instruction_account_index| {
                     InstructionAccount::new(instruction_account_index, false, false)
@@ -991,14 +987,14 @@ mod tests {
             assert_eq!(
                 program_id,
                 instruction_context
-                    .try_borrow_instruction_account(transaction_context, 0)?
+                    .try_borrow_instruction_account(0)?
                     .get_owner()
             );
             assert_ne!(
                 instruction_context
-                    .try_borrow_instruction_account(transaction_context, 1)?
+                    .try_borrow_instruction_account(1)?
                     .get_owner(),
-                instruction_context.get_key_of_instruction_account(0, transaction_context)?
+                instruction_context.get_key_of_instruction_account(0)?
             );
 
             if let Ok(instruction) = bincode::deserialize(instruction_data) {
@@ -1006,17 +1002,17 @@ mod tests {
                     MockInstruction::NoopSuccess => (),
                     MockInstruction::NoopFail => return Err(InstructionError::GenericError),
                     MockInstruction::ModifyOwned => instruction_context
-                        .try_borrow_instruction_account(transaction_context, 0)?
+                        .try_borrow_instruction_account(0)?
                         .set_data_from_slice(&[1])?,
                     MockInstruction::ModifyNotOwned => instruction_context
-                        .try_borrow_instruction_account(transaction_context, 1)?
+                        .try_borrow_instruction_account(1)?
                         .set_data_from_slice(&[1])?,
                     MockInstruction::ModifyReadonly => instruction_context
-                        .try_borrow_instruction_account(transaction_context, 2)?
+                        .try_borrow_instruction_account(2)?
                         .set_data_from_slice(&[1])?,
                     MockInstruction::UnbalancedPush => {
                         instruction_context
-                            .try_borrow_instruction_account(transaction_context, 0)?
+                            .try_borrow_instruction_account(0)?
                             .checked_add_lamports(1)?;
                         let program_id = *transaction_context.get_key_of_account_at_index(3)?;
                         let metas = vec![
@@ -1046,7 +1042,7 @@ mod tests {
                             .and(invoke_context.pop())?;
                     }
                     MockInstruction::UnbalancedPop => instruction_context
-                        .try_borrow_instruction_account(transaction_context, 0)?
+                        .try_borrow_instruction_account(0)?
                         .checked_add_lamports(1)?,
                     MockInstruction::ConsumeComputeUnits {
                         compute_units_to_consume,
@@ -1058,7 +1054,7 @@ mod tests {
                         return desired_result;
                     }
                     MockInstruction::Resize { new_len } => instruction_context
-                        .try_borrow_instruction_account(transaction_context, 0)?
+                        .try_borrow_instruction_account(0)?
                         .set_data_from_slice(&vec![0; new_len as usize])?,
                 }
             } else {
