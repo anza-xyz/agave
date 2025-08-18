@@ -647,8 +647,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .default_value(&default_args.rocksdb_shred_compaction)
             .help(
                 "Controls how RocksDB compacts shreds. *WARNING*: You will lose your Blockstore \
-                 data when you switch between options. Possible values are: 'level': stores \
-                 shreds using RocksDB's default (level) compaction.",
+                 data when you switch between options.",
             ),
     )
     .arg(
