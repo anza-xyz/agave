@@ -534,10 +534,9 @@ impl TransactionContext {
                     return;
                 }
 
-                let remaining_allowed_growth =
-                    MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION
-                        .saturating_sub(accounts.resize_delta.get())
-                        .max(0) as usize;
+                let remaining_allowed_growth = MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION
+                    .saturating_sub(accounts.resize_delta.get())
+                    .max(0) as usize;
 
                 if requested_length > region.len as usize {
                     // Realloc immediately here to fit the requested access,
