@@ -217,9 +217,9 @@ pub fn wait_for_restart_window(
                 }
                 if !leader_schedule.is_empty() && upcoming_idle_windows.is_empty() {
                     return Err(format!(
-                        "Validator has no idle window of at least {} slots. Largest idle window \
-                         for epoch {} is {} slots",
-                        min_idle_slots, epoch_info.epoch, max_idle_window
+                        "Validator has no idle window of at least {min_idle_slots} slots. Largest \
+                         idle window for epoch {} is {max_idle_window} slots",
+                        epoch_info.epoch,
                     )
                     .into());
                 }
