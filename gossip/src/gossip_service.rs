@@ -45,7 +45,7 @@ impl GossipService {
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
         bank_forks: Option<Arc<RwLock<BankForks>>>,
-        gossip_sockets: Vec<Arc<UdpSocket>>,
+        gossip_sockets: Arc<[UdpSocket]>,
         gossip_validators: Option<HashSet<Pubkey>>,
         should_check_duplicate_instance: bool,
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
@@ -373,7 +373,7 @@ pub fn make_gossip_node(
     if let Some(entrypoint) = entrypoint {
         cluster_info.set_entrypoint(ContactInfo::new_gossip_entry_point(entrypoint));
     }
-    let gossip_sockets = vec![Arc::new(gossip_socket)];
+    let gossip_sockets: Arc<[UdpSocket]> = vec![gossip_socket].into();
     let cluster_info = Arc::new(cluster_info);
     let gossip_service = GossipService::new(
         &cluster_info,

@@ -181,7 +181,7 @@ fn recv_loop<P: SocketProvider>(
     }
 
     let mut socket = provider.current_socket_ref();
-    setup_socket(&socket)?;
+    setup_socket(socket)?;
     #[cfg(unix)]
     let mut poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
 
@@ -208,9 +208,9 @@ fn recv_loop<P: SocketProvider>(
             }
 
             #[cfg(unix)]
-            let result = packet::recv_from(&mut packet_batch, &socket, coalesce, &mut poll_fd);
+            let result = packet::recv_from(&mut packet_batch, socket, coalesce, &mut poll_fd);
             #[cfg(not(unix))]
-            let result = packet::recv_from(&mut packet_batch, &socket, coalesce);
+            let result = packet::recv_from(&mut packet_batch, socket, coalesce);
 
             if let Ok(len) = result {
                 if len > 0 {
@@ -247,7 +247,7 @@ fn recv_loop<P: SocketProvider>(
 
         if let CurrentSocket::Changed(s) = provider.current_socket() {
             socket = s;
-            setup_socket(&socket)?;
+            setup_socket(socket)?;
 
             #[cfg(unix)]
             {
@@ -292,7 +292,7 @@ pub fn receiver(
 #[allow(clippy::too_many_arguments)]
 pub fn receiver_atomic(
     thread_name: String,
-    sockets: Vec<Arc<UdpSocket>>,
+    sockets: Arc<[UdpSocket]>,
     bind_ip_addrs: Arc<BindIpAddrs>,
     exit: Arc<AtomicBool>,
     packet_batch_sender: impl ChannelSend<PacketBatch>,
@@ -536,7 +536,7 @@ pub fn recv_packet_batches(
 
 pub fn responder_atomic(
     name: &'static str,
-    sockets: Vec<Arc<UdpSocket>>,
+    sockets: Arc<[UdpSocket]>,
     bind_ip_addrs: Arc<BindIpAddrs>,
     r: PacketBatchReceiver,
     socket_addr_space: SocketAddrSpace,
@@ -595,7 +595,7 @@ fn responder_loop<P: SocketProvider>(
 
     loop {
         let sock = provider.current_socket_ref();
-        if let Err(e) = recv_send(&sock, &r, &socket_addr_space, &mut stats) {
+        if let Err(e) = recv_send(sock, &r, &socket_addr_space, &mut stats) {
             match e {
                 StreamerError::RecvTimeout(RecvTimeoutError::Disconnected) => break,
                 StreamerError::RecvTimeout(RecvTimeoutError::Timeout) => (),

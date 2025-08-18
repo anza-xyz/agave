@@ -269,7 +269,7 @@ impl Node {
         trace!("new ContactInfo: {info:?}");
         let sockets = Sockets {
             alpenglow: Some(alpenglow),
-            gossip: gossip_sockets.into_iter().map(Arc::new).collect(),
+            gossip: gossip_sockets.into_iter().collect(),
             tvu: tvu_sockets,
             tvu_quic,
             tpu: tpu_sockets,
@@ -315,7 +315,7 @@ mod multihoming {
 
     #[derive(Debug, Clone)]
     pub struct SocketsMultihomed {
-        pub gossip: Vec<Arc<UdpSocket>>,
+        pub gossip: Arc<[UdpSocket]>,
         // add tvu, retransmit_sockets, etc below
     }
 
@@ -354,7 +354,7 @@ mod multihoming {
             cluster_info
                 .set_gossip_socket(gossip_addr)
                 .map_err(|e| e.to_string())?;
-    
+
             // This will never fail since we have checked index validity above
             let _new_ip_addr = self
                 .bind_ip_addrs

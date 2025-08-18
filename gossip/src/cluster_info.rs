@@ -2356,7 +2356,7 @@ impl ClusterInfo {
 
 #[derive(Debug)]
 pub struct Sockets {
-    pub gossip: Vec<Arc<UdpSocket>>,
+    pub gossip: Arc<[UdpSocket]>,
     pub ip_echo: Option<TcpListener>,
     pub tvu: Vec<UdpSocket>,
     pub tvu_quic: UdpSocket,
@@ -2865,7 +2865,7 @@ mod tests {
     fn check_node_sockets(node: &Node, ip: IpAddr, range: (u16, u16)) {
         check_socket(&node.sockets.repair, ip, range);
         check_socket(&node.sockets.tvu_quic, ip, range);
-    
+
         check_sockets(&node.sockets.gossip, ip, range);
         check_sockets(&node.sockets.tvu, ip, range);
         check_sockets(&node.sockets.tpu, ip, range);

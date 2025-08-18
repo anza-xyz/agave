@@ -80,7 +80,7 @@ fn verify_reachable_ports(
     };
 
     let mut udp_sockets = vec![&node.sockets.repair];
-    udp_sockets.extend(node.sockets.gossip.iter().map(|socket| socket.as_ref()));
+    udp_sockets.extend(node.sockets.gossip.iter());
 
     if verify_address(&node.info.serve_repair(Protocol::UDP)) {
         udp_sockets.push(&node.sockets.serve_repair);
@@ -144,7 +144,7 @@ fn start_gossip_node(
     cluster_entrypoints: &[ContactInfo],
     ledger_path: &Path,
     gossip_addr: &SocketAddr,
-    gossip_sockets: Vec<Arc<UdpSocket>>,
+    gossip_sockets: Arc<[UdpSocket]>,
     expected_shred_version: u16,
     gossip_validators: Option<HashSet<Pubkey>>,
     should_check_duplicate_instance: bool,

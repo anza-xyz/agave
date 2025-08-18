@@ -8,16 +8,16 @@ use std::{
     },
 };
 
-pub enum CurrentSocket {
-    Same(Arc<UdpSocket>),
-    Changed(Arc<UdpSocket>),
+pub enum CurrentSocket<'a> {
+    Same(&'a UdpSocket),
+    Changed(&'a UdpSocket),
 }
 
 pub trait SocketProvider {
-    fn current_socket(&self) -> CurrentSocket;
+    fn current_socket(&self) -> CurrentSocket<'_>;
 
     #[inline]
-    fn current_socket_ref(&self) -> Arc<UdpSocket> {
+    fn current_socket_ref(&self) -> &UdpSocket {
         match self.current_socket() {
             CurrentSocket::Same(sock) | CurrentSocket::Changed(sock) => sock,
         }
@@ -35,19 +35,19 @@ impl FixedSocketProvider {
 }
 impl SocketProvider for FixedSocketProvider {
     #[inline]
-    fn current_socket(&self) -> CurrentSocket {
-        CurrentSocket::Same(self.socket.clone())
+    fn current_socket(&self) -> CurrentSocket<'_> {
+        CurrentSocket::Same(self.socket.as_ref())
     }
 }
 
 pub struct MultihomedSocketProvider {
-    sockets: Vec<Arc<UdpSocket>>,
+    sockets: Arc<[UdpSocket]>,
     bind_ip_addrs: Arc<BindIpAddrs>,
     last_index: AtomicUsize,
 }
 
 impl MultihomedSocketProvider {
-    pub fn new(sockets: Vec<Arc<UdpSocket>>, bind_ip_addrs: Arc<BindIpAddrs>) -> Self {
+    pub fn new(sockets: Arc<[UdpSocket]>, bind_ip_addrs: Arc<BindIpAddrs>) -> Self {
         Self {
             sockets,
             bind_ip_addrs,
@@ -58,11 +58,11 @@ impl MultihomedSocketProvider {
 
 impl SocketProvider for MultihomedSocketProvider {
     #[inline]
-    fn current_socket(&self) -> CurrentSocket {
+    fn current_socket(&self) -> CurrentSocket<'_> {
         let idx = self.bind_ip_addrs.active_index();
         let last = self.last_index.swap(idx, Ordering::AcqRel);
 
-        let sock = self.sockets[idx].clone();
+        let sock = &self.sockets[idx];
         if last == idx {
             CurrentSocket::Same(sock)
         } else {
