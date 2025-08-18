@@ -23,8 +23,6 @@ use {
 
 #[inline]
 fn get_shred_size(shred: &[u8]) -> Option<usize> {
-    // Legacy data shreds have zero padding at the end which might have been
-    // trimmed. Other variants do not have any trailing zeros.
     match get_shred_variant(shred).ok()? {
         ShredVariant::MerkleCode { .. } => Some(shred::merkle::ShredCode::SIZE_OF_PAYLOAD),
         ShredVariant::MerkleData { .. } => Some(shred::merkle::ShredData::SIZE_OF_PAYLOAD),
