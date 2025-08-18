@@ -235,7 +235,7 @@ fn bench_banking(
     let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
         create_test_recorder(bank.clone(), blockstore, None, None);
     let (s, _r) = unbounded();
-    let _banking_stage = BankingStage::new(
+    let _banking_stage = BankingStage::new_num_threads(
         block_production_method,
         transaction_struct,
         &poh_recorder,
@@ -243,6 +243,7 @@ fn bench_banking(
         non_vote_receiver,
         tpu_vote_receiver,
         gossip_vote_receiver,
+        num_threads,
         None,
         s,
         None,

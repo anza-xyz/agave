@@ -355,38 +355,6 @@ impl LikeClusterInfo for Arc<ClusterInfo> {
 
 impl BankingStage {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        block_production_method: BlockProductionMethod,
-        transaction_struct: TransactionStructure,
-        poh_recorder: &Arc<RwLock<PohRecorder>>,
-        transaction_recorder: TransactionRecorder,
-        non_vote_receiver: BankingPacketReceiver,
-        tpu_vote_receiver: BankingPacketReceiver,
-        gossip_vote_receiver: BankingPacketReceiver,
-        transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: ReplayVoteSender,
-        log_messages_bytes_limit: Option<usize>,
-        bank_forks: Arc<RwLock<BankForks>>,
-        prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
-    ) -> Self {
-        Self::new_num_threads(
-            block_production_method,
-            transaction_struct,
-            poh_recorder,
-            transaction_recorder,
-            non_vote_receiver,
-            tpu_vote_receiver,
-            gossip_vote_receiver,
-            Self::default_num_workers(),
-            transaction_status_sender,
-            replay_vote_sender,
-            log_messages_bytes_limit,
-            bank_forks,
-            prioritization_fee_cache,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
     pub fn new_num_threads(
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
@@ -725,7 +693,7 @@ mod tests {
             create_test_recorder(bank, blockstore, None, None);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
-        let banking_stage = BankingStage::new(
+        let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralScheduler,
             transaction_struct,
             &poh_recorder,
@@ -733,6 +701,7 @@ mod tests {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
+            DEFAULT_NUM_WORKERS,
             None,
             replay_vote_sender,
             None,
@@ -780,7 +749,7 @@ mod tests {
             create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
-        let banking_stage = BankingStage::new(
+        let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralScheduler,
             transaction_struct,
             &poh_recorder,
@@ -788,6 +757,7 @@ mod tests {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
+            DEFAULT_NUM_WORKERS,
             None,
             replay_vote_sender,
             None,
@@ -844,7 +814,7 @@ mod tests {
             create_test_recorder(bank.clone(), blockstore, None, None);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
-        let banking_stage = BankingStage::new(
+        let banking_stage = BankingStage::new_num_threads(
             block_production_method,
             transaction_struct,
             &poh_recorder,
@@ -852,6 +822,7 @@ mod tests {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
+            DEFAULT_NUM_WORKERS,
             None,
             replay_vote_sender,
             None,
@@ -994,7 +965,7 @@ mod tests {
             let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
             let (exit, poh_recorder, transaction_recorder, poh_service, entry_receiver) =
                 create_test_recorder(bank.clone(), blockstore, None, None);
-            let _banking_stage = BankingStage::new(
+            let _banking_stage = BankingStage::new_num_threads(
                 BlockProductionMethod::CentralScheduler,
                 transaction_struct,
                 &poh_recorder,
@@ -1002,6 +973,7 @@ mod tests {
                 non_vote_receiver,
                 tpu_vote_receiver,
                 gossip_vote_receiver,
+                DEFAULT_NUM_WORKERS,
                 None,
                 replay_vote_sender,
                 None,
@@ -1180,7 +1152,7 @@ mod tests {
             create_test_recorder(bank.clone(), blockstore, None, None);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
-        let banking_stage = BankingStage::new(
+        let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralScheduler,
             transaction_struct,
             &poh_recorder,
@@ -1188,6 +1160,7 @@ mod tests {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
+            DEFAULT_NUM_WORKERS,
             None,
             replay_vote_sender,
             None,

@@ -1641,6 +1641,7 @@ impl Validator {
             vote_quic_server_config,
             &prioritization_fee_cache,
             config.block_production_method.clone(),
+            config.block_production_num_workers,
             config.transaction_struct.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
