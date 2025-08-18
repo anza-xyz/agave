@@ -230,7 +230,7 @@ solana-runtime-transaction = { workspace = true, features = [
 solana-sbf-rust-invoke-dep = { workspace = true }
 solana-sbf-rust-realloc-dep = { workspace = true }
 solana-sbf-rust-realloc-invoke-dep = { workspace = true }
-solana-sbpf = { workspace = true }
+solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = "2.2.1"
 solana-signer = "2.2.1"
 solana-stake-interface = "1.2.1"
