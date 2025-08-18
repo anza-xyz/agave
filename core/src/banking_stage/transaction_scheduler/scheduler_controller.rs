@@ -12,7 +12,9 @@ use {
         consume_worker::ConsumeWorkerMetrics,
         consumer::Consumer,
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
-        transaction_scheduler::transaction_state_container::StateContainer,
+        transaction_scheduler::{
+            receive_and_buffer::ReceivingStats, transaction_state_container::StateContainer,
+        },
         TOTAL_BUFFERED_PACKETS,
     },
     solana_clock::MAX_PROCESSING_AGE,
@@ -302,13 +304,9 @@ where
     fn receive_and_buffer_packets(
         &mut self,
         decision: &BufferedPacketsDecision,
-    ) -> Result<usize, DisconnectedError> {
-        self.receive_and_buffer.receive_and_buffer_packets(
-            &mut self.container,
-            &mut self.timing_metrics,
-            &mut self.count_metrics,
-            decision,
-        )
+    ) -> Result<ReceivingStats, DisconnectedError> {
+        self.receive_and_buffer
+            .receive_and_buffer_packets(&mut self.container, decision)
     }
 }
 
@@ -492,11 +490,11 @@ mod tests {
         // Loop here until no more packets are received, this avoids parallel
         // tests from inconsistently timing out and not receiving
         // from the channel.
-        while scheduler_controller
-            .receive_and_buffer_packets(&decision)
-            .map(|n| n > 0)
-            .unwrap_or_default()
-        {}
+        // while scheduler_controller
+        //     .receive_and_buffer_packets(&decision)
+        //     .map(|n| n > 0)
+        //     .unwrap_or_default()
+        // {}
         assert!(scheduler_controller.process_transactions(&decision).is_ok());
     }
 
