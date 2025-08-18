@@ -469,8 +469,10 @@ impl BankingStage {
         // Create an exit signal for the scheduler and workers
         let exit = Arc::new(AtomicBool::new(false));
 
-        // + 1 for scheduler thread
+        assert!(num_workers <= BankingStage::max_num_workers());
         let num_workers = num_workers.get();
+
+        // + 1 for scheduler thread
         let mut thread_hdls = Vec::with_capacity(num_workers + 1);
 
         // Create channels for communication between scheduler and workers
@@ -598,6 +600,11 @@ impl BankingStage {
 
     pub fn default_num_workers() -> NonZeroUsize {
         DEFAULT_NUM_WORKERS
+    }
+
+    pub fn max_num_workers() -> NonZeroUsize {
+        const MAX_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(64).unwrap();
+        MAX_NUM_WORKERS
     }
 
     pub fn join(self) -> thread::Result<()> {

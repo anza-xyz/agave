@@ -279,7 +279,7 @@ impl ThreadArg for BlockProductionNumWorkersArg {
     }
 
     fn max() -> usize {
-        64
+        BankingStage::max_num_workers().get()
     }
 }
 
