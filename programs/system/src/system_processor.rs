@@ -214,17 +214,14 @@ fn transfer(
     to_account_index: IndexOfAccount,
     lamports: u64,
     invoke_context: &InvokeContext,
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
     if !instruction_context.is_instruction_account_signer(from_account_index)? {
         ic_msg!(
             invoke_context,
             "Transfer: `from` account {} must sign",
-            transaction_context.get_key_of_account_at_index(
-                instruction_context
-                    .get_index_of_instruction_account_in_transaction(from_account_index)?,
-            )?,
+            instruction_context.get_key_of_instruction_account(from_account_index)?,
         );
         return Err(InstructionError::MissingRequiredSignature);
     }
@@ -247,32 +244,24 @@ fn transfer_with_seed(
     to_account_index: IndexOfAccount,
     lamports: u64,
     invoke_context: &InvokeContext,
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
     if !instruction_context.is_instruction_account_signer(from_base_account_index)? {
         ic_msg!(
             invoke_context,
             "Transfer: 'from' account {:?} must sign",
-            transaction_context.get_key_of_account_at_index(
-                instruction_context
-                    .get_index_of_instruction_account_in_transaction(from_base_account_index)?,
-            )?,
+            instruction_context.get_key_of_instruction_account(from_base_account_index,)?,
         );
         return Err(InstructionError::MissingRequiredSignature);
     }
     let address_from_seed = Pubkey::create_with_seed(
-        transaction_context.get_key_of_account_at_index(
-            instruction_context
-                .get_index_of_instruction_account_in_transaction(from_base_account_index)?,
-        )?,
+        instruction_context.get_key_of_instruction_account(from_base_account_index)?,
         from_seed,
         from_owner,
     )?;
 
-    let from_key = transaction_context.get_key_of_account_at_index(
-        instruction_context.get_index_of_instruction_account_in_transaction(from_account_index)?,
-    )?;
+    let from_key = instruction_context.get_key_of_instruction_account(from_account_index)?;
     if *from_key != address_from_seed {
         ic_msg!(
             invoke_context,
@@ -313,9 +302,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         } => {
             instruction_context.check_number_of_instruction_accounts(2)?;
             let to_address = Address::create(
-                transaction_context.get_key_of_account_at_index(
-                    instruction_context.get_index_of_instruction_account_in_transaction(1)?,
-                )?,
+                instruction_context.get_key_of_instruction_account(1)?,
                 None,
                 invoke_context,
             )?;
@@ -341,9 +328,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         } => {
             instruction_context.check_number_of_instruction_accounts(2)?;
             let to_address = Address::create(
-                transaction_context.get_key_of_account_at_index(
-                    instruction_context.get_index_of_instruction_account_in_transaction(1)?,
-                )?,
+                instruction_context.get_key_of_instruction_account(1)?,
                 Some((&base, &seed, &owner)),
                 invoke_context,
             )?;
@@ -364,9 +349,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             instruction_context.check_number_of_instruction_accounts(1)?;
             let mut account = instruction_context.try_borrow_instruction_account(0)?;
             let address = Address::create(
-                transaction_context.get_key_of_account_at_index(
-                    instruction_context.get_index_of_instruction_account_in_transaction(0)?,
-                )?,
+                instruction_context.get_key_of_instruction_account(0)?,
                 None,
                 invoke_context,
             )?;
@@ -484,9 +467,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             instruction_context.check_number_of_instruction_accounts(1)?;
             let mut account = instruction_context.try_borrow_instruction_account(0)?;
             let address = Address::create(
-                transaction_context.get_key_of_account_at_index(
-                    instruction_context.get_index_of_instruction_account_in_transaction(0)?,
-                )?,
+                instruction_context.get_key_of_instruction_account(0)?,
                 None,
                 invoke_context,
             )?;
@@ -501,9 +482,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             instruction_context.check_number_of_instruction_accounts(1)?;
             let mut account = instruction_context.try_borrow_instruction_account(0)?;
             let address = Address::create(
-                transaction_context.get_key_of_account_at_index(
-                    instruction_context.get_index_of_instruction_account_in_transaction(0)?,
-                )?,
+                instruction_context.get_key_of_instruction_account(0)?,
                 Some((&base, &seed, &owner)),
                 invoke_context,
             )?;
@@ -520,9 +499,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             instruction_context.check_number_of_instruction_accounts(1)?;
             let mut account = instruction_context.try_borrow_instruction_account(0)?;
             let address = Address::create(
-                transaction_context.get_key_of_account_at_index(
-                    instruction_context.get_index_of_instruction_account_in_transaction(0)?,
-                )?,
+                instruction_context.get_key_of_instruction_account(0)?,
                 Some((&base, &seed, &owner)),
                 invoke_context,
             )?;

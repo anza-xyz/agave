@@ -123,7 +123,7 @@ fn redelegate_stake(
 
 fn move_stake_or_lamports_shared_checks(
     invoke_context: &InvokeContext,
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     source_account: &BorrowedAccount,
     lamports: u64,
@@ -131,10 +131,8 @@ fn move_stake_or_lamports_shared_checks(
     stake_authority_index: IndexOfAccount,
 ) -> Result<(MergeKind, MergeKind), InstructionError> {
     // authority must sign
-    let stake_authority_pubkey = transaction_context.get_key_of_account_at_index(
-        instruction_context
-            .get_index_of_instruction_account_in_transaction(stake_authority_index)?,
-    )?;
+    let stake_authority_pubkey =
+        instruction_context.get_key_of_instruction_account(stake_authority_index)?;
     if !instruction_context.is_instruction_account_signer(stake_authority_index)? {
         return Err(InstructionError::MissingRequiredSignature);
     }
@@ -275,7 +273,7 @@ pub fn authorize(
 
 #[allow(clippy::too_many_arguments)]
 pub fn authorize_with_seed(
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stake_account: &mut BorrowedAccount,
     authority_base_index: IndexOfAccount,
@@ -288,10 +286,8 @@ pub fn authorize_with_seed(
 ) -> Result<(), InstructionError> {
     let mut signers = HashSet::default();
     if instruction_context.is_instruction_account_signer(authority_base_index)? {
-        let base_pubkey = transaction_context.get_key_of_account_at_index(
-            instruction_context
-                .get_index_of_instruction_account_in_transaction(authority_base_index)?,
-        )?;
+        let base_pubkey =
+            instruction_context.get_key_of_instruction_account(authority_base_index)?;
         signers.insert(Pubkey::create_with_seed(
             base_pubkey,
             authority_seed,
@@ -395,7 +391,7 @@ pub fn set_lockup(
 
 pub fn split(
     invoke_context: &InvokeContext,
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stake_account_index: IndexOfAccount,
     lamports: u64,
@@ -515,10 +511,8 @@ pub fn split(
             split.set_state(&StakeStateV2::Initialized(split_meta))?;
         }
         StakeStateV2::Uninitialized => {
-            let stake_pubkey = transaction_context.get_key_of_account_at_index(
-                instruction_context
-                    .get_index_of_instruction_account_in_transaction(stake_account_index)?,
-            )?;
+            let stake_pubkey =
+                instruction_context.get_key_of_instruction_account(stake_account_index)?;
             if !signers.contains(stake_pubkey) {
                 return Err(InstructionError::MissingRequiredSignature);
             }
@@ -791,7 +785,7 @@ pub fn move_lamports(
 
 #[allow(clippy::too_many_arguments)]
 pub fn withdraw(
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stake_account_index: IndexOfAccount,
     lamports: u64,
@@ -802,10 +796,8 @@ pub fn withdraw(
     custodian_index: Option<IndexOfAccount>,
     new_rate_activation_epoch: Option<Epoch>,
 ) -> Result<(), InstructionError> {
-    let withdraw_authority_pubkey = transaction_context.get_key_of_account_at_index(
-        instruction_context
-            .get_index_of_instruction_account_in_transaction(withdraw_authority_index)?,
-    )?;
+    let withdraw_authority_pubkey =
+        instruction_context.get_key_of_instruction_account(withdraw_authority_index)?;
     if !instruction_context.is_instruction_account_signer(withdraw_authority_index)? {
         return Err(InstructionError::MissingRequiredSignature);
     }
@@ -852,12 +844,7 @@ pub fn withdraw(
     //   the custodian, both epoch and unix_timestamp must have passed
     let custodian_pubkey = if let Some(custodian_index) = custodian_index {
         if instruction_context.is_instruction_account_signer(custodian_index)? {
-            Some(
-                transaction_context.get_key_of_account_at_index(
-                    instruction_context
-                        .get_index_of_instruction_account_in_transaction(custodian_index)?,
-                )?,
-            )
+            Some(instruction_context.get_key_of_instruction_account(custodian_index)?)
         } else {
             None
         }
@@ -892,17 +879,15 @@ pub fn withdraw(
 }
 
 pub(crate) fn deactivate_delinquent(
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stake_account: &mut BorrowedAccount,
     delinquent_vote_account_index: IndexOfAccount,
     reference_vote_account_index: IndexOfAccount,
     current_epoch: Epoch,
 ) -> Result<(), InstructionError> {
-    let delinquent_vote_account_pubkey = transaction_context.get_key_of_account_at_index(
-        instruction_context
-            .get_index_of_instruction_account_in_transaction(delinquent_vote_account_index)?,
-    )?;
+    let delinquent_vote_account_pubkey =
+        instruction_context.get_key_of_instruction_account(delinquent_vote_account_index)?;
     let delinquent_vote_account =
         instruction_context.try_borrow_instruction_account(delinquent_vote_account_index)?;
     if *delinquent_vote_account.get_owner() != solana_sdk_ids::vote::id() {

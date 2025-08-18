@@ -453,9 +453,7 @@ fn process_loader_upgradeable_instruction(
                 return Err(InstructionError::AccountAlreadyInitialized);
             }
 
-            let authority_key = Some(*transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(1)?,
-            )?);
+            let authority_key = Some(*instruction_context.get_key_of_instruction_account(1)?);
 
             buffer.set_state(&UpgradeableLoaderState::Buffer {
                 authority_address: authority_key,
@@ -470,9 +468,7 @@ fn process_loader_upgradeable_instruction(
                     ic_logger_msg!(log_collector, "Buffer is immutable");
                     return Err(InstructionError::Immutable); // TODO better error code
                 }
-                let authority_key = Some(*transaction_context.get_key_of_account_at_index(
-                    instruction_context.get_index_of_instruction_account_in_transaction(1)?,
-                )?);
+                let authority_key = Some(*instruction_context.get_key_of_instruction_account(1)?);
                 if authority_address != authority_key {
                     ic_logger_msg!(log_collector, "Incorrect buffer authority provided");
                     return Err(InstructionError::IncorrectAuthority);
@@ -494,20 +490,14 @@ fn process_loader_upgradeable_instruction(
         }
         UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len } => {
             instruction_context.check_number_of_instruction_accounts(4)?;
-            let payer_key = *transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(0)?,
-            )?;
-            let programdata_key = *transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(1)?,
-            )?;
+            let payer_key = *instruction_context.get_key_of_instruction_account(0)?;
+            let programdata_key = *instruction_context.get_key_of_instruction_account(1)?;
             let rent =
                 get_sysvar_with_account_check::rent(invoke_context, &instruction_context, 4)?;
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 5)?;
             instruction_context.check_number_of_instruction_accounts(8)?;
-            let authority_key = Some(*transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(7)?,
-            )?);
+            let authority_key = Some(*instruction_context.get_key_of_instruction_account(7)?);
 
             // Verify Program account
 
@@ -661,17 +651,13 @@ fn process_loader_upgradeable_instruction(
         }
         UpgradeableLoaderInstruction::Upgrade => {
             instruction_context.check_number_of_instruction_accounts(3)?;
-            let programdata_key = *transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(0)?,
-            )?;
+            let programdata_key = *instruction_context.get_key_of_instruction_account(0)?;
             let rent =
                 get_sysvar_with_account_check::rent(invoke_context, &instruction_context, 4)?;
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 5)?;
             instruction_context.check_number_of_instruction_accounts(7)?;
-            let authority_key = Some(*transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(6)?,
-            )?);
+            let authority_key = Some(*instruction_context.get_key_of_instruction_account(6)?);
 
             // Verify Program account
 
@@ -839,15 +825,8 @@ fn process_loader_upgradeable_instruction(
         UpgradeableLoaderInstruction::SetAuthority => {
             instruction_context.check_number_of_instruction_accounts(2)?;
             let mut account = instruction_context.try_borrow_instruction_account(0)?;
-            let present_authority_key = transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(1)?,
-            )?;
-            let new_authority = instruction_context
-                .get_index_of_instruction_account_in_transaction(2)
-                .and_then(|index_in_transaction| {
-                    transaction_context.get_key_of_account_at_index(index_in_transaction)
-                })
-                .ok();
+            let present_authority_key = instruction_context.get_key_of_instruction_account(1)?;
+            let new_authority = instruction_context.get_key_of_instruction_account(2).ok();
 
             match account.get_state()? {
                 UpgradeableLoaderState::Buffer { authority_address } => {
@@ -910,12 +889,8 @@ fn process_loader_upgradeable_instruction(
 
             instruction_context.check_number_of_instruction_accounts(3)?;
             let mut account = instruction_context.try_borrow_instruction_account(0)?;
-            let present_authority_key = transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(1)?,
-            )?;
-            let new_authority_key = transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(2)?,
-            )?;
+            let present_authority_key = instruction_context.get_key_of_instruction_account(1)?;
+            let new_authority_key = instruction_context.get_key_of_instruction_account(2)?;
 
             match account.get_state()? {
                 UpgradeableLoaderState::Buffer { authority_address } => {
@@ -1104,15 +1079,10 @@ fn process_loader_upgradeable_instruction(
             }
 
             instruction_context.check_number_of_instruction_accounts(3)?;
-            let programdata_address = *transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(0)?,
-            )?;
-            let program_address = *transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(1)?,
-            )?;
-            let provided_authority_address = *transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(2)?,
-            )?;
+            let programdata_address = *instruction_context.get_key_of_instruction_account(0)?;
+            let program_address = *instruction_context.get_key_of_instruction_account(1)?;
+            let provided_authority_address =
+                *instruction_context.get_key_of_instruction_account(2)?;
             let clock_slot = invoke_context
                 .get_sysvar_cache()
                 .get_clock()
@@ -1367,12 +1337,8 @@ fn common_extend_program(
         }
 
         if check_authority {
-            let authority_key = Some(
-                *transaction_context.get_key_of_account_at_index(
-                    instruction_context
-                        .get_index_of_instruction_account_in_transaction(AUTHORITY_ACCOUNT_INDEX)?,
-                )?,
-            );
+            let authority_key =
+                Some(*instruction_context.get_key_of_instruction_account(AUTHORITY_ACCOUNT_INDEX)?);
             if upgrade_authority_address != authority_key {
                 ic_logger_msg!(log_collector, "Incorrect upgrade authority provided");
                 return Err(InstructionError::IncorrectAuthority);
@@ -1402,10 +1368,8 @@ fn common_extend_program(
     // Dereference the program ID to prevent overlapping mutable/immutable borrow of invoke context
     let program_id = *program_id;
     if required_payment > 0 {
-        let payer_key = *transaction_context.get_key_of_account_at_index(
-            instruction_context
-                .get_index_of_instruction_account_in_transaction(optional_payer_account_index)?,
-        )?;
+        let payer_key =
+            *instruction_context.get_key_of_instruction_account(optional_payer_account_index)?;
 
         invoke_context.native_invoke(
             system_instruction::transfer(&payer_key, &programdata_key, required_payment),
@@ -1452,7 +1416,7 @@ fn common_extend_program(
 
 fn common_close_account(
     authority_address: &Option<Pubkey>,
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     log_collector: &Option<Rc<RefCell<LogCollector>>>,
 ) -> Result<(), InstructionError> {
@@ -1460,11 +1424,7 @@ fn common_close_account(
         ic_logger_msg!(log_collector, "Account is immutable");
         return Err(InstructionError::Immutable);
     }
-    if *authority_address
-        != Some(*transaction_context.get_key_of_account_at_index(
-            instruction_context.get_index_of_instruction_account_in_transaction(2)?,
-        )?)
-    {
+    if *authority_address != Some(*instruction_context.get_key_of_instruction_account(2)?) {
         ic_logger_msg!(log_collector, "Incorrect authority provided");
         return Err(InstructionError::IncorrectAuthority);
     }

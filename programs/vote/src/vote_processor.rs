@@ -18,7 +18,7 @@ use {
 fn process_authorize_with_seed_instruction(
     invoke_context: &InvokeContext,
     instruction_context: &InstructionContext,
-    transaction_context: &TransactionContext,
+    _transaction_context: &TransactionContext,
     vote_account: &mut BorrowedAccount,
     new_authority: &Pubkey,
     authorization_type: VoteAuthorize,
@@ -28,9 +28,7 @@ fn process_authorize_with_seed_instruction(
     let clock = get_sysvar_with_account_check::clock(invoke_context, instruction_context, 1)?;
     let mut expected_authority_keys: HashSet<Pubkey> = HashSet::default();
     if instruction_context.is_instruction_account_signer(2)? {
-        let base_pubkey = transaction_context.get_key_of_account_at_index(
-            instruction_context.get_index_of_instruction_account_in_transaction(2)?,
-        )?;
+        let base_pubkey = instruction_context.get_key_of_instruction_account(2)?;
         expected_authority_keys.insert(Pubkey::create_with_seed(
             base_pubkey,
             current_authority_derived_key_seed,
@@ -94,9 +92,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::AuthorizeCheckedWithSeed(args) => {
             instruction_context.check_number_of_instruction_accounts(4)?;
-            let new_authority = transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(3)?,
-            )?;
+            let new_authority = instruction_context.get_key_of_instruction_account(3)?;
             if !instruction_context.is_instruction_account_signer(3)? {
                 return Err(InstructionError::MissingRequiredSignature);
             }
@@ -113,9 +109,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::UpdateValidatorIdentity => {
             instruction_context.check_number_of_instruction_accounts(2)?;
-            let node_pubkey = transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(1)?,
-            )?;
+            let node_pubkey = instruction_context.get_key_of_instruction_account(1)?;
             vote_state::update_validator_identity(&mut me, node_pubkey, &signers)
         }
         VoteInstruction::UpdateCommission(commission) => {
@@ -206,9 +200,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::AuthorizeChecked(vote_authorize) => {
             instruction_context.check_number_of_instruction_accounts(4)?;
-            let voter_pubkey = transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(3)?,
-            )?;
+            let voter_pubkey = instruction_context.get_key_of_instruction_account(3)?;
             if !instruction_context.is_instruction_account_signer(3)? {
                 return Err(InstructionError::MissingRequiredSignature);
             }

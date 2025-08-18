@@ -94,9 +94,7 @@ fn process_instruction_write(
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let mut program = instruction_context.try_borrow_instruction_account(0)?;
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
     let state = check_program_account(
         &log_collector,
         &instruction_context,
@@ -129,9 +127,7 @@ fn process_instruction_copy(
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let mut program = instruction_context.try_borrow_instruction_account(0)?;
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
     let source_program = instruction_context.try_borrow_instruction_account(2)?;
     let state = check_program_account(
         &log_collector,
@@ -185,9 +181,7 @@ fn process_instruction_set_program_length(
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let mut program = instruction_context.try_borrow_instruction_account(0)?;
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
     let is_initialization = program.get_data().len() < LoaderV4State::program_data_offset();
     if is_initialization {
         if !loader_v4::check_id(program.get_owner()) {
@@ -272,9 +266,7 @@ fn process_instruction_deploy(invoke_context: &mut InvokeContext) -> Result<(), 
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let mut program = instruction_context.try_borrow_instruction_account(0)?;
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
     let state = check_program_account(
         &log_collector,
         &instruction_context,
@@ -323,9 +315,7 @@ fn process_instruction_retract(invoke_context: &mut InvokeContext) -> Result<(),
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let mut program = instruction_context.try_borrow_instruction_account(0)?;
 
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
     let state = check_program_account(
         &log_collector,
         &instruction_context,
@@ -366,12 +356,8 @@ fn process_instruction_transfer_authority(
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let mut program = instruction_context.try_borrow_instruction_account(0)?;
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
-    let new_authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(2)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
+    let new_authority_address = instruction_context.get_key_of_instruction_account(2)?;
     let state = check_program_account(
         &log_collector,
         &instruction_context,
@@ -398,9 +384,7 @@ fn process_instruction_finalize(
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let program = instruction_context.try_borrow_instruction_account(0)?;
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
     let state = check_program_account(
         &log_collector,
         &instruction_context,

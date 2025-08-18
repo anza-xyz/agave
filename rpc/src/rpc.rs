@@ -4649,15 +4649,9 @@ pub mod tests {
         ic_logger_msg!(log_collector, "I am logging from a builtin program!");
         ic_logger_msg!(log_collector, "I am about to CPI to System!");
 
-        let from_pubkey = *transaction_context.get_key_of_account_at_index(
-            instruction_context.get_index_of_instruction_account_in_transaction(0)?,
-        )?;
-        let to_pubkey = *transaction_context.get_key_of_account_at_index(
-            instruction_context.get_index_of_instruction_account_in_transaction(1)?,
-        )?;
-        let owner_pubkey = *transaction_context.get_key_of_account_at_index(
-            instruction_context.get_index_of_instruction_account_in_transaction(2)?,
-        )?;
+        let from_pubkey = *instruction_context.get_key_of_instruction_account(0)?;
+        let to_pubkey = *instruction_context.get_key_of_instruction_account(1)?;
+        let owner_pubkey = *instruction_context.get_key_of_instruction_account(2)?;
 
         invoke_context.native_invoke(
             system_instruction::create_account(

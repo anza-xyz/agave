@@ -21,7 +21,7 @@ use {
 };
 
 fn get_optional_pubkey<'a>(
-    transaction_context: &'a TransactionContext,
+    _transaction_context: &'a TransactionContext,
     instruction_context: &'a InstructionContext,
     instruction_account_index: IndexOfAccount,
     should_be_signer: bool,
@@ -33,13 +33,7 @@ fn get_optional_pubkey<'a>(
             {
                 return Err(InstructionError::MissingRequiredSignature);
             }
-            Some(
-                transaction_context.get_key_of_account_at_index(
-                    instruction_context.get_index_of_instruction_account_in_transaction(
-                        instruction_account_index,
-                    )?,
-                )?,
-            )
+            Some(instruction_context.get_key_of_instruction_account(instruction_account_index)?)
         } else {
             None
         },
@@ -227,12 +221,8 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         StakeInstruction::InitializeChecked => {
             let mut me = get_stake_account()?;
             instruction_context.check_number_of_instruction_accounts(4)?;
-            let staker_pubkey = transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(2)?,
-            )?;
-            let withdrawer_pubkey = transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(3)?,
-            )?;
+            let staker_pubkey = instruction_context.get_key_of_instruction_account(2)?;
+            let withdrawer_pubkey = instruction_context.get_key_of_instruction_account(3)?;
             if !instruction_context.is_instruction_account_signer(3)? {
                 return Err(InstructionError::MissingRequiredSignature);
             }
@@ -251,9 +241,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 1)?;
             instruction_context.check_number_of_instruction_accounts(4)?;
-            let authorized_pubkey = transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(3)?,
-            )?;
+            let authorized_pubkey = instruction_context.get_key_of_instruction_account(3)?;
             if !instruction_context.is_instruction_account_signer(3)? {
                 return Err(InstructionError::MissingRequiredSignature);
             }
@@ -275,9 +263,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 2)?;
             instruction_context.check_number_of_instruction_accounts(4)?;
-            let authorized_pubkey = transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(3)?,
-            )?;
+            let authorized_pubkey = instruction_context.get_key_of_instruction_account(3)?;
             if !instruction_context.is_instruction_account_signer(3)? {
                 return Err(InstructionError::MissingRequiredSignature);
             }
