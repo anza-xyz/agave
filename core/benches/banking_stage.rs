@@ -140,7 +140,7 @@ fn bench_banking(
     transaction_struct: TransactionStructure,
 ) {
     solana_logger::setup();
-    let num_threads = BankingStage::default_or_env_num_workers() as usize;
+    let num_threads = BankingStage::default_num_workers();
     //   a multiple of packet chunk duplicates to avoid races
     const CHUNKS: usize = 8;
     const PACKETS_PER_BATCH: usize = 192;

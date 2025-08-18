@@ -35,7 +35,6 @@ use {
     },
     solana_time_utils::AtomicInterval,
     std::{
-        cmp, env,
         num::Saturating,
         ops::Deref,
         sync::{
@@ -80,20 +79,10 @@ conditional_vis_mod!(
 );
 conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
 
-pub const DEFAULT_NUM_WORKERS: u32 = 4;
-pub const NUM_THREADS: u32 = {
-    DEFAULT_NUM_WORKERS
-    + 1 // scheduler thread
-    + 1 // vote-thread
-};
+const DEFAULT_NUM_WORKERS: usize = 4;
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
-
-const NUM_VOTE_PROCESSING_THREADS: u32 = 2;
-const MIN_THREADS_BANKING: u32 = 1;
-const MIN_TOTAL_THREADS: u32 = NUM_VOTE_PROCESSING_THREADS + MIN_THREADS_BANKING;
-
 const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Default)]
@@ -388,7 +377,7 @@ impl BankingStage {
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
-            Self::default_or_env_num_workers(),
+            Self::default_num_workers(),
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
@@ -406,7 +395,7 @@ impl BankingStage {
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
-        num_workers: u32,
+        num_workers: usize,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
@@ -455,7 +444,7 @@ impl BankingStage {
     fn new_central_scheduler(
         transaction_struct: TransactionStructure,
         use_greedy_scheduler: bool,
-        num_workers: u32,
+        num_workers: usize,
         non_vote_receiver: BankingPacketReceiver,
         transaction_recorder: TransactionRecorder,
         poh_recorder: Arc<RwLock<PohRecorder>>,
@@ -502,7 +491,7 @@ impl BankingStage {
     fn spawn_scheduler_and_workers<R: ReceiveAndBuffer + Send + Sync + 'static>(
         receive_and_buffer: R,
         use_greedy_scheduler: bool,
-        num_workers: u32,
+        num_workers: usize,
         transaction_recorder: TransactionRecorder,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -513,7 +502,7 @@ impl BankingStage {
         let exit = Arc::new(AtomicBool::new(false));
 
         // + 1 for scheduler thread
-        let mut thread_hdls = Vec::with_capacity(num_workers as usize + 1);
+        let mut thread_hdls = Vec::with_capacity(num_workers + 1);
 
         // Create channels for communication between scheduler and workers
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
@@ -522,9 +511,9 @@ impl BankingStage {
 
         // Spawn the worker threads
         let decision_maker = DecisionMaker::from(poh_recorder.read().unwrap().deref());
-        let mut worker_metrics = Vec::with_capacity(num_workers as usize);
+        let mut worker_metrics = Vec::with_capacity(num_workers);
         for (index, work_receiver) in work_receivers.into_iter().enumerate() {
-            let id = (index as u32).saturating_add(NUM_VOTE_PROCESSING_THREADS);
+            let id = index as u32;
             let consume_worker = ConsumeWorker::new(
                 id,
                 exit.clone(),
@@ -638,14 +627,8 @@ impl BankingStage {
             .unwrap()
     }
 
-    pub fn default_or_env_num_workers() -> u32 {
-        cmp::max(
-            env::var("SOLANA_BANKING_THREADS")
-                .map(|x| x.parse().unwrap_or(NUM_THREADS))
-                .unwrap_or(NUM_THREADS)
-                .saturating_sub(2), // - 2 for vote and scheduler threads
-            MIN_TOTAL_THREADS,
-        )
+    pub fn default_num_workers() -> usize {
+        DEFAULT_NUM_WORKERS
     }
 
     pub fn join(self) -> thread::Result<()> {

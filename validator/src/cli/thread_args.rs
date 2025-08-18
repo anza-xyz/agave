@@ -4,6 +4,7 @@ use {
     clap::{value_t_or_exit, Arg, ArgMatches},
     solana_accounts_db::{accounts_db, accounts_index},
     solana_clap_utils::{hidden_unless_forced, input_validators::is_within_range},
+    solana_core::banking_stage::BankingStage,
     solana_rayon_threadlimit::get_thread_count,
     std::{num::NonZeroUsize, ops::RangeInclusive},
 };
@@ -26,6 +27,7 @@ pub struct DefaultThreadArgs {
     pub tvu_receive_threads: String,
     pub tvu_retransmit_threads: String,
     pub tvu_sigverify_threads: String,
+    pub block_production_num_workers: String,
 }
 
 impl Default for DefaultThreadArgs {
@@ -54,6 +56,7 @@ impl Default for DefaultThreadArgs {
             tvu_receive_threads: TvuReceiveThreadsArg::bounded_default().to_string(),
             tvu_retransmit_threads: TvuRetransmitThreadsArg::bounded_default().to_string(),
             tvu_sigverify_threads: TvuShredSigverifyThreadsArg::bounded_default().to_string(),
+            block_production_num_workers: BankingStage::default_num_workers().to_string(),
         }
     }
 }
@@ -80,6 +83,7 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
         new_thread_arg::<TvuReceiveThreadsArg>(&defaults.tvu_receive_threads),
         new_thread_arg::<TvuRetransmitThreadsArg>(&defaults.tvu_retransmit_threads),
         new_thread_arg::<TvuShredSigverifyThreadsArg>(&defaults.tvu_sigverify_threads),
+        new_thread_arg::<BlockProductionNumWorkersArg>(&defaults.block_production_num_workers),
     ]
 }
 
@@ -109,6 +113,7 @@ pub struct NumThreadConfig {
     pub tvu_receive_threads: NonZeroUsize,
     pub tvu_retransmit_threads: NonZeroUsize,
     pub tvu_sigverify_threads: NonZeroUsize,
+    pub block_production_num_workers: NonZeroUsize,
 }
 
 pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
@@ -172,6 +177,11 @@ pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
         tvu_sigverify_threads: value_t_or_exit!(
             matches,
             TvuShredSigverifyThreadsArg::NAME,
+            NonZeroUsize
+        ),
+        block_production_num_workers: value_t_or_exit!(
+            matches,
+            BlockProductionNumWorkersArg::NAME,
             NonZeroUsize
         ),
     }
@@ -404,5 +414,24 @@ impl ThreadArg for TvuShredSigverifyThreadsArg {
 
     fn default() -> usize {
         get_thread_count()
+    }
+}
+
+struct BlockProductionNumWorkersArg;
+impl ThreadArg for BlockProductionNumWorkersArg {
+    const NAME: &'static str = "block_production_num_workers";
+    const LONG_NAME: &'static str = "block-production-num-workers";
+    const HELP: &'static str = "Number of worker threads to use for block production";
+
+    fn default() -> usize {
+        BankingStage::default_num_workers()
+    }
+
+    fn min() -> usize {
+        1
+    }
+
+    fn max() -> usize {
+        64
     }
 }
