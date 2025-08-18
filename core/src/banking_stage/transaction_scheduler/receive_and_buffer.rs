@@ -36,6 +36,7 @@ use {
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::sanitized::{MessageHash, SanitizedTransaction},
+    solana_transaction_error::TransactionError,
     std::{
         sync::{Arc, RwLock},
         time::Instant,
@@ -54,6 +55,9 @@ pub(crate) struct ReceivingStats {
     pub num_dropped_on_sanitization: usize,
     pub num_dropped_on_lock_validation: usize,
     pub num_dropped_on_compute_budget: usize,
+    pub num_dropped_on_age: usize,
+    pub num_dropped_on_already_processed: usize,
+    pub num_dropped_on_fee_payer: usize,
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -124,6 +128,10 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                             + buffer_stats.num_dropped_on_sanitization,
                         num_dropped_on_lock_validation: buffer_stats.num_dropped_on_lock_validation,
                         num_dropped_on_compute_budget: buffer_stats.num_dropped_on_compute_budget,
+                        num_dropped_on_age: buffer_stats.num_dropped_on_age,
+                        num_dropped_on_already_processed: buffer_stats
+                            .num_dropped_on_already_processed,
+                        num_dropped_on_fee_payer: buffer_stats.num_dropped_on_fee_payer,
                     })
                 } else {
                     Ok(ReceivingStats {
@@ -136,6 +144,9 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                         num_dropped_on_sanitization: 0,
                         num_dropped_on_lock_validation: 0,
                         num_dropped_on_compute_budget: 0,
+                        num_dropped_on_age: 0,
+                        num_dropped_on_already_processed: 0,
+                        num_dropped_on_fee_payer: 0,
                     })
                 }
             }
@@ -145,6 +156,9 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                 num_dropped_on_sanitization: 0,
                 num_dropped_on_lock_validation: 0,
                 num_dropped_on_compute_budget: 0,
+                num_dropped_on_age: 0,
+                num_dropped_on_already_processed: 0,
+                num_dropped_on_fee_payer: 0,
             }),
             Err(RecvTimeoutError::Disconnected) => Err(DisconnectedError),
         }
@@ -155,6 +169,9 @@ struct BufferStats {
     num_dropped_on_sanitization: usize,
     num_dropped_on_lock_validation: usize,
     num_dropped_on_compute_budget: usize,
+    num_dropped_on_age: usize,
+    num_dropped_on_already_processed: usize,
+    num_dropped_on_fee_payer: usize,
 }
 
 impl SanitizedTransactionReceiveAndBuffer {
@@ -194,6 +211,9 @@ impl SanitizedTransactionReceiveAndBuffer {
         let mut num_dropped_on_sanitization = 0;
         let mut num_dropped_on_lock_validation = 0;
         let mut num_dropped_on_compute_budget = 0;
+        let mut num_dropped_on_age = 0;
+        let mut num_dropped_on_already_processed = 0;
+        let mut num_dropped_on_fee_payer = 0;
 
         let mut error_counts = TransactionErrorMetrics::default();
         for chunk in packets.chunks(CHUNK_SIZE) {
@@ -242,16 +262,39 @@ impl SanitizedTransactionReceiveAndBuffer {
                 &mut error_counts,
             );
 
-            for (((transaction, max_age), fee_budget_limits), _check_result) in transactions
+            for (((transaction, max_age), fee_budget_limits), check_result) in transactions
                 .drain(..)
                 .zip(max_ages.drain(..))
                 .zip(fee_budget_limits_vec.drain(..))
                 .zip(check_results)
-                .filter(|(_, check_result)| check_result.is_ok())
-                .filter(|(((tx, _), _), _)| {
-                    Consumer::check_fee_payer_unlocked(&working_bank, tx, &mut error_counts).is_ok()
-                })
             {
+                match check_result {
+                    Ok(_) => {}
+                    Err(err) => {
+                        match err {
+                            TransactionError::BlockhashNotFound => {
+                                num_dropped_on_age += 1;
+                            }
+                            TransactionError::AlreadyProcessed => {
+                                num_dropped_on_already_processed += 1;
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+                }
+
+                if Consumer::check_fee_payer_unlocked(
+                    &working_bank,
+                    &transaction,
+                    &mut error_counts,
+                )
+                .is_err()
+                {
+                    num_dropped_on_fee_payer += 1;
+                    continue;
+                }
+
                 let (priority, cost) =
                     calculate_priority_and_cost(&transaction, &fee_budget_limits, &working_bank);
                 container.insert_new_transaction(transaction, max_age, priority, cost);
@@ -262,6 +305,9 @@ impl SanitizedTransactionReceiveAndBuffer {
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
         }
     }
 }
@@ -299,6 +345,9 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         let mut num_dropped_on_sanitization = 0;
         let mut num_dropped_on_lock_validation = 0;
         let mut num_dropped_on_compute_budget = 0;
+        let mut num_dropped_on_age = 0;
+        let mut num_dropped_on_already_processed = 0;
+        let mut num_dropped_on_fee_payer = 0;
 
         // If not leader/unknown, do a blocking-receive initially. This lets
         // the thread sleep until a message is received, or until the timeout.
@@ -329,6 +378,9 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                     num_dropped_on_sanitization += stats.num_dropped_on_sanitization;
                     num_dropped_on_lock_validation += stats.num_dropped_on_lock_validation;
                     num_dropped_on_compute_budget += stats.num_dropped_on_compute_budget;
+                    num_dropped_on_age += stats.num_dropped_on_age;
+                    num_dropped_on_already_processed += stats.num_dropped_on_already_processed;
+                    num_dropped_on_fee_payer += stats.num_dropped_on_fee_payer;
                 }
                 Err(RecvTimeoutError::Timeout) => timed_out = true,
                 Err(RecvTimeoutError::Disconnected) => {
@@ -356,6 +408,9 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                         num_dropped_on_sanitization += stats.num_dropped_on_sanitization;
                         num_dropped_on_lock_validation += stats.num_dropped_on_lock_validation;
                         num_dropped_on_compute_budget += stats.num_dropped_on_compute_budget;
+                        num_dropped_on_age += stats.num_dropped_on_age;
+                        num_dropped_on_already_processed += stats.num_dropped_on_already_processed;
+                        num_dropped_on_fee_payer += stats.num_dropped_on_fee_payer;
                     }
                     Err(TryRecvError::Empty) => {}
                     Err(TryRecvError::Disconnected) => {
@@ -373,6 +428,9 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
         })
     }
 }
@@ -383,6 +441,9 @@ struct PacketBatchHandlingStats {
     num_dropped_on_sanitization: usize,
     num_dropped_on_lock_validation: usize,
     num_dropped_on_compute_budget: usize,
+    num_dropped_on_age: usize,
+    num_dropped_on_already_processed: usize,
+    num_dropped_on_fee_payer: usize,
 }
 
 enum PacketHandlingError {
@@ -413,6 +474,9 @@ impl TransactionViewReceiveAndBuffer {
         let mut transaction_priority_ids = ArrayVec::<_, EXTRA_CAPACITY>::new();
         let lock_results: [_; EXTRA_CAPACITY] = core::array::from_fn(|_| Ok(()));
         let mut error_counters = TransactionErrorMetrics::default();
+        let mut num_dropped_on_age = 0;
+        let mut num_dropped_on_already_processed = 0;
+        let mut num_dropped_on_fee_payer = 0;
 
         let mut check_and_push_to_queue =
             |container: &mut TransactionViewStateContainer,
@@ -439,7 +503,16 @@ impl TransactionViewReceiveAndBuffer {
                     .iter_mut()
                     .zip(transaction_priority_ids.iter())
                 {
-                    if result.is_err() {
+                    if let Err(err) = result {
+                        match err {
+                            TransactionError::BlockhashNotFound => {
+                                num_dropped_on_age += 1;
+                            }
+                            TransactionError::AlreadyProcessed => {
+                                num_dropped_on_already_processed += 1;
+                            }
+                            _ => {}
+                        }
                         container.remove_by_id(priority_id.id);
                         continue;
                     }
@@ -452,6 +525,7 @@ impl TransactionViewReceiveAndBuffer {
                         &mut error_counters,
                     ) {
                         *result = Err(err);
+                        num_dropped_on_fee_payer += 1;
                         container.remove_by_id(priority_id.id);
                         continue;
                     }
@@ -535,6 +609,9 @@ impl TransactionViewReceiveAndBuffer {
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
         }
     }
 
@@ -826,6 +903,9 @@ mod tests {
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
         } = receive_and_buffer
             .receive_and_buffer_packets(
                 &mut container,
@@ -838,6 +918,9 @@ mod tests {
         assert_eq!(num_dropped_on_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
         verify_container(&mut container, 0);
     }
 
@@ -874,6 +957,9 @@ mod tests {
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -883,6 +969,9 @@ mod tests {
         assert_eq!(num_dropped_on_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
 
         verify_container(&mut container, 0);
     }
@@ -911,6 +1000,9 @@ mod tests {
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -920,6 +1012,9 @@ mod tests {
         assert_eq!(num_dropped_on_sanitization, 1);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
 
         verify_container(&mut container, 0);
     }
@@ -947,6 +1042,9 @@ mod tests {
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -956,6 +1054,9 @@ mod tests {
         assert_eq!(num_dropped_on_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 1);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
 
         verify_container(&mut container, 0);
     }
@@ -988,6 +1089,9 @@ mod tests {
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -997,6 +1101,9 @@ mod tests {
         assert_eq!(num_dropped_on_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 1);
 
         verify_container(&mut container, 0);
     }
@@ -1044,6 +1151,9 @@ mod tests {
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1053,6 +1163,9 @@ mod tests {
         assert_eq!(num_dropped_on_sanitization, 1);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
 
         verify_container(&mut container, 0);
     }
@@ -1085,6 +1198,9 @@ mod tests {
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1094,6 +1210,9 @@ mod tests {
         assert_eq!(num_dropped_on_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
 
         verify_container(&mut container, 1);
     }
@@ -1130,6 +1249,9 @@ mod tests {
             num_dropped_on_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
         } = receive_and_buffer
             .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
@@ -1139,6 +1261,9 @@ mod tests {
         assert_eq!(num_dropped_on_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
 
         verify_container(&mut container, TEST_CONTAINER_CAPACITY);
     }
