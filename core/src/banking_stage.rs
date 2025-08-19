@@ -785,6 +785,7 @@ mod tests {
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
         drop(poh_recorder);
+        banking_stage.join().unwrap();
 
         trace!("getting entries");
         let entries: Vec<_> = entry_receiver
@@ -795,7 +796,6 @@ mod tests {
         assert_eq!(entries.len(), genesis_config.ticks_per_slot as usize);
         assert!(entries.verify(&start_hash, &entry::thread_pool_for_tests()));
         assert_eq!(entries[entries.len() - 1].hash, bank.last_blockhash());
-        banking_stage.join().unwrap();
     }
 
     fn test_banking_stage_entries_only(
