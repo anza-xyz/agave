@@ -455,7 +455,9 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                         );
                         stats.accumulate(batch_stats);
                     }
-                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Empty) => {
+                        break;
+                    }
                     Err(TryRecvError::Disconnected) => {
                         if !received_message {
                             return Err(DisconnectedError);
