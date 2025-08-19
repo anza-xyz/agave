@@ -373,7 +373,7 @@ pub fn make_gossip_node(
     if let Some(entrypoint) = entrypoint {
         cluster_info.set_entrypoint(ContactInfo::new_gossip_entry_point(entrypoint));
     }
-    let gossip_sockets: Arc<[UdpSocket]> = vec![gossip_socket].into();
+    let gossip_sockets = Arc::new([gossip_socket]);
     let cluster_info = Arc::new(cluster_info);
     let gossip_service = GossipService::new(
         &cluster_info,
