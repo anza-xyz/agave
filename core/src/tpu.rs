@@ -322,7 +322,7 @@ impl Tpu {
         let banking_stage = BankingStage::new_num_threads(
             block_production_method,
             transaction_struct,
-            poh_recorder,
+            poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
@@ -332,7 +332,7 @@ impl Tpu {
             replay_vote_sender,
             log_messages_bytes_limit,
             bank_forks.clone(),
-            prioritization_fee_cache,
+            prioritization_fee_cache.clone(),
         );
 
         let SpawnForwardingStageResult {

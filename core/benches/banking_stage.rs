@@ -238,7 +238,7 @@ fn bench_banking(
     let _banking_stage = BankingStage::new_num_threads(
         block_production_method,
         transaction_struct,
-        &poh_recorder,
+        poh_recorder.clone(),
         transaction_recorder,
         non_vote_receiver,
         tpu_vote_receiver,
@@ -248,7 +248,7 @@ fn bench_banking(
         s,
         None,
         bank_forks,
-        &Arc::new(PrioritizationFeeCache::new(0u64)),
+        Arc::new(PrioritizationFeeCache::new(0u64)),
     );
 
     let chunk_len = verified.len() / CHUNKS;

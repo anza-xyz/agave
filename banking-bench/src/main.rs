@@ -459,7 +459,7 @@ fn main() {
     let banking_stage = BankingStage::new_num_threads(
         block_production_method,
         transaction_struct,
-        &poh_recorder,
+        poh_recorder.clone(),
         transaction_recorder,
         non_vote_receiver,
         tpu_vote_receiver,
@@ -469,7 +469,7 @@ fn main() {
         replay_vote_sender,
         None,
         bank_forks.clone(),
-        &prioritization_fee_cache,
+        prioritization_fee_cache,
     );
 
     // This is so that the signal_receiver does not go out of scope after the closure.
