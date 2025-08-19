@@ -764,14 +764,30 @@ mod tests {
                     transaction_context,
                     transaction_accounts
                 );
-                invoke_context
-                    .transaction_context
-                    .configure_next_instruction_for_tests(
-                        0,
-                        instruction_accounts,
-                        &instruction_data,
-                    )
-                    .unwrap();
+                if instruction_accounts.len() > MAX_ACCOUNTS_PER_INSTRUCTION {
+                    // Special case implementation of configure_next_instruction_for_tests()
+                    // which avoids the overflow when constructing the dedup_map
+                    // by simply not filling it.
+                    let dedup_map = vec![u8::MAX; u8::MAX as usize + 1];
+                    invoke_context
+                        .transaction_context
+                        .configure_next_instruction(
+                            0,
+                            instruction_accounts,
+                            dedup_map,
+                            &instruction_data,
+                        )
+                        .unwrap();
+                } else {
+                    invoke_context
+                        .transaction_context
+                        .configure_next_instruction_for_tests(
+                            0,
+                            instruction_accounts,
+                            &instruction_data,
+                        )
+                        .unwrap();
+                }
                 invoke_context.push().unwrap();
                 let instruction_context = invoke_context
                     .transaction_context
