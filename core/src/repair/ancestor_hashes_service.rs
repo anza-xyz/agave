@@ -190,7 +190,6 @@ impl AncestorHashesService {
                         ancestor_hashes_response_quic_receiver,
                         PacketFlags::REPAIR,
                         response_sender,
-                        Recycler::default(),
                         exit,
                     )
                 })

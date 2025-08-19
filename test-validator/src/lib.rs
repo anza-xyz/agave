@@ -1,6 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_feature_set::{raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES},
+    agave_feature_set::{alpenglow, raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES},
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
@@ -25,7 +25,7 @@ use {
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
     solana_gossip::{
-        cluster_info::{BindIpAddrs, ClusterInfo, NodeConfig},
+        cluster_info::{ClusterInfo, NodeConfig},
         contact_info::Protocol,
         node::Node,
     },
@@ -39,7 +39,7 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
     solana_native_token::sol_to_lamports,
-    solana_net_utils::{find_available_ports_in_range, PortRange},
+    solana_net_utils::{find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
@@ -50,7 +50,7 @@ use {
         genesis_utils::{self, create_genesis_config_with_leader_ex_no_features},
         runtime_config::RuntimeConfig,
         snapshot_config::SnapshotConfig,
-        snapshot_utils::SnapshotInterval,
+        snapshot_utils::{SnapshotInterval, BANK_SNAPSHOTS_DIR},
     },
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
@@ -143,6 +143,8 @@ pub struct TestValidatorGenesis {
 
 impl Default for TestValidatorGenesis {
     fn default() -> Self {
+        // Default to Tower consensus to ensure proper converage pre-Alpenglow.
+        let deactivate_feature_set = [alpenglow::id()].into_iter().collect();
         Self {
             fee_rate_governor: FeeRateGovernor::default(),
             ledger_path: Option::<PathBuf>::default(),
@@ -165,7 +167,7 @@ impl Default for TestValidatorGenesis {
             max_ledger_shreds: Option::<u64>::default(),
             max_genesis_archive_unpacked_size: Option::<u64>::default(),
             geyser_plugin_config_files: Option::<Vec<PathBuf>>::default(),
-            deactivate_feature_set: HashSet::<Pubkey>::default(),
+            deactivate_feature_set,
             compute_unit_limit: Option::<u64>::default(),
             log_messages_bytes_limit: Option::<usize>::default(),
             transaction_account_lock_limit: Option::<usize>::default(),
@@ -1036,7 +1038,7 @@ impl TestValidator {
         let node = {
             let bind_ip_addr = config.node_config.bind_ip_addr;
             let validator_node_config = NodeConfig {
-                bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr])?,
+                bind_ip_addrs: Arc::new(BindIpAddrs::new(vec![bind_ip_addr])?),
                 gossip_port: config.node_config.gossip_addr.port(),
                 port_range: config.node_config.port_range,
                 advertised_ip: bind_ip_addr,
@@ -1125,7 +1127,7 @@ impl TestValidator {
                     NonZeroU64::new(100).unwrap(),
                 ),
                 incremental_snapshot_archive_interval: SnapshotInterval::Disabled,
-                bank_snapshots_dir: ledger_path.join("snapshot"),
+                bank_snapshots_dir: ledger_path.join(BANK_SNAPSHOTS_DIR),
                 full_snapshot_archives_dir: ledger_path.to_path_buf(),
                 incremental_snapshot_archives_dir: ledger_path.to_path_buf(),
                 ..SnapshotConfig::default()
@@ -1436,6 +1438,7 @@ mod test {
         [
             agave_feature_set::deprecate_rewards_sysvar::id(),
             agave_feature_set::disable_fees_sysvar::id(),
+            alpenglow::id(),
         ]
         .into_iter()
         .for_each(|feature| {

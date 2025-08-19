@@ -1,8 +1,8 @@
 use {
-    solana_measure::measure_us,
     solana_program_runtime::invoke_context::InvokeContext,
+    solana_svm_measure::measure_us,
+    solana_svm_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::IndexOfAccount,
     solana_transaction_error::TransactionError,
 };
@@ -76,7 +76,6 @@ pub(crate) fn process_message(
 mod tests {
     use {
         super::*,
-        agave_reserved_account_keys::ReservedAccountKeys,
         ed25519_dalek::ed25519::signature::Signer,
         openssl::{
             ec::{EcGroup, EcKey},
@@ -109,7 +108,7 @@ mod tests {
         solana_svm_callback::InvokeContextCallback,
         solana_svm_feature_set::SVMFeatureSet,
         solana_transaction_context::TransactionContext,
-        std::sync::Arc,
+        std::{collections::HashSet, sync::Arc},
     };
 
     struct MockCallback {}
@@ -127,8 +126,7 @@ mod tests {
     }
 
     fn new_sanitized_message(message: Message) -> SanitizedMessage {
-        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
-            .unwrap()
+        SanitizedMessage::try_from_legacy_message(message, &HashSet::new()).unwrap()
     }
 
     #[test]
@@ -149,17 +147,17 @@ mod tests {
                     MockSystemInstruction::Correct => Ok(()),
                     MockSystemInstruction::TransferLamports { lamports } => {
                         instruction_context
-                            .try_borrow_instruction_account(transaction_context, 0)?
+                            .try_borrow_instruction_account(0)?
                             .checked_sub_lamports(lamports)?;
                         instruction_context
-                            .try_borrow_instruction_account(transaction_context, 1)?
+                            .try_borrow_instruction_account(1)?
                             .checked_add_lamports(lamports)?;
                         Ok(())
                     }
                     MockSystemInstruction::ChangeData { data } => {
                         instruction_context
-                            .try_borrow_instruction_account(transaction_context, 1)?
-                            .set_data(vec![data])?;
+                            .try_borrow_instruction_account(1)?
+                            .set_data_from_slice(&[data])?;
                         Ok(())
                     }
                 }
@@ -363,15 +361,12 @@ mod tests {
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
             let instruction_data = instruction_context.get_instruction_data();
-            let mut to_account =
-                instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
+            let mut to_account = instruction_context.try_borrow_instruction_account(1)?;
             if let Ok(instruction) = bincode::deserialize(instruction_data) {
                 match instruction {
                     MockSystemInstruction::BorrowFail => {
-                        let from_account = instruction_context
-                            .try_borrow_instruction_account(transaction_context, 0)?;
-                        let dup_account = instruction_context
-                            .try_borrow_instruction_account(transaction_context, 2)?;
+                        let from_account = instruction_context.try_borrow_instruction_account(0)?;
+                        let dup_account = instruction_context.try_borrow_instruction_account(2)?;
                         if from_account.get_lamports() != dup_account.get_lamports() {
                             return Err(InstructionError::InvalidArgument);
                         }
@@ -379,10 +374,10 @@ mod tests {
                     }
                     MockSystemInstruction::MultiBorrowMut => {
                         let lamports_a = instruction_context
-                            .try_borrow_instruction_account(transaction_context, 0)?
+                            .try_borrow_instruction_account(0)?
                             .get_lamports();
                         let lamports_b = instruction_context
-                            .try_borrow_instruction_account(transaction_context, 2)?
+                            .try_borrow_instruction_account(2)?
                             .get_lamports();
                         if lamports_a != lamports_b {
                             return Err(InstructionError::InvalidArgument);
@@ -390,14 +385,14 @@ mod tests {
                         Ok(())
                     }
                     MockSystemInstruction::DoWork { lamports, data } => {
-                        let mut dup_account = instruction_context
-                            .try_borrow_instruction_account(transaction_context, 2)?;
+                        let mut dup_account =
+                            instruction_context.try_borrow_instruction_account(2)?;
                         dup_account.checked_sub_lamports(lamports)?;
                         to_account.checked_add_lamports(lamports)?;
-                        dup_account.set_data(vec![data])?;
+                        dup_account.set_data_from_slice(&[data])?;
                         drop(dup_account);
-                        let mut from_account = instruction_context
-                            .try_borrow_instruction_account(transaction_context, 0)?;
+                        let mut from_account =
+                            instruction_context.try_borrow_instruction_account(0)?;
                         from_account.checked_sub_lamports(lamports)?;
                         to_account.checked_add_lamports(lamports)?;
                         Ok(())

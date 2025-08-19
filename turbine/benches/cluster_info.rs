@@ -85,7 +85,7 @@ fn broadcast_shreds_bench(b: &mut Bencher) {
         let shreds = shreds.clone();
         broadcast_shreds(
             socket,
-            shreds,
+            &shreds,
             &cluster_nodes_cache,
             &last_datapoint,
             &mut TransmitShredsStats::default(),

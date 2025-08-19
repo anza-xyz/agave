@@ -266,10 +266,7 @@ impl PrioritizationFeeCache {
                         writable_accounts,
                     })
                     .unwrap_or_else(|err| {
-                        warn!(
-                            "prioritization fee cache transaction updates failed: {:?}",
-                            err
-                        );
+                        warn!("prioritization fee cache transaction updates failed: {err:?}");
                     });
             }
         });
@@ -284,10 +281,7 @@ impl PrioritizationFeeCache {
         self.sender
             .send(CacheServiceUpdate::BankFinalized { slot, bank_id })
             .unwrap_or_else(|err| {
-                warn!(
-                    "prioritization fee cache signalling bank frozen failed: {:?}",
-                    err
-                )
+                warn!("prioritization fee cache signalling bank frozen failed: {err:?}")
             });
     }
 
@@ -345,15 +339,15 @@ impl PrioritizationFeeCache {
             // It should be rare that optimistically confirmed bank had no prioritized
             // transactions, but duplicated and unconfirmed bank had.
             if pre_purge_bank_count > 0 && post_purge_bank_count == 0 {
-                warn!("Finalized bank has empty prioritization fee cache. slot {slot} bank id {bank_id}");
+                warn!(
+                    "Finalized bank has empty prioritization fee cache. slot {slot} bank id \
+                     {bank_id}"
+                );
             }
 
             if let Some(prioritization_fee) = &mut prioritization_fee {
                 if let Err(err) = prioritization_fee.mark_block_completed() {
-                    error!(
-                        "Unsuccessful finalizing slot {slot}, bank ID {bank_id}: {:?}",
-                        err
-                    );
+                    error!("Unsuccessful finalizing slot {slot}, bank ID {bank_id}: {err:?}");
                 }
                 prioritization_fee.report_metrics(slot);
             }

@@ -104,11 +104,6 @@ pub use {
 pub const MAX_REPLAY_WAKE_UP_SIGNALS: usize = 1;
 pub const MAX_COMPLETED_SLOTS_IN_CHANNEL: usize = 100_000;
 
-// An upper bound on maximum number of data shreds we can handle in a slot
-// 32K shreds would allow ~320K peak TPS
-// (32K shreds per slot * 4 TX per shred * 2.5 slots per sec)
-pub const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
-
 pub type CompletedSlotsSender = Sender<Vec<Slot>>;
 pub type CompletedSlotsReceiver = Receiver<Vec<Slot>>;
 
@@ -1009,13 +1004,11 @@ impl Blockstore {
                 match shred.shred_type() {
                     ShredType::Code => {
                         // Don't need Arc overhead here!
-                        debug_assert_matches!(shred.payload(), shred::Payload::Unique(_));
                         recovered_shreds.push(shred.into_payload());
                         None
                     }
                     ShredType::Data => {
                         // Verify that the cloning is cheap here.
-                        debug_assert_matches!(shred.payload(), shred::Payload::Shared(_));
                         recovered_shreds.push(shred.payload().clone());
                         Some(shred)
                     }
@@ -5267,7 +5260,7 @@ fn adjust_ulimit_nofile(enforce_ulimit_nofile: bool) -> Result<()> {
     // usually not enough
     // AppendVecs and disk Account Index are also heavy users of mmapped files.
     // This should be kept in sync with published validator instructions.
-    // https://docs.solanalabs.com/operations/guides/validator-start#increased-memory-mapped-files-limit
+    // https://docs.anza.xyz/operations/guides/validator-start#system-tuning
     let desired_nofile = 1_000_000;
 
     fn get_nofile() -> libc::rlimit {
@@ -5315,7 +5308,7 @@ pub mod tests {
         crate::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
-            shred::max_ticks_per_n_shreds,
+            shred::{max_ticks_per_n_shreds, MAX_DATA_SHREDS_PER_SLOT},
         },
         assert_matches::assert_matches,
         bincode::{serialize, Options},

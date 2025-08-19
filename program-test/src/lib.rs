@@ -23,7 +23,6 @@ use {
         Instruction,
     },
     solana_keypair::Keypair,
-    solana_log_collector::ic_msg,
     solana_native_token::sol_to_lamports,
     solana_poh_config::PohConfig,
     solana_program_entrypoint::{deserialize, SUCCESS},
@@ -42,9 +41,10 @@ use {
         runtime_config::RuntimeConfig,
     },
     solana_signer::Signer,
+    solana_svm_log_collector::ic_msg,
+    solana_svm_timings::ExecuteTimings,
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
-    solana_timings::ExecuteTimings,
     solana_vote_program::vote_state::{self, VoteStateV3, VoteStateVersions},
     std::{
         cell::RefCell,
@@ -116,7 +116,7 @@ pub fn invoke_builtin_function(
     invoke_context.consume_checked(1)?;
 
     let log_collector = invoke_context.get_log_collector();
-    let program_id = instruction_context.get_program_key(transaction_context)?;
+    let program_id = instruction_context.get_program_key()?;
     stable_log::program_invoke(
         &log_collector,
         program_id,
@@ -131,8 +131,7 @@ pub fn invoke_builtin_function(
         .get_feature_set()
         .mask_out_rent_epoch_in_vm_serialization;
     let (mut parameter_bytes, _regions, _account_lengths) = serialize_parameters(
-        transaction_context,
-        instruction_context,
+        &instruction_context,
         false, // There is no VM so stricter_abi_and_runtime_constraints can not be implemented here
         false, // There is no VM so account_data_direct_mapping can not be implemented here
         mask_out_rent_epoch_in_vm_serialization,
@@ -174,8 +173,7 @@ pub fn invoke_builtin_function(
 
     // Commit AccountInfo changes back into KeyedAccounts
     for i in deduplicated_indices.into_iter() {
-        let mut borrowed_account =
-            instruction_context.try_borrow_instruction_account(transaction_context, i)?;
+        let mut borrowed_account = instruction_context.try_borrow_instruction_account(i)?;
         if borrowed_account.is_writable() {
             if let Some(account_info) = account_info_map.get(borrowed_account.get_key()) {
                 if borrowed_account.get_lamports() != account_info.lamports() {
@@ -256,9 +254,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
-        let caller = instruction_context
-            .get_program_key(transaction_context)
-            .unwrap();
+        let caller = instruction_context.get_program_key().unwrap();
 
         stable_log::program_invoke(
             &log_collector,
@@ -280,11 +276,8 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
-
-        let next_instruction_accounts = transaction_context
-            .get_next_instruction_context()
-            .unwrap()
-            .instruction_accounts();
+        let next_instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let next_instruction_accounts = next_instruction_context.instruction_accounts();
         let mut account_indices = Vec::with_capacity(next_instruction_accounts.len());
         for instruction_account in next_instruction_accounts.iter() {
             let account_key = transaction_context
@@ -300,7 +293,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                 .get_index_of_account_in_instruction(instruction_account.index_in_transaction)
                 .unwrap();
             let mut borrowed_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, index_in_caller)
+                .try_borrow_instruction_account(index_in_caller)
                 .unwrap();
             if borrowed_account.get_lamports() != account_info.lamports() {
                 borrowed_account
@@ -345,7 +338,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                 .get_index_of_account_in_instruction(index_in_transaction)
                 .unwrap();
             let borrowed_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, index_in_caller)
+                .try_borrow_instruction_account(index_in_caller)
                 .unwrap();
             let account_info = &account_infos[account_info_index];
             **account_info.try_borrow_mut_lamports().unwrap() = borrowed_account.get_lamports();
@@ -425,9 +418,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
-        let caller = *instruction_context
-            .get_program_key(transaction_context)
-            .unwrap();
+        let caller = *instruction_context.get_program_key().unwrap();
         transaction_context
             .set_return_data(caller, data.to_vec())
             .unwrap();

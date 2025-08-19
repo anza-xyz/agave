@@ -133,30 +133,6 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
     // packets.
     let mut batched_packets = 0;
 
-    // With some drivers, or always when we work in SKB mode, we need to explicitly kick the driver
-    // once we want the NIC to do something.
-    let kick = |ring: &TxRing<SliceUmemFrame<'_>>| {
-        if !ring.needs_wakeup() {
-            return;
-        }
-
-        if let Err(e) = ring.wake() {
-            match e.raw_os_error() {
-                // these are non-fatal errors
-                Some(libc::EBUSY | libc::ENOBUFS | libc::EAGAIN) => {}
-                // this can temporarily happen with some drivers when changing
-                // settings (eg with ethtool)
-                Some(libc::ENETDOWN) => {
-                    log::warn!("network interface is down")
-                }
-                // we should never get here, hopefully the driver recovers?
-                _ => {
-                    log::error!("network interface driver error: {e:?}");
-                }
-            }
-        }
-    };
-
     let mut timeouts = 0;
     loop {
         match receiver.try_recv() {
@@ -193,25 +169,27 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
 
         for (addrs, payload) in batched_items.drain(..) {
             for addr in addrs.as_ref() {
-                // loop until we have space for the next packet
-                loop {
-                    completion.sync(true);
-                    // we haven't written any frames so we only need to sync the consumer position
-                    ring.sync(false);
+                if ring.available() == 0 || umem.available() == 0 {
+                    // loop until we have space for the next packet
+                    loop {
+                        completion.sync(true);
+                        // we haven't written any frames so we only need to sync the consumer position
+                        ring.sync(false);
 
-                    // check if any frames were completed
-                    while let Some(frame_offset) = completion.read() {
-                        umem.release(frame_offset);
+                        // check if any frames were completed
+                        while let Some(frame_offset) = completion.read() {
+                            umem.release(frame_offset);
+                        }
+
+                        if ring.available() > 0 && umem.available() > 0 {
+                            // we have space for the next packet, break out of the loop
+                            break;
+                        }
+
+                        // queues are full, if NEEDS_WAKEUP is set kick the driver so hopefully it'll
+                        // complete some work
+                        kick(&ring);
                     }
-
-                    if ring.available() > 0 && umem.available() > 0 {
-                        // we have a frame and a slot in the ring
-                        break;
-                    }
-
-                    // queues are full, if NEEDS_WAKEUP is set kick the driver so hopefully it'll
-                    // complete some work
-                    kick(&ring);
                 }
 
                 // at this point we're guaranteed to have a frame to write the next packet into and
@@ -323,5 +301,35 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
 
         ring.sync(false);
         kick(&ring);
+    }
+}
+
+// With some drivers, or always when we work in SKB mode, we need to explicitly kick the driver once
+// we want the NIC to do something.
+#[inline(always)]
+fn kick(ring: &TxRing<SliceUmemFrame<'_>>) {
+    if !ring.needs_wakeup() {
+        return;
+    }
+
+    if let Err(e) = ring.wake() {
+        kick_error(e);
+    }
+}
+
+#[inline(never)]
+fn kick_error(e: std::io::Error) {
+    match e.raw_os_error() {
+        // these are non-fatal errors
+        Some(libc::EBUSY | libc::ENOBUFS | libc::EAGAIN) => {}
+        // this can temporarily happen with some drivers when changing
+        // settings (eg with ethtool)
+        Some(libc::ENETDOWN) => {
+            log::warn!("network interface is down")
+        }
+        // we should never get here, hopefully the driver recovers?
+        _ => {
+            log::error!("network interface driver error: {e:?}");
+        }
     }
 }

@@ -27,10 +27,10 @@ frozen-abi = [
     "solana-program-runtime/frozen-abi",
 ]
 shuttle-test = [
-    "solana-type-overrides/shuttle-test",
-    "solana-program-runtime/shuttle-test",
     "solana-bpf-loader-program/shuttle-test",
     "solana-loader-v4-program/shuttle-test",
+    "solana-program-runtime/shuttle-test",
+    "solana-svm-type-overrides/shuttle-test",
 ]
 svm-internal = []
 
@@ -56,8 +56,6 @@ solana-instructions-sysvar = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
 solana-loader-v4-interface = { workspace = true }
 solana-loader-v4-program = { workspace = true }
-solana-log-collector = { workspace = true }
-solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
@@ -66,23 +64,23 @@ solana-program-pack = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
-solana-rent-collector = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-svm-measure = { workspace = true }
+solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar-id = { workspace = true }
-solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
-solana-type-overrides = { workspace = true }
 spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 agave-feature-set = { workspace = true }
-agave-reserved-account-keys = { workspace = true }
 agave-syscalls = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
@@ -106,7 +104,7 @@ solana-precompile-error = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
-solana-sbpf = { workspace = true }
+solana-sbpf = { workspace = true, features = ["jit"] }
 solana-secp256k1-program = { workspace = true }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 solana-signature = { workspace = true, features = ["rand"] }

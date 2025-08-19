@@ -3,25 +3,18 @@ use {
     crate::{translate_inner, translate_slice_inner, translate_type_inner},
     solana_instruction::Instruction,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
-    solana_measure::measure::Measure,
     solana_program_runtime::{
         invoke_context::SerializedAccountMetadata,
         serialization::{create_memory_region_of_account, modify_memory_region_of_account},
     },
     solana_sbpf::ebpf,
     solana_stable_layout::stable_instruction::StableInstruction,
-    solana_transaction_context::BorrowedAccount,
+    solana_svm_measure::measure::Measure,
+    solana_transaction_context::{
+        BorrowedAccount, MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
+    },
     std::mem,
 };
-
-const MAX_CPI_INSTRUCTION_DATA_LEN: u64 = 10 * 1024;
-const MAX_CPI_INSTRUCTION_ACCOUNTS: u8 = u8::MAX;
-
-#[cfg(test)]
-static_assertions::const_assert_eq!(
-    (MAX_CPI_INSTRUCTION_ACCOUNTS as usize).saturating_add(1),
-    solana_transaction_context::MAX_ACCOUNTS_PER_TRANSACTION,
-);
 
 const MAX_CPI_ACCOUNT_INFOS: usize = 128;
 
@@ -411,16 +404,14 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         )?
         .to_vec();
 
-        check_instruction_size(account_metas.len(), data.len(), invoke_context)?;
+        check_instruction_size(account_metas.len(), data.len())?;
 
-        if invoke_context.get_feature_set().loosen_cpi_size_restriction {
-            consume_compute_meter(
-                invoke_context,
-                (data.len() as u64)
-                    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                    .unwrap_or(u64::MAX),
-            )?;
-        }
+        consume_compute_meter(
+            invoke_context,
+            (data.len() as u64)
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX),
+        )?;
 
         let mut accounts = Vec::with_capacity(account_metas.len());
         #[allow(clippy::needless_range_loop)]
@@ -612,16 +603,14 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
             translate_slice::<u8>(memory_mapping, ix_c.data_addr, ix_c.data_len, check_aligned)?
                 .to_vec();
 
-        check_instruction_size(ix_c.accounts_len as usize, data.len(), invoke_context)?;
+        check_instruction_size(ix_c.accounts_len as usize, data.len())?;
 
-        if invoke_context.get_feature_set().loosen_cpi_size_restriction {
-            consume_compute_meter(
-                invoke_context,
-                (data.len() as u64)
-                    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                    .unwrap_or(u64::MAX),
-            )?;
-        }
+        consume_compute_meter(
+            invoke_context,
+            (data.len() as u64)
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX),
+        )?;
 
         let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
         #[allow(clippy::needless_range_loop)]
@@ -825,8 +814,7 @@ where
 
         let index_in_caller = instruction_context
             .get_index_of_account_in_instruction(instruction_account.index_in_transaction)?;
-        let callee_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, index_in_caller)?;
+        let callee_account = instruction_context.try_borrow_instruction_account(index_in_caller)?;
         let account_key = invoke_context
             .transaction_context
             .get_key_of_account_at_index(instruction_account.index_in_transaction)?;
@@ -903,37 +891,18 @@ where
     Ok(accounts)
 }
 
-fn check_instruction_size(
-    num_accounts: usize,
-    data_len: usize,
-    invoke_context: &mut InvokeContext,
-) -> Result<(), Error> {
-    if invoke_context.get_feature_set().loosen_cpi_size_restriction {
-        let data_len = data_len as u64;
-        let max_data_len = MAX_CPI_INSTRUCTION_DATA_LEN;
-        if data_len > max_data_len {
-            return Err(Box::new(SyscallError::MaxInstructionDataLenExceeded {
-                data_len,
-                max_data_len,
-            }));
-        }
-
-        let num_accounts = num_accounts as u64;
-        let max_accounts = MAX_CPI_INSTRUCTION_ACCOUNTS as u64;
-        if num_accounts > max_accounts {
-            return Err(Box::new(SyscallError::MaxInstructionAccountsExceeded {
-                num_accounts,
-                max_accounts,
-            }));
-        }
-    } else {
-        let max_size = invoke_context.get_compute_budget().max_cpi_instruction_size;
-        let size = num_accounts
-            .saturating_mul(size_of::<AccountMeta>())
-            .saturating_add(data_len);
-        if size > max_size {
-            return Err(Box::new(SyscallError::InstructionTooLarge(size, max_size)));
-        }
+fn check_instruction_size(num_accounts: usize, data_len: usize) -> Result<(), Error> {
+    if num_accounts > MAX_ACCOUNTS_PER_INSTRUCTION {
+        return Err(Box::new(SyscallError::MaxInstructionAccountsExceeded {
+            num_accounts: num_accounts as u64,
+            max_accounts: MAX_ACCOUNTS_PER_INSTRUCTION as u64,
+        }));
+    }
+    if data_len > MAX_INSTRUCTION_DATA_LEN {
+        return Err(Box::new(SyscallError::MaxInstructionDataLenExceeded {
+            data_len: data_len as u64,
+            max_data_len: MAX_INSTRUCTION_DATA_LEN as u64,
+        }));
     }
     Ok(())
 }
@@ -942,31 +911,21 @@ fn check_account_infos(
     num_account_infos: usize,
     invoke_context: &mut InvokeContext,
 ) -> Result<(), Error> {
-    if invoke_context.get_feature_set().loosen_cpi_size_restriction {
-        let max_cpi_account_infos = if invoke_context
-            .get_feature_set()
-            .increase_tx_account_lock_limit
-        {
-            MAX_CPI_ACCOUNT_INFOS
-        } else {
-            64
-        };
-        let num_account_infos = num_account_infos as u64;
-        let max_account_infos = max_cpi_account_infos as u64;
-        if num_account_infos > max_account_infos {
-            return Err(Box::new(SyscallError::MaxInstructionAccountInfosExceeded {
-                num_account_infos,
-                max_account_infos,
-            }));
-        }
+    let max_cpi_account_infos = if invoke_context
+        .get_feature_set()
+        .increase_tx_account_lock_limit
+    {
+        MAX_CPI_ACCOUNT_INFOS
     } else {
-        let adjusted_len = num_account_infos.saturating_mul(size_of::<Pubkey>());
-
-        if adjusted_len > invoke_context.get_compute_budget().max_cpi_instruction_size {
-            // Cap the number of account_infos a caller can pass to approximate
-            // maximum that accounts that could be passed in an instruction
-            return Err(Box::new(SyscallError::TooManyAccounts));
-        };
+        64
+    };
+    let num_account_infos = num_account_infos as u64;
+    let max_account_infos = max_cpi_account_infos as u64;
+    if num_account_infos > max_account_infos {
+        return Err(Box::new(SyscallError::MaxInstructionAccountInfosExceeded {
+            num_account_infos,
+            max_account_infos,
+        }));
     }
     Ok(())
 }
@@ -1035,7 +994,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
     )?;
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let caller_program_id = instruction_context.get_program_key(transaction_context)?;
+    let caller_program_id = instruction_context.get_program_key()?;
     let signers = S::translate_signers(
         caller_program_id,
         signers_seeds_addr,
@@ -1071,10 +1030,8 @@ fn cpi_common<S: SyscallInvokeSigned>(
         .stricter_abi_and_runtime_constraints;
 
     for translate_account in accounts.iter_mut() {
-        let mut callee_account = instruction_context.try_borrow_instruction_account(
-            transaction_context,
-            translate_account.index_in_caller,
-        )?;
+        let mut callee_account = instruction_context
+            .try_borrow_instruction_account(translate_account.index_in_caller)?;
         if translate_account.update_caller_account_info {
             update_caller_account(
                 invoke_context,
@@ -1089,10 +1046,8 @@ fn cpi_common<S: SyscallInvokeSigned>(
 
     if stricter_abi_and_runtime_constraints {
         for translate_account in accounts.iter() {
-            let mut callee_account = instruction_context.try_borrow_instruction_account(
-                transaction_context,
-                translate_account.index_in_caller,
-            )?;
+            let mut callee_account = instruction_context
+                .try_borrow_instruction_account(translate_account.index_in_caller)?;
             if translate_account.update_caller_account_region {
                 update_caller_account_region(
                     memory_mapping,
@@ -1373,23 +1328,26 @@ mod tests {
             );
             $invoke_context
                 .transaction_context
-                .get_next_instruction_context_mut()
-                .unwrap()
-                .configure_for_tests($program_account, instruction_accounts, instruction_data);
+                .configure_next_instruction_for_tests(
+                    $program_account,
+                    instruction_accounts,
+                    instruction_data,
+                )
+                .unwrap();
             $invoke_context.push().unwrap();
         };
     }
 
     macro_rules! borrow_instruction_account {
-        ($invoke_context:expr, $index:expr) => {{
+        ($borrowed_account:ident, $invoke_context:expr, $index:expr) => {
             let instruction_context = $invoke_context
                 .transaction_context
                 .get_current_instruction_context()
                 .unwrap();
-            instruction_context
-                .try_borrow_instruction_account($invoke_context.transaction_context, $index)
-                .unwrap()
-        }};
+            let $borrowed_account = instruction_context
+                .try_borrow_instruction_account($index)
+                .unwrap();
+        };
     }
 
     #[test]
@@ -1548,9 +1506,13 @@ mod tests {
         .unwrap();
 
         let mut caller_account = mock_caller_account.caller_account();
-
-        let mut callee_account = borrow_instruction_account!(invoke_context, 0);
-
+        let instruction_context = invoke_context
+            .transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        let mut callee_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
         callee_account.set_lamports(42).unwrap();
         callee_account
             .set_owner(Pubkey::new_unique().as_ref())
@@ -1608,8 +1570,13 @@ mod tests {
         };
         let serialized_len = || unsafe { *len_ptr.cast::<u64>() as usize };
         let mut caller_account = mock_caller_account.caller_account();
-
-        let mut callee_account = borrow_instruction_account!(invoke_context, 0);
+        let instruction_context = invoke_context
+            .transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        let mut callee_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
 
         for (new_value, expected_realloc_size) in [
             (b"foo".to_vec(), MAX_PERMITTED_DATA_INCREASE + 3),
@@ -1709,7 +1676,7 @@ mod tests {
 
         let caller_account = mock_caller_account.caller_account();
 
-        let callee_account = borrow_instruction_account!(invoke_context, 0);
+        borrow_instruction_account!(callee_account, invoke_context, 0);
 
         *caller_account.lamports = 42;
         *caller_account.owner = Pubkey::new_unique();
@@ -1723,7 +1690,7 @@ mod tests {
         )
         .unwrap();
 
-        let callee_account = borrow_instruction_account!(invoke_context, 0);
+        borrow_instruction_account!(callee_account, invoke_context, 0);
         assert_eq!(callee_account.get_lamports(), 42);
         assert_eq!(caller_account.owner, callee_account.get_owner());
     }
@@ -1747,7 +1714,7 @@ mod tests {
             MockCallerAccount::new(1234, *account.owner(), account.data(), false);
 
         let mut caller_account = mock_caller_account.caller_account();
-        let callee_account = borrow_instruction_account!(invoke_context, 0);
+        borrow_instruction_account!(callee_account, invoke_context, 0);
 
         // stricter_abi_and_runtime_constraints does not copy data in update_callee_account()
         caller_account.serialized_data[0] = b'b';
@@ -1759,7 +1726,7 @@ mod tests {
             false, // account_data_direct_mapping
         )
         .unwrap();
-        let callee_account = borrow_instruction_account!(invoke_context, 0);
+        borrow_instruction_account!(callee_account, invoke_context, 0);
         assert_eq!(callee_account.get_data(), b"boobar");
 
         // growing resize
@@ -1782,7 +1749,7 @@ mod tests {
         let mut data = b"baz".to_vec();
         *caller_account.ref_to_len_in_vm = data.len() as u64;
         caller_account.serialized_data = &mut data;
-        let callee_account = borrow_instruction_account!(invoke_context, 0);
+        borrow_instruction_account!(callee_account, invoke_context, 0);
         assert_eq!(
             update_callee_account(
                 true, // check_aligned
@@ -1801,7 +1768,7 @@ mod tests {
         *caller_account.ref_to_len_in_vm = 0;
         let mut owner = system_program::id();
         caller_account.owner = &mut owner;
-        let callee_account = borrow_instruction_account!(invoke_context, 0);
+        borrow_instruction_account!(callee_account, invoke_context, 0);
         update_callee_account(
             true, // check_aligned
             &caller_account,
@@ -1810,7 +1777,7 @@ mod tests {
             true, // account_data_direct_mapping
         )
         .unwrap();
-        let callee_account = borrow_instruction_account!(invoke_context, 0);
+        borrow_instruction_account!(callee_account, invoke_context, 0);
         assert_eq!(callee_account.get_data(), b"");
 
         // growing beyond address_space_reserved_for_account
@@ -1850,7 +1817,7 @@ mod tests {
         let mut mock_caller_account =
             MockCallerAccount::new(1234, *account.owner(), account.data(), false);
         let mut caller_account = mock_caller_account.caller_account();
-        let callee_account = borrow_instruction_account!(invoke_context, 0);
+        borrow_instruction_account!(callee_account, invoke_context, 0);
 
         // stricter_abi_and_runtime_constraints does not copy data in update_callee_account()
         caller_account.serialized_data[0] = b'b';
@@ -1869,7 +1836,7 @@ mod tests {
         let mut data = b"foobarbaz".to_vec();
         *caller_account.ref_to_len_in_vm = data.len() as u64;
         caller_account.serialized_data = &mut data;
-        let callee_account = borrow_instruction_account!(invoke_context, 0);
+        borrow_instruction_account!(callee_account, invoke_context, 0);
         assert_matches!(
             update_callee_account(
                 true, // check_aligned
@@ -1885,7 +1852,7 @@ mod tests {
         let mut data = b"baz".to_vec();
         *caller_account.ref_to_len_in_vm = data.len() as u64;
         caller_account.serialized_data = &mut data;
-        let callee_account = borrow_instruction_account!(invoke_context, 0);
+        borrow_instruction_account!(callee_account, invoke_context, 0);
         assert_matches!(
             update_callee_account(
                 true, // check_aligned
@@ -1935,16 +1902,15 @@ mod tests {
 
         invoke_context
             .transaction_context
-            .get_next_instruction_context_mut()
-            .unwrap()
-            .configure_for_tests(
+            .configure_next_instruction_for_tests(
                 0,
                 vec![
                     InstructionAccount::new(1, false, true),
                     InstructionAccount::new(1, false, true),
                 ],
                 &[],
-            );
+            )
+            .unwrap();
         let accounts = SyscallInvokeSignedRust::translate_accounts(
             vm_addr,
             1,

@@ -12,10 +12,10 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::sysvar,
     solana_slot_hashes::SlotHashes,
+    solana_svm_type_overrides::sync::Arc,
     solana_sysvar::{stake_history::StakeHistory, Sysvar},
     solana_sysvar_id::SysvarId,
-    solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
-    solana_type_overrides::sync::Arc,
+    solana_transaction_context::{IndexOfAccount, InstructionContext},
 };
 
 #[cfg(feature = "frozen-abi")]
@@ -284,13 +284,12 @@ pub mod get_sysvar_with_account_check {
     use super::*;
 
     fn check_sysvar_account<S: Sysvar>(
-        transaction_context: &TransactionContext,
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<(), InstructionError> {
-        let index_in_transaction = instruction_context
-            .get_index_of_instruction_account_in_transaction(instruction_account_index)?;
-        if !S::check_id(transaction_context.get_key_of_account_at_index(index_in_transaction)?) {
+        if !S::check_id(
+            instruction_context.get_key_of_instruction_account(instruction_account_index)?,
+        ) {
             return Err(InstructionError::InvalidArgument);
         }
         Ok(())
@@ -301,11 +300,7 @@ pub mod get_sysvar_with_account_check {
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<Clock>, InstructionError> {
-        check_sysvar_account::<Clock>(
-            invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
+        check_sysvar_account::<Clock>(instruction_context, instruction_account_index)?;
         invoke_context.get_sysvar_cache().get_clock()
     }
 
@@ -314,11 +309,7 @@ pub mod get_sysvar_with_account_check {
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<Rent>, InstructionError> {
-        check_sysvar_account::<Rent>(
-            invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
+        check_sysvar_account::<Rent>(instruction_context, instruction_account_index)?;
         invoke_context.get_sysvar_cache().get_rent()
     }
 
@@ -327,11 +318,7 @@ pub mod get_sysvar_with_account_check {
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<SlotHashes>, InstructionError> {
-        check_sysvar_account::<SlotHashes>(
-            invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
+        check_sysvar_account::<SlotHashes>(instruction_context, instruction_account_index)?;
         invoke_context.get_sysvar_cache().get_slot_hashes()
     }
 
@@ -341,11 +328,7 @@ pub mod get_sysvar_with_account_check {
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<RecentBlockhashes>, InstructionError> {
-        check_sysvar_account::<RecentBlockhashes>(
-            invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
+        check_sysvar_account::<RecentBlockhashes>(instruction_context, instruction_account_index)?;
         invoke_context.get_sysvar_cache().get_recent_blockhashes()
     }
 
@@ -354,11 +337,7 @@ pub mod get_sysvar_with_account_check {
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<StakeHistory>, InstructionError> {
-        check_sysvar_account::<StakeHistory>(
-            invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
+        check_sysvar_account::<StakeHistory>(instruction_context, instruction_account_index)?;
         invoke_context.get_sysvar_cache().get_stake_history()
     }
 
@@ -367,11 +346,7 @@ pub mod get_sysvar_with_account_check {
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<LastRestartSlot>, InstructionError> {
-        check_sysvar_account::<LastRestartSlot>(
-            invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
+        check_sysvar_account::<LastRestartSlot>(instruction_context, instruction_account_index)?;
         invoke_context.get_sysvar_cache().get_last_restart_slot()
     }
 }

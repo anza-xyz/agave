@@ -1,0 +1,17 @@
+[package]
+name = "solana-low-pass-filter"
+description = "Low Pass Filter"
+version = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+agave-unstable-api = []
+
+[dependencies]

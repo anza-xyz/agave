@@ -87,7 +87,6 @@ solana-nohash-hasher = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true, optional = true }
-solana-rent-collector = { workspace = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true, optional = true }
@@ -127,6 +126,7 @@ solana-logger = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true, features = ["rand"] }
 solana-slot-history = { workspace = true }
+solana-svm = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }

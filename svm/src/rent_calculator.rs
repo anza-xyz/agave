@@ -4,11 +4,17 @@
 
 use {
     solana_account::{AccountSharedData, ReadableAccount},
+    solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_transaction_context::{IndexOfAccount, TransactionContext},
     solana_transaction_error::{TransactionError, TransactionResult},
 };
+
+/// When rent is collected from an exempt account, rent_epoch is set to this
+/// value. The idea is to have a fixed, consistent value for rent_epoch for all accounts that do not collect rent.
+/// This enables us to get rid of the field completely.
+pub const RENT_EXEMPT_RENT_EPOCH: Epoch = Epoch::MAX;
 
 /// Rent state of a Solana account.
 #[derive(Debug, PartialEq, Eq)]
@@ -42,10 +48,6 @@ pub fn check_rent_state(
             transaction_context
                 .get_key_of_account_at_index(index)
                 .expect(expect_msg),
-            &transaction_context
-                .accounts()
-                .try_borrow(index)
-                .expect(expect_msg),
             index,
         )?;
     }
@@ -61,7 +63,6 @@ pub fn check_rent_state_with_account(
     pre_rent_state: &RentState,
     post_rent_state: &RentState,
     address: &Pubkey,
-    _account_state: &AccountSharedData,
     account_index: IndexOfAccount,
 ) -> TransactionResult<()> {
     if !solana_sdk_ids::incinerator::check_id(address)

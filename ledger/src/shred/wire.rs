@@ -25,12 +25,11 @@ use {
 fn get_shred_size(shred: &[u8]) -> Option<usize> {
     // Legacy data shreds have zero padding at the end which might have been
     // trimmed. Other variants do not have any trailing zeros.
-    Some(match get_shred_variant(shred).ok()? {
-        ShredVariant::LegacyCode => shred::legacy::ShredCode::SIZE_OF_PAYLOAD,
-        ShredVariant::LegacyData => shred::legacy::ShredData::SIZE_OF_PAYLOAD.min(shred.len()),
-        ShredVariant::MerkleCode { .. } => shred::merkle::ShredCode::SIZE_OF_PAYLOAD,
-        ShredVariant::MerkleData { .. } => shred::merkle::ShredData::SIZE_OF_PAYLOAD,
-    })
+    match get_shred_variant(shred).ok()? {
+        ShredVariant::MerkleCode { .. } => Some(shred::merkle::ShredCode::SIZE_OF_PAYLOAD),
+        ShredVariant::MerkleData { .. } => Some(shred::merkle::ShredData::SIZE_OF_PAYLOAD),
+        _ => None,
+    }
 }
 
 #[inline]
@@ -152,10 +151,8 @@ fn get_data_size(shred: &[u8]) -> Result<u16, Error> {
 #[inline]
 pub(crate) fn get_data(shred: &[u8]) -> Result<&[u8], Error> {
     match get_shred_variant(shred)? {
-        ShredVariant::LegacyCode => Err(Error::InvalidShredType),
-        ShredVariant::MerkleCode { .. } => Err(Error::InvalidShredType),
-        ShredVariant::LegacyData => {
-            shred::legacy::ShredData::get_data(shred, get_data_size(shred)?)
+        ShredVariant::LegacyCode | ShredVariant::LegacyData | ShredVariant::MerkleCode { .. } => {
+            Err(Error::InvalidShredType)
         }
         ShredVariant::MerkleData {
             proof_size,
@@ -183,8 +180,7 @@ pub fn get_shred_id(shred: &[u8]) -> Option<ShredId> {
 pub(crate) fn get_signed_data(shred: &[u8]) -> Option<SignedData> {
     let data = match get_shred_variant(shred).ok()? {
         ShredVariant::LegacyCode | ShredVariant::LegacyData => {
-            let chunk = shred.get(shred::legacy::SIGNED_MESSAGE_OFFSETS)?;
-            SignedData::Chunk(chunk)
+            return None;
         }
         ShredVariant::MerkleCode {
             proof_size,
@@ -206,21 +202,6 @@ pub(crate) fn get_signed_data(shred: &[u8]) -> Option<SignedData> {
         }
     };
     Some(data)
-}
-
-// Returns offsets within the shred payload which is signed.
-pub(crate) fn get_signed_data_offsets(shred: &[u8]) -> Option<Range<usize>> {
-    match get_shred_variant(shred).ok()? {
-        ShredVariant::LegacyCode | ShredVariant::LegacyData => {
-            let offsets = shred::legacy::SIGNED_MESSAGE_OFFSETS;
-            (offsets.end <= shred.len()).then_some(offsets)
-        }
-        // Merkle shreds sign merkle tree root which can be recovered from
-        // the merkle proof embedded in the payload but itself is not
-        // stored the payload.
-        ShredVariant::MerkleCode { .. } => None,
-        ShredVariant::MerkleData { .. } => None,
-    }
 }
 
 pub fn get_reference_tick(shred: &[u8]) -> Result<u8, Error> {
@@ -437,11 +418,8 @@ pub(crate) fn corrupt_packet<R: Rng>(
                 let size = shred.len() - if resigned { SIGNATURE_BYTES } else { 0 };
                 size - offset..size
             })
-            .or_else(|| {
-                let Range { start, end } = get_signed_data_offsets(shred)?;
-                Some(start + 1..end) // +1 to exclude ShredVariant.
-            });
-        modify_packet(rng, packet, offsets.unwrap());
+            .expect("Only merkle shreds are possible");
+        modify_packet(rng, packet, offsets);
     }
     // Assert that the signature no longer verifies.
     let shred = get_shred(packet).unwrap();
@@ -451,17 +429,12 @@ pub(crate) fn corrupt_packet<R: Rng>(
         let pubkey = keypairs[&slot].pubkey();
         let data = get_signed_data(shred).unwrap();
         assert!(!signature.verify(pubkey.as_ref(), data.as_ref()));
-        if let Some(offsets) = get_signed_data_offsets(shred) {
-            assert!(!signature.verify(pubkey.as_ref(), &shred[offsets]));
-        }
     } else {
         // Slot may have been corrupted and no longer mapping to a keypair.
         let pubkey = keypairs.get(&slot).map(Keypair::pubkey).unwrap_or_default();
         if let Some(data) = get_signed_data(shred) {
             assert!(!signature.verify(pubkey.as_ref(), data.as_ref()));
         }
-        let offsets = get_signed_data_offsets(shred).unwrap_or_default();
-        assert!(!signature.verify(pubkey.as_ref(), &shred[offsets]));
     }
 }
 
@@ -608,7 +581,6 @@ mod tests {
                 get_signed_data(bytes).unwrap(),
                 SignedData::MerkleRoot(shred.merkle_root().unwrap())
             );
-            assert_matches!(get_signed_data_offsets(bytes), None);
             assert_eq!(
                 get_merkle_root(bytes).unwrap(),
                 shred.merkle_root().unwrap(),

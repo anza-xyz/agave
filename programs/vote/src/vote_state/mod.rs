@@ -11,9 +11,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_slot_hashes::SlotHash,
-    solana_transaction_context::{
-        BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
-    },
+    solana_transaction_context::{BorrowedAccount, IndexOfAccount, InstructionContext},
     solana_vote_interface::{error::VoteError, program::id},
     std::{
         cmp::Ordering,
@@ -811,7 +809,6 @@ fn verify_authorized_signer<S: std::hash::BuildHasher>(
 
 /// Withdraw funds from the vote account
 pub fn withdraw<S: std::hash::BuildHasher>(
-    transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     vote_account_index: IndexOfAccount,
     lamports: u64,
@@ -820,8 +817,8 @@ pub fn withdraw<S: std::hash::BuildHasher>(
     rent_sysvar: &Rent,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    let mut vote_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, vote_account_index)?;
+    let mut vote_account =
+        instruction_context.try_borrow_instruction_account(vote_account_index)?;
     let vote_state: VoteState = vote_account
         .get_state::<VoteStateVersions>()?
         .convert_to_current();
@@ -861,8 +858,7 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 
     vote_account.checked_sub_lamports(lamports)?;
     drop(vote_account);
-    let mut to_account = instruction_context
-        .try_borrow_instruction_account(transaction_context, to_account_index)?;
+    let mut to_account = instruction_context.try_borrow_instruction_account(to_account_index)?;
     to_account.checked_add_lamports(lamports)?;
     Ok(())
 }
@@ -1072,7 +1068,7 @@ mod tests {
         solana_account::{state_traits::StateMut, AccountSharedData},
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
-        solana_transaction_context::InstructionAccount,
+        solana_transaction_context::{InstructionAccount, TransactionContext},
         std::cell::RefCell,
         test_case::test_case,
     };
@@ -1160,23 +1156,25 @@ mod tests {
         // Create a fake TransactionContext with a fake InstructionContext with a single account which is the
         // vote account that was just created
         let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
-        let transaction_context = TransactionContext::new(
+        let mut transaction_context = TransactionContext::new(
             vec![(id(), processor_account), (node_pubkey, vote_account)],
             rent.clone(),
             0,
             0,
         );
-        let mut instruction_context = InstructionContext::default();
-        instruction_context.configure_for_tests(
-            0,
-            vec![InstructionAccount::new(1, false, true)],
-            &[],
-        );
+        transaction_context
+            .configure_next_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                &[],
+            )
+            .unwrap();
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
 
         // Get the BorrowedAccount from the InstructionContext which is what is used to manipulate and inspect account
         // state
         let mut borrowed_account = instruction_context
-            .try_borrow_instruction_account(&transaction_context, 0)
+            .try_borrow_instruction_account(0)
             .unwrap();
 
         // Ensure that the vote state started out at 1_14_11
@@ -1228,7 +1226,7 @@ mod tests {
         // Test that when the feature is enabled, if the vote account does have sufficient lamports, the
         // new vote state is written out
         assert_eq!(
-            borrowed_account.set_lamports(rent.minimum_balance(VoteState::size_of()),),
+            borrowed_account.set_lamports(rent.minimum_balance(VoteState::size_of())),
             Ok(())
         );
         assert_eq!(
@@ -1309,23 +1307,25 @@ mod tests {
         // Create a fake TransactionContext with a fake InstructionContext with a single account which is the
         // vote account that was just created
         let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
-        let transaction_context = TransactionContext::new(
+        let mut transaction_context = TransactionContext::new(
             vec![(id(), processor_account), (node_pubkey, vote_account)],
             rent,
             0,
             0,
         );
-        let mut instruction_context = InstructionContext::default();
-        instruction_context.configure_for_tests(
-            0,
-            vec![InstructionAccount::new(1, false, true)],
-            &[],
-        );
+        transaction_context
+            .configure_next_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                &[],
+            )
+            .unwrap();
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
 
         // Get the BorrowedAccount from the InstructionContext which is what is used to manipulate and inspect account
         // state
         let mut borrowed_account = instruction_context
-            .try_borrow_instruction_account(&transaction_context, 0)
+            .try_borrow_instruction_account(0)
             .unwrap();
 
         let epoch_schedule = std::sync::Arc::new(EpochSchedule::without_warmup());

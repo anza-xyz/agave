@@ -24,8 +24,6 @@ use {
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
-    solana_log_collector::LogCollector,
-    solana_measure::{measure::Measure, measure_us},
     solana_message::{
         compiled_instruction::CompiledInstruction,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
@@ -49,11 +47,13 @@ use {
     solana_sdk_ids::system_program,
     solana_svm_callback::TransactionProcessingCallback,
     solana_svm_feature_set::SVMFeatureSet,
+    solana_svm_log_collector::LogCollector,
+    solana_svm_measure::{measure::Measure, measure_us},
+    solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
-    solana_timings::{ExecuteTimingType, ExecuteTimings},
+    solana_svm_type_overrides::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard},
     solana_transaction_context::{ExecutionRecord, TransactionContext},
     solana_transaction_error::{TransactionError, TransactionResult},
-    solana_type_overrides::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard},
     std::{
         collections::HashSet,
         fmt::{Debug, Formatter},
@@ -364,31 +364,35 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             let builtins = self.builtin_program_ids.read().unwrap().clone();
 
-            self.replenish_program_cache(
-                &account_loader,
-                &builtins,
-                &mut program_cache_for_tx_batch,
-                &mut execute_timings,
-                config.check_program_modification_slot,
-                config.limit_to_load_programs,
-                false, // increment_usage_counter
-            );
-
-            if program_cache_for_tx_batch.hit_max_limit {
-                return LoadAndExecuteSanitizedTransactionsOutput {
-                    error_metrics,
-                    execute_timings,
-                    processing_results: (0..sanitized_txs.len())
-                        .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
-                        .collect(),
-                    // If we abort the batch and balance recording is enabled, no balances should be
-                    // collected. If this is a leader thread, no batch will be committed.
-                    balance_collector: None,
-                };
-            }
+            let ((), program_cache_us) = measure_us!({
+                self.replenish_program_cache(
+                    &account_loader,
+                    &builtins,
+                    &mut program_cache_for_tx_batch,
+                    &mut execute_timings,
+                    config.check_program_modification_slot,
+                    config.limit_to_load_programs,
+                    false, // increment_usage_counter
+                );
+            });
+            execute_timings
+                .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
 
             program_cache_for_tx_batch
         };
+
+        if program_cache_for_tx_batch.hit_max_limit {
+            return LoadAndExecuteSanitizedTransactionsOutput {
+                error_metrics,
+                execute_timings,
+                processing_results: (0..sanitized_txs.len())
+                    .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
+                    .collect(),
+                // If we abort the batch and balance recording is enabled, no balances should be
+                // collected. If this is a leader thread, no batch will be committed.
+                balance_collector: None,
+            };
+        }
 
         let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
 
@@ -455,24 +459,24 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             config.limit_to_load_programs,
                             true, // increment_usage_counter
                         );
-
-                        if program_cache_for_tx_batch.hit_max_limit {
-                            return LoadAndExecuteSanitizedTransactionsOutput {
-                                error_metrics,
-                                execute_timings,
-                                processing_results: (0..sanitized_txs.len())
-                                    .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
-                                    .collect(),
-                                // If we abort the batch and balance recording is enabled, no balances should be
-                                // collected. If this is a leader thread, no batch will be committed.
-                                balance_collector: None,
-                            };
-                        }
                     });
                     execute_timings.saturating_add_in_place(
                         ExecuteTimingType::ProgramCacheUs,
                         program_cache_us,
                     );
+
+                    if program_cache_for_tx_batch.hit_max_limit {
+                        return LoadAndExecuteSanitizedTransactionsOutput {
+                            error_metrics,
+                            execute_timings,
+                            processing_results: (0..sanitized_txs.len())
+                                .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
+                                .collect(),
+                            // If we abort the batch and balance recording is enabled, no balances should be
+                            // collected. If this is a leader thread, no batch will be committed.
+                            balance_collector: None,
+                        };
+                    }
 
                     let executed_tx = self.execute_loaded_transaction(
                         callbacks,
@@ -712,13 +716,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
                 cache_entry.tx_usage_counter.fetch_add(1, Ordering::Relaxed);
             } else if account_loader
-                .account_matches_owners(account_key, PROGRAM_OWNERS)
-                .is_some()
+                .get_account_shared_data(account_key)
+                .map(|(account, _slot)| PROGRAM_OWNERS.contains(account.owner()))
+                .unwrap_or(false)
             {
                 program_accounts_set.insert(*account_key);
             }
         }
-
         program_accounts_set
     }
 
@@ -849,11 +853,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             environment.rent.clone(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
-        );
-        transaction_context.set_remove_accounts_executable_flag_checks(
-            environment
-                .feature_set
-                .remove_accounts_executable_flag_checks,
         );
 
         let pre_account_state_info =
@@ -1040,7 +1039,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) {
         let mut sysvar_cache = self.sysvar_cache.write().unwrap();
         sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
-            if let Some(account) = callbacks.get_account_shared_data(pubkey) {
+            if let Some((account, _slot)) = callbacks.get_account_shared_data(pubkey) {
                 set_sysvar(account.data());
             }
         });
@@ -1092,9 +1091,9 @@ mod tests {
                 TRANSACTION_ACCOUNT_BASE_SIZE,
             },
             nonce_info::NonceInfo,
+            rent_calculator::RENT_EXEMPT_RENT_EPOCH,
             rollback_accounts::RollbackAccounts,
         },
-        agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{create_account_shared_data_for_test, WritableAccount},
         solana_clock::Clock,
         solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -1112,7 +1111,6 @@ mod tests {
             loaded_programs::{BlockRelation, ProgramCacheEntryType},
         },
         solana_rent::Rent,
-        solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
         solana_sdk_ids::{bpf_loader, loader_v4, system_program, sysvar},
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
@@ -1124,10 +1122,7 @@ mod tests {
     };
 
     fn new_unchecked_sanitized_message(message: Message) -> SanitizedMessage {
-        SanitizedMessage::Legacy(LegacyMessage::new(
-            message,
-            &ReservedAccountKeys::empty_key_set(),
-        ))
+        SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()))
     }
 
     struct TestForkGraph {}
@@ -1160,24 +1155,12 @@ mod tests {
     impl InvokeContextCallback for MockBankCallback {}
 
     impl TransactionProcessingCallback for MockBankCallback {
-        fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-            if let Some(data) = self.account_shared_data.read().unwrap().get(account) {
-                if data.lamports() == 0 {
-                    None
-                } else {
-                    owners.iter().position(|entry| data.owner() == entry)
-                }
-            } else {
-                None
-            }
-        }
-
-        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
             self.account_shared_data
                 .read()
                 .unwrap()
                 .get(pubkey)
-                .cloned()
+                .map(|account| (account.clone(), 0))
         }
 
         fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
@@ -1293,14 +1276,13 @@ mod tests {
             instruction_trace.len(),
         );
         for (index_in_trace, stack_height) in instruction_trace.into_iter().enumerate() {
-            while stack_height <= transaction_context.get_instruction_context_stack_height() {
+            while stack_height <= transaction_context.get_instruction_stack_height() {
                 transaction_context.pop().unwrap();
             }
-            if stack_height > transaction_context.get_instruction_context_stack_height() {
+            if stack_height > transaction_context.get_instruction_stack_height() {
                 transaction_context
-                    .get_next_instruction_context_mut()
-                    .unwrap()
-                    .configure_for_tests(0, vec![], &[index_in_trace as u8]);
+                    .configure_next_instruction_for_tests(0, vec![], &[index_in_trace as u8])
+                    .unwrap();
                 transaction_context.push().unwrap();
             }
         }

@@ -50,8 +50,7 @@ members = [
     "ledger",
     "ledger-tool",
     "local-cluster",
-    "log-analyzer",
-    "log-collector",
+    "low-pass-filter",
     "measure",
     "memory-management",
     "merkle-tree",
@@ -105,12 +104,16 @@ members = [
     "svm",
     "svm-callback",
     "svm-feature-set",
+    "svm-log-collector",
+    "svm-measure",
+    "svm-metrics",
+    "svm-timings",
     "svm-transaction",
+    "svm-type-overrides",
     "syscalls",
     "syscalls/gen-syscall-list",
     "test-validator",
     "thread-manager",
-    "timings",
     "tls-utils",
     "tokens",
     "tps-client",
@@ -123,16 +126,15 @@ members = [
     "transaction-status-client-types",
     "transaction-view",
     "turbine",
-    "type-overrides",
     "udp-client",
     "unified-scheduler-logic",
     "unified-scheduler-pool",
-    "upload-perf",
     "validator",
     "verified-packet-receiver",
     "version",
     "vortexor",
     "vote",
+    "votor",
     "watchtower",
     "wen-restart",
     "xdp",
@@ -183,9 +185,10 @@ agave-syscalls = { path = "syscalls", version = "=3.0.0" }
 agave-thread-manager = { path = "thread-manager", version = "=3.0.0" }
 agave-transaction-view = { path = "transaction-view", version = "=3.0.0" }
 agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=3.0.0" }
+agave-votor = { path = "votor", version = "=3.0.0" }
 agave-xdp = { path = "xdp", version = "=3.0.0" }
 ahash = "0.8.11"
-anyhow = "1.0.98"
+anyhow = "1.0.99"
 aquamarine = "0.6.0"
 arbitrary = "1.4.1"
 arc-swap = "1.7.1"
@@ -200,7 +203,7 @@ assert_cmd = "2.0"
 assert_matches = "1.5.0"
 async-channel = "1.9.0"
 async-lock = "3.4.1"
-async-trait = "0.1.88"
+async-trait = "0.1.89"
 atty = "0.2.11"
 axum = "0.7.9"
 aya = "0.13"
@@ -241,7 +244,7 @@ ctrlc = "3.4.7"
 curve25519-dalek = { version = "4.1.3", features = ["digest", "rand_core"] }
 dashmap = "5.5.3"
 derivation-path = { version = "0.2.0", default-features = false }
-derive-where = "1.5.0"
+derive-where = "1.6.0"
 derive_more = { version = "1.0.0", features = ["full"] }
 dialoguer = "0.10.4"
 digest = "0.10.7"
@@ -293,7 +296,7 @@ jsonrpc-http-server = "18.0.0"
 jsonrpc-ipc-server = "18.0.0"
 jsonrpc-pubsub = "18.0.0"
 lazy-lru = "0.1.3"
-libc = "0.2.174"
+libc = "0.2.175"
 libloading = "0.7.4"
 libsecp256k1 = { version = "0.6.0", default-features = false, features = [
     "std",
@@ -325,7 +328,7 @@ predicates = "2.1"
 pretty-hex = "0.3.0"
 pretty_assertions = "1.4.1"
 prio-graph = "0.3.0"
-proc-macro2 = "1.0.95"
+proc-macro2 = "1.0.97"
 proptest = "1.7"
 prost = "0.11.9"
 prost-build = "0.11.9"
@@ -364,7 +367,7 @@ sha3 = "0.10.8"
 shuttle = "0.7.1"
 signal-hook = "0.3.18"
 siphasher = "1.0.1"
-slab = "0.4.10"
+slab = "0.4.11"
 smallvec = "1.15.1"
 smpl_jwt = "0.7.1"
 socket2 = "0.6.0"
@@ -427,9 +430,9 @@ solana-feature-gate-interface = "2.2.2"
 solana-fee = { path = "fee", version = "=3.0.0" }
 solana-fee-calculator = "2.2.1"
 solana-fee-structure = "2.3.0"
-solana-file-download = "2.2.2"
+solana-file-download = "3.0.0"
 solana-frozen-abi = "2.3.0"
-solana-frozen-abi-macro = "2.2.1"
+solana-frozen-abi-macro = "3.0.0"
 solana-genesis = { path = "genesis", version = "=3.0.0" }
 solana-genesis-config = "2.3.0"
 solana-genesis-utils = { path = "genesis-utils", version = "=3.0.0" }
@@ -450,8 +453,8 @@ solana-loader-v3-interface = "5.0.0"
 solana-loader-v4-interface = "2.2.1"
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=3.0.0" }
 solana-local-cluster = { path = "local-cluster", version = "=3.0.0" }
-solana-log-collector = { path = "log-collector", version = "=3.0.0" }
 solana-logger = "3.0.0"
+solana-low-pass-filter = { path = "low-pass-filter", version = "=3.0.0" }
 solana-measure = { path = "measure", version = "=3.0.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=3.0.0" }
 solana-message = "2.4.0"
@@ -486,7 +489,6 @@ solana-quic-definitions = "2.3.0"
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=3.0.0" }
 solana-remote-wallet = { path = "remote-wallet", version = "=3.0.0", default-features = false }
 solana-rent = "2.2.1"
-solana-rent-collector = "2.2.1"
 solana-reward-info = "2.2.1"
 solana-rpc = { path = "rpc", version = "=3.0.0" }
 solana-rpc-client = { path = "rpc-client", version = "=3.0.0", default-features = false }
@@ -496,7 +498,7 @@ solana-rpc-client-types = { path = "rpc-client-types", version = "=3.0.0" }
 solana-runtime = { path = "runtime", version = "=3.0.0" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=3.0.0" }
 solana-sanitize = "2.2.1"
-solana-sbpf = "=0.12.0"
+solana-sbpf = { version = "=0.12.2", default-features = false }
 solana-sdk-ids = "2.2.1"
 solana-secp256k1-program = "2.2.3"
 solana-secp256k1-recover = "2.2.1"
@@ -523,7 +525,12 @@ solana-streamer = { path = "streamer", version = "=3.0.0" }
 solana-svm = { path = "svm", version = "=3.0.0" }
 solana-svm-callback = { path = "svm-callback", version = "=3.0.0" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.0.0" }
+solana-svm-log-collector = { path = "svm-log-collector", version = "=3.0.0" }
+solana-svm-measure = { path = "svm-measure", version = "=3.0.0" }
+solana-svm-metrics = { path = "svm-metrics", version = "=3.0.0" }
+solana-svm-timings = { path = "svm-timings", version = "=3.0.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.0.0" }
+solana-svm-type-overrides = { path = "svm-type-overrides", version = "=3.0.0" }
 solana-system-interface = "1.0"
 solana-system-program = { path = "programs/system", version = "=3.0.0" }
 solana-system-transaction = "2.2.1"
@@ -531,7 +538,6 @@ solana-sysvar = "2.2.2"
 solana-sysvar-id = "2.2.1"
 solana-test-validator = { path = "test-validator", version = "=3.0.0" }
 solana-time-utils = "2.2.1"
-solana-timings = { path = "timings", version = "=3.0.0" }
 solana-tls-utils = { path = "tls-utils", version = "=3.0.0" }
 solana-tps-client = { path = "tps-client", version = "=3.0.0" }
 solana-tpu-client = { path = "tpu-client", version = "=3.0.0", default-features = false }
@@ -543,7 +549,6 @@ solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", ver
 solana-transaction-status = { path = "transaction-status", version = "=3.0.0" }
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=3.0.0" }
 solana-turbine = { path = "turbine", version = "=3.0.0" }
-solana-type-overrides = { path = "type-overrides", version = "=3.0.0" }
 solana-udp-client = { path = "udp-client", version = "=3.0.0" }
 solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=3.0.0" }
 solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=3.0.0" }
@@ -581,7 +586,7 @@ tar = "0.4.44"
 tarpc = "0.29.0"
 tempfile = "3.20.0"
 test-case = "3.3.1"
-thiserror = "2.0.12"
+thiserror = "2.0.14"
 thread-priority = "1.2.0"
 tiny-bip39 = "0.8.2"
 tokio = "1.47.1"

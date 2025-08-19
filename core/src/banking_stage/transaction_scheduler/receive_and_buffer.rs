@@ -179,38 +179,43 @@ impl SanitizedTransactionReceiveAndBuffer {
         let mut error_counts = TransactionErrorMetrics::default();
         for chunk in packets.chunks(CHUNK_SIZE) {
             let mut post_sanitization_count = Saturating::<usize>(0);
-            chunk
-                .iter()
-                .filter_map(|packet| {
-                    packet.build_sanitized_transaction(
-                        vote_only,
-                        root_bank.as_ref(),
-                        root_bank.get_reserved_account_keys(),
-                    )
-                })
-                .inspect(|_| post_sanitization_count += 1)
-                .filter(|(tx, _deactivation_slot)| {
-                    validate_account_locks(
-                        tx.message().account_keys(),
-                        transaction_account_lock_limit,
-                    )
-                    .is_ok()
-                })
-                .filter_map(|(tx, deactivation_slot)| {
-                    tx.compute_budget_instruction_details()
-                        .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
-                        .map(|compute_budget| (tx, deactivation_slot, compute_budget.into()))
-                        .ok()
-                })
-                .for_each(|(tx, deactivation_slot, fee_budget_limits)| {
-                    transactions.push(tx);
-                    max_ages.push(calculate_max_age(
-                        sanitized_epoch,
-                        deactivation_slot,
-                        alt_resolved_slot,
-                    ));
-                    fee_budget_limits_vec.push(fee_budget_limits);
-                });
+
+            for packet in chunk {
+                let Some((tx, deactivation_slot)) = packet.build_sanitized_transaction(
+                    vote_only,
+                    root_bank.as_ref(),
+                    root_bank.get_reserved_account_keys(),
+                ) else {
+                    continue;
+                };
+
+                post_sanitization_count += 1;
+
+                if validate_account_locks(
+                    tx.message().account_keys(),
+                    transaction_account_lock_limit,
+                )
+                .is_err()
+                {
+                    continue;
+                }
+
+                let Ok(fee_budget_limits) = tx
+                    .compute_budget_instruction_details()
+                    .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
+                    .map(|compute_budget| compute_budget.into())
+                else {
+                    continue;
+                };
+
+                transactions.push(tx);
+                max_ages.push(calculate_max_age(
+                    sanitized_epoch,
+                    deactivation_slot,
+                    alt_resolved_slot,
+                ));
+                fee_budget_limits_vec.push(fee_budget_limits);
+            }
 
             let check_results = working_bank.check_transactions(
                 &transactions,

@@ -38,12 +38,13 @@ use {
         account_saver::collect_accounts_to_store,
         bank::{
             metrics::*,
-            partitioned_epoch_rewards::{EpochRewardStatus, StakeRewards, VoteRewardsAccounts},
+            partitioned_epoch_rewards::{EpochRewardStatus, VoteRewardsAccounts},
         },
         bank_forks::BankForks,
         epoch_stakes::{NodeVoteAccounts, VersionedEpochStakes},
         inflation_rewards::points::InflationPointCalculationEvent,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
+        rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
         snapshot_hash::SnapshotHash,
         stake_account::StakeAccount,
@@ -112,7 +113,6 @@ use {
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
     },
     solana_pubkey::Pubkey,
-    solana_rent_collector::RentCollector,
     solana_reward_info::RewardInfo,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
@@ -143,12 +143,12 @@ use {
         },
     },
     solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_transaction as system_transaction,
     solana_sysvar::{self as sysvar, last_restart_slot::LastRestartSlot, Sysvar},
     solana_sysvar_id::SysvarId,
     solana_time_utils::years_as_slots,
-    solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
         versioned::VersionedTransaction,
@@ -160,6 +160,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         fmt,
+        num::NonZeroUsize,
         ops::{AddAssign, RangeFull},
         path::PathBuf,
         slice,
@@ -1743,8 +1744,8 @@ impl Bank {
             Some(account)
         })
         .expect(
-            "Stakes cache is inconsistent with accounts-db. This can indicate \
-            a corrupted snapshot or bugs in cached accounts or accounts-db.",
+            "Stakes cache is inconsistent with accounts-db. This can indicate a corrupted \
+             snapshot or bugs in cached accounts or accounts-db.",
         ));
         info!("Loading Stakes took: {stakes_time}");
         let stakes_accounts_load_duration = now.elapsed();
@@ -1849,8 +1850,8 @@ impl Bank {
         // from the passed in genesis_config instead (as new()/new_with_paths() already do)
         assert_eq!(
             bank.genesis_creation_time, genesis_config.creation_time,
-            "Bank snapshot genesis creation time does not match genesis.bin creation time. \
-             The snapshot and genesis.bin might pertain to different clusters"
+            "Bank snapshot genesis creation time does not match genesis.bin creation time. The \
+             snapshot and genesis.bin might pertain to different clusters"
         );
         assert_eq!(bank.ticks_per_slot, genesis_config.ticks_per_slot);
         assert_eq!(
@@ -2380,7 +2381,7 @@ impl Bank {
                 },
             )| {
                 if let Err(err) = vote_account.checked_add_lamports(vote_rewards) {
-                    debug!("reward redemption failed for {}: {:?}", vote_pubkey, err);
+                    debug!("reward redemption failed for {vote_pubkey}: {err:?}");
                     return;
                 }
 
@@ -2400,24 +2401,15 @@ impl Bank {
         result
     }
 
-    fn update_reward_history(
-        &self,
-        stake_rewards: StakeRewards,
-        vote_rewards: &VoteRewardsAccounts,
-    ) {
-        let additional_reserve = stake_rewards.len() + vote_rewards.accounts_with_rewards.len();
+    fn update_vote_rewards(&self, vote_rewards: &VoteRewardsAccounts) {
         let mut rewards = self.rewards.write().unwrap();
-        rewards.reserve(additional_reserve);
+        rewards.reserve(vote_rewards.accounts_with_rewards.len());
         vote_rewards
             .accounts_with_rewards
             .iter()
             .for_each(|(vote_pubkey, vote_reward, _)| {
                 rewards.push((*vote_pubkey, *vote_reward));
             });
-        stake_rewards
-            .into_iter()
-            .filter(|x| x.get_stake_reward() > 0)
-            .for_each(|x| rewards.push((x.stake_pubkey, x.stake_reward_info)));
     }
 
     fn update_recent_blockhashes_locked(&self, locked_blockhash_queue: &BlockhashQueue) {
@@ -2689,8 +2681,9 @@ impl Bank {
 
         assert!(
             !self.freeze_started(),
-            "Can't change frozen bank by adding not-existing new precompiled program ({program_id}). \
-                Maybe, inconsistent program activation is detected on snapshot restore?"
+            "Can't change frozen bank by adding not-existing new precompiled program \
+             ({program_id}). Maybe, inconsistent program activation is detected on snapshot \
+             restore?"
         );
 
         // Add a bogus executable account, which will be loaded and ignored.
@@ -3137,7 +3130,7 @@ impl Bank {
             },
         );
 
-        debug!("simulate_transaction: {:?}", timings);
+        debug!("simulate_transaction: {timings:?}");
 
         let processing_result = processing_results
             .pop()
@@ -3367,7 +3360,7 @@ impl Bank {
                 }
                 Err(err) => {
                     if err_count.0 == 0 {
-                        debug!("tx error: {:?} {:?}", err, tx);
+                        debug!("tx error: {err:?} {tx:?}");
                     }
                     *err_count += 1;
                 }
@@ -3576,7 +3569,8 @@ impl Bank {
     ) -> Vec<TransactionCommitResult> {
         assert!(
             !self.freeze_started(),
-            "commit_transactions() working on a bank that is already frozen or is undergoing freezing!"
+            "commit_transactions() working on a bank that is already frozen or is undergoing \
+             freezing!"
         );
 
         let ProcessedTransactionCounts {
@@ -3627,9 +3621,11 @@ impl Bank {
 
             let to_store = (self.slot(), accounts_to_store.as_slice());
             self.update_bank_hash_stats(&to_store);
+            // See https://github.com/solana-labs/solana/pull/31455 for discussion
+            // on *not* updating the index within a threadpool.
             self.rc
                 .accounts
-                .store_cached(to_store, transactions.as_deref());
+                .store_accounts_seq(to_store, transactions.as_deref());
         });
 
         // Cached vote and stake accounts are synchronized with accounts-db
@@ -3988,7 +3984,7 @@ impl Bank {
             })
         });
         self.update_bank_hash_stats(&accounts);
-        self.rc.accounts.store_accounts_cached(accounts);
+        self.rc.accounts.store_accounts_par(accounts, None);
         m.stop();
         self.rc
             .accounts
@@ -4019,40 +4015,32 @@ impl Bank {
         pubkey: &Pubkey,
         new_account: &AccountSharedData,
     ) {
-        let old_account_data_size =
-            if let Some(old_account) = self.get_account_with_fixed_root_no_cache(pubkey) {
-                match new_account.lamports().cmp(&old_account.lamports()) {
-                    std::cmp::Ordering::Greater => {
-                        let increased = new_account.lamports() - old_account.lamports();
-                        trace!(
-                            "store_account_and_update_capitalization: increased: {} {}",
-                            pubkey,
-                            increased
-                        );
-                        self.capitalization.fetch_add(increased, Relaxed);
-                    }
-                    std::cmp::Ordering::Less => {
-                        let decreased = old_account.lamports() - new_account.lamports();
-                        trace!(
-                            "store_account_and_update_capitalization: decreased: {} {}",
-                            pubkey,
-                            decreased
-                        );
-                        self.capitalization.fetch_sub(decreased, Relaxed);
-                    }
-                    std::cmp::Ordering::Equal => {}
+        let old_account_data_size = if let Some(old_account) =
+            self.get_account_with_fixed_root_no_cache(pubkey)
+        {
+            match new_account.lamports().cmp(&old_account.lamports()) {
+                std::cmp::Ordering::Greater => {
+                    let diff = new_account.lamports() - old_account.lamports();
+                    trace!("store_account_and_update_capitalization: increased: {pubkey} {diff}");
+                    self.capitalization.fetch_add(diff, Relaxed);
                 }
-                old_account.data().len()
-            } else {
-                trace!(
-                    "store_account_and_update_capitalization: created: {} {}",
-                    pubkey,
-                    new_account.lamports()
-                );
-                self.capitalization
-                    .fetch_add(new_account.lamports(), Relaxed);
-                0
-            };
+                std::cmp::Ordering::Less => {
+                    let diff = old_account.lamports() - new_account.lamports();
+                    trace!("store_account_and_update_capitalization: decreased: {pubkey} {diff}");
+                    self.capitalization.fetch_sub(diff, Relaxed);
+                }
+                std::cmp::Ordering::Equal => {}
+            }
+            old_account.data().len()
+        } else {
+            trace!(
+                "store_account_and_update_capitalization: created: {pubkey} {}",
+                new_account.lamports()
+            );
+            self.capitalization
+                .fetch_add(new_account.lamports(), Relaxed);
+            0
+        };
 
         self.store_account(pubkey, new_account);
         self.calculate_and_update_accounts_data_size_delta_off_chain(
@@ -4194,14 +4182,14 @@ impl Bank {
         let bank_frozen = *lock != Hash::default();
         if new_hard_fork_slot < bank_slot {
             warn!(
-                "Hard fork at slot {new_hard_fork_slot} ignored, the hard fork is older \
-                than the bank at slot {bank_slot} that attempted to register it."
+                "Hard fork at slot {new_hard_fork_slot} ignored, the hard fork is older than the \
+                 bank at slot {bank_slot} that attempted to register it."
             );
         } else if (new_hard_fork_slot == bank_slot) && bank_frozen {
             warn!(
-                "Hard fork at slot {new_hard_fork_slot} ignored, the hard fork is the same \
-                slot as the bank at slot {bank_slot} that attempted to register it, but that \
-                bank is already frozen."
+                "Hard fork at slot {new_hard_fork_slot} ignored, the hard fork is the same slot \
+                 as the bank at slot {bank_slot} that attempted to register it, but that bank is \
+                 already frozen."
             );
         } else {
             self.hard_forks
@@ -4557,8 +4545,8 @@ impl Bank {
         );
         info!(
             "bank frozen: {slot} hash: {hash} signature_count: {} last_blockhash: {} \
-             capitalization: {}, accounts_lt_hash checksum: {accounts_lt_hash_checksum}, \
-             stats: {bank_hash_stats:?}",
+             capitalization: {}, accounts_lt_hash checksum: {accounts_lt_hash_checksum}, stats: \
+             {bank_hash_stats:?}",
             self.signature_count(),
             self.last_blockhash(),
             self.capitalization(),
@@ -4645,8 +4633,8 @@ impl Bank {
                 let expected = expected_accounts_lt_hash.0.checksum();
                 let calculated = calculated_accounts_lt_hash.0.checksum();
                 error!(
-                    "Verifying accounts failed: accounts lattice hashes do not match, \
-                     expected: {expected}, calculated: {calculated}",
+                    "Verifying accounts failed: accounts lattice hashes do not match, expected: \
+                     {expected}, calculated: {calculated}",
                 );
             }
             is_ok
@@ -4665,25 +4653,17 @@ impl Bank {
                     .spawn(move || {
                         info!("Verifying accounts in background...");
                         let start = Instant::now();
-                        let thread_pool = {
-                            let num_threads = accounts_db_
-                                .num_hash_threads
-                                .unwrap_or_else(accounts_db::default_num_hash_threads)
-                                .get();
-                            ThreadPoolBuilder::new()
-                                .thread_name(|i| format!("solVerfyAccts{i:02}"))
-                                .num_threads(num_threads)
-                                .build()
-                                .unwrap()
-                        };
+                        let num_threads = accounts_db_
+                            .num_hash_threads
+                            .unwrap_or_else(accounts_db::default_num_hash_threads);
                         let (calculated_accounts_lt_hash, lattice_verify_time) =
-                            meas_dur!(thread_pool.install(|| {
-                                accounts_db_.calculate_accounts_lt_hash_at_startup_from_storages(
+                            meas_dur!(accounts_db_
+                                .calculate_accounts_lt_hash_at_startup_from_storages(
                                     snapshot_storages.0.as_slice(),
                                     &duplicates_lt_hash.unwrap(),
                                     slot,
-                                )
-                            }));
+                                    num_threads
+                                ));
                         let is_ok =
                             check_lt_hash(&expected_accounts_lt_hash, &calculated_accounts_lt_hash);
                         accounts_db_
@@ -4708,11 +4688,13 @@ impl Bank {
         } else {
             info!("Verifying accounts in foreground...");
             let start = Instant::now();
+            let num_threads = NonZeroUsize::new(num_cpus::get()).unwrap();
             let calculated_accounts_lt_hash = if let Some(duplicates_lt_hash) = duplicates_lt_hash {
                 accounts_db.calculate_accounts_lt_hash_at_startup_from_storages(
                     snapshot_storages.0.as_slice(),
                     &duplicates_lt_hash,
                     slot,
+                    num_threads,
                 )
             } else {
                 accounts_db.calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot)
@@ -5245,9 +5227,9 @@ impl Bank {
     }
 
     pub fn add_precompile(&mut self, program_id: &Pubkey) {
-        debug!("Adding precompiled program {}", program_id);
+        debug!("Adding precompiled program {program_id}");
         self.add_precompiled_account(program_id);
-        debug!("Added precompiled program {:?}", program_id);
+        debug!("Added precompiled program {program_id:?}");
     }
 
     // Call AccountsDb::clean_accounts()
@@ -5712,20 +5694,11 @@ impl InvokeContextCallback for Bank {
 }
 
 impl TransactionProcessingCallback for Bank {
-    fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-        self.rc
-            .accounts
-            .accounts_db
-            .account_matches_owners(&self.ancestors, account, owners)
-            .ok()
-    }
-
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
         self.rc
             .accounts
             .accounts_db
             .load_with_fixed_root(&self.ancestors, pubkey)
-            .map(|(acc, _)| acc)
     }
 
     // NOTE: must hold idempotent for the same set of arguments
@@ -5754,8 +5727,9 @@ impl TransactionProcessingCallback for Bank {
 
         assert!(
             !self.freeze_started(),
-            "Can't change frozen bank by adding not-existing new builtin program ({name}, {program_id}). \
-            Maybe, inconsistent program activation is detected on snapshot restore?"
+            "Can't change frozen bank by adding not-existing new builtin program ({name}, \
+             {program_id}). Maybe, inconsistent program activation is detected on snapshot \
+             restore?"
         );
 
         // Add a bogus executable builtin account, which will be loaded and ignored.

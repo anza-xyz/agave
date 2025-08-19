@@ -4,6 +4,7 @@ use {
     crate::{
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
         epoch_stakes::VersionedEpochStakes,
+        rent_collector::RentCollector,
         runtime_config::RuntimeConfig,
         snapshot_utils::{SnapshotError, StorageAndNextAccountsFileId},
         stake_account::StakeAccount,
@@ -35,7 +36,6 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_rent_collector::RentCollector,
     solana_serde::default_on_eof,
     solana_stake_interface::state::Delegation,
     std::{
@@ -340,8 +340,14 @@ impl<T> SnapshotAccountsDbFields<T> {
                 // There must not be any overlap in the slots of storages between the full snapshot and the incremental snapshot
                 incremental_snapshot_storages
                     .iter()
-                    .all(|storage_entry| !full_snapshot_storages.contains_key(storage_entry.0)).then_some(()).ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidData, "Snapshots are incompatible: There are storages for the same slot in both the full snapshot and the incremental snapshot!")
+                    .all(|storage_entry| !full_snapshot_storages.contains_key(storage_entry.0))
+                    .then_some(())
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Snapshots are incompatible: There are storages for the same slot in \
+                             both the full snapshot and the incremental snapshot!",
+                        )
                     })?;
 
                 let mut combined_storages = full_snapshot_storages;
@@ -435,9 +441,7 @@ where
     let deserializable_bank = deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?;
     if !deserializable_bank.unused_epoch_stakes.is_empty() {
         return Err(Box::new(bincode::ErrorKind::Custom(
-            "Expected deserialized bank's unused_epoch_stakes field \
-             to be empty"
-                .to_string(),
+            "Expected deserialized bank's unused_epoch_stakes field to be empty".to_string(),
         )));
     }
     let mut bank_fields = BankFieldsToDeserialize::from(deserializable_bank);
@@ -447,7 +451,7 @@ where
     // Process extra fields
     let ExtraFieldsToDeserialize {
         lamports_per_signature,
-        _obsolete_incremental_snapshot_persistence: _incremental_snapshot_persistence,
+        _obsolete_incremental_snapshot_persistence,
         _obsolete_epoch_accounts_hash,
         versioned_epoch_stakes,
         accounts_lt_hash,

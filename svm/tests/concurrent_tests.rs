@@ -26,7 +26,7 @@ use {
         },
     },
     solana_svm_feature_set::SVMFeatureSet,
-    solana_timings::ExecuteTimings,
+    solana_svm_timings::ExecuteTimings,
     solana_transaction::{sanitized::SanitizedTransaction, Transaction},
     std::collections::HashSet,
 };

@@ -225,6 +225,7 @@ fn elems_from_buffer(buffer: &PinnedVec<u8>) -> perf_libs::Elems {
     }
 }
 
+// TODO: clean up legacy shred artifacts
 fn shred_gpu_offsets(
     offset: usize,
     batches: &[PacketBatch],
@@ -244,7 +245,7 @@ fn shred_gpu_offsets(
         offset.checked_add(std::mem::size_of::<Packet>())
     });
     let packets = batches.iter().flatten();
-    for (offset, packet, merkle_root_offset) in izip!(offsets, packets, merkle_roots_offsets) {
+    for (offset, _packet, merkle_root_offset) in izip!(offsets, packets, merkle_roots_offsets) {
         let sig = shred::layout::get_signature_range();
         let sig = add_offset(sig, offset);
         debug_assert_eq!(sig.end - sig.start, std::mem::size_of::<Signature>());
@@ -252,9 +253,7 @@ fn shred_gpu_offsets(
         // discarded during deserialization.
         let msg: Range<usize> = match merkle_root_offset {
             None => {
-                let shred = shred::layout::get_shred(packet);
-                let msg = shred.and_then(shred::layout::get_signed_data_offsets);
-                add_offset(msg.unwrap_or_default(), offset)
+                0..SIZE_OF_MERKLE_ROOT // legacy shreds - remove valid but useless offset
             }
             Some(merkle_root_offset) => {
                 merkle_root_offset..merkle_root_offset + SIZE_OF_MERKLE_ROOT
@@ -779,9 +778,6 @@ mod tests {
             let slot = shred::layout::get_slot(shred).unwrap();
             let signature = shred::layout::get_signature(shred).unwrap();
             let pubkey = keypairs[&slot].pubkey();
-            if let Some(offsets) = shred::layout::get_signed_data_offsets(shred) {
-                assert!(signature.verify(pubkey.as_ref(), &shred[offsets]));
-            }
             let data = shred::layout::get_signed_data(shred).unwrap();
             assert!(signature.verify(pubkey.as_ref(), data.as_ref()));
         }

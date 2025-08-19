@@ -368,7 +368,7 @@ impl PrunedBanksRequestHandler {
         // Purge all the slots in parallel
         // Banks for the same slot are purged sequentially
         let accounts_db = bank.rc.accounts.accounts_db.as_ref();
-        accounts_db.thread_pool_clean.install(|| {
+        accounts_db.thread_pool_background.install(|| {
             grouped_banks_to_purge.into_par_iter().for_each(|group| {
                 group.iter().for_each(|(slot, bank_id)| {
                     accounts_db.purge_slot(*slot, *bank_id, true);
@@ -509,10 +509,9 @@ impl AccountsBackgroundService {
                                 Ok(snapshot_slot) => {
                                     assert!(
                                         last_cleaned_slot <= snapshot_slot,
-                                        "last cleaned slot: {last_cleaned_slot}, \
-                                         snapshot request slot: {snapshot_slot}, \
-                                         is startup verification complete: {}, \
-                                         enqueued snapshot requests: {:?}",
+                                        "last cleaned slot: {last_cleaned_slot}, snapshot request \
+                                         slot: {snapshot_slot}, is startup verification complete: \
+                                         {}, enqueued snapshot requests: {:?}",
                                         bank.has_initial_accounts_hash_verification_completed(),
                                         request_handlers
                                             .snapshot_request_handler
@@ -526,8 +525,8 @@ impl AccountsBackgroundService {
                                 }
                                 Err(err) => {
                                     error!(
-                                        "Stopping AccountsBackgroundService! \
-                                         Fatal error while handling snapshot requests: {err}",
+                                        "Stopping AccountsBackgroundService! Fatal error while \
+                                         handling snapshot requests: {err}",
                                     );
                                     exit.store(true, Ordering::Relaxed);
                                     break;

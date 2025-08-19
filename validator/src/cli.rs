@@ -1,7 +1,6 @@
 use {
     crate::commands,
     clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
-    log::warn,
     solana_accounts_db::{
         accounts_db::{
             DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE, DEFAULT_ACCOUNTS_SHRINK_RATIO,
@@ -128,6 +127,37 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
 
     add_arg!(
         // deprecated in v3.0.0
+        Arg::with_name("accounts_db_clean_threads")
+            .long("accounts-db-clean-threads")
+            .takes_value(true)
+            .value_name("NUMBER")
+            .conflicts_with("accounts_db_background_threads"),
+        replaced_by: "accounts-db-background-threads",
+    );
+    add_arg!(
+        // deprecated in v3.0.0
+        Arg::with_name("accounts_db_read_cache_limit_mb")
+            .long("accounts-db-read-cache-limit-mb")
+            .value_name("MAX | LOW,HIGH")
+            .takes_value(true)
+            .min_values(1)
+            .max_values(2)
+            .multiple(false)
+            .require_delimiter(true)
+            .help("How large the read cache for account data can become, in mebibytes")
+            .long_help(
+                "How large the read cache for account data can become, in mebibytes. \
+                 If given a single value, it will be the maximum size for the cache. \
+                 If given a pair of values, they will be the low and high watermarks \
+                 for the cache. When the cache exceeds the high watermark, entries will \
+                 be evicted until the size reaches the low watermark."
+            )
+            .hidden(hidden_unless_forced())
+            .conflicts_with("accounts_db_read_cache_limit"),
+            replaced_by: "accounts-db-read-cache-limit",
+    );
+    add_arg!(
+        // deprecated in v3.0.0
         Arg::with_name("accounts_hash_cache_path")
             .long("accounts-hash-cache-path")
             .value_name("PATH")
@@ -142,6 +172,32 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .long("disable-accounts-disk-index")
         .help("Disable the disk-based accounts index if it is enabled by default."));
 
+    add_arg!(
+        // deprecated in v3.0.0
+        Arg::with_name("gossip_host")
+            .long("gossip-host")
+            .value_name("HOST")
+            .takes_value(true)
+            .validator(solana_net_utils::is_host),
+            replaced_by : "bind-address",
+            usage_warning:"Use --bind-address instead",
+    );
+    add_arg!(
+        // deprecated in v3.0.0
+        Arg::with_name("tpu_disable_quic")
+            .long("tpu-disable-quic")
+            .takes_value(false)
+            .help("Do not use QUIC to send transactions."),
+        usage_warning: "UDP support will be dropped"
+    );
+    add_arg!(
+        // deprecated in v3.0.0
+        Arg::with_name("tpu_enable_udp")
+            .long("tpu-enable-udp")
+            .takes_value(false)
+            .help("Enable UDP for receiving/sending transactions."),
+        usage_warning: "UDP support will be dropped"
+    );
     res
 }
 
@@ -177,7 +233,8 @@ pub fn warn_for_deprecated_arguments(matches: &ArgMatches) {
                     msg.push('.');
                 }
             }
-            warn!("{}", msg);
+            // this can not rely on logger since it is not initialized at the time of call
+            eprintln!("{}", msg);
         }
     }
 }
@@ -678,15 +735,6 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Gossip port number for the validator"),
         )
         .arg(
-            Arg::with_name("gossip_host")
-                .long("gossip-host")
-                .value_name("HOST")
-                .takes_value(true)
-                .validator(solana_net_utils::is_host)
-                .hidden(hidden_unless_forced())
-                .help("DEPRECATED: Use --bind-address instead."),
-        )
-        .arg(
             Arg::with_name("dynamic_port_range")
                 .long("dynamic-port-range")
                 .value_name("MIN_PORT-MAX_PORT")
@@ -701,7 +749,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
                 .default_value("127.0.0.1")
-                .help("IP address to bind the validator ports [default: 127.0.0.1]"),
+                .help("IP address to bind the validator ports [default: 127.0.0.1]. Can be repeated to specify multihoming options."),
         )
         .arg(
             Arg::with_name("clone_account")

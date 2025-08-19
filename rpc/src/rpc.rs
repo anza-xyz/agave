@@ -159,7 +159,7 @@ fn is_finalized(
         && (blockstore.is_root(slot) || bank.status_cache_ancestors().contains(&slot))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct JsonRpcConfig {
     pub enable_rpc_transaction_history: bool,
     pub enable_extended_tx_metadata_storage: bool,
@@ -211,7 +211,7 @@ impl JsonRpcConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RpcBigtableConfig {
     pub enable_bigtable_ledger_upload: bool,
     pub bigtable_instance_name: String,
@@ -4529,7 +4529,6 @@ pub mod tests {
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path,
         },
-        solana_log_collector::ic_logger_msg,
         solana_message::{
             v0::{self, MessageAddressTableLookup},
             Message, MessageHeader, SimpleAddressLoader, VersionedMessage,
@@ -4562,6 +4561,7 @@ pub mod tests {
         solana_sha256_hasher::hash,
         solana_signer::Signer,
         solana_svm::account_loader::TRANSACTION_ACCOUNT_BASE_SIZE,
+        solana_svm_log_collector::ic_logger_msg,
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_system_transaction as system_transaction,
         solana_sysvar::slot_hashes::SlotHashes,
@@ -4675,15 +4675,9 @@ pub mod tests {
         ic_logger_msg!(log_collector, "I am logging from a builtin program!");
         ic_logger_msg!(log_collector, "I am about to CPI to System!");
 
-        let from_pubkey = *transaction_context.get_key_of_account_at_index(
-            instruction_context.get_index_of_instruction_account_in_transaction(0)?,
-        )?;
-        let to_pubkey = *transaction_context.get_key_of_account_at_index(
-            instruction_context.get_index_of_instruction_account_in_transaction(1)?,
-        )?;
-        let owner_pubkey = *transaction_context.get_key_of_account_at_index(
-            instruction_context.get_index_of_instruction_account_in_transaction(2)?,
-        )?;
+        let from_pubkey = *instruction_context.get_key_of_instruction_account(0)?;
+        let to_pubkey = *instruction_context.get_key_of_instruction_account(1)?;
+        let owner_pubkey = *instruction_context.get_key_of_instruction_account(2)?;
 
         invoke_context.native_invoke(
             system_instruction::create_account(

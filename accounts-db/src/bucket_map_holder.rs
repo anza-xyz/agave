@@ -140,13 +140,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
             return;
         }
 
-        // when age has incremented twice, we know that we have made it through scanning all bins since we started waiting,
-        //  so we are then 'idle'
-        let end_age = self.current_age().wrapping_add(2);
+        let start_age = self.current_age();
         loop {
             self.wait_dirty_or_aged
                 .wait_timeout(Duration::from_millis(self.age_interval_ms()));
-            if end_age == self.current_age() {
+            // when age has incremented twice or more from the starting age, we know that we have
+            // made it through scanning all bins since we started waiting, so we are then 'idle'
+            if self.current_age().wrapping_sub(start_age) > 1 {
                 break;
             }
         }

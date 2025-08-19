@@ -51,8 +51,8 @@ use {
         transaction_processing_result::ProcessedTransaction,
         transaction_processor::ExecutionRecordingConfig,
     },
+    solana_svm_timings::{report_execute_timings, ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
-    solana_timings::{report_execute_timings, ExecuteTimingType, ExecuteTimings},
     solana_transaction::{
         sanitized::SanitizedTransaction, versioned::VersionedTransaction,
         TransactionVerificationMode,
@@ -3567,10 +3567,11 @@ pub mod tests {
         declare_process_instruction!(MockBuiltinErr, 1, |invoke_context| {
             let instruction_errors = get_instruction_errors();
 
-            let err = invoke_context
+            let instruction_context = invoke_context
                 .transaction_context
                 .get_current_instruction_context()
-                .expect("Failed to get instruction context")
+                .expect("Failed to get instruction context");
+            let err = instruction_context
                 .get_instruction_data()
                 .first()
                 .expect("Failed to get instruction data");

@@ -10,7 +10,7 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
-    solana_type_overrides::{
+    solana_svm_type_overrides::{
         rand::{thread_rng, Rng},
         sync::{
             atomic::{AtomicU64, Ordering},
@@ -25,7 +25,7 @@ use {
     },
 };
 #[cfg(feature = "metrics")]
-use {solana_measure::measure::Measure, solana_timings::ExecuteDetailsTimings};
+use {solana_svm_measure::measure::Measure, solana_svm_timings::ExecuteDetailsTimings};
 
 pub type ProgramRuntimeEnvironment = Arc<BuiltinProgram<InvokeContext<'static>>>;
 pub const MAX_LOADED_ENTRY_COUNT: usize = 512;

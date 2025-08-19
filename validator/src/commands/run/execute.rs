@@ -13,10 +13,7 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_file::StorageAccess,
-        accounts_index::{
-            AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude,
-            AccountsIndexConfig, IndexLimitMb, ScanFilter,
-        },
+        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimitMb, ScanFilter},
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
@@ -40,7 +37,7 @@ use {
         },
     },
     solana_gossip::{
-        cluster_info::{BindIpAddrs, NodeConfig, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS},
+        cluster_info::{NodeConfig, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS},
         contact_info::ContactInfo,
         node::Node,
     },
@@ -51,17 +48,17 @@ use {
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_logger::redirect_stderr_to_file,
+    solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
-    solana_rpc::{
-        rpc::{JsonRpcConfig, RpcBigtableConfig},
-        rpc_pubsub_service::PubSubConfig,
-    },
+    solana_rpc::rpc_pubsub_service::PubSubConfig,
     solana_runtime::{
         runtime_config::RuntimeConfig,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
-        snapshot_utils::{self, ArchiveFormat, SnapshotInterval, SnapshotVersion},
+        snapshot_utils::{
+            self, ArchiveFormat, SnapshotInterval, SnapshotVersion, BANK_SNAPSHOTS_DIR,
+        },
     },
     solana_send_transaction_service::send_transaction_service,
     solana_signer::Signer,
@@ -102,10 +99,11 @@ pub fn execute(
     let run_args = RunArgs::from_clap_arg_match(matches)?;
 
     let cli::thread_args::NumThreadConfig {
-        accounts_db_clean_threads,
+        accounts_db_background_threads,
         accounts_db_foreground_threads,
         accounts_db_hash_threads,
         accounts_index_flush_threads,
+        block_production_num_workers,
         ip_echo_server_threads,
         rayon_global_threads,
         replay_forks_threads,
@@ -241,12 +239,12 @@ pub fn execute(
     } else if private_rpc {
         solana_net_utils::parse_host("127.0.0.1").unwrap()
     } else {
-        bind_addresses.primary()
+        bind_addresses.active()
     };
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
 
-    let account_indexes = process_account_indexes(matches);
+    let account_indexes = AccountSecondaryIndexes::from_clap_arg_match(matches)?;
 
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
     let accounts_shrink_optimize_total_space =
@@ -291,7 +289,7 @@ pub fn execute(
     // version can then be deleted from gossip and get_rpc_node above.
     let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
         .ok()
-        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.primary()));
+        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.active()));
 
     let tower_path = value_t!(matches, "tower", PathBuf)
         .ok()
@@ -354,8 +352,19 @@ pub fn execute(
         .transpose()?
         .unzip();
 
-    let read_cache_limit_bytes = values_of::<usize>(matches, "accounts_db_read_cache_limit_mb")
-        .map(|limits| {
+    let read_cache_limit_bytes =
+        values_of::<usize>(matches, "accounts_db_read_cache_limit").map(|limits| {
+            match limits.len() {
+                2 => (limits[0], limits[1]),
+                _ => {
+                    // clap will enforce two values are given
+                    unreachable!("invalid number of values given to accounts-db-read-cache-limit")
+                }
+            }
+        });
+    // accounts-db-read-cache-limit-mb was deprecated in v3.0.0
+    let read_cache_limit_mb =
+        values_of::<usize>(matches, "accounts_db_read_cache_limit_mb").map(|limits| {
             match limits.len() {
                 // we were given explicit low and high watermark values, so use them
                 2 => (limits[0] * MB, limits[1] * MB),
@@ -369,6 +378,9 @@ pub fn execute(
                 }
             }
         });
+    // clap will enforce only one cli arg is provided, so pick whichever is Some
+    let read_cache_limit_bytes = read_cache_limit_bytes.or(read_cache_limit_mb);
+
     let storage_access = matches
         .value_of("accounts_db_access_storages_method")
         .map(|method| match method {
@@ -415,7 +427,7 @@ pub fn execute(
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         storage_access,
         scan_filter_for_shrinking,
-        num_clean_threads: Some(accounts_db_clean_threads),
+        num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         num_hash_threads: Some(accounts_db_hash_threads),
         ..AccountsDbConfig::default()
@@ -435,26 +447,6 @@ pub fn execute(
     };
     let starting_with_geyser_plugins: bool = on_start_geyser_plugin_config_files.is_some()
         || matches.is_present("geyser_plugin_always_enabled");
-
-    let rpc_bigtable_config = if matches.is_present("enable_rpc_bigtable_ledger_storage")
-        || matches.is_present("enable_bigtable_ledger_upload")
-    {
-        Some(RpcBigtableConfig {
-            enable_bigtable_ledger_upload: matches.is_present("enable_bigtable_ledger_upload"),
-            bigtable_instance_name: value_t_or_exit!(matches, "rpc_bigtable_instance_name", String),
-            bigtable_app_profile_id: value_t_or_exit!(
-                matches,
-                "rpc_bigtable_app_profile_id",
-                String
-            ),
-            timeout: value_t!(matches, "rpc_bigtable_timeout", u64)
-                .ok()
-                .map(Duration::from_secs),
-            max_message_size: value_t_or_exit!(matches, "rpc_bigtable_max_message_size", usize),
-        })
-    } else {
-        None
-    };
 
     let rpc_send_retry_rate_ms = value_t_or_exit!(matches, "rpc_send_transaction_retry_ms", u64);
     let rpc_send_batch_size = value_t_or_exit!(matches, "rpc_send_transaction_batch_size", usize);
@@ -497,8 +489,6 @@ pub fn execute(
         } else {
             value_t_or_exit!(matches, "rpc_send_transaction_leader_forward_count", u64)
         };
-
-    let full_api = matches.is_present("full_rpc_api");
 
     let xdp_interface = matches.value_of("retransmit_xdp_interface");
     let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
@@ -560,38 +550,7 @@ pub fn execute(
             .map(|s| Hash::from_str(s).unwrap()),
         expected_shred_version,
         new_hard_forks: hardforks_of(matches, "hard_forks"),
-        rpc_config: JsonRpcConfig {
-            enable_rpc_transaction_history: matches.is_present("enable_rpc_transaction_history"),
-            enable_extended_tx_metadata_storage: matches
-                .is_present("enable_extended_tx_metadata_storage"),
-            rpc_bigtable_config,
-            faucet_addr: matches.value_of("rpc_faucet_addr").map(|address| {
-                solana_net_utils::parse_host_port(address).expect("failed to parse faucet address")
-            }),
-            full_api,
-            max_multiple_accounts: Some(value_t_or_exit!(
-                matches,
-                "rpc_max_multiple_accounts",
-                usize
-            )),
-            health_check_slot_distance: value_t_or_exit!(
-                matches,
-                "health_check_slot_distance",
-                u64
-            ),
-            disable_health_check: false,
-            rpc_threads: value_t_or_exit!(matches, "rpc_threads", usize),
-            rpc_blocking_threads: value_t_or_exit!(matches, "rpc_blocking_threads", usize),
-            rpc_niceness_adj: value_t_or_exit!(matches, "rpc_niceness_adj", i8),
-            account_indexes: account_indexes.clone(),
-            rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),
-            max_request_body_size: Some(value_t_or_exit!(
-                matches,
-                "rpc_max_request_body_size",
-                usize
-            )),
-            skip_preflight_health_check: matches.is_present("skip_preflight_health_check"),
-        },
+        rpc_config: run_args.json_rpc_config,
         on_start_geyser_plugin_config_files,
         geyser_plugin_always_enabled: matches.is_present("geyser_plugin_always_enabled"),
         rpc_addrs: value_t!(matches, "rpc_port", u16).ok().map(|rpc_port| {
@@ -722,6 +681,7 @@ pub fn execute(
             "block_production_method",
             BlockProductionMethod
         ),
+        block_production_num_workers,
         transaction_struct: value_t_or_exit!(matches, "transaction_struct", TransactionStructure),
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         banking_trace_dir_byte_limit: parse_banking_trace_dir_byte_limit(matches),
@@ -794,7 +754,7 @@ pub fn execute(
             info!("OS network limits test passed.");
         } else {
             Err("OS network limit test failed. See \
-                https://docs.solanalabs.com/operations/guides/validator-start#system-tuning"
+                https://docs.anza.xyz/operations/guides/validator-start#system-tuning"
                 .to_string())?;
         }
     }
@@ -838,9 +798,8 @@ pub fn execute(
 
     let advertised_ip = if let Some(ip) = gossip_host {
         ip
-    } else if !bind_addresses.primary().is_unspecified() && !bind_addresses.primary().is_loopback()
-    {
-        bind_addresses.primary()
+    } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
+        bind_addresses.active()
     } else if !entrypoint_addrs.is_empty() {
         let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
         order.shuffle(&mut thread_rng());
@@ -855,7 +814,7 @@ pub fn execute(
                 );
                 solana_net_utils::get_public_ip_addr_with_binding(
                     entrypoint_addr,
-                    bind_addresses.primary(),
+                    bind_addresses.active(),
                 )
                 .map_or_else(
                     |err| {
@@ -870,7 +829,7 @@ pub fn execute(
         IpAddr::V4(Ipv4Addr::LOCALHOST)
     };
     let gossip_port = value_t!(matches, "gossip_port", u16).or_else(|_| {
-        solana_net_utils::find_available_port_in_range(bind_addresses.primary(), (0, 1))
+        solana_net_utils::find_available_port_in_range(bind_addresses.active(), (0, 1))
             .map_err(|err| format!("unable to find an available gossip port: {err}"))
     })?;
 
@@ -924,7 +883,7 @@ pub fn execute(
         advertised_ip,
         gossip_port,
         port_range: dynamic_port_range,
-        bind_ip_addrs: bind_addresses,
+        bind_ip_addrs: Arc::new(bind_addresses),
         public_tpu_addr,
         public_tpu_forwards_addr,
         num_tvu_receive_sockets: tvu_receive_threads,
@@ -1261,7 +1220,7 @@ fn new_snapshot_config(
         )?;
     }
 
-    let bank_snapshots_dir = snapshots_dir.join("snapshots");
+    let bank_snapshots_dir = snapshots_dir.join(BANK_SNAPSHOTS_DIR);
     fs::create_dir_all(&bank_snapshots_dir).map_err(|err| {
         format!(
             "failed to create bank snapshots directory '{}': {err}",
@@ -1356,53 +1315,4 @@ fn new_snapshot_config(
     }
 
     Ok(snapshot_config)
-}
-
-fn process_account_indexes(matches: &ArgMatches) -> AccountSecondaryIndexes {
-    let account_indexes: HashSet<AccountIndex> = matches
-        .values_of("account_indexes")
-        .unwrap_or_default()
-        .map(|value| match value {
-            "program-id" => AccountIndex::ProgramId,
-            "spl-token-mint" => AccountIndex::SplTokenMint,
-            "spl-token-owner" => AccountIndex::SplTokenOwner,
-            _ => unreachable!(),
-        })
-        .collect();
-
-    let account_indexes_include_keys: HashSet<Pubkey> =
-        values_t!(matches, "account_index_include_key", Pubkey)
-            .unwrap_or_default()
-            .iter()
-            .cloned()
-            .collect();
-
-    let account_indexes_exclude_keys: HashSet<Pubkey> =
-        values_t!(matches, "account_index_exclude_key", Pubkey)
-            .unwrap_or_default()
-            .iter()
-            .cloned()
-            .collect();
-
-    let exclude_keys = !account_indexes_exclude_keys.is_empty();
-    let include_keys = !account_indexes_include_keys.is_empty();
-
-    let keys = if !account_indexes.is_empty() && (exclude_keys || include_keys) {
-        let account_indexes_keys = AccountSecondaryIndexesIncludeExclude {
-            exclude: exclude_keys,
-            keys: if exclude_keys {
-                account_indexes_exclude_keys
-            } else {
-                account_indexes_include_keys
-            },
-        };
-        Some(account_indexes_keys)
-    } else {
-        None
-    };
-
-    AccountSecondaryIndexes {
-        keys,
-        indexes: account_indexes,
-    }
 }

@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "agave-unstable-api"), allow(dead_code))]
 //! The `shred` module defines data structures and methods to pull MTU sized data frames from the
 //! network. There are two types of shreds: data and coding. Data shreds contain entry information
 //! while coding shreds provide redundancy to protect against dropped network packets (erasures).
@@ -49,8 +50,6 @@
 //! So, given a) - c), we must restrict data shred's payload length such that the entire coding
 //! payload can fit into one coding shred / packet.
 
-#[cfg(test)]
-pub(crate) use self::shred_code::MAX_CODE_SHREDS_PER_SLOT;
 pub(crate) use self::{
     merkle_tree::{PROOF_ENTRIES_FOR_32_32_BATCH, SIZE_OF_MERKLE_ROOT},
     payload::serde_bytes_payload,
@@ -65,7 +64,7 @@ pub use {
 };
 use {
     self::{shred_code::ShredCode, traits::Shred as _},
-    crate::blockstore::{self, MAX_DATA_SHREDS_PER_SLOT},
+    crate::blockstore::{self},
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
     num_enum::{IntoPrimitive, TryFromPrimitive},
@@ -89,7 +88,7 @@ mod legacy;
 pub(crate) mod merkle;
 mod merkle_tree;
 mod payload;
-pub mod shred_code;
+mod shred_code;
 mod shred_data;
 mod stats;
 mod traits;
@@ -120,6 +119,12 @@ pub const DATA_SHREDS_PER_FEC_BLOCK: usize = 32;
 pub const CODING_SHREDS_PER_FEC_BLOCK: usize = 32;
 pub const SHREDS_PER_FEC_BLOCK: usize = DATA_SHREDS_PER_FEC_BLOCK + CODING_SHREDS_PER_FEC_BLOCK;
 
+/// An upper bound on maximum number of data shreds we can handle in a slot
+/// 32K shreds would allow ~320K peak TPS
+/// (32K shreds per slot * 4 TX per shred * 2.5 slots per sec)
+pub const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
+pub const MAX_CODE_SHREDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT;
+
 // Statically compute the typical data batch size assuming:
 // 1. 32:32 erasure coding batch
 // 2. Merkles are chained
@@ -134,10 +139,6 @@ pub const fn get_data_shred_bytes_per_batch_typical() -> u64 {
         };
     (DATA_SHREDS_PER_FEC_BLOCK * capacity) as u64
 }
-
-// For legacy tests and benchmarks.
-const_assert_eq!(LEGACY_SHRED_DATA_CAPACITY, 1051);
-pub const LEGACY_SHRED_DATA_CAPACITY: usize = legacy::ShredData::CAPACITY;
 
 // LAST_SHRED_IN_SLOT also implies DATA_COMPLETE_SHRED.
 // So it cannot be LAST_SHRED_IN_SLOT if not also DATA_COMPLETE_SHRED.
@@ -218,11 +219,12 @@ pub enum ShredType {
     Code = 0b0101_1010,
 }
 
+#[allow(dead_code)] //legacy shreds have been removed, TODO remove unused enum variants
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 #[serde(into = "u8", try_from = "u8")]
 enum ShredVariant {
-    LegacyCode, // 0b0101_1010
-    LegacyData, // 0b1010_0101
+    LegacyCode, // 0b0101_1010 TO REMOVE
+    LegacyData, // 0b1010_0101 TO REMOVE
     // proof_size is the number of Merkle proof entries, and is encoded in the
     // lowest 4 bits of the binary representation. The first 4 bits identify
     // the shred variant:
@@ -416,42 +418,14 @@ impl Shred {
         packet.meta_mut().size = size;
     }
 
-    // TODO: Should this sanitize output?
-    pub fn new_from_data(
-        slot: Slot,
-        index: u32,
-        parent_offset: u16,
-        data: &[u8],
-        flags: ShredFlags,
-        reference_tick: u8,
-        version: u16,
-        fec_set_index: u32,
-    ) -> Self {
-        Self::from(ShredData::new_from_data(
-            slot,
-            index,
-            parent_offset,
-            data,
-            flags,
-            reference_tick,
-            version,
-            fec_set_index,
-        ))
-    }
-
     pub fn new_from_serialized_shred<T>(shred: T) -> Result<Self, Error>
     where
         T: AsRef<[u8]> + Into<Payload>,
         Payload: From<T>,
     {
         Ok(match layout::get_shred_variant(shred.as_ref())? {
-            ShredVariant::LegacyCode => {
-                let shred = legacy::ShredCode::from_payload(shred)?;
-                Self::from(ShredCode::from(shred))
-            }
-            ShredVariant::LegacyData => {
-                let shred = legacy::ShredData::from_payload(shred)?;
-                Self::from(ShredData::from(shred))
+            ShredVariant::LegacyCode | ShredVariant::LegacyData => {
+                return Err(Error::InvalidShredVariant);
             }
             ShredVariant::MerkleCode { .. } => {
                 let shred = merkle::ShredCode::from_payload(shred)?;
@@ -722,10 +696,9 @@ impl TryFrom<u8> for ShredVariant {
     type Error = Error;
     #[inline]
     fn try_from(shred_variant: u8) -> Result<Self, Self::Error> {
-        if shred_variant == u8::from(ShredType::Code) {
-            Ok(ShredVariant::LegacyCode)
-        } else if shred_variant == u8::from(ShredType::Data) {
-            Ok(ShredVariant::LegacyData)
+        if shred_variant == u8::from(ShredType::Code) || shred_variant == u8::from(ShredType::Data)
+        {
+            Err(Error::InvalidShredVariant)
         } else {
             let proof_size = shred_variant & 0x0F;
             match shred_variant & 0xF0 {
@@ -845,7 +818,7 @@ where
     };
     match ShredType::from(shred_variant) {
         ShredType::Code => {
-            if index >= shred_code::MAX_CODE_SHREDS_PER_SLOT as u32 {
+            if index >= MAX_CODE_SHREDS_PER_SLOT as u32 {
                 stats.index_out_of_bounds += 1;
                 return true;
             }
@@ -1386,29 +1359,17 @@ mod tests {
         // Legacy coding shred.
         assert_eq!(u8::from(ShredVariant::LegacyCode), 0b0101_1010);
         assert_eq!(ShredType::from(ShredVariant::LegacyCode), ShredType::Code);
-        assert_matches!(
-            ShredVariant::try_from(0b0101_1010),
-            Ok(ShredVariant::LegacyCode)
-        );
+        assert_matches!(ShredVariant::try_from(0b0101_1010), Err(_));
         let buf = bincode::serialize(&ShredVariant::LegacyCode).unwrap();
         assert_eq!(buf, vec![0b0101_1010]);
-        assert_matches!(
-            bincode::deserialize::<ShredVariant>(&[0b0101_1010]),
-            Ok(ShredVariant::LegacyCode)
-        );
+        assert_matches!(bincode::deserialize::<ShredVariant>(&[0b0101_1010]), Err(_));
         // Legacy data shred.
         assert_eq!(u8::from(ShredVariant::LegacyData), 0b1010_0101);
         assert_eq!(ShredType::from(ShredVariant::LegacyData), ShredType::Data);
-        assert_matches!(
-            ShredVariant::try_from(0b1010_0101),
-            Ok(ShredVariant::LegacyData)
-        );
+        assert_matches!(ShredVariant::try_from(0b1010_0101), Err(_));
         let buf = bincode::serialize(&ShredVariant::LegacyData).unwrap();
         assert_eq!(buf, vec![0b1010_0101]);
-        assert_matches!(
-            bincode::deserialize::<ShredVariant>(&[0b1010_0101]),
-            Ok(ShredVariant::LegacyData)
-        );
+        assert_matches!(bincode::deserialize::<ShredVariant>(&[0b1010_0101]), Err(_));
     }
 
     #[test_case(false, false, 0b0100_0000)]
@@ -1750,7 +1711,10 @@ mod tests {
             let mut shred = shred.into_payload();
             let mut signature = [0u8; SIGNATURE_BYTES];
             rng.fill(&mut signature[..]);
-            let out = layout::set_retransmitter_signature(&mut shred, &Signature::from(signature));
+            let out = layout::set_retransmitter_signature(
+                &mut shred.as_mut(),
+                &Signature::from(signature),
+            );
             if chained && is_last_in_slot {
                 assert_matches!(out, Ok(()));
             } else {
@@ -1799,7 +1763,7 @@ mod tests {
         // (ignoring retransmitter signature) are duplicate.
         for shred in &shreds {
             let mut other = shred.payload().clone();
-            other[90] = other[90].wrapping_add(1);
+            other.as_mut()[90] = other[90].wrapping_add(1);
             let other = Shred::new_from_serialized_shred(other).unwrap();
             assert_ne!(shred.payload(), other.payload());
             assert_eq!(

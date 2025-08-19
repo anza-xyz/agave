@@ -250,8 +250,8 @@ pub fn adjust_ulimit_memlock(min_required: usize) -> io::Result<()> {
 
             if cfg!(target_os = "macos") {
                 log::error!(
-                    "On mac OS you may need to run \
-                    |sudo launchctl limit memlock {DESIRED_MEMLOCK} {DESIRED_MEMLOCK}| first"
+                    "On mac OS you may need to run |sudo launchctl limit memlock \
+                     {DESIRED_MEMLOCK} {DESIRED_MEMLOCK}| first"
                 );
             }
             return Err(io::Error::new(

@@ -40,8 +40,6 @@ pub struct ComputeBudget {
     pub stack_frame_size: usize,
     /// Number of compute units consumed by logging a `Pubkey`
     pub log_pubkey_units: u64,
-    /// Maximum cross-program invocation instruction size
-    pub max_cpi_instruction_size: usize,
     /// Number of account data bytes per compute unit charged during a cross-program invocation
     pub cpi_bytes_per_unit: u64,
     /// Base number of compute units consumed to get a sysvar
@@ -154,7 +152,6 @@ impl ComputeBudget {
             max_call_depth: budget.max_call_depth,
             stack_frame_size: budget.stack_frame_size,
             log_pubkey_units: cost.log_pubkey_units,
-            max_cpi_instruction_size: budget.max_cpi_instruction_size,
             cpi_bytes_per_unit: cost.cpi_bytes_per_unit,
             sysvar_base_cost: cost.sysvar_base_cost,
             secp256k1_recover_cost: cost.secp256k1_recover_cost,
@@ -199,7 +196,6 @@ impl ComputeBudget {
             sha256_max_slices: self.sha256_max_slices,
             max_call_depth: self.max_call_depth,
             stack_frame_size: self.stack_frame_size,
-            max_cpi_instruction_size: self.max_cpi_instruction_size,
             heap_size: self.heap_size,
         }
     }

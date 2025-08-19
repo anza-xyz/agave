@@ -51,10 +51,10 @@ fn bench_delete_dependencies(bencher: &mut Bencher) {
         let account = AccountSharedData::new(i + 1, 0, AccountSharedData::default().owner());
         accounts
             .accounts_db
-            .store_for_tests(i, &[(&pubkey, &account)]);
+            .store_for_tests((i, [(&pubkey, &account)].as_slice()));
         accounts
             .accounts_db
-            .store_for_tests(i, &[(&old_pubkey, &zero_account)]);
+            .store_for_tests((i, [(&old_pubkey, &zero_account)].as_slice()));
         old_pubkey = pubkey;
         accounts.accounts_db.add_root_and_flush_write_cache(i);
     }
@@ -89,7 +89,7 @@ where
     )
     .collect();
     let storable_accounts: Vec<_> = pubkeys.iter().zip(accounts_data.iter()).collect();
-    accounts.store_accounts_cached((slot, storable_accounts.as_slice()));
+    accounts.store_accounts_par((slot, storable_accounts.as_slice()), None);
     accounts.add_root(slot);
     accounts
         .accounts_db
@@ -116,7 +116,7 @@ where
         // Write to a different slot than the one being read from. Because
         // there's a new account pubkey being written to every time, will
         // compete for the accounts index lock on every store
-        accounts.store_accounts_cached((slot + 1, new_storable_accounts.as_slice()));
+        accounts.store_accounts_par((slot + 1, new_storable_accounts.as_slice()), None);
     });
 }
 
@@ -234,7 +234,7 @@ fn bench_dashmap_par_iter(bencher: &mut Bencher) {
     let (accounts, dashmap) = setup_bench_dashmap_iter();
 
     bencher.iter(|| {
-        test::black_box(accounts.accounts_db.thread_pool.install(|| {
+        test::black_box(accounts.accounts_db.thread_pool_foreground.install(|| {
             dashmap
                 .par_iter()
                 .map(|cached_account| (*cached_account.key(), cached_account.value().1))
@@ -268,7 +268,7 @@ fn bench_load_largest_accounts(b: &mut Bencher) {
         let account = AccountSharedData::new(lamports, 0, &Pubkey::default());
         accounts
             .accounts_db
-            .store_for_tests(0, &[(&pubkey, &account)]);
+            .store_for_tests((0, [(&pubkey, &account)].as_slice()));
     }
     accounts.accounts_db.add_root_and_flush_write_cache(0);
     let ancestors = Ancestors::from(vec![0]);

@@ -33,8 +33,8 @@ use {
         prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_svm_timings::ExecuteTimings,
     solana_system_transaction as system_transaction,
-    solana_timings::ExecuteTimings,
     solana_transaction_error::TransactionResult as Result,
     solana_unified_scheduler_logic::{SchedulingMode, Task},
     solana_unified_scheduler_pool::{
@@ -242,7 +242,7 @@ fn test_scheduler_producing_blocks() {
         &channels,
         &poh_recorder,
         transaction_recorder,
-        BankingStage::num_threads(),
+        BankingStage::default_num_workers(),
     );
     bank_forks.write().unwrap().install_scheduler_pool(pool);
 

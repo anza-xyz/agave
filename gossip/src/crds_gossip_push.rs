@@ -21,10 +21,13 @@ use {
         protocol::{Ping, PingCache},
         push_active_set::PushActiveSet,
         received_cache::ReceivedCache,
+        stake_weighting_config::{get_gossip_config_from_account, WeightingConfig},
     },
     itertools::Itertools,
+    solana_genesis_config::ClusterType,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
+    solana_runtime::bank::Bank,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_time_utils::timestamp,
@@ -49,6 +52,7 @@ const CRDS_GOSSIP_PRUNE_MSG_TIMEOUT_MS: u64 = 500;
 const CRDS_GOSSIP_PRUNE_STAKE_THRESHOLD_PCT: f64 = 0.15;
 const CRDS_GOSSIP_PRUNE_MIN_INGRESS_NODES: usize = 2;
 const CRDS_GOSSIP_PUSH_ACTIVE_SET_SIZE: usize = CRDS_GOSSIP_PUSH_FANOUT + 3;
+const CONFIG_REFRESH_INTERVAL_MS: u64 = 60_000;
 
 pub struct CrdsGossipPush {
     /// Active set of validators for push
@@ -65,12 +69,13 @@ pub struct CrdsGossipPush {
     pub num_total: AtomicUsize,
     pub num_old: AtomicUsize,
     pub num_pushes: AtomicUsize,
+    last_cfg_poll_ms: Mutex<u64>,
 }
 
 impl Default for CrdsGossipPush {
     fn default() -> Self {
         Self {
-            active_set: RwLock::default(),
+            active_set: RwLock::new(PushActiveSet::new_static()),
             crds_cursor: Mutex::default(),
             received_cache: Mutex::new(ReceivedCache::new(2 * CRDS_UNIQUE_PUBKEY_CAPACITY)),
             push_fanout: CRDS_GOSSIP_PUSH_FANOUT,
@@ -79,6 +84,7 @@ impl Default for CrdsGossipPush {
             num_total: AtomicUsize::default(),
             num_old: AtomicUsize::default(),
             num_pushes: AtomicUsize::default(),
+            last_cfg_poll_ms: Mutex::new(0),
         }
     }
 }
@@ -238,6 +244,28 @@ impl CrdsGossipPush {
         active_set.prune(self_pubkey, peer, origins, stakes);
     }
 
+    fn maybe_refresh_weighting_config(
+        &self,
+        maybe_bank_ref: Option<&Bank>,
+        now_ms: u64,
+    ) -> Option<WeightingConfig> {
+        let bank = maybe_bank_ref?;
+        if !matches!(
+            bank.cluster_type(),
+            ClusterType::Testnet | ClusterType::Development
+        ) {
+            return None;
+        }
+        {
+            let mut last = self.last_cfg_poll_ms.lock().unwrap();
+            if now_ms.saturating_sub(*last) < CONFIG_REFRESH_INTERVAL_MS {
+                return None;
+            }
+            *last = now_ms;
+        }
+        get_gossip_config_from_account(bank)
+    }
+
     /// Refresh the push active set.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn refresh_push_active_set(
@@ -250,6 +278,7 @@ impl CrdsGossipPush {
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
+        maybe_bank_ref: Option<&Bank>,
     ) {
         let mut rng = rand::thread_rng();
         // Active and valid gossip nodes with matching shred-version.
@@ -280,13 +309,18 @@ impl CrdsGossipPush {
             return;
         }
         let cluster_size = crds.read().unwrap().num_pubkeys().max(stakes.len());
+        let maybe_cfg = self.maybe_refresh_weighting_config(maybe_bank_ref, timestamp());
         let mut active_set = self.active_set.write().unwrap();
+        if let Some(cfg) = maybe_cfg {
+            active_set.apply_cfg(&cfg);
+        }
         active_set.rotate(
             &mut rng,
             CRDS_GOSSIP_PUSH_ACTIVE_SET_SIZE,
             cluster_size,
             &nodes,
             stakes,
+            &self_keypair.pubkey(),
         )
     }
 }
@@ -447,6 +481,7 @@ mod tests {
             &ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
+            None,
         );
 
         let new_msg = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
@@ -514,6 +549,7 @@ mod tests {
             &ping_cache,
             &mut Vec::new(),
             &SocketAddrSpace::Unspecified,
+            None,
         );
 
         // push 3's contact info to 1 and 2 and 3
@@ -557,6 +593,7 @@ mod tests {
             &ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
+            None,
         );
 
         let new_msg = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
@@ -605,6 +642,7 @@ mod tests {
             &ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
+            None,
         );
 
         let mut ci = ContactInfo::new_localhost(&solana_pubkey::new_rand(), 0);
