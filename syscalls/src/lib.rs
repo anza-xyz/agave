@@ -4428,14 +4428,14 @@ mod tests {
             while stack_height
                 <= invoke_context
                     .transaction_context
-                    .get_instruction_context_stack_height()
+                    .get_instruction_stack_height()
             {
                 invoke_context.transaction_context.pop().unwrap();
             }
             if stack_height
                 > invoke_context
                     .transaction_context
-                    .get_instruction_context_stack_height()
+                    .get_instruction_stack_height()
             {
                 let instruction_accounts = vec![InstructionAccount::new(
                     index_in_trace.saturating_add(1) as IndexOfAccount,

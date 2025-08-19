@@ -254,15 +254,9 @@ impl<'a> InvokeContext<'a> {
         let program_id = instruction_context
             .get_program_key()
             .map_err(|_| InstructionError::UnsupportedProgramId)?;
-        if self
-            .transaction_context
-            .get_instruction_context_stack_height()
-            != 0
-        {
-            let contains = (0..self
-                .transaction_context
-                .get_instruction_context_stack_height())
-                .any(|level| {
+        if self.transaction_context.get_instruction_stack_height() != 0 {
+            let contains =
+                (0..self.transaction_context.get_instruction_stack_height()).any(|level| {
                     self.transaction_context
                         .get_instruction_context_at_nesting_level(level)
                         .and_then(|instruction_context| instruction_context.get_program_key())
@@ -296,8 +290,7 @@ impl<'a> InvokeContext<'a> {
     /// Current height of the invocation stack, top level instructions are height
     /// `solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT`
     pub fn get_stack_height(&self) -> usize {
-        self.transaction_context
-            .get_instruction_context_stack_height()
+        self.transaction_context.get_instruction_stack_height()
     }
 
     /// Entrypoint for a cross-program invocation from a builtin program

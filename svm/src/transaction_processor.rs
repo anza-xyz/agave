@@ -1276,10 +1276,10 @@ mod tests {
             instruction_trace.len(),
         );
         for (index_in_trace, stack_height) in instruction_trace.into_iter().enumerate() {
-            while stack_height <= transaction_context.get_instruction_context_stack_height() {
+            while stack_height <= transaction_context.get_instruction_stack_height() {
                 transaction_context.pop().unwrap();
             }
-            if stack_height > transaction_context.get_instruction_context_stack_height() {
+            if stack_height > transaction_context.get_instruction_stack_height() {
                 transaction_context
                     .configure_next_instruction_for_tests(0, vec![], &[index_in_trace as u8])
                     .unwrap();

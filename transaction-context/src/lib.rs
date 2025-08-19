@@ -344,14 +344,14 @@ impl TransactionContext {
 
     /// Gets instruction stack height, top-level instructions are height
     /// `solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT`
-    pub fn get_instruction_context_stack_height(&self) -> usize {
+    pub fn get_instruction_stack_height(&self) -> usize {
         self.instruction_stack.len()
     }
 
     /// Returns a view on the current instruction
     pub fn get_current_instruction_context(&self) -> Result<InstructionContext, InstructionError> {
         let level = self
-            .get_instruction_context_stack_height()
+            .get_instruction_stack_height()
             .checked_sub(1)
             .ok_or(InstructionError::CallDepth)?;
         self.get_instruction_context_at_nesting_level(level)
@@ -418,7 +418,7 @@ impl TransactionContext {
     /// Pushes the next instruction
     #[cfg(not(target_os = "solana"))]
     pub fn push(&mut self) -> Result<(), InstructionError> {
-        let nesting_level = self.get_instruction_context_stack_height();
+        let nesting_level = self.get_instruction_stack_height();
         if !self.instruction_stack.is_empty() && self.accounts.get_lamports_delta() != 0 {
             return Err(InstructionError::UnbalancedInstruction);
         }
