@@ -141,9 +141,9 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
 
         match received_packet_results {
             Ok(receive_packet_results) => {
+                let num_received =
+                    receive_packet_results.packet_stats.passed_sigverify_count.0 as usize;
                 if should_buffer {
-                    let num_received =
-                        receive_packet_results.packet_stats.passed_sigverify_count.0 as usize;
                     let num_dropped_on_initial_parsing =
                         num_received - receive_packet_results.deserialized_packets.len();
 
@@ -151,8 +151,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                         self.buffer_packets(container, receive_packet_results.deserialized_packets)
                     );
                     Ok(ReceivingStats {
-                        num_received: receive_packet_results.packet_stats.passed_sigverify_count.0
-                            as usize,
+                        num_received,
                         num_dropped_without_parsing: 0,
                         num_dropped_on_sanitization: num_dropped_on_initial_parsing
                             + buffer_stats.num_dropped_on_sanitization,
@@ -169,12 +168,8 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                     })
                 } else {
                     Ok(ReceivingStats {
-                        num_received: receive_packet_results.packet_stats.passed_sigverify_count.0
-                            as usize,
-                        num_dropped_without_parsing: receive_packet_results
-                            .packet_stats
-                            .passed_sigverify_count
-                            .0 as usize,
+                        num_received,
+                        num_dropped_without_parsing: num_received,
                         num_dropped_on_sanitization: 0,
                         num_dropped_on_lock_validation: 0,
                         num_dropped_on_compute_budget: 0,
