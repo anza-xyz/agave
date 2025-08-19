@@ -7299,6 +7299,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-borsh"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc402b16657abbfa9991cd5cbfac5a11d809f7e7d28d3bb291baeb088b39060e"
+dependencies = [
+ "borsh 1.5.7",
+]
+
+[[package]]
 name = "solana-bpf-loader-program"
 version = "3.0.0"
 dependencies = [
@@ -7542,7 +7551,7 @@ dependencies = [
  "solana-account",
  "solana-account-decoder",
  "solana-address-lookup-table-interface",
- "solana-borsh",
+ "solana-borsh 3.0.0",
  "solana-clap-utils",
  "solana-cli-config",
  "solana-cli-output",
@@ -7828,7 +7837,7 @@ dependencies = [
  "criterion",
  "log",
  "rand 0.8.5",
- "solana-borsh",
+ "solana-borsh 3.0.0",
  "solana-builtins-default-costs",
  "solana-compute-budget",
  "solana-compute-budget-interface",
@@ -8101,7 +8110,7 @@ dependencies = [
  "log",
  "rand 0.8.5",
  "solana-bincode",
- "solana-borsh",
+ "solana-borsh 3.0.0",
  "solana-builtins-default-costs",
  "solana-clock",
  "solana-compute-budget",
@@ -8574,7 +8583,7 @@ dependencies = [
  "serde_yaml 0.9.34+deprecated",
  "solana-account",
  "solana-accounts-db",
- "solana-borsh",
+ "solana-borsh 3.0.0",
  "solana-clap-utils",
  "solana-cli-config",
  "solana-clock",
@@ -9562,7 +9571,7 @@ dependencies = [
  "solana-big-mod-exp",
  "solana-bincode",
  "solana-blake3-hasher",
- "solana-borsh",
+ "solana-borsh 2.2.1",
  "solana-clock",
  "solana-cpi",
  "solana-decode-error",
@@ -12284,7 +12293,7 @@ dependencies = [
  "borsh 1.5.7",
  "num-derive",
  "num-traits",
- "solana-borsh",
+ "solana-borsh 2.2.1",
  "solana-decode-error",
  "solana-instruction",
  "solana-msg",
