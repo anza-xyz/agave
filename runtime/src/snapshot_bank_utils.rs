@@ -108,7 +108,7 @@ pub fn serialize_status_cache(
 #[derive(Debug)]
 pub struct BankFromArchivesTimings {
     pub untar_full_snapshot_archive_us: u64,
-    pub untar_incremental_snapshot_archive_us: u64,
+    pub untar_incremental_snapshot_archive_us: Option<u64>,
     pub rebuild_bank_us: u64,
     pub verify_bank_us: u64,
 }
@@ -280,18 +280,8 @@ pub fn bank_from_snapshot_archives(
     // snapshot, use that.  Otherwise use the full snapshot.
     let status_cache_path = incremental_unpacked_snapshots_dir_and_version
         .as_ref()
-        .map_or_else(
-            || {
-                full_unpacked_snapshots_dir_and_version
-                    .unpacked_snapshots_dir
-                    .as_path()
-            },
-            |unarchived_incremental_snapshot| {
-                unarchived_incremental_snapshot
-                    .unpacked_snapshots_dir
-                    .as_path()
-            },
-        )
+        .unwrap_or(&full_unpacked_snapshots_dir_and_version)
+        .unpacked_snapshots_dir
         .join(snapshot_utils::SNAPSHOT_STATUS_CACHE_FILENAME);
     let slot_deltas = deserialize_status_cache(&status_cache_path)?;
 
@@ -326,9 +316,8 @@ pub fn bank_from_snapshot_archives(
     let timings = BankFromArchivesTimings {
         untar_full_snapshot_archive_us: full_measure_untar.as_us(),
         untar_incremental_snapshot_archive_us: incremental_measure_untar
-            .map_or(0, |incremental_measure_untar| {
-                incremental_measure_untar.as_us()
-            }),
+            .as_ref()
+            .map(Measure::as_us),
         rebuild_bank_us: measure_rebuild.as_us(),
         verify_bank_us: measure_verify.as_us(),
     };
@@ -342,7 +331,7 @@ pub fn bank_from_snapshot_archives(
         (
             "untar_incremental_snapshot_archive_us",
             timings.untar_incremental_snapshot_archive_us,
-            i64
+            Option<i64>
         ),
         ("rebuild_bank_us", timings.rebuild_bank_us, i64),
         ("verify_bank_us", timings.verify_bank_us, i64),
