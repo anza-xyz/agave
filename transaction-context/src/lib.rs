@@ -214,9 +214,12 @@ pub struct TransactionContext {
     accounts: Rc<TransactionAccounts>,
     instruction_stack_capacity: usize,
     instruction_trace_capacity: usize,
+    top_level_instruction_index: usize,
     instruction_stack: Vec<usize>,
     instruction_trace: Vec<InstructionFrame>,
-    top_level_instruction_index: usize,
+    dedup_map: Vec<u8>,
+    instruction_accounts: Vec<InstructionAccount>,
+    instruction_data: Vec<u8>,
     return_data: TransactionReturnData,
     #[cfg(not(target_os = "solana"))]
     rent: Rent,
@@ -235,14 +238,25 @@ impl TransactionContext {
             .into_iter()
             .map(|(key, account)| (key, RefCell::new(account)))
             .unzip();
+        let mut instruction_trace = Vec::with_capacity(instruction_trace_capacity);
+        instruction_trace.push(InstructionFrame::default());
         Self {
             account_keys: Pin::new(account_keys.into_boxed_slice()),
             accounts: Rc::new(TransactionAccounts::new(accounts)),
             instruction_stack_capacity,
             instruction_trace_capacity,
-            instruction_stack: Vec::with_capacity(instruction_stack_capacity),
-            instruction_trace: vec![InstructionFrame::default()],
             top_level_instruction_index: 0,
+            instruction_stack: Vec::with_capacity(instruction_stack_capacity),
+            instruction_trace,
+            dedup_map: Vec::with_capacity(
+                MAX_ACCOUNTS_PER_TRANSACTION.saturating_mul(instruction_trace_capacity),
+            ),
+            instruction_accounts: Vec::with_capacity(
+                MAX_ACCOUNTS_PER_INSTRUCTION.saturating_mul(instruction_trace_capacity),
+            ),
+            instruction_data: Vec::with_capacity(
+                MAX_INSTRUCTION_DATA_LEN.saturating_mul(instruction_trace_capacity),
+            ),
             return_data: TransactionReturnData::default(),
             rent,
         }
@@ -309,17 +323,43 @@ impl TransactionContext {
         &self,
         index_in_trace: usize,
     ) -> Result<InstructionContext, InstructionError> {
+        let prev_instruction = index_in_trace
+            .checked_sub(1)
+            .and_then(|index_in_trace| self.instruction_trace.get(index_in_trace));
         let instruction = self
             .instruction_trace
             .get(index_in_trace)
             .ok_or(InstructionError::CallDepth)?;
         Ok(InstructionContext {
             transaction_context: self,
-            nesting_level: instruction.nesting_level,
+            nesting_level: instruction.nesting_level as usize,
             program_account_index_in_tx: instruction.program_account_index_in_tx,
-            instruction_accounts: &instruction.instruction_accounts,
-            dedup_map: &instruction.dedup_map,
-            instruction_data: &instruction.instruction_data,
+            dedup_map: self
+                .dedup_map
+                .get(
+                    prev_instruction
+                        .map(|prev_instruction| prev_instruction.dedup_map_end as usize)
+                        .unwrap_or(0)..instruction.dedup_map_end as usize,
+                )
+                .ok_or(InstructionError::CallDepth)?,
+            instruction_accounts: self
+                .instruction_accounts
+                .get(
+                    prev_instruction
+                        .map(|prev_instruction| prev_instruction.instruction_accounts_end as usize)
+                        .unwrap_or(0)
+                        ..instruction.instruction_accounts_end as usize,
+                )
+                .ok_or(InstructionError::CallDepth)?,
+            instruction_data: self
+                .instruction_data
+                .get(
+                    prev_instruction
+                        .map(|prev_instruction| prev_instruction.instruction_data_end as usize)
+                        .unwrap_or(0)
+                        ..instruction.instruction_data_end as usize,
+                )
+                .ok_or(InstructionError::CallDepth)?,
         })
     }
 
@@ -385,9 +425,13 @@ impl TransactionContext {
             .last_mut()
             .ok_or(InstructionError::CallDepth)?;
         instruction.program_account_index_in_tx = program_index;
-        instruction.instruction_accounts = instruction_accounts;
-        instruction.instruction_data = instruction_data.to_vec();
-        instruction.dedup_map = deduplication_map;
+        self.dedup_map.extend_from_slice(&deduplication_map);
+        self.instruction_accounts
+            .extend_from_slice(&instruction_accounts);
+        self.instruction_data.extend_from_slice(instruction_data);
+        instruction.dedup_map_end = self.dedup_map.len() as u32;
+        instruction.instruction_accounts_end = self.instruction_accounts.len() as u32;
+        instruction.instruction_data_end = self.instruction_data.len() as u32;
         Ok(())
     }
 
@@ -427,7 +471,7 @@ impl TransactionContext {
                 .instruction_trace
                 .last_mut()
                 .ok_or(InstructionError::CallDepth)?;
-            instruction.nesting_level = nesting_level;
+            instruction.nesting_level = nesting_level as u16;
         }
         let index_in_trace = self.get_instruction_trace_length();
         if index_in_trace >= self.instruction_trace_capacity {
@@ -592,16 +636,14 @@ pub struct TransactionReturnData {
 }
 
 /// Instruction shared between runtime and programs.
+#[repr(C)]
 #[derive(Debug, Clone, Default)]
 pub struct InstructionFrame {
-    nesting_level: usize,
+    nesting_level: u16,
     program_account_index_in_tx: IndexOfAccount,
-    instruction_accounts: Vec<InstructionAccount>,
-    /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
-    /// Usage: dedup_map[index_in_transaction] = index_in_instruction
-    /// This is a vector of u8s to save memory, since many entries may be unused.
-    dedup_map: Vec<u8>,
-    instruction_data: Vec<u8>,
+    dedup_map_end: u32,
+    instruction_accounts_end: u32,
+    instruction_data_end: u32,
 }
 
 /// View interface to read instructions.
@@ -611,8 +653,11 @@ pub struct InstructionContext<'a> {
     // The rest of the fields are redundant shortcuts
     nesting_level: usize,
     program_account_index_in_tx: IndexOfAccount,
-    instruction_accounts: &'a [InstructionAccount],
+    /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
+    /// Usage: dedup_map[index_in_transaction] = index_in_instruction
+    /// The elements are u8 to save memory, since many entries may be unused.
     dedup_map: &'a [u8],
+    instruction_accounts: &'a [InstructionAccount],
     instruction_data: &'a [u8],
 }
 
