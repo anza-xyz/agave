@@ -36,6 +36,10 @@ solana-signature = { workspace = true, features = ["std"] }
 solana-signer = { workspace = true }
 thiserror = { workspace = true }
 uriparse = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+ur-registry = {workspace = true }
+ur-parse-lib = {workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }

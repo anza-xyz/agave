@@ -5,6 +5,7 @@ use {
     crate::{
         locator::{Locator, Manufacturer},
         wallet::{
+            keystone::keystone::KeystoneWallet,
             ledger::ledger::LedgerWallet,
             types::{Device, RemoteWalletType},
             WalletProbe,
@@ -85,8 +86,8 @@ impl RemoteWalletManager {
     /// Create wallet probes for supported hardware wallets
     #[cfg(feature = "hidapi")]
     fn create_wallet_probes(&self) -> Vec<Box<dyn WalletProbe>> {
-        use crate::wallet::ledger::ledger::LedgerProbe;
-        vec![Box::new(LedgerProbe)]
+        use crate::wallet::{keystone::keystone::KeystoneProbe, ledger::ledger::LedgerProbe};
+        vec![Box::new(LedgerProbe), Box::new(KeystoneProbe)]
     }
 
     /// Discover and connect to supported hardware wallet devices
@@ -171,7 +172,23 @@ impl RemoteWalletManager {
         })
     }
 
-    /// Get wallet info.
+    /// Get a particular Keystone wallet
+    pub fn get_keystone(
+        &self,
+        host_device_path: &str,
+    ) -> Result<Rc<KeystoneWallet>, RemoteWalletError> {
+        self.get_wallet_by_path(host_device_path, |wallet_type| {
+            match wallet_type {
+                RemoteWalletType::Keystone(keystone) => Ok(keystone.clone()),
+                _ => Err(RemoteWalletError::DeviceTypeMismatch),
+            }
+        })
+    }
+
+    /// Get wallet information by public key
+    /// 
+    /// Searches through connected devices to find one with the specified public key.
+    /// Returns the device information if found, or `None` if no matching device exists.
     pub fn get_wallet_info(&self, pubkey: &Pubkey) -> Option<RemoteWalletInfo> {
         self.devices
             .read()
