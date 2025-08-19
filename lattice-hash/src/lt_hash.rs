@@ -120,8 +120,6 @@ mod tests {
         }
     }
 
-    impl Copy for LtHash {}
-
     // Ensure that if you mix-in or mix-out with the identity, you get the original value
     #[test]
     fn test_identity() {
