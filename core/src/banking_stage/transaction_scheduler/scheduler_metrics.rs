@@ -68,7 +68,7 @@ pub struct SchedulerCountMetricsInner {
     /// Number of transactions that were immediately dropped on receive.
     pub num_dropped_on_receive: Saturating<usize>,
     /// Number of transactions that were dropped due to sanitization failure.
-    pub num_dropped_on_sanitization: Saturating<usize>,
+    pub num_dropped_on_parsing_and_sanitization: Saturating<usize>,
     /// Number of transactions that were dropped due to failed lock validation.
     pub num_dropped_on_validate_locks: Saturating<usize>,
     /// Number of transactions that were dropped in checking compute budget configuration
@@ -130,7 +130,8 @@ impl SchedulerCountMetricsInner {
             num_finished: Saturating(num_finished),
             num_retryable: Saturating(num_retryable),
             num_dropped_on_receive: Saturating(num_dropped_on_receive),
-            num_dropped_on_sanitization: Saturating(num_dropped_on_sanitization),
+            num_dropped_on_parsing_and_sanitization:
+                Saturating(num_dropped_on_parsing_and_sanitization),
             num_dropped_on_validate_locks: Saturating(num_dropped_on_validate_locks),
             num_dropped_on_receive_compute_budget: Saturating(num_dropped_on_receive_compute_budget),
             num_dropped_on_receive_age: Saturating(num_dropped_on_receive_age),
@@ -159,8 +160,8 @@ impl SchedulerCountMetricsInner {
             ("num_retryable", num_retryable, i64),
             ("num_dropped_on_receive", num_dropped_on_receive, i64),
             (
-                "num_dropped_on_sanitization",
-                num_dropped_on_sanitization,
+                "num_dropped_on_parsing_and_sanitization",
+                num_dropped_on_parsing_and_sanitization,
                 i64
             ),
             (
@@ -221,7 +222,7 @@ impl SchedulerCountMetricsInner {
         self.num_finished = Saturating(0);
         self.num_retryable = Saturating(0);
         self.num_dropped_on_receive = Saturating(0);
-        self.num_dropped_on_sanitization = Saturating(0);
+        self.num_dropped_on_parsing_and_sanitization = Saturating(0);
         self.num_dropped_on_validate_locks = Saturating(0);
         self.num_dropped_on_receive_compute_budget = Saturating(0);
         self.num_dropped_on_receive_age = Saturating(0);

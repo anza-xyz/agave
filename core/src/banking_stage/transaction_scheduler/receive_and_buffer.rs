@@ -57,7 +57,7 @@ pub(crate) struct ReceivingStats {
     /// window.
     pub num_dropped_without_parsing: usize,
 
-    pub num_dropped_on_sanitization: usize,
+    pub num_dropped_on_parsing_and_sanitization: usize,
     pub num_dropped_on_lock_validation: usize,
     pub num_dropped_on_compute_budget: usize,
     pub num_dropped_on_age: usize,
@@ -75,7 +75,8 @@ impl ReceivingStats {
     fn accumulate(&mut self, other: ReceivingStats) {
         self.num_received += other.num_received;
         self.num_dropped_without_parsing += other.num_dropped_without_parsing;
-        self.num_dropped_on_sanitization += other.num_dropped_on_sanitization;
+        self.num_dropped_on_parsing_and_sanitization +=
+            other.num_dropped_on_parsing_and_sanitization;
         self.num_dropped_on_lock_validation += other.num_dropped_on_lock_validation;
         self.num_dropped_on_compute_budget += other.num_dropped_on_compute_budget;
         self.num_dropped_on_age += other.num_dropped_on_age;
@@ -153,7 +154,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                     Ok(ReceivingStats {
                         num_received,
                         num_dropped_without_parsing: 0,
-                        num_dropped_on_sanitization: num_dropped_on_initial_parsing
+                        num_dropped_on_parsing_and_sanitization: num_dropped_on_initial_parsing
                             + buffer_stats.num_dropped_on_sanitization,
                         num_dropped_on_lock_validation: buffer_stats.num_dropped_on_lock_validation,
                         num_dropped_on_compute_budget: buffer_stats.num_dropped_on_compute_budget,
@@ -170,7 +171,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                     Ok(ReceivingStats {
                         num_received,
                         num_dropped_without_parsing: num_received,
-                        num_dropped_on_sanitization: 0,
+                        num_dropped_on_parsing_and_sanitization: 0,
                         num_dropped_on_lock_validation: 0,
                         num_dropped_on_compute_budget: 0,
                         num_dropped_on_age: 0,
@@ -186,7 +187,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
             Err(RecvTimeoutError::Timeout) => Ok(ReceivingStats {
                 num_received: 0,
                 num_dropped_without_parsing: 0,
-                num_dropped_on_sanitization: 0,
+                num_dropped_on_parsing_and_sanitization: 0,
                 num_dropped_on_lock_validation: 0,
                 num_dropped_on_compute_budget: 0,
                 num_dropped_on_age: 0,
@@ -389,7 +390,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         let mut stats = ReceivingStats {
             num_received: 0,
             num_dropped_without_parsing: 0,
-            num_dropped_on_sanitization: 0,
+            num_dropped_on_parsing_and_sanitization: 0,
             num_dropped_on_lock_validation: 0,
             num_dropped_on_compute_budget: 0,
             num_dropped_on_age: 0,
@@ -465,7 +466,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         Ok(ReceivingStats {
             num_received: stats.num_received,
             num_dropped_without_parsing: stats.num_dropped_without_parsing,
-            num_dropped_on_sanitization: stats.num_dropped_on_sanitization,
+            num_dropped_on_parsing_and_sanitization: stats.num_dropped_on_parsing_and_sanitization,
             num_dropped_on_lock_validation: stats.num_dropped_on_lock_validation,
             num_dropped_on_compute_budget: stats.num_dropped_on_compute_budget,
             num_dropped_on_age: stats.num_dropped_on_age,
@@ -579,8 +580,8 @@ impl TransactionViewReceiveAndBuffer {
             };
 
         let mut num_received = 0;
-        let mut num_dropped_without_buffering = 0;
-        let mut num_dropped_on_sanitization = 0;
+        let mut num_dropped_without_parsing = 0;
+        let mut num_dropped_on_parsing_and_sanitization = 0;
         let mut num_dropped_on_lock_validation = 0;
         let mut num_dropped_on_compute_budget = 0;
 
@@ -592,7 +593,7 @@ impl TransactionViewReceiveAndBuffer {
 
                 num_received += 1;
                 if !should_parse {
-                    num_dropped_without_buffering += 1;
+                    num_dropped_without_parsing += 1;
                     continue;
                 }
 
@@ -609,7 +610,7 @@ impl TransactionViewReceiveAndBuffer {
                         ) {
                             Ok(state) => Ok(state),
                             Err(PacketHandlingError::Sanitization) => {
-                                num_dropped_on_sanitization += 1;
+                                num_dropped_on_parsing_and_sanitization += 1;
                                 Err(())
                             }
                             Err(PacketHandlingError::LockValidation) => {
@@ -643,8 +644,8 @@ impl TransactionViewReceiveAndBuffer {
 
         ReceivingStats {
             num_received,
-            num_dropped_without_parsing: num_dropped_without_buffering,
-            num_dropped_on_sanitization,
+            num_dropped_without_parsing,
+            num_dropped_on_parsing_and_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
             num_dropped_on_age,
@@ -942,7 +943,7 @@ mod tests {
         let ReceivingStats {
             num_received,
             num_dropped_without_parsing,
-            num_dropped_on_sanitization,
+            num_dropped_on_parsing_and_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
             num_dropped_on_age,
@@ -961,7 +962,7 @@ mod tests {
 
         assert_eq!(num_received, 1);
         assert_eq!(num_dropped_without_parsing, 1);
-        assert_eq!(num_dropped_on_sanitization, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
         assert_eq!(num_dropped_on_age, 0);
@@ -1002,7 +1003,7 @@ mod tests {
         let ReceivingStats {
             num_received,
             num_dropped_without_parsing,
-            num_dropped_on_sanitization,
+            num_dropped_on_parsing_and_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
             num_dropped_on_age,
@@ -1018,7 +1019,7 @@ mod tests {
 
         assert_eq!(num_received, 0);
         assert_eq!(num_dropped_without_parsing, 0);
-        assert_eq!(num_dropped_on_sanitization, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
         assert_eq!(num_dropped_on_age, 0);
@@ -1051,7 +1052,7 @@ mod tests {
         let ReceivingStats {
             num_received,
             num_dropped_without_parsing,
-            num_dropped_on_sanitization,
+            num_dropped_on_parsing_and_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
             num_dropped_on_age,
@@ -1067,7 +1068,7 @@ mod tests {
 
         assert_eq!(num_received, 1);
         assert_eq!(num_dropped_without_parsing, 0);
-        assert_eq!(num_dropped_on_sanitization, 1);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 1);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
         assert_eq!(num_dropped_on_age, 0);
@@ -1099,7 +1100,7 @@ mod tests {
         let ReceivingStats {
             num_received,
             num_dropped_without_parsing,
-            num_dropped_on_sanitization,
+            num_dropped_on_parsing_and_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
             num_dropped_on_age,
@@ -1115,7 +1116,7 @@ mod tests {
 
         assert_eq!(num_received, 1);
         assert_eq!(num_dropped_without_parsing, 0);
-        assert_eq!(num_dropped_on_sanitization, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
         assert_eq!(num_dropped_on_age, 1);
@@ -1152,7 +1153,7 @@ mod tests {
         let ReceivingStats {
             num_received,
             num_dropped_without_parsing,
-            num_dropped_on_sanitization,
+            num_dropped_on_parsing_and_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
             num_dropped_on_age,
@@ -1168,7 +1169,7 @@ mod tests {
 
         assert_eq!(num_received, 1);
         assert_eq!(num_dropped_without_parsing, 0);
-        assert_eq!(num_dropped_on_sanitization, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
         assert_eq!(num_dropped_on_age, 0);
@@ -1220,7 +1221,7 @@ mod tests {
         let ReceivingStats {
             num_received,
             num_dropped_without_parsing,
-            num_dropped_on_sanitization,
+            num_dropped_on_parsing_and_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
             num_dropped_on_age,
@@ -1236,7 +1237,7 @@ mod tests {
 
         assert_eq!(num_received, 1);
         assert_eq!(num_dropped_without_parsing, 0);
-        assert_eq!(num_dropped_on_sanitization, 1);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 1);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
         assert_eq!(num_dropped_on_age, 0);
@@ -1273,7 +1274,7 @@ mod tests {
         let ReceivingStats {
             num_received,
             num_dropped_without_parsing,
-            num_dropped_on_sanitization,
+            num_dropped_on_parsing_and_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
             num_dropped_on_age,
@@ -1289,7 +1290,7 @@ mod tests {
 
         assert_eq!(num_received, 1);
         assert_eq!(num_dropped_without_parsing, 0);
-        assert_eq!(num_dropped_on_sanitization, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
         assert_eq!(num_dropped_on_age, 0);
@@ -1330,7 +1331,7 @@ mod tests {
         let ReceivingStats {
             num_received,
             num_dropped_without_parsing,
-            num_dropped_on_sanitization,
+            num_dropped_on_parsing_and_sanitization,
             num_dropped_on_lock_validation,
             num_dropped_on_compute_budget,
             num_dropped_on_age,
@@ -1346,7 +1347,7 @@ mod tests {
 
         assert_eq!(num_received, num_transactions);
         assert_eq!(num_dropped_without_parsing, 0);
-        assert_eq!(num_dropped_on_sanitization, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
         assert_eq!(num_dropped_on_lock_validation, 0);
         assert_eq!(num_dropped_on_compute_budget, 0);
         assert_eq!(num_dropped_on_age, 0);

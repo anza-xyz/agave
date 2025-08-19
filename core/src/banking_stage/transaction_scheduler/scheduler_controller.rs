@@ -313,7 +313,7 @@ where
             let ReceivingStats {
                 num_received,
                 num_dropped_without_parsing: num_dropped_without_buffering,
-                num_dropped_on_sanitization,
+                num_dropped_on_parsing_and_sanitization,
                 num_dropped_on_lock_validation,
                 num_dropped_on_compute_budget,
                 num_dropped_on_age,
@@ -327,7 +327,8 @@ where
 
             count_metrics.num_received += *num_received;
             count_metrics.num_dropped_on_receive += *num_dropped_without_buffering;
-            count_metrics.num_dropped_on_sanitization += *num_dropped_on_sanitization;
+            count_metrics.num_dropped_on_parsing_and_sanitization +=
+                *num_dropped_on_parsing_and_sanitization;
             count_metrics.num_dropped_on_validate_locks += *num_dropped_on_lock_validation;
             count_metrics.num_dropped_on_receive_compute_budget += *num_dropped_on_compute_budget;
             count_metrics.num_dropped_on_receive_age += *num_dropped_on_age;
