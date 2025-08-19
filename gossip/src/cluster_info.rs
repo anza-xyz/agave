@@ -409,6 +409,15 @@ impl ClusterInfo {
         Ok(())
     }
 
+    pub fn set_tvu_socket(&self, tvu_addr: SocketAddr) -> Result<(), ContactInfoError> {
+        self.my_contact_info
+            .write()
+            .unwrap()
+            .set_tvu(contact_info::Protocol::UDP, tvu_addr)?;
+        self.refresh_my_gossip_contact_info();
+        Ok(())
+    }
+
     pub fn set_tpu(&self, tpu_addr: SocketAddr) -> Result<(), ContactInfoError> {
         self.my_contact_info.write().unwrap().set_tpu(tpu_addr)?;
         self.refresh_my_gossip_contact_info();
@@ -2358,7 +2367,7 @@ impl ClusterInfo {
 pub struct Sockets {
     pub gossip: Arc<[UdpSocket]>,
     pub ip_echo: Option<TcpListener>,
-    pub tvu: Vec<UdpSocket>,
+    pub tvu: Vec<Arc<UdpSocket>>,
     pub tvu_quic: UdpSocket,
     pub tpu: Vec<UdpSocket>,
     pub tpu_forwards: Vec<UdpSocket>,
