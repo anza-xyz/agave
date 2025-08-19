@@ -48,8 +48,7 @@ use {
     solana_svm_log_collector::{ic_logger_msg, ic_msg},
     solana_svm_timings::ExecuteTimings,
     solana_svm_type_overrides::sync::Arc,
-    solana_sysvar::Sysvar,
-    solana_sysvar_id::SysvarId,
+    solana_sysvar::SysvarSerialize,
     solana_transaction_context::IndexOfAccount,
     std::{
         alloc::Layout,
@@ -2178,7 +2177,8 @@ mod tests {
         solana_sha256_hasher::hashv,
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,
-        solana_sysvar::stake_history::{self, StakeHistory, StakeHistoryEntry},
+        solana_stake_interface::stake_history::{self, StakeHistory, StakeHistoryEntry},
+        solana_sysvar_id::SysvarId,
         solana_transaction_context::InstructionAccount,
         std::{
             hash::{DefaultHasher, Hash, Hasher},

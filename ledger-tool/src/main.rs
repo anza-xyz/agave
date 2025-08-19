@@ -30,8 +30,9 @@ use {
             is_within_range,
         },
     },
-    solana_cli_output::{CliAccount, OutputFormat},
+    solana_cli_output::{display::build_balance_message, CliAccount, OutputFormat},
     solana_clock::{Epoch, Slot},
+    solana_cluster_type::ClusterType,
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
@@ -39,7 +40,6 @@ use {
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
     solana_feature_gate_interface::{self as feature, Feature},
-    solana_genesis_config::ClusterType,
     solana_inflation::Inflation,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_ledger::{
@@ -51,7 +51,7 @@ use {
     },
     solana_measure::{measure::Measure, measure_time},
     solana_message::SimpleAddressLoader,
-    solana_native_token::{lamports_to_sol, sol_to_lamports, Sol},
+    solana_native_token::{Sol, LAMPORTS_PER_SOL},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -281,7 +281,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
                         format!(
                             "\nvotes: {}, stake: {:.1} SOL ({:.1}%)",
                             votes,
-                            lamports_to_sol(*stake),
+                            build_balance_message(*stake, false, false),
                             *stake as f64 / *total_stake as f64 * 100.,
                         )
                     } else {
@@ -377,7 +377,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
                 r#"  "last vote {}"[shape=box,label="Latest validator vote: {}\nstake: {} SOL\nroot slot: {}\n{}"];"#,
                 node_pubkey,
                 node_pubkey,
-                lamports_to_sol(*stake),
+                build_balance_message(*stake, false, false),
                 vote_state_view.root_slot().unwrap_or(0),
                 vote_history,
             ));
@@ -399,7 +399,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
         dot.push(format!(
             r#"    "..."[label="...\nvotes: {}, stake: {:.1} SOL {:.1}%"];"#,
             absent_votes,
-            lamports_to_sol(absent_stake),
+            build_balance_message(absent_stake, false, false),
             absent_stake as f64 / lowest_total_stake as f64 * 100.,
         ));
     }
@@ -941,10 +941,10 @@ fn main() {
         .help("Print account data in specified format when printing account contents.");
 
     let rent = Rent::default();
-    let default_bootstrap_validator_lamports = &sol_to_lamports(500.0)
+    let default_bootstrap_validator_lamports = &(500 * LAMPORTS_PER_SOL)
         .max(VoteStateV3::get_rent_exempt_reserve(&rent))
         .to_string();
-    let default_bootstrap_validator_stake_lamports = &sol_to_lamports(0.5)
+    let default_bootstrap_validator_stake_lamports = &(LAMPORTS_PER_SOL / 2)
         .max(rent.minimum_balance(StakeStateV2::size_of()))
         .to_string();
     let default_graph_vote_account_mode = GraphVoteAccountMode::default();

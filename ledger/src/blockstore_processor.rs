@@ -3521,7 +3521,7 @@ pub mod tests {
                 InstructionError::ProgramFailedToCompile,
                 InstructionError::Immutable,
                 InstructionError::IncorrectAuthority,
-                InstructionError::BorshIoError("error".to_string()),
+                InstructionError::BorshIoError,
                 InstructionError::AccountNotRentExempt,
                 InstructionError::InvalidAccountOwner,
                 InstructionError::ArithmeticOverflow,
@@ -4849,7 +4849,7 @@ pub mod tests {
                         VoteStateV3::size_of(),
                         &solana_vote_program::id(),
                     );
-                    let versioned = VoteStateVersions::new_current(vote_state);
+                    let versioned = VoteStateVersions::new_v3(vote_state);
                     VoteStateV3::serialize(&versioned, vote_account.data_as_mut_slice()).unwrap();
                     (
                         solana_pubkey::new_rand(),

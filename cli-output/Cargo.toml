@@ -34,7 +34,6 @@ solana-clock = { workspace = true }
 solana-epoch-info = { workspace = true, features = ["serde"] }
 solana-hash = { workspace = true }
 solana-message = { workspace = true }
-solana-native-token = { workspace = true }
 solana-packet = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rpc-client-api = { workspace = true }
@@ -42,7 +41,6 @@ solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true, features = ["verify"] }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }

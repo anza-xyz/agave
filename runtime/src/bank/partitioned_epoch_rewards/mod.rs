@@ -501,10 +501,10 @@ mod tests {
                 if let Some(v) = vote_state.as_mut() {
                     vote_state::process_slot_vote_unchecked(v, i as u64)
                 }
-                let versioned = VoteStateVersions::Current(Box::new(vote_state.take().unwrap()));
+                let versioned = VoteStateVersions::V3(Box::new(vote_state.take().unwrap()));
                 vote_state::to(&versioned, &mut vote_account).unwrap();
                 match versioned {
-                    VoteStateVersions::Current(v) => {
+                    VoteStateVersions::V3(v) => {
                         vote_state = Some(*v);
                     }
                     _ => panic!("Has to be of type Current"),

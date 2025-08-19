@@ -2,11 +2,11 @@ use {
     crate::{parse_account_data::ParseAccountError, StringAmount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    solana_vote_interface::state::{BlockTimestamp, Lockout, VoteState},
+    solana_vote_interface::state::{BlockTimestamp, Lockout, VoteStateV3},
 };
 
 pub fn parse_vote(data: &[u8]) -> Result<VoteAccountType, ParseAccountError> {
-    let mut vote_state = VoteState::deserialize(data).map_err(ParseAccountError::from)?;
+    let mut vote_state = VoteStateV3::deserialize(data).map_err(ParseAccountError::from)?;
     let epoch_credits = vote_state
         .epoch_credits()
         .iter()
@@ -125,10 +125,10 @@ mod test {
 
     #[test]
     fn test_parse_vote() {
-        let vote_state = VoteState::default();
-        let mut vote_account_data: Vec<u8> = vec![0; VoteState::size_of()];
-        let versioned = VoteStateVersions::new_current(vote_state);
-        VoteState::serialize(&versioned, &mut vote_account_data).unwrap();
+        let vote_state = VoteStateV3::default();
+        let mut vote_account_data: Vec<u8> = vec![0; VoteStateV3::size_of()];
+        let versioned = VoteStateVersions::new_v3(vote_state);
+        VoteStateV3::serialize(&versioned, &mut vote_account_data).unwrap();
         let expected_vote_state = UiVoteState {
             node_pubkey: Pubkey::default().to_string(),
             authorized_withdrawer: Pubkey::default().to_string(),

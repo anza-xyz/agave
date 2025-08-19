@@ -101,14 +101,14 @@ mod tests {
         super::*,
         solana_clock::Clock,
         solana_vote_interface::state::{
-            LandedVote, Lockout, VoteInit, VoteState, VoteStateVersions,
+            LandedVote, Lockout, VoteInit, VoteStateV3, VoteStateVersions,
         },
     };
 
     #[test]
     fn test_try_new_zeroed() {
-        let target_vote_state = VoteState::default();
-        let target_vote_state_versions = VoteStateVersions::Current(Box::new(target_vote_state));
+        let target_vote_state = VoteStateV3::default();
+        let target_vote_state_versions = VoteStateVersions::V3(Box::new(target_vote_state));
         let mut bytes = bincode::serialize(&target_vote_state_versions).unwrap();
 
         for i in 0..bytes.len() {
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn test_try_new_simple() {
-        let mut target_vote_state = VoteState::new(&VoteInit::default(), &Clock::default());
+        let mut target_vote_state = VoteStateV3::new(&VoteInit::default(), &Clock::default());
         target_vote_state.root_slot = Some(42);
         target_vote_state.epoch_credits.push((1, 2, 3));
         target_vote_state.votes.push_back(LandedVote {
@@ -147,7 +147,7 @@ mod tests {
             lockout: Lockout::default(),
         });
 
-        let target_vote_state_versions = VoteStateVersions::Current(Box::new(target_vote_state));
+        let target_vote_state_versions = VoteStateVersions::V3(Box::new(target_vote_state));
         let mut bytes = bincode::serialize(&target_vote_state_versions).unwrap();
 
         for i in 0..bytes.len() {
