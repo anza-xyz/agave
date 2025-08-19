@@ -55,12 +55,16 @@ use {
     types::SerdeAccountsLtHash,
 };
 
+mod status_cache;
 mod storage;
 mod tests;
 mod types;
 mod utils;
 
-pub(crate) use storage::{SerializableAccountStorageEntry, SerializedAccountsFileId};
+pub(crate) use {
+    status_cache::{deserialize_status_cache, serialize_status_cache},
+    storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
+};
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 
