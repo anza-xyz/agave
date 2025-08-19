@@ -8738,7 +8738,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-runtime",
  "solana-sanitize",
- "solana-serde-varint",
+ "solana-serde-varint 3.0.0",
  "solana-sha256-hasher",
  "solana-short-vec",
  "solana-signature",
@@ -9595,7 +9595,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-secp256k1-recover",
- "solana-serde-varint",
+ "solana-serde-varint 2.2.2",
  "solana-serialize-utils",
  "solana-sha256-hasher",
  "solana-short-vec",
@@ -10530,6 +10530,15 @@ name = "solana-serde-varint"
 version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a7e155eba458ecfb0107b98236088c3764a09ddf0201ec29e52a0be40857113"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "solana-serde-varint"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e5174c57d5ff3c1995f274d17156964664566e2cde18a07bba1586d35a70d3b"
 dependencies = [
  "serde",
 ]
@@ -11687,7 +11696,7 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro 3.0.0",
  "solana-sanitize",
- "solana-serde-varint",
+ "solana-serde-varint 3.0.0",
 ]
 
 [[package]]
@@ -11800,7 +11809,7 @@ dependencies = [
  "solana-pubkey",
  "solana-rent",
  "solana-sdk-ids",
- "solana-serde-varint",
+ "solana-serde-varint 2.2.2",
  "solana-serialize-utils",
  "solana-short-vec",
  "solana-system-interface",

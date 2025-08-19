@@ -507,7 +507,7 @@ solana-seed-derivable = "2.2.1"
 solana-seed-phrase = "2.2.1"
 solana-send-transaction-service = { path = "send-transaction-service", version = "=3.0.0" }
 solana-serde = "2.2.1"
-solana-serde-varint = "2.2.2"
+solana-serde-varint = "3.0.0"
 solana-serialize-utils = "2.2.1"
 solana-sha256-hasher = "2.3.0"
 solana-short-vec = "2.2.1"
