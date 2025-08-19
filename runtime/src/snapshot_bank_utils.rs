@@ -63,7 +63,7 @@ type SerdeStatus<T> = HashMap<Hash, (usize, Vec<(status_cache::KeySlice, T)>)>;
 type SerdeSlotDelta<T> = (Slot, bool, SerdeStatus<T>);
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "FBYTVHPczfBGsrenR1TEHgKDnMt4FXfniTduqj1zf5Au")
+    frozen_abi(digest = "EKEe5eQhdd78XHfWaskKuKbMKqcmnz63jsabK5KUFgxj")
 )]
 type SerdeBankSlotDelta = SerdeSlotDelta<Result<(), SerdeTransactionError>>;
 
@@ -940,7 +940,7 @@ pub fn bank_to_incremental_snapshot_archive(
 /// contain a string in the BorshIoError variant.
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "2qgqaezvR69GkJdUzaUtUyv8YMDdNUrEuwtDz43iY3mm"),
+    frozen_abi(digest = "GyjBLQFupLXxDhBYR6mh9ZhFbW1WMHRPg5mGARu3su56"),
     derive(AbiExample, AbiEnumVisitor)
 )]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
