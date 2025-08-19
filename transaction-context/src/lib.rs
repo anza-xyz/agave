@@ -66,7 +66,7 @@ pub type IndexOfAccount = u16;
 #[derive(Clone, Copy, Debug)]
 pub struct InstructionAccount {
     /// Points to the account and its key in the `TransactionContext`
-    pub index_in_transaction: IndexOfAccount,
+    pub index_in_transaction: u16,
     /// Is this account supposed to sign
     is_signer: u8,
     /// Is this account allowed to become writable
@@ -640,7 +640,7 @@ pub struct TransactionReturnData {
 #[derive(Debug, Clone, Default)]
 pub struct InstructionFrame {
     nesting_level: u16,
-    program_account_index_in_tx: IndexOfAccount,
+    program_account_index_in_tx: u16,
     dedup_map_end: u32,
     instruction_accounts_end: u32,
     instruction_data_end: u32,
