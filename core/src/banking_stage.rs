@@ -79,6 +79,10 @@ conditional_vis_mod!(
 );
 conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
 
+/// The maximum number of worker threads that can be spawned by banking stage.
+/// 64 because `ThreadAwareAccountLocks` uses a `u64` as a bitmask to
+/// track thread placement.
+const MAX_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 const DEFAULT_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -603,7 +607,6 @@ impl BankingStage {
     }
 
     pub fn max_num_workers() -> NonZeroUsize {
-        const MAX_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(64).unwrap();
         MAX_NUM_WORKERS
     }
 
