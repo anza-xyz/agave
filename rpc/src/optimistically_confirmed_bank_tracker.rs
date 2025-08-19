@@ -72,13 +72,13 @@ impl std::fmt::Debug for BankNotification {
     }
 }
 
-pub type BankNotificationWithEventSequence = (
+pub type BankNotificationWithDependencyWork = (
     BankNotification,
-    Option<u64>, // dependecy work sequence number
+    Option<u64>, // dependecy work id
 );
 
-pub type BankNotificationReceiver = Receiver<BankNotificationWithEventSequence>;
-pub type BankNotificationSender = Sender<BankNotificationWithEventSequence>;
+pub type BankNotificationReceiver = Receiver<BankNotificationWithDependencyWork>;
+pub type BankNotificationSender = Sender<BankNotificationWithDependencyWork>;
 
 #[derive(Clone)]
 pub struct BankNotificationSenderConfig {
@@ -138,7 +138,7 @@ impl OptimisticallyConfirmedBankTracker {
 
     #[allow(clippy::too_many_arguments)]
     fn recv_notification(
-        receiver: &Receiver<BankNotificationWithEventSequence>,
+        receiver: &Receiver<BankNotificationWithDependencyWork>,
         bank_forks: &RwLock<BankForks>,
         optimistically_confirmed_bank: &RwLock<OptimisticallyConfirmedBank>,
         subscriptions: &RpcSubscriptions,
@@ -270,7 +270,7 @@ impl OptimisticallyConfirmedBankTracker {
 
     #[allow(clippy::too_many_arguments)]
     pub fn process_notification(
-        (notification, dependency_work): BankNotificationWithEventSequence,
+        (notification, dependency_work): BankNotificationWithDependencyWork,
         bank_forks: &RwLock<BankForks>,
         optimistically_confirmed_bank: &RwLock<OptimisticallyConfirmedBank>,
         subscriptions: &RpcSubscriptions,
@@ -469,7 +469,7 @@ mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::OptimisticallyConfirmed(2),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
@@ -489,7 +489,7 @@ mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::OptimisticallyConfirmed(1),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
@@ -509,7 +509,7 @@ mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::OptimisticallyConfirmed(3),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
@@ -534,7 +534,7 @@ mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::Frozen(bank3),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
@@ -558,7 +558,7 @@ mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::OptimisticallyConfirmed(4),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
@@ -591,7 +591,7 @@ mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::NewRootBank(bank5),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
@@ -614,7 +614,7 @@ mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::NewRootedChain(parent_roots),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
@@ -645,7 +645,7 @@ mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::OptimisticallyConfirmed(6),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
@@ -670,7 +670,7 @@ mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::NewRootBank(bank7),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
@@ -692,7 +692,7 @@ mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::NewRootedChain(parent_roots),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
@@ -718,8 +718,8 @@ mod tests {
         let exit = Arc::new(AtomicBool::new(false));
         let dependency_tracker: Arc<DependencyTracker> =
             Arc::new(dependency_tracker::DependencyTracker::default());
-        let work_sequence_1 = 345;
-        let work_sequence_2 = 678;
+        let work_id_1 = 345;
+        let work_id_2 = 678;
         let tracker_clone = dependency_tracker.clone();
         let handle = thread::spawn(move || {
             let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
@@ -756,7 +756,7 @@ mod tests {
             OptimisticallyConfirmedBankTracker::process_notification(
                 (
                     BankNotification::OptimisticallyConfirmed(1),
-                    Some(work_sequence_1), /* dependency work sequence */
+                    Some(work_id_1), /* dependency work id */
                 ),
                 &bank_forks,
                 &optimistically_confirmed_bank,
@@ -781,7 +781,7 @@ mod tests {
             OptimisticallyConfirmedBankTracker::process_notification(
                 (
                     BankNotification::Frozen(bank1),
-                    Some(work_sequence_2), /* dependency work sequence */
+                    Some(work_id_2), /* dependency work id */
                 ),
                 &bank_forks,
                 &optimistically_confirmed_bank,
@@ -800,8 +800,8 @@ mod tests {
             assert_eq!(pending_optimistically_confirmed_banks.len(), 0);
         });
 
-        dependency_tracker.mark_this_and_all_previous_work_processed(work_sequence_1);
-        dependency_tracker.mark_this_and_all_previous_work_processed(work_sequence_2);
+        dependency_tracker.mark_this_and_all_previous_work_processed(work_id_1);
+        dependency_tracker.mark_this_and_all_previous_work_processed(work_id_2);
 
         handle.join().unwrap();
     }
