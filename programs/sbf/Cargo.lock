@@ -5589,7 +5589,7 @@ dependencies = [
  "solana-rent",
  "solana-sdk-ids",
  "solana-slot-hashes",
- "solana-slot-history",
+ "solana-slot-history 3.0.0",
  "solana-stake-interface",
  "solana-sysvar",
  "solana-vote-interface",
@@ -6322,7 +6322,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-slot-hashes",
- "solana-slot-history",
+ "solana-slot-history 3.0.0",
  "solana-streamer",
  "solana-svm",
  "solana-svm-timings",
@@ -7459,7 +7459,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-short-vec",
  "solana-slot-hashes",
- "solana-slot-history",
+ "solana-slot-history 2.2.1",
  "solana-stable-layout",
  "solana-stake-interface",
  "solana-system-interface",
@@ -7822,7 +7822,7 @@ dependencies = [
  "solana-send-transaction-service",
  "solana-signature",
  "solana-signer",
- "solana-slot-history",
+ "solana-slot-history 3.0.0",
  "solana-stake-program",
  "solana-storage-bigtable",
  "solana-streamer",
@@ -8046,7 +8046,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-slot-hashes",
- "solana-slot-history",
+ "solana-slot-history 3.0.0",
  "solana-stake-interface",
  "solana-stake-program",
  "solana-svm",
@@ -9086,6 +9086,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-slot-history"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f914f6b108f5bba14a280b458d023e3621c9973f27f015a4d755b50e88d89e97"
+dependencies = [
+ "bv",
+]
+
+[[package]]
 name = "solana-stable-layout"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9451,7 +9460,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-slot-hashes",
- "solana-slot-history",
+ "solana-slot-history 2.2.1",
  "solana-stake-interface",
  "solana-sysvar-id",
 ]
