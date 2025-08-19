@@ -215,7 +215,7 @@ pub struct TransactionContext {
     instruction_stack_capacity: usize,
     instruction_trace_capacity: usize,
     instruction_stack: Vec<usize>,
-    instruction_trace: Vec<Instruction>,
+    instruction_trace: Vec<InstructionFrame>,
     top_level_instruction_index: usize,
     return_data: TransactionReturnData,
     #[cfg(not(target_os = "solana"))]
@@ -241,7 +241,7 @@ impl TransactionContext {
             instruction_stack_capacity,
             instruction_trace_capacity,
             instruction_stack: Vec::with_capacity(instruction_stack_capacity),
-            instruction_trace: vec![Instruction::default()],
+            instruction_trace: vec![InstructionFrame::default()],
             top_level_instruction_index: 0,
             return_data: TransactionReturnData::default(),
             rent,
@@ -433,7 +433,7 @@ impl TransactionContext {
         if index_in_trace >= self.instruction_trace_capacity {
             return Err(InstructionError::MaxInstructionTraceLengthExceeded);
         }
-        self.instruction_trace.push(Instruction::default());
+        self.instruction_trace.push(InstructionFrame::default());
         if nesting_level >= self.instruction_stack_capacity {
             return Err(InstructionError::CallDepth);
         }
@@ -593,7 +593,7 @@ pub struct TransactionReturnData {
 
 /// Instruction shared between runtime and programs.
 #[derive(Debug, Clone, Default)]
-pub struct Instruction {
+pub struct InstructionFrame {
     nesting_level: usize,
     program_account_index_in_tx: IndexOfAccount,
     instruction_accounts: Vec<InstructionAccount>,
