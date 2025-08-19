@@ -33,8 +33,9 @@ pub struct Node {
     pub info: ContactInfo,
     pub sockets: Sockets,
     pub bind_ip_addrs: Arc<BindIpAddrs>,
-    // Store TVU addresses for each interface (one per interface)
+    // Store TVU addresses for each interface
     pub tvu_addresses: Vec<SocketAddr>,
+    pub tvu_retransmit_addresses: Vec<SocketAddr>,
 }
 
 impl Node {
@@ -196,13 +197,27 @@ impl Node {
             .expect("Secondary bind TPU vote"),
         );
 
-        let (_, retransmit_sockets) = multi_bind_in_range_with_config(
+        let (tvu_retransmit_port, mut retransmit_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
             port_range,
             socket_config,
             num_tvu_retransmit_sockets.get(),
         )
-        .expect("retransmit multi_bind");
+        .expect("tvu retransmit multi_bind");
+        // Multihoming TX for TVU
+        retransmit_sockets.append(
+            &mut Self::bind_to_extra_ip(
+                &bind_ip_addrs,
+                tvu_retransmit_port,
+                num_tvu_retransmit_sockets.get(),
+                socket_config,
+            )
+            .expect("Secondary bind TVU retransmit"),
+        );
+        let tvu_retransmit_addresses: Vec<SocketAddr> = bind_ip_addrs
+            .iter()
+            .map(|&ip| SocketAddr::new(ip, tvu_retransmit_port))
+            .collect();
 
         let (_, repair) = bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
             .expect("repair bind");
@@ -318,6 +333,7 @@ impl Node {
             sockets,
             bind_ip_addrs,
             tvu_addresses,
+            tvu_retransmit_addresses,
         }
     }
 
@@ -345,7 +361,7 @@ impl Node {
 #[cfg(feature = "agave-unstable-api")]
 mod multihoming {
     use {
-        crate::{cluster_info::ClusterInfo, node::Node},
+        crate::{cluster_info::ClusterInfo, egress_socket_select, node::Node},
         solana_net_utils::multihomed_sockets::BindIpAddrs,
         std::{
             net::{IpAddr, SocketAddr, UdpSocket},
@@ -357,6 +373,7 @@ mod multihoming {
     pub struct SocketsMultihomed {
         pub gossip: Arc<[UdpSocket]>,
         pub tvu_ingress: Vec<SocketAddr>,
+        pub tvu_retransmit_sockets: Vec<SocketAddr>,
     }
 
     #[derive(Debug, Clone)]
@@ -390,6 +407,7 @@ mod multihoming {
             let gossip_addr = self.sockets.gossip[interface_index]
                 .local_addr()
                 .map_err(|e| e.to_string())?;
+
             // Set the new gossip address in contact-info
             cluster_info
                 .set_gossip_socket(gossip_addr)
@@ -397,13 +415,6 @@ mod multihoming {
 
             // update tvu ingress advertised socket
             let tvu_ingress_address = self.sockets.tvu_ingress[interface_index];
-            if tvu_ingress_address.ip() != interface {
-                return Err(format!(
-                    "TVU IP address mismatch: expected {} but got {}",
-                    interface,
-                    tvu_ingress_address.ip()
-                ));
-            }
 
             cluster_info
                 .set_tvu_socket(tvu_ingress_address)
@@ -414,6 +425,10 @@ mod multihoming {
                 .bind_ip_addrs
                 .set_active(interface_index)
                 .expect("Interface index out of range");
+
+            // Send from correct tvu retransmit sockets
+            egress_socket_select::select_interface(interface_index);
+
             Ok(())
         }
     }
@@ -424,6 +439,7 @@ mod multihoming {
                 sockets: SocketsMultihomed {
                     gossip: node.sockets.gossip.clone(),
                     tvu_ingress: node.tvu_addresses.clone(),
+                    tvu_retransmit_sockets: node.tvu_retransmit_addresses.clone(),
                 },
                 bind_ip_addrs: node.bind_ip_addrs.clone(),
             }

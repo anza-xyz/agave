@@ -39,6 +39,7 @@ use {
     solana_gossip::{
         cluster_info::{NodeConfig, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS},
         contact_info::ContactInfo,
+        egress_socket_select,
         node::Node,
     },
     solana_hash::Hash,
@@ -890,6 +891,7 @@ pub fn execute(
         num_quic_endpoints,
         vortexor_receiver_addr: tpu_vortexor_receiver_address,
     };
+    egress_socket_select::init(node_config.num_tvu_retransmit_sockets.get());
 
     let cluster_entrypoints = entrypoint_addrs
         .iter()
