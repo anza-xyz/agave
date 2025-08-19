@@ -59,13 +59,13 @@ use {
     },
 };
 
-type SnapshotStatus<T> = HashMap<Hash, (usize, Vec<(status_cache::KeySlice, T)>)>;
-type SnapshotSlotDelta<T> = (Slot, bool, SnapshotStatus<T>);
+type SerdeStatus<T> = HashMap<Hash, (usize, Vec<(status_cache::KeySlice, T)>)>;
+type SerdeSlotDelta<T> = (Slot, bool, SerdeStatus<T>);
 #[cfg_attr(
     feature = "frozen-abi",
     frozen_abi(digest = "FBYTVHPczfBGsrenR1TEHgKDnMt4FXfniTduqj1zf5Au")
 )]
-type SnapshotBankSlotDelta = SnapshotSlotDelta<Result<(), SnapshotTransactionError>>;
+type SerdeBankSlotDelta = SerdeSlotDelta<Result<(), SerdeTransactionError>>;
 
 pub fn serialize_status_cache(
     slot_deltas: &[BankSlotDelta],
@@ -89,7 +89,7 @@ pub fn serialize_status_cache(
                                     .map(|(key_slice, result)| {
                                         (
                                             *key_slice,
-                                            result.clone().map_err(SnapshotTransactionError::from),
+                                            result.clone().map_err(SerdeTransactionError::from),
                                         )
                                     })
                                     .collect::<Vec<_>>(),
@@ -604,7 +604,7 @@ fn deserialize_status_cache(
             "Rebuilding status cache from {}",
             status_cache_path.display()
         );
-        let snapshot_slot_deltas: Vec<SnapshotBankSlotDelta> = bincode::options()
+        let snapshot_slot_deltas: Vec<SerdeBankSlotDelta> = bincode::options()
             .with_limit(snapshot_utils::MAX_SNAPSHOT_DATA_FILE_SIZE)
             .with_fixint_encoding()
             .allow_trailing_bytes()
@@ -944,7 +944,7 @@ pub fn bank_to_incremental_snapshot_archive(
     derive(AbiExample, AbiEnumVisitor)
 )]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-enum SnapshotTransactionError {
+enum SerdeTransactionError {
     AccountInUse,
     AccountLoadedTwice,
     AccountNotFound,
@@ -953,7 +953,7 @@ enum SnapshotTransactionError {
     InvalidAccountForFee,
     AlreadyProcessed,
     BlockhashNotFound,
-    InstructionError(u8, SnapshotInstructionError),
+    InstructionError(u8, SerdeInstructionError),
     CallChainTooDeep,
     MissingSignatureForFee,
     InvalidAccountIndex,
@@ -991,7 +991,7 @@ enum SnapshotTransactionError {
 #[cfg_attr(test, derive(strum_macros::FromRepr, strum_macros::EnumIter))]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-enum SnapshotInstructionError {
+enum SerdeInstructionError {
     GenericError,
     InvalidArgument,
     InvalidInstructionData,
@@ -1048,84 +1048,78 @@ enum SnapshotInstructionError {
     BuiltinProgramsMustConsumeComputeUnits,
 }
 
-impl From<SnapshotInstructionError> for InstructionError {
-    fn from(err: SnapshotInstructionError) -> Self {
+impl From<SerdeInstructionError> for InstructionError {
+    fn from(err: SerdeInstructionError) -> Self {
         match err {
-            SnapshotInstructionError::GenericError => Self::GenericError,
-            SnapshotInstructionError::InvalidArgument => Self::InvalidArgument,
-            SnapshotInstructionError::InvalidInstructionData => Self::InvalidInstructionData,
-            SnapshotInstructionError::InvalidAccountData => Self::InvalidAccountData,
-            SnapshotInstructionError::AccountDataTooSmall => Self::AccountDataTooSmall,
-            SnapshotInstructionError::InsufficientFunds => Self::InsufficientFunds,
-            SnapshotInstructionError::IncorrectProgramId => Self::IncorrectProgramId,
-            SnapshotInstructionError::MissingRequiredSignature => Self::MissingRequiredSignature,
-            SnapshotInstructionError::AccountAlreadyInitialized => Self::AccountAlreadyInitialized,
-            SnapshotInstructionError::UninitializedAccount => Self::UninitializedAccount,
-            SnapshotInstructionError::UnbalancedInstruction => Self::UnbalancedInstruction,
-            SnapshotInstructionError::ModifiedProgramId => Self::ModifiedProgramId,
-            SnapshotInstructionError::ExternalAccountLamportSpend => {
-                Self::ExternalAccountLamportSpend
-            }
-            SnapshotInstructionError::ExternalAccountDataModified => {
-                Self::ExternalAccountDataModified
-            }
-            SnapshotInstructionError::ReadonlyLamportChange => Self::ReadonlyLamportChange,
-            SnapshotInstructionError::ReadonlyDataModified => Self::ReadonlyDataModified,
-            SnapshotInstructionError::DuplicateAccountIndex => Self::DuplicateAccountIndex,
-            SnapshotInstructionError::ExecutableModified => Self::ExecutableModified,
-            SnapshotInstructionError::RentEpochModified => Self::RentEpochModified,
-            SnapshotInstructionError::NotEnoughAccountKeys => Self::NotEnoughAccountKeys,
-            SnapshotInstructionError::AccountDataSizeChanged => Self::AccountDataSizeChanged,
-            SnapshotInstructionError::AccountNotExecutable => Self::AccountNotExecutable,
-            SnapshotInstructionError::AccountBorrowFailed => Self::AccountBorrowFailed,
-            SnapshotInstructionError::AccountBorrowOutstanding => Self::AccountBorrowOutstanding,
-            SnapshotInstructionError::DuplicateAccountOutOfSync => Self::DuplicateAccountOutOfSync,
-            SnapshotInstructionError::Custom(n) => Self::Custom(n),
-            SnapshotInstructionError::InvalidError => Self::InvalidError,
-            SnapshotInstructionError::ExecutableDataModified => Self::ExecutableDataModified,
-            SnapshotInstructionError::ExecutableLamportChange => Self::ExecutableLamportChange,
-            SnapshotInstructionError::ExecutableAccountNotRentExempt => {
+            SerdeInstructionError::GenericError => Self::GenericError,
+            SerdeInstructionError::InvalidArgument => Self::InvalidArgument,
+            SerdeInstructionError::InvalidInstructionData => Self::InvalidInstructionData,
+            SerdeInstructionError::InvalidAccountData => Self::InvalidAccountData,
+            SerdeInstructionError::AccountDataTooSmall => Self::AccountDataTooSmall,
+            SerdeInstructionError::InsufficientFunds => Self::InsufficientFunds,
+            SerdeInstructionError::IncorrectProgramId => Self::IncorrectProgramId,
+            SerdeInstructionError::MissingRequiredSignature => Self::MissingRequiredSignature,
+            SerdeInstructionError::AccountAlreadyInitialized => Self::AccountAlreadyInitialized,
+            SerdeInstructionError::UninitializedAccount => Self::UninitializedAccount,
+            SerdeInstructionError::UnbalancedInstruction => Self::UnbalancedInstruction,
+            SerdeInstructionError::ModifiedProgramId => Self::ModifiedProgramId,
+            SerdeInstructionError::ExternalAccountLamportSpend => Self::ExternalAccountLamportSpend,
+            SerdeInstructionError::ExternalAccountDataModified => Self::ExternalAccountDataModified,
+            SerdeInstructionError::ReadonlyLamportChange => Self::ReadonlyLamportChange,
+            SerdeInstructionError::ReadonlyDataModified => Self::ReadonlyDataModified,
+            SerdeInstructionError::DuplicateAccountIndex => Self::DuplicateAccountIndex,
+            SerdeInstructionError::ExecutableModified => Self::ExecutableModified,
+            SerdeInstructionError::RentEpochModified => Self::RentEpochModified,
+            SerdeInstructionError::NotEnoughAccountKeys => Self::NotEnoughAccountKeys,
+            SerdeInstructionError::AccountDataSizeChanged => Self::AccountDataSizeChanged,
+            SerdeInstructionError::AccountNotExecutable => Self::AccountNotExecutable,
+            SerdeInstructionError::AccountBorrowFailed => Self::AccountBorrowFailed,
+            SerdeInstructionError::AccountBorrowOutstanding => Self::AccountBorrowOutstanding,
+            SerdeInstructionError::DuplicateAccountOutOfSync => Self::DuplicateAccountOutOfSync,
+            SerdeInstructionError::Custom(n) => Self::Custom(n),
+            SerdeInstructionError::InvalidError => Self::InvalidError,
+            SerdeInstructionError::ExecutableDataModified => Self::ExecutableDataModified,
+            SerdeInstructionError::ExecutableLamportChange => Self::ExecutableLamportChange,
+            SerdeInstructionError::ExecutableAccountNotRentExempt => {
                 Self::ExecutableAccountNotRentExempt
             }
-            SnapshotInstructionError::UnsupportedProgramId => Self::UnsupportedProgramId,
-            SnapshotInstructionError::CallDepth => Self::CallDepth,
-            SnapshotInstructionError::MissingAccount => Self::MissingAccount,
-            SnapshotInstructionError::ReentrancyNotAllowed => Self::ReentrancyNotAllowed,
-            SnapshotInstructionError::MaxSeedLengthExceeded => Self::MaxSeedLengthExceeded,
-            SnapshotInstructionError::InvalidSeeds => Self::InvalidSeeds,
-            SnapshotInstructionError::InvalidRealloc => Self::InvalidRealloc,
-            SnapshotInstructionError::ComputationalBudgetExceeded => {
-                Self::ComputationalBudgetExceeded
-            }
-            SnapshotInstructionError::PrivilegeEscalation => Self::PrivilegeEscalation,
-            SnapshotInstructionError::ProgramEnvironmentSetupFailure => {
+            SerdeInstructionError::UnsupportedProgramId => Self::UnsupportedProgramId,
+            SerdeInstructionError::CallDepth => Self::CallDepth,
+            SerdeInstructionError::MissingAccount => Self::MissingAccount,
+            SerdeInstructionError::ReentrancyNotAllowed => Self::ReentrancyNotAllowed,
+            SerdeInstructionError::MaxSeedLengthExceeded => Self::MaxSeedLengthExceeded,
+            SerdeInstructionError::InvalidSeeds => Self::InvalidSeeds,
+            SerdeInstructionError::InvalidRealloc => Self::InvalidRealloc,
+            SerdeInstructionError::ComputationalBudgetExceeded => Self::ComputationalBudgetExceeded,
+            SerdeInstructionError::PrivilegeEscalation => Self::PrivilegeEscalation,
+            SerdeInstructionError::ProgramEnvironmentSetupFailure => {
                 Self::ProgramEnvironmentSetupFailure
             }
-            SnapshotInstructionError::ProgramFailedToComplete => Self::ProgramFailedToComplete,
-            SnapshotInstructionError::ProgramFailedToCompile => Self::ProgramFailedToCompile,
-            SnapshotInstructionError::Immutable => Self::Immutable,
-            SnapshotInstructionError::IncorrectAuthority => Self::IncorrectAuthority,
-            SnapshotInstructionError::BorshIoError(_) => Self::BorshIoError(String::new()),
-            SnapshotInstructionError::AccountNotRentExempt => Self::AccountNotRentExempt,
-            SnapshotInstructionError::InvalidAccountOwner => Self::InvalidAccountOwner,
-            SnapshotInstructionError::ArithmeticOverflow => Self::ArithmeticOverflow,
-            SnapshotInstructionError::UnsupportedSysvar => Self::UnsupportedSysvar,
-            SnapshotInstructionError::IllegalOwner => Self::IllegalOwner,
-            SnapshotInstructionError::MaxAccountsDataAllocationsExceeded => {
+            SerdeInstructionError::ProgramFailedToComplete => Self::ProgramFailedToComplete,
+            SerdeInstructionError::ProgramFailedToCompile => Self::ProgramFailedToCompile,
+            SerdeInstructionError::Immutable => Self::Immutable,
+            SerdeInstructionError::IncorrectAuthority => Self::IncorrectAuthority,
+            SerdeInstructionError::BorshIoError(_) => Self::BorshIoError(String::new()),
+            SerdeInstructionError::AccountNotRentExempt => Self::AccountNotRentExempt,
+            SerdeInstructionError::InvalidAccountOwner => Self::InvalidAccountOwner,
+            SerdeInstructionError::ArithmeticOverflow => Self::ArithmeticOverflow,
+            SerdeInstructionError::UnsupportedSysvar => Self::UnsupportedSysvar,
+            SerdeInstructionError::IllegalOwner => Self::IllegalOwner,
+            SerdeInstructionError::MaxAccountsDataAllocationsExceeded => {
                 Self::MaxAccountsDataAllocationsExceeded
             }
-            SnapshotInstructionError::MaxAccountsExceeded => Self::MaxAccountsExceeded,
-            SnapshotInstructionError::MaxInstructionTraceLengthExceeded => {
+            SerdeInstructionError::MaxAccountsExceeded => Self::MaxAccountsExceeded,
+            SerdeInstructionError::MaxInstructionTraceLengthExceeded => {
                 Self::MaxInstructionTraceLengthExceeded
             }
-            SnapshotInstructionError::BuiltinProgramsMustConsumeComputeUnits => {
+            SerdeInstructionError::BuiltinProgramsMustConsumeComputeUnits => {
                 Self::BuiltinProgramsMustConsumeComputeUnits
             }
         }
     }
 }
 
-impl From<InstructionError> for SnapshotInstructionError {
+impl From<InstructionError> for SerdeInstructionError {
     fn from(err: InstructionError) -> Self {
         match err {
             InstructionError::GenericError => Self::GenericError,
@@ -1196,7 +1190,7 @@ impl From<InstructionError> for SnapshotInstructionError {
     }
 }
 
-impl From<TransactionError> for SnapshotTransactionError {
+impl From<TransactionError> for SerdeTransactionError {
     fn from(err: TransactionError) -> Self {
         match err {
             TransactionError::AccountInUse => Self::AccountInUse,
@@ -1260,78 +1254,72 @@ impl From<TransactionError> for SnapshotTransactionError {
     }
 }
 
-impl From<SnapshotTransactionError> for TransactionError {
-    fn from(err: SnapshotTransactionError) -> Self {
+impl From<SerdeTransactionError> for TransactionError {
+    fn from(err: SerdeTransactionError) -> Self {
         match err {
-            SnapshotTransactionError::AccountInUse => Self::AccountInUse,
-            SnapshotTransactionError::AccountLoadedTwice => Self::AccountLoadedTwice,
-            SnapshotTransactionError::AccountNotFound => Self::AccountNotFound,
-            SnapshotTransactionError::ProgramAccountNotFound => Self::ProgramAccountNotFound,
-            SnapshotTransactionError::InsufficientFundsForFee => Self::InsufficientFundsForFee,
-            SnapshotTransactionError::InvalidAccountForFee => Self::InvalidAccountForFee,
-            SnapshotTransactionError::AlreadyProcessed => Self::AlreadyProcessed,
-            SnapshotTransactionError::BlockhashNotFound => Self::BlockhashNotFound,
-            SnapshotTransactionError::InstructionError(i, inner) => {
+            SerdeTransactionError::AccountInUse => Self::AccountInUse,
+            SerdeTransactionError::AccountLoadedTwice => Self::AccountLoadedTwice,
+            SerdeTransactionError::AccountNotFound => Self::AccountNotFound,
+            SerdeTransactionError::ProgramAccountNotFound => Self::ProgramAccountNotFound,
+            SerdeTransactionError::InsufficientFundsForFee => Self::InsufficientFundsForFee,
+            SerdeTransactionError::InvalidAccountForFee => Self::InvalidAccountForFee,
+            SerdeTransactionError::AlreadyProcessed => Self::AlreadyProcessed,
+            SerdeTransactionError::BlockhashNotFound => Self::BlockhashNotFound,
+            SerdeTransactionError::InstructionError(i, inner) => {
                 Self::InstructionError(i, inner.into())
             }
-            SnapshotTransactionError::CallChainTooDeep => Self::CallChainTooDeep,
-            SnapshotTransactionError::MissingSignatureForFee => Self::MissingSignatureForFee,
-            SnapshotTransactionError::InvalidAccountIndex => Self::InvalidAccountIndex,
-            SnapshotTransactionError::SignatureFailure => Self::SignatureFailure,
-            SnapshotTransactionError::InvalidProgramForExecution => {
-                Self::InvalidProgramForExecution
-            }
-            SnapshotTransactionError::SanitizeFailure => Self::SanitizeFailure,
-            SnapshotTransactionError::ClusterMaintenance => Self::ClusterMaintenance,
-            SnapshotTransactionError::AccountBorrowOutstanding => Self::AccountBorrowOutstanding,
-            SnapshotTransactionError::WouldExceedMaxBlockCostLimit => {
+            SerdeTransactionError::CallChainTooDeep => Self::CallChainTooDeep,
+            SerdeTransactionError::MissingSignatureForFee => Self::MissingSignatureForFee,
+            SerdeTransactionError::InvalidAccountIndex => Self::InvalidAccountIndex,
+            SerdeTransactionError::SignatureFailure => Self::SignatureFailure,
+            SerdeTransactionError::InvalidProgramForExecution => Self::InvalidProgramForExecution,
+            SerdeTransactionError::SanitizeFailure => Self::SanitizeFailure,
+            SerdeTransactionError::ClusterMaintenance => Self::ClusterMaintenance,
+            SerdeTransactionError::AccountBorrowOutstanding => Self::AccountBorrowOutstanding,
+            SerdeTransactionError::WouldExceedMaxBlockCostLimit => {
                 Self::WouldExceedMaxBlockCostLimit
             }
-            SnapshotTransactionError::UnsupportedVersion => Self::UnsupportedVersion,
-            SnapshotTransactionError::InvalidWritableAccount => Self::InvalidWritableAccount,
-            SnapshotTransactionError::WouldExceedMaxAccountCostLimit => {
+            SerdeTransactionError::UnsupportedVersion => Self::UnsupportedVersion,
+            SerdeTransactionError::InvalidWritableAccount => Self::InvalidWritableAccount,
+            SerdeTransactionError::WouldExceedMaxAccountCostLimit => {
                 Self::WouldExceedMaxAccountCostLimit
             }
-            SnapshotTransactionError::WouldExceedAccountDataBlockLimit => {
+            SerdeTransactionError::WouldExceedAccountDataBlockLimit => {
                 Self::WouldExceedAccountDataBlockLimit
             }
-            SnapshotTransactionError::TooManyAccountLocks => Self::TooManyAccountLocks,
-            SnapshotTransactionError::AddressLookupTableNotFound => {
-                Self::AddressLookupTableNotFound
-            }
-            SnapshotTransactionError::InvalidAddressLookupTableOwner => {
+            SerdeTransactionError::TooManyAccountLocks => Self::TooManyAccountLocks,
+            SerdeTransactionError::AddressLookupTableNotFound => Self::AddressLookupTableNotFound,
+            SerdeTransactionError::InvalidAddressLookupTableOwner => {
                 Self::InvalidAddressLookupTableOwner
             }
-            SnapshotTransactionError::InvalidAddressLookupTableData => {
+            SerdeTransactionError::InvalidAddressLookupTableData => {
                 Self::InvalidAddressLookupTableData
             }
-            SnapshotTransactionError::InvalidAddressLookupTableIndex => {
+            SerdeTransactionError::InvalidAddressLookupTableIndex => {
                 Self::InvalidAddressLookupTableIndex
             }
-            SnapshotTransactionError::InvalidRentPayingAccount => Self::InvalidRentPayingAccount,
-            SnapshotTransactionError::WouldExceedMaxVoteCostLimit => {
-                Self::WouldExceedMaxVoteCostLimit
-            }
-            SnapshotTransactionError::WouldExceedAccountDataTotalLimit => {
+            SerdeTransactionError::InvalidRentPayingAccount => Self::InvalidRentPayingAccount,
+            SerdeTransactionError::WouldExceedMaxVoteCostLimit => Self::WouldExceedMaxVoteCostLimit,
+            SerdeTransactionError::WouldExceedAccountDataTotalLimit => {
                 Self::WouldExceedAccountDataTotalLimit
             }
-            SnapshotTransactionError::DuplicateInstruction(i) => Self::DuplicateInstruction(i),
-            SnapshotTransactionError::InsufficientFundsForRent { account_index } => {
+            SerdeTransactionError::DuplicateInstruction(i) => Self::DuplicateInstruction(i),
+            SerdeTransactionError::InsufficientFundsForRent { account_index } => {
                 Self::InsufficientFundsForRent { account_index }
             }
-            SnapshotTransactionError::MaxLoadedAccountsDataSizeExceeded => {
+            SerdeTransactionError::MaxLoadedAccountsDataSizeExceeded => {
                 Self::MaxLoadedAccountsDataSizeExceeded
             }
-            SnapshotTransactionError::InvalidLoadedAccountsDataSizeLimit => {
+            SerdeTransactionError::InvalidLoadedAccountsDataSizeLimit => {
                 Self::InvalidLoadedAccountsDataSizeLimit
             }
-            SnapshotTransactionError::ResanitizationNeeded => Self::ResanitizationNeeded,
-            SnapshotTransactionError::ProgramExecutionTemporarilyRestricted { account_index } => {
+            SerdeTransactionError::ResanitizationNeeded => Self::ResanitizationNeeded,
+            SerdeTransactionError::ProgramExecutionTemporarilyRestricted { account_index } => {
                 Self::ProgramExecutionTemporarilyRestricted { account_index }
             }
-            SnapshotTransactionError::UnbalancedTransaction => Self::UnbalancedTransaction,
-            SnapshotTransactionError::ProgramCacheHitMaxLimit => Self::ProgramCacheHitMaxLimit,
-            SnapshotTransactionError::CommitCancelled => Self::CommitCancelled,
+            SerdeTransactionError::UnbalancedTransaction => Self::UnbalancedTransaction,
+            SerdeTransactionError::ProgramCacheHitMaxLimit => Self::ProgramCacheHitMaxLimit,
+            SerdeTransactionError::CommitCancelled => Self::CommitCancelled,
         }
     }
 }
