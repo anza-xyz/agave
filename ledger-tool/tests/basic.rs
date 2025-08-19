@@ -65,14 +65,14 @@ fn ledger_tool_copy_test() {
     insert_test_shreds(ledger_path.path(), LEDGER_TOOL_COPY_TEST_ENDING_SLOT);
     let ledger_path = ledger_path.path().to_str().unwrap();
 
-    let target_ledger_path = get_tmp_ledger_path_auto_delete!();
-    let target_ledger_path = target_ledger_path.path().to_str().unwrap();
+    let output_dir_path = get_tmp_ledger_path_auto_delete!();
+    let output_dir_path = output_dir_path.path().to_str().unwrap();
     let output = run_ledger_tool(&[
         "-l",
         ledger_path,
         "copy",
-        "--target-ledger",
-        target_ledger_path,
+        "--output-dir",
+        output_dir_path,
         "--ending-slot",
         &(LEDGER_TOOL_COPY_TEST_ENDING_SLOT).to_string(),
     ]);
@@ -81,7 +81,7 @@ fn ledger_tool_copy_test() {
         let src_slot_output = run_ledger_tool(&["-l", ledger_path, "slot", &slot_id.to_string()]);
 
         let dst_slot_output =
-            run_ledger_tool(&["-l", target_ledger_path, "slot", &slot_id.to_string()]);
+            run_ledger_tool(&["-l", output_dir_path, "slot", &slot_id.to_string()]);
         assert!(src_slot_output.status.success());
         assert!(dst_slot_output.status.success());
         assert!(!src_slot_output.stdout.is_empty());
