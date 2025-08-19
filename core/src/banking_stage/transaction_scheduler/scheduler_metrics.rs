@@ -71,8 +71,9 @@ pub struct SchedulerCountMetricsInner {
     pub num_dropped_on_sanitization: Saturating<usize>,
     /// Number of transactions that were dropped due to failed lock validation.
     pub num_dropped_on_validate_locks: Saturating<usize>,
-    /// Number of transactions that were dropped in checking compute budget configuration.
-    pub num_dropped_on_compute_budget: Saturating<usize>,
+    /// Number of transactions that were dropped in checking compute budget configuration
+    /// during receive checks.
+    pub num_dropped_on_receive_compute_budget: Saturating<usize>,
     /// Number of transactions that were dropped due to age/nonce during receive checks.
     pub num_dropped_on_receive_age: Saturating<usize>,
     /// Number of transactions that were dropped due to already processed during receive checks.
@@ -131,7 +132,7 @@ impl SchedulerCountMetricsInner {
             num_dropped_on_receive: Saturating(num_dropped_on_receive),
             num_dropped_on_sanitization: Saturating(num_dropped_on_sanitization),
             num_dropped_on_validate_locks: Saturating(num_dropped_on_validate_locks),
-            num_dropped_on_compute_budget: Saturating(num_dropped_on_compute_budget),
+            num_dropped_on_receive_compute_budget: Saturating(num_dropped_on_receive_compute_budget),
             num_dropped_on_receive_age: Saturating(num_dropped_on_receive_age),
             num_dropped_on_receive_already_processed:
                 Saturating(num_dropped_on_receive_already_processed),
@@ -168,8 +169,8 @@ impl SchedulerCountMetricsInner {
                 i64
             ),
             (
-                "num_dropped_on_compute_budget",
-                num_dropped_on_compute_budget,
+                "num_dropped_on_receive_compute_budget",
+                num_dropped_on_receive_compute_budget,
                 i64
             ),
             ("num_dropped_on_receive_age", num_dropped_on_receive_age, i64),
@@ -222,7 +223,7 @@ impl SchedulerCountMetricsInner {
         self.num_dropped_on_receive = Saturating(0);
         self.num_dropped_on_sanitization = Saturating(0);
         self.num_dropped_on_validate_locks = Saturating(0);
-        self.num_dropped_on_compute_budget = Saturating(0);
+        self.num_dropped_on_receive_compute_budget = Saturating(0);
         self.num_dropped_on_receive_age = Saturating(0);
         self.num_dropped_on_receive_already_processed = Saturating(0);
         self.num_dropped_on_receive_fee_payer = Saturating(0);
