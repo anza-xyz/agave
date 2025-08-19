@@ -26,7 +26,6 @@ fn get_shred_size(shred: &[u8]) -> Option<usize> {
     match get_shred_variant(shred).ok()? {
         ShredVariant::MerkleCode { .. } => Some(shred::merkle::ShredCode::SIZE_OF_PAYLOAD),
         ShredVariant::MerkleData { .. } => Some(shred::merkle::ShredData::SIZE_OF_PAYLOAD),
-        _ => None,
     }
 }
 
@@ -149,9 +148,7 @@ fn get_data_size(shred: &[u8]) -> Result<u16, Error> {
 #[inline]
 pub(crate) fn get_data(shred: &[u8]) -> Result<&[u8], Error> {
     match get_shred_variant(shred)? {
-        ShredVariant::LegacyCode | ShredVariant::LegacyData | ShredVariant::MerkleCode { .. } => {
-            Err(Error::InvalidShredType)
-        }
+        ShredVariant::MerkleCode { .. } => Err(Error::InvalidShredType),
         ShredVariant::MerkleData {
             proof_size,
             chained,
@@ -177,9 +174,6 @@ pub fn get_shred_id(shred: &[u8]) -> Option<ShredId> {
 
 pub(crate) fn get_signed_data(shred: &[u8]) -> Option<SignedData> {
     let data = match get_shred_variant(shred).ok()? {
-        ShredVariant::LegacyCode | ShredVariant::LegacyData => {
-            return None;
-        }
         ShredVariant::MerkleCode {
             proof_size,
             chained,
@@ -214,7 +208,6 @@ pub fn get_reference_tick(shred: &[u8]) -> Result<u8, Error> {
 
 pub fn get_merkle_root(shred: &[u8]) -> Option<Hash> {
     match get_shred_variant(shred).ok()? {
-        ShredVariant::LegacyCode | ShredVariant::LegacyData => None,
         ShredVariant::MerkleCode {
             proof_size,
             chained,
@@ -230,7 +223,6 @@ pub fn get_merkle_root(shred: &[u8]) -> Option<Hash> {
 
 pub(crate) fn get_chained_merkle_root(shred: &[u8]) -> Option<Hash> {
     let offset = match get_shred_variant(shred).ok()? {
-        ShredVariant::LegacyCode | ShredVariant::LegacyData => return None,
         ShredVariant::MerkleCode {
             proof_size,
             chained,
@@ -255,7 +247,6 @@ pub(crate) fn get_chained_merkle_root(shred: &[u8]) -> Option<Hash> {
 
 fn get_retransmitter_signature_offset(shred: &[u8]) -> Result<usize, Error> {
     match get_shred_variant(shred)? {
-        ShredVariant::LegacyCode | ShredVariant::LegacyData => Err(Error::InvalidShredVariant),
         ShredVariant::MerkleCode {
             proof_size,
             chained,
@@ -283,7 +274,6 @@ pub fn get_retransmitter_signature(shred: &[u8]) -> Result<Signature, Error> {
 
 pub fn is_retransmitter_signed_variant(shred: &[u8]) -> Result<bool, Error> {
     match get_shred_variant(shred)? {
-        ShredVariant::LegacyCode | ShredVariant::LegacyData => Ok(false),
         ShredVariant::MerkleCode {
             proof_size: _,
             chained: _,
@@ -339,9 +329,6 @@ pub fn resign_packet(packet: &mut PacketRefMut, keypair: &Keypair) -> Result<(),
 /// signature which is left intact.
 pub fn resign_shred(shred: &mut [u8], keypair: &Keypair) -> Result<(), Error> {
     let (offset, merkle_root) = match get_shred_variant(shred)? {
-        ShredVariant::LegacyCode | ShredVariant::LegacyData => {
-            return Err(Error::InvalidShredVariant)
-        }
         ShredVariant::MerkleCode {
             proof_size,
             chained,
@@ -390,7 +377,6 @@ pub(crate) fn corrupt_packet<R: Rng>(
     // as moved.
     let shred = get_shred(&*packet).unwrap();
     let merkle_variant = match get_shred_variant(shred).unwrap() {
-        ShredVariant::LegacyCode | ShredVariant::LegacyData => None,
         ShredVariant::MerkleCode {
             proof_size,
             resigned,

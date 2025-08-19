@@ -68,7 +68,6 @@ pub fn verify_shred_cpu(
         return false;
     };
     match data {
-        SignedData::Chunk(chunk) => signature.verify(pubkey.as_ref(), chunk),
         SignedData::MerkleRoot(root) => {
             let key = (signature, *pubkey, root);
             if cache.read().unwrap().get(&key).is_some() {

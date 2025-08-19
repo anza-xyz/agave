@@ -84,7 +84,6 @@ use {
 use {solana_keypair::Keypair, solana_perf::packet::Packet, solana_signer::Signer};
 
 mod common;
-mod legacy;
 pub(crate) mod merkle;
 mod merkle_tree;
 mod payload;
@@ -219,12 +218,9 @@ pub enum ShredType {
     Code = 0b0101_1010,
 }
 
-#[allow(dead_code)] //legacy shreds have been removed, TODO remove unused enum variants
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 #[serde(into = "u8", try_from = "u8")]
 enum ShredVariant {
-    LegacyCode, // 0b0101_1010 TO REMOVE
-    LegacyData, // 0b1010_0101 TO REMOVE
     // proof_size is the number of Merkle proof entries, and is encoded in the
     // lowest 4 bits of the binary representation. The first 4 bits identify
     // the shred variant:
@@ -280,15 +276,13 @@ pub enum Shred {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum SignedData<'a> {
-    Chunk(&'a [u8]), // Chunk of payload past signature.
+pub(crate) enum SignedData {
     MerkleRoot(Hash),
 }
 
-impl AsRef<[u8]> for SignedData<'_> {
+impl AsRef<[u8]> for SignedData {
     fn as_ref(&self) -> &[u8] {
         match self {
-            Self::Chunk(chunk) => chunk,
             Self::MerkleRoot(root) => root.as_ref(),
         }
     }
@@ -424,9 +418,6 @@ impl Shred {
         Payload: From<T>,
     {
         Ok(match layout::get_shred_variant(shred.as_ref())? {
-            ShredVariant::LegacyCode | ShredVariant::LegacyData => {
-                return Err(Error::InvalidShredVariant);
-            }
             ShredVariant::MerkleCode { .. } => {
                 let shred = merkle::ShredCode::from_payload(shred)?;
                 Self::from(ShredCode::from(shred))
@@ -590,8 +581,6 @@ impl Shred {
         match self {
             Self::ShredCode(ShredCode::Merkle(shred)) => shred.retransmitter_signature_offset(),
             Self::ShredData(ShredData::Merkle(shred)) => shred.retransmitter_signature_offset(),
-            Self::ShredCode(ShredCode::Legacy(_)) => Err(Error::InvalidShredVariant),
-            Self::ShredData(ShredData::Legacy(_)) => Err(Error::InvalidShredVariant),
         }
     }
 }
@@ -622,9 +611,7 @@ impl TryFrom<Shred> for merkle::Shred {
 
     fn try_from(shred: Shred) -> Result<Self, Self::Error> {
         match shred {
-            Shred::ShredCode(ShredCode::Legacy(_)) => Err(Error::InvalidShredVariant),
             Shred::ShredCode(ShredCode::Merkle(shred)) => Ok(Self::ShredCode(shred)),
-            Shred::ShredData(ShredData::Legacy(_)) => Err(Error::InvalidShredVariant),
             Shred::ShredData(ShredData::Merkle(shred)) => Ok(Self::ShredData(shred)),
         }
     }
@@ -634,8 +621,6 @@ impl From<ShredVariant> for ShredType {
     #[inline]
     fn from(shred_variant: ShredVariant) -> Self {
         match shred_variant {
-            ShredVariant::LegacyCode => ShredType::Code,
-            ShredVariant::LegacyData => ShredType::Data,
             ShredVariant::MerkleCode { .. } => ShredType::Code,
             ShredVariant::MerkleData { .. } => ShredType::Data,
         }
@@ -646,8 +631,6 @@ impl From<ShredVariant> for u8 {
     #[inline]
     fn from(shred_variant: ShredVariant) -> u8 {
         match shred_variant {
-            ShredVariant::LegacyCode => u8::from(ShredType::Code),
-            ShredVariant::LegacyData => u8::from(ShredType::Data),
             ShredVariant::MerkleCode {
                 proof_size,
                 chained: false,
@@ -847,9 +830,7 @@ where
         }
     }
     match shred_variant {
-        ShredVariant::LegacyCode
-        | ShredVariant::LegacyData
-        | ShredVariant::MerkleCode { chained: false, .. }
+        ShredVariant::MerkleCode { chained: false, .. }
         | ShredVariant::MerkleData { chained: false, .. } => {
             return true;
         }
@@ -974,7 +955,11 @@ mod tests {
     fn test_shred_constants() {
         let common_header = ShredCommonHeader {
             signature: Signature::default(),
-            shred_variant: ShredVariant::LegacyCode,
+            shred_variant: ShredVariant::MerkleCode {
+                proof_size: 0,
+                chained: true,
+                resigned: false,
+            },
             slot: Slot::MAX,
             index: u32::MAX,
             version: u16::MAX,
@@ -1356,19 +1341,9 @@ mod tests {
         assert_matches!(ShredVariant::try_from(0b1010_0000), Err(_));
         assert_matches!(bincode::deserialize::<ShredVariant>(&[0b0101_0000]), Err(_));
         assert_matches!(bincode::deserialize::<ShredVariant>(&[0b1010_0000]), Err(_));
-        // Legacy coding shred.
-        assert_eq!(u8::from(ShredVariant::LegacyCode), 0b0101_1010);
-        assert_eq!(ShredType::from(ShredVariant::LegacyCode), ShredType::Code);
         assert_matches!(ShredVariant::try_from(0b0101_1010), Err(_));
-        let buf = bincode::serialize(&ShredVariant::LegacyCode).unwrap();
-        assert_eq!(buf, vec![0b0101_1010]);
         assert_matches!(bincode::deserialize::<ShredVariant>(&[0b0101_1010]), Err(_));
-        // Legacy data shred.
-        assert_eq!(u8::from(ShredVariant::LegacyData), 0b1010_0101);
-        assert_eq!(ShredType::from(ShredVariant::LegacyData), ShredType::Data);
         assert_matches!(ShredVariant::try_from(0b1010_0101), Err(_));
-        let buf = bincode::serialize(&ShredVariant::LegacyData).unwrap();
-        assert_eq!(buf, vec![0b1010_0101]);
         assert_matches!(bincode::deserialize::<ShredVariant>(&[0b1010_0101]), Err(_));
     }
 

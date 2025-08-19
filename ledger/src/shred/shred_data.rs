@@ -2,7 +2,7 @@ use {
     crate::shred::{
         self,
         common::dispatch,
-        legacy, merkle,
+        merkle,
         payload::Payload,
         traits::{Shred as _, ShredData as ShredDataTrait},
         DataShredHeader, Error, ShredCommonHeader, ShredFlags, ShredType, ShredVariant, SignedData,
@@ -15,7 +15,6 @@ use {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShredData {
-    Legacy(legacy::ShredData),
     Merkle(merkle::ShredData),
 }
 
@@ -32,21 +31,18 @@ impl ShredData {
 
     pub(super) fn signed_data(&self) -> Result<SignedData, Error> {
         match self {
-            Self::Legacy(shred) => Ok(SignedData::Chunk(shred.signed_data()?)),
             Self::Merkle(shred) => Ok(SignedData::MerkleRoot(shred.signed_data()?)),
         }
     }
 
     pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error> {
         match self {
-            Self::Legacy(_) => Err(Error::InvalidShredType),
             Self::Merkle(shred) => shred.chained_merkle_root(),
         }
     }
 
     pub(super) fn merkle_root(&self) -> Result<Hash, Error> {
         match self {
-            Self::Legacy(_) => Err(Error::InvalidShredType),
             Self::Merkle(shred) => shred.merkle_root(),
         }
     }
@@ -70,7 +66,6 @@ impl ShredData {
     // Should only be used when storing shreds to blockstore.
     pub(super) fn bytes_to_store(&self) -> &[u8] {
         match self {
-            Self::Legacy(shred) => shred.bytes_to_store(),
             Self::Merkle(shred) => shred.payload(),
         }
     }
@@ -78,16 +73,13 @@ impl ShredData {
     // Possibly zero pads bytes stored in blockstore.
     pub(crate) fn resize_stored_shred(shred: Vec<u8>) -> Result<Vec<u8>, Error> {
         match shred::layout::get_shred_variant(&shred)? {
-            ShredVariant::LegacyCode | ShredVariant::MerkleCode { .. } => {
-                Err(Error::InvalidShredType)
-            }
+            ShredVariant::MerkleCode { .. } => Err(Error::InvalidShredType),
             ShredVariant::MerkleData { .. } => {
                 if shred.len() != merkle::ShredData::SIZE_OF_PAYLOAD {
                     return Err(Error::InvalidPayloadSize(shred.len()));
                 }
                 Ok(shred)
             }
-            ShredVariant::LegacyData => legacy::ShredData::resize_stored_shred(shred),
         }
     }
 
@@ -112,15 +104,8 @@ impl ShredData {
 
     pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error> {
         match self {
-            Self::Legacy(_) => Err(Error::InvalidShredVariant),
             Self::Merkle(shred) => shred.retransmitter_signature(),
         }
-    }
-}
-
-impl From<legacy::ShredData> for ShredData {
-    fn from(shred: legacy::ShredData) -> Self {
-        Self::Legacy(shred)
     }
 }
 

@@ -129,7 +129,6 @@ impl Shred {
         Payload: From<T>,
     {
         match shred::layout::get_shred_variant(shred.as_ref())? {
-            ShredVariant::LegacyCode | ShredVariant::LegacyData => Err(Error::InvalidShredVariant),
             ShredVariant::MerkleCode { .. } => Ok(Self::ShredCode(ShredCode::from_payload(shred)?)),
             ShredVariant::MerkleData { .. } => Ok(Self::ShredData(ShredData::from_payload(shred)?)),
         }
@@ -712,7 +711,7 @@ pub(super) fn recover(
             chained,
             resigned,
         } => (proof_size, chained, resigned),
-        ShredVariant::MerkleData { .. } | ShredVariant::LegacyCode | ShredVariant::LegacyData => {
+        ShredVariant::MerkleData { .. } => {
             return Err(Error::InvalidShredVariant);
         }
     };
