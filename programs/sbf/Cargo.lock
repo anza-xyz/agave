@@ -185,7 +185,7 @@ dependencies = [
  "solana-packet",
  "solana-pubkey",
  "solana-sdk-ids",
- "solana-short-vec",
+ "solana-short-vec 3.0.0",
  "solana-signature",
  "solana-svm-transaction",
 ]
@@ -6182,7 +6182,7 @@ dependencies = [
  "solana-instruction",
  "solana-pubkey",
  "solana-sdk-ids",
- "solana-short-vec",
+ "solana-short-vec 2.2.1",
  "solana-system-interface",
 ]
 
@@ -6317,7 +6317,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-send-transaction-service",
  "solana-sha256-hasher",
- "solana-short-vec",
+ "solana-short-vec 3.0.0",
  "solana-shred-version",
  "solana-signature",
  "solana-signer",
@@ -6801,7 +6801,7 @@ dependencies = [
  "solana-sanitize",
  "solana-serde-varint",
  "solana-sha256-hasher",
- "solana-short-vec",
+ "solana-short-vec 3.0.0",
  "solana-signature",
  "solana-signer",
  "solana-streamer",
@@ -7181,7 +7181,7 @@ dependencies = [
  "solana-pubkey",
  "solana-sanitize",
  "solana-sdk-ids",
- "solana-short-vec",
+ "solana-short-vec 2.2.1",
  "solana-system-interface",
  "solana-transaction-error",
  "wasm-bindgen",
@@ -7321,7 +7321,7 @@ dependencies = [
  "solana-pubkey",
  "solana-rayon-threadlimit",
  "solana-sdk-ids",
- "solana-short-vec",
+ "solana-short-vec 3.0.0",
  "solana-signature",
  "solana-time-utils",
 ]
@@ -7457,7 +7457,7 @@ dependencies = [
  "solana-serde-varint",
  "solana-serialize-utils",
  "solana-sha256-hasher",
- "solana-short-vec",
+ "solana-short-vec 2.2.1",
  "solana-slot-hashes",
  "solana-slot-history",
  "solana-stable-layout",
@@ -9024,6 +9024,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-short-vec"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b69d029da5428fc1c57f7d49101b2077c61f049d4112cd5fb8456567cc7d2638"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "solana-shred-version"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9606,7 +9615,7 @@ dependencies = [
  "solana-pubkey",
  "solana-sanitize",
  "solana-sdk-ids",
- "solana-short-vec",
+ "solana-short-vec 2.2.1",
  "solana-signature",
  "solana-signer",
  "solana-system-interface",
@@ -9653,7 +9662,7 @@ dependencies = [
  "rand 0.8.5",
  "solana-packet",
  "solana-perf",
- "solana-short-vec",
+ "solana-short-vec 3.0.0",
  "solana-signature",
 ]
 
@@ -9900,7 +9909,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-serde-varint",
  "solana-serialize-utils",
- "solana-short-vec",
+ "solana-short-vec 2.2.1",
  "solana-system-interface",
 ]
 
