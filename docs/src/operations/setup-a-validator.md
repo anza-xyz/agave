@@ -36,7 +36,7 @@ Validator operators are required to install the tools included in the Solana CLI
 Once the Solana CLI is installed, you can return to this document once you are
 able to run two commands and get an answer on your terminal.
 
-First, run the following command to verify that the solana cli is installed:
+First, run the following command to verify that the Solana CLI is installed:
 
 ```
 solana --version
