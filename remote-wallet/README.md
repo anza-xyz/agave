@@ -4,7 +4,7 @@ A Rust library for interacting with hardware wallets in the Solana ecosystem. Th
 
 ## Features
 
-- **Multi-Wallet Support**: Currently supports Ledger hardware wallets, with extensible architecture for additional wallet types
+- **Multi-Wallet Support**: Supports Ledger and Keystone hardware wallets, with extensible architecture for additional wallet types
 - **USB HID Communication**: Secure communication with hardware wallets via USB HID protocol
 - **Device Discovery**: Automatic detection and connection to connected hardware wallets
 - **Transaction Signing**: Sign Solana transactions and messages using hardware wallet private keys
@@ -19,8 +19,11 @@ A Rust library for interacting with hardware wallets in the Solana ecosystem. Th
 - **Features**: Transaction signing, message signing, public key derivation
 - **Ledger udev-rules**: In order to use a Ledger device on Linux machines, users must apply certain udev rules. These are available at the [udev-rules repository](https://github.com/LedgerHQ/udev-rules) maintained by the Ledger team.
 
-### Keystone (Planned/In Development)
-- Support for Keystone hardware wallets is being added
+### Keystone
+- **Protocol**: USB HID with UR (Uniform Resource) protocol
+- **Features**: Transaction signing, message signing, public key derivation, QR code support
+- **Device Support**: Keystone 3 Pro
+- **UR Protocol**: Uses UR (Uniform Resource) protocol for secure communication with QR code capabilities
 
 ## Architecture
 
@@ -38,10 +41,14 @@ remote-wallet/
 │   │   ├── mod.rs             # Wallet module definitions
 │   │   ├── types.rs           # Common wallet types
 │   │   ├── errors.rs          # Wallet-specific errors
-│   │   └── ledger/            # Ledger wallet implementation
-│   │       ├── mod.rs         # Ledger module
-│   │       ├── ledger.rs      # Ledger wallet logic
-│   │       └── error.rs       # Ledger-specific errors
+│   │   ├── ledger/            # Ledger wallet implementation
+│   │   │   ├── mod.rs         # Ledger module
+│   │   │   ├── ledger.rs      # Ledger wallet logic
+│   │   │   └── error.rs       # Ledger-specific errors
+│   │   └── keystone/          # Keystone wallet implementation
+│   │       ├── mod.rs         # Keystone module
+│   │       ├── keystone.rs    # Keystone wallet logic
+│   │       └── error.rs       # Keystone-specific errors
 │   └── transport/             # Communication layer
 │       ├── mod.rs             # Transport module
 │       ├── transport_trait.rs # Transport trait definition
@@ -80,6 +87,8 @@ Hardware wallets are identified using URI-style locators:
 ```
 usb://ledger
 usb://ledger?key=0
+usb://keystone
+usb://keystone?key=0
 ```
 
 ### Security Considerations
@@ -142,3 +151,8 @@ impl WalletProbe for NewWalletProbe {
     // Implement device discovery
 }
 ```
+
+### Current Implementations
+
+The library currently includes complete implementations for:
+- **Keystone**: Full support for Keystone hardware wallets with UR protocol
