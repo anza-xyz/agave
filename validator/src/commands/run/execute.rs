@@ -1288,8 +1288,8 @@ fn new_snapshot_config(
 
     if !is_snapshot_config_valid(&snapshot_config) {
         Err(
-            "invalid snapshot configuration provided: snapshot intervals are incompatible. \n\t- \
-             full snapshot interval MUST be larger than incremental snapshot interval (if enabled)"
+            "invalid snapshot configuration provided: snapshot intervals are incompatible. full \
+             snapshot interval MUST be larger than incremental snapshot interval (if enabled)"
                 .to_string(),
         )?;
     }

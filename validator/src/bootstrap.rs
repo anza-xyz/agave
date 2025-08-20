@@ -953,7 +953,7 @@ fn build_known_snapshot_hashes<'a>(
         if is_any_same_slot_and_different_hash(&full_snapshot_hash, known_snapshot_hashes.keys()) {
             warn!(
                 "Ignoring all snapshot hashes from node {node} since we've seen a different full \
-                 snapshot hash with this slot. Full snapshot hash: {full_snapshot_hash:?}"
+                 snapshot hash with this slot. full snapshot hash: {full_snapshot_hash:?}"
             );
             debug!(
                 "known full snapshot hashes: {:#?}",
@@ -979,7 +979,7 @@ fn build_known_snapshot_hashes<'a>(
             ) {
                 warn!(
                     "Ignoring incremental snapshot hash from node {node} since we've seen a \
-                     different incremental snapshot hash with this slot. Full snapshot hash: \
+                     different incremental snapshot hash with this slot. full snapshot hash: \
                      {full_snapshot_hash:?}, incremental snapshot hash: \
                      {incremental_snapshot_hash:?}"
                 );
