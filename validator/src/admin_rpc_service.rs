@@ -1025,6 +1025,7 @@ mod tests {
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
                     node: None,
+                    banking_stage: Arc::new(RwLock::new(None)),
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,

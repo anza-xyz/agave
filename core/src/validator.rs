@@ -1685,6 +1685,7 @@ impl Validator {
             outstanding_repair_requests,
             cluster_slots,
             node: Some(node_multihoming),
+            banking_stage: tpu.banking_stage(),
         });
 
         Ok(Self {

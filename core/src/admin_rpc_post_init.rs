@@ -1,5 +1,6 @@
 use {
     crate::{
+        banking_stage::BankingStage,
         cluster_slots_service::cluster_slots::ClusterSlots,
         repair::{outstanding_requests::OutstandingRequests, serve_repair::ShredRepairType},
     },
@@ -79,4 +80,5 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub outstanding_repair_requests: Arc<RwLock<OutstandingRequests<ShredRepairType>>>,
     pub cluster_slots: Arc<ClusterSlots>,
     pub node: Option<Arc<NodeMultihoming>>,
+    pub banking_stage: Arc<RwLock<Option<BankingStage>>>,
 }
