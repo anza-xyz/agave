@@ -184,9 +184,20 @@ impl BlockVerificationMethod {
 }
 
 #[derive(
-    Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display, Deserialize, Serialize,
+    Clone,
+    Debug,
+    EnumString,
+    EnumVariantNames,
+    Default,
+    IntoStaticStr,
+    Display,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
 )]
 #[strum(serialize_all = "kebab-case")]
+#[serde(rename_all = "kebab-case")]
 pub enum BlockProductionMethod {
     CentralScheduler,
     #[default]
@@ -204,9 +215,20 @@ impl BlockProductionMethod {
 }
 
 #[derive(
-    Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display, Deserialize, Serialize,
+    Clone,
+    Debug,
+    EnumString,
+    EnumVariantNames,
+    Default,
+    IntoStaticStr,
+    Display,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
 )]
 #[strum(serialize_all = "kebab-case")]
+#[serde(rename_all = "kebab-case")]
 pub enum TransactionStructure {
     Sdk,
     #[default]
