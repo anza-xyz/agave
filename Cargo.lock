@@ -8156,9 +8156,9 @@ dependencies = [
 
 [[package]]
 name = "solana-curve25519"
-version = "2.2.15"
+version = "2.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "def3cfe5279edb64fc39111cff6dcf77b01fbfba2c02c13ced41e6a48baf4cbe"
+checksum = "b162f50499b391b785d57b2f2c73e3b9754d88fd4894bef444960b00bda8dcca"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
@@ -12222,13 +12222,13 @@ dependencies = [
 
 [[package]]
 name = "spl-token-confidential-transfer-proof-extraction"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bedc4675c80409a004da46978674e4073c65c4b1c611bf33d120381edeffe036"
+checksum = "512c85bdbbb4cbcc2038849a9e164c958b16541f252b53ea1a3933191c0a4a1a"
 dependencies = [
  "bytemuck",
  "solana-account-info",
- "solana-curve25519 2.2.15",
+ "solana-curve25519 2.3.7",
  "solana-instruction",
  "solana-instructions-sysvar",
  "solana-msg",
