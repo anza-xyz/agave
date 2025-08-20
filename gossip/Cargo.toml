@@ -95,7 +95,7 @@ solana-short-vec = "=2.2.1"
 solana-signature = { version = "=2.3.0", default-features = false }
 solana-signer = "=2.2.1"
 solana-streamer = { workspace = true }
-solana-time-utils = "=2.2.1"
+solana-time-utils = "=3.0.0"
 solana-tpu-client = { workspace = true }
 solana-transaction = "=2.2.3"
 solana-version = { workspace = true }

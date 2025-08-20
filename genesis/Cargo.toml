@@ -55,7 +55,7 @@ solana-sdk-ids = "=2.2.1"
 solana-signer = "=2.2.1"
 solana-stake-interface = "=1.2.1"
 solana-stake-program = { workspace = true }
-solana-time-utils = "2.2.1"
+solana-time-utils = "3.0.0"
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 tempfile = { workspace = true }

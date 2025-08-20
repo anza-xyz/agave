@@ -537,7 +537,7 @@ solana-system-transaction = "2.2.1"
 solana-sysvar = "2.2.2"
 solana-sysvar-id = "2.2.1"
 solana-test-validator = { path = "test-validator", version = "=3.0.0" }
-solana-time-utils = "2.2.1"
+solana-time-utils = "3.0.0"
 solana-tls-utils = { path = "tls-utils", version = "=3.0.0" }
 solana-tps-client = { path = "tps-client", version = "=3.0.0" }
 solana-tpu-client = { path = "tpu-client", version = "=3.0.0", default-features = false }
