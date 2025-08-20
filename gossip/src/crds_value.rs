@@ -362,16 +362,6 @@ mod test {
 
     #[test]
     fn test_serialize_round_trip() {
-        // Unfortunately doing `Keypair::new_from_array(rng.gen())` gives
-        // different results, so this essentially inlines the implementation
-        // from ed25519_dalek v1:
-        // https://docs.rs/ed25519-dalek/1.0.1/src/ed25519_dalek/secret.rs.html#171
-        fn random_keypair<R: RngCore>(rng: &mut R) -> Keypair {
-            let mut secret_bytes = [0u8; 32];
-            rng.fill_bytes(&mut secret_bytes);
-            Keypair::new_from_array(secret_bytes)
-        }
-        use rand0_7::RngCore;
         let mut rng = ChaChaRng::from_seed(
             bs58::decode("4nHgVgCvVaHnsrg4dYggtvWYYgV3JbeyiRBWupPMt3EG")
                 .into_vec()
@@ -381,7 +371,7 @@ mod test {
         );
         let values: Vec<CrdsValue> = vec![
             {
-                let keypair = random_keypair(&mut rng);
+                let keypair = Keypair::new_from_array(rng.gen());
                 let lockouts: [Lockout; 4] = [
                     Lockout::new_with_confirmation_count(302_388_991, 11),
                     Lockout::new_with_confirmation_count(302_388_995, 7),
@@ -395,16 +385,13 @@ mod test {
                     timestamp: Some(1_732_044_716_167),
                     block_id: Hash::new_from_array(rng.gen()),
                 };
-                let blockhash = Hash::new_from_array(rng.gen());
-                let vote_keypair = random_keypair(&mut rng);
-                let voter_keypair = random_keypair(&mut rng);
                 let vote = new_tower_sync_transaction(
                     tower_sync,
-                    blockhash,      // blockhash
-                    &keypair,       // node_keypair
-                    &vote_keypair,  // vote_keypair
-                    &voter_keypair, // authorized_voter_keypair
-                    None,           // switch_proof_hash
+                    Hash::new_from_array(rng.gen()),     // blockhash
+                    &keypair,                            // node_keypair
+                    &Keypair::new_from_array(rng.gen()), // vote_keypair
+                    &Keypair::new_from_array(rng.gen()), // authorized_voter_keypair
+                    None,                                // switch_proof_hash
                 );
                 let vote = Vote::new(
                     keypair.pubkey(),
@@ -415,7 +402,7 @@ mod test {
                 CrdsValue::new(CrdsData::Vote(5, vote), &keypair)
             },
             {
-                let keypair = random_keypair(&mut rng);
+                let keypair = Keypair::new_from_array(rng.gen());
                 let lockouts: [Lockout; 3] = [
                     Lockout::new_with_confirmation_count(302_410_500, 9),
                     Lockout::new_with_confirmation_count(302_410_505, 5),
@@ -428,16 +415,13 @@ mod test {
                     timestamp: Some(1_732_053_615_237),
                     block_id: Hash::new_from_array(rng.gen()),
                 };
-                let blockhash = Hash::new_from_array(rng.gen());
-                let vote_keypair = random_keypair(&mut rng);
-                let voter_keypair = random_keypair(&mut rng);
                 let vote = new_tower_sync_transaction(
                     tower_sync,
-                    blockhash,      // blockhash
-                    &keypair,       // node_keypair
-                    &vote_keypair,  // vote_keypair
-                    &voter_keypair, // authorized_voter_keypair
-                    None,           // switch_proof_hash
+                    Hash::new_from_array(rng.gen()),     // blockhash
+                    &keypair,                            // node_keypair
+                    &Keypair::new_from_array(rng.gen()), // vote_keypair
+                    &Keypair::new_from_array(rng.gen()), // authorized_voter_keypair
+                    None,                                // switch_proof_hash
                 );
                 let vote = Vote::new(
                     keypair.pubkey(),
@@ -452,7 +436,7 @@ mod test {
         // Serialized bytes are fixed and should never change.
         assert_eq!(
             solana_sha256_hasher::hash(&bytes),
-            Hash::from_str("7gtcoafccWE964njbs2bA1QuVFeV34RaoY781yLx2A8N").unwrap()
+            Hash::from_str("BTg284TRo5S5PpbA9YZaab5rKeoLNAj7arwadvG6XVLT").unwrap()
         );
         // serialize -> deserialize should round trip.
         assert_eq!(
