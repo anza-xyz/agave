@@ -97,7 +97,7 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .long("skip-wait-for-exit")
                 .takes_value(false)
                 .conflicts_with("wait_for_exit")
-                .help("Skip waiting for the validator to terminate after sending the exit request"),
+                .help("Do not wait for the validator to terminate after sending the exit request"),
         )
         .arg(
             Arg::with_name("min_idle_time")
