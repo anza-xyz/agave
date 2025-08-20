@@ -114,8 +114,8 @@ impl FromStr for KeystoneError {
             "device locked" => Ok(KeystoneError::DeviceLocked),
             "invalid signature" => Ok(KeystoneError::InvalidSignature),
             "UR parsing rejected" => Ok(KeystoneError::URParsingRejected),
-                "export address is just allowed on specific pages" => Ok(KeystoneError::DeviceError(
-                    "Export address is just allowed on specific pages".to_string(),
+            "export address is just allowed on specific pages" => Ok(KeystoneError::DeviceError(
+                "Export address is just allowed on specific pages".to_string(),
             )),
 
             s if s.contains("previous request") && s.contains("not finished") => {
