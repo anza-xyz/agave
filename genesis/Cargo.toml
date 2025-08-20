@@ -35,7 +35,7 @@ solana-cli-config = { workspace = true }
 solana-clock = "=2.2.2"
 solana-commitment-config = "=2.2.1"
 solana-entry = { workspace = true }
-solana-epoch-schedule = "=2.2.1"
+solana-epoch-schedule = "=3.0.0"
 solana-feature-gate-interface = "=2.2.2"
 solana-fee-calculator = "=2.2.1"
 solana-genesis-config = "=2.3.0"

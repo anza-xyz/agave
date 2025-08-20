@@ -65,7 +65,7 @@ solana-client = { workspace = true }
 solana-clock = "=2.2.2"
 solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
-solana-epoch-schedule = "=2.2.1"
+solana-epoch-schedule = "=3.0.0"
 solana-frozen-abi = { version = "=2.3.0", optional = true, features = [
     "frozen-abi",
 ] }
