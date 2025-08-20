@@ -14,7 +14,7 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{poh_service::PohService, transaction_recorder::TransactionRecorder},
-    arc_swap::ArcSwapOption,
+    arc_swap::{ArcSwap, ArcSwapOption},
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TrySendError},
     log::*,
     solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
@@ -1009,6 +1009,36 @@ impl SharedWorkingBank {
     fn empty() -> Self {
         Self(Arc::new(ArcSwapOption::empty()))
     }
+}
+
+/// A shareable leader status that can be used to
+/// determine the current leader status of the
+/// `PohRecorder`.
+#[derive(Clone)]
+pub struct SharedLeaderStatus(Arc<ArcSwap<SharedLeaderStatusInner>>);
+
+impl SharedLeaderStatus {
+    pub fn load(&self) -> LeaderStatus {
+        match self.0.load().as_ref() {
+            SharedLeaderStatusInner::Active(bank) => LeaderStatus::Active(bank.clone()),
+            SharedLeaderStatusInner::TicksUntilLeader(ticks) => {
+                LeaderStatus::TicksUntilLeader(ticks.load(Ordering::Acquire))
+            }
+            SharedLeaderStatusInner::WillNotBeLeader => LeaderStatus::WillNotBeLeader,
+        }
+    }
+}
+
+enum SharedLeaderStatusInner {
+    Active(Arc<Bank>),
+    TicksUntilLeader(AtomicU64),
+    WillNotBeLeader,
+}
+
+pub enum LeaderStatus {
+    Active(Arc<Bank>),
+    TicksUntilLeader(u64),
+    WillNotBeLeader,
 }
 
 /// Wrapper around a atomic-u64 that prevents modifying outside
