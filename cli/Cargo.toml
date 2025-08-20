@@ -90,7 +90,7 @@ solana-sysvar = "=2.2.2"
 solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
 solana-transaction = "=2.2.3"
-solana-transaction-error = "=2.2.1"
+solana-transaction-error = "=3.0.0"
 solana-transaction-status = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
 solana-udp-client = { workspace = true }

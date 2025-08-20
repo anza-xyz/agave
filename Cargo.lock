@@ -121,7 +121,7 @@ version = "3.0.0"
 dependencies = [
  "ahash 0.8.11",
  "solana-epoch-schedule",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-pubkey",
@@ -314,7 +314,7 @@ name = "agave-reserved-account-keys"
 version = "3.0.0"
 dependencies = [
  "agave-feature-set",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-message",
  "solana-pubkey",
@@ -562,7 +562,7 @@ dependencies = [
  "solana-clock",
  "solana-entry",
  "solana-epoch-schedule",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-gossip",
  "solana-hash",
@@ -6765,7 +6765,7 @@ dependencies = [
  "serde_derive",
  "solana-account-info",
  "solana-clock",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
  "solana-instruction",
  "solana-logger 2.3.1",
@@ -6840,7 +6840,7 @@ checksum = "c8f5152a288ef1912300fc6efa6c2d1f9bb55d9398eb6c72326360b8063987da"
 dependencies = [
  "bincode",
  "serde",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-program-memory",
  "solana-pubkey",
 ]
@@ -6938,7 +6938,7 @@ dependencies = [
  "solana-compute-budget",
  "solana-epoch-schedule",
  "solana-fee-calculator",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-genesis-config",
  "solana-hash",
@@ -6968,7 +6968,7 @@ dependencies = [
  "solana-time-utils",
  "solana-transaction",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-vote-program",
  "spl-generic-token",
  "static_assertions",
@@ -7066,7 +7066,7 @@ dependencies = [
  "solana-sysvar",
  "solana-transaction",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "tarpc",
  "thiserror 2.0.14",
  "tokio",
@@ -7088,7 +7088,7 @@ dependencies = [
  "solana-signature",
  "solana-transaction",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "tarpc",
 ]
 
@@ -7114,7 +7114,7 @@ dependencies = [
  "solana-signature",
  "solana-svm",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "tarpc",
  "tokio",
  "tokio-serde",
@@ -7254,7 +7254,7 @@ dependencies = [
  "blake3",
  "solana-define-syscall",
  "solana-hash",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
 ]
 
 [[package]]
@@ -7268,10 +7268,10 @@ dependencies = [
  "rayon",
  "serde",
  "serde_derive",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
  "solana-sha256-hasher",
  "solana-signature",
  "solana-time-utils",
@@ -7360,7 +7360,7 @@ dependencies = [
  "solana-signer",
  "solana-system-interface",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
 ]
 
 [[package]]
@@ -7413,7 +7413,7 @@ dependencies = [
  "rand 0.8.5",
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-loader-v4-program",
  "solana-pubkey",
  "solana-sdk-ids",
@@ -7602,7 +7602,7 @@ dependencies = [
  "solana-tps-client",
  "solana-tpu-client",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status",
  "solana-transaction-status-client-types",
  "solana-udp-client",
@@ -7668,7 +7668,7 @@ dependencies = [
  "solana-sysvar",
  "solana-transaction",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status",
  "solana-transaction-status-client-types",
  "solana-vote-program",
@@ -7714,7 +7714,7 @@ dependencies = [
  "solana-time-utils",
  "solana-tpu-client",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status-client-types",
  "solana-udp-client",
  "thiserror 2.0.14",
@@ -7776,7 +7776,7 @@ dependencies = [
  "solana-signer",
  "solana-system-interface",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 2.2.1",
 ]
 
 [[package]]
@@ -7819,7 +7819,7 @@ version = "3.0.0"
 dependencies = [
  "qualifier_attr",
  "solana-fee-structure",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-program-runtime",
 ]
 
@@ -7848,7 +7848,7 @@ dependencies = [
  "solana-svm-transaction",
  "solana-system-interface",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "thiserror 2.0.14",
 ]
 
@@ -7936,7 +7936,7 @@ dependencies = [
  "solana-metrics",
  "solana-net-utils",
  "solana-time-utils",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "thiserror 2.0.14",
  "tokio",
 ]
@@ -8012,7 +8012,7 @@ dependencies = [
  "solana-fee",
  "solana-fee-calculator",
  "solana-fee-structure",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-genesis-config",
  "solana-geyser-plugin-manager",
@@ -8045,7 +8045,7 @@ dependencies = [
  "solana-rpc-client-api",
  "solana-runtime",
  "solana-runtime-transaction",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
  "solana-sdk-ids",
  "solana-send-transaction-service",
  "solana-sha256-hasher",
@@ -8069,7 +8069,7 @@ dependencies = [
  "solana-tpu-client",
  "solana-tpu-client-next",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status",
  "solana-turbine",
  "solana-unified-scheduler-logic",
@@ -8114,7 +8114,7 @@ dependencies = [
  "solana-compute-budget-program",
  "solana-cost-model",
  "solana-fee-structure",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-instruction",
@@ -8133,7 +8133,7 @@ dependencies = [
  "solana-system-program",
  "solana-system-transaction",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-vote",
  "solana-vote-program",
  "static_assertions",
@@ -8149,7 +8149,7 @@ dependencies = [
  "solana-account-info",
  "solana-define-syscall",
  "solana-instruction",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-pubkey",
  "solana-stable-layout",
 ]
@@ -8288,7 +8288,7 @@ dependencies = [
  "solana-program-test",
  "solana-signer",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
 ]
 
 [[package]]
@@ -8322,7 +8322,7 @@ dependencies = [
  "solana-signer",
  "solana-system-transaction",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
 ]
 
 [[package]]
@@ -8368,7 +8368,7 @@ checksum = "3fce071fbddecc55d727b1d7ed16a629afe4f6e4c217bc8d00af3b785f6f67ed"
 dependencies = [
  "serde",
  "serde_derive",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
  "solana-sdk-ids",
  "solana-sdk-macro",
@@ -8452,7 +8452,7 @@ dependencies = [
  "solana-account",
  "solana-account-info",
  "solana-instruction",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-pubkey",
  "solana-rent",
  "solana-sdk-ids",
@@ -8491,7 +8491,7 @@ dependencies = [
  "log",
  "serde",
  "serde_derive",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
 ]
 
@@ -8503,7 +8503,7 @@ checksum = "33adf673581c38e810bf618f745bf31b683a0a4a4377682e6aaac5d9a058dd4e"
 dependencies = [
  "serde",
  "serde_derive",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-message",
  "solana-native-token 2.2.2",
 ]
@@ -8539,6 +8539,28 @@ dependencies = [
  "serde_with",
  "sha2 0.10.9",
  "solana-frozen-abi-macro 2.2.1",
+ "thiserror 2.0.14",
+]
+
+[[package]]
+name = "solana-frozen-abi"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f19aad3b79cf84cd24de85e711ed1718de1e5bf46a710fa73179efa6a117d707"
+dependencies = [
+ "boxcar",
+ "bs58",
+ "bv",
+ "bytes",
+ "dashmap",
+ "im",
+ "log",
+ "memmap2 0.5.10",
+ "serde",
+ "serde_derive",
+ "serde_with",
+ "sha2 0.10.9",
+ "solana-frozen-abi-macro 3.0.0",
  "thiserror 2.0.14",
 ]
 
@@ -8723,7 +8745,7 @@ dependencies = [
  "solana-connection-cache",
  "solana-entry",
  "solana-epoch-schedule",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-genesis-config",
  "solana-hash",
@@ -8741,7 +8763,7 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-rpc-client",
  "solana-runtime",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
  "solana-serde-varint",
  "solana-sha256-hasher",
  "solana-short-vec",
@@ -8769,7 +8791,7 @@ checksum = "b6c28371f878e2ead55611d8ba1b5fb879847156d04edea13693700ad1a28baf"
 dependencies = [
  "serde",
  "serde_derive",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
 ]
 
@@ -8787,9 +8809,9 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-atomic-u64",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
  "wasm-bindgen",
 ]
 
@@ -8801,7 +8823,7 @@ checksum = "23eef6a09eb8e568ce6839573e4966850e85e9ce71e6ae1a6c930c1c43947de3"
 dependencies = [
  "serde",
  "serde_derive",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
 ]
 
@@ -8819,10 +8841,21 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-define-syscall",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
  "solana-pubkey",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "solana-instruction-error"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f0d483b8ae387178d9210e0575b666b05cdd4bd0f2f188128249f6e454d39d"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "solana-program-error 3.0.0",
 ]
 
 [[package]]
@@ -8834,9 +8867,9 @@ dependencies = [
  "bitflags 2.9.1",
  "solana-account-info",
  "solana-instruction",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-pubkey",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
  "solana-sdk-ids",
  "solana-serialize-utils",
  "solana-sysvar-id",
@@ -8851,7 +8884,7 @@ dependencies = [
  "sha3",
  "solana-define-syscall",
  "solana-hash",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
 ]
 
 [[package]]
@@ -8974,7 +9007,7 @@ dependencies = [
  "solana-cost-model",
  "solana-entry",
  "solana-epoch-schedule",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-genesis-config",
  "solana-hash",
@@ -9014,7 +9047,7 @@ dependencies = [
  "solana-time-utils",
  "solana-transaction",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status",
  "solana-vote",
  "solana-vote-program",
@@ -9155,7 +9188,7 @@ dependencies = [
  "solana-time-utils",
  "solana-tpu-client",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-turbine",
  "solana-validator-exit",
  "solana-vote",
@@ -9226,11 +9259,11 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-pubkey",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
  "solana-sdk-ids",
  "solana-short-vec",
  "solana-system-interface",
- "solana-transaction-error",
+ "solana-transaction-error 2.2.1",
  "wasm-bindgen",
 ]
 
@@ -9359,7 +9392,7 @@ dependencies = [
  "solana-hash",
  "solana-packet 2.2.1",
  "solana-pubkey",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
  "solana-sha256-hasher",
  "solana-signature",
  "solana-signer",
@@ -9377,7 +9410,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_with",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
 ]
 
@@ -9412,7 +9445,7 @@ dependencies = [
  "rayon",
  "serde",
  "solana-clock",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-keypair",
@@ -9600,13 +9633,13 @@ dependencies = [
  "solana-native-token 2.2.2",
  "solana-nonce",
  "solana-program-entrypoint",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-program-memory",
  "solana-program-option",
  "solana-program-pack",
  "solana-pubkey",
  "solana-rent",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-secp256k1-recover",
@@ -9634,7 +9667,7 @@ checksum = "32ce041b1a0ed275290a5008ee1a4a6c48f5054c8a3d78d313c08958a06aedbd"
 dependencies = [
  "solana-account-info",
  "solana-msg",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-pubkey",
 ]
 
@@ -9653,6 +9686,12 @@ dependencies = [
  "solana-msg",
  "solana-pubkey",
 ]
+
+[[package]]
+name = "solana-program-error"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1af32c995a7b692a915bb7414d5f8e838450cf7c70414e763d8abcae7b51f28"
 
 [[package]]
 name = "solana-program-memory"
@@ -9675,7 +9714,7 @@ version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "319f0ef15e6e12dc37c597faccb7d62525a509fec5f6975ecb9419efddeb277b"
 dependencies = [
- "solana-program-error",
+ "solana-program-error 2.2.2",
 ]
 
 [[package]]
@@ -9696,7 +9735,7 @@ dependencies = [
  "solana-epoch-rewards",
  "solana-epoch-schedule",
  "solana-fee-structure",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-instruction",
@@ -9764,7 +9803,7 @@ dependencies = [
  "solana-poh-config",
  "solana-program",
  "solana-program-entrypoint",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-program-runtime",
  "solana-pubkey",
  "solana-rent",
@@ -9783,7 +9822,7 @@ dependencies = [
  "solana-sysvar-id",
  "solana-transaction",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-vote-program",
  "spl-generic-token",
  "test-case",
@@ -9814,9 +9853,9 @@ dependencies = [
  "solana-atomic-u64",
  "solana-decode-error",
  "solana-define-syscall",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
  "solana-sha256-hasher",
  "wasm-bindgen",
 ]
@@ -9875,7 +9914,7 @@ dependencies = [
  "solana-signer",
  "solana-streamer",
  "solana-tls-utils",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "thiserror 2.0.14",
  "tokio",
 ]
@@ -9928,7 +9967,7 @@ checksum = "d1aea8fdea9de98ca6e8c2da5827707fb3842833521b528a713810ca685d2480"
 dependencies = [
  "serde",
  "serde_derive",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
  "solana-sdk-ids",
  "solana-sdk-macro",
@@ -10032,7 +10071,7 @@ dependencies = [
  "solana-tpu-client",
  "solana-transaction",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status",
  "solana-validator-exit",
  "solana-version",
@@ -10090,7 +10129,7 @@ dependencies = [
  "solana-signer",
  "solana-system-transaction",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status-client-types",
  "solana-version",
  "solana-vote-interface",
@@ -10113,7 +10152,7 @@ dependencies = [
  "solana-clock",
  "solana-rpc-client-types",
  "solana-signer",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status-client-types",
  "test-case",
  "thiserror 2.0.14",
@@ -10166,7 +10205,7 @@ dependencies = [
  "solana-fee-calculator",
  "solana-inflation",
  "solana-pubkey",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status-client-types",
  "solana-version",
  "spl-generic-token",
@@ -10283,7 +10322,7 @@ dependencies = [
  "solana-fee",
  "solana-fee-calculator",
  "solana-fee-structure",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-genesis-config",
  "solana-hard-forks",
@@ -10336,7 +10375,7 @@ dependencies = [
  "solana-time-utils",
  "solana-transaction",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status-client-types",
  "solana-unified-scheduler-logic",
  "solana-version",
@@ -10381,7 +10420,7 @@ dependencies = [
  "solana-system-interface",
  "solana-system-transaction",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-vote-interface",
  "thiserror 2.0.14",
 ]
@@ -10391,6 +10430,12 @@ name = "solana-sanitize"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61f1bc1357b8188d9c4a3af3fc55276e56987265eb7ad073ae6f8180ee54cecf"
+
+[[package]]
+name = "solana-sanitize"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "927e833259588ac8f860861db0f6e2668c3cc46d917798ade116858960acfe8a"
 
 [[package]]
 name = "solana-sbpf"
@@ -10557,7 +10602,7 @@ checksum = "817a284b63197d2b27afdba829c5ab34231da4a9b4e763466a003c40ca4f535e"
 dependencies = [
  "solana-instruction",
  "solana-pubkey",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
 ]
 
 [[package]]
@@ -10578,7 +10623,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c54c66f19b9766a56fa0057d060de8378676cb64987533fa088861858fc5a69"
 dependencies = [
  "serde",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
 ]
 
@@ -10605,9 +10650,9 @@ dependencies = [
  "serde",
  "serde-big-array",
  "serde_derive",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
 ]
 
 [[package]]
@@ -10618,7 +10663,7 @@ checksum = "7c41991508a4b02f021c1342ba00bcfa098630b213726ceadc7cb032e051975b"
 dependencies = [
  "solana-pubkey",
  "solana-signature",
- "solana-transaction-error",
+ "solana-transaction-error 2.2.1",
 ]
 
 [[package]]
@@ -10701,10 +10746,10 @@ dependencies = [
  "solana-clock",
  "solana-cpi",
  "solana-decode-error",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
  "solana-instruction",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-pubkey",
  "solana-system-interface",
  "solana-sysvar-id",
@@ -10758,7 +10803,7 @@ dependencies = [
  "solana-account",
  "solana-instruction",
  "solana-keypair",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-program-test",
  "solana-pubkey",
  "solana-signer",
@@ -10766,7 +10811,7 @@ dependencies = [
  "solana-system-interface",
  "solana-sysvar",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-vote-program",
  "test-case",
 ]
@@ -10807,7 +10852,7 @@ dependencies = [
  "solana-time-utils",
  "solana-transaction",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status",
  "thiserror 2.0.14",
  "tokio",
@@ -10834,7 +10879,7 @@ dependencies = [
  "solana-signature",
  "solana-transaction",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status",
  "test-case",
  "tonic-build",
@@ -10882,7 +10927,7 @@ dependencies = [
  "solana-streamer",
  "solana-time-utils",
  "solana-tls-utils",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-metrics-tracker",
  "thiserror 2.0.14",
  "tokio",
@@ -10919,7 +10964,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-fee-calculator",
  "solana-fee-structure",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-instruction",
@@ -10960,7 +11005,7 @@ dependencies = [
  "solana-sysvar-id",
  "solana-transaction",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "spl-generic-token",
  "spl-token-interface",
  "test-case",
@@ -11133,11 +11178,11 @@ dependencies = [
  "solana-instructions-sysvar",
  "solana-last-restart-slot",
  "solana-program-entrypoint",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-program-memory",
  "solana-pubkey",
  "solana-rent",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-slot-hashes",
@@ -11249,7 +11294,7 @@ dependencies = [
  "solana-logger 3.0.0",
  "solana-message",
  "solana-native-token 2.2.2",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-program-pack",
  "solana-pubkey",
  "solana-remote-wallet",
@@ -11262,7 +11307,7 @@ dependencies = [
  "solana-system-interface",
  "solana-test-validator",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status",
  "solana-version",
  "spl-associated-token-account-interface",
@@ -11296,7 +11341,7 @@ dependencies = [
  "solana-streamer",
  "solana-tpu-client",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status",
  "tempfile",
  "thiserror 2.0.14",
@@ -11329,7 +11374,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "thiserror 2.0.14",
  "tokio",
 ]
@@ -11384,13 +11429,13 @@ dependencies = [
  "solana-message",
  "solana-precompiles",
  "solana-pubkey",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
  "solana-sdk-ids",
  "solana-short-vec",
  "solana-signature",
  "solana-signer",
  "solana-system-interface",
- "solana-transaction-error",
+ "solana-transaction-error 2.2.1",
  "wasm-bindgen",
 ]
 
@@ -11460,12 +11505,22 @@ version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "222a9dc8fdb61c6088baab34fc3a8b8473a03a7a5fd404ed8dd502fa79b67cb1"
 dependencies = [
+ "solana-instruction",
+ "solana-sanitize 2.2.1",
+]
+
+[[package]]
+name = "solana-transaction-error"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4222065402340d7e6aec9dc3e54d22992ddcf923d91edcd815443c2bfca3144a"
+dependencies = [
  "serde",
  "serde_derive",
- "solana-frozen-abi",
- "solana-frozen-abi-macro 2.2.1",
- "solana-instruction",
- "solana-sanitize",
+ "solana-frozen-abi 3.0.0",
+ "solana-frozen-abi-macro 3.0.0",
+ "solana-instruction-error",
+ "solana-sanitize 3.0.0",
 ]
 
 [[package]]
@@ -11518,7 +11573,7 @@ dependencies = [
  "solana-stake-interface",
  "solana-system-interface",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-transaction-status-client-types",
  "solana-vote-interface",
  "spl-associated-token-account-interface",
@@ -11550,7 +11605,7 @@ dependencies = [
  "solana-signature",
  "solana-transaction",
  "solana-transaction-context",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "test-case",
  "thiserror 2.0.14",
 ]
@@ -11607,7 +11662,7 @@ dependencies = [
  "solana-time-utils",
  "solana-tls-utils",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-turbine",
  "static_assertions",
  "test-case",
@@ -11625,7 +11680,7 @@ dependencies = [
  "solana-net-utils",
  "solana-packet 2.2.1",
  "solana-streamer",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "thiserror 2.0.14",
  "tokio",
 ]
@@ -11675,7 +11730,7 @@ dependencies = [
  "solana-svm-timings",
  "solana-system-transaction",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-unified-scheduler-logic",
  "static_assertions",
  "test-case",
@@ -11699,9 +11754,9 @@ dependencies = [
  "semver 1.0.26",
  "serde",
  "serde_derive",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
- "solana-sanitize",
+ "solana-sanitize 2.2.1",
  "solana-serde-varint",
 ]
 
@@ -11774,7 +11829,7 @@ dependencies = [
  "solana-account",
  "solana-bincode",
  "solana-clock",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-instruction",
@@ -11808,7 +11863,7 @@ dependencies = [
  "serde_derive",
  "solana-clock",
  "solana-decode-error",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 2.2.1",
  "solana-hash",
  "solana-instruction",
@@ -11839,7 +11894,7 @@ dependencies = [
  "solana-clock",
  "solana-epoch-schedule",
  "solana-fee-calculator",
- "solana-frozen-abi",
+ "solana-frozen-abi 2.3.0",
  "solana-frozen-abi-macro 3.0.0",
  "solana-hash",
  "solana-instruction",
@@ -11929,7 +11984,7 @@ dependencies = [
  "solana-signer",
  "solana-system-interface",
  "solana-transaction",
- "solana-transaction-error",
+ "solana-transaction-error 3.0.0",
  "solana-zk-sdk 3.0.0",
 ]
 
@@ -12109,7 +12164,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0a20542d4c8264856d205c0090512f374dbf7b3124479a3d93ab6184ae3631aa"
 dependencies = [
  "bytemuck",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-sha256-hasher",
  "spl-discriminator-derive",
 ]
@@ -12156,7 +12211,7 @@ checksum = "0f738b75144edbb32c01de832632eecad71113b62a48ef8e55e60c5a692bae4e"
 dependencies = [
  "num_enum",
  "solana-instruction",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-pubkey",
 ]
 
@@ -12183,7 +12238,7 @@ dependencies = [
  "num-traits",
  "solana-decode-error",
  "solana-msg",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-program-option",
  "solana-pubkey",
  "solana-zk-sdk 2.3.6",
@@ -12205,7 +12260,7 @@ dependencies = [
  "solana-decode-error",
  "solana-instruction",
  "solana-msg",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-program-option",
  "solana-program-pack",
  "solana-pubkey",
@@ -12232,7 +12287,7 @@ dependencies = [
  "solana-instruction",
  "solana-instructions-sysvar",
  "solana-msg",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-pubkey",
  "solana-sdk-ids",
  "solana-zk-sdk 2.3.6",
@@ -12263,7 +12318,7 @@ dependencies = [
  "solana-decode-error",
  "solana-instruction",
  "solana-msg",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-pubkey",
  "spl-discriminator",
  "spl-pod",
@@ -12282,7 +12337,7 @@ dependencies = [
  "num-traits",
  "num_enum",
  "solana-instruction",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-program-option",
  "solana-program-pack",
  "solana-pubkey",
@@ -12303,7 +12358,7 @@ dependencies = [
  "solana-decode-error",
  "solana-instruction",
  "solana-msg",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "solana-pubkey",
  "spl-discriminator",
  "spl-pod",
@@ -12323,7 +12378,7 @@ dependencies = [
  "solana-account-info",
  "solana-decode-error",
  "solana-msg",
- "solana-program-error",
+ "solana-program-error 2.2.2",
  "spl-discriminator",
  "spl-pod",
  "thiserror 2.0.14",
