@@ -500,7 +500,7 @@ impl BankingStage {
                     log_messages_bytes_limit,
                 ),
                 finished_work_sender.clone(),
-                poh_recorder.read().unwrap().shared_working_bank(),
+                poh_recorder.read().unwrap().shared_leader_status(),
             );
 
             worker_metrics.push(consume_worker.metrics_handle());

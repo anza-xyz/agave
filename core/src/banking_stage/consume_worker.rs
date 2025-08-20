@@ -6,7 +6,7 @@ use {
     },
     crossbeam_channel::{Receiver, RecvError, SendError, Sender},
     solana_measure::measure_us,
-    solana_poh::poh_recorder::SharedWorkingBank,
+    solana_poh::poh_recorder::{LeaderStatus, SharedLeaderStatus},
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
@@ -35,7 +35,7 @@ pub(crate) struct ConsumeWorker<Tx> {
     consumer: Consumer,
     consumed_sender: Sender<FinishedConsumeWork<Tx>>,
 
-    shared_working_bank: SharedWorkingBank,
+    shared_leader_status: SharedLeaderStatus,
     metrics: Arc<ConsumeWorkerMetrics>,
 }
 
@@ -46,14 +46,14 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         consume_receiver: Receiver<ConsumeWork<Tx>>,
         consumer: Consumer,
         consumed_sender: Sender<FinishedConsumeWork<Tx>>,
-        shared_working_bank: SharedWorkingBank,
+        shared_leader_status: SharedLeaderStatus,
     ) -> Self {
         Self {
             exit,
             consume_receiver,
             consumer,
             consumed_sender,
-            shared_working_bank,
+            shared_leader_status,
             metrics: Arc::new(ConsumeWorkerMetrics::new(id)),
         }
     }
@@ -155,7 +155,11 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 
     /// Get the current poh working bank without a timeout.
     fn working_bank(&self) -> Option<Arc<Bank>> {
-        self.shared_working_bank.load()
+        match self.shared_leader_status.status() {
+            LeaderStatus::Active(bank) => Some(bank),
+            LeaderStatus::TicksUntilLeader(_) => None,
+            LeaderStatus::WillNotBeLeader => None,
+        }
     }
 
     /// Retry current batch and all outstanding batches.
@@ -865,7 +869,7 @@ mod tests {
             consume_receiver,
             consumer,
             consumed_sender,
-            poh_recorder.read().unwrap().shared_working_bank(),
+            poh_recorder.read().unwrap().shared_leader_status(),
         );
 
         (
