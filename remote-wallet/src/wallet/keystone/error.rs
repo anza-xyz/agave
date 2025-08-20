@@ -1,9 +1,9 @@
-use {num_traits::FromPrimitive, thiserror::Error, std::str::FromStr};
+use {num_traits::FromPrimitive, std::str::FromStr, thiserror::Error};
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 #[repr(u16)]
 pub enum KeystoneError {
-    #[error("Solana app not open on Ledger device")]
+    #[error("no app response")]
     NoAppResponse = 0x6700,
 
     #[error("Previous request not finished")]
@@ -48,6 +48,9 @@ pub enum KeystoneError {
     #[error("UR parsing rejected")]
     URParsingRejected = 0x670E,
 
+    #[error("Device error: {0}")]
+    DeviceError(String),
+
     #[error("Communication error: {message}")]
     CommunicationError { message: String },
 
@@ -55,7 +58,6 @@ pub enum KeystoneError {
     Unknown { code: u16 },
 }
 
-// 为简单的枚举变体实现 FromPrimitive
 impl FromPrimitive for KeystoneError {
     fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -86,72 +88,44 @@ impl FromPrimitive for KeystoneError {
     }
 }
 
-// 从字符串转换到 KeystoneError
 impl FromStr for KeystoneError {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s_lower = s.to_lowercase();
-        
+
         match s_lower.as_str() {
-            // 精确匹配
             "previous request is not finished" | "previous request not finished" => {
                 Ok(KeystoneError::PreviousRequestNotFinished)
             }
             "solana app not open on ledger device" | "no app response" => {
                 Ok(KeystoneError::NoAppResponse)
             }
-            "invalid json response" | "invalid json" => {
-                Ok(KeystoneError::InvalidJson)
-            }
-            "key packet size mismatch" | "key size mismatch" => {
-                Ok(KeystoneError::KeySizeMismatch)
-            }
-            "device not connected" => {
-                Ok(KeystoneError::DeviceNotConnected)
-            }
-            "user rejected the request" | "user rejected" => {
-                Ok(KeystoneError::UserRejected)
-            }
-            "invalid derivation path" => {
-                Ok(KeystoneError::InvalidDerivationPath)
-            }
-            "transaction signing failed" => {
-                Ok(KeystoneError::TransactionSigningFailed)
-            }
-            "message signing failed" => {
-                Ok(KeystoneError::MessageSigningFailed)
-            }
-            "device timeout" => {
-                Ok(KeystoneError::DeviceTimeout)
-            }
-            "invalid transaction data" => {
-                Ok(KeystoneError::InvalidTransactionData)
-            }
-            "unsupported operation" => {
-                Ok(KeystoneError::UnsupportedOperation)
-            }
-            "device locked" => {
-                Ok(KeystoneError::DeviceLocked)
-            }
-            "invalid signature" => {
-                Ok(KeystoneError::InvalidSignature)
-            }
-            "UR parsing rejected" => {
-                Ok(KeystoneError::URParsingRejected)
-            }
-            
-            // 包含匹配（更灵活）
+            "invalid json response" | "invalid json" => Ok(KeystoneError::InvalidJson),
+            "key packet size mismatch" | "key size mismatch" => Ok(KeystoneError::KeySizeMismatch),
+            "device not connected" => Ok(KeystoneError::DeviceNotConnected),
+            "user rejected the request" | "user rejected" => Ok(KeystoneError::UserRejected),
+            "invalid derivation path" => Ok(KeystoneError::InvalidDerivationPath),
+            "transaction signing failed" => Ok(KeystoneError::TransactionSigningFailed),
+            "message signing failed" => Ok(KeystoneError::MessageSigningFailed),
+            "device timeout" => Ok(KeystoneError::DeviceTimeout),
+            "invalid transaction data" => Ok(KeystoneError::InvalidTransactionData),
+            "unsupported operation" => Ok(KeystoneError::UnsupportedOperation),
+            "device locked" => Ok(KeystoneError::DeviceLocked),
+            "invalid signature" => Ok(KeystoneError::InvalidSignature),
+            "UR parsing rejected" => Ok(KeystoneError::URParsingRejected),
+                "export address is just allowed on specific pages" => Ok(KeystoneError::DeviceError(
+                    "Export address is just allowed on specific pages".to_string(),
+            )),
+
             s if s.contains("previous request") && s.contains("not finished") => {
                 Ok(KeystoneError::PreviousRequestNotFinished)
             }
-            s if s.contains("communication error") => {
-                Ok(KeystoneError::CommunicationError { 
-                    message: s.to_string() 
-                })
-            }
+            s if s.contains("communication error") => Ok(KeystoneError::CommunicationError {
+                message: s.to_string(),
+            }),
             s if s.contains("unknown error") => {
-                // 尝试提取错误代码
+                // Try to extract error code
                 if let Some(code_str) = s.split(':').last() {
                     if let Ok(code) = code_str.trim().parse::<u16>() {
                         return Ok(KeystoneError::Unknown { code });
@@ -159,8 +133,8 @@ impl FromStr for KeystoneError {
                 }
                 Ok(KeystoneError::Unknown { code: 0xFFFF })
             }
-            
-            _ => Err(format!("Unknown Keystone error: {}", s))
+
+            _ => Err(format!("Unknown Keystone error: {}", s)),
         }
     }
 }
@@ -169,13 +143,15 @@ impl KeystoneError {
     pub fn from_string(s: &str) -> Result<Self, String> {
         s.parse()
     }
-    
+
     pub fn from_error_message(message: &str) -> Self {
         let message_lower = message.to_lowercase();
-        
+
         if message_lower.contains("previous request") && message_lower.contains("not finished") {
             KeystoneError::PreviousRequestNotFinished
-        } else if message_lower.contains("device not connected") || message_lower.contains("connection failed") {
+        } else if message_lower.contains("device not connected")
+            || message_lower.contains("connection failed")
+        {
             KeystoneError::DeviceNotConnected
         } else if message_lower.contains("user rejected") || message_lower.contains("cancelled") {
             KeystoneError::UserRejected
@@ -188,19 +164,22 @@ impl KeystoneError {
         } else if message_lower.contains("invalid json") {
             KeystoneError::InvalidJson
         } else if message_lower.contains("communication error") {
-            KeystoneError::CommunicationError { 
-                message: message.to_string() 
+            KeystoneError::CommunicationError {
+                message: message.to_string(),
             }
         } else if message_lower.contains("ur parsing rejected") {
-            KeystoneError::URParsingRejected 
+            KeystoneError::URParsingRejected
+        } else if message_lower.contains("export address is just allowed on specific pages") {
+            KeystoneError::DeviceError(
+                "Export address is just allowed on specific pages".to_string(),
+            )
         } else {
-            KeystoneError::CommunicationError { 
-                message: message.to_string() 
+            KeystoneError::CommunicationError {
+                message: message.to_string(),
             }
         }
     }
 
-    /// 从 usize 创建 KeystoneError
     pub fn from_usize(status: usize) -> Option<Self> {
         Self::from_u64(status as u64)
     }
@@ -227,6 +206,7 @@ impl HardwareWalletError for KeystoneError {
             KeystoneError::InvalidSignature => 0x670D,
             KeystoneError::URParsingRejected => 0x670E,
             KeystoneError::CommunicationError { .. } => 0x67FF,
+            KeystoneError::DeviceError(_) => 0x67FE,
             KeystoneError::Unknown { code } => *code,
         }
     }

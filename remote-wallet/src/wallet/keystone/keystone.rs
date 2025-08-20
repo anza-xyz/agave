@@ -1,7 +1,8 @@
 use {
     super::error::KeystoneError,
+    crate::transport::hid_transport::HidTransport,
+    crate::transport::transport_trait::Transport,
     crate::{
-        debug_print,
         errors::RemoteWalletError,
         remote_wallet::{RemoteWallet, RemoteWalletInfo, RemoteWalletManager},
         wallet::{types::Device, WalletProbe},
@@ -11,7 +12,7 @@ use {
     hex,
     semver::Version as FirmwareVersion,
     serde_json,
-    solana_sdk::derivation_path::DerivationPath,
+    solana_derivation_path::DerivationPath,
     std::{fmt, rc::Rc},
     ur_parse_lib::keystone_ur_decoder::{probe_decode, URParseResult},
     ur_parse_lib::keystone_ur_encoder::probe_encode,
@@ -19,37 +20,26 @@ use {
     ur_registry::extend::crypto_multi_accounts::CryptoMultiAccounts,
     ur_registry::extend::key_derivation::KeyDerivationCall,
     ur_registry::extend::key_derivation_schema::{Curve, KeyDerivationSchema},
-    ur_registry::solana::sol_sign_request::{SolSignRequest, SignType},
-    ur_registry::solana::sol_signature::SolSignature,
     ur_registry::extend::qr_hardware_call::{
         CallParams, CallType, HardWareCallVersion, QRHardwareCall,
     },
+    ur_registry::solana::sol_sign_request::{SignType, SolSignRequest},
+    ur_registry::solana::sol_signature::SolSignature,
     ur_registry::traits::RegistryItem,
-    crate::transport::transport_trait::Transport,
-    crate::transport::hid_transport::HidTransport,
 };
 #[cfg(feature = "hidapi")]
 use {
     crate::locator::Manufacturer,
     log::*,
-    num_traits::FromPrimitive,
-    solana_sdk::{pubkey::Pubkey, signature::Signature},
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
     std::{cmp::min, convert::TryFrom},
 };
 
 static CHECK_MARK: Emoji = Emoji("✅ ", "");
 
-const DEPRECATE_VERSION_BEFORE: FirmwareVersion = FirmwareVersion::new(0, 2, 0);
-
-const APDU_PAYLOAD_HEADER_LEN: usize = 7;
-const DEPRECATED_APDU_PAYLOAD_HEADER_LEN: usize = 8;
-const P1_NON_CONFIRM: u8 = 0x00;
-const P1_CONFIRM: u8 = 0x01;
-const P2_EXTEND: u8 = 0x01;
-const P2_MORE: u8 = 0x02;
-const MAX_CHUNK_SIZE: usize = 255;
-
-const APDU_SUCCESS_CODE: usize = 0x9000;
+const REQUEST_ID: u16 = 0xACE0;
+const HID_TAG: u8 = 0xAA;
 
 /// Keystone vendor ID
 const KEYSTONE_VID: u16 = 0x1209;
@@ -59,8 +49,6 @@ const LEDGER_TRANSPORT_HEADER_LEN: usize = 5;
 
 const HID_PACKET_SIZE: usize = 64 + HID_PREFIX_ZERO;
 
-#[cfg(windows)]
-const HID_PREFIX_ZERO: usize = 1;
 #[cfg(not(windows))]
 const HID_PREFIX_ZERO: usize = 0;
 
@@ -81,6 +69,8 @@ const ERROR_MISSING_FIELD: &str = "Missing required field";
 const ERROR_INVALID_HEX: &str = "Invalid hex data";
 const ERROR_SIGNATURE_SIZE: &str = "Signature packet size mismatch";
 const ERROR_KEY_SIZE: &str = "Key packet size mismatch";
+const ERROR_MFP_NOT_SET: &str = "MFP is not set";
+const ERROR_JSON_PARSE: &str = "JSON parse error";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum CommandType {
@@ -93,9 +83,13 @@ enum CommandType {
 }
 
 impl CommandType {
+    const VALID_COMMANDS: &'static [u16] = &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06];
+}
+
+impl CommandType {
     /// Check if a u16 value corresponds to a valid CommandType
     fn is_valid_command(value: u16) -> bool {
-        matches!(value, 0x01 | 0x02 | 0x03 | 0x04 | 0x05 | 0x06)
+        Self::VALID_COMMANDS.contains(&value)
     }
 
     /// Try to convert u16 to CommandType
@@ -110,23 +104,6 @@ impl CommandType {
             _ => None,
         }
     }
-}
-
-enum ConfigurationVersion {
-    Deprecated(Vec<u8>),
-    Current(Vec<u8>),
-}
-
-#[derive(Debug)]
-pub enum PubkeyDisplayMode {
-    Short,
-    Long,
-}
-
-#[derive(Debug)]
-pub struct LedgerSettings {
-    pub enable_blind_signing: bool,
-    pub pubkey_display: PubkeyDisplayMode,
 }
 
 /// Ledger Wallet device
@@ -144,13 +121,13 @@ impl fmt::Debug for KeystoneWallet {
 }
 #[derive(Debug, Clone)]
 pub struct EAPDUFrame {
-    pub cla: u8,
-    pub ins: CommandType,
-    pub p1: u16,
-    pub p2: u16,
-    pub lc: u16,
-    pub data: Vec<u8>,
-    pub data_len: u32,
+    cla: u8,
+    ins: CommandType,
+    p1: u16,
+    p2: u16,
+    lc: u16,
+    data: Vec<u8>,
+    data_len: u32,
 }
 
 #[cfg(feature = "hidapi")]
@@ -165,13 +142,18 @@ impl KeystoneWallet {
     }
 
     // Transport Protocol:
-    //		* Communication Channel Id		(2 bytes big endian )
-    //		* Command Tag				(1 byte)
-    //		* Packet Sequence ID			(2 bytes big endian)
-    //		* Payload				(Optional)
+    //      * header                            (2 bytes)
+    //      * command                           (2 bytes)
+    //      * total_packets                     (2 bytes)
+    //      * sequence_number                   (2 bytes)
+    //      * request_id                        (2 bytes)
+    //      * tag                               (1 byte)
+    //      * size                              (1 byte)
+    //      * data                              (Variable)
+    //      * Payload				            (Optional)
     //
     // Payload
-    //		* APDU Total Length			(2 bytes big endian)
+    //		* APDU Total Length			(2 bytes)
     //		* APDU_CLA				(1 byte)
     //		* APDU_INS				(1 byte)
     //		* APDU_P1				(1 byte)
@@ -184,29 +166,27 @@ impl KeystoneWallet {
         let mut offset = 0;
         let mut sequence_number = 0;
         let mut hid_chunk = [0_u8; HID_PACKET_SIZE];
-        println!("data_len: {:?}", data_len);
-        println!("data: {:2x?}", data);
-        let total_packets = if data_len > 11 {
-            if data_len % (64 - 10) == 0 {
-                data_len / (64 - 10)
+        let total_packets = if data_len > 12 {
+            if data_len % (64 - 12) == 0 {
+                data_len / (64 - 12)
             } else {
-                data_len / (64 - 10) + 1
+                data_len / (64 - 12) + 1
             }
         } else {
             1
         };
-        let mut request_id = 0;
+        let request_id = REQUEST_ID;
 
         while sequence_number == 0 || offset < data_len {
-            // Clear the entire chunk to avoid residual data
             hid_chunk.fill(0);
-
-            let header = 10;
+            let header = 12;
             let size = min(64 - header, data_len - offset);
+            let tag = ((HID_TAG as u16 + request_id as u16 + size as u16) & 0xff) as u8;
             {
                 let chunk = &mut hid_chunk[HID_PREFIX_ZERO..];
-                chunk[0..3].copy_from_slice(&[0x00, 0x00, 0x00]);
-                chunk[3..10].copy_from_slice(&[
+                chunk[0..2].copy_from_slice(&[0x00, 0x00]);
+                chunk[2..12].copy_from_slice(&[
+                    (command as u16 >> 8) as u8,
                     (command as u16 & 0xff) as u8,
                     (total_packets >> 8) as u8,
                     (total_packets & 0xff) as u8,
@@ -214,22 +194,19 @@ impl KeystoneWallet {
                     (sequence_number & 0xff) as u8,
                     (request_id >> 8) as u8,
                     (request_id & 0xff) as u8,
+                    tag,
+                    size as u8,
                 ]);
 
                 chunk[header..header + size].copy_from_slice(&data[offset..offset + size]);
             }
             trace!("Ledger write {:?}", &hid_chunk[..]);
-            if command == CommandType::CMD_RESOLVE_UR {
-                // debug_print!("send command: sequence_number: {:?}, request_id: {:?}", sequence_number, request_id);
-                // debug_print!("send command: {:2x?}", &hid_chunk[..]);
-            }
             let n = self.transport.write(&hid_chunk[..])?;
             if n < size + header {
                 return Err(RemoteWalletError::Protocol("Write data size mismatch"));
             }
             offset += size;
             sequence_number += 1;
-            request_id += 1;
             if sequence_number >= 0xffff {
                 return Err(RemoteWalletError::Protocol(
                     "Maximum sequence number reached",
@@ -240,21 +217,19 @@ impl KeystoneWallet {
     }
 
     // Transport Protocol:
-    //		* Communication Channel Id		(2 bytes big endian )
+    //		* Communication Channel Id	(2 bytes)
     //		* Command Tag				(1 byte)
-    //		* Packet Sequence ID			(2 bytes big endian)
-    //		* Payload				(Optional)
+    //		* Packet Sequence ID		(2 bytes)
+    //		* Payload				    (Optional)
     //
     // Payload
     //		* APDU_LENGTH				(1 byte)
     //		* APDU_Payload				(Variable)
     //
     fn read(&self) -> Result<Vec<u8>, RemoteWalletError> {
-        let _buffer = [0u8; HID_PACKET_SIZE];
         let mut result_data = Vec::new();
         let mut sequence_number = 0u16;
         let mut total_length = 0usize;
-        let _received_length = 0usize;
 
         loop {
             // Read HID packet
@@ -278,10 +253,6 @@ impl KeystoneWallet {
             let packet_seq = u16::from_be_bytes([packet[5], packet[6]]);
             let _request_id = u16::from_be_bytes([packet[7], packet[8]]);
             let packet_data = &packet[9..];
-            if command == CommandType::CMD_RESOLVE_UR as u16 {
-                debug_print!("packet_length: {:?}", packet_data.len());
-            }
-
             // Check if command is valid
             if !CommandType::is_valid_command(command) {
                 return Err(RemoteWalletError::Protocol("Invalid command"));
@@ -335,8 +306,6 @@ impl KeystoneWallet {
                 return Ok(json_str.to_string());
             }
         }
-        debug_print!("message_str: {:?}", message_str);
-
         Ok(message_str.to_string())
     }
 
@@ -344,12 +313,17 @@ impl KeystoneWallet {
         self._send_apdu(command, data)
     }
 
-    fn get_firmware_version(&self) -> Result<(FirmwareVersion, Option<[u8; 4]>), RemoteWalletError> {
+    fn get_firmware_version(
+        &self,
+    ) -> Result<(FirmwareVersion, Option<[u8; 4]>), RemoteWalletError> {
         self.get_device_info()
     }
 
     /// Generate a hardware call request for key derivation
-    fn generate_hardware_call(&self, derivation_path: &DerivationPath) -> Result<String, RemoteWalletError> {
+    fn generate_hardware_call(
+        &self,
+        derivation_path: &DerivationPath,
+    ) -> Result<String, RemoteWalletError> {
         let key_path = parse_crypto_key_path(derivation_path, self.mfp);
         let schema = KeyDerivationSchema::new(key_path, Some(Curve::Ed25519), None, None);
         let schemas = vec![schema];
@@ -366,7 +340,11 @@ impl KeystoneWallet {
     }
 
     /// Generate a Solana sign request for transaction signing
-    fn generate_sol_sign_request(&self, derivation_path: &DerivationPath, sign_data: &[u8]) -> Result<String, RemoteWalletError> {
+    fn generate_sol_sign_request(
+        &self,
+        derivation_path: &DerivationPath,
+        sign_data: &[u8],
+    ) -> Result<String, RemoteWalletError> {
         let crypto_key_path = parse_crypto_key_path(derivation_path, self.mfp);
         let request_id = [0u8; 16].to_vec();
         let sol_sign_request = SolSignRequest::new(
@@ -378,9 +356,13 @@ impl KeystoneWallet {
             SignType::Transaction,
         );
         let bytes: Vec<u8> = sol_sign_request.try_into().unwrap();
-        let res =
-            probe_encode(&bytes, 0xFFFFFFF, SolSignRequest::get_registry_type().get_type()).unwrap();
-        Ok(res.data)
+        Ok(probe_encode(
+            &bytes,
+            0xFFFFFFF,
+            SolSignRequest::get_registry_type().get_type(),
+        )
+        .unwrap()
+        .data)
     }
 
     /// Parse a public key from UR (Uniform Resource) format
@@ -398,37 +380,19 @@ impl KeystoneWallet {
         Ok(result.data.unwrap().get_signature().to_vec())
     }
 
-    /// Parse JSON response and extract field value
-    fn parse_json_field(&self, json_str: &str, field_name: &str) -> Result<String, RemoteWalletError> {
+    fn parse_json_field(
+        &self,
+        json_str: &str,
+        field_name: &str,
+    ) -> Result<String, RemoteWalletError> {
         let json = serde_json::from_str::<serde_json::Value>(json_str)
             .map_err(|_| RemoteWalletError::Protocol(ERROR_INVALID_JSON))?;
-        
+
         json.get(field_name)
             .and_then(|v| v.as_str())
             .ok_or(RemoteWalletError::Protocol(ERROR_MISSING_FIELD))
             .map(String::from)
     }
-
-    // pub fn get_settings(&self) -> Result<LedgerSettings, RemoteWalletError> {
-    //     self.get_device_info().map(|conf ig| match config {
-    //         ConfigurationVersion::Current(config) => {
-    //             let enable_blind_signing = config[0] != 0;
-    //             let pubkey_display = if config[1] == 0 {
-    //                 PubkeyDisplayMode::Long
-    //             } else {
-    //                 PubkeyDisplayMode::Short
-    //             };
-    //             LedgerSettings {
-    //                 enable_blind_signing,
-    //                 pubkey_display,
-    //             }
-    //         }
-    //         ConfigurationVersion::Deprecated(_) => LedgerSettings {
-    //             enable_blind_signing: false,
-    //             pubkey_display: PubkeyDisplayMode::Short,
-    //         },
-    //     })
-    // }
 
     fn get_device_info(&self) -> Result<(FirmwareVersion, Option<[u8; 4]>), RemoteWalletError> {
         let json_str = self._send_apdu(CommandType::CMD_GET_DEVICE_INFO, &[])?;
@@ -436,7 +400,9 @@ impl KeystoneWallet {
         let mut mfp = None;
         match serde_json::from_str::<serde_json::Value>(&json_str) {
             Ok(json) => {
-                if let Some(firmware_version) = json.get(JSON_FIELD_FIRMWARE_VERSION).and_then(|v| v.as_str())
+                if let Some(firmware_version) = json
+                    .get(JSON_FIELD_FIRMWARE_VERSION)
+                    .and_then(|v| v.as_str())
                 {
                     // Parse version string like "12.1.2"
                     let parts: Vec<&str> = firmware_version.split('.').collect();
@@ -459,26 +425,41 @@ impl KeystoneWallet {
                     }
                 }
             }
-            Err(e) => {
-                debug_print!("JSON parse error: {}", e);
-                return Err(RemoteWalletError::Protocol("JSON parse error"));
+            Err(_) => {
+                return Err(RemoteWalletError::Protocol(ERROR_JSON_PARSE));
             }
         }
         Ok((version, mfp))
     }
 
-    fn outdated_app(&self) -> bool {
-        self.version < DEPRECATE_VERSION_BEFORE
-    }
-
-    fn parse_status(status: usize) -> Result<(), RemoteWalletError> {
-        if status == APDU_SUCCESS_CODE {
-            Ok(())
-        } else if let Some(err) = KeystoneError::from_usize(status) {
-            Err(err.into())
-        } else {
-            Err(RemoteWalletError::Protocol("Unknown error"))
+    /// Internal method to handle the actual signing request
+    fn sign_with_request(
+        &self,
+        derivation_path: &DerivationPath,
+        data: &[u8],
+    ) -> Result<Signature, RemoteWalletError> {
+        if self.mfp.is_none() {
+            return Err(RemoteWalletError::Protocol(ERROR_MFP_NOT_SET));
         }
+
+        let result = self.generate_sol_sign_request(derivation_path, data)?;
+        let key = self.send_apdu(CommandType::CMD_RESOLVE_UR, result.as_bytes())?;
+        let payload = self.parse_json_field(&key, JSON_FIELD_PAYLOAD)?;
+
+        println!(
+            "Waiting for your approval on {} {}",
+            self.name(),
+            self.pretty_path
+        );
+        let keystone_error = KeystoneError::from_error_message(&payload);
+        if !matches!(keystone_error, KeystoneError::CommunicationError { .. }) {
+            return Err(keystone_error.into());
+        }
+        println!("{CHECK_MARK}Approved");
+        let signature = self.parse_ur_signature(&payload)?;
+
+        Signature::try_from(signature)
+            .map_err(|_| RemoteWalletError::Protocol(ERROR_SIGNATURE_SIZE))
     }
 }
 
@@ -499,7 +480,9 @@ impl WalletProbe for KeystoneProbe {
             .open_path(devinfo.path())
             .map_err(|e| RemoteWalletError::Hid(e.to_string()))?;
         let mut wallet = KeystoneWallet::new(Box::new(HidTransport::new(handle)));
-        let info = wallet.read_device(&devinfo).map_err(|e| RemoteWalletError::Hid(e.to_string()))?;
+        let info = wallet
+            .read_device(&devinfo)
+            .map_err(|e| RemoteWalletError::Hid(e.to_string()))?;
         wallet.pretty_path = info.get_pretty_path();
         Ok(Device {
             path: devinfo.path().to_string_lossy().into_owned(),
@@ -532,11 +515,9 @@ impl RemoteWallet<hidapi::DeviceInfo> for KeystoneWallet {
             .replace(' ', "-");
         let serial = dev_info.serial_number().unwrap_or("Unknown").to_string();
         let host_device_path = dev_info.path().to_string_lossy().to_string();
-        let (version, mfp) = self.get_device_info()?; 
-        debug_print!("version: {:?}", version);
+        let (version, mfp) = self.get_device_info()?;
         self.version = version;
         self.mfp = mfp;
-        debug_print!("mfp: {:?}", mfp);
         let pubkey_result = self.get_pubkey(&DerivationPath::default(), false);
         let (pubkey, error) = match pubkey_result {
             Ok(pubkey) => (pubkey, None),
@@ -557,41 +538,39 @@ impl RemoteWallet<hidapi::DeviceInfo> for KeystoneWallet {
         derivation_path: &DerivationPath,
         _confirm_key: bool,
     ) -> Result<Pubkey, RemoteWalletError> {
-        debug_print!("derivation_path: {:?}", derivation_path);
         let pubkey = if is_path_in_cached_range(derivation_path) {
             let data = extend_and_serialize(derivation_path);
-            let key = self.send_apdu(
-                CommandType::CMD_GET_DEVICE_USB_PUBKEY,
-                data.as_slice(),
-            )?;
+            let key = self.send_apdu(CommandType::CMD_GET_DEVICE_USB_PUBKEY, data.as_slice())?;
             let payload = self.parse_json_field(&key, JSON_FIELD_PUBKEY)?;
-            
-            // 检查 payload 是否包含错误信息
+
             let keystone_error = KeystoneError::from_error_message(&payload);
             if !matches!(keystone_error, KeystoneError::CommunicationError { .. }) {
                 return Err(keystone_error.into());
             }
-            
-            hex::decode(payload)
-                .map_err(|_| RemoteWalletError::Protocol(ERROR_INVALID_HEX))?
+
+            hex::decode(payload).map_err(|_| RemoteWalletError::Protocol(ERROR_INVALID_HEX))?
         } else {
             let key = self.send_apdu(
                 CommandType::CMD_RESOLVE_UR,
                 self.generate_hardware_call(derivation_path)?.as_bytes(),
             )?;
             let payload = self.parse_json_field(&key, JSON_FIELD_PAYLOAD)?;
-            
-            // 检查 payload 是否包含错误信息
+
             let keystone_error = KeystoneError::from_error_message(&payload);
-            if !matches!(keystone_error, KeystoneError::CommunicationError { .. }) {
-                return Err(keystone_error.into());
+            // Only allow CommunicationError to proceed, all other errors should be returned
+            match keystone_error {
+                KeystoneError::CommunicationError { .. } => {
+                    // This is expected for successful operations
+                }
+                _ => {
+                    return Err(keystone_error.into());
+                }
             }
-            
+
             self.parse_ur_pubkey(&payload)?
         };
 
-        Pubkey::try_from(pubkey)
-            .map_err(|_| RemoteWalletError::Protocol(ERROR_KEY_SIZE))
+        Pubkey::try_from(pubkey).map_err(|_| RemoteWalletError::Protocol(ERROR_KEY_SIZE))
     }
 
     fn sign_message(
@@ -606,36 +585,8 @@ impl RemoteWallet<hidapi::DeviceInfo> for KeystoneWallet {
         if !data.is_empty() && data[0] == 0xff {
             return self.sign_offchain_message(derivation_path, data);
         }
-        
-        let key_path = parse_crypto_key_path(derivation_path, self.mfp);
-        debug_print!("key_path: {:?}", key_path);
 
-        if self.mfp.is_none() {
-            return Err(RemoteWalletError::Protocol("MFP is not set"));
-        }
-
-        let result = self.generate_sol_sign_request(derivation_path, data)?;
-        debug_print!("result: {:?}", result);
-        let key = self.send_apdu(
-            CommandType::CMD_RESOLVE_UR,
-            result.as_bytes(),
-        )?;
-        let payload = self.parse_json_field(&key, JSON_FIELD_PAYLOAD)?;
-        debug_print!("payload: {:?}", payload);
-        
-        let keystone_error = KeystoneError::from_error_message(&payload);
-        if !matches!(keystone_error, KeystoneError::CommunicationError { .. }) {
-            return Err(keystone_error.into());
-        }
-        
-        let signature =  self.parse_ur_signature(&payload)?;
-
-        debug_print!("signature: {:?}", signature);
-        
-        // TODO: Remove this temporary workaround - should use actual signature
-        let signature = vec![0u8; 64];
-        Signature::try_from(signature)
-            .map_err(|_| RemoteWalletError::Protocol(ERROR_SIGNATURE_SIZE))
+        self.sign_with_request(derivation_path, data)
     }
 
     fn sign_offchain_message(
@@ -643,81 +594,44 @@ impl RemoteWallet<hidapi::DeviceInfo> for KeystoneWallet {
         derivation_path: &DerivationPath,
         data: &[u8],
     ) -> Result<Signature, RemoteWalletError> {
-        // If the first byte of the data is 0xff then it is an off-chain message
-        // because it starts with the Domain Specifier b"\xffsolana offchain".
-        // On-chain messages, in contrast, start with either 0x80 (MESSAGE_VERSION_PREFIX)
-        // or the number of signatures (0x00 - 0x13).
-        // if !data.is_empty() && data[0] == 0xff {
-            // return self.sign_offchain_message(derivation_path, data);
-        // }
-        debug_print!("{}:{:?}", file!(), line!());
-        
-        let key_path = parse_crypto_key_path(derivation_path, self.mfp);
-        debug_print!("key_path: {:?}", key_path);
-
-        if self.mfp.is_none() {
-            return Err(RemoteWalletError::Protocol("MFP is not set"));
-        }
-
-        let result = self.generate_sol_sign_request(derivation_path, data)?;
-        debug_print!("result: {:?}", result);
-        let key = self.send_apdu(
-            CommandType::CMD_RESOLVE_UR,
-            result.as_bytes(),
-        )?;
-        let payload = self.parse_json_field(&key, JSON_FIELD_PAYLOAD)?;
-        debug_print!("payload: {:?}", payload);
-        
-        let keystone_error = KeystoneError::from_error_message(&payload);
-        if !matches!(keystone_error, KeystoneError::CommunicationError { .. }) {
-            return Err(keystone_error.into());
-        }
-        
-        let signature =  self.parse_ur_signature(&payload)?;
-
-        debug_print!("signature: {:?}", signature);
-        
-        // TODO: Remove this temporary workaround - should use actual signature
-        let signature = vec![0u8; 64];
-        Signature::try_from(signature)
-            .map_err(|_| RemoteWalletError::Protocol(ERROR_SIGNATURE_SIZE))
+        self.sign_with_request(derivation_path, data)
     }
 }
 
 /// Convert a Solana DerivationPath to a CryptoKeyPath for Keystone hardware wallet
 fn parse_crypto_key_path(derivation_path: &DerivationPath, mfp: Option<[u8; 4]>) -> CryptoKeyPath {
     let mut path_components = vec![
-        PathComponent::new(Some(44), true).unwrap(),   // BIP44 purpose
-        PathComponent::new(Some(501), true).unwrap()   // Solana coin type
+        PathComponent::new(Some(44), true).unwrap(), // BIP44 purpose
+        PathComponent::new(Some(501), true).unwrap(), // Solana coin type
     ];
-    
+
     if let Some(account) = derivation_path.account() {
         let account_index = account.to_u32();
         path_components.push(PathComponent::new(Some(account_index), true).unwrap());
     }
-    
+
     if let Some(change) = derivation_path.change() {
         let change_index = change.to_u32();
         path_components.push(PathComponent::new(Some(change_index), true).unwrap());
     }
-    
+
     CryptoKeyPath::new(path_components, mfp, None)
 }
 
 /// Build the derivation path byte array from a DerivationPath selection
-/// 
+///
 /// Format: [depth_byte, 4-byte indices...]
 /// - depth_byte: 2 for m/44'/501', 3 for m/44'/501'/account', 4 for m/44'/501'/account'/change'
 /// - Each index is serialized as 4 bytes in big-endian format with hardened bit set
 fn extend_and_serialize(derivation_path: &DerivationPath) -> Vec<u8> {
     let depth_byte: u8 = if derivation_path.change().is_some() {
-        4  // m/44'/501'/account'/change'
+        4 // m/44'/501'/account'/change'
     } else if derivation_path.account().is_some() {
-        3  // m/44'/501'/account'
+        3 // m/44'/501'/account'
     } else {
-        2  // m/44'/501'
+        2 // m/44'/501'
     };
-    
+
     let mut concat_derivation = vec![depth_byte];
     for index in derivation_path.path() {
         concat_derivation.extend_from_slice(&index.to_bits().to_be_bytes());
@@ -726,7 +640,7 @@ fn extend_and_serialize(derivation_path: &DerivationPath) -> Vec<u8> {
 }
 
 /// Build the derivation path byte array for multiple paths
-/// 
+///
 /// Format: [count, path1_serialized, path2_serialized, ...]
 /// where each path is serialized using extend_and_serialize
 fn extend_and_serialize_multiple(derivation_paths: &[&DerivationPath]) -> Vec<u8> {
@@ -757,10 +671,7 @@ pub fn get_keystone_from_info(
         }
     }
     let mut matches: Vec<(String, String)> = matches
-        .filter(|&device_info| {
-            debug_print!("{:?}", device_info);
-            device_info.error.is_none()
-        })
+        .filter(|&device_info| device_info.error.is_none())
         .map(|device_info| {
             let query_item = format!("{} ({})", device_info.get_pretty_path(), device_info.model,);
             (device_info.host_device_path.clone(), query_item)
@@ -788,11 +699,6 @@ pub fn get_keystone_from_info(
     wallet_manager.get_keystone(wallet_host_device_path)
 }
 
-//
-fn is_last_part(p2: u8) -> bool {
-    p2 & P2_MORE == 0
-}
-
 /// Check if a derivation path is within the cached range supported by the hardware wallet
 ///
 /// Keystone hardware wallet pre-caches a limited number of derivation paths to avoid
@@ -804,17 +710,17 @@ fn is_last_part(p2: u8) -> bool {
 /// Paths outside these ranges require user password confirmation.
 fn is_path_in_cached_range(derivation_path: &DerivationPath) -> bool {
     let path = derivation_path.path();
-    
+
     // Must have at least m/44'/501'
     if path.len() < 2 {
         return false;
     }
-    
+
     // Must be BIP44 Solana path
     if path[0].to_u32() != 44 || path[1].to_u32() != 501 {
         return false;
     }
-    
+
     match path.len() {
         2 => true, // m/44'/501'
         3 => {
@@ -828,49 +734,7 @@ fn is_path_in_cached_range(derivation_path: &DerivationPath) -> bool {
             let change = path[3].to_u32();
             account == CACHED_FIXED_ACCOUNT && change <= CACHED_CHANGE_RANGE
         }
-        
+
         _ => false,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_last_part() {
-        // Bytes with bit-2 set to 0 should return true
-        assert!(is_last_part(0b00));
-        assert!(is_last_part(0b01));
-        assert!(is_last_part(0b101));
-        assert!(is_last_part(0b1001));
-        assert!(is_last_part(0b1101));
-
-        // Bytes with bit-2 set to 1 should return false
-        assert!(!is_last_part(0b10));
-        assert!(!is_last_part(0b11));
-        assert!(!is_last_part(0b110));
-        assert!(!is_last_part(0b111));
-        assert!(!is_last_part(0b1010));
-
-        // Test implementation-specific uses
-        let p2 = 0;
-        assert!(is_last_part(p2));
-        let p2 = P2_EXTEND | P2_MORE;
-        assert!(!is_last_part(p2));
-        assert!(is_last_part(p2 & !P2_MORE));
-    }
-
-    #[test]
-    fn test_parse_status() {
-        KeystoneWallet::parse_status(APDU_SUCCESS_CODE).expect("unexpected result");
-        if let RemoteWalletError::Protocol(err) = KeystoneWallet::parse_status(0x6985).unwrap_err()
-        {
-            assert_eq!(err, "Unknown error");
-        }
-        if let RemoteWalletError::Protocol(err) = KeystoneWallet::parse_status(0x6fff).unwrap_err()
-        {
-            assert_eq!(err, "Unknown error");
-        }
     }
 }

@@ -38,8 +38,8 @@ thiserror = { workspace = true }
 uriparse = { workspace = true }
 serde_json = { workspace = true }
 hex = { workspace = true }
-ur-registry = {workspace = true }
-ur-parse-lib = {workspace = true }
+ur-registry = { git = "https://github.com/KeystoneHQ/keystone-sdk-rust.git", tag = "0.0.50", default-features = false, features = ["std"] }
+ur-parse-lib = { git = "https://github.com/KeystoneHQ/keystone-sdk-rust.git", tag = "0.0.50" }
 
 [dev-dependencies]
 assert_matches = { workspace = true }

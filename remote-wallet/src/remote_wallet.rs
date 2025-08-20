@@ -177,16 +177,14 @@ impl RemoteWalletManager {
         &self,
         host_device_path: &str,
     ) -> Result<Rc<KeystoneWallet>, RemoteWalletError> {
-        self.get_wallet_by_path(host_device_path, |wallet_type| {
-            match wallet_type {
-                RemoteWalletType::Keystone(keystone) => Ok(keystone.clone()),
-                _ => Err(RemoteWalletError::DeviceTypeMismatch),
-            }
+        self.get_wallet_by_path(host_device_path, |wallet_type| match wallet_type {
+            RemoteWalletType::Keystone(keystone) => Ok(keystone.clone()),
+            _ => Err(RemoteWalletError::DeviceTypeMismatch),
         })
     }
 
     /// Get wallet information by public key
-    /// 
+    ///
     /// Searches through connected devices to find one with the specified public key.
     /// Returns the device information if found, or `None` if no matching device exists.
     pub fn get_wallet_info(&self, pubkey: &Pubkey) -> Option<RemoteWalletInfo> {
@@ -474,7 +472,7 @@ pub fn initialize_wallet_manager() -> Result<Rc<RemoteWalletManager>, RemoteWall
 /// Returns `Some(manager)` if devices are found, `None` if no devices are detected
 pub fn maybe_wallet_manager() -> Result<Option<Rc<RemoteWalletManager>>, RemoteWalletError> {
     let wallet_manager = initialize_wallet_manager()?;
-    let total_devices = wallet_manager.devices.read().len();
+    let _total_devices = wallet_manager.devices.read().len();
 
     // Perform initial device scan
     wallet_manager.update_devices()?;

@@ -211,7 +211,7 @@ impl LedgerWallet {
             let n = self
                 .transport
                 .write(&hid_chunk[..])
-                .map_err(|e| RemoteWalletError::Hid(e))?;
+                .map_err(|e| RemoteWalletError::Hid(e.to_string()))?;
             if n < size + header {
                 return Err(RemoteWalletError::Protocol("Incomplete write"));
             }
@@ -242,7 +242,10 @@ impl LedgerWallet {
 
         // terminate the loop if `sequence_number` reaches its max_value and report error
         for chunk_index in 0..=0xffff {
-            let chunk = self.transport.read().map_err(RemoteWalletError::Hid)?;
+            let chunk = self
+                .transport
+                .read()
+                .map_err(|e| RemoteWalletError::Hid(e.to_string()))?;
             trace!("Ledger read {:?}", &chunk[..]);
             if chunk.len() < LEDGER_TRANSPORT_HEADER_LEN
                 || chunk[0] != 0x01

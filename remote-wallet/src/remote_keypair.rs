@@ -85,7 +85,6 @@ pub fn generate_remote_keypair(
     } else if remote_wallet_info.manufacturer == Manufacturer::Keystone {
         let keystone = get_keystone_from_info(remote_wallet_info, keypair_name, wallet_manager)?;
         let path = format!("{}{}", keystone.pretty_path, derivation_path.get_query());
-        debug_print!("path: {:?}", path);
         Ok(RemoteKeypair::new(
             RemoteWalletType::Keystone(keystone),
             derivation_path,
