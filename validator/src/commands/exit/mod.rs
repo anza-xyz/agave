@@ -40,7 +40,7 @@ impl FromClapArgMatches for ExitArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         let post_exit_action = if matches.is_present("monitor") {
             Some(PostExitAction::Monitor)
-        } else if matches.is_present("skip_wait_for_exit") {
+        } else if matches.is_present("no_wait_for_exit") {
             None
         } else {
             Some(PostExitAction::Wait)
@@ -82,7 +82,7 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .short("m")
                 .long("monitor")
                 .takes_value(false)
-                .requires("skip_wait_for_exit")
+                .requires("no_wait_for_exit")
                 .help("Monitor the validator after sending the exit request"),
         )
         .arg(
@@ -93,8 +93,8 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .help("Wait for the validator to terminate after sending the exit request"),
         )
         .arg(
-            Arg::with_name("skip_wait_for_exit")
-                .long("skip-wait-for-exit")
+            Arg::with_name("no_wait_for_exit")
+                .long("no-wait-for-exit")
                 .takes_value(false)
                 .conflicts_with("wait_for_exit")
                 .help("Do not wait for the validator to terminate after sending the exit request"),
@@ -268,7 +268,7 @@ mod tests {
     fn verify_args_struct_by_command_exit_with_post_exit_action() {
         verify_args_struct_by_command(
             command(),
-            vec![COMMAND, "--monitor", "--skip-wait-for-exit"],
+            vec![COMMAND, "--monitor", "--no-wait-for-exit"],
             ExitArgs {
                 post_exit_action: Some(PostExitAction::Monitor),
                 ..ExitArgs::default()
@@ -277,7 +277,7 @@ mod tests {
 
         verify_args_struct_by_command(
             command(),
-            vec![COMMAND, "--skip-wait-for-exit"],
+            vec![COMMAND, "--no-wait-for-exit"],
             ExitArgs {
                 post_exit_action: None,
                 ..ExitArgs::default()

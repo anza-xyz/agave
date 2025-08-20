@@ -46,7 +46,7 @@ Release channels have their own copy of this changelog:
 * `--transaction-structure view` is now the default.
 * The default full snapshot interval is now 100,000 slots.
 * `SOLANA_BANKING_THREADS` environment variable is no longer supported. Use `--block-prouduction-num-workers` instead.
-* By default, `agave-validator exit` will now wait for the validator process to terminate before returning. The `--wait-for-exit` flag has been deprecated, but operators can still opt out with the new `--skip-wait-for-exit` flag.
+* By default, `agave-validator exit` will now wait for the validator process to terminate before returning. The `--wait-for-exit` flag has been deprecated, but operators can still opt out with the new `--no-wait-for-exit` flag.
 
 ## 2.3.0
 
