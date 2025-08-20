@@ -7121,18 +7121,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-bench-streamer"
-version = "3.0.0"
-dependencies = [
- "clap 3.2.23",
- "crossbeam-channel",
- "solana-net-utils",
- "solana-streamer",
- "solana-version",
- "tikv-jemallocator",
-]
-
-[[package]]
 name = "solana-bench-tps"
 version = "3.0.0"
 dependencies = [

@@ -11,7 +11,6 @@ members = [
     "banks-client",
     "banks-interface",
     "banks-server",
-    "bench-streamer",
     "bench-tps",
     "bench-vote",
     "bloom",
