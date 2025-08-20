@@ -53,7 +53,7 @@ solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk-ids = "=2.2.1"
 solana-signer = "=2.2.1"
-solana-stake-interface = "=1.2.1"
+solana-stake-interface = "=2.0.0"
 solana-stake-program = { workspace = true }
 solana-time-utils = "2.2.1"
 solana-version = { workspace = true }

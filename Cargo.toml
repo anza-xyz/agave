@@ -517,7 +517,7 @@ solana-signer = "2.2.1"
 solana-slot-hashes = "2.2.1"
 solana-slot-history = "2.2.1"
 solana-stable-layout = "2.2.1"
-solana-stake-interface = { version = "1.2.1" }
+solana-stake-interface = { version = "2.0.0" }
 solana-stake-program = { path = "programs/stake", version = "=3.0.0" }
 solana-storage-bigtable = { path = "storage-bigtable", version = "=3.0.0" }
 solana-storage-proto = { path = "storage-proto", version = "=3.0.0" }

@@ -83,7 +83,7 @@ solana-sdk-ids = "=2.2.1"
 solana-signature = { version = "=2.3.0", default-features = false }
 solana-signer = "=2.2.1"
 solana-slot-history = "=2.2.1"
-solana-stake-interface = "=1.2.1"
+solana-stake-interface = "=2.0.0"
 solana-streamer = { workspace = true }
 solana-system-interface = { version = "=1.0", features = ["bincode"] }
 solana-sysvar = "=2.2.2"
