@@ -1,10 +1,9 @@
-#![feature(test)]
 #![allow(clippy::arithmetic_side_effects)]
 
 extern crate solana_core;
-extern crate test;
 
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     crossbeam_channel::unbounded,
     log::*,
     rand::{
@@ -25,8 +24,10 @@ use {
     },
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
-    std::time::{Duration, Instant},
-    test::Bencher,
+    std::{
+        hint::black_box,
+        time::{Duration, Instant},
+    },
 };
 
 fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
@@ -70,17 +71,14 @@ fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
     });
 }
 
-#[bench]
 fn bench_packet_discard_many_senders(bencher: &mut Bencher) {
     run_bench_packet_discard(1000, bencher);
 }
 
-#[bench]
 fn bench_packet_discard_single_sender(bencher: &mut Bencher) {
     run_bench_packet_discard(1, bencher);
 }
 
-#[bench]
 fn bench_packet_discard_mixed_senders(bencher: &mut Bencher) {
     const SIZE: usize = 30 * 1000;
     const CHUNK_SIZE: usize = 1024;
@@ -141,12 +139,10 @@ fn gen_batches(use_same_tx: bool) -> Vec<PacketBatch> {
     }
 }
 
-#[bench]
 fn bench_sigverify_stage_with_same_tx(bencher: &mut Bencher) {
     bench_sigverify_stage(bencher, true)
 }
 
-#[bench]
 fn bench_sigverify_stage_without_same_tx(bencher: &mut Bencher) {
     bench_sigverify_stage(bencher, false)
 }
@@ -179,7 +175,7 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
         loop {
             if let Ok(verifieds) = verified_r.recv_timeout(Duration::from_millis(10)) {
                 received += verifieds.iter().map(|batch| batch.len()).sum::<usize>();
-                test::black_box(verifieds);
+                black_box(verifieds);
                 if received >= expected {
                     break;
                 }
@@ -260,7 +256,6 @@ fn bench_shrink_sigverify_stage_core(bencher: &mut Bencher, discard_factor: i32)
 
 macro_rules! GEN_SHRINK_SIGVERIFY_BENCH {
     ($i:ident, $n:literal) => {
-        #[bench]
         fn $i(bencher: &mut Bencher) {
             bench_shrink_sigverify_stage_core(bencher, $n);
         }
@@ -277,3 +272,23 @@ GEN_SHRINK_SIGVERIFY_BENCH!(bsv_60, 60);
 GEN_SHRINK_SIGVERIFY_BENCH!(bsv_70, 70);
 GEN_SHRINK_SIGVERIFY_BENCH!(bsv_80, 80);
 GEN_SHRINK_SIGVERIFY_BENCH!(bsv_90, 90);
+
+benchmark_group!(
+    benches,
+    bench_packet_discard_many_senders,
+    bench_packet_discard_single_sender,
+    bench_packet_discard_mixed_senders,
+    bench_sigverify_stage_with_same_tx,
+    bench_sigverify_stage_without_same_tx,
+    bsv_0,
+    bsv_10,
+    bsv_20,
+    bsv_30,
+    bsv_40,
+    bsv_50,
+    bsv_60,
+    bsv_70,
+    bsv_80,
+    bsv_90,
+);
+benchmark_main!(benches);
