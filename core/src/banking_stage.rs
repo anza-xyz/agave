@@ -431,7 +431,11 @@ impl BankingStage {
                 bank_thread_hdl.join()?;
             }
 
-            info!("Spawning new banking stage non-vote threads");
+            info!(
+                "Spawning new banking stage non-vote threads with block-production-method: {:?} \
+                transaction-structure: {:?} num-workers: {}",
+                block_production_method, transaction_struct, num_workers
+            );
             context.non_vote_exit_signal.store(false, Ordering::Relaxed);
             self.non_vote_thread_hdls = Self::new_central_scheduler(
                 transaction_struct,
