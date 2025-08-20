@@ -9,7 +9,9 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     log::*,
-    solana_account::{create_account_shared_data_for_test, Account, AccountSharedData},
+    solana_account::{
+        create_account_shared_data_for_test, Account, AccountSharedData, ReadableAccount,
+    },
     solana_account_info::AccountInfo,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
@@ -22,6 +24,7 @@ use {
         error::{InstructionError, UNSUPPORTED_SYSVAR},
         Instruction,
     },
+    solana_instructions_sysvar::{load_current_index_checked, load_instruction_at_checked},
     solana_keypair::Keypair,
     solana_native_token::sol_to_lamports,
     solana_poh_config::PohConfig,
@@ -94,7 +97,7 @@ fn set_invoke_context(new: &mut InvokeContext) {
         invoke_context.replace(Some(transmute::<&mut InvokeContext, usize>(new)))
     });
 }
-fn get_invoke_context<'a, 'b>() -> &'a mut InvokeContext<'b> {
+pub fn get_invoke_context<'a, 'b>() -> &'a mut InvokeContext<'b> {
     let ptr = INVOKE_CONTEXT.with(|invoke_context| match *invoke_context.borrow() {
         Some(val) => val,
         None => panic!("Invoke context not set!"),
@@ -428,6 +431,34 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         let invoke_context = get_invoke_context();
         invoke_context.get_stack_height().try_into().unwrap()
     }
+
+    fn sol_get_processed_sibling_instruction(&self, index: usize) -> Option<Instruction> {
+        let invoke_context = get_invoke_context();
+        let instructions_sysvar_id =
+            Pubkey::from_str_const("Sysvar1nstructions1111111111111111111111111");
+        let instructions_sysvar_account_index = invoke_context
+            .transaction_context
+            .find_index_of_account(&instructions_sysvar_id)?;
+        let accounts = invoke_context.transaction_context.accounts();
+        let instructions_account = accounts
+            .try_borrow(instructions_sysvar_account_index)
+            .ok()?;
+        let mut a: Account = instructions_account.to_account_shared_data().into();
+        let ai = AccountInfo {
+            key: &instructions_sysvar_id,
+            is_signer: false,
+            is_writable: true,
+            lamports: std::rc::Rc::new(RefCell::new(&mut a.lamports)),
+            data: std::rc::Rc::new(RefCell::new(&mut a.data[..])),
+            owner: &a.owner,
+            executable: a.executable,
+            rent_epoch: a.rent_epoch,
+        };
+        let current_ix_index = load_current_index_checked(&ai).ok()? as usize;
+        // We're actually looking for current_index - index - 1
+        let index = current_ix_index.checked_sub(index)?.checked_sub(1)?;
+        load_instruction_at_checked(index, &ai).ok()
+    }
 }
 
 pub fn find_file(filename: &str) -> Option<PathBuf> {
@@ -474,6 +505,7 @@ pub struct ProgramTest {
     prefer_bpf: bool,
     deactivate_feature_set: HashSet<Pubkey>,
     transaction_account_lock_limit: Option<usize>,
+    payer: Keypair,
 }
 
 impl Default for ProgramTest {
@@ -505,6 +537,7 @@ impl Default for ProgramTest {
             prefer_bpf,
             deactivate_feature_set: HashSet::default(),
             transaction_account_lock_limit: None,
+            payer: Keypair::new(),
         }
     }
 }
@@ -525,6 +558,11 @@ impl ProgramTest {
         let mut me = Self::default();
         me.add_program(program_name, program_id, builtin_function);
         me
+    }
+
+    /// Override default payer
+    pub fn set_payer(&mut self, payer: Keypair) {
+        self.payer = payer;
     }
 
     /// Override default SBF program selection
@@ -794,12 +832,11 @@ impl ProgramTest {
         let bootstrap_validator_stake_lamports =
             rent.minimum_balance(VoteStateV3::size_of()) + sol_to_lamports(1_000_000.0);
 
-        let mint_keypair = Keypair::new();
         let voting_keypair = Keypair::new();
 
         let mut genesis_config = create_genesis_config_with_leader_ex(
             sol_to_lamports(1_000_000.0),
-            &mint_keypair.pubkey(),
+            &self.payer.pubkey(),
             &bootstrap_validator_pubkey,
             &voting_keypair.pubkey(),
             &Pubkey::new_unique(),
@@ -831,7 +868,7 @@ impl ProgramTest {
 
         let target_tick_duration = Duration::from_micros(100);
         genesis_config.poh_config = PohConfig::new_sleep(target_tick_duration);
-        debug!("Payer address: {}", mint_keypair.pubkey());
+        debug!("Payer address: {}", self.payer.pubkey());
         debug!("Genesis config: {genesis_config}");
 
         let bank = Bank::new_with_paths(
@@ -909,7 +946,7 @@ impl ProgramTest {
             last_blockhash,
             GenesisConfigInfo {
                 genesis_config,
-                mint_keypair,
+                mint_keypair: self.payer.insecure_clone(),
                 voting_keypair,
                 validator_pubkey: bootstrap_validator_pubkey,
             },
@@ -1253,5 +1290,14 @@ impl ProgramTestContext {
             .unwrap()
             .working_bank()
             .register_hard_fork(hard_fork_slot)
+    }
+
+    /// Register recent blockhash
+    pub fn register_recent_blockhash(&self, blockhash: &Hash, lamports_per_signature: Option<u64>) {
+        self.bank_forks
+            .write()
+            .unwrap()
+            .working_bank()
+            .register_recent_blockhash_for_test(blockhash, lamports_per_signature);
     }
 }
