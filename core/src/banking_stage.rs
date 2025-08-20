@@ -495,7 +495,7 @@ impl BankingStage {
                     QosService::new(id),
                     context.log_messages_bytes_limit,
                 ),
-                context.poh_recorder.read().unwrap().shared_working_bank(),
+                context.poh_recorder.read().unwrap().shared_leader_state(),
             );
 
             worker_metrics.push(consume_worker.metrics_handle());
