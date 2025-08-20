@@ -1110,7 +1110,7 @@ pub mod disable_zk_elgamal_proof_program {
 }
 
 pub mod reenable_zk_elgamal_proof_program {
-    solana_pubkey::declare_id!("zkemPXcuM3G4wpMDZ36Cpw34EjUpvm1nuioiSGbGZPR");
+    solana_pubkey::declare_id!("zkeygbBwEGgThKda6nVFVUjJHSYXbwydbmaPUeNQbmK");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
