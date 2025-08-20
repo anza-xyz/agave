@@ -41,6 +41,7 @@ Release channels have their own copy of this changelog:
 * Deprecated snapshot archive formats have been removed and are no longer loadable.
 * Using `--snapshot-interval-slots 0` to disable generating snapshots has been removed. Use `--no-snapshots` instead.
 * Validator will now bind all ports within provided `--dynamic-port-range`, including the client ports. A range of at least 25 ports is recommended to avoid failures to bind during startup.
+* Agave can no longer operate with legacy shreds. This may break operations with ledgers that are older than April 2024.
 
 #### Changes
 * `--transaction-structure view` is now the default.
