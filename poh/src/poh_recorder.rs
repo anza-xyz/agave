@@ -14,7 +14,7 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{poh_service::PohService, transaction_recorder::TransactionRecorder},
-    arc_swap::ArcSwapOption,
+    arc_swap::ArcSwap,
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TrySendError},
     log::*,
     solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
@@ -157,7 +157,6 @@ impl PohRecorderMetrics {
 
 pub struct PohRecorder {
     pub(crate) poh: Arc<Mutex<Poh>>,
-    tick_height: SharedTickHeight,
     clear_bank_signal: Option<Sender<bool>>,
     start_bank: Arc<Bank>, // parent slot
     start_bank_active_descendants: Vec<Slot>,
@@ -165,14 +164,10 @@ pub struct PohRecorder {
     tick_cache: Vec<(Entry, u64)>, // cache of entry and its tick_height
     /// This stores the current working bank + scheduler and other metadata,
     /// if they exist.
-    /// This field MUST be kept consistent with the `shared_working_bank` field.
+    /// This field MUST be kept consistent with the `shared_leader_status` field.
     working_bank: Option<WorkingBank>,
-    /// This is used to store the current working bank - just the Arc<Bank> without
-    /// schduler or any other metadata. It MUST be kept consistent with
-    /// the `working_bank` field of this struct.
-    shared_working_bank: SharedWorkingBank,
+    shared_leader_status: SharedLeaderStatus,
     working_bank_sender: Sender<WorkingBankEntry>,
-    leader_first_tick_height: SharedLeaderFirstTickHeight,
     leader_last_tick_height: u64, // zero if none
     grace_ticks: u64,
     blockstore: Arc<Blockstore>,
@@ -251,18 +246,17 @@ impl PohRecorder {
         (
             Self {
                 poh,
-                tick_height: SharedTickHeight::new(tick_height),
                 tick_cache: vec![],
                 working_bank: None,
-                shared_working_bank: SharedWorkingBank::empty(),
+                shared_leader_status: SharedLeaderStatus::new(
+                    tick_height,
+                    leader_first_tick_height,
+                ),
                 working_bank_sender,
                 clear_bank_signal,
                 start_bank,
                 start_bank_active_descendants: vec![],
                 start_tick_height: tick_height + 1,
-                leader_first_tick_height: SharedLeaderFirstTickHeight::new(
-                    leader_first_tick_height,
-                ),
                 leader_last_tick_height,
                 grace_ticks,
                 blockstore,
@@ -292,8 +286,8 @@ impl PohRecorder {
         let (leader_first_tick_height, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, self.ticks_per_slot);
         self.grace_ticks = grace_ticks;
-        self.leader_first_tick_height
-            .store(leader_first_tick_height);
+        self.shared_leader_status
+            .set_leader_first_tick_height(leader_first_tick_height);
         self.leader_last_tick_height = leader_last_tick_height;
     }
 
@@ -396,10 +390,14 @@ impl PohRecorder {
         self.metrics.tick_lock_contention_us += tick_lock_contention_us;
 
         if let Some(poh_entry) = poh_entry {
-            self.tick_height.increment();
+            self.shared_leader_status.increment_tick_height();
             trace!("tick_height {}", self.tick_height());
 
-            if self.leader_first_tick_height.load().is_none() {
+            if self
+                .shared_leader_status
+                .leader_first_tick_height()
+                .is_none()
+            {
                 return;
             }
 
@@ -453,8 +451,9 @@ impl PohRecorder {
             }
         }
 
-        // `shared_working_bank` and `working_bank` must be kept consistent.
-        self.shared_working_bank.store(working_bank.bank.clone());
+        // `shared_leader_status` and `working_bank` must be kept consistent.
+        self.shared_leader_status
+            .set_working_bank(Some(working_bank.bank.clone()));
         self.working_bank = Some(working_bank);
 
         // TODO: adjust the working_bank.start time based on number of ticks
@@ -464,8 +463,8 @@ impl PohRecorder {
 
     fn clear_bank(&mut self) {
         if let Some(WorkingBank { bank, start, .. }) = self.working_bank.take() {
-            // clear `shared_working_bank` to keep it consistent with `working_bank`
-            self.shared_working_bank.clear();
+            // clear `shared_leader_stauts` to keep it consistent with `working_bank`
+            self.shared_leader_status.set_working_bank(None);
 
             let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
                 bank.collector_id(),
@@ -478,8 +477,8 @@ impl PohRecorder {
             let (leader_first_tick_height, leader_last_tick_height, grace_ticks) =
                 Self::compute_leader_slot_tick_heights(next_leader_slot, self.ticks_per_slot);
             self.grace_ticks = grace_ticks;
-            self.leader_first_tick_height
-                .store(leader_first_tick_height);
+            self.shared_leader_status
+                .set_leader_first_tick_height(leader_first_tick_height);
             self.leader_last_tick_height = leader_last_tick_height;
 
             datapoint_info!(
@@ -523,8 +522,8 @@ impl PohRecorder {
             self.start_bank = reset_bank;
             self.start_bank_active_descendants = vec![];
         }
-        self.tick_height
-            .store((self.start_slot() + 1) * self.ticks_per_slot);
+        self.shared_leader_status
+            .set_tick_height((self.start_slot() + 1) * self.ticks_per_slot);
         self.start_tick_height = self.tick_height() + 1;
     }
 
@@ -598,11 +597,11 @@ impl PohRecorder {
     pub fn would_be_leader(&self, within_next_n_ticks: u64) -> bool {
         self.has_bank()
             || self
-                .leader_first_tick_height
-                .load()
+                .leader_first_tick_height()
                 .is_some_and(|leader_first_tick_height| {
-                    self.tick_height() + within_next_n_ticks >= leader_first_tick_height
-                        && self.tick_height() <= self.leader_last_tick_height
+                    let tick_height = self.tick_height();
+                    tick_height + within_next_n_ticks >= leader_first_tick_height
+                        && tick_height <= self.leader_last_tick_height
                 })
     }
 
@@ -640,6 +639,10 @@ impl PohRecorder {
             .map(|leader| (leader, target_slot))
     }
 
+    pub fn shared_leader_status(&self) -> SharedLeaderStatus {
+        self.shared_leader_status.clone()
+    }
+
     pub fn bank(&self) -> Option<Arc<Bank>> {
         self.working_bank.as_ref().map(|w| w.bank.clone())
     }
@@ -649,26 +652,15 @@ impl PohRecorder {
     }
 
     pub fn tick_height(&self) -> u64 {
-        self.tick_height.load()
+        self.shared_leader_status.tick_height()
     }
 
-    pub fn shared_tick_height(&self) -> SharedTickHeight {
-        self.tick_height.clone()
-    }
-
-    pub fn shared_leader_first_tick_height(&self) -> SharedLeaderFirstTickHeight {
-        self.leader_first_tick_height.clone()
+    fn leader_first_tick_height(&self) -> Option<u64> {
+        self.shared_leader_status.leader_first_tick_height()
     }
 
     pub fn ticks_per_slot(&self) -> u64 {
         self.ticks_per_slot
-    }
-
-    /// Returns a shared reference to the working bank, if it exists.
-    /// This allows for other threads to access the working bank
-    /// without needing to lock poh recorder.
-    pub fn shared_working_bank(&self) -> SharedWorkingBank {
-        self.shared_working_bank.clone()
     }
 
     pub fn start_slot(&self) -> Slot {
@@ -683,13 +675,13 @@ impl PohRecorder {
             "tick_height {}, start_tick_height {}, leader_first_tick_height {:?}, grace_ticks {}, has_bank {}",
             self.tick_height(),
             self.start_tick_height,
-            self.leader_first_tick_height.load(),
+            self.shared_leader_status.leader_first_tick_height(),
             self.grace_ticks,
             self.has_bank()
         );
 
         let current_poh_slot = self.current_poh_slot();
-        let Some(leader_first_tick_height) = self.leader_first_tick_height.load() else {
+        let Some(leader_first_tick_height) = self.leader_first_tick_height() else {
             // No next leader slot, so no leader slot has been reached.
             return PohLeaderStatus::NotReached;
         };
@@ -979,101 +971,106 @@ pub fn create_test_recorder_with_index_tracking(
     do_create_test_recorder(bank, blockstore, poh_config, leader_schedule_cache, true)
 }
 
-/// Wrapper around an arc-swapped bank that prevents modifying outside
-/// of `PohRecorder`.
+/// A shareable leader status that can be used to
+/// determine the current leader status of the
+/// `PohRecorder`.
 #[derive(Clone)]
-pub struct SharedWorkingBank(Arc<ArcSwapOption<Bank>>);
+pub struct SharedLeaderStatus(Arc<ArcSwap<SharedLeaderStatusInner>>);
 
-impl SharedWorkingBank {
-    pub fn load(&self) -> Option<Arc<Bank>> {
-        self.0.load_full()
-    }
-
-    // Mutable access not needed for this function.
-    // However we use it to guarantee only used when PohRecorder is
-    // write locked.
+impl SharedLeaderStatus {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn store(&mut self, bank: Arc<Bank>) {
-        self.0.store(Some(bank));
+    fn new(tick_height: u64, leader_first_tick_height: Option<u64>) -> Self {
+        let inner = SharedLeaderStatusInner {
+            working_bank: None,
+            tick_height: AtomicU64::new(tick_height),
+            leader_first_tick_height: AtomicU64::new(
+                leader_first_tick_height.unwrap_or(LEADER_FIRST_TICK_HEIGHT_NONE),
+            ),
+        };
+        Self(Arc::new(ArcSwap::from_pointee(inner)))
     }
 
-    // Mutable access not needed for this function.
-    // However we use it to guarantee only used when PohRecorder is
-    // write locked.
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn clear(&mut self) {
-        self.0.store(None);
-    }
-
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn empty() -> Self {
-        Self(Arc::new(ArcSwapOption::empty()))
-    }
-}
-
-/// Wrapper around a atomic-u64 that prevents modifying outside
-/// of `PohRecorder`.
-#[derive(Clone)]
-pub struct SharedTickHeight(Arc<AtomicU64>);
-
-impl SharedTickHeight {
-    pub fn load(&self) -> u64 {
-        self.0.load(Ordering::Acquire)
-    }
-
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn new(tick_height: u64) -> Self {
-        Self(Arc::new(AtomicU64::new(tick_height)))
-    }
-
-    // Mutable access not needed for this function.
-    // However we use it to guarantee only used when PohRecorder is
-    // write locked.
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn store(&mut self, tick_height: u64) {
-        self.0.store(tick_height, Ordering::Release);
-    }
-
-    // Mutable access not needed for this function.
-    // However we use it to guarantee only used when PohRecorder is
-    // write locked.
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn increment(&mut self) {
-        self.0.fetch_add(1, Ordering::Release);
-    }
-}
-
-/// Wrapper around a atomic-u64 that may be None.
-// Uses the flag of u64::MAX to indicate None; this does not
-// need to be observable outside of PohRecorder.
-#[derive(Clone)]
-pub struct SharedLeaderFirstTickHeight(Arc<AtomicU64>);
-const SHARED_LEADER_FIRST_TICK_HEIGHT_NONE: u64 = u64::MAX;
-
-impl SharedLeaderFirstTickHeight {
-    pub fn load(&self) -> Option<u64> {
-        let v = self.0.load(Ordering::Acquire);
-        if v == SHARED_LEADER_FIRST_TICK_HEIGHT_NONE {
-            None
+    pub fn status(&self) -> LeaderStatus {
+        let inner = self.0.load();
+        if let Some(working_bank) = inner.working_bank.as_ref() {
+            LeaderStatus::Active(working_bank.clone())
+        } else if let Some(leader_first_tick_height) = inner.leader_first_tick_height() {
+            let ticks_until_leader =
+                leader_first_tick_height.saturating_sub(inner.tick_height.load(Ordering::Acquire));
+            LeaderStatus::TicksUntilLeader(ticks_until_leader)
         } else {
-            Some(v)
+            LeaderStatus::WillNotBeLeader
         }
     }
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn new(tick_height: Option<u64>) -> Self {
-        let v = tick_height.unwrap_or(SHARED_LEADER_FIRST_TICK_HEIGHT_NONE);
-        Self(Arc::new(AtomicU64::new(v)))
+    fn set_working_bank(&mut self, working_bank: Option<Arc<Bank>>) {
+        let current_inner = self.0.load();
+        let inner = Arc::new(SharedLeaderStatusInner {
+            working_bank,
+            tick_height: AtomicU64::new(current_inner.tick_height.load(Ordering::Acquire)),
+            leader_first_tick_height: AtomicU64::new(
+                current_inner
+                    .leader_first_tick_height
+                    .load(Ordering::Acquire),
+            ),
+        });
+        self.0.store(inner);
     }
 
-    // Mutable access not needed for this function.
-    // However we use it to guarantee only used when PohRecorder is
-    // write locked.
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn store(&mut self, tick_height: Option<u64>) {
-        let v = tick_height.unwrap_or(SHARED_LEADER_FIRST_TICK_HEIGHT_NONE);
-        self.0.store(v, Ordering::Release);
+    fn tick_height(&self) -> u64 {
+        let inner = self.0.load();
+        inner.tick_height.load(Ordering::Acquire)
     }
+
+    fn increment_tick_height(&self) {
+        let inner = self.0.load();
+        inner.tick_height.fetch_add(1, Ordering::Release);
+    }
+
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn set_tick_height(&mut self, tick_height: u64) {
+        let inner = self.0.load();
+        inner.tick_height.store(tick_height, Ordering::Release);
+    }
+
+    fn leader_first_tick_height(&self) -> Option<u64> {
+        let inner = self.0.load();
+        inner.leader_first_tick_height()
+    }
+
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn set_leader_first_tick_height(&mut self, leader_first_tick_height: Option<u64>) {
+        let inner = self.0.load();
+        inner.leader_first_tick_height.store(
+            leader_first_tick_height.unwrap_or(LEADER_FIRST_TICK_HEIGHT_NONE),
+            Ordering::Release,
+        );
+    }
+}
+
+struct SharedLeaderStatusInner {
+    working_bank: Option<Arc<Bank>>,
+    tick_height: AtomicU64,
+    leader_first_tick_height: AtomicU64, // LEADER_FIRST_TICK_HEIGHT_NONE if None
+}
+const LEADER_FIRST_TICK_HEIGHT_NONE: u64 = u64::MAX;
+
+impl SharedLeaderStatusInner {
+    fn leader_first_tick_height(&self) -> Option<u64> {
+        let leader_first_tick_height = self.leader_first_tick_height.load(Ordering::Acquire);
+        if leader_first_tick_height == LEADER_FIRST_TICK_HEIGHT_NONE {
+            None
+        } else {
+            Some(leader_first_tick_height)
+        }
+    }
+}
+
+pub enum LeaderStatus {
+    Active(Arc<Bank>),
+    TicksUntilLeader(u64),
+    WillNotBeLeader,
 }
 
 #[cfg(test)]

@@ -3,9 +3,7 @@ use {
         DEFAULT_TICKS_PER_SLOT, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
         HOLD_TRANSACTIONS_SLOT_OFFSET,
     },
-    solana_poh::poh_recorder::{
-        PohRecorder, SharedLeaderFirstTickHeight, SharedTickHeight, SharedWorkingBank,
-    },
+    solana_poh::poh_recorder::{LeaderStatus, PohRecorder, SharedLeaderStatus},
     solana_runtime::bank::Bank,
     solana_unified_scheduler_pool::{BankingStageMonitor, BankingStageStatus},
     std::sync::{
@@ -34,67 +32,46 @@ impl BufferedPacketsDecision {
 
 #[derive(Clone)]
 pub struct DecisionMaker {
-    shared_working_bank: SharedWorkingBank,
-    shared_tick_height: SharedTickHeight,
-    shared_leader_first_tick_height: SharedLeaderFirstTickHeight,
+    shared_leader_status: SharedLeaderStatus,
 }
 
 impl std::fmt::Debug for DecisionMaker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DecisionMaker")
-            .field("shared_working_bank", &self.shared_working_bank.load())
-            .field("shared_tick_height", &self.shared_tick_height.load())
-            .field(
-                "shared_leader_first_tick_height",
-                &self.shared_leader_first_tick_height.load(),
-            )
-            .finish()
+        f.debug_struct("DecisionMaker").finish()
     }
 }
 
 impl DecisionMaker {
-    pub fn new(
-        shared_working_bank: SharedWorkingBank,
-        shared_tick_height: SharedTickHeight,
-        shared_leader_first_tick_height: SharedLeaderFirstTickHeight,
-    ) -> Self {
+    pub fn new(shared_leader_status: SharedLeaderStatus) -> Self {
         Self {
-            shared_working_bank,
-            shared_tick_height,
-            shared_leader_first_tick_height,
+            shared_leader_status,
         }
     }
 
     pub(crate) fn make_consume_or_forward_decision(&self) -> BufferedPacketsDecision {
-        // Check if there is an active working bank.
-        if let Some(bank) = self.shared_working_bank.load() {
-            BufferedPacketsDecision::Consume(bank)
-        } else if let Some(first_leader_tick_height) = self.shared_leader_first_tick_height.load() {
-            let current_tick_height = self.shared_tick_height.load();
-            let ticks_until_leader = first_leader_tick_height.saturating_sub(current_tick_height);
-
-            if ticks_until_leader
-                <= (FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET - 1) * DEFAULT_TICKS_PER_SLOT
-            {
-                BufferedPacketsDecision::Hold
-            } else if ticks_until_leader < HOLD_TRANSACTIONS_SLOT_OFFSET * DEFAULT_TICKS_PER_SLOT {
-                BufferedPacketsDecision::ForwardAndHold
-            } else {
-                BufferedPacketsDecision::Forward
+        match self.shared_leader_status.status() {
+            LeaderStatus::Active(bank) => BufferedPacketsDecision::Consume(bank),
+            LeaderStatus::TicksUntilLeader(ticks_until_leader) => {
+                if ticks_until_leader
+                    <= (FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET - 1) * DEFAULT_TICKS_PER_SLOT
+                {
+                    BufferedPacketsDecision::Hold
+                } else if ticks_until_leader
+                    < HOLD_TRANSACTIONS_SLOT_OFFSET * DEFAULT_TICKS_PER_SLOT
+                {
+                    BufferedPacketsDecision::ForwardAndHold
+                } else {
+                    BufferedPacketsDecision::Forward
+                }
             }
-        } else {
-            BufferedPacketsDecision::Forward
+            LeaderStatus::WillNotBeLeader => BufferedPacketsDecision::Forward,
         }
     }
 }
 
 impl From<&PohRecorder> for DecisionMaker {
     fn from(poh_recorder: &PohRecorder) -> Self {
-        Self::new(
-            poh_recorder.shared_working_bank(),
-            poh_recorder.shared_tick_height(),
-            poh_recorder.shared_leader_first_tick_height(),
-        )
+        Self::new(poh_recorder.shared_leader_status())
     }
 }
 
@@ -148,15 +125,9 @@ mod tests {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
 
-        let mut shared_working_bank = SharedWorkingBank::empty();
-        let shared_tick_height = SharedTickHeight::new(0);
-        let mut shared_leader_first_tick_height = SharedLeaderFirstTickHeight::new(None);
+        let mut shared_leader_status = SharedLeaderStatus::new(0, None);
 
-        let decision_maker = DecisionMaker::new(
-            shared_working_bank.clone(),
-            shared_tick_height.clone(),
-            shared_leader_first_tick_height.clone(),
-        );
+        let decision_maker = DecisionMaker::new(shared_leader_status.clone());
 
         // No active bank, no leader first tick height.
         assert_matches!(
@@ -165,17 +136,18 @@ mod tests {
         );
 
         // Active bank.
-        shared_working_bank.store(bank.clone());
+        shared_leader_status.set_working_bank(Some(bank.clone()));
         assert_matches!(
             decision_maker.make_consume_or_forward_decision(),
             BufferedPacketsDecision::Consume(_)
         );
-        shared_working_bank.clear();
+        shared_leader_status.set_working_bank(None);
 
         // Will be leader shortly - Hold
         for next_leader_slot_offset in [0, 1].into_iter() {
             let next_leader_slot = bank.slot() + next_leader_slot_offset;
-            shared_leader_first_tick_height.store(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
+            shared_leader_status
+                .set_leader_first_tick_height(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
 
             let decision = decision_maker.make_consume_or_forward_decision();
             assert!(
@@ -187,7 +159,8 @@ mod tests {
         // Will be leader - ForwardAndHold
         for next_leader_slot_offset in [2, 19].into_iter() {
             let next_leader_slot = bank.slot() + next_leader_slot_offset;
-            shared_leader_first_tick_height.store(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
+            shared_leader_status
+                .set_leader_first_tick_height(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
 
             let decision = decision_maker.make_consume_or_forward_decision();
             assert!(
@@ -198,7 +171,8 @@ mod tests {
 
         // Longer period until next leader - Forward
         let next_leader_slot = 20 + bank.slot();
-        shared_leader_first_tick_height.store(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
+        shared_leader_status
+            .set_leader_first_tick_height(Some(next_leader_slot * DEFAULT_TICKS_PER_SLOT));
         let decision = decision_maker.make_consume_or_forward_decision();
         assert!(
             matches!(decision, BufferedPacketsDecision::Forward),
