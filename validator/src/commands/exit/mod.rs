@@ -145,15 +145,23 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
 
     // Grab the pid from the process before initiating exit as the running
     // validator will be unable to respond after exit has returned.
+    //
+    // Additionally, only check the pid() RPC call result if it will be used.
+    // In an upgrade scenario, it is possible that a binary that calls pid()
+    // will be initating exit against a process that doesn't support pid().
     const WAIT_FOR_EXIT_UNSUPPORTED_ERROR: &str = "remote process exit cannot be waited on. \
                                                    `--wait-for-exit` is not supported by the \
                                                    remote process";
+    let post_exit_action = exit_args.post_exit_action.clone();
     let validator_pid = admin_rpc_service::runtime().block_on(async move {
         let admin_client = admin_rpc_service::connect(ledger_path).await?;
-        let validator_pid = admin_client
-            .pid()
-            .await
-            .map_err(|_err| Error::Dynamic(WAIT_FOR_EXIT_UNSUPPORTED_ERROR.into()))?;
+        let validator_pid = match post_exit_action {
+            Some(PostExitAction::Wait) => admin_client
+                .pid()
+                .await
+                .map_err(|_err| Error::Dynamic(WAIT_FOR_EXIT_UNSUPPORTED_ERROR.into()))?,
+            _ => 0,
+        };
         admin_client.exit().await?;
 
         Ok::<u32, Error>(validator_pid)
