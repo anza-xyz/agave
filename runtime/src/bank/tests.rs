@@ -1952,7 +1952,7 @@ fn test_load_and_execute_commit_transactions_fees_only() {
                 loaded_accounts_count: 2,
                 loaded_accounts_data_size: nonce_size as u32,
             },
-            fee_payer_post_balance: genesis_config.rent.minimum_balance(0) - 1,
+            fee_payer_post_balance: genesis_config.rent.minimum_balance(0) - 1 - 5000,
         })]
     );
 }
