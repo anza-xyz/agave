@@ -408,7 +408,7 @@ impl BankingStage {
             transaction_struct,
             use_greedy_scheduler,
             num_workers,
-            non_vote_context.clone(),
+            &non_vote_context,
         );
 
         Self {
@@ -418,11 +418,40 @@ impl BankingStage {
         }
     }
 
+    pub fn spawn_non_vote_threads(
+        &mut self,
+        transaction_struct: TransactionStructure,
+        block_production_method: BlockProductionMethod,
+        num_workers: NonZeroUsize,
+    ) -> thread::Result<()> {
+        if let Some(context) = self.non_vote_context.as_ref() {
+            info!("Shutting down banking stage non-vote threads");
+            context.non_vote_exit_signal.store(true, Ordering::Relaxed);
+            for bank_thread_hdl in self.non_vote_thread_hdls.drain(..) {
+                bank_thread_hdl.join()?;
+            }
+
+            info!("Spawning new banking stage non-vote threads");
+            context.non_vote_exit_signal.store(false, Ordering::Relaxed);
+            self.non_vote_thread_hdls = Self::new_central_scheduler(
+                transaction_struct,
+                matches!(
+                    block_production_method,
+                    BlockProductionMethod::CentralSchedulerGreedy
+                ),
+                num_workers,
+                context,
+            )
+        }
+
+        Ok(())
+    }
+
     fn new_central_scheduler(
         transaction_struct: TransactionStructure,
         use_greedy_scheduler: bool,
         num_workers: NonZeroUsize,
-        context: BankingStageNonVoteContext,
+        context: &BankingStageNonVoteContext,
     ) -> Vec<JoinHandle<()>> {
         match transaction_struct {
             TransactionStructure::Sdk => {
@@ -456,7 +485,7 @@ impl BankingStage {
         receive_and_buffer: R,
         use_greedy_scheduler: bool,
         num_workers: NonZeroUsize,
-        context: BankingStageNonVoteContext,
+        context: &BankingStageNonVoteContext,
     ) -> Vec<JoinHandle<()>> {
         assert!(num_workers <= BankingStage::max_num_workers());
         let num_workers = num_workers.get();
@@ -507,6 +536,7 @@ impl BankingStage {
         macro_rules! spawn_scheduler {
             ($scheduler:ident) => {
                 let exit = exit.clone();
+                let bank_forks = context.bank_forks.clone();
                 thread_hdls.push(
                     Builder::new()
                         .name("solBnkTxSched".to_string())
@@ -515,7 +545,7 @@ impl BankingStage {
                                 exit,
                                 decision_maker,
                                 receive_and_buffer,
-                                context.bank_forks.clone(),
+                                bank_forks,
                                 $scheduler,
                                 worker_metrics,
                             );
