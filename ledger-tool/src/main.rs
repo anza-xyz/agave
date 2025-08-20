@@ -1316,8 +1316,8 @@ fn main() {
                         .value_name("DIR")
                         .takes_value(true)
                         .help(
-                            "Output directory for the snapshot \
-                             [default: --snapshot-archive-path if present else --ledger directory]",
+                            "Output directory for the snapshot [default: --snapshot-archive-path \
+                             if present else --ledger directory]",
                         ),
                 )
                 .arg(
@@ -1475,12 +1475,12 @@ fn main() {
                         .takes_value(false)
                         .help("Recalculate the accounts lt hash for minimized snapshots")
                         .long_help(
-                            "Recalculate the accounts lt hash for minimized snapshots. \
-                             Without this flag, loading the minimized snapshot will fail \
-                             startup accounts verification because the accounts lt hash will not \
-                             match due to the pruned account state. If not recalculating the \
-                             accounts lt hash, pass `--accounts-db-skip-initial-hash-calculation` \
-                             to `leder-tool verify` in order to bypass this check.",
+                            "Recalculate the accounts lt hash for minimized snapshots. Without \
+                             this flag, loading the minimized snapshot will fail startup accounts \
+                             verification because the accounts lt hash will not match due to the \
+                             pruned account state. If not recalculating the accounts lt hash, \
+                             pass `--accounts-db-skip-initial-hash-calculation` to `leder-tool \
+                             verify` in order to bypass this check.",
                         )
                         .requires("minimized"),
                 )
