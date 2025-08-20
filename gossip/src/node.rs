@@ -155,14 +155,8 @@ impl Node {
 
         // multihoming RX for TPU
         tpu_quic.append(
-            &mut Self::bind_to_extra_ip(
-                bind_ip_addr,
-                &bind_ip_addrs,
-                tpu_port_quic,
-                32,
-                socket_config,
-            )
-            .expect("Secondary bind TPU QUIC"),
+            &mut Self::bind_to_extra_ip(&bind_ip_addrs, tpu_port_quic, 32, socket_config)
+                .expect("Secondary bind TPU QUIC"),
         );
 
         let ((tpu_forwards_port, tpu_forwards_socket), (tpu_forwards_quic_port, tpu_forwards_quic)) =
@@ -182,7 +176,6 @@ impl Node {
 
         tpu_forwards_quic.append(
             &mut Self::bind_to_extra_ip(
-                bind_ip_addr,
                 &bind_ip_addrs,
                 tpu_forwards_quic_port,
                 num_quic_endpoints.get(),
@@ -203,7 +196,6 @@ impl Node {
                 .expect("tpu_vote_quic multi_bind");
         tpu_vote_quic.append(
             &mut Self::bind_to_extra_ip(
-                bind_ip_addr,
                 &bind_ip_addrs,
                 tpu_vote_port,
                 num_quic_endpoints.get(),
@@ -338,17 +330,17 @@ impl Node {
 
     /// Binds num sockets to each of the addresses in bind_ip_addrs except primary_ip_addr
     fn bind_to_extra_ip(
-        primary_ip_addr: IpAddr,
         bind_ip_addrs: &BindIpAddrs,
         port: u16,
         num: usize,
         socket_config: SocketConfig,
     ) -> io::Result<Vec<UdpSocket>> {
+        let active_ip_addr = bind_ip_addrs.active();
         let mut sockets = vec![];
         for ip_addr in bind_ip_addrs
             .iter()
             .cloned()
-            .filter(|&ip| ip != primary_ip_addr)
+            .filter(|&ip| ip != active_ip_addr)
         {
             let socket = bind_to_with_config(ip_addr, port, socket_config)?;
             sockets.append(&mut bind_more_with_config(socket, num, socket_config)?);
