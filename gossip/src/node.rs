@@ -409,16 +409,117 @@ mod multihoming {
         },
         solana_net_utils::multihomed_sockets::BindIpAddrs,
         std::{
-            net::{IpAddr, UdpSocket},
+            net::{IpAddr, SocketAddr, UdpSocket},
             sync::Arc,
         },
     };
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum SocketType {
+        Gossip,
+        Tvu,
+        TpuQuic,
+        TpuForwardsQuic,
+        TpuVoteQuic,
+        TpuVote,
+    }
+
+    impl SocketType {
+        fn set_socket(&self, cluster_info: &ClusterInfo, addr: SocketAddr) -> Result<(), String> {
+            match self {
+                SocketType::Gossip => cluster_info.set_gossip_socket(addr),
+                SocketType::Tvu => cluster_info.set_tvu_socket(addr),
+                SocketType::TpuQuic => cluster_info.set_tpu(addr),
+                SocketType::TpuForwardsQuic => cluster_info.set_tpu_forwards(addr),
+                SocketType::TpuVoteQuic => cluster_info.set_tpu_vote(QUIC, addr),
+                SocketType::TpuVote => cluster_info.set_tpu_vote(UDP, addr),
+            }
+            .map_err(|e| e.to_string())
+        }
+    }
 
     #[derive(Debug, Clone)]
     pub struct NodeMultihoming {
         pub gossip_socket: Arc<[UdpSocket]>,
         pub addresses: MultihomingAddresses,
         pub bind_ip_addrs: Arc<BindIpAddrs>,
+    }
+
+    /// builder to collect advertised interface updates
+    struct UpdateActiveInterfaceBuilder<'a> {
+        cluster_info: &'a ClusterInfo,
+        current_state: Vec<(SocketType, SocketAddr)>,
+        pending_operations: Vec<Box<dyn FnMut() -> Result<(), String> + 'a>>,
+    }
+
+    impl<'a> UpdateActiveInterfaceBuilder<'a> {
+        fn new(cluster_info: &'a ClusterInfo) -> Self {
+            Self {
+                cluster_info,
+                current_state: Vec::new(),
+                pending_operations: Vec::new(),
+            }
+        }
+
+        /// Add a socket update operation
+        fn add_socket_update<F>(
+            &mut self,
+            socket_type: SocketType,
+            current_addr: Option<SocketAddr>,
+            mut update_fn: F,
+        ) where
+            F: FnMut() -> Result<(), String> + 'a,
+        {
+            if let Some(addr) = current_addr {
+                self.current_state.push((socket_type, addr));
+            }
+
+            self.pending_operations.push(Box::new(move || {
+                update_fn().map_err(|e| format!("Failed to update {socket_type:?}: {e}"))
+            }));
+        }
+
+        /// execute all operations atomically - rollback on any failure
+        fn execute(mut self) -> Result<(), String> {
+            // execute operations in order
+            for (executed_count, operation) in self.pending_operations.iter_mut().enumerate() {
+                if let Err(e) = operation() {
+                    // rollback all previously executed operations
+                    self.rollback_executed(executed_count, &e)?;
+                    return Err(e);
+                }
+            }
+            Ok(())
+        }
+
+        /// rollback operations in reverse order
+        fn rollback_executed(
+            &self,
+            executed_count: usize,
+            original_error: &str,
+        ) -> Result<(), String> {
+            if executed_count == 0 {
+                return Ok(());
+            }
+
+            let mut rollback_errors = Vec::new();
+            for i in (0..executed_count).rev() {
+                if let Some((socket_type, addr)) = self.current_state.get(i) {
+                    if let Err(e) = socket_type.set_socket(self.cluster_info, *addr) {
+                        rollback_errors.push(format!("Failed to rollback {socket_type:?}: {e}"));
+                    }
+                }
+            }
+
+            if !rollback_errors.is_empty() {
+                return Err(format!(
+                    "Failed to rollback after error '{}'. Rollback errors: {}",
+                    original_error,
+                    rollback_errors.join("; ")
+                ));
+            }
+            Ok(())
+        }
     }
 
     impl NodeMultihoming {
@@ -446,40 +547,84 @@ mod multihoming {
             let gossip_addr = self.gossip_socket[interface_index]
                 .local_addr()
                 .map_err(|e| e.to_string())?;
-            // Set the new gossip address in contact-info
-            cluster_info
-                .set_gossip_socket(gossip_addr)
-                .map_err(|e| e.to_string())?;
 
             // update tvu ingress advertised socket
             let tvu_ingress_address = self.addresses.tvu[interface_index];
-            cluster_info
-                .set_tvu_socket(tvu_ingress_address)
-                .map_err(|e| e.to_string())?;
-
-            // tpu_quic
             let tpu_quic_address = self.addresses.tpu_quic[interface_index];
-            cluster_info
-                .set_tpu(tpu_quic_address)
-                .map_err(|e| e.to_string())?;
-
-            // tpu_forwards_quic
             let tpu_forwards_quic_address = self.addresses.tpu_forwards_quic[interface_index];
-            cluster_info
-                .set_tpu_forwards(tpu_forwards_quic_address)
-                .map_err(|e| e.to_string())?;
-
-            // tpu_vote_quic
             let tpu_vote_quic_address = self.addresses.tpu_vote_quic[interface_index];
-            cluster_info
-                .set_tpu_vote(QUIC, tpu_vote_quic_address)
-                .map_err(|e| e.to_string())?;
+            let tpu_vote_address = self.addresses.tpu_vote[interface_index]; //udp
 
-            // tpu_vote (udp)
-            let tpu_vote_address = self.addresses.tpu_vote[interface_index];
-            cluster_info
-                .set_tpu_vote(UDP, tpu_vote_address)
-                .map_err(|e| e.to_string())?;
+            // Create builder for atomic execution
+            let mut builder = UpdateActiveInterfaceBuilder::new(cluster_info);
+
+            // gossip
+            builder.add_socket_update(
+                SocketType::Gossip,
+                cluster_info.my_contact_info().gossip(),
+                || {
+                    cluster_info
+                        .set_gossip_socket(gossip_addr)
+                        .map_err(|e| e.to_string())
+                },
+            );
+
+            // tvu ingress
+            builder.add_socket_update(
+                SocketType::Tvu,
+                cluster_info.my_contact_info().tvu(UDP),
+                || {
+                    cluster_info
+                        .set_tvu_socket(tvu_ingress_address)
+                        .map_err(|e| e.to_string())
+                },
+            );
+
+            // tpu quic
+            builder.add_socket_update(
+                SocketType::TpuQuic,
+                cluster_info.my_contact_info().tpu(QUIC),
+                || {
+                    cluster_info
+                        .set_tpu(tpu_quic_address)
+                        .map_err(|e| e.to_string())
+                },
+            );
+
+            // tpu forwards quic
+            builder.add_socket_update(
+                SocketType::TpuForwardsQuic,
+                cluster_info.my_contact_info().tpu_forwards(QUIC),
+                || {
+                    cluster_info
+                        .set_tpu_forwards(tpu_forwards_quic_address)
+                        .map_err(|e| e.to_string())
+                },
+            );
+
+            // tpu vote quic
+            builder.add_socket_update(
+                SocketType::TpuVoteQuic,
+                cluster_info.my_contact_info().tpu_vote(QUIC),
+                || {
+                    cluster_info
+                        .set_tpu_vote(QUIC, tpu_vote_quic_address)
+                        .map_err(|e| e.to_string())
+                },
+            );
+
+            // tpu vote udp
+            builder.add_socket_update(
+                SocketType::TpuVote,
+                cluster_info.my_contact_info().tpu_vote(UDP),
+                || {
+                    cluster_info
+                        .set_tpu_vote(UDP, tpu_vote_address)
+                        .map_err(|e| e.to_string())
+                },
+            );
+
+            builder.execute()?;
 
             // Update active index for tvu broadcast, tvu retransmit, and tpu forwarding client
             // This will never fail since we have checked index validity above
@@ -501,7 +646,197 @@ mod multihoming {
             }
         }
     }
-}
 
+    #[cfg(test)]
+    mod tests {
+        use {
+            super::*,
+            crate::{
+                cluster_info::ClusterInfo,
+                contact_info::{
+                    ContactInfo,
+                    Protocol::{QUIC, UDP},
+                },
+            },
+            solana_keypair::Keypair,
+            solana_net_utils::sockets::unique_port_range_for_tests,
+            solana_signer::Signer,
+            solana_streamer::socket::SocketAddrSpace,
+            solana_time_utils::timestamp,
+            std::net::{IpAddr, Ipv4Addr, SocketAddr},
+        };
+
+        fn create_test_cluster_info() -> ClusterInfo {
+            let keypair = Arc::new(Keypair::new());
+            let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
+            ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified)
+        }
+
+        fn create_test_socket_addr() -> SocketAddr {
+            let port_range = unique_port_range_for_tests(1);
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.start)
+        }
+
+        fn all_socket_types() -> Vec<SocketType> {
+            vec![
+                SocketType::Gossip,
+                SocketType::Tvu,
+                SocketType::TpuQuic,
+                SocketType::TpuForwardsQuic,
+                SocketType::TpuVoteQuic,
+                SocketType::TpuVote,
+            ]
+        }
+
+        fn get_current_socket_addr(
+            cluster_info: &ClusterInfo,
+            socket_type: SocketType,
+        ) -> Option<SocketAddr> {
+            match socket_type {
+                SocketType::Gossip => cluster_info.my_contact_info().gossip(),
+                SocketType::Tvu => cluster_info.my_contact_info().tvu(UDP),
+                SocketType::TpuQuic => cluster_info.my_contact_info().tpu(QUIC),
+                SocketType::TpuForwardsQuic => cluster_info.my_contact_info().tpu_forwards(QUIC),
+                SocketType::TpuVoteQuic => cluster_info.my_contact_info().tpu_vote(QUIC),
+                SocketType::TpuVote => cluster_info.my_contact_info().tpu_vote(UDP),
+            }
+        }
+
+        /// helper to get the expected QUIC address based on UDP address and offset
+        fn get_expected_quic_addr(udp_addr: SocketAddr) -> SocketAddr {
+            use solana_quic_definitions::QUIC_PORT_OFFSET;
+            SocketAddr::new(udp_addr.ip(), udp_addr.port() + QUIC_PORT_OFFSET)
+        }
+
+        fn verify_socket_addr(
+            cluster_info: &ClusterInfo,
+            socket_type: SocketType,
+            expected: Option<SocketAddr>,
+        ) {
+            let actual = get_current_socket_addr(cluster_info, socket_type);
+            assert_eq!(
+                actual, expected,
+                "Socket {socket_type:?} should be {expected:?}, but was {actual:?}"
+            );
+        }
+
+        #[test]
+        fn test_interface_switch_builder_atomic_execution() {
+            let cluster_info = create_test_cluster_info();
+
+            // store original state for all socket types
+            let original_states: Vec<(SocketType, Option<SocketAddr>)> = all_socket_types()
+                .into_iter()
+                .map(|socket_type| {
+                    (
+                        socket_type,
+                        get_current_socket_addr(&cluster_info, socket_type),
+                    )
+                })
+                .collect();
+
+            let mut builder = UpdateActiveInterfaceBuilder::new(&cluster_info);
+            let mut new_addresses = Vec::new();
+
+            // add operations for all socket types
+            for (socket_type, original_addr) in &original_states {
+                let new_addr = create_test_socket_addr();
+                new_addresses.push((*socket_type, new_addr));
+
+                builder.add_socket_update(*socket_type, *original_addr, {
+                    let cluster_info = &cluster_info;
+                    move || {
+                        match socket_type {
+                            SocketType::Gossip => cluster_info.set_gossip_socket(new_addr),
+                            SocketType::Tvu => cluster_info.set_tvu_socket(new_addr),
+                            SocketType::TpuQuic => cluster_info.set_tpu(new_addr),
+                            SocketType::TpuForwardsQuic => cluster_info.set_tpu_forwards(new_addr),
+                            SocketType::TpuVoteQuic => cluster_info.set_tpu_vote(QUIC, new_addr),
+                            SocketType::TpuVote => cluster_info.set_tpu_vote(UDP, new_addr),
+                        }
+                        .map_err(|e| e.to_string())
+                    }
+                });
+            }
+
+            let result = builder.execute();
+            assert!(result.is_ok(), "All commands should succeed");
+
+            // verify all updates were applied
+            for (socket_type, new_addr) in &new_addresses {
+                match socket_type {
+                    // for TpuQuic and TpuForwardsQuic, we set the UDP address but the QUIC address is calculated with offset
+                    SocketType::TpuQuic | SocketType::TpuForwardsQuic => {
+                        let expected_quic_addr = get_expected_quic_addr(*new_addr);
+                        verify_socket_addr(&cluster_info, *socket_type, Some(expected_quic_addr));
+                    }
+                    // for other socket types, the address should match exactly
+                    _ => {
+                        verify_socket_addr(&cluster_info, *socket_type, Some(*new_addr));
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn test_interface_switch_builder_rollback() {
+            let cluster_info = create_test_cluster_info();
+
+            // store original state for all socket types
+            let original_states: Vec<(SocketType, Option<SocketAddr>)> = all_socket_types()
+                .into_iter()
+                .map(|socket_type| {
+                    (
+                        socket_type,
+                        get_current_socket_addr(&cluster_info, socket_type),
+                    )
+                })
+                .collect();
+
+            let mut builder = UpdateActiveInterfaceBuilder::new(&cluster_info);
+            let mut new_addresses = Vec::new();
+
+            // add operations for all socket types - first few will succeed
+            for (i, (socket_type, original_addr)) in original_states.iter().enumerate() {
+                let new_addr = create_test_socket_addr();
+                new_addresses.push((*socket_type, new_addr));
+
+                // make the 3rd operation fail in order to test rollback
+                let should_fail = i == 2;
+
+                builder.add_socket_update(*socket_type, *original_addr, {
+                    let cluster_info = &cluster_info;
+                    move || {
+                        if should_fail {
+                            return Err("Simulated failure for rollback test".to_string());
+                        }
+
+                        match socket_type {
+                            SocketType::Gossip => cluster_info.set_gossip_socket(new_addr),
+                            SocketType::Tvu => cluster_info.set_tvu_socket(new_addr),
+                            SocketType::TpuQuic => cluster_info.set_tpu(new_addr),
+                            SocketType::TpuForwardsQuic => cluster_info.set_tpu_forwards(new_addr),
+                            SocketType::TpuVoteQuic => cluster_info.set_tpu_vote(QUIC, new_addr),
+                            SocketType::TpuVote => cluster_info.set_tpu_vote(UDP, new_addr),
+                        }
+                        .map_err(|e| e.to_string())
+                    }
+                });
+            }
+
+            // execute updates - should fail and trigger rollback
+            let result = builder.execute();
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .contains("Simulated failure for rollback test"));
+
+            // verify rollback occurred - all sockets should be back to original state
+            for (socket_type, original_addr) in &original_states {
+                verify_socket_addr(&cluster_info, *socket_type, *original_addr);
+            }
+        }
+    }
+}
 #[cfg(feature = "agave-unstable-api")]
 pub use multihoming::*;
