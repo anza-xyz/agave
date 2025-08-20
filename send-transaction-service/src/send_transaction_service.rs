@@ -1,14 +1,8 @@
-#[deprecated(
-    since = "2.2.0",
-    note = "Please import from `send_transaction_service` directly."
-)]
-pub use crate::{
-    send_transaction_service_stats::SendTransactionServiceStats,
-    transaction_client::{CurrentLeaderInfo, LEADER_INFO_REFRESH_RATE_MS},
-};
 use {
     crate::{
-        send_transaction_service_stats::SendTransactionServiceStatsReport,
+        send_transaction_service_stats::{
+            SendTransactionServiceStats, SendTransactionServiceStatsReport,
+        },
         transaction_client::TransactionClient,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError},
