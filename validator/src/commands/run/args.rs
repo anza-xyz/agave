@@ -37,6 +37,25 @@ use {
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
 
+// Declared out of line to allow use of #[rustfmt::skip]
+#[rustfmt::skip]
+const WEN_RESTART_HELP: &str =
+    "Only used during coordinated cluster restarts.\n\n\
+     Need to also specify the leader's pubkey in --wen-restart-leader.\n\n\
+     When specified, the validator will enter Wen Restart mode which pauses normal activity. \
+     Validators in this mode will gossip their last vote to reach consensus on a safe restart \
+     slot and repair all blocks on the selected fork. The safe slot will be a descendant of the \
+     latest optimistically confirmed slot to ensure we do not roll back any optimistically \
+     confirmed slots.\n\n\
+     The progress in this mode will be saved in the file location provided. If consensus is \
+     reached, the validator will automatically exit with 200 status code. Then the operators are \
+     expected to restart the validator with --wait_for_supermajority and other arguments \
+     (including new shred_version, supermajority slot, and bankhash) given in the error log \
+     before the exit so the cluster will resume execution. The progress file will be kept around \
+     for future debugging.\n\n\
+     If wen_restart fails, refer to the progress file (in proto3 format) for further debugging and \
+     watch the discord channel for instructions.";
+
 pub mod account_secondary_indexes;
 pub mod blockstore_options;
 pub mod json_rpc_config;
@@ -1603,23 +1622,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .required(false)
             .conflicts_with("wait_for_supermajority")
             .requires("wen_restart_coordinator")
-            .help(
-                "Only used during coordinated cluster restarts.\n\nNeed to also specify the \
-                 leader's pubkey in --wen-restart-leader.\n\nWhen specified, the validator will \
-                 enter Wen Restart mode which pauses normal activity. Validators in this mode \
-                 will gossip their last vote to reach consensus on a safe restart slot and repair \
-                 all blocks on the selected fork. The safe slot will be a descendant of the \
-                 latest optimistically confirmed slot to ensure we do not roll back any \
-                 optimistically confirmed slots. \n\nThe progress in this mode will be saved in \
-                 the file location provided. If consensus is reached, the validator will \
-                 automatically exit with 200 status code. Then the operators are expected to \
-                 restart the validator with --wait_for_supermajority and other arguments \
-                 (including new shred_version, supermajority slot, and bankhash) given in the \
-                 error log before the exit so the cluster will resume execution. The progress \
-                 file will be kept around for future debugging. \n\nIf wen_restart fails, refer \
-                 to the progress file (in proto3 format) for further debugging and watch the \
-                 discord channel for instructions.",
-            ),
+            .help(WEN_RESTART_HELP),
     )
     .arg(
         Arg::with_name("wen_restart_coordinator")
