@@ -1,4 +1,5 @@
 use crate::remote_wallet::RemoteWalletInfo;
+use crate::wallet::keystone::keystone::KeystoneWallet;
 use crate::wallet::ledger::ledger::LedgerWallet;
 use std::rc::Rc;
 
@@ -12,4 +13,5 @@ pub struct Device {
 #[derive(Debug)]
 pub enum RemoteWalletType {
     Ledger(Rc<LedgerWallet>),
+    Keystone(Rc<KeystoneWallet>),
 }

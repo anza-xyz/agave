@@ -1,4 +1,5 @@
 use crate::locator::LocatorError;
+use crate::wallet::keystone::error::KeystoneError;
 use crate::wallet::ledger::error::LedgerError;
 use solana_derivation_path::DerivationPathError;
 use solana_signer::SignerError;
@@ -27,6 +28,9 @@ pub enum RemoteWalletError {
 
     #[error(transparent)]
     LedgerError(#[from] LedgerError),
+
+    #[error(transparent)]
+    KeystoneError(#[from] KeystoneError),
 
     #[error("no device found")]
     NoDeviceFound,
@@ -59,6 +63,7 @@ impl From<RemoteWalletError> for SignerError {
             RemoteWalletError::InvalidDevice => SignerError::Connection(err.to_string()),
             RemoteWalletError::InvalidInput(input) => SignerError::InvalidInput(input),
             RemoteWalletError::LedgerError(e) => SignerError::Protocol(e.to_string()),
+            RemoteWalletError::KeystoneError(e) => SignerError::Protocol(e.to_string()),
             RemoteWalletError::NoDeviceFound => SignerError::NoDeviceFound,
             RemoteWalletError::Protocol(e) => SignerError::Protocol(e.to_string()),
             RemoteWalletError::UserCancel => {
