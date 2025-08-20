@@ -227,8 +227,8 @@ above.
 ### Building from Source
 
 After installing the prerequisites, proceed with building Solana from source,
-navigate to
-[Solana's GitHub releases page](https://github.com/anza-xyz/agave/releases/latest),
+navigate to the
+[Agave GitHub releases page](https://github.com/anza-xyz/agave/releases/latest),
 and download the **Source Code** archive. Extract the code and build the
 binaries with:
 
