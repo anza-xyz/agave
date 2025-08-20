@@ -6,7 +6,10 @@ use {
         commands::{monitor, wait_for_restart_window, Error, FromClapArgMatches, Result},
     },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
-    solana_clap_utils::input_validators::{is_parsable, is_valid_percentage},
+    solana_clap_utils::{
+        hidden_unless_forced,
+        input_validators::{is_parsable, is_valid_percentage},
+    },
     std::path::Path,
 };
 
@@ -86,6 +89,7 @@ pub fn command<'a>() -> App<'a, 'a> {
             Arg::with_name("wait_for_exit")
                 .long("wait-for-exit")
                 .conflicts_with("monitor")
+                .hidden(hidden_unless_forced())
                 .help("Wait for the validator to terminate after sending the exit request"),
         )
         .arg(
