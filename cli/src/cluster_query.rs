@@ -31,7 +31,6 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_message::Message,
-    solana_native_token::lamports_to_sol,
     solana_nonce::state::State as NonceState,
     solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
@@ -59,7 +58,7 @@ use {
     solana_transaction_status::{
         EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding,
     },
-    solana_vote_program::vote_state::VoteState,
+    solana_vote_program::vote_state::VoteStateV3,
     std::{
         collections::{BTreeMap, HashMap, HashSet, VecDeque},
         fmt,
@@ -1413,7 +1412,10 @@ pub fn process_supply(
 
 pub fn process_total_supply(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessResult {
     let supply = rpc_client.supply()?.value;
-    Ok(format!("{} SOL", lamports_to_sol(supply.total)))
+    Ok(format!(
+        "{} SOL",
+        build_balance_message(supply.total, false, false)
+    ))
 }
 
 pub fn process_get_transaction_count(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessResult {
@@ -2262,7 +2264,7 @@ impl RentLengthValue {
             Self::Nonce => NonceState::size(),
             Self::Stake => StakeStateV2::size_of(),
             Self::System => 0,
-            Self::Vote => VoteState::size_of(),
+            Self::Vote => VoteStateV3::size_of(),
             Self::Bytes(l) => *l,
         }
     }

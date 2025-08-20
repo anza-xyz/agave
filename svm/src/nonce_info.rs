@@ -13,8 +13,8 @@ use {solana_account::AccountSharedData, solana_pubkey::Pubkey};
 /// Holds limited nonce info available during transaction checks
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NonceInfo {
-    address: Pubkey,
-    account: AccountSharedData,
+    pub address: Pubkey,
+    pub account: AccountSharedData,
 }
 
 #[derive(Error, Debug, PartialEq)]

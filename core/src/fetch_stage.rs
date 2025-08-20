@@ -238,7 +238,7 @@ impl FetchStage {
                         Error::RecvTimeout(RecvTimeoutError::Timeout) => (),
                         Error::Recv(_) => break,
                         Error::Send => break,
-                        _ => error!("{:?}", e),
+                        _ => error!("{e:?}"),
                     }
                 }
             })

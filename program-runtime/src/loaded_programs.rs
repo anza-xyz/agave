@@ -10,7 +10,7 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
-    solana_type_overrides::{
+    solana_svm_type_overrides::{
         rand::{thread_rng, Rng},
         sync::{
             atomic::{AtomicU64, Ordering},
@@ -25,7 +25,7 @@ use {
     },
 };
 #[cfg(feature = "metrics")]
-use {solana_measure::measure::Measure, solana_timings::ExecuteDetailsTimings};
+use {solana_svm_measure::measure::Measure, solana_svm_timings::ExecuteDetailsTimings};
 
 pub type ProgramRuntimeEnvironment = Arc<BuiltinProgram<InvokeContext<'static>>>;
 pub const MAX_LOADED_ENTRY_COUNT: usize = 512;
@@ -189,9 +189,7 @@ pub struct ProgramCacheEntry {
     /// Slot in which this entry will become active (can be in the future)
     pub effective_slot: Slot,
     /// How often this entry was used by a transaction
-    pub tx_usage_counter: AtomicU64,
-    /// How often this entry was used by an instruction
-    pub ix_usage_counter: AtomicU64,
+    pub tx_usage_counter: Arc<AtomicU64>,
     /// Latest slot in which the entry was used
     pub latest_access_slot: AtomicU64,
 }
@@ -243,8 +241,11 @@ impl ProgramCacheStats {
         let empty_entries = self.empty_entries.load(Ordering::Relaxed);
         let water_level = self.water_level.load(Ordering::Relaxed);
         debug!(
-            "Loaded Programs Cache Stats -- Hits: {}, Misses: {}, Evictions: {}, Reloads: {}, Insertions: {}, Lost-Insertions: {}, Replacements: {}, One-Hit-Wonders: {}, Prunes-Orphan: {}, Prunes-Environment: {}, Empty: {}, Water-Level: {}",
-            hits, misses, evictions, reloads, insertions, lost_insertions, replacements, one_hit_wonders, prunes_orphan, prunes_environment, empty_entries, water_level
+            "Loaded Programs Cache Stats -- Hits: {hits}, Misses: {misses}, Evictions: \
+             {evictions}, Reloads: {reloads}, Insertions: {insertions}, Lost-Insertions: \
+             {lost_insertions}, Replacements: {replacements}, One-Hit-Wonders: {one_hit_wonders}, \
+             Prunes-Orphan: {prunes_orphan}, Prunes-Environment: {prunes_environment}, Empty: \
+             {empty_entries}, Water-Level: {water_level}"
         );
         if log_enabled!(log::Level::Trace) && !self.evictions.is_empty() {
             let mut evictions = self.evictions.iter().collect::<Vec<_>>();
@@ -410,9 +411,8 @@ impl ProgramCacheEntry {
             account_owner: ProgramCacheEntryOwner::try_from(loader_key).unwrap(),
             account_size,
             effective_slot,
-            tx_usage_counter: AtomicU64::new(0),
+            tx_usage_counter: Arc::<AtomicU64>::default(),
             program: ProgramCacheEntryType::Loaded(executable),
-            ix_usage_counter: AtomicU64::new(0),
             latest_access_slot: AtomicU64::new(0),
         })
     }
@@ -434,8 +434,7 @@ impl ProgramCacheEntry {
             account_size: self.account_size,
             deployment_slot: self.deployment_slot,
             effective_slot: self.effective_slot,
-            tx_usage_counter: AtomicU64::new(self.tx_usage_counter.load(Ordering::Relaxed)),
-            ix_usage_counter: AtomicU64::new(self.ix_usage_counter.load(Ordering::Relaxed)),
+            tx_usage_counter: self.tx_usage_counter.clone(),
             latest_access_slot: AtomicU64::new(self.latest_access_slot.load(Ordering::Relaxed)),
         })
     }
@@ -455,9 +454,8 @@ impl ProgramCacheEntry {
             account_owner: ProgramCacheEntryOwner::NativeLoader,
             account_size,
             effective_slot: deployment_slot,
-            tx_usage_counter: AtomicU64::new(0),
+            tx_usage_counter: Arc::<AtomicU64>::default(),
             program: ProgramCacheEntryType::Builtin(program),
-            ix_usage_counter: AtomicU64::new(0),
             latest_access_slot: AtomicU64::new(0),
         }
     }
@@ -467,14 +465,27 @@ impl ProgramCacheEntry {
         account_owner: ProgramCacheEntryOwner,
         reason: ProgramCacheEntryType,
     ) -> Self {
+        Self::new_tombstone_with_usage_counter(
+            slot,
+            account_owner,
+            reason,
+            Arc::<AtomicU64>::default(),
+        )
+    }
+
+    pub fn new_tombstone_with_usage_counter(
+        slot: Slot,
+        account_owner: ProgramCacheEntryOwner,
+        reason: ProgramCacheEntryType,
+        tx_usage_counter: Arc<AtomicU64>,
+    ) -> Self {
         let tombstone = Self {
             program: reason,
             account_owner,
             account_size: 0,
             deployment_slot: slot,
             effective_slot: slot,
-            tx_usage_counter: AtomicU64::default(),
-            ix_usage_counter: AtomicU64::default(),
+            tx_usage_counter,
             latest_access_slot: AtomicU64::new(0),
         };
         debug_assert!(tombstone.is_tombstone());
@@ -610,7 +621,7 @@ enum IndexImplementation {
 /// - is validator global and fork graph aware, so it can optimize the commonalities across banks.
 /// - handles the visibility rules of un/re/deployments.
 /// - stores the usage statistics and verification status of each program.
-/// - is elastic and uses a probabilistic eviction stragety based on the usage statistics.
+/// - is elastic and uses a probabilistic eviction strategy based on the usage statistics.
 /// - also keeps the compiled executables around, but only for the most used programs.
 /// - supports various kinds of tombstones to avoid loading programs which can not be loaded.
 /// - cleans up entries on orphan branches when the block store is rerooted.
@@ -763,16 +774,17 @@ impl ProgramCacheForTxBatch {
         // programs that are loaded for the transaction batch.
         self.modified_entries
             .get(key)
-            .or(self.entries.get(key))
+            .or_else(|| self.entries.get(key))
             .map(|entry| {
                 if entry.is_implicit_delay_visibility_tombstone(self.slot) {
                     // Found a program entry on the current fork, but it's not effective
                     // yet. It indicates that the program has delayed visibility. Return
                     // the tombstone to reflect that.
-                    Arc::new(ProgramCacheEntry::new_tombstone(
+                    Arc::new(ProgramCacheEntry::new_tombstone_with_usage_counter(
                         entry.deployment_slot,
                         entry.account_owner,
                         ProgramCacheEntryType::DelayVisibility,
+                        entry.tx_usage_counter.clone(),
                     ))
                 } else {
                     entry.clone()
@@ -902,7 +914,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             ) => {}
                             _ => {
                                 // Something is wrong, I can feel it ...
-                                error!("ProgramCache::assign_program() failed key={:?} existing={:?} entry={:?}", key, slot_versions, entry);
+                                error!(
+                                    "ProgramCache::assign_program() failed key={key:?} \
+                                     existing={slot_versions:?} entry={entry:?}"
+                                );
                                 debug_assert!(false, "Unexpected replacement of an entry");
                                 self.stats.replacements.fetch_add(1, Ordering::Relaxed);
                                 return true;
@@ -911,10 +926,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         // Copy over the usage counter to the new entry
                         entry.tx_usage_counter.fetch_add(
                             existing.tx_usage_counter.load(Ordering::Relaxed),
-                            Ordering::Relaxed,
-                        );
-                        entry.ix_usage_counter.fetch_add(
-                            existing.ix_usage_counter.load(Ordering::Relaxed),
                             Ordering::Relaxed,
                         );
                         *existing = Arc::clone(&entry);
@@ -1054,10 +1065,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     /// and returns which program accounts the accounts DB needs to load.
     pub fn extract(
         &self,
-        search_for: &mut Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))>,
+        search_for: &mut Vec<(Pubkey, ProgramCacheMatchCriteria)>,
         loaded_programs_for_tx_batch: &mut ProgramCacheForTxBatch,
-        is_first_round: bool,
-    ) -> Option<(Pubkey, u64)> {
+        increment_usage_counter: bool,
+        count_hits_and_misses: bool,
+    ) -> Option<Pubkey> {
         debug_assert!(self.fork_graph.is_some());
         let fork_graph = self.fork_graph.as_ref().unwrap().upgrade().unwrap();
         let locked_fork_graph = fork_graph.read().unwrap();
@@ -1067,7 +1079,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 entries,
                 loading_entries,
             } => {
-                search_for.retain(|(key, (match_criteria, usage_count))| {
+                search_for.retain(|(key, match_criteria)| {
                     if let Some(second_level) = entries.get(key) {
                         for entry in second_level.iter().rev() {
                             if entry.deployment_slot <= self.latest_root_slot
@@ -1100,19 +1112,22 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     // Found a program entry on the current fork, but it's not effective
                                     // yet. It indicates that the program has delayed visibility. Return
                                     // the tombstone to reflect that.
-                                    Arc::new(ProgramCacheEntry::new_tombstone(
+                                    Arc::new(ProgramCacheEntry::new_tombstone_with_usage_counter(
                                         entry.deployment_slot,
                                         entry.account_owner,
                                         ProgramCacheEntryType::DelayVisibility,
+                                        entry.tx_usage_counter.clone(),
                                     ))
                                 } else {
                                     continue;
                                 };
                                 entry_to_return
                                     .update_access_slot(loaded_programs_for_tx_batch.slot);
-                                entry_to_return
-                                    .tx_usage_counter
-                                    .fetch_add(*usage_count, Ordering::Relaxed);
+                                if increment_usage_counter {
+                                    entry_to_return
+                                        .tx_usage_counter
+                                        .fetch_add(1, Ordering::Relaxed);
+                                }
                                 loaded_programs_for_tx_batch
                                     .entries
                                     .insert(*key, entry_to_return);
@@ -1128,7 +1143,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 loaded_programs_for_tx_batch.slot,
                                 thread::current().id(),
                             ));
-                            cooperative_loading_task = Some((*key, *usage_count));
+                            cooperative_loading_task = Some(*key);
                         }
                     }
                     true
@@ -1136,7 +1151,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             }
         }
         drop(locked_fork_graph);
-        if is_first_round {
+        if count_hits_and_misses {
             self.stats
                 .misses
                 .fetch_add(search_for.len() as u64, Ordering::Relaxed);
@@ -1433,8 +1448,7 @@ mod tests {
             account_size: 0,
             deployment_slot,
             effective_slot,
-            tx_usage_counter: usage_counter,
-            ix_usage_counter: AtomicU64::default(),
+            tx_usage_counter: Arc::new(usage_counter),
             latest_access_slot: AtomicU64::new(deployment_slot),
         })
     }
@@ -1449,8 +1463,7 @@ mod tests {
             account_size: 0,
             deployment_slot,
             effective_slot,
-            tx_usage_counter: AtomicU64::default(),
-            ix_usage_counter: AtomicU64::default(),
+            tx_usage_counter: Arc::default(),
             latest_access_slot: AtomicU64::default(),
         })
     }
@@ -1889,8 +1902,7 @@ mod tests {
                 account_size: 0,
                 deployment_slot: 10,
                 effective_slot: 11,
-                tx_usage_counter: AtomicU64::default(),
-                ix_usage_counter: AtomicU64::default(),
+                tx_usage_counter: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             }),
         ));
@@ -1902,8 +1914,7 @@ mod tests {
                 account_size: 0,
                 deployment_slot: 10,
                 effective_slot: 11,
-                tx_usage_counter: AtomicU64::default(),
-                ix_usage_counter: AtomicU64::default(),
+                tx_usage_counter: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             }),
         );
@@ -1928,8 +1939,7 @@ mod tests {
                 account_size: 0,
                 deployment_slot: 10,
                 effective_slot: 11,
-                tx_usage_counter: AtomicU64::default(),
-                ix_usage_counter: AtomicU64::default(),
+                tx_usage_counter: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             }),
         ));
@@ -1941,8 +1951,7 @@ mod tests {
                 account_size: 0,
                 deployment_slot: 10,
                 effective_slot: 11,
-                tx_usage_counter: AtomicU64::default(),
-                ix_usage_counter: AtomicU64::default(),
+                tx_usage_counter: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             }),
         ));
@@ -2097,8 +2106,7 @@ mod tests {
             account_size: 0,
             deployment_slot: 20,
             effective_slot: 20,
-            tx_usage_counter: AtomicU64::default(),
-            ix_usage_counter: AtomicU64::default(),
+            tx_usage_counter: Arc::default(),
             latest_access_slot: AtomicU64::default(),
         });
         cache.assign_program(program1, updated_program.clone());
@@ -2170,7 +2178,7 @@ mod tests {
         cache: &ProgramCache<TestForkGraphSpecific>,
         loading_slot: Slot,
         keys: &[Pubkey],
-    ) -> Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))> {
+    ) -> Vec<(Pubkey, ProgramCacheMatchCriteria)> {
         let fork_graph = cache.fork_graph.as_ref().unwrap().upgrade().unwrap();
         let locked_fork_graph = fork_graph.read().unwrap();
         let entries = cache.get_flattened_entries_for_tests();
@@ -2187,7 +2195,7 @@ mod tests {
                             )
                     })
                     .map(|(program_id, _entry)| {
-                        (*program_id, (ProgramCacheMatchCriteria::NoCriteria, 1))
+                        (*program_id, ProgramCacheMatchCriteria::NoCriteria)
                     })
             })
             .collect()
@@ -2208,7 +2216,7 @@ mod tests {
     }
 
     fn match_missing(
-        missing: &[(Pubkey, (ProgramCacheMatchCriteria, u64))],
+        missing: &[(Pubkey, ProgramCacheMatchCriteria)],
         program: &Pubkey,
         expected_result: bool,
     ) -> bool {
@@ -2287,7 +2295,7 @@ mod tests {
         assert!(match_missing(&missing, &program2, false));
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(22, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 20, 22));
         assert!(match_slot(&extracted, &program4, 0, 22));
 
@@ -2296,7 +2304,7 @@ mod tests {
             get_entries_to_load(&cache, 15, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(15, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 15));
         assert!(match_slot(&extracted, &program2, 11, 15));
         // The effective slot of program4 deployed in slot 15 is 19. So it should not be usable in slot 16.
@@ -2312,7 +2320,7 @@ mod tests {
             get_entries_to_load(&cache, 18, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(18, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 18));
         assert!(match_slot(&extracted, &program2, 11, 18));
         // The effective slot of program4 deployed in slot 15 is 18. So it should be usable in slot 18.
@@ -2323,7 +2331,7 @@ mod tests {
             get_entries_to_load(&cache, 23, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(23, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 23));
         assert!(match_slot(&extracted, &program2, 11, 23));
         // The effective slot of program4 deployed in slot 15 is 19. So it should be usable in slot 23.
@@ -2334,7 +2342,7 @@ mod tests {
             get_entries_to_load(&cache, 11, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(11, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 11));
         // program2 was updated at slot 11, but is not effective till slot 12. The result should contain a tombstone.
         let tombstone = extracted
@@ -2366,7 +2374,7 @@ mod tests {
             get_entries_to_load(&cache, 21, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(21, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         // Since the fork was pruned, we should not find the entry deployed at slot 20.
         assert!(match_slot(&extracted, &program1, 0, 21));
         assert!(match_slot(&extracted, &program2, 11, 21));
@@ -2376,7 +2384,7 @@ mod tests {
         let mut missing =
             get_entries_to_load(&cache, 27, &[program1, program2, program3, program4]);
         let mut extracted = ProgramCacheForTxBatch::new(27, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 27));
         assert!(match_slot(&extracted, &program2, 11, 27));
         assert!(match_slot(&extracted, &program3, 25, 27));
@@ -2404,7 +2412,7 @@ mod tests {
             get_entries_to_load(&cache, 23, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(23, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 23));
         assert!(match_slot(&extracted, &program2, 11, 23));
         assert!(match_slot(&extracted, &program4, 15, 23));
@@ -2452,17 +2460,17 @@ mod tests {
         let mut missing = get_entries_to_load(&cache, 12, &[program1, program2, program3]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(12, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 12));
         assert!(match_slot(&extracted, &program2, 11, 12));
 
         // Test the same fork, but request the program modified at a later slot than what's in the cache.
         let mut missing = get_entries_to_load(&cache, 12, &[program1, program2, program3]);
-        missing.get_mut(0).unwrap().1 .0 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
-        missing.get_mut(1).unwrap().1 .0 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
+        missing.get_mut(0).unwrap().1 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
+        missing.get_mut(1).unwrap().1 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(12, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_missing(&missing, &program1, true));
         assert!(match_slot(&extracted, &program2, 11, 12));
     }
@@ -2522,14 +2530,14 @@ mod tests {
         let mut missing = get_entries_to_load(&cache, 19, &[program1, program2, program3]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(19, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 19));
         assert!(match_slot(&extracted, &program2, 11, 19));
 
         // Testing fork 0 - 5 - 11 - 25 - 27 with current slot at 27
         let mut missing = get_entries_to_load(&cache, 27, &[program1, program2, program3]);
         let mut extracted = ProgramCacheForTxBatch::new(27, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 27));
         assert!(match_slot(&extracted, &program2, 11, 27));
         assert!(match_missing(&missing, &program3, true));
@@ -2538,7 +2546,7 @@ mod tests {
         let mut missing = get_entries_to_load(&cache, 22, &[program1, program2, program3]);
         assert!(match_missing(&missing, &program2, false));
         let mut extracted = ProgramCacheForTxBatch::new(22, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 20, 22));
         assert!(match_missing(&missing, &program3, true));
     }
@@ -2551,9 +2559,9 @@ mod tests {
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
-        let mut missing = vec![(program1, (ProgramCacheMatchCriteria::NoCriteria, 1))];
+        let mut missing = vec![(program1, ProgramCacheMatchCriteria::NoCriteria)];
         let mut extracted = ProgramCacheForTxBatch::new(0, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_missing(&missing, &program1, true));
     }
 
@@ -2574,8 +2582,7 @@ mod tests {
                 account_size: 0,
                 deployment_slot: 0,
                 effective_slot: 0,
-                tx_usage_counter: AtomicU64::default(),
-                ix_usage_counter: AtomicU64::default(),
+                tx_usage_counter: Arc::default(),
                 latest_access_slot: AtomicU64::default(),
             });
             assert!(entry.to_unloaded().is_none());
@@ -2630,7 +2637,7 @@ mod tests {
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1]);
         let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
 
         // The cache should have the program deployed at slot 0
         assert_eq!(
@@ -2671,14 +2678,14 @@ mod tests {
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
         let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 20));
         assert!(match_slot(&extracted, &program2, 10, 20));
 
         let mut missing = get_entries_to_load(&cache, 6, &[program1, program2]);
         assert!(match_missing(&missing, &program2, false));
         let mut extracted = ProgramCacheForTxBatch::new(6, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 5, 6));
 
         // Pruning slot 5 will remove program1 entry deployed at slot 5.
@@ -2687,14 +2694,14 @@ mod tests {
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
         let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 20));
         assert!(match_slot(&extracted, &program2, 10, 20));
 
         let mut missing = get_entries_to_load(&cache, 6, &[program1, program2]);
         assert!(match_missing(&missing, &program2, false));
         let mut extracted = ProgramCacheForTxBatch::new(6, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 6));
 
         // Pruning slot 10 will remove program2 entry deployed at slot 10.
@@ -2704,7 +2711,7 @@ mod tests {
         let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
         assert!(match_missing(&missing, &program2, false));
         let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted, true);
+        cache.extract(&mut missing, &mut extracted, true, true);
         assert!(match_slot(&extracted, &program1, 0, 20));
     }
 

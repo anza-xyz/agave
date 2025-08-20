@@ -355,8 +355,14 @@ impl RpcSender for MockSender {
                     loaded_accounts_data_size: None,
                     return_data: None,
                     inner_instructions: None,
-                    replacement_blockhash: None
-                },
+                    replacement_blockhash: None,
+                    fee: None,
+                    pre_balances: None,
+                    post_balances: None,
+                    pre_token_balances: None,
+                    post_token_balances: None,
+                    loaded_addresses: None,
+                }
             })?,
             "getMinimumBalanceForRentExemption" => json![20],
             "getVersion" => {

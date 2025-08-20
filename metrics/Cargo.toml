@@ -26,9 +26,11 @@ solana-time-utils = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+bencher = { workspace = true }
 env_logger = { workspace = true }
 rand = { workspace = true }
 serial_test = { workspace = true }
 
 [[bench]]
 name = "metrics"
+harness = false

@@ -1,5 +1,4 @@
 use {
-    crate::Config,
     itertools::Itertools,
     log::{error, info},
     std::{
@@ -22,7 +21,7 @@ where
         .iter()
         .map(|arg| arg.as_ref().to_str().unwrap_or("?"))
         .join(" ");
-    info!("spawn: {:?} {}", program, msg);
+    info!("spawn: {program:?} {msg}");
 
     let child = Command::new(program)
         .args(args)
@@ -49,12 +48,9 @@ where
             writeln!(out, "{key}=\"{value}\" \\").unwrap();
         }
         write!(out, "{}", program.display()).unwrap();
-        writeln!(out, "{}", msg).unwrap();
+        writeln!(out, "{msg}").unwrap();
         out.flush().unwrap();
-        error!(
-            "To rerun the failed command for debugging use {}",
-            script_name,
-        );
+        error!("To rerun the failed command for debugging use {script_name}");
         exit(1);
     }
     output
@@ -63,12 +59,4 @@ where
         .iter()
         .map(|&c| c as char)
         .collect::<String>()
-}
-
-pub(crate) fn rust_target_triple(config: &Config) -> String {
-    if config.arch == "v0" {
-        "sbpf-solana-solana".to_string()
-    } else {
-        format!("sbpf{}-solana-solana", config.arch)
-    }
 }

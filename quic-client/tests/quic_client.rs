@@ -3,19 +3,21 @@ mod tests {
     use {
         crossbeam_channel::{unbounded, Receiver},
         log::*,
-        solana_connection_cache::connection_cache_stats::ConnectionCacheStats,
+        solana_connection_cache::{
+            client_connection::ClientStats, connection_cache_stats::ConnectionCacheStats,
+        },
         solana_keypair::Keypair,
-        solana_net_utils::bind_to_localhost,
+        solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
         solana_packet::PACKET_DATA_SIZE,
         solana_perf::packet::PacketBatch,
-        solana_quic_client::nonblocking::quic_client::QuicLazyInitializedEndpoint,
+        solana_quic_client::nonblocking::quic_client::{QuicClient, QuicLazyInitializedEndpoint},
         solana_streamer::{
             quic::{QuicServerParams, SpawnServerResult},
             streamer::StakedNodes,
         },
         solana_tls_utils::{new_dummy_x509_certificate, QuicClientCertificate},
         std::{
-            net::{SocketAddr, UdpSocket},
+            net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
             sync::{
                 atomic::{AtomicBool, Ordering},
                 Arc, RwLock,
@@ -51,8 +53,9 @@ mod tests {
     }
 
     fn server_args() -> (UdpSocket, Arc<AtomicBool>, Keypair) {
+        let port_range = localhost_port_range_for_tests();
         (
-            bind_to_localhost().unwrap(),
+            bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.0).expect("should bind"),
             Arc::new(AtomicBool::new(false)),
             Keypair::new(),
         )
@@ -75,18 +78,12 @@ mod tests {
         } = solana_streamer::quic::spawn_server(
             "solQuicTest",
             "quic_streamer_test",
-            s.try_clone().unwrap(),
+            vec![s.try_clone().unwrap()],
             &keypair,
             sender,
             exit.clone(),
             staked_nodes,
-            QuicServerParams {
-                max_connections_per_peer: 1,
-                max_staked_connections: 10,
-                max_unstaked_connections: 10,
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
-                ..QuicServerParams::default()
-            },
+            QuicServerParams::default_for_tests(),
         )
         .unwrap();
 
@@ -161,19 +158,12 @@ mod tests {
             max_concurrent_connections: _,
         } = solana_streamer::nonblocking::quic::spawn_server(
             "quic_streamer_test",
-            s.try_clone().unwrap(),
+            vec![s.try_clone().unwrap()],
             &keypair,
             sender,
             exit.clone(),
             staked_nodes,
-            QuicServerParams {
-                max_connections_per_peer: 1,
-                max_staked_connections: 10,
-                max_unstaked_connections: 10,
-                wait_for_chunk_timeout: Duration::from_secs(1),
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
-                ..QuicServerParams::default()
-            },
+            QuicServerParams::default_for_tests(),
         )
         .unwrap();
 
@@ -226,18 +216,12 @@ mod tests {
         } = solana_streamer::quic::spawn_server(
             "solQuicTest",
             "quic_streamer_test",
-            request_recv_socket.try_clone().unwrap(),
+            [request_recv_socket.try_clone().unwrap()],
             &keypair,
             sender,
             request_recv_exit.clone(),
             staked_nodes.clone(),
-            QuicServerParams {
-                max_connections_per_peer: 1,
-                max_staked_connections: 10,
-                max_unstaked_connections: 10,
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
-                ..QuicServerParams::default()
-            },
+            QuicServerParams::default_for_tests(),
         )
         .unwrap();
 
@@ -256,18 +240,12 @@ mod tests {
         } = solana_streamer::quic::spawn_server(
             "solQuicTest",
             "quic_streamer_test",
-            response_recv_socket,
+            [response_recv_socket],
             &keypair2,
             sender2,
             response_recv_exit.clone(),
             staked_nodes,
-            QuicServerParams {
-                max_connections_per_peer: 1,
-                max_staked_connections: 10,
-                max_unstaked_connections: 10,
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
-                ..QuicServerParams::default()
-            },
+            QuicServerParams::default_for_tests(),
         )
         .unwrap();
 
@@ -333,5 +311,52 @@ mod tests {
         response_recv_exit.store(true, Ordering::Relaxed);
         response_recv_thread.join().unwrap();
         info!("Response receiver exited!");
+    }
+
+    #[tokio::test]
+    async fn test_connection_close() {
+        solana_logger::setup();
+        let (sender, receiver) = unbounded();
+        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let (s, exit, keypair) = server_args();
+        let solana_streamer::nonblocking::quic::SpawnNonBlockingServerResult {
+            endpoints: _,
+            stats: _,
+            thread: t,
+            max_concurrent_connections: _,
+        } = solana_streamer::nonblocking::quic::spawn_server(
+            "quic_streamer_test",
+            vec![s.try_clone().unwrap()],
+            &keypair,
+            sender,
+            exit.clone(),
+            staked_nodes,
+            QuicServerParams::default_for_tests(),
+        )
+        .unwrap();
+
+        let addr = s.local_addr().unwrap().ip();
+        let port = s.local_addr().unwrap().port();
+        let tpu_addr = SocketAddr::new(addr, port);
+        let connection_cache_stats = Arc::new(ConnectionCacheStats::default());
+        let client = QuicClient::new(Arc::new(QuicLazyInitializedEndpoint::default()), tpu_addr);
+
+        // Send a full size packet with single byte writes.
+        let num_bytes = PACKET_DATA_SIZE;
+        let num_expected_packets: usize = 3;
+        let packets = vec![vec![0u8; PACKET_DATA_SIZE]; num_expected_packets];
+        let client_stats = ClientStats::default();
+        for packet in packets {
+            let _ = client
+                .send_buffer(&packet, &client_stats, connection_cache_stats.clone())
+                .await;
+        }
+
+        nonblocking_check_packets(receiver, num_bytes, num_expected_packets).await;
+        exit.store(true, Ordering::Relaxed);
+
+        t.await.unwrap();
+        // We close the connection after the server is down, this should not block
+        client.close().await;
     }
 }

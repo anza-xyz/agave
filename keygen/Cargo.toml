@@ -17,21 +17,21 @@ name = "solana-keygen"
 path = "src/keygen.rs"
 
 [dependencies]
-bs58 = { workspace = true }
+bs58 = { workspace = true, features = ["std"] }
 clap = { version = "3.1.5", features = ["cargo"] }
 dirs-next = { workspace = true }
 num_cpus = { workspace = true }
 serde_json = { workspace = true }
 solana-clap-v3-utils = { workspace = true }
 solana-cli-config = { workspace = true }
-solana-derivation-path = "=2.2.1"
-solana-instruction = { version = "=2.3.0", features = ["bincode"] }
-solana-keypair = "=2.2.1"
-solana-message = { version = "=2.4.0", features = ["bincode"] }
-solana-pubkey = { version = "=2.4.0", default-features = false }
+solana-derivation-path = "=3.0.0"
+solana-instruction = { version = "=3.0.0", features = ["bincode"] }
+solana-keypair = "=3.0.0"
+solana-message = { version = "=3.0.0", features = ["bincode"] }
+solana-pubkey = { version = "=3.0.0", default-features = false }
 solana-remote-wallet = { workspace = true, features = ["default"] }
-solana-seed-derivable = "=2.2.1"
-solana-signer = "=2.2.1"
+solana-seed-derivable = "=3.0.0"
+solana-signer = "=3.0.0"
 solana-version = { workspace = true }
 tiny-bip39 = { workspace = true }
 

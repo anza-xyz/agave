@@ -52,7 +52,7 @@ impl StakeUpdater {
                         &rpc_load_balancer,
                         &refresh_sleep_duration,
                     ) {
-                        warn!("Failed to refresh pubkey to stake map! Error: {:?}", err);
+                        warn!("Failed to refresh pubkey to stake map! Error: {err:?}");
                         sleep(refresh_sleep_duration);
                     }
                 }

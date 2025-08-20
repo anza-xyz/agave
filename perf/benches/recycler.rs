@@ -1,14 +1,9 @@
-#![feature(test)]
-
-extern crate test;
-
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     solana_perf::{packet::PacketBatchRecycler, recycler::Recycler},
-    test::Bencher,
 };
 
-#[bench]
-fn bench_recycler(bencher: &mut Bencher) {
+fn bench_recycler(b: &mut Bencher) {
     solana_logger::setup();
 
     let recycler: PacketBatchRecycler = Recycler::default();
@@ -17,7 +12,10 @@ fn bench_recycler(bencher: &mut Bencher) {
         let _packet = recycler.allocate("");
     }
 
-    bencher.iter(move || {
+    b.iter(move || {
         let _packet = recycler.allocate("");
     });
 }
+
+benchmark_group!(benches, bench_recycler);
+benchmark_main!(benches);

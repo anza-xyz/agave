@@ -11,6 +11,7 @@ use {
             serve_repair::{
                 self, AncestorHashesRepairType, AncestorHashesResponse, RepairProtocol, ServeRepair,
             },
+            standard_repair_handler::StandardRepairHandler,
         },
         replay_stage::DUPLICATE_THRESHOLD,
         shred_fetch_stage::receive_quic_datagrams,
@@ -19,7 +20,7 @@ use {
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     dashmap::{mapref::entry::Entry::Occupied, DashMap},
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
-    solana_genesis_config::ClusterType,
+    solana_cluster_type::ClusterType,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, ping_pong::Pong},
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::blockstore::Blockstore,
@@ -128,7 +129,7 @@ impl AncestorRepairRequestsStats {
 
         let repair_total = self.ancestor_requests.count;
         if self.last_report.elapsed().as_secs() > 2 && repair_total > 0 {
-            info!("ancestor_repair_requests_stats: {:?}", slot_to_count);
+            info!("ancestor_repair_requests_stats: {slot_to_count:?}");
             datapoint_info!(
                 "ancestor-repair",
                 ("ancestor-repair-count", self.ancestor_requests.count, i64)
@@ -189,7 +190,6 @@ impl AncestorHashesService {
                         ancestor_hashes_response_quic_receiver,
                         PacketFlags::REPAIR,
                         response_sender,
-                        Recycler::default(),
                         exit,
                     )
                 })
@@ -203,7 +203,7 @@ impl AncestorHashesService {
         let t_ancestor_hashes_responses = Self::run_responses_listener(
             ancestor_hashes_request_statuses.clone(),
             response_receiver,
-            blockstore,
+            blockstore.clone(),
             outstanding_requests.clone(),
             exit.clone(),
             repair_info.ancestor_duplicate_slots_sender.clone(),
@@ -214,6 +214,7 @@ impl AncestorHashesService {
 
         // Generate ancestor requests for dead slots that are repairable
         let t_ancestor_requests = Self::run_manage_ancestor_requests(
+            blockstore,
             ancestor_hashes_request_statuses,
             ancestor_hashes_request_socket,
             ancestor_hashes_request_quic_sender,
@@ -591,6 +592,7 @@ impl AncestorHashesService {
     }
 
     fn run_manage_ancestor_requests(
+        blockstore: Arc<Blockstore>,
         ancestor_hashes_request_statuses: Arc<DashMap<Slot, AncestorRequestStatus>>,
         ancestor_hashes_request_socket: Arc<UdpSocket>,
         ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
@@ -600,11 +602,14 @@ impl AncestorHashesService {
         ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
         retryable_slots_receiver: RetryableSlotsReceiver,
     ) -> JoinHandle<()> {
-        let serve_repair = ServeRepair::new(
-            repair_info.cluster_info.clone(),
-            repair_info.bank_forks.clone(),
-            repair_info.repair_whitelist.clone(),
-        );
+        let serve_repair = {
+            ServeRepair::new(
+                repair_info.cluster_info.clone(),
+                repair_info.bank_forks.read().unwrap().sharable_root_bank(),
+                repair_info.repair_whitelist.clone(),
+                Box::new(StandardRepairHandler::new(blockstore)),
+            )
+        };
         let mut repair_stats = AncestorRepairRequestsStats::default();
 
         let mut dead_slot_pool = HashSet::new();
@@ -741,8 +746,8 @@ impl AncestorHashesService {
 
         for (slot, request_type) in potential_slot_requests.take(number_of_allowed_requests) {
             warn!(
-                "Cluster froze slot: {slot}, but we marked it as {}. \
-                 Initiating protocol to sample cluster for dead slot ancestors.",
+                "Cluster froze slot: {slot}, but we marked it as {}. Initiating protocol to \
+                 sample cluster for dead slot ancestors.",
                 if request_type.is_pruned() {
                     "pruned"
                 } else {
@@ -908,8 +913,9 @@ mod test {
             vote_simulator::VoteSimulator,
         },
         solana_gossip::{
-            cluster_info::{ClusterInfo, Node},
+            cluster_info::ClusterInfo,
             contact_info::{ContactInfo, Protocol},
+            node::Node,
         },
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -917,7 +923,7 @@ mod test {
             blockstore::make_many_slot_entries, get_tmp_ledger_path,
             get_tmp_ledger_path_auto_delete, shred::Nonce,
         },
-        solana_net_utils::bind_to_unspecified,
+        solana_net_utils::sockets::bind_to_localhost_unique,
         solana_perf::packet::Packet,
         solana_runtime::bank_forks::BankForks,
         solana_signer::Signer,
@@ -1259,20 +1265,27 @@ mod test {
                 Arc::new(keypair),
                 SocketAddrSpace::Unspecified,
             );
-            let responder_serve_repair = ServeRepair::new(
-                Arc::new(cluster_info),
-                vote_simulator.bank_forks,
-                Arc::<RwLock<HashSet<_>>>::default(), // repair whitelist
-            );
+            // Set up blockstore for responses
+            let ledger_path = get_tmp_ledger_path!();
+            let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
+            let responder_serve_repair = {
+                ServeRepair::new(
+                    Arc::new(cluster_info),
+                    vote_simulator
+                        .bank_forks
+                        .read()
+                        .unwrap()
+                        .sharable_root_bank(),
+                    Arc::<RwLock<HashSet<_>>>::default(), // repair whitelist
+                    Box::new(StandardRepairHandler::new(blockstore.clone())),
+                )
+            };
 
             // Set up thread to give us responses
-            let ledger_path = get_tmp_ledger_path!();
             let exit = Arc::new(AtomicBool::new(false));
             let (requests_sender, requests_receiver) = unbounded();
             let (response_sender, response_receiver) = unbounded();
 
-            // Set up blockstore for responses
-            let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
             // Create slots [slot - MAX_ANCESTOR_RESPONSES, slot) with 5 shreds apiece
             let (shreds, _) = make_many_slot_entries(
                 slot_to_query - MAX_ANCESTOR_RESPONSES as Slot + 1,
@@ -1310,7 +1323,6 @@ mod test {
                 .unwrap();
             let (repair_response_quic_sender, _) = tokio::sync::mpsc::channel(/*buffer:*/ 128);
             let t_listen = responder_serve_repair.listen(
-                blockstore,
                 remote_request_receiver,
                 response_sender,
                 repair_response_quic_sender,
@@ -1349,7 +1361,8 @@ mod test {
     impl ManageAncestorHashesState {
         fn new(bank_forks: Arc<RwLock<BankForks>>) -> Self {
             let ancestor_hashes_request_statuses = Arc::new(DashMap::new());
-            let ancestor_hashes_request_socket = Arc::new(bind_to_unspecified().unwrap());
+            let ancestor_hashes_request_socket =
+                Arc::new(bind_to_localhost_unique().expect("should bind"));
             let epoch_schedule = bank_forks
                 .read()
                 .unwrap()
@@ -1364,11 +1377,16 @@ mod test {
                 SocketAddrSpace::Unspecified,
             ));
             let repair_whitelist = Arc::new(RwLock::new(HashSet::default()));
-            let requester_serve_repair = ServeRepair::new(
-                requester_cluster_info.clone(),
-                bank_forks.clone(),
-                repair_whitelist.clone(),
-            );
+            let ledger_path = get_tmp_ledger_path!();
+            let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
+            let requester_serve_repair = {
+                ServeRepair::new(
+                    requester_cluster_info.clone(),
+                    bank_forks.read().unwrap().sharable_root_bank(),
+                    repair_whitelist.clone(),
+                    Box::new(StandardRepairHandler::new(blockstore)),
+                )
+            };
             let (ancestor_duplicate_slots_sender, _ancestor_duplicate_slots_receiver) = unbounded();
             let repair_info = RepairInfo {
                 bank_forks,

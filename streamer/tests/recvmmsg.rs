@@ -1,7 +1,7 @@
 #![cfg(target_os = "linux")]
 
 use {
-    solana_net_utils::bind_to_localhost,
+    solana_net_utils::sockets::bind_to_localhost_unique,
     solana_streamer::{
         packet::{Meta, Packet, PACKET_DATA_SIZE},
         recvmmsg::*,
@@ -11,9 +11,9 @@ use {
 
 #[test]
 pub fn test_recv_mmsg_batch_size() {
-    let reader = bind_to_localhost().expect("bind");
+    let reader = bind_to_localhost_unique().expect("should bind - reader");
     let addr = reader.local_addr().unwrap();
-    let sender = bind_to_localhost().expect("bind");
+    let sender = bind_to_localhost_unique().expect("should bind - sender");
 
     const TEST_BATCH_SIZE: usize = 64;
     let sent = TEST_BATCH_SIZE;

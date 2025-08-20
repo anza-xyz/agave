@@ -24,19 +24,18 @@ pub trait Frame {
 
 pub trait Umem {
     type Frame: Frame;
-
     fn as_ptr(&self) -> *const u8;
     fn as_mut_ptr(&mut self) -> *mut u8;
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    fn reserve(&mut self) -> Option<Self::Frame>;
+    fn release(&mut self, frame: FrameOffset);
     fn frame_size(&self) -> usize;
-
     fn map_frame(&self, frame: &Self::Frame) -> &[u8] {
         unsafe { slice::from_raw_parts(self.as_ptr().add(frame.offset().0), frame.len()) }
     }
-
     fn map_frame_mut(&mut self, frame: &Self::Frame) -> &mut [u8] {
         unsafe { slice::from_raw_parts_mut(self.as_mut_ptr().add(frame.offset().0), frame.len()) }
     }
@@ -90,21 +89,6 @@ impl<'a> SliceUmem<'a> {
     pub fn available(&self) -> usize {
         self.available_frames.len()
     }
-
-    pub fn reserve(&mut self) -> Option<SliceUmemFrame<'a>> {
-        let index = self.available_frames.pop()?;
-
-        Some(SliceUmemFrame {
-            offset: index as usize * self.frame_size as usize,
-            len: 0,
-            _buf: PhantomData,
-        })
-    }
-
-    pub fn release(&mut self, frame: FrameOffset) {
-        let index = frame.0 / self.frame_size as usize;
-        self.available_frames.push(index as u64);
-    }
 }
 
 impl<'a> Umem for SliceUmem<'a> {
@@ -124,6 +108,21 @@ impl<'a> Umem for SliceUmem<'a> {
 
     fn frame_size(&self) -> usize {
         self.frame_size as usize
+    }
+
+    fn reserve(&mut self) -> Option<SliceUmemFrame<'a>> {
+        let index = self.available_frames.pop()?;
+
+        Some(SliceUmemFrame {
+            offset: index as usize * self.frame_size as usize,
+            len: 0,
+            _buf: PhantomData,
+        })
+    }
+
+    fn release(&mut self, frame: FrameOffset) {
+        let index = frame.0 / self.frame_size as usize;
+        self.available_frames.push(index as u64);
     }
 }
 
@@ -171,7 +170,7 @@ impl PageAlignedMemory {
             )
         };
 
-        if ptr == libc::MAP_FAILED {
+        if std::ptr::eq(ptr, libc::MAP_FAILED) {
             return Err(AllocError);
         }
 

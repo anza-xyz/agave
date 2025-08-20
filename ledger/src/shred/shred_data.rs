@@ -23,12 +23,11 @@ impl ShredData {
     dispatch!(fn data_header(&self) -> &DataShredHeader);
 
     dispatch!(pub(super) fn common_header(&self) -> &ShredCommonHeader);
-    dispatch!(pub(super) fn erasure_shard(&self) -> Result<&[u8], Error>);
-    dispatch!(pub(super) fn erasure_shard_index(&self) -> Result<usize, Error>);
     dispatch!(pub(super) fn into_payload(self) -> Payload);
     dispatch!(pub(super) fn parent(&self) -> Result<Slot, Error>);
     dispatch!(pub(super) fn payload(&self) -> &Payload);
     dispatch!(pub(super) fn sanitize(&self) -> Result<(), Error>);
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     dispatch!(pub(super) fn set_signature(&mut self, signature: Signature));
 
     pub(super) fn signed_data(&self) -> Result<SignedData, Error> {
@@ -50,28 +49,6 @@ impl ShredData {
             Self::Legacy(_) => Err(Error::InvalidShredType),
             Self::Merkle(shred) => shred.merkle_root(),
         }
-    }
-
-    pub(super) fn new_from_data(
-        slot: Slot,
-        index: u32,
-        parent_offset: u16,
-        data: &[u8],
-        flags: ShredFlags,
-        reference_tick: u8,
-        version: u16,
-        fec_set_index: u32,
-    ) -> Self {
-        Self::from(legacy::ShredData::new_from_data(
-            slot,
-            index,
-            parent_offset,
-            data,
-            flags,
-            reference_tick,
-            version,
-            fec_set_index,
-        ))
     }
 
     pub(super) fn last_in_slot(&self) -> bool {
@@ -125,19 +102,11 @@ impl ShredData {
         )>,
     ) -> Result<usize, Error> {
         match merkle_variant {
-            None => Ok(legacy::ShredData::CAPACITY),
+            None => Err(Error::InvalidShredVariant),
             Some((proof_size, chained, resigned)) => {
                 debug_assert!(chained || !resigned);
                 merkle::ShredData::capacity(proof_size, chained, resigned)
             }
-        }
-    }
-
-    // Only for tests.
-    pub(super) fn set_last_in_slot(&mut self) {
-        match self {
-            Self::Legacy(shred) => shred.set_last_in_slot(),
-            Self::Merkle(_) => panic!("Not Implemented!"),
         }
     }
 

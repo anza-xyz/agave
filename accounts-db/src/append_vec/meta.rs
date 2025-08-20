@@ -1,5 +1,5 @@
 use {
-    crate::{accounts_hash::AccountHash, is_zero_lamport::IsZeroLamport},
+    crate::is_zero_lamport::IsZeroLamport,
     solana_account::ReadableAccount,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
@@ -59,7 +59,7 @@ impl<'a, T: ReadableAccount> From<Option<&'a T>> for AccountMeta {
 
 /// References to account data stored elsewhere. Getting an `Account` requires cloning
 /// (see `StoredAccountMeta::clone_account()`).
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub struct StoredAccountMeta<'append_vec> {
     pub meta: &'append_vec StoredMeta,
     /// account data
@@ -67,16 +67,11 @@ pub struct StoredAccountMeta<'append_vec> {
     pub(crate) data: &'append_vec [u8],
     pub(crate) offset: usize,
     pub(crate) stored_size: usize,
-    pub(crate) hash: &'append_vec AccountHash,
 }
 
 impl<'append_vec> StoredAccountMeta<'append_vec> {
     pub fn pubkey(&self) -> &'append_vec Pubkey {
         &self.meta.pubkey
-    }
-
-    pub fn hash(&self) -> &'append_vec AccountHash {
-        self.hash
     }
 
     pub fn stored_size(&self) -> usize {

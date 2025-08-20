@@ -117,6 +117,11 @@ pub fn record_error(err: QuicError, stats: &SendTransactionStats) {
         // Endpoint is created on the scheduler level and handled separately
         // No counters are used for this case.
         QuicError::Endpoint(_) => (),
+        QuicError::HandshakeTimeout => {
+            stats
+                .connection_error_timed_out
+                .fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 

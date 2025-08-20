@@ -9,6 +9,8 @@
 //! sources supported by the Solana CLI. Many other functions here are
 //! variations on, or delegate to, `signer_from_path`.
 
+#[cfg(feature = "elgamal")]
+use solana_zk_sdk::encryption::{auth_encryption::AeKey, elgamal::ElGamalKeypair};
 use {
     crate::{
         input_parsers::signer::{try_pubkeys_sigs_of, SignerSource, SignerSourceKind},
@@ -32,7 +34,6 @@ use {
     solana_seed_phrase::generate_seed_from_seed_phrase_and_passphrase,
     solana_signature::Signature,
     solana_signer::{null_signer::NullSigner, EncodableKey, EncodableKeypair, Signer},
-    solana_zk_token_sdk::encryption::{auth_encryption::AeKey, elgamal::ElGamalKeypair},
     std::{
         cell::RefCell,
         error,
@@ -950,6 +951,7 @@ pub fn keypair_from_source(
 /// )?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+#[cfg(feature = "elgamal")]
 pub fn elgamal_keypair_from_path(
     matches: &ArgMatches,
     path: &str,
@@ -964,6 +966,7 @@ pub fn elgamal_keypair_from_path(
     Ok(elgamal_keypair)
 }
 
+#[cfg(feature = "elgamal")]
 pub fn elgamal_keypair_from_source(
     matches: &ArgMatches,
     source: &SignerSource,
@@ -1020,6 +1023,7 @@ fn confirm_encodable_keypair_pubkey<K: EncodableKeypair>(keypair: &K, pubkey_lab
 /// )?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+#[cfg(feature = "elgamal")]
 pub fn ae_key_from_path(
     matches: &ArgMatches,
     path: &str,
@@ -1029,6 +1033,7 @@ pub fn ae_key_from_path(
     encodable_key_from_path(path, key_name, skip_validation)
 }
 
+#[cfg(feature = "elgamal")]
 pub fn ae_key_from_source(
     matches: &ArgMatches,
     source: &SignerSource,
@@ -1106,6 +1111,7 @@ pub fn keypair_from_seed_phrase(
 /// derivation.
 ///
 /// Optionally skips validation of seed phrase. Optionally confirms recovered public key.
+#[cfg(feature = "elgamal")]
 pub fn elgamal_keypair_from_seed_phrase(
     elgamal_keypair_name: &str,
     skip_validation: bool,
@@ -1127,6 +1133,7 @@ pub fn elgamal_keypair_from_seed_phrase(
 
 /// Reads user input from stdin to retrieve a seed phrase and passphrase for an authenticated
 /// encryption keypair derivation.
+#[cfg(feature = "elgamal")]
 pub fn ae_key_from_seed_phrase(
     keypair_name: &str,
     skip_validation: bool,

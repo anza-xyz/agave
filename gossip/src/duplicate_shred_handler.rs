@@ -58,9 +58,15 @@ impl DuplicateShredHandlerTrait for DuplicateShredHandler {
         let pubkey = shred_data.from;
         if let Err(error) = self.handle_shred_data(shred_data) {
             if error.is_non_critical() {
-                info!("Received invalid duplicate shred proof from {pubkey} for slot {slot}: {error:?}");
+                info!(
+                    "Received invalid duplicate shred proof from {pubkey} for slot {slot}: \
+                     {error:?}"
+                );
             } else {
-                error!("Unable to process duplicate shred proof from {pubkey} for slot {slot}: {error:?}");
+                error!(
+                    "Unable to process duplicate shred proof from {pubkey} for slot {slot}: \
+                     {error:?}"
+                );
             }
         }
     }
@@ -352,14 +358,15 @@ mod tests {
             Error::SlotMismatch,
             Error::InvalidDuplicateShreds,
         ] {
-            match create_duplicate_proof(
+            let proof_result = create_duplicate_proof(
                 my_keypair.clone(),
                 None,
                 start_slot + 2,
                 Some(error),
                 DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
                 shred_version,
-            ) {
+            );
+            match proof_result {
                 Err(_) => (),
                 Ok(chunks) => {
                     for chunk in chunks {

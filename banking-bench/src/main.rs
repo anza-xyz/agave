@@ -13,7 +13,6 @@ use {
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
         validator::{BlockProductionMethod, TransactionStructure},
     },
-    solana_gossip::cluster_info::{ClusterInfo, Node},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
@@ -32,12 +31,12 @@ use {
     },
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::instruction as system_instruction,
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     solana_transaction::Transaction,
     std::{
+        num::NonZeroUsize,
         sync::{atomic::Ordering, Arc, RwLock},
         thread::sleep,
         time::{Duration, Instant},
@@ -290,18 +289,19 @@ fn main() {
                 .help(BlockProductionMethod::cli_message()),
         )
         .arg(
+            Arg::with_name("block_production_num_workers")
+                .long("block-production-num-workers")
+                .takes_value(true)
+                .value_name("NUMBER")
+                .help("Number of worker threads to use for block production"),
+        )
+        .arg(
             Arg::with_name("transaction_struct")
                 .long("transaction-structure")
                 .value_name("STRUCT")
                 .takes_value(true)
                 .possible_values(TransactionStructure::cli_names())
                 .help(TransactionStructure::cli_message()),
-        )
-        .arg(
-            Arg::new("num_banking_threads")
-                .long("num-banking-threads")
-                .takes_value(true)
-                .help("Number of threads to use in the banking stage"),
         )
         .arg(
             Arg::new("simulate_mint")
@@ -321,12 +321,12 @@ fn main() {
     let block_production_method = matches
         .value_of_t::<BlockProductionMethod>("block_production_method")
         .unwrap_or_default();
+    let block_production_num_workers = matches
+        .value_of_t::<NonZeroUsize>("block_production_num_workers")
+        .unwrap_or_else(|_| BankingStage::default_num_workers());
     let transaction_struct = matches
         .value_of_t::<TransactionStructure>("transaction_struct")
         .unwrap_or_default();
-    let num_banking_threads = matches
-        .value_of_t::<u32>("num_banking_threads")
-        .unwrap_or_else(|_| BankingStage::num_threads());
     //   a multiple of packet chunk duplicates to avoid races
     let num_chunks = matches.value_of_t::<usize>("num_chunks").unwrap_or(16);
     let packets_per_batch = matches
@@ -335,7 +335,7 @@ fn main() {
     let iterations = matches.value_of_t::<usize>("iterations").unwrap_or(1000);
     let batches_per_iteration = matches
         .value_of_t::<usize>("batches_per_iteration")
-        .unwrap_or(BankingStage::num_threads() as usize);
+        .unwrap_or(BankingStage::default_num_workers().get());
     let write_lock_contention = matches
         .value_of_t::<WriteLockContention>("write_lock_contention")
         .unwrap_or(WriteLockContention::None);
@@ -378,8 +378,8 @@ fn main() {
         .map(|packets_for_single_iteration| packets_for_single_iteration.transactions.len() as u64)
         .sum();
     info!(
-        "threads: {} txs: {}",
-        num_banking_threads, total_num_transactions
+        "worker threads: {} txs: {}",
+        block_production_num_workers, total_num_transactions
     );
 
     // fund all the accounts
@@ -448,12 +448,6 @@ fn main() {
         )))
         .unwrap();
     let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-    let cluster_info = {
-        let keypair = Arc::new(Keypair::new());
-        let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
-        ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
-    };
-    let cluster_info = Arc::new(cluster_info);
     let Channels {
         non_vote_sender,
         non_vote_receiver,
@@ -465,18 +459,17 @@ fn main() {
     let banking_stage = BankingStage::new_num_threads(
         block_production_method,
         transaction_struct,
-        &cluster_info,
-        &poh_recorder,
+        poh_recorder.clone(),
         transaction_recorder,
         non_vote_receiver,
         tpu_vote_receiver,
         gossip_vote_receiver,
-        num_banking_threads,
+        block_production_num_workers,
         None,
         replay_vote_sender,
         None,
         bank_forks.clone(),
-        &prioritization_fee_cache,
+        prioritization_fee_cache,
     );
 
     // This is so that the signal_receiver does not go out of scope after the closure.
@@ -559,7 +552,6 @@ fn main() {
                 &bank_forks,
                 &poh_recorder,
                 new_bank,
-                false,
             );
             bank = bank_forks.read().unwrap().working_bank_with_scheduler();
             assert_matches!(poh_recorder.read().unwrap().bank(), Some(_));

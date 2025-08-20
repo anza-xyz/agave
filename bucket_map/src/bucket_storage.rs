@@ -171,7 +171,12 @@ impl<O: BucketOccupied> BucketStorage<O> {
             let full_page_bytes = bytes / PAGE_SIZE * PAGE_SIZE / cell_size * cell_size;
             if full_page_bytes < bytes {
                 let bytes_new = ((bytes / PAGE_SIZE) + 1) * PAGE_SIZE / cell_size * cell_size;
-                assert!(bytes_new >= bytes, "allocating less than requested, capacity: {}, bytes: {}, bytes_new: {}, full_page_bytes: {}", capacity.capacity(), bytes, bytes_new, full_page_bytes);
+                assert!(
+                    bytes_new >= bytes,
+                    "allocating less than requested, capacity: {}, bytes: {bytes}, bytes_new: \
+                     {bytes_new}, full_page_bytes: {full_page_bytes}",
+                    capacity.capacity()
+                );
                 assert_eq!(bytes_new % cell_size, 0);
                 bytes = bytes_new;
                 *capacity = Capacity::Actual(bytes / cell_size);
@@ -452,7 +457,7 @@ impl<O: BucketOccupied> BucketStorage<O> {
         let r = thread_rng().gen_range(0..drives.len());
         let drive = &drives[r];
         let file_random = thread_rng().gen_range(0..u128::MAX);
-        let pos = format!("{}", file_random,);
+        let pos = format!("{file_random}");
         let file = drive.join(pos);
         let res = Self::map_open_file(file.clone(), true, bytes, stats).unwrap();
 

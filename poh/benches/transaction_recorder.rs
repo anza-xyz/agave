@@ -57,10 +57,7 @@ fn bench_record_transactions(c: &mut Criterion) {
         &genesis_config_info.genesis_config.poh_config,
         exit.clone(),
     );
-    poh_recorder.set_bank(
-        BankWithScheduler::new_without_scheduler(bank.clone()),
-        false,
-    );
+    poh_recorder.set_bank(BankWithScheduler::new_without_scheduler(bank.clone()));
 
     let (record_sender, record_receiver) = crossbeam_channel::unbounded();
     let transaction_recorder = TransactionRecorder::new(record_sender, exit.clone());
@@ -103,10 +100,10 @@ fn bench_record_transactions(c: &mut Criterion) {
                     &Pubkey::default(),
                     bank.slot().wrapping_add(1),
                 ));
-                poh_recorder.write().unwrap().set_bank(
-                    BankWithScheduler::new_without_scheduler(bank.clone()),
-                    false,
-                );
+                poh_recorder
+                    .write()
+                    .unwrap()
+                    .set_bank(BankWithScheduler::new_without_scheduler(bank.clone()));
 
                 let start = Instant::now();
                 for txs in tx_batches {

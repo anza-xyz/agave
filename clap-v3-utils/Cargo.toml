@@ -15,6 +15,10 @@ targets = ["x86_64-unknown-linux-gnu"]
 [lib]
 name = "solana_clap_v3_utils"
 
+[features]
+default = []
+elgamal = ["dep:solana-zk-sdk"]
+
 [dependencies]
 chrono = { workspace = true, features = ["default"] }
 clap = { version = "3.2.23", features = ["cargo"] }
@@ -35,7 +39,7 @@ solana-seed-derivable = { workspace = true }
 solana-seed-phrase = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
-solana-zk-token-sdk = { workspace = true }
+solana-zk-sdk = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tiny-bip39 = { workspace = true }
 uriparse = { workspace = true }

@@ -10,8 +10,8 @@ use {
     solana_keypair::Keypair,
     solana_ledger::shred::{
         get_data_shred_bytes_per_batch_typical, max_entries_per_n_shred, max_ticks_per_n_shreds,
-        ProcessShredsStats, ReedSolomonCache, Shred, ShredFlags, Shredder,
-        DATA_SHREDS_PER_FEC_BLOCK,
+        recover, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
+        CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_perf::test_tx,
     test::{black_box, Bencher},
@@ -46,14 +46,13 @@ fn bench_shredder_ticks(bencher: &mut Bencher) {
     let chained_merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
     bencher.iter(|| {
         let shredder = Shredder::new(1, 0, 0, 0).unwrap();
-        shredder.entries_to_shreds(
+        shredder.entries_to_merkle_shreds_for_tests(
             &kp,
             &entries,
             true,
             chained_merkle_root,
             0,
             0,
-            true, // merkle_variant
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
@@ -77,14 +76,13 @@ fn bench_shredder_large_entries(bencher: &mut Bencher) {
     // 1Mb
     bencher.iter(|| {
         let shredder = Shredder::new(1, 0, 0, 0).unwrap();
-        shredder.entries_to_shreds(
+        shredder.entries_to_merkle_shreds_for_tests(
             &kp,
             &entries,
             true,
             chained_merkle_root,
             0,
             0,
-            true, // merkle_variant
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
@@ -101,14 +99,13 @@ fn bench_deshredder(bencher: &mut Bencher) {
     let entries = create_ticks(num_ticks, 0, Hash::default());
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();
     let chained_merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
-    let (data_shreds, _) = shredder.entries_to_shreds(
+    let (data_shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
         &kp,
         &entries,
         true,
         chained_merkle_root,
         0,
         0,
-        true, // merkle_variant
         &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     );
@@ -121,9 +118,25 @@ fn bench_deshredder(bencher: &mut Bencher) {
 
 #[bench]
 fn bench_deserialize_hdr(bencher: &mut Bencher) {
-    let data = vec![0; SHRED_SIZE_TYPICAL];
-
-    let shred = Shred::new_from_data(2, 1, 1, &data, ShredFlags::LAST_SHRED_IN_SLOT, 0, 0, 1);
+    let keypair = Keypair::new();
+    let shredder = Shredder::new(2, 1, 0, 0).unwrap();
+    let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
+    let mut stats = ProcessShredsStats::default();
+    let reed_solomon_cache = ReedSolomonCache::default();
+    let mut shreds = shredder
+        .make_merkle_shreds_from_entries(
+            &keypair,
+            &[],
+            true, // is_last_in_slot
+            merkle_root,
+            1, // next_shred_index
+            0, // next_code_index
+            &reed_solomon_cache,
+            &mut stats,
+        )
+        .filter(Shred::is_data)
+        .collect::<Vec<_>>();
+    let shred = shreds.remove(0);
 
     bencher.iter(|| {
         let payload = shred.payload().clone();
@@ -166,7 +179,7 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();
     let reed_solomon_cache = ReedSolomonCache::default();
     let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
-    let (_data_shreds, coding_shreds): (Vec<_>, Vec<_>) = shredder
+    let (_data_shreds, mut coding_shreds): (Vec<_>, Vec<_>) = shredder
         .make_merkle_shreds_from_entries(
             &Keypair::new(),
             &entries,
@@ -178,9 +191,11 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
             &mut ProcessShredsStats::default(),
         )
         .partition(Shred::is_data);
+    coding_shreds.truncate(CODING_SHREDS_PER_FEC_BLOCK);
 
     bencher.iter(|| {
-        let result = Shredder::try_recovery(coding_shreds.clone(), &reed_solomon_cache).unwrap();
-        black_box(result);
+        for shred in recover(coding_shreds.clone(), &reed_solomon_cache).unwrap() {
+            black_box(shred.unwrap());
+        }
     })
 }

@@ -86,7 +86,8 @@ where
     let mut errors = 0;
     for data in reader.into_iter() {
         number += 1;
-        match parse_packet(&data) {
+        let packet = parse_packet(&data);
+        match packet {
             Ok(pkt) => {
                 let reconstructed_bytes = serialize_packet(pkt);
                 let diff = custom_compare(&reconstructed_bytes, &data);

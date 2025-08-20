@@ -1,6 +1,4 @@
-mod pending_snapshot_packages;
 mod snapshot_gossip_manager;
-pub use pending_snapshot_packages::PendingSnapshotPackages;
 use {
     snapshot_gossip_manager::SnapshotGossipManager,
     solana_accounts_db::accounts_db::AccountStorageEntry,
@@ -9,8 +7,9 @@ use {
     solana_measure::{meas_dur, measure::Measure, measure_us},
     solana_perf::thread::renice_this_thread,
     solana_runtime::{
-        snapshot_config::SnapshotConfig, snapshot_controller::SnapshotController,
-        snapshot_hash::StartingSnapshotHashes, snapshot_package::SnapshotPackage, snapshot_utils,
+        accounts_background_service::PendingSnapshotPackages, snapshot_config::SnapshotConfig,
+        snapshot_controller::SnapshotController, snapshot_hash::StartingSnapshotHashes,
+        snapshot_package::SnapshotPackage, snapshot_utils,
     },
     std::{
         sync::{

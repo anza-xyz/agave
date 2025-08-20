@@ -6,7 +6,7 @@ use {
     solana_msg::msg,
     solana_program_error::ProgramResult,
     solana_pubkey::{declare_id, Pubkey},
-    solana_sysvar::Sysvar,
+    solana_sysvar::{Sysvar, SysvarSerialize},
     std::convert::TryInto,
 };
 

@@ -26,6 +26,7 @@ impl LeaderSchedule {
     ) -> Self {
         let keyed_stakes: Vec<_> = vote_accounts_map
             .iter()
+            .filter(|(_pubkey, (stake, _account))| *stake > 0)
             .map(|(vote_pubkey, (stake, _account))| (vote_pubkey, *stake))
             .collect();
         let vote_keyed_slot_leaders = stake_weighted_slot_leaders(keyed_stakes, epoch, len, repeat);

@@ -218,7 +218,7 @@ pub fn sleep_n_epochs(
     let num_ticks_per_second = config.target_tick_duration.as_secs_f64().recip();
     let num_ticks_to_sleep = num_epochs * ticks_per_slot as f64 * slots_per_epoch as f64;
     let secs = ((num_ticks_to_sleep + num_ticks_per_second - 1.0) / num_ticks_per_second) as u64;
-    warn!("sleep_n_epochs: {} seconds", secs);
+    warn!("sleep_n_epochs: {secs} seconds");
     sleep(Duration::from_secs(secs));
 }
 
@@ -320,7 +320,7 @@ pub fn kill_entry_and_spend_and_verify_rest(
                 &transaction,
             ) {
                 Err(e) => {
-                    info!("poll_all_nodes_for_signature() failed {:?}", e);
+                    info!("poll_all_nodes_for_signature() failed {e:?}");
                     result = Err(e);
                 }
                 Ok(()) => {
@@ -405,8 +405,8 @@ pub fn check_for_new_roots(
             done = num_roots >= num_new_roots;
             if done || last_print.elapsed().as_secs() > 3 {
                 info!(
-                    "{} waiting for {} new roots.. observed: {:?}",
-                    test_name, num_new_roots, num_roots_map
+                    "{test_name} waiting for {num_new_roots} new roots.. observed: \
+                     {num_roots_map:?}"
                 );
                 last_print = Instant::now();
             }
@@ -572,7 +572,7 @@ pub fn start_gossip_voter(
                     if latest_push_attempt.elapsed() > Duration::from_millis(refresh_ms) {
                         for (leader_vote_tx, parsed_vote) in refreshable_votes.iter().rev() {
                             let vote_slot = parsed_vote.last_voted_slot().unwrap();
-                            info!("gossip voter refreshing vote {}", vote_slot);
+                            info!("gossip voter refreshing vote {vote_slot}");
                             process_vote_tx(vote_slot, leader_vote_tx, parsed_vote, &cluster_info);
                             latest_push_attempt = Instant::now();
                         }
@@ -594,7 +594,7 @@ pub fn start_gossip_voter(
 
                 for (parsed_vote, leader_vote_tx) in &parsed_vote_iter {
                     if let Some(vote_slot) = parsed_vote.last_voted_slot() {
-                        info!("received vote for {}", vote_slot);
+                        info!("received vote for {vote_slot}");
                         if vote_slot > latest_voted_slot {
                             latest_voted_slot = vote_slot;
                             refreshable_votes

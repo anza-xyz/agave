@@ -17,7 +17,8 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
     solana_tls_utils::{
-        new_dummy_x509_certificate, tls_client_config_builder, tls_server_config_builder,
+        new_dummy_x509_certificate, socket_addr_to_quic_server_name, tls_client_config_builder,
+        tls_server_config_builder,
     },
     std::{
         cmp::Reverse,
@@ -44,7 +45,6 @@ const CLIENT_CHANNEL_BUFFER: usize = 1 << 14;
 const ROUTER_CHANNEL_BUFFER: usize = 64;
 const CONNECTION_CACHE_CAPACITY: usize = 3072;
 const ALPN_TURBINE_PROTOCOL_ID: &[u8] = b"solana-turbine";
-const CONNECT_SERVER_NAME: &str = "solana-turbine";
 
 // Transport config.
 const DATAGRAM_RECEIVE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
@@ -227,10 +227,7 @@ async fn run_server(
                 ));
             }
             Err(error) => {
-                debug!(
-                    "Error while accepting incoming connection: {error:?} from {}",
-                    remote_addr
-                );
+                debug!("Error while accepting incoming connection: {error:?} from {remote_addr}");
             }
         }
     }
@@ -507,9 +504,8 @@ async fn make_connection(
     cache: Arc<Mutex<HashMap<Pubkey, Connection>>>,
     stats: Arc<TurbineQuicStats>,
 ) -> Result<(), Error> {
-    let connection = endpoint
-        .connect(remote_address, CONNECT_SERVER_NAME)?
-        .await?;
+    let server_name = socket_addr_to_quic_server_name(remote_address);
+    let connection = endpoint.connect(remote_address, &server_name)?.await?;
     handle_connection(
         endpoint,
         connection.remote_address(),
@@ -823,10 +819,14 @@ mod tests {
         super::*,
         itertools::{izip, multiunzip},
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
-        solana_net_utils::bind_to_localhost,
+        solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
         solana_runtime::bank::Bank,
         solana_signer::Signer,
-        std::{iter::repeat_with, time::Duration},
+        std::{
+            iter::repeat_with,
+            net::{IpAddr, Ipv4Addr},
+            time::Duration,
+        },
     };
 
     #[test]
@@ -839,10 +839,12 @@ mod tests {
             .build()
             .unwrap();
         let keypairs: Vec<Keypair> = repeat_with(Keypair::new).take(NUM_ENDPOINTS).collect();
-        let sockets: Vec<UdpSocket> = repeat_with(bind_to_localhost)
+        let port_range = localhost_port_range_for_tests();
+        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let sockets: Vec<UdpSocket> = (port_range.0..port_range.1)
+            .map(|port| bind_to(ip_addr, port).unwrap())
             .take(NUM_ENDPOINTS)
-            .collect::<Result<_, _>>()
-            .unwrap();
+            .collect();
         let addresses: Vec<SocketAddr> = sockets
             .iter()
             .map(UdpSocket::local_addr)

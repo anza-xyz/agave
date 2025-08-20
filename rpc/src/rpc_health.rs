@@ -104,9 +104,9 @@ impl RpcHealth {
             let num_slots = cluster_latest_optimistically_confirmed_slot
                 .saturating_sub(my_latest_optimistically_confirmed_slot);
             warn!(
-                "health check: behind by {num_slots} \
-                slots: me={my_latest_optimistically_confirmed_slot}, \
-                latest cluster={cluster_latest_optimistically_confirmed_slot}",
+                "health check: behind by {num_slots} slots: \
+                 me={my_latest_optimistically_confirmed_slot}, latest \
+                 cluster={cluster_latest_optimistically_confirmed_slot}",
             );
             RpcHealthStatus::Behind { num_slots }
         }
@@ -178,7 +178,7 @@ pub mod tests {
 
         // Mark startup verification complete - status still unknown as no slots have been
         // optimistically confirmed yet
-        bank0.set_startup_verification_complete();
+        bank0.set_initial_accounts_hash_verification_completed();
         assert_eq!(health.check(), RpcHealthStatus::Unknown);
 
         // Mark slot 15 as being optimistically confirmed in the Blockstore, this could

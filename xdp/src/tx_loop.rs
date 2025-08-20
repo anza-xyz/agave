@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        device::{NetworkDevice, QueueId},
+        device::{NetworkDevice, QueueId, RingSizes},
         netlink::MacAddress,
         packet::{
             write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
@@ -20,20 +20,24 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{sysconf, _SC_PAGESIZE},
     std::{
-        net::{IpAddr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         thread,
         time::Duration,
     },
 };
 
-pub fn tx_loop<T: AsRef<[u8]>>(
+#[allow(clippy::too_many_arguments)]
+pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
+    cpu_id: usize,
     dev: &NetworkDevice,
-    src_port: u16,
     queue_id: QueueId,
     zero_copy: bool,
-    cpu_id: usize,
-    receiver: Receiver<(Vec<SocketAddr>, T)>,
-    drop_sender: Sender<(Vec<SocketAddr>, T)>,
+    src_mac: Option<MacAddress>,
+    src_ip: Option<Ipv4Addr>,
+    src_port: u16,
+    dest_mac: Option<MacAddress>,
+    receiver: Receiver<(A, T)>,
+    drop_sender: Sender<(A, T)>,
 ) {
     log::info!(
         "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
@@ -43,20 +47,43 @@ pub fn tx_loop<T: AsRef<[u8]>>(
     // each queue is bound to its own CPU core
     set_cpu_affinity([cpu_id]).unwrap();
 
-    let src_mac = dev.mac_addr().unwrap();
-    let src_ip = dev.ipv4_addr().unwrap();
+    let src_mac = src_mac.unwrap_or_else(|| {
+        // if no source MAC is provided, use the device's MAC address
+        dev.mac_addr()
+            .expect("no src_mac provided, device must have a MAC address")
+    });
+    let src_ip = src_ip.unwrap_or_else(|| {
+        // if no source IP is provided, use the device's IPv4 address
+        dev.ipv4_addr()
+            .expect("no src_ip provided, device must have an IPv4 address")
+    });
 
     // some drivers require frame_size=page_size
     let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
-    const FRAME_COUNT: usize = 4096;
+
+    let queue = dev
+        .open_queue(queue_id)
+        .expect("failed to open queue for AF_XDP socket");
+    let RingSizes {
+        rx: rx_size,
+        tx: tx_size,
+    } = queue.ring_sizes().unwrap_or_else(|| {
+        log::info!(
+            "using default ring sizes for {} queue {queue_id:?}",
+            dev.name()
+        );
+        RingSizes::default()
+    });
+
+    let frame_count = (rx_size + tx_size) * 2;
 
     // try to allocate huge pages first, then fall back to regular pages
     const HUGE_2MB: usize = 2 * 1024 * 1024;
     let mut memory =
-        PageAlignedMemory::alloc_with_page_size(frame_size, FRAME_COUNT, HUGE_2MB, true)
+        PageAlignedMemory::alloc_with_page_size(frame_size, frame_count, HUGE_2MB, true)
             .or_else(|_| {
                 log::warn!("huge page alloc failed, falling back to regular page size");
-                PageAlignedMemory::alloc(frame_size, FRAME_COUNT)
+                PageAlignedMemory::alloc(frame_size, frame_count)
             })
             .unwrap();
     let umem = SliceUmem::new(&mut memory, frame_size as u32).unwrap();
@@ -66,21 +93,12 @@ pub fn tx_loop<T: AsRef<[u8]>>(
         caps::raise(None, CapSet::Effective, cap).unwrap();
     }
 
-    // A nice round number. This is the size used by kernel selftests, so likely to work with all
-    // drivers.
-    const RING_SIZE: usize = 2048;
-
-    let Ok((mut socket, tx)) = Socket::tx(
-        dev.open_queue(queue_id),
-        umem,
-        zero_copy,
-        RING_SIZE,
-        RING_SIZE,
-    ) else {
+    let Ok((mut socket, tx)) = Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) else {
         panic!("failed to create AF_XDP socket on queue {queue_id:?}");
     };
 
     let umem = socket.umem();
+    let umem_tx_capacity = umem.available();
     let Tx {
         // this is where we'll queue frames
         ring,
@@ -115,35 +133,11 @@ pub fn tx_loop<T: AsRef<[u8]>>(
     // packets.
     let mut batched_packets = 0;
 
-    // With some drivers, or always when we work in SKB mode, we need to explicitly kick the driver
-    // once we want the NIC to do something.
-    let kick = |ring: &TxRing<SliceUmemFrame<'_>>| {
-        if !ring.needs_wakeup() {
-            return;
-        }
-
-        if let Err(e) = ring.wake() {
-            match e.raw_os_error() {
-                // these are non-fatal errors
-                Some(libc::EBUSY | libc::ENOBUFS | libc::EAGAIN) => {}
-                // this can temporarily happen with some drivers when changing
-                // settings (eg with ethtool)
-                Some(libc::ENETDOWN) => {
-                    log::warn!("network interface is down")
-                }
-                // we should never get here, hopefully the driver recovers?
-                _ => {
-                    log::error!("network interface driver error: {e:?}");
-                }
-            }
-        }
-    };
-
     let mut timeouts = 0;
     loop {
         match receiver.try_recv() {
             Ok((addrs, payload)) => {
-                batched_packets += addrs.len();
+                batched_packets += addrs.as_ref().len();
                 batched_items.push((addrs, payload));
                 timeouts = 0;
                 if batched_packets < BATCH_SIZE {
@@ -174,26 +168,28 @@ pub fn tx_loop<T: AsRef<[u8]>>(
         let mut chunk_remaining = BATCH_SIZE.min(batched_packets);
 
         for (addrs, payload) in batched_items.drain(..) {
-            for addr in &addrs {
-                // loop until we have space for the next packet
-                loop {
-                    completion.sync(true);
-                    // we haven't written any frames so we only need to sync the consumer position
-                    ring.sync(false);
+            for addr in addrs.as_ref() {
+                if ring.available() == 0 || umem.available() == 0 {
+                    // loop until we have space for the next packet
+                    loop {
+                        completion.sync(true);
+                        // we haven't written any frames so we only need to sync the consumer position
+                        ring.sync(false);
 
-                    // check if any frames were completed
-                    while let Some(frame_offset) = completion.read() {
-                        umem.release(frame_offset);
+                        // check if any frames were completed
+                        while let Some(frame_offset) = completion.read() {
+                            umem.release(frame_offset);
+                        }
+
+                        if ring.available() > 0 && umem.available() > 0 {
+                            // we have space for the next packet, break out of the loop
+                            break;
+                        }
+
+                        // queues are full, if NEEDS_WAKEUP is set kick the driver so hopefully it'll
+                        // complete some work
+                        kick(&ring);
                     }
-
-                    if ring.available() > 0 && umem.available() > 0 {
-                        // we have a frame and a slot in the ring
-                        break;
-                    }
-
-                    // queues are full, if NEEDS_WAKEUP is set kick the driver so hopefully it'll
-                    // complete some work
-                    kick(&ring);
                 }
 
                 // at this point we're guaranteed to have a frame to write the next packet into and
@@ -203,19 +199,38 @@ pub fn tx_loop<T: AsRef<[u8]>>(
                     panic!("IPv6 not supported");
                 };
 
-                let next_hop = router.route(addr.ip()).unwrap();
-                // sanity check that the address is routable through our NIC
-                if next_hop.if_index != dev.if_index() {
-                    log::warn!(
-                        "turbine peer {} must be routed through if_index: {} our if_index: {}",
-                        addr,
-                        next_hop.if_index,
-                        dev.if_index()
-                    );
-                    batched_packets -= 1;
-                    umem.release(frame.offset());
-                    continue;
-                }
+                let dest_mac = if let Some(mac) = dest_mac {
+                    mac
+                } else {
+                    let next_hop = router.route(addr.ip()).unwrap();
+
+                    let mut skip = false;
+
+                    // sanity check that the address is routable through our NIC
+                    if next_hop.if_index != dev.if_index() {
+                        log::warn!(
+                            "dropping packet: turbine peer {addr} must be routed through if_index: {} our if_index: {}",
+                            next_hop.if_index,
+                            dev.if_index()
+                        );
+                        skip = true;
+                    }
+
+                    // we need the MAC address to send the packet
+                    if next_hop.mac_addr.is_none() {
+                        log::warn!("dropping packet: turbine peer {addr} must be routed through {} which has no known MAC address", next_hop.ip_addr);
+                        skip = true;
+                    };
+
+                    if skip {
+                        batched_packets -= 1;
+                        umem.release(frame.offset());
+                        continue;
+                    }
+
+                    next_hop.mac_addr.unwrap()
+                };
+
                 const PACKET_HEADER_SIZE: usize =
                     ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
                 let len = payload.as_ref().len();
@@ -225,12 +240,7 @@ pub fn tx_loop<T: AsRef<[u8]>>(
                 // write the payload first as it's needed for checksum calculation (if enabled)
                 packet[PACKET_HEADER_SIZE..][..len].copy_from_slice(payload.as_ref());
 
-                write_eth_header(
-                    packet,
-                    &src_mac,
-                    // the unwrap case is for loopback interfaces which don't have a mac address
-                    &next_hop.mac_addr.unwrap_or(MacAddress([0u8; 6])).0,
-                );
+                write_eth_header(packet, &src_mac.0, &dest_mac.0);
 
                 write_ip_header(
                     &mut packet[ETH_HEADER_SIZE..],
@@ -275,11 +285,11 @@ pub fn tx_loop<T: AsRef<[u8]>>(
     assert_eq!(batched_packets, 0);
 
     // drain the ring
-    while umem.available() < umem.capacity() || ring.available() < ring.capacity() {
+    while umem.available() < umem_tx_capacity || ring.available() < ring.capacity() {
         log::debug!(
             "draining xdp ring umem {}/{} ring {}/{}",
             umem.available(),
-            umem.capacity(),
+            umem_tx_capacity,
             ring.available(),
             ring.capacity()
         );
@@ -291,5 +301,35 @@ pub fn tx_loop<T: AsRef<[u8]>>(
 
         ring.sync(false);
         kick(&ring);
+    }
+}
+
+// With some drivers, or always when we work in SKB mode, we need to explicitly kick the driver once
+// we want the NIC to do something.
+#[inline(always)]
+fn kick(ring: &TxRing<SliceUmemFrame<'_>>) {
+    if !ring.needs_wakeup() {
+        return;
+    }
+
+    if let Err(e) = ring.wake() {
+        kick_error(e);
+    }
+}
+
+#[inline(never)]
+fn kick_error(e: std::io::Error) {
+    match e.raw_os_error() {
+        // these are non-fatal errors
+        Some(libc::EBUSY | libc::ENOBUFS | libc::EAGAIN) => {}
+        // this can temporarily happen with some drivers when changing
+        // settings (eg with ethtool)
+        Some(libc::ENETDOWN) => {
+            log::warn!("network interface is down")
+        }
+        // we should never get here, hopefully the driver recovers?
+        _ => {
+            log::error!("network interface driver error: {e:?}");
+        }
     }
 }

@@ -1,6 +1,6 @@
 use {
     super::*,
-    spl_token_2022::{
+    spl_token_2022_interface::{
         extension::group_member_pointer::instruction::*,
         instruction::{decode_instruction_data, decode_instruction_type},
     },
@@ -84,7 +84,7 @@ mod test {
 
         // Initialize variations
         let init_ix = initialize(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &mint_pubkey,
             Some(authority),
             Some(member_address),
@@ -108,7 +108,8 @@ mod test {
             }
         );
 
-        let init_ix = initialize(&spl_token_2022::id(), &mint_pubkey, None, None).unwrap();
+        let init_ix =
+            initialize(&spl_token_2022_interface::id(), &mint_pubkey, None, None).unwrap();
         let mut message = Message::new(&[init_ix], None);
         let compiled_instruction = &mut message.instructions[0];
         assert_eq!(
@@ -127,7 +128,7 @@ mod test {
 
         // Single owner Update
         let update_ix = update(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &mint_pubkey,
             &authority,
             &[],
@@ -157,7 +158,7 @@ mod test {
         let multisig_signer0 = Pubkey::new_unique();
         let multisig_signer1 = Pubkey::new_unique();
         let update_ix = update(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &mint_pubkey,
             &multisig_pubkey,
             &[&multisig_signer0, &multisig_signer1],

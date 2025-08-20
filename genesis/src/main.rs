@@ -18,6 +18,7 @@ use {
         },
     },
     solana_clock as clock,
+    solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_entry::poh::compute_hashes_per_tick,
     solana_epoch_schedule::EpochSchedule,
@@ -27,12 +28,12 @@ use {
         genesis_accounts::add_genesis_accounts, Base64Account, StakedValidatorAccountInfo,
         ValidatorAccountsFile,
     },
-    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_genesis_config::GenesisConfig,
     solana_inflation::Inflation,
     solana_keypair::{read_keypair_file, Keypair},
     solana_ledger::{blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions},
     solana_loader_v3_interface::state::UpgradeableLoaderState,
-    solana_native_token::sol_to_lamports,
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -42,7 +43,7 @@ use {
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
     solana_stake_program::stake_state,
-    solana_vote_program::vote_state::{self, VoteState},
+    solana_vote_program::vote_state::{self, VoteStateV3},
     std::{
         collections::HashMap,
         error,
@@ -65,7 +66,7 @@ fn pubkey_from_str(key_str: &str) -> Result<Pubkey, Box<dyn error::Error>> {
     Pubkey::from_str(key_str).or_else(|_| {
         let bytes: Vec<u8> = serde_json::from_str(key_str)?;
         let keypair =
-            Keypair::from_bytes(&bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
+            Keypair::try_from(bytes.as_ref()).map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(keypair.pubkey())
     })
 }
@@ -253,7 +254,7 @@ fn add_validator_accounts(
             identity_pubkey,
             identity_pubkey,
             commission,
-            VoteState::get_rent_exempt_reserve(rent).max(1),
+            VoteStateV3::get_rent_exempt_reserve(rent).max(1),
         );
 
         genesis_config.add_account(
@@ -313,11 +314,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
 
     // vote account
-    let default_bootstrap_validator_lamports = &sol_to_lamports(500.0)
-        .max(VoteState::get_rent_exempt_reserve(&rent))
+    let default_bootstrap_validator_lamports = &(500 * LAMPORTS_PER_SOL)
+        .max(VoteStateV3::get_rent_exempt_reserve(&rent))
         .to_string();
     // stake account
-    let default_bootstrap_validator_stake_lamports = &sol_to_lamports(0.5)
+    let default_bootstrap_validator_stake_lamports = &(LAMPORTS_PER_SOL / 2)
         .max(rent.minimum_balance(StakeStateV2::size_of()))
         .to_string();
 
@@ -1306,7 +1307,7 @@ mod tests {
                 // check vote account
                 let vote_pk = b64_account.vote_account.parse().unwrap();
                 let vote_data = genesis_config.accounts[&vote_pk].data.clone();
-                let vote_state = VoteState::deserialize(&vote_data).unwrap();
+                let vote_state = VoteStateV3::deserialize(&vote_data).unwrap();
                 assert_eq!(vote_state.node_pubkey, identity_pk);
                 assert_eq!(vote_state.authorized_withdrawer, identity_pk);
                 let authorized_voters = vote_state.authorized_voters();

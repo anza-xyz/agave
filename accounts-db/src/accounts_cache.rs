@@ -1,12 +1,9 @@
 use {
-    crate::{accounts_db::AccountsDb, accounts_hash::AccountHash},
-    ahash::RandomState as AHashRandomState,
     dashmap::DashMap,
-    seqlock::SeqLock,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
     solana_nohash_hasher::BuildNoHashHasher,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::{
         collections::BTreeSet,
         ops::Deref,
@@ -19,7 +16,7 @@ use {
 
 #[derive(Debug)]
 pub struct SlotCache {
-    cache: DashMap<Pubkey, Arc<CachedAccount>, AHashRandomState>,
+    cache: DashMap<Pubkey, Arc<CachedAccount>, PubkeyHasherBuilder>,
     same_account_writes: AtomicU64,
     same_account_writes_size: AtomicU64,
     unique_account_writes_size: AtomicU64,
@@ -76,7 +73,6 @@ impl SlotCache {
         let data_len = account.data().len() as u64;
         let item = Arc::new(CachedAccount {
             account,
-            hash: SeqLock::new(None),
             pubkey: *pubkey,
         });
         if let Some(old) = self.cache.insert(*pubkey, item.clone()) {
@@ -131,7 +127,7 @@ impl SlotCache {
 }
 
 impl Deref for SlotCache {
-    type Target = DashMap<Pubkey, Arc<CachedAccount>, AHashRandomState>;
+    type Target = DashMap<Pubkey, Arc<CachedAccount>, PubkeyHasherBuilder>;
     fn deref(&self) -> &Self::Target {
         &self.cache
     }
@@ -140,22 +136,10 @@ impl Deref for SlotCache {
 #[derive(Debug)]
 pub struct CachedAccount {
     pub account: AccountSharedData,
-    hash: SeqLock<Option<AccountHash>>,
     pubkey: Pubkey,
 }
 
 impl CachedAccount {
-    pub fn hash(&self) -> AccountHash {
-        let hash = self.hash.read();
-        match hash {
-            Some(hash) => hash,
-            None => {
-                let hash = AccountsDb::hash_account(&self.account, &self.pubkey);
-                *self.hash.lock_write() = Some(hash);
-                hash
-            }
-        }
-    }
     pub fn pubkey(&self) -> &Pubkey {
         &self.pubkey
     }

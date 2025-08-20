@@ -17,3 +17,6 @@ crossbeam-channel = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-streamer = { workspace = true }
 solana-version = { workspace = true }
+
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
+jemallocator = { workspace = true }

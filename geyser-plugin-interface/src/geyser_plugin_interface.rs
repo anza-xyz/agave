@@ -1,16 +1,16 @@
-/// The interface for Geyser plugins. A plugin must implement
-/// the GeyserPlugin trait to work with the runtime.
-/// In addition, the dynamic library must export a "C" function _create_plugin which
-/// creates the implementation of the plugin.
+//! The interface for Geyser plugins. A plugin must implement
+//! the GeyserPlugin trait to work with the runtime.
+//! In addition, the dynamic library must export a "C" function _create_plugin which
+//! creates the implementation of the plugin.
 use {
     solana_clock::{Slot, UnixTimestamp},
+    solana_hash::Hash,
     solana_signature::Signature,
-    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
     std::{any::Any, error, io},
     thiserror::Error,
 };
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
 /// Information about an account being updated
@@ -157,6 +157,29 @@ pub struct ReplicaTransactionInfoV2<'a> {
     pub index: usize,
 }
 
+/// Information about a transaction, including index in block
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaTransactionInfoV3<'a> {
+    /// The transaction signature, used for identifying the transaction.
+    pub signature: &'a Signature,
+
+    /// The transaction message hash, used for identifying the transaction.
+    pub message_hash: &'a Hash,
+
+    /// Indicates if the transaction is a simple vote transaction.
+    pub is_vote: bool,
+
+    /// The versioned transaction.
+    pub transaction: &'a VersionedTransaction,
+
+    /// Metadata of the transaction status.
+    pub transaction_status_meta: &'a TransactionStatusMeta,
+
+    /// The transaction's index in the block
+    pub index: usize,
+}
+
 /// A wrapper to future-proof ReplicaTransactionInfo handling.
 /// If there were a change to the structure of ReplicaTransactionInfo,
 /// there would be new enum entry for the newer version, forcing
@@ -165,6 +188,7 @@ pub struct ReplicaTransactionInfoV2<'a> {
 pub enum ReplicaTransactionInfoVersions<'a> {
     V0_0_1(&'a ReplicaTransactionInfo<'a>),
     V0_0_2(&'a ReplicaTransactionInfoV2<'a>),
+    V0_0_3(&'a ReplicaTransactionInfoV3<'a>),
 }
 
 #[derive(Clone, Debug)]

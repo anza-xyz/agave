@@ -110,7 +110,7 @@ impl BigTableUploadService {
             match result {
                 Ok(last_slot_uploaded) => start_slot = last_slot_uploaded.saturating_add(1),
                 Err(err) => {
-                    warn!("bigtable: upload_confirmed_blocks: {}", err);
+                    warn!("bigtable: upload_confirmed_blocks: {err}");
                     std::thread::sleep(std::time::Duration::from_secs(2));
                     if start_slot == 0 {
                         start_slot = blockstore.get_first_available_block().unwrap_or_default();

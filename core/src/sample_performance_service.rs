@@ -67,7 +67,7 @@ impl SamplePerformanceService {
 
                 let highest_slot = snapshot.highest_slot;
                 if let Err(e) = blockstore.write_perf_sample(highest_slot, &perf_sample) {
-                    error!("write_perf_sample failed: slot {:?} {:?}", highest_slot, e);
+                    error!("write_perf_sample failed: slot {highest_slot:?} {e:?}");
                 }
             }
             sleep(SLEEP_INTERVAL);

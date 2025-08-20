@@ -10,7 +10,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_net_utils::bind_to_unspecified,
+    solana_net_utils::sockets::bind_to_localhost_unique,
     solana_pubkey::Pubkey,
     solana_pubsub_client::nonblocking::pubsub_client::PubsubClient,
     solana_rent::Rent,
@@ -83,7 +83,7 @@ fn test_rpc_send_tx() {
         .parse()
         .unwrap();
 
-    info!("blockhash: {:?}", blockhash);
+    info!("blockhash: {blockhash:?}");
     let tx = system_transaction::transfer(
         &alice,
         &bob_pubkey,
@@ -290,7 +290,7 @@ fn test_rpc_subscriptions() {
     let test_validator =
         TestValidator::with_no_fees_udp(alice.pubkey(), None, SocketAddrSpace::Unspecified);
 
-    let transactions_socket = bind_to_unspecified().unwrap();
+    let transactions_socket = bind_to_localhost_unique().unwrap();
     transactions_socket.connect(test_validator.tpu()).unwrap();
 
     let rpc_client = RpcClient::new(test_validator.rpc_url());
@@ -442,7 +442,7 @@ fn test_rpc_subscriptions() {
         sleep(Duration::from_millis(100));
     }
     if mint_balance != expected_mint_balance {
-        error!("mint-check timeout. mint_balance {:?}", mint_balance);
+        error!("mint-check timeout. mint_balance {mint_balance:?}");
     }
 
     // Wait for all signature subscriptions

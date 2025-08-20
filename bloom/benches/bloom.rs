@@ -1,7 +1,7 @@
-#![feature(test)]
+#![allow(clippy::arithmetic_side_effects)]
 
-extern crate test;
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     bv::BitVec,
     fnv::FnvHasher,
     rand::Rng,
@@ -10,51 +10,41 @@ use {
     solana_sha256_hasher::hash,
     solana_signature::Signature,
     std::{collections::HashSet, hash::Hasher},
-    test::Bencher,
 };
 
-#[bench]
-#[ignore]
-fn bench_bits_set(bencher: &mut Bencher) {
+fn bench_bits_set(b: &mut Bencher) {
     let mut bits: BitVec<u8> = BitVec::new_fill(false, 38_340_234_u64);
     let mut hasher = FnvHasher::default();
 
-    bencher.iter(|| {
+    b.iter(|| {
         let idx = hasher.finish() % bits.len();
         bits.set(idx, true);
         hasher.write_u64(idx);
     });
-    // subtract the next bencher result from this one to get a number for raw
-    //  bits.set()
 }
 
-#[bench]
-#[ignore]
-fn bench_bits_set_hasher(bencher: &mut Bencher) {
+fn bench_bits_set_hasher(b: &mut Bencher) {
     let bits: BitVec<u8> = BitVec::new_fill(false, 38_340_234_u64);
     let mut hasher = FnvHasher::default();
 
-    bencher.iter(|| {
+    b.iter(|| {
         let idx = hasher.finish() % bits.len();
         hasher.write_u64(idx);
     });
 }
 
-#[bench]
-#[ignore]
-fn bench_sigs_bloom(bencher: &mut Bencher) {
+fn bench_sigs_bloom(b: &mut Bencher) {
     // 1M TPS * 1s (length of block in sigs) == 1M items in filter
     // 1.0E-8 false positive rate
     // https://hur.st/bloomfilter/?n=1000000&p=1.0E-8&m=&k=
     let blockhash = hash(Hash::default().as_ref());
-    //    info!("blockhash = {:?}", blockhash);
     let keys = (0..27).map(|i| blockhash.hash_at_index(i)).collect();
     let mut sigs: Bloom<Signature> = Bloom::new(38_340_234, keys);
 
     let mut id = blockhash;
     let mut falses = 0;
     let mut iterations = 0;
-    bencher.iter(|| {
+    b.iter(|| {
         id = hash(id.as_ref());
         let mut sigbytes = Vec::from(id.as_ref());
         id = hash(id.as_ref());
@@ -71,18 +61,14 @@ fn bench_sigs_bloom(bencher: &mut Bencher) {
     assert_eq!(falses, 0);
 }
 
-#[bench]
-#[ignore]
-fn bench_sigs_hashmap(bencher: &mut Bencher) {
-    // same structure as above, new
+fn bench_sigs_hashmap(b: &mut Bencher) {
     let blockhash = hash(Hash::default().as_ref());
-    //    info!("blockhash = {:?}", blockhash);
     let mut sigs: HashSet<Signature> = HashSet::new();
 
     let mut id = blockhash;
     let mut falses = 0;
     let mut iterations = 0;
-    bencher.iter(|| {
+    b.iter(|| {
         id = hash(id.as_ref());
         let mut sigbytes = Vec::from(id.as_ref());
         id = hash(id.as_ref());
@@ -99,14 +85,13 @@ fn bench_sigs_hashmap(bencher: &mut Bencher) {
     assert_eq!(falses, 0);
 }
 
-#[bench]
-fn bench_add_hash(bencher: &mut Bencher) {
+fn bench_add_hash(b: &mut Bencher) {
     let mut rng = rand::thread_rng();
     let hash_values: Vec<_> = std::iter::repeat_with(Hash::new_unique)
         .take(1200)
         .collect();
     let mut fail = 0;
-    bencher.iter(|| {
+    b.iter(|| {
         let mut bloom = Bloom::random(1287, 0.1, 7424);
         for hash_value in &hash_values {
             bloom.add(hash_value);
@@ -119,14 +104,13 @@ fn bench_add_hash(bencher: &mut Bencher) {
     assert_eq!(fail, 0);
 }
 
-#[bench]
-fn bench_add_hash_atomic(bencher: &mut Bencher) {
+fn bench_add_hash_atomic(b: &mut Bencher) {
     let mut rng = rand::thread_rng();
     let hash_values: Vec<_> = std::iter::repeat_with(Hash::new_unique)
         .take(1200)
         .collect();
     let mut fail = 0;
-    bencher.iter(|| {
+    b.iter(|| {
         let bloom: ConcurrentBloom<_> = Bloom::random(1287, 0.1, 7424).into();
         // Intentionally not using parallelism here, so that this and above
         // benchmark only compare the bit-vector ops.
@@ -142,3 +126,14 @@ fn bench_add_hash_atomic(bencher: &mut Bencher) {
     });
     assert_eq!(fail, 0);
 }
+
+benchmark_group!(
+    benches,
+    bench_bits_set,
+    bench_bits_set_hasher,
+    bench_sigs_bloom,
+    bench_sigs_hashmap,
+    bench_add_hash,
+    bench_add_hash_atomic
+);
+benchmark_main!(benches);

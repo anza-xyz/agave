@@ -19,14 +19,12 @@ use {
     solana_signer::Signer,
     solana_stake_interface::{
         instruction as stake_instruction,
+        stake_history::StakeHistory,
         state::{StakeActivationStatus, StakeStateV2},
+        sysvar::stake_history,
     },
     solana_stake_program::stake_state,
-    solana_sysvar::{
-        clock,
-        stake_history::{self, StakeHistory},
-        Sysvar,
-    },
+    solana_sysvar::{clock, SysvarSerialize},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     solana_vote_program::vote_state,
@@ -240,7 +238,7 @@ async fn stake_rewards_filter_bench_core(num_stake_accounts: u64) {
         program_test.add_account(stake_pubkey, stake_account);
         to_filter.push(stake_pubkey);
         if i % 100 == 0 {
-            debug!("create stake account {} {}", i, stake_pubkey);
+            debug!("create stake account {i} {stake_pubkey}");
         }
     }
 

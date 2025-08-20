@@ -1,3 +1,4 @@
+#![cfg(feature = "dev-context-only-utils")]
 use {crate::RefCount, solana_pubkey::Pubkey};
 
 #[derive(Debug, Default, Clone)]

@@ -387,7 +387,7 @@ mod tests {
         let (shreds, _) = make_many_slot_entries(0, initial_slots, initial_entries);
         blockstore.insert_shreds(shreds, None, false).unwrap();
         first_insert.stop();
-        info!("{}", first_insert);
+        info!("{first_insert}");
 
         let mut last_purge_slot = 0;
         let mut slot = initial_slots;
@@ -400,7 +400,7 @@ mod tests {
                 let (shreds, _) = make_many_slot_entries(slot + i * batch_size, batch_size, 5);
                 blockstore.insert_shreds(shreds, None, false).unwrap();
                 if i % 100 == 0 {
-                    info!("inserting..{} of {}", i, batches);
+                    info!("inserting..{i} of {batches}");
                 }
             }
             insert_time.stop();
@@ -414,10 +414,7 @@ mod tests {
                 10,
             );
             time.stop();
-            info!(
-                "slot: {} size: {} {} {}",
-                slot, num_slots, insert_time, time
-            );
+            info!("slot: {slot} size: {num_slots} {insert_time} {time}");
             slot += num_slots;
             num_slots *= 2;
         }

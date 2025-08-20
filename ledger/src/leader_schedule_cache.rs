@@ -176,10 +176,7 @@ impl LeaderScheduleCache {
         // Forbid asking for slots in an unconfirmed epoch
         let bank_epoch = self.epoch_schedule.get_epoch_and_slot_index(slot).0;
         if bank_epoch > *self.max_epoch.read().unwrap() {
-            debug!(
-                "Requested leader in slot: {} of unconfirmed epoch: {}",
-                slot, bank_epoch
-            );
+            debug!("Requested leader in slot: {slot} of unconfirmed epoch: {bank_epoch}");
             return None;
         }
         if cache_result.is_some() {
@@ -449,7 +446,7 @@ mod tests {
 
         // Write a shred into slot 2 that chains to slot 1,
         // but slot 1 is empty so should not be skipped
-        let (shreds, _) = make_slot_entries(2, 1, 1, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(2, 1, 1);
         blockstore.insert_shreds(shreds, None, false).unwrap();
         assert_eq!(
             cache
@@ -460,7 +457,7 @@ mod tests {
         );
 
         // Write a shred into slot 1
-        let (shreds, _) = make_slot_entries(1, 0, 1, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(1, 0, 1);
 
         // Check that slot 1 and 2 are skipped
         blockstore.insert_shreds(shreds, None, false).unwrap();

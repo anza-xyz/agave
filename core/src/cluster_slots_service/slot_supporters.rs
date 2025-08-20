@@ -4,6 +4,7 @@ use {
     std::{
         collections::HashMap,
         hash::RandomState,
+        ptr,
         sync::{
             atomic::{AtomicU64, Ordering},
             Arc,
@@ -115,7 +116,10 @@ impl SlotSupporters {
     pub(crate) fn recycle(mut self, total_stake: Stake, index_map: &Arc<IndexMap>) -> Self {
         self.total_stake = total_stake;
         self.total_support.store(0, Ordering::Relaxed);
-        let same_epoch = Arc::as_ptr(index_map) == Arc::as_ptr(&self.pubkey_to_index_map);
+        let same_epoch = ptr::eq(
+            Arc::as_ptr(index_map),
+            Arc::as_ptr(&self.pubkey_to_index_map),
+        );
         if !same_epoch {
             let old_len = self.supporting_stakes.len();
             let new_len = index_map.len();

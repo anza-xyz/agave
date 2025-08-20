@@ -11,8 +11,9 @@ use {
         },
     },
     solana_cli_config::Config,
+    solana_cli_output::display::build_balance_message,
+    solana_commitment_config::CommitmentConfig,
     solana_message::Message,
-    solana_native_token::lamports_to_sol,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::client_error::Error as ClientError,
@@ -21,7 +22,7 @@ use {
     solana_stake_interface::{instruction::LockupArgs, state::Lockup},
     solana_stake_program::stake_state,
     solana_transaction::Transaction,
-    std::{env, error::Error},
+    std::{env, error::Error, str::FromStr},
 };
 
 fn get_balance_at(client: &RpcClient, pubkey: &Pubkey, i: usize) -> Result<u64, ClientError> {
@@ -83,7 +84,7 @@ fn process_new_stake_account(
         &*args.funding_keypair,
         &*args.base_keypair,
     ]);
-    let signature = send_and_confirm_message(client, message, &signers, false)?;
+    let signature = send_and_confirm_message(client, message, &signers, args.no_wait)?;
     Ok(signature)
 }
 
@@ -105,7 +106,7 @@ fn process_authorize_stake_accounts(
         &*args.stake_authority,
         &*args.withdraw_authority,
     ]);
-    send_and_confirm_messages(client, messages, &signers, false)?;
+    send_and_confirm_messages(client, messages, &signers, args.no_wait)?;
     Ok(())
 }
 
@@ -161,7 +162,7 @@ fn process_rebase_stake_accounts(
         &*args.new_base_keypair,
         &*args.stake_authority,
     ]);
-    send_and_confirm_messages(client, messages, &signers, false)?;
+    send_and_confirm_messages(client, messages, &signers, args.no_wait)?;
     Ok(())
 }
 
@@ -194,7 +195,7 @@ fn process_move_stake_accounts(
         &*args.stake_authority,
         &*authorize_args.withdraw_authority,
     ]);
-    send_and_confirm_messages(client, messages, &signers, false)?;
+    send_and_confirm_messages(client, messages, &signers, args.no_wait)?;
     Ok(())
 }
 
@@ -235,7 +236,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let command_args = parse_args(env::args_os());
     let config = Config::load(&command_args.config_file).unwrap_or_default();
     let json_rpc_url = command_args.url.unwrap_or(config.json_rpc_url);
-    let client = RpcClient::new(json_rpc_url);
+    let client = RpcClient::new_with_commitment(
+        json_rpc_url,
+        CommitmentConfig::from_str(
+            command_args
+                .commitment
+                .as_ref()
+                .unwrap_or(&config.commitment),
+        )?,
+    );
 
     match resolve_command(&command_args.command)? {
         Command::New(args) => {
@@ -261,7 +270,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             );
             let balances = get_balances(&client, addresses)?;
             let lamports: u64 = balances.into_iter().map(|(_, bal)| bal).sum();
-            let sol = lamports_to_sol(lamports);
+            let sol = build_balance_message(lamports, false, false);
             println!("{sol} SOL");
         }
         Command::Authorize(args) => {

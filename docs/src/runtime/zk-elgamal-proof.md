@@ -131,3 +131,12 @@ proofs.
     cipehrtext is well-formed
     - Mathematical description and proof of security:
       [[Notes]](https://github.com/anza-xyz/agave/blob/master/docs/src/runtime/zk-docs/ciphertext_validity.pdf)
+
+#### Percentage with Cap proof
+
+- `PercentageWithCap`:
+
+  - The percentage with cap proof certifies that percentage relation useful
+    for fee calcluations
+    - Mathematical description and proof of security:
+      [[Notes]](https://github.com/anza-xyz/agave/blob/master/docs/src/runtime/zk-docs/percentage_with_cap.pdf)

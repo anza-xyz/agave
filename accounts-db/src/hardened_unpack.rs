@@ -1,16 +1,19 @@
 use {
+    crate::file_io::{file_creator, FileCreator},
     bzip2::bufread::BzDecoder,
+    crossbeam_channel::Sender,
     log::*,
     rand::{thread_rng, Rng},
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
     std::{
         collections::HashMap,
         fs::{self, File},
-        io::{BufReader, Read},
+        io::{self, BufReader, Read},
         path::{
             Component::{self, CurDir, Normal},
             Path, PathBuf,
         },
+        sync::Arc,
         time::Instant,
     },
     tar::{
@@ -45,13 +48,14 @@ const MAX_SNAPSHOT_ARCHIVE_UNPACKED_COUNT: u64 = 5_000_000;
 pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10 MiB
 const MAX_GENESIS_ARCHIVE_UNPACKED_COUNT: u64 = 100;
 
+// The buffer should be large enough to saturate write I/O bandwidth, while also accommodating:
+// - Many small files: each file consumes at least one write-capacity-sized chunk (0.5-1 MiB).
+// - Large files: their data may accumulate in backlog buffers while waiting for file open
+//   operations to complete.
+const MAX_UNPACK_WRITE_BUF_SIZE: usize = 512 * 1024 * 1024;
+
 fn checked_total_size_sum(total_size: u64, entry_size: u64, limit_size: u64) -> Result<u64> {
-    trace!(
-        "checked_total_size_sum: {} + {} < {}",
-        total_size,
-        entry_size,
-        limit_size,
-    );
+    trace!("checked_total_size_sum: {total_size} + {entry_size} < {limit_size}");
     let total_size = total_size.saturating_add(entry_size);
     if total_size > limit_size {
         return Err(UnpackError::Archive(format!(
@@ -71,9 +75,11 @@ fn checked_total_count_increment(total_count: u64, limit_count: u64) -> Result<u
     Ok(total_count)
 }
 
-fn check_unpack_result(unpack_result: bool, path: String) -> Result<()> {
-    if !unpack_result {
-        return Err(UnpackError::Archive(format!("failed to unpack: {path:?}")));
+fn check_unpack_result(unpack_result: Result<()>, path: String) -> Result<()> {
+    if let Err(err) = unpack_result {
+        return Err(UnpackError::Archive(format!(
+            "failed to unpack {path:?}: {err}"
+        )));
     }
     Ok(())
 }
@@ -86,25 +92,34 @@ pub enum UnpackPath<'a> {
 }
 
 fn unpack_archive<'a, A, C, D>(
-    archive: &mut Archive<A>,
+    mut archive: Archive<A>,
+    input_archive_size: u64,
     apparent_limit_size: u64,
     actual_limit_size: u64,
     limit_count: u64,
-    mut entry_checker: C, // checks if entry is valid
-    entry_processor: D,   // processes entry after setting permissions
+    mut entry_checker: C,   // checks if entry is valid
+    file_path_processor: D, // processes file paths after writing
 ) -> Result<()>
 where
     A: Read,
     C: FnMut(&[&str], tar::EntryType) -> UnpackPath<'a>,
-    D: Fn(PathBuf),
+    D: FnMut(PathBuf),
 {
     let mut apparent_total_size: u64 = 0;
     let mut actual_total_size: u64 = 0;
     let mut total_count: u64 = 0;
 
     let mut total_entries = 0;
+    let mut open_dirs = Vec::new();
+
+    // Bound the buffer based on provided limit of unpacked data and input archive size
+    // (decompression multiplies content size, but buffering more than origin isn't necessary).
+    let buf_size =
+        (input_archive_size.min(actual_limit_size) as usize).min(MAX_UNPACK_WRITE_BUF_SIZE);
+    let mut files_creator = file_creator(buf_size, file_path_processor)?;
+
     for entry in archive.entries()? {
-        let mut entry = entry?;
+        let entry = entry?;
         let path = entry.path()?;
         let path_str = path.display().to_string();
 
@@ -167,35 +182,52 @@ where
             // account_paths returned by `entry_checker`. We want to unpack into
             // account_path/<account> instead of account_path/accounts/<account> so we strip the
             // accounts/ prefix.
-            sanitize_path(&account, unpack_dir)
+            sanitize_path_and_open_dir(&account, unpack_dir, &mut open_dirs)
         } else {
-            sanitize_path(&path, unpack_dir)
+            sanitize_path_and_open_dir(&path, unpack_dir, &mut open_dirs)
         }?; // ? handles file system errors
-        let Some(entry_path) = entry_path else {
+        let Some((entry_path, open_dir)) = entry_path else {
             continue; // skip it
         };
 
-        let unpack = entry.unpack(&entry_path);
-        check_unpack_result(unpack.map(|_unpack| true)?, path_str)?;
-
-        // Sanitize permissions.
-        let mode = match entry.header().entry_type() {
-            GNUSparse | Regular => 0o644,
-            _ => 0o755,
-        };
-        set_perms(&entry_path, mode)?;
-
-        // Process entry after setting permissions
-        entry_processor(entry_path);
+        let unpack = unpack_entry(&mut files_creator, entry, entry_path, open_dir);
+        check_unpack_result(unpack, path_str)?;
 
         total_entries += 1;
     }
-    info!("unpacked {} entries total", total_entries);
+    files_creator.drain()?;
+
+    info!("unpacked {total_entries} entries total");
+    Ok(())
+}
+
+fn unpack_entry<'a, R: Read>(
+    files_creator: &mut Box<dyn FileCreator + 'a>,
+    mut entry: tar::Entry<'_, R>,
+    dst: PathBuf,
+    dst_open_dir: Arc<File>,
+) -> Result<()> {
+    let mode = match entry.header().entry_type() {
+        GNUSparse | Regular => 0o644,
+        _ => 0o755,
+    };
+    if should_fallback_to_tar_unpack(&entry) {
+        entry.unpack(&dst)?;
+        // Sanitize permissions.
+        set_perms(&dst, mode)?;
+
+        if !entry.header().entry_type().is_dir() {
+            // Process file after setting permissions
+            files_creator.file_complete(dst);
+        }
+        return Ok(());
+    }
+    files_creator.schedule_create_at_dir(dst, mode, dst_open_dir, &mut entry)?;
 
     return Ok(());
 
     #[cfg(unix)]
-    fn set_perms(dst: &Path, mode: u32) -> std::io::Result<()> {
+    fn set_perms(dst: &Path, mode: u32) -> io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
 
         let perm = fs::Permissions::from_mode(mode as _);
@@ -203,25 +235,39 @@ where
     }
 
     #[cfg(windows)]
-    fn set_perms(dst: &Path, _mode: u32) -> std::io::Result<()> {
-        let mut perm = fs::metadata(dst)?.permissions();
-        // This is OK for Windows, but clippy doesn't realize we're doing this
-        // only on Windows.
-        #[allow(clippy::permissions_set_readonly_false)]
-        perm.set_readonly(false);
-        fs::set_permissions(dst, perm)
+    fn set_perms(dst: &Path, _mode: u32) -> io::Result<()> {
+        super::file_io::set_file_readonly(dst, false)
     }
 }
 
+fn should_fallback_to_tar_unpack<R: io::Read>(entry: &tar::Entry<'_, R>) -> bool {
+    // Follows cases that are handled as directory or in special way by tar-rs library,
+    // we want to handle just cases where the library would write plain files with entry's content.
+    matches!(
+        entry.header().entry_type(),
+        tar::EntryType::Directory
+            | tar::EntryType::Link
+            | tar::EntryType::Symlink
+            | tar::EntryType::XGlobalHeader
+            | tar::EntryType::XHeader
+            | tar::EntryType::GNULongName
+            | tar::EntryType::GNULongLink
+    ) || entry.header().as_ustar().is_none() && entry.path_bytes().ends_with(b"/")
+}
+
 // return Err on file system error
-// return Some(path) if path is good
+// return Some((path, open_dir)) if path is good
 // return None if we should skip this file
-fn sanitize_path(entry_path: &Path, dst: &Path) -> Result<Option<PathBuf>> {
+fn sanitize_path_and_open_dir(
+    entry_path: &Path,
+    dst: &Path,
+    open_dirs: &mut Vec<(PathBuf, Arc<File>)>,
+) -> Result<Option<(PathBuf, Arc<File>)>> {
     // We cannot call unpack_in because it errors if we try to use 2 account paths.
     // So, this code is borrowed from unpack_in
     // ref: https://docs.rs/tar/*/tar/struct.Entry.html#method.unpack_in
     let mut file_dst = dst.to_path_buf();
-    const SKIP: Result<Option<PathBuf>> = Ok(None);
+    const SKIP: Result<Option<(PathBuf, Arc<File>)>> = Ok(None);
     {
         let path = entry_path;
         for part in path.components() {
@@ -253,14 +299,22 @@ fn sanitize_path(entry_path: &Path, dst: &Path) -> Result<Option<PathBuf>> {
         return SKIP;
     };
 
-    fs::create_dir_all(parent)?;
+    let open_dst_dir = match open_dirs.binary_search_by(|(key, _)| parent.cmp(key)) {
+        Err(insert_at) => {
+            fs::create_dir_all(parent)?;
 
-    // Here we are different than untar_in. The code for tar::unpack_in internally calling unpack is a little different.
-    // ignore return value here
-    validate_inside_dst(dst, parent)?;
-    let target = parent.join(entry_path.file_name().unwrap());
+            // Here we are different than untar_in. The code for tar::unpack_in internally calling unpack is a little different.
+            // ignore return value here
+            validate_inside_dst(dst, parent)?;
 
-    Ok(Some(target))
+            let opened_dir = Arc::new(File::open(parent)?);
+            open_dirs.insert(insert_at, (parent.to_path_buf(), opened_dir.clone()));
+            opened_dir
+        }
+        Ok(index) => open_dirs[index].1.clone(),
+    };
+
+    Ok(Some((file_dst, open_dst_dir)))
 }
 
 // copied from:
@@ -268,14 +322,10 @@ fn sanitize_path(entry_path: &Path, dst: &Path) -> Result<Option<PathBuf>> {
 fn validate_inside_dst(dst: &Path, file_dst: &Path) -> Result<PathBuf> {
     // Abort if target (canonical) parent is outside of `dst`
     let canon_parent = file_dst.canonicalize().map_err(|err| {
-        UnpackError::Archive(format!(
-            "{} while canonicalizing {}",
-            err,
-            file_dst.display()
-        ))
+        UnpackError::Archive(format!("{err} while canonicalizing {}", file_dst.display()))
     })?;
     let canon_target = dst.canonicalize().map_err(|err| {
-        UnpackError::Archive(format!("{} while canonicalizing {}", err, dst.display()))
+        UnpackError::Archive(format!("{err} while canonicalizing {}", dst.display()))
     })?;
     if !canon_parent.starts_with(&canon_target) {
         return Err(UnpackError::Archive(format!(
@@ -289,32 +339,19 @@ fn validate_inside_dst(dst: &Path, file_dst: &Path) -> Result<PathBuf> {
 /// Map from AppendVec file name to unpacked file system location
 pub type UnpackedAppendVecMap = HashMap<String, PathBuf>;
 
-// select/choose only 'index' out of each # of 'divisions' of total items.
-pub struct ParallelSelector {
-    pub index: usize,
-    pub divisions: usize,
-}
-
-impl ParallelSelector {
-    pub fn select_index(&self, index: usize) -> bool {
-        index % self.divisions == self.index
-    }
-}
-
 /// Unpacks snapshot and collects AppendVec file names & paths
 pub fn unpack_snapshot<A: Read>(
-    archive: &mut Archive<A>,
+    archive: Archive<A>,
+    input_archive_size: u64,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
-    parallel_selector: Option<ParallelSelector>,
 ) -> Result<UnpackedAppendVecMap> {
     let mut unpacked_append_vec_map = UnpackedAppendVecMap::new();
-
     unpack_snapshot_with_processors(
         archive,
+        input_archive_size,
         ledger_dir,
         account_paths,
-        parallel_selector,
         |file, path| {
             unpacked_append_vec_map.insert(file.to_string(), path.join("accounts").join(file));
         },
@@ -323,63 +360,56 @@ pub fn unpack_snapshot<A: Read>(
     .map(|_| unpacked_append_vec_map)
 }
 
-/// Unpacks snapshots and sends entry file paths through the `sender` channel
+/// Unpacks snapshot from (potentially partial) `archive` and
+/// sends entry file paths through the `sender` channel
 pub fn streaming_unpack_snapshot<A: Read>(
-    archive: &mut Archive<A>,
+    archive: Archive<A>,
+    input_archive_size: u64,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
-    parallel_selector: Option<ParallelSelector>,
-    sender: &crossbeam_channel::Sender<PathBuf>,
+    sender: &Sender<PathBuf>,
 ) -> Result<()> {
     unpack_snapshot_with_processors(
         archive,
+        input_archive_size,
         ledger_dir,
         account_paths,
-        parallel_selector,
         |_, _| {},
-        |entry_path_buf| {
-            if entry_path_buf.is_file() {
-                let result = sender.send(entry_path_buf);
-                if let Err(err) = result {
-                    panic!(
-                        "failed to send path '{}' from unpacker to rebuilder: {err}",
-                        err.0.display(),
-                    );
-                }
+        |file_path| {
+            let result = sender.send(file_path);
+            if let Err(err) = result {
+                panic!(
+                    "failed to send path '{}' from unpacker to rebuilder: {err}",
+                    err.0.display(),
+                );
             }
         },
     )
 }
 
 fn unpack_snapshot_with_processors<A, F, G>(
-    archive: &mut Archive<A>,
+    archive: Archive<A>,
+    input_archive_size: u64,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
-    parallel_selector: Option<ParallelSelector>,
     mut accounts_path_processor: F,
-    entry_processor: G,
+    file_path_processor: G,
 ) -> Result<()>
 where
     A: Read,
     F: FnMut(&str, &Path),
-    G: Fn(PathBuf),
+    G: FnMut(PathBuf),
 {
     assert!(!account_paths.is_empty());
-    let mut i = 0;
 
     unpack_archive(
         archive,
+        input_archive_size,
         MAX_SNAPSHOT_ARCHIVE_UNPACKED_APPARENT_SIZE,
         MAX_SNAPSHOT_ARCHIVE_UNPACKED_ACTUAL_SIZE,
         MAX_SNAPSHOT_ARCHIVE_UNPACKED_COUNT,
         |parts, kind| {
             if is_valid_snapshot_archive_entry(parts, kind) {
-                i += 1;
-                if let Some(parallel_selector) = &parallel_selector {
-                    if !parallel_selector.select_index(i - 1) {
-                        return UnpackPath::Ignore;
-                    }
-                };
                 if let ["accounts", file] = parts {
                     // Randomly distribute the accounts files about the available `account_paths`,
                     let path_index = thread_rng().gen_range(0..account_paths.len());
@@ -400,7 +430,7 @@ where
                 UnpackPath::Invalid
             }
         },
-        entry_processor,
+        file_path_processor,
     )
 }
 
@@ -469,8 +499,8 @@ pub fn open_genesis_config(
         Ok(genesis_config) => Ok(genesis_config),
         Err(load_err) => {
             warn!(
-                "Failed to load genesis_config at {ledger_path:?}: {load_err}. \
-                Will attempt to unpack genesis archive and then retry loading."
+                "Failed to load genesis_config at {ledger_path:?}: {load_err}. Will attempt to \
+                 unpack genesis archive and then retry loading."
             );
 
             let genesis_package = ledger_path.join(DEFAULT_GENESIS_ARCHIVE);
@@ -489,15 +519,17 @@ pub fn unpack_genesis_archive(
     destination_dir: &Path,
     max_genesis_archive_unpacked_size: u64,
 ) -> std::result::Result<(), UnpackError> {
-    info!("Extracting {:?}...", archive_filename);
+    info!("Extracting {archive_filename:?}...");
     let extract_start = Instant::now();
 
     fs::create_dir_all(destination_dir)?;
     let tar_bz2 = File::open(archive_filename)?;
+    let archive_size = tar_bz2.metadata()?.len();
     let tar = BzDecoder::new(BufReader::new(tar_bz2));
-    let mut archive = Archive::new(tar);
+    let archive = Archive::new(tar);
     unpack_genesis(
-        &mut archive,
+        archive,
+        archive_size,
         destination_dir,
         max_genesis_archive_unpacked_size,
     )?;
@@ -510,12 +542,14 @@ pub fn unpack_genesis_archive(
 }
 
 fn unpack_genesis<A: Read>(
-    archive: &mut Archive<A>,
+    archive: Archive<A>,
+    input_archive_size: u64,
     unpack_dir: &Path,
     max_genesis_archive_unpacked_size: u64,
 ) -> Result<()> {
     unpack_archive(
         archive,
+        input_archive_size,
         max_genesis_archive_unpacked_size,
         max_genesis_archive_unpacked_size,
         MAX_GENESIS_ARCHIVE_UNPACKED_COUNT,
@@ -529,7 +563,7 @@ fn is_valid_genesis_archive_entry<'a>(
     parts: &[&str],
     kind: tar::EntryType,
 ) -> UnpackPath<'a> {
-    trace!("validating: {:?} {:?}", parts, kind);
+    trace!("validating: {parts:?} {kind:?}");
     #[allow(clippy::match_like_matches_macro)]
     match (parts, kind) {
         ([DEFAULT_GENESIS_FILE], GNUSparse) => UnpackPath::Valid(unpack_dir),
@@ -778,14 +812,14 @@ mod tests {
 
     fn with_finalize_and_unpack<C>(archive: tar::Builder<Vec<u8>>, checker: C) -> Result<()>
     where
-        C: Fn(&mut Archive<BufReader<&[u8]>>, &Path) -> Result<()>,
+        C: Fn(Archive<BufReader<&[u8]>>, &Path) -> Result<()>,
     {
         let data = archive.into_inner().unwrap();
         let reader = BufReader::new(&data[..]);
-        let mut archive: Archive<std::io::BufReader<&[u8]>> = Archive::new(reader);
+        let archive = Archive::new(reader);
         let temp_dir = tempfile::TempDir::new().unwrap();
 
-        checker(&mut archive, temp_dir.path())?;
+        checker(archive, temp_dir.path())?;
         // Check that there is no bad permissions preventing deletion.
         let result = temp_dir.close();
         assert_matches!(result, Ok(()));
@@ -794,13 +828,14 @@ mod tests {
 
     fn finalize_and_unpack_snapshot(archive: tar::Builder<Vec<u8>>) -> Result<()> {
         with_finalize_and_unpack(archive, |a, b| {
-            unpack_snapshot_with_processors(a, b, &[PathBuf::new()], None, |_, _| {}, |_| {})
+            unpack_snapshot_with_processors(a, 256, b, &[PathBuf::new()], |_, _| {}, |_| {})
+                .map(|_| ())
         })
     }
 
     fn finalize_and_unpack_genesis(archive: tar::Builder<Vec<u8>>) -> Result<()> {
         with_finalize_and_unpack(archive, |a, b| {
-            unpack_genesis(a, b, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE)
+            unpack_genesis(a, 256, b, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE)
         })
     }
 
@@ -936,7 +971,7 @@ mod tests {
 
         let mut archive = Builder::new(Vec::new());
         archive.append(&header, data).unwrap();
-        with_finalize_and_unpack(archive, |unpacking_archive, path| {
+        with_finalize_and_unpack(archive, |mut unpacking_archive, path| {
             for entry in unpacking_archive.entries()? {
                 if !entry?.unpack_in(path)? {
                     return Err(UnpackError::Archive("failed!".to_string()));
@@ -1000,8 +1035,11 @@ mod tests {
 
     #[test]
     fn test_archive_unpack_snapshot_bad_unpack() {
-        let result = check_unpack_result(false, "abc".to_string());
-        assert_matches!(result, Err(UnpackError::Archive(ref message)) if message == "failed to unpack: \"abc\"");
+        let result = check_unpack_result(
+            Err(UnpackError::Io(io::ErrorKind::FileTooLarge.into())),
+            "abc".to_string(),
+        );
+        assert_matches!(result, Err(UnpackError::Archive(ref message)) if message == "failed to unpack \"abc\": IO error: file too large");
     }
 
     #[test]
@@ -1047,9 +1085,9 @@ mod tests {
         let result = with_finalize_and_unpack(archive, |ar, tmp| {
             unpack_snapshot_with_processors(
                 ar,
+                256,
                 tmp,
                 &[tmp.join("accounts_dest")],
-                None,
                 |_, _| {},
                 |path| assert_eq!(path, tmp.join("accounts_dest/123.456")),
             )

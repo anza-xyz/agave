@@ -29,6 +29,7 @@ pub const JSON_RPC_SERVER_ERROR_SLOT_NOT_EPOCH_BOUNDARY: i64 = -32018;
 pub const JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE: i64 = -32019;
 
 #[derive(Error, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum RpcCustomError {
     #[error("BlockCleanedUp")]
     BlockCleanedUp {
@@ -92,11 +93,13 @@ pub struct MinContextSlotNotReachedErrorData {
     pub context_slot: Slot,
 }
 
+#[cfg_attr(test, derive(PartialEq))]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EpochRewardsPeriodActiveErrorData {
     pub current_block_height: u64,
     pub rewards_complete_block_height: u64,
+    pub slot: Option<u64>,
 }
 
 impl From<EncodeError> for RpcCustomError {
@@ -237,6 +240,7 @@ impl From<RpcCustomError> for Error {
                 data: Some(serde_json::json!(EpochRewardsPeriodActiveErrorData {
                     current_block_height,
                     rewards_complete_block_height,
+                    slot: Some(slot),
                 })),
             },
             RpcCustomError::SlotNotEpochBoundary { slot } => Self {
@@ -245,7 +249,9 @@ impl From<RpcCustomError> for Error {
                     "Rewards cannot be found because slot {slot} is not the epoch boundary. This \
                      may be due to gap in the queried node's local ledger or long-term storage"
                 ),
-                data: None,
+                data: Some(serde_json::json!({
+                    "slot": slot,
+                })),
             },
             RpcCustomError::LongTermStorageUnreachable => Self {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE),
@@ -253,5 +259,44 @@ impl From<RpcCustomError> for Error {
                 data: None,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        crate::custom_error::EpochRewardsPeriodActiveErrorData, serde_json::Value,
+        test_case::test_case,
+    };
+
+    #[test_case(serde_json::json!({
+            "currentBlockHeight": 123,
+            "rewardsCompleteBlockHeight": 456
+        }); "Pre-3.0 schema")]
+    #[test_case(serde_json::json!({
+            "currentBlockHeight": 123,
+            "rewardsCompleteBlockHeight": 456,
+            "slot": 789
+        }); "3.0+ schema")]
+    fn test_deseriailze_epoch_rewards_period_active_error_data(serialized_data: Value) {
+        let expected_current_block_height = serialized_data
+            .get("currentBlockHeight")
+            .map(|v| v.as_u64().unwrap())
+            .unwrap();
+        let expected_rewards_complete_block_height = serialized_data
+            .get("rewardsCompleteBlockHeight")
+            .map(|v| v.as_u64().unwrap())
+            .unwrap();
+        let expected_slot: Option<u64> = serialized_data.get("slot").map(|v| v.as_u64().unwrap());
+        let actual: EpochRewardsPeriodActiveErrorData =
+            serde_json::from_value(serialized_data).expect("Failed to deserialize test fixture");
+        assert_eq!(
+            actual,
+            EpochRewardsPeriodActiveErrorData {
+                current_block_height: expected_current_block_height,
+                rewards_complete_block_height: expected_rewards_complete_block_height,
+                slot: expected_slot,
+            }
+        );
     }
 }

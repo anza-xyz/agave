@@ -40,7 +40,7 @@ The address of a vote account is never needed to sign any transactions, but is
 just used to look up the account information.
 
 When someone wants to
-[delegate tokens in a stake account](https://solana.com/docs/economics/staking),
+[delegate tokens in a stake account](https://solana.com/staking),
 the delegation command is pointed at the vote account address of the validator
 to whom the token-holder wants to delegate.
 

@@ -6,20 +6,6 @@ use {
     solana_pubkey::Pubkey,
 };
 
-// A helper function to convert spl_memo::v1::id() as spl_sdk::pubkey::Pubkey to
-// solana_pubkey::Pubkey
-#[deprecated(since = "2.3.0", note = "Use `spl_memo::v1::id()` instead")]
-pub fn spl_memo_id_v1() -> Pubkey {
-    spl_memo::v1::id()
-}
-
-// A helper function to convert spl_memo::id() as spl_sdk::pubkey::Pubkey to
-// solana_pubkey::Pubkey
-#[deprecated(since = "2.3.0", note = "Use `spl_memo::id()` instead")]
-pub fn spl_memo_id_v3() -> Pubkey {
-    spl_memo::id()
-}
-
 pub fn extract_and_fmt_memos<T: ExtractMemos>(message: &T) -> Option<String> {
     let memos = message.extract_memos();
     if memos.is_empty() {
@@ -83,7 +69,9 @@ fn extract_memos_inner(
                 KeyType::MemoProgram => Some(&ix.data),
                 KeyType::OtherProgram => None,
                 KeyType::Unknown(program_id) => {
-                    if **program_id == spl_memo::v1::id() || **program_id == spl_memo::id() {
+                    if **program_id == spl_memo_interface::v1::id()
+                        || **program_id == spl_memo_interface::v3::id()
+                    {
                         account_keys[index] = KeyType::MemoProgram;
                         Some(&ix.data)
                     } else {
@@ -130,9 +118,9 @@ mod test {
         ];
         let static_keys = vec![
             fee_payer,
-            spl_memo::v1::id(),
+            spl_memo_interface::v1::id(),
             another_program_id,
-            spl_memo::id(),
+            spl_memo_interface::v3::id(),
         ];
         let account_keys = AccountKeys::new(&static_keys, None);
 

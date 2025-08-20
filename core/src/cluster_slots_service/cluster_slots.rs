@@ -247,7 +247,7 @@ impl ClusterSlots {
         let epoch_metadata = self.epoch_metadata.read().unwrap();
         //startup init, this is very slow but only ever happens once
         if cluster_slots.is_empty() {
-            info!("Init cluster_slots at range {:?}", slot_range);
+            info!("Init cluster_slots at range {slot_range:?}");
             for slot in slot_range.clone() {
                 // Epoch should be defined for all slots in the window
                 let epoch = self
@@ -293,7 +293,10 @@ impl ClusterSlots {
                 .get_epoch_for_slot(slot)
                 .expect("Epoch should be defined for all slots in the window");
             let Some(stake_info) = epoch_metadata.get(&epoch) else {
-                warn!("Epoch slots can not reuse slot entry for slot {slot} since stakes for epoch {epoch} are not available");
+                warn!(
+                    "Epoch slots can not reuse slot entry for slot {slot} since stakes for epoch \
+                     {epoch} are not available"
+                );
                 cluster_slots.push_back(RowContent {
                     slot,
                     supporters: Arc::new(SlotSupporters::new_blank()),
@@ -515,8 +518,7 @@ mod tests {
             assert_eq!(
                 rg.len(),
                 CLUSTER_SLOTS_TRIM_SIZE,
-                "ring should have exactly {} elements",
-                CLUSTER_SLOTS_TRIM_SIZE
+                "ring should have exactly {CLUSTER_SLOTS_TRIM_SIZE} elements"
             );
             assert_eq!(rg.front().unwrap().slot, 1, "first slot should be root + 1");
             assert_eq!(

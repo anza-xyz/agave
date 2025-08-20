@@ -601,11 +601,6 @@ impl RpcClient {
         self.sender.url()
     }
 
-    #[deprecated(since = "2.0.2", note = "RpcClient::node_version is no longer used")]
-    pub async fn set_node_version(&self, _version: semver::Version) -> Result<(), ()> {
-        Ok(())
-    }
-
     /// Get the configured default [commitment level][cl].
     ///
     /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
@@ -719,9 +714,8 @@ impl RpcClient {
         }
 
         Err(RpcError::ForUser(
-            "unable to confirm transaction. \
-             This can happen in situations such as transaction expiration \
-             and insufficient fee-payer funds"
+            "unable to confirm transaction. This can happen in situations such as transaction \
+             expiration and insufficient fee-payer funds"
                 .to_string(),
         )
         .into())
@@ -989,7 +983,7 @@ impl RpcClient {
                     data,
                 }) = err.kind()
                 {
-                    debug!("{} {}", code, message);
+                    debug!("{code} {message}");
                     if let RpcResponseErrorData::SendTransactionPreflightFailure(
                         RpcSimulateTransactionResult {
                             logs: Some(logs), ..
@@ -1204,9 +1198,8 @@ impl RpcClient {
             }
         } else {
             return Err(RpcError::ForUser(
-                "unable to confirm transaction. \
-                                      This can happen in situations such as transaction expiration \
-                                      and insufficient fee-payer funds"
+                "unable to confirm transaction. This can happen in situations such as transaction \
+                 expiration and insufficient fee-payer funds"
                     .to_string(),
             )
             .into());
@@ -1237,11 +1230,12 @@ impl RpcClient {
                 .await
                 .unwrap_or(confirmations);
             if now.elapsed().as_secs() >= MAX_HASH_AGE_IN_SECONDS as u64 {
-                return Err(
-                    RpcError::ForUser("transaction not finalized. \
-                                      This can happen when a transaction lands in an abandoned fork. \
-                                      Please retry.".to_string()).into(),
-                );
+                return Err(RpcError::ForUser(
+                    "transaction not finalized. This can happen when a transaction lands in an \
+                     abandoned fork. Please retry."
+                        .to_string(),
+                )
+                .into());
             }
         }
     }
@@ -2316,8 +2310,7 @@ impl RpcClient {
             }
 
             info!(
-                "Waiting for stake to drop below {} current: {:.1}",
-                max_stake_percent, current_percent
+                "Waiting for stake to drop below {max_stake_percent} current: {current_percent:.1}"
             );
             sleep(Duration::from_secs(5)).await;
         }
@@ -2945,7 +2938,7 @@ impl RpcClient {
                 }
                 let result = serde_json::from_value(result_json)
                     .map_err(|err| ClientError::new_with_request(err.into(), request))?;
-                trace!("Response block timestamp {:?} {:?}", slot, result);
+                trace!("Response block timestamp {slot:?} {result:?}");
                 Ok(result)
             })
             .map_err(|err| err.into_with_request(request))?
@@ -3604,7 +3597,7 @@ impl RpcClient {
                     context,
                     value: rpc_account,
                 } = serde_json::from_value::<Response<Option<UiAccount>>>(result_json)?;
-                trace!("Response account {:?} {:?}", pubkey, rpc_account);
+                trace!("Response account {pubkey:?} {rpc_account:?}");
                 let account = rpc_account.and_then(|rpc_account| rpc_account.decode());
 
                 Ok(Response {
@@ -3891,11 +3884,7 @@ impl RpcClient {
 
         let minimum_balance: u64 = serde_json::from_value(minimum_balance_json)
             .map_err(|err| ClientError::new_with_request(err.into(), request))?;
-        trace!(
-            "Response minimum balance {:?} {:?}",
-            data_len,
-            minimum_balance
-        );
+        trace!("Response minimum balance {data_len:?} {minimum_balance:?}");
         Ok(minimum_balance)
     }
 
@@ -4227,7 +4216,7 @@ impl RpcClient {
                     context,
                     value: rpc_account,
                 } = serde_json::from_value::<Response<Option<UiAccount>>>(result_json)?;
-                trace!("Response account {:?} {:?}", pubkey, rpc_account);
+                trace!("Response account {pubkey:?} {rpc_account:?}");
                 let response = {
                     if let Some(rpc_account) = rpc_account {
                         if let UiAccountData::Json(account_data) = rpc_account.data {
@@ -4450,8 +4439,7 @@ impl RpcClient {
         })
         .map_err(|_| {
             RpcError::ForUser(
-                "airdrop request failed. \
-                    This can happen when the rate limit is reached."
+                "airdrop request failed. This can happen when the rate limit is reached."
                     .to_string(),
             )
             .into()
@@ -4514,10 +4502,7 @@ impl RpcClient {
                 return balance_result;
             }
             trace!(
-                "wait_for_balance_with_commitment [{}] {:?} {:?}",
-                run,
-                balance_result,
-                expected_balance
+                "wait_for_balance_with_commitment [{run}] {balance_result:?} {expected_balance:?}"
             );
             if let (Some(expected_balance), Ok(balance_result)) = (expected_balance, balance_result)
             {
@@ -4591,7 +4576,7 @@ impl RpcClient {
                     }
                 }
                 Err(err) => {
-                    debug!("check_confirmations request failed: {:?}", err);
+                    debug!("check_confirmations request failed: {err:?}");
                 }
             };
             if now.elapsed().as_secs() > 20 {
@@ -4707,7 +4692,7 @@ impl RpcClient {
                     return Ok(new_blockhash);
                 }
             }
-            debug!("Got same blockhash ({:?}), will retry...", blockhash);
+            debug!("Got same blockhash ({blockhash:?}), will retry...");
 
             // Retry ~twice during a slot
             sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT / 2)).await;

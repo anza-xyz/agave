@@ -45,7 +45,7 @@ impl GossipService {
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
         bank_forks: Option<Arc<RwLock<BankForks>>>,
-        gossip_socket: UdpSocket,
+        gossip_sockets: Arc<[UdpSocket]>,
         gossip_validators: Option<HashSet<Pubkey>>,
         should_check_duplicate_instance: bool,
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
@@ -53,17 +53,18 @@ impl GossipService {
     ) -> Self {
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
-        let gossip_socket = Arc::new(gossip_socket);
         trace!(
-            "GossipService: id: {}, listening on: {:?}",
+            "GossipService: id: {}, listening on primary interface: {:?}, all available interfaces: {:?}",
             &cluster_info.id(),
-            gossip_socket.local_addr().unwrap()
+            gossip_sockets[0].local_addr().unwrap(),
+            gossip_sockets,
         );
         let socket_addr_space = *cluster_info.socket_addr_space();
         let gossip_receiver_stats = Arc::new(StreamerReceiveStats::new("gossip_receiver"));
-        let t_receiver = streamer::receiver(
+        let t_receiver = streamer::receiver_atomic(
             "solRcvrGossip".to_string(),
-            gossip_socket.clone(),
+            gossip_sockets.clone(),
+            cluster_info.bind_ip_addrs(),
             exit.clone(),
             request_sender,
             Recycler::default(),
@@ -96,9 +97,10 @@ impl GossipService {
             gossip_validators,
             exit.clone(),
         );
-        let t_responder = streamer::responder(
+        let t_responder = streamer::responder_atomic(
             "Gossip",
-            gossip_socket,
+            gossip_sockets.clone(),
+            cluster_info.bind_ip_addrs(),
             response_receiver,
             socket_addr_space,
             stats_reporter_sender,
@@ -200,10 +202,10 @@ pub fn discover(
     );
 
     let id = spy_ref.id();
-    info!("Entrypoint: {:?}", entrypoint);
-    info!("Node Id: {:?}", id);
+    info!("Entrypoint: {entrypoint:?}");
+    info!("Node Id: {id:?}");
     if let Some(my_gossip_addr) = my_gossip_addr {
-        info!("Gossip Address: {:?}", my_gossip_addr);
+        info!("Gossip Address: {my_gossip_addr:?}");
     }
 
     let _ip_echo_server = ip_echo.map(|tcp_listener| {
@@ -304,7 +306,7 @@ fn spy(
             .into_iter()
             .map(|x| x.0)
             .collect::<Vec<_>>();
-        tvu_peers = spy_ref.tvu_peers(|q| q.clone());
+        tvu_peers = spy_ref.tvu_peers(ContactInfo::clone);
 
         let found_nodes_by_pubkey = if let Some(pubkeys) = find_nodes_by_pubkey {
             pubkeys
@@ -371,11 +373,12 @@ pub fn make_gossip_node(
     if let Some(entrypoint) = entrypoint {
         cluster_info.set_entrypoint(ContactInfo::new_gossip_entry_point(entrypoint));
     }
+    let gossip_sockets = Arc::new([gossip_socket]);
     let cluster_info = Arc::new(cluster_info);
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        gossip_socket,
+        gossip_sockets,
         None,
         should_check_duplicate_instance,
         None,
@@ -388,10 +391,7 @@ pub fn make_gossip_node(
 mod tests {
     use {
         super::*,
-        crate::{
-            cluster_info::{ClusterInfo, Node},
-            contact_info::ContactInfo,
-        },
+        crate::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
         std::sync::{atomic::AtomicBool, Arc},
     };
 

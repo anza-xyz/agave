@@ -1,7 +1,11 @@
 //! File i/o helper functions.
-#[cfg(unix)]
-use std::os::unix::prelude::FileExt;
-use std::{fs::File, ops::Range};
+use std::{
+    fs::{File, OpenOptions},
+    io::{self, BufWriter, Write},
+    ops::Range,
+    path::PathBuf,
+    sync::Arc,
+};
 
 /// `buffer` contains `valid_bytes` of data at its end.
 /// Move those valid bytes to the beginning of `buffer`, then read from `offset` to fill the rest of `buffer`.
@@ -32,6 +36,19 @@ pub fn read_more_buffer(
 }
 
 #[cfg(unix)]
+fn arch_read_at(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    use std::os::unix::prelude::FileExt;
+    file.read_at(buffer, offset)
+}
+
+#[cfg(windows)]
+fn arch_read_at(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    // Note: as opposed to unix `read_at` this call will update the internal file offset,
+    // so all callers should consistently use the file only through this module
+    file.seek_read(buffer, offset)
+}
+
 /// Read, starting at `start_offset`, until `buffer` is full or we read past `valid_file_len`/eof.
 /// `valid_file_len` is # of valid bytes in the file. This may be <= file length.
 /// return # bytes read
@@ -49,7 +66,7 @@ pub fn read_into_buffer(
     }
 
     while buffer_offset < buffer.len() {
-        match file.read_at(&mut buffer[buffer_offset..], offset as u64) {
+        match arch_read_at(file, &mut buffer[buffer_offset..], offset as u64) {
             Err(err) => {
                 if err.kind() == std::io::ErrorKind::Interrupted {
                     continue;
@@ -72,21 +89,106 @@ pub fn read_into_buffer(
     Ok(total_bytes_read)
 }
 
-#[cfg(not(unix))]
-/// this cannot be supported if we're not on unix-os
-pub fn read_into_buffer(
-    _file: &File,
-    _valid_file_len: usize,
-    _start_offset: usize,
-    _buffer: &mut [u8],
-) -> std::io::Result<usize> {
-    panic!("unimplemented");
+/// An asynchronous queue for file creation.
+pub trait FileCreator {
+    /// Schedule creating a file at `path` with `mode` permissions and bytes read from `contents`.
+    ///
+    /// `parent_dir_handle` is assumed to be a parent directory of `path` such that file may be
+    /// created using optimized kernel API to create `path.file_name()` inside `parent_dir_handle`.
+    fn schedule_create_at_dir(
+        &mut self,
+        path: PathBuf,
+        mode: u32,
+        parent_dir_handle: Arc<File>,
+        contents: &mut dyn io::Read,
+    ) -> io::Result<()>;
+
+    /// Invoke implementation specific logic to handle file creation completion.
+    fn file_complete(&mut self, path: PathBuf);
+
+    /// Waits for all operations to be completed
+    fn drain(&mut self) -> io::Result<()>;
 }
 
-#[cfg(all(unix, test))]
-mod tests {
+pub fn file_creator<'a>(
+    buf_size: usize,
+    file_complete: impl FnMut(PathBuf) + 'a,
+) -> io::Result<Box<dyn FileCreator + 'a>> {
+    #[cfg(target_os = "linux")]
+    if agave_io_uring::io_uring_supported() {
+        use crate::io_uring::file_creator::{IoUringFileCreator, DEFAULT_WRITE_SIZE};
 
-    use {super::*, std::io::Write, tempfile::tempfile};
+        let buf_size = buf_size.max(DEFAULT_WRITE_SIZE);
+        let io_uring_creator = IoUringFileCreator::with_buffer_capacity(buf_size, file_complete)?;
+        return Ok(Box::new(io_uring_creator));
+    }
+    Ok(Box::new(SyncIoFileCreator::new(buf_size, file_complete)))
+}
+
+pub struct SyncIoFileCreator<'a> {
+    file_complete: Box<dyn FnMut(PathBuf) + 'a>,
+}
+
+impl<'a> SyncIoFileCreator<'a> {
+    fn new(_buf_size: usize, file_complete: impl FnMut(PathBuf) + 'a) -> Self {
+        Self {
+            file_complete: Box::new(file_complete),
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub(super) fn set_file_readonly(path: &std::path::Path, readonly: bool) -> io::Result<()> {
+    let mut perm = std::fs::metadata(path)?.permissions();
+    perm.set_readonly(readonly);
+    std::fs::set_permissions(path, perm)
+}
+
+impl FileCreator for SyncIoFileCreator<'_> {
+    fn schedule_create_at_dir(
+        &mut self,
+        path: PathBuf,
+        mode: u32,
+        _parent_dir_handle: Arc<File>,
+        contents: &mut dyn io::Read,
+    ) -> io::Result<()> {
+        // Open for writing (also allows overwrite) and apply `mode`
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(true).write(true);
+
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
+
+        let mut file_buf = BufWriter::new(options.open(&path)?);
+        io::copy(contents, &mut file_buf)?;
+        file_buf.flush()?;
+
+        #[cfg(not(unix))]
+        set_file_readonly(&path, mode & 0o200 == 0)?;
+
+        self.file_complete(path);
+        Ok(())
+    }
+
+    fn file_complete(&mut self, path: PathBuf) {
+        (self.file_complete)(path)
+    }
+
+    fn drain(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        std::{
+            fs,
+            io::{Cursor, Write},
+        },
+        tempfile::tempfile,
+    };
 
     #[test]
     fn test_read_into_buffer() {
@@ -192,5 +294,69 @@ mod tests {
             buffer[valid_bytes_len..valid_bytes.end],
             bytes[start_offset..file_size]
         );
+    }
+
+    fn read_file_to_string(path: &PathBuf) -> String {
+        String::from_utf8(fs::read(path).expect("Failed to read file"))
+            .expect("Failed to decode file contents")
+    }
+
+    #[test]
+    fn test_create_writes_contents() -> io::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let file_path = temp_dir.path().join("test.txt");
+        let contents = "Hello, world!";
+
+        // Shared state to capture callback invocations
+        let mut callback_invoked_path = None;
+
+        // Instantiate FileCreator
+        let mut creator = file_creator(2 << 20, |path| {
+            callback_invoked_path.replace(path);
+        })?;
+
+        let dir = Arc::new(File::open(temp_dir.path())?);
+        creator.schedule_create_at_dir(
+            file_path.clone(),
+            0o644,
+            dir,
+            &mut Cursor::new(contents),
+        )?;
+        creator.drain()?;
+        drop(creator);
+
+        assert_eq!(read_file_to_string(&file_path), contents);
+        assert_eq!(callback_invoked_path, Some(file_path));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_file_creations() -> io::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let mut callback_counter = 0;
+
+        let mut creator = file_creator(2 << 20, |path: PathBuf| {
+            let contents = read_file_to_string(&path);
+            assert!(contents.starts_with("File "));
+            callback_counter += 1;
+        })?;
+
+        let dir = Arc::new(File::open(temp_dir.path())?);
+        for i in 0..5 {
+            let file_path = temp_dir.path().join(format!("file_{i}.txt"));
+            let data = format!("File {i}");
+            creator.schedule_create_at_dir(
+                file_path,
+                0o600,
+                dir.clone(),
+                &mut Cursor::new(data),
+            )?;
+        }
+        creator.drain()?;
+        drop(creator);
+
+        assert_eq!(callback_counter, 5);
+        Ok(())
     }
 }

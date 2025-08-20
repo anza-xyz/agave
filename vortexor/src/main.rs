@@ -5,7 +5,7 @@ use {
     solana_core::banking_trace::BankingTracer,
     solana_keypair::read_keypair_file,
     solana_logger::redirect_stderr_to_file,
-    solana_net_utils::{bind_in_range_with_config, SocketConfig},
+    solana_net_utils::sockets::{bind_in_range_with_config, SocketConfiguration as SocketConfig},
     solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_signer::Signer,
     solana_streamer::streamer::StakedNodes,
@@ -100,7 +100,7 @@ pub fn main() {
     )
     .unwrap();
 
-    let config = SocketConfig::default().reuseport(false);
+    let config = SocketConfig::default();
 
     let sender_socket =
         bind_in_range_with_config(*bind_address, dynamic_port_range, config).unwrap();
@@ -124,8 +124,11 @@ pub fn main() {
         .zip(websocket_servers)
         .collect::<Vec<_>>();
 
-    info!("Creating the PacketBatchSender: at address: {:?} for the following initial destinations: {destinations:?}",
-        sender_socket.1.local_addr());
+    info!(
+        "Creating the PacketBatchSender: at address: {:?} for the following initial destinations: \
+         {destinations:?}",
+        sender_socket.1.local_addr()
+    );
 
     let destinations = Arc::new(RwLock::new(destinations));
     let packet_sender = PacketBatchSender::new(
@@ -178,11 +181,10 @@ pub fn main() {
 
     for destination in destinations.read().unwrap().iter() {
         info!(
-            "To pair the validator with receiver address {destination} with this \
-             vortexor, add the following arguments in the validator's start command: \
-              --tpu-vortexor-receiver-address {destination} \
-              --public-tpu-address {tpu_public_address} \
-              --public-tpu-forwards-address {tpu_fwd_public_address}",
+            "To pair the validator with receiver address {destination} with this vortexor, add \
+             the following arguments in the validator's start command: \
+             --tpu-vortexor-receiver-address {destination} --public-tpu-address \
+             {tpu_public_address} --public-tpu-forwards-address {tpu_fwd_public_address}",
         );
     }
 

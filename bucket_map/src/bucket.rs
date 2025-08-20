@@ -1,6 +1,7 @@
+#[cfg(feature = "dev-context-only-utils")]
+use crate::bucket_item::BucketItem;
 use {
     crate::{
-        bucket_item::BucketItem,
         bucket_map::BucketMapError,
         bucket_stats::BucketMapStats,
         bucket_storage::{
@@ -22,7 +23,6 @@ use {
         fs,
         hash::{Hash, Hasher},
         num::NonZeroU64,
-        ops::RangeBounds,
         path::PathBuf,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -191,10 +191,8 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
         rv
     }
 
-    pub fn items_in_range<R>(&self, range: &Option<&R>) -> Vec<BucketItem<T>>
-    where
-        R: RangeBounds<Pubkey>,
-    {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn items(&self) -> Vec<BucketItem<T>> {
         let mut result = Vec::with_capacity(self.index.count.load(Ordering::Relaxed) as usize);
         for i in 0..self.index.capacity() {
             let ii = i % self.index.capacity();
@@ -203,14 +201,12 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
             }
             let ix = IndexEntryPlaceInBucket::new(ii);
             let key = ix.key(&self.index);
-            if range.map(|r| r.contains(key)).unwrap_or(true) {
-                let (v, ref_count) = ix.read_value(&self.index, &self.data);
-                result.push(BucketItem {
-                    pubkey: *key,
-                    ref_count,
-                    slot_list: v.to_vec(),
-                });
-            }
+            let (v, ref_count) = ix.read_value(&self.index, &self.data);
+            result.push(BucketItem {
+                pubkey: *key,
+                ref_count,
+                slot_list: v.to_vec(),
+            });
         }
         result
     }

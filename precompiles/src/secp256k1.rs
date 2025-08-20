@@ -3,7 +3,7 @@ use {
     digest::Digest,
     solana_precompile_error::PrecompileError,
     solana_secp256k1_program::{
-        construct_eth_pubkey, SecpSignatureOffsets, HASHED_PUBKEY_SERIALIZED_SIZE,
+        eth_address_from_pubkey, SecpSignatureOffsets, HASHED_PUBKEY_SERIALIZED_SIZE,
         SIGNATURE_OFFSETS_SERIALIZED_SIZE, SIGNATURE_SERIALIZED_SIZE,
     },
 };
@@ -97,7 +97,7 @@ pub fn verify(
             &recovery_id,
         )
         .map_err(|_| PrecompileError::InvalidSignature)?;
-        let eth_address = construct_eth_pubkey(&pubkey);
+        let eth_address = eth_address_from_pubkey(&pubkey.serialize()[1..].try_into().unwrap());
 
         if eth_address_slice != eth_address {
             return Err(PrecompileError::InvalidSignature);
@@ -133,7 +133,9 @@ pub mod tests {
         crate::test_verify_with_alignment,
         rand0_7::{thread_rng, Rng},
         solana_keccak_hasher as keccak,
-        solana_secp256k1_program::{new_secp256k1_instruction, DATA_START},
+        solana_secp256k1_program::{
+            new_secp256k1_instruction_with_signature, sign_message, DATA_START,
+        },
     };
 
     fn test_case(
@@ -306,7 +308,17 @@ pub mod tests {
 
         let secp_privkey = libsecp256k1::SecretKey::random(&mut thread_rng());
         let message_arr = b"hello";
-        let mut instruction = new_secp256k1_instruction(&secp_privkey, message_arr);
+        let secp_pubkey = libsecp256k1::PublicKey::from_secret_key(&secp_privkey);
+        let eth_address =
+            eth_address_from_pubkey(&secp_pubkey.serialize()[1..].try_into().unwrap());
+        let (signature, recovery_id) =
+            sign_message(&secp_privkey.serialize(), message_arr).unwrap();
+        let mut instruction = new_secp256k1_instruction_with_signature(
+            message_arr,
+            &signature,
+            recovery_id,
+            &eth_address,
+        );
         let feature_set = FeatureSet::all_enabled();
         assert!(test_verify_with_alignment(
             verify,
@@ -334,7 +346,7 @@ pub mod tests {
 
         let secret_key = libsecp256k1::SecretKey::random(&mut thread_rng());
         let public_key = libsecp256k1::PublicKey::from_secret_key(&secret_key);
-        let eth_address = construct_eth_pubkey(&public_key);
+        let eth_address = eth_address_from_pubkey(&public_key.serialize()[1..].try_into().unwrap());
 
         let message = b"hello";
         let message_hash = {
@@ -343,7 +355,7 @@ pub mod tests {
             hasher.result()
         };
 
-        let secp_message = libsecp256k1::Message::parse(&message_hash.0);
+        let secp_message = libsecp256k1::Message::parse(message_hash.as_bytes());
         let (signature, recovery_id) = libsecp256k1::sign(&secp_message, &secret_key);
 
         // Flip the S value in the signature to make a different but valid signature.

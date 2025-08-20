@@ -86,7 +86,7 @@ impl AccessToken {
         credentials: &Credentials,
         scope: &Scope,
     ) -> Result<(Token, Instant), String> {
-        info!("Requesting token for {:?} scope", scope);
+        info!("Requesting token for {scope:?} scope");
         let claims = JwtClaims::new(
             credentials.iss(),
             scope,
@@ -136,7 +136,7 @@ impl AccessToken {
                         let mut token_w = this.token.write().unwrap();
                         *token_w = new_token;
                     }
-                    Err(err) => error!("Failed to fetch new token: {}", err),
+                    Err(err) => error!("Failed to fetch new token: {err}"),
                 },
                 Err(_timeout) => {
                     warn!("Token refresh timeout")

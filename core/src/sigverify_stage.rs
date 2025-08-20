@@ -415,7 +415,7 @@ impl SigVerifyStage {
                             SigVerifyServiceError::Send(_) => {
                                 break;
                             }
-                            _ => error!("{:?}", e),
+                            _ => error!("{e:?}"),
                         }
                     }
                     if last_print.elapsed().as_secs() > 2 {
@@ -526,7 +526,7 @@ mod tests {
         }
         let mut packet_s = Some(packet_s);
         let mut valid_received = 0;
-        trace!("sent: {}", sent_len);
+        trace!("sent: {sent_len}");
         loop {
             if let Ok(verifieds) = verified_r.recv() {
                 valid_received += verifieds
@@ -544,7 +544,7 @@ mod tests {
                 packet_s.take();
             }
         }
-        trace!("received: {}", valid_received);
+        trace!("received: {valid_received}");
 
         if use_same_tx {
             assert_eq!(valid_received, 1);

@@ -1,5 +1,6 @@
 use {
     crate::{args::*, canonicalize_ledger_path, ledger_utils::*},
+    agave_syscalls::create_program_runtime_environment_v1,
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
     serde_derive::{Deserialize, Serialize},
@@ -7,9 +8,7 @@ use {
     solana_account::{
         create_account_shared_data_for_test, state_traits::StateMut, AccountSharedData,
     },
-    solana_bpf_loader_program::{
-        create_vm, load_program_from_bytes, syscalls::create_program_runtime_environment_v1,
-    },
+    solana_bpf_loader_program::{create_vm, load_program_from_bytes},
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
@@ -409,13 +408,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 pubkey,
                 AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
             ));
-            instruction_accounts.push(InstructionAccount {
-                index_in_transaction: 0,
-                index_in_caller: 0,
-                index_in_callee: 0,
-                is_signer: false,
-                is_writable: true,
-            });
+            instruction_accounts.push(InstructionAccount::new(0, false, true));
             vec![]
         }
         Err(_) => {
@@ -447,7 +440,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                                 programdata_address,
                             }) = account.state()
                             {
-                                debug!("Program data address {}", programdata_address);
+                                debug!("Program data address {programdata_address}");
                                 if bank
                                     .get_account_with_fixed_root(&programdata_address)
                                     .is_some()
@@ -486,13 +479,11 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                         transaction_accounts.push((pubkey, account));
                         idx
                     };
-                    InstructionAccount {
-                        index_in_transaction: txn_acct_index as IndexOfAccount,
-                        index_in_caller: txn_acct_index as IndexOfAccount,
-                        index_in_callee: txn_acct_index as IndexOfAccount,
-                        is_signer: account_info.is_signer.unwrap_or(false),
-                        is_writable: account_info.is_writable.unwrap_or(false),
-                    }
+                    InstructionAccount::new(
+                        txn_acct_index as IndexOfAccount,
+                        account_info.is_signer.unwrap_or(false),
+                        account_info.is_writable.unwrap_or(false),
+                    )
                 })
                 .collect();
             input.instruction_data
@@ -523,28 +514,27 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             bank.load_program(&key, false, bank.epoch())
                 .expect("Couldn't find program account"),
         );
-        debug!("Loaded program {}", key);
+        debug!("Loaded program {key}");
     }
     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
     invoke_context
         .transaction_context
-        .get_next_instruction_context()
-        .unwrap()
-        .configure(
-            &[program_index, program_index.saturating_add(1)],
-            &instruction_accounts,
+        .configure_next_instruction_for_tests(
+            program_index.saturating_add(1),
+            instruction_accounts,
             &instruction_data,
-        );
+        )
+        .unwrap();
     invoke_context.push().unwrap();
     let (_parameter_bytes, regions, account_lengths) = serialize_parameters(
-        invoke_context.transaction_context,
-        invoke_context
+        &invoke_context
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        true, // copy_account_data
-        true, // for mask_out_rent_epoch_in_vm_serialization
+        false, // stricter_abi_and_runtime_constraints
+        false, // account_data_direct_mapping
+        true,  // for mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 

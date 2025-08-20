@@ -16,6 +16,10 @@ use {
 };
 mod utils;
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 /// Sizes of accounts.
 ///
 /// - No data.
@@ -160,7 +164,7 @@ fn bench_read_only_accounts_cache_eviction(
     max_data_size_hi: usize,
 ) {
     // Prepare initial accounts, two times the high limit of the cache, to make
-    // sure that the backgroud threads sometimes try to store something which
+    // sure that the background threads sometimes try to store something which
     // is not in the cache.
     let accounts: Vec<_> = utils::accounts_with_size_limit(
         255,

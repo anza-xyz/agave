@@ -1,17 +1,21 @@
-# The SVM team is in the process of migrating these subdirectories to a new
-# repo and would like to avoid introducing dependencies in the meantime.
+# Please keep this file sorted
+/bloom/ @anza-xyz/networking
 /compute-budget-instruction/ @anza-xyz/fees
+/core/src/repair/ @anza-xyz/networking
 /fee/ @anza-xyz/fees
+/gossip/ @anza-xyz/networking
 /log-collector/ @anza-xyz/svm
+/net-utils/ @anza-xyz/networking
 /program-runtime/ @anza-xyz/svm
 /programs/bpf_loader/ @anza-xyz/svm
 /programs/loader-v4/ @anza-xyz/svm
 /runtime-transaction/ @anza-xyz/tx-metadata
+/svm-callback/ @anza-xyz/svm
 /svm-conformance/ @anza-xyz/svm
-/svm-rent-collector/ @anza-xyz/svm
 /svm-transaction/ @anza-xyz/svm
 /svm/ @anza-xyz/svm
-/svm/examples/Cargo.lock
-/svm-callback/ @anza-xyz/svm
+/tls-utils/ @anza-xyz/networking
 /transaction-context/ @anza-xyz/svm
 /transaction-view/ @anza-xyz/tx-metadata
+/turbine/ @anza-xyz/networking
+/xdp/ @anza-xyz/networking

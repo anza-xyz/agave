@@ -16,21 +16,18 @@ rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 bincode = ["dep:bincode", "serde", "solana-account/bincode"]
-debug-signature = ["dep:solana-signature"]
-dev-context-only-utils = [
-    "bincode",
-    "debug-signature",
-    "solana-account/dev-context-only-utils",
-]
+dev-context-only-utils = ["bincode", "solana-account/dev-context-only-utils", "dep:qualifier_attr"]
 serde = ["dep:serde", "dep:serde_derive"]
 
 [dependencies]
+qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_derive = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-instructions-sysvar = { workspace = true }
 solana-pubkey = { workspace = true }
+solana-sbpf = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
 bincode = { workspace = true, optional = true }
@@ -40,6 +37,7 @@ solana-signature = { workspace = true, optional = true }
 
 [dev-dependencies]
 solana-account-info = { workspace = true }
+solana-program-entrypoint = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { path = ".", features = [
     "dev-context-only-utils",

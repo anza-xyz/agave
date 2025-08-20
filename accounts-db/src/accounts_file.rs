@@ -1,12 +1,13 @@
 #[cfg(feature = "dev-context-only-utils")]
-use crate::append_vec::StoredAccountMeta;
+use crate::append_vec::{self, StoredAccountMeta};
 use {
     crate::{
-        account_info::AccountInfo,
+        account_info::{AccountInfo, Offset},
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_db::AccountsFileId,
         accounts_update_notifier_interface::AccountForGeyser,
-        append_vec::{AppendVec, AppendVecError, IndexInfo},
+        append_vec::{AppendVec, AppendVecError},
+        buffered_reader::RequiredLenBufFileRead,
         storable_accounts::StorableAccounts,
         tiered_storage::{
             error::TieredStorageError, hot::HOT_FORMAT, index::IndexOffset, TieredStorage,
@@ -46,14 +47,6 @@ pub enum AccountsFileError {
     TieredStorageError(#[from] TieredStorageError),
 }
 
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum MatchAccountOwnerError {
-    #[error("The account owner does not match with the provided list")]
-    NoMatch,
-    #[error("Unable to load the account")]
-    UnableToLoad,
-}
-
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum StorageAccess {
     /// storages should be accessed by Mmap
@@ -79,6 +72,7 @@ impl AccountsFile {
     ///
     /// The second element of the returned tuple is the number of accounts in the
     /// accounts file.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new_from_file(
         path: impl Into<PathBuf>,
         current_len: usize,
@@ -86,6 +80,20 @@ impl AccountsFile {
     ) -> Result<(Self, usize)> {
         let (av, num_accounts) = AppendVec::new_from_file(path, current_len, storage_access)?;
         Ok((Self::AppendVec(av), num_accounts))
+    }
+
+    /// Creates a new AccountsFile for the underlying storage at `path`
+    ///
+    /// This version of `new()` may only be called when reconstructing storages as part of startup.
+    /// It trusts the snapshot's value for `current_len`, and relies on later index generation or
+    /// accounts verification to ensure it is valid.
+    pub fn new_for_startup(
+        path: impl Into<PathBuf>,
+        current_len: usize,
+        storage_access: StorageAccess,
+    ) -> Result<Self> {
+        let av = AppendVec::new_for_startup(path, current_len, storage_access)?;
+        Ok(Self::AppendVec(av))
     }
 
     /// true if this storage can possibly be appended to (independent of capacity check)
@@ -247,28 +255,6 @@ impl AccountsFile {
         }
     }
 
-    pub fn account_matches_owners(
-        &self,
-        offset: usize,
-        owners: &[Pubkey],
-    ) -> std::result::Result<usize, MatchAccountOwnerError> {
-        match self {
-            Self::AppendVec(av) => av.account_matches_owners(offset, owners),
-            // Note: The conversion here is needed as the AccountsDB currently
-            // assumes all offsets are multiple of 8 while TieredStorage uses
-            // IndexOffset that is equivalent to AccountInfo::reduced_offset.
-            Self::TieredStorage(ts) => {
-                let Some(reader) = ts.reader() else {
-                    return Err(MatchAccountOwnerError::UnableToLoad);
-                };
-                reader.account_matches_owners(
-                    IndexOffset(AccountInfo::get_reduced_offset(offset)),
-                    owners,
-                )
-            }
-        }
-    }
-
     /// Return the path of the underlying account file.
     pub fn path(&self) -> &Path {
         match self {
@@ -279,32 +265,46 @@ impl AccountsFile {
 
     /// Iterate over all accounts and call `callback` with each account.
     ///
+    /// `callback` parameters:
+    /// * Offset: the offset within the file of this account
+    /// * StoredAccountInfoWithoutData: the account itself, without account data
+    ///
     /// Note that account data is not read/passed to the callback.
     pub fn scan_accounts_without_data(
         &self,
-        callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
-    ) {
+        callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
+    ) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.scan_accounts_without_data(callback),
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
-                    _ = reader.scan_accounts_without_data(callback);
+                    reader.scan_accounts_without_data(callback)?;
                 }
+                Ok(())
             }
         }
     }
 
     /// Iterate over all accounts and call `callback` with each account.
     ///
+    /// `callback` parameters:
+    /// * Offset: the offset within the file of this account
+    /// * StoredAccountInfo: the account itself, with account data
+    ///
     /// Prefer scan_accounts_without_data() when account data is not needed,
     /// as it can potentially read less and be faster.
-    pub fn scan_accounts(&self, callback: impl for<'local> FnMut(StoredAccountInfo<'local>)) {
+    pub(crate) fn scan_accounts<'a>(
+        &'a self,
+        reader: &mut impl RequiredLenBufFileRead<'a>,
+        callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
+    ) -> Result<()> {
         match self {
-            Self::AppendVec(av) => av.scan_accounts(callback),
+            Self::AppendVec(av) => av.scan_accounts(reader, callback),
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
-                    _ = reader.scan_accounts(callback);
+                    reader.scan_accounts(callback)?;
                 }
+                Ok(())
             }
         }
     }
@@ -317,9 +317,10 @@ impl AccountsFile {
     pub fn scan_accounts_stored_meta(
         &self,
         callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
-    ) {
+    ) -> Result<()> {
+        let mut reader = append_vec::new_scan_accounts_reader();
         match self {
-            Self::AppendVec(av) => av.scan_accounts_stored_meta(callback),
+            Self::AppendVec(av) => av.scan_accounts_stored_meta(&mut reader, callback),
             Self::TieredStorage(_) => {
                 unimplemented!("StoredAccountMeta is only implemented for AppendVec")
             }
@@ -328,11 +329,12 @@ impl AccountsFile {
 
     /// Iterate over all accounts and call `callback` with each account.
     /// Only intended to be used by Geyser.
-    pub fn scan_accounts_for_geyser(
-        &self,
+    pub(crate) fn scan_accounts_for_geyser<'a>(
+        &'a self,
+        reader: &mut impl RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(AccountForGeyser<'local>),
-    ) {
-        self.scan_accounts(|account| {
+    ) -> Result<()> {
+        self.scan_accounts(reader, |_offset, account| {
             let account_for_geyser = AccountForGeyser {
                 pubkey: account.pubkey(),
                 lamports: account.lamports(),
@@ -352,7 +354,7 @@ impl AccountsFile {
             Self::AppendVec(av) => av.calculate_stored_size(data_len),
             Self::TieredStorage(ts) => ts
                 .reader()
-                .expect("Reader must be initalized as stored size is specific to format")
+                .expect("Reader must be initialized as stored size is specific to format")
                 .calculate_stored_size(data_len),
         }
     }
@@ -368,26 +370,15 @@ impl AccountsFile {
         }
     }
 
-    /// iterate over all entries to put in index
-    pub(crate) fn scan_index(&self, callback: impl FnMut(IndexInfo)) {
-        match self {
-            Self::AppendVec(av) => av.scan_index(callback),
-            Self::TieredStorage(ts) => {
-                if let Some(reader) = ts.reader() {
-                    _ = reader.scan_index(callback);
-                }
-            }
-        }
-    }
-
     /// iterate over all pubkeys
-    pub fn scan_pubkeys(&self, callback: impl FnMut(&Pubkey)) {
+    pub fn scan_pubkeys(&self, callback: impl FnMut(&Pubkey)) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.scan_pubkeys(callback),
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
-                    _ = reader.scan_pubkeys(callback);
+                    reader.scan_pubkeys(callback)?;
                 }
+                Ok(())
             }
         }
     }
@@ -399,7 +390,7 @@ impl AccountsFile {
     /// So, return.len() is 1 + (number of accounts written)
     /// After each account is appended, the internal `current_len` is updated
     /// and will be available to other threads.
-    pub fn append_accounts<'a>(
+    pub fn write_accounts<'a>(
         &self,
         accounts: &impl StorableAccounts<'a>,
         skip: usize,

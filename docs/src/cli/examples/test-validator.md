@@ -13,7 +13,7 @@ starts a full-featured, single-node cluster on the developer's workstation.
 
 - No RPC rate-limits
 - No airdrop limits
-- Direct [on-chain program](https://solana.com/docs/programs) deployment
+- Direct [on-chain program](https://solana.com/docs/programs/rust) deployment
   (`--bpf-program ...`)
 - Clone accounts from a public cluster, including programs (`--clone ...`)
 - Load accounts from files

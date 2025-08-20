@@ -27,7 +27,7 @@ use {
         collections::{HashMap, HashSet},
         env, error,
         fmt::{self, Display},
-        net::SocketAddr,
+        net::{IpAddr, SocketAddr},
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -151,8 +151,14 @@ impl solana_cli_output::QuietDisplay for AdminRpcRepairWhitelist {}
 pub trait AdminRpc {
     type Metadata;
 
+    /// Initiates validator exit; exit is asynchronous so the validator
+    /// will almost certainly still be running when this method returns
     #[rpc(meta, name = "exit")]
     fn exit(&self, meta: Self::Metadata) -> Result<()>;
+
+    /// Return the process id (pid)
+    #[rpc(meta, name = "pid")]
+    fn pid(&self, meta: Self::Metadata) -> Result<u32>;
 
     #[rpc(meta, name = "reloadPlugin")]
     fn reload_plugin(
@@ -215,6 +221,9 @@ pub trait AdminRpc {
     #[rpc(meta, name = "contactInfo")]
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo>;
 
+    #[rpc(meta, name = "selectActiveInterface")]
+    fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()>;
+
     #[rpc(meta, name = "repairShredFromPeer")]
     fn repair_shred_from_peer(
         &self,
@@ -266,7 +275,7 @@ impl AdminRpc for AdminRpcImpl {
                 // receive a confusing error as the validator shuts down before a response is sent back.
                 thread::sleep(Duration::from_millis(100));
 
-                warn!("validator exit requested");
+                info!("validator exit requested");
                 meta.validator_exit.write().unwrap().exit();
 
                 if !meta.validator_exit_backpressure.is_empty() {
@@ -309,6 +318,10 @@ impl AdminRpc for AdminRpcImpl {
             .unwrap();
 
         Ok(())
+    }
+
+    fn pid(&self, _meta: Self::Metadata) -> Result<u32> {
+        Ok(std::process::id())
     }
 
     fn reload_plugin(
@@ -463,7 +476,7 @@ impl AdminRpc for AdminRpcImpl {
     ) -> Result<()> {
         debug!("add_authorized_voter_from_bytes request received");
 
-        let authorized_voter = Keypair::from_bytes(&keypair).map_err(|err| {
+        let authorized_voter = Keypair::try_from(keypair.as_ref()).map_err(|err| {
             jsonrpc_core::error::Error::invalid_params(format!(
                 "Failed to read authorized voter keypair from provided byte array: {err}"
             ))
@@ -503,7 +516,7 @@ impl AdminRpc for AdminRpcImpl {
     ) -> Result<()> {
         debug!("set_identity_from_bytes request received");
 
-        let identity_keypair = Keypair::from_bytes(&identity_keypair).map_err(|err| {
+        let identity_keypair = Keypair::try_from(identity_keypair.as_ref()).map_err(|err| {
             jsonrpc_core::error::Error::invalid_params(format!(
                 "Failed to read identity keypair from provided byte array: {err}"
             ))
@@ -525,13 +538,31 @@ impl AdminRpc for AdminRpcImpl {
         let mut write_staked_nodes = meta.staked_nodes_overrides.write().unwrap();
         write_staked_nodes.clear();
         write_staked_nodes.extend(loaded_config);
-        info!("Staked nodes overrides loaded from {}", path);
-        debug!("overrides map: {:?}", write_staked_nodes);
+        info!("Staked nodes overrides loaded from {path}");
+        debug!("overrides map: {write_staked_nodes:?}");
         Ok(())
     }
 
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo> {
         meta.with_post_init(|post_init| Ok(post_init.cluster_info.my_contact_info().into()))
+    }
+
+    fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()> {
+        debug!("select_active_interface received: {interface}");
+        meta.with_post_init(|post_init| {
+            let node = post_init.node.as_ref().ok_or_else(|| {
+                jsonrpc_core::Error::invalid_params("`Node` not initialized in post_init")
+            })?;
+
+            node.switch_active_interface(interface, &post_init.cluster_info)
+                .map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!(
+                        "Switching failed due to error {e}"
+                    ))
+                })?;
+            info!("Switched primary interface to {interface}");
+            Ok(())
+        })
     }
 
     fn repair_shred_from_peer(
@@ -591,10 +622,7 @@ impl AdminRpc for AdminRpcImpl {
         meta: Self::Metadata,
         pubkey_str: String,
     ) -> Result<HashMap<RpcAccountIndex, usize>> {
-        debug!(
-            "get_secondary_index_key_size rpc request received: {:?}",
-            pubkey_str
-        );
+        debug!("get_secondary_index_key_size rpc request received: {pubkey_str:?}");
         let index_key = verify_pubkey(&pubkey_str)?;
         meta.with_post_init(|post_init| {
             let bank = post_init.bank_forks.read().unwrap().root_bank();
@@ -800,7 +828,7 @@ pub fn run(ledger_path: &Path, metadata: AdminRpcRequestMetadata) {
 
             match server {
                 Err(err) => {
-                    warn!("Unable to start admin rpc service: {:?}", err);
+                    warn!("Unable to start admin rpc service: {err:?}");
                 }
                 Ok(server) => {
                     info!("started admin rpc service!");
@@ -852,10 +880,14 @@ pub async fn connect(ledger_path: &Path) -> std::result::Result<gen_client::Clie
     }
 }
 
+// Create a runtime for use by client side admin RPC interface calls
 pub fn runtime() -> Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .thread_name("solAdminRpcRt")
         .enable_all()
+        // The agave-validator subcommands make few admin RPC calls and block
+        // on the results so two workers is plenty
+        .worker_threads(2)
         .build()
         .expect("new tokio runtime")
 }
@@ -883,7 +915,7 @@ where
 pub fn load_staked_nodes_overrides(
     path: &String,
 ) -> std::result::Result<StakedNodesOverrides, Box<dyn error::Error>> {
-    debug!("Loading staked nodes overrides configuration from {}", path);
+    debug!("Loading staked nodes overrides configuration from {path}");
     if Path::new(&path).exists() {
         let file = std::fs::File::open(path)?;
         Ok(serde_yaml::from_reader(file)?)
@@ -907,14 +939,14 @@ mod tests {
             consensus::tower_storage::NullTowerStorage,
             validator::{Validator, ValidatorConfig, ValidatorTpuConfig},
         },
-        solana_gossip::cluster_info::{ClusterInfo, Node},
+        solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_ledger::{
             create_new_tmp_ledger,
             genesis_utils::{
                 create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
             },
         },
-        solana_net_utils::bind_to_unspecified,
+        solana_net_utils::sockets::bind_to_localhost_unique,
         solana_program_option::COption,
         solana_program_pack::Pack,
         solana_pubkey::Pubkey,
@@ -927,7 +959,9 @@ mod tests {
         solana_system_interface::program as system_program,
         solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
         spl_generic_token::token,
-        spl_token_2022::state::{Account as TokenAccount, AccountState as TokenAccountState, Mint},
+        spl_token_2022_interface::state::{
+            Account as TokenAccount, AccountState as TokenAccountState, Mint,
+        },
         std::{collections::HashSet, fs::remove_dir_all, sync::atomic::AtomicBool},
     };
 
@@ -983,13 +1017,14 @@ mod tests {
                     vote_account,
                     repair_whitelist,
                     notifies: Arc::new(RwLock::new(KeyUpdaters::default())),
-                    repair_socket: Arc::new(bind_to_unspecified().unwrap()),
+                    repair_socket: Arc::new(bind_to_localhost_unique().expect("should bind")),
                     outstanding_repair_requests: Arc::<
                         RwLock<repair_service::OutstandingShredRepairs>,
                     >::default(),
                     cluster_slots: Arc::new(
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
+                    node: None,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,

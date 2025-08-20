@@ -165,13 +165,17 @@ where
         writable_socket: &Arc<RwLock<WebSocket<MaybeTlsStream<TcpStream>>>>,
         body: String,
     ) -> Result<u64, PubsubClientError> {
-        writable_socket.write().unwrap().send(Message::Text(body))?;
-        let message = writable_socket.write().unwrap().read()?;
+        writable_socket
+            .write()
+            .unwrap()
+            .send(Message::Text(body))
+            .map_err(Box::new)?;
+        let message = writable_socket.write().unwrap().read().map_err(Box::new)?;
         Self::extract_subscription_id(message)
     }
 
     fn extract_subscription_id(message: Message) -> Result<u64, PubsubClientError> {
-        let message_text = &message.into_text()?;
+        let message_text = &message.into_text().map_err(Box::new)?;
 
         if let Ok(json_msg) = serde_json::from_str::<Map<String, Value>>(message_text) {
             if let Some(Number(x)) = json_msg.get("result") {
@@ -205,17 +209,18 @@ where
                 })
                 .to_string(),
             ))
+            .map_err(Box::new)
             .map_err(|err| err.into())
     }
 
     fn read_message(
         writable_socket: &Arc<RwLock<WebSocket<MaybeTlsStream<TcpStream>>>>,
     ) -> Result<Option<T>, PubsubClientError> {
-        let message = writable_socket.write().unwrap().read()?;
+        let message = writable_socket.write().unwrap().read().map_err(Box::new)?;
         if message.is_ping() {
             return Ok(None);
         }
-        let message_text = &message.into_text()?;
+        let message_text = &message.into_text().map_err(Box::new)?;
         if let Ok(json_msg) = serde_json::from_str::<Map<String, Value>>(message_text) {
             if let Some(Object(params)) = json_msg.get("params") {
                 if let Some(result) = params.get("result") {
@@ -300,7 +305,7 @@ pub struct PubsubClient {}
 
 fn connect_with_retry(
     url: Url,
-) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, tungstenite::Error> {
+) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, Box<tungstenite::Error>> {
     let mut connection_retries = 5;
     loop {
         let result = connect(url.clone()).map(|(socket, _)| socket);
@@ -319,15 +324,15 @@ fn connect_with_retry(
 
                 connection_retries -= 1;
                 debug!(
-                    "Too many requests: server responded with {:?}, {} retries left, pausing for {:?}",
-                    response, connection_retries, duration
+                    "Too many requests: server responded with {response:?}, {connection_retries} \
+                     retries left, pausing for {duration:?}"
                 );
 
                 sleep(duration);
                 continue;
             }
         }
-        return result;
+        return result.map_err(Box::new);
     }
 }
 
@@ -780,7 +785,7 @@ impl PubsubClient {
         let handler = move |message| match sender.send(message) {
             Ok(_) => (),
             Err(err) => {
-                info!("receive error: {:?}", err);
+                info!("receive error: {err:?}");
             }
         };
         Self::cleanup_with_handler(exit, socket, handler);
@@ -805,7 +810,7 @@ impl PubsubClient {
                     // Nothing useful, means we received a ping message
                 }
                 Err(err) => {
-                    info!("receive error: {:?}", err);
+                    info!("receive error: {err:?}");
                     break;
                 }
             }

@@ -15,7 +15,7 @@ use {
     solana_signer::{null_signer::NullSigner, Signer},
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidator,
-    solana_vote_program::vote_state::{VoteAuthorize, VoteState, VoteStateVersions},
+    solana_vote_program::vote_state::{VoteAuthorize, VoteStateV3, VoteStateVersions},
     test_case::test_case,
 };
 
@@ -64,10 +64,10 @@ fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
     let vote_state: VoteStateVersions = vote_account.state().unwrap();
-    let authorized_withdrawer = vote_state.convert_to_current().authorized_withdrawer;
+    let authorized_withdrawer = vote_state.convert_to_v3().authorized_withdrawer;
     assert_eq!(authorized_withdrawer, config.signers[0].pubkey());
     let expected_balance = rpc_client
-        .get_minimum_balance_for_rent_exemption(VoteState::size_of())
+        .get_minimum_balance_for_rent_exemption(VoteStateV3::size_of())
         .unwrap()
         .max(1);
     check_balance!(expected_balance, &rpc_client, &vote_account_pubkey);
@@ -118,7 +118,7 @@ fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
     let vote_state: VoteStateVersions = vote_account.state().unwrap();
-    let authorized_withdrawer = vote_state.convert_to_current().authorized_withdrawer;
+    let authorized_withdrawer = vote_state.convert_to_v3().authorized_withdrawer;
     assert_eq!(authorized_withdrawer, first_withdraw_authority.pubkey());
 
     // Authorize vote account withdrawal to another signer with checked instruction
@@ -165,7 +165,7 @@ fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
     let vote_state: VoteStateVersions = vote_account.state().unwrap();
-    let authorized_withdrawer = vote_state.convert_to_current().authorized_withdrawer;
+    let authorized_withdrawer = vote_state.convert_to_v3().authorized_withdrawer;
     assert_eq!(authorized_withdrawer, withdraw_authority.pubkey());
 
     // Withdraw from vote account
@@ -292,10 +292,10 @@ fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
     let vote_state: VoteStateVersions = vote_account.state().unwrap();
-    let authorized_withdrawer = vote_state.convert_to_current().authorized_withdrawer;
+    let authorized_withdrawer = vote_state.convert_to_v3().authorized_withdrawer;
     assert_eq!(authorized_withdrawer, offline_keypair.pubkey());
     let expected_balance = rpc_client
-        .get_minimum_balance_for_rent_exemption(VoteState::size_of())
+        .get_minimum_balance_for_rent_exemption(VoteStateV3::size_of())
         .unwrap()
         .max(1);
     check_balance!(expected_balance, &rpc_client, &vote_account_pubkey);
@@ -369,7 +369,7 @@ fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
     let vote_state: VoteStateVersions = vote_account.state().unwrap();
-    let authorized_withdrawer = vote_state.convert_to_current().authorized_withdrawer;
+    let authorized_withdrawer = vote_state.convert_to_v3().authorized_withdrawer;
     assert_eq!(authorized_withdrawer, withdraw_authority.pubkey());
 
     // Withdraw from vote account offline

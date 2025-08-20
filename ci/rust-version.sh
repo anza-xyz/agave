@@ -37,6 +37,10 @@ export rust_stable="$stable_version"
 
 export rust_nightly=nightly-"$nightly_version"
 
+if [[ -n $NO_INSTALL ]]; then
+  return
+fi
+
 [[ -z $1 ]] || (
 
   rustup_install() {

@@ -1,9 +1,6 @@
 use {
-    solana_account_info::AccountInfo,
-    solana_program_entrypoint::entrypoint,
-    solana_program_error::ProgramResult,
-    solana_msg::msg,
-    solana_pubkey::Pubkey,
+    solana_account_info::AccountInfo, solana_msg::msg, solana_program_entrypoint::entrypoint,
+    solana_program_error::ProgramResult, solana_pubkey::Pubkey,
 };
 
 entrypoint!(process_instruction);

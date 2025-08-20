@@ -13,7 +13,7 @@ use {
     },
 };
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct AccountSecondaryIndexes {
     pub keys: Option<AccountSecondaryIndexesIncludeExclude>,
     pub indexes: HashSet<AccountIndex>,
@@ -280,6 +280,6 @@ impl<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>
             .iter()
             .rev()
             .take(20)
-            .for_each(|(v, k)| info!("owner: {}, accounts: {}", k, v));
+            .for_each(|(v, k)| info!("owner: {k}, accounts: {v}"));
     }
 }

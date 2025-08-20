@@ -23,16 +23,12 @@ use {
     solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
     solana_message::{Message, VersionedMessage},
     solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
-    solana_poh::poh_recorder::BankStart,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk_ids::system_program,
     solana_signer::Signer,
     solana_transaction::versioned::VersionedTransaction,
-    std::{
-        sync::{Arc, RwLock},
-        time::Instant,
-    },
+    std::sync::{Arc, RwLock},
 };
 
 // the max number of instructions of given type that we can put into packet.
@@ -83,9 +79,11 @@ fn generate_transactions(
 ) -> BankingPacketBatch {
     assert!(num_instructions_per_tx <= MAX_INSTRUCTIONS_PER_TRANSACTION);
     if set_rand_cu_price {
-        assert!(num_instructions_per_tx > 0,
-            "`num_instructions_per_tx` must be at least 1 when `set_rand_cu_price` flag is set to count\
-             the set_compute_unit_price instruction.");
+        assert!(
+            num_instructions_per_tx > 0,
+            "`num_instructions_per_tx` must be at least 1 when `set_rand_cu_price` flag is set to \
+             count the set_compute_unit_price instruction."
+        );
     }
     let blockhash = FaultyBlockhash::new(bank.last_blockhash(), probability_invalid_blockhash);
 
@@ -189,16 +187,12 @@ pub fn setup_receive_and_buffer<T: ReceiveAndBuffer + ReceiveAndBufferCreator>(
 
     let (bank, bank_forks) =
         Bank::new_for_benches(&genesis_config).wrap_with_bank_forks_for_tests();
-    let bank_start = BankStart {
-        working_bank: bank.clone(),
-        bank_creation_time: Arc::new(Instant::now()),
-    };
 
     let (sender, receiver) = unbounded();
 
     let receive_and_buffer = T::create(receiver, bank_forks);
 
-    let decision = BufferedPacketsDecision::Consume(bank_start);
+    let decision = BufferedPacketsDecision::Consume(bank.clone());
 
     let txs = generate_transactions(
         num_txs,

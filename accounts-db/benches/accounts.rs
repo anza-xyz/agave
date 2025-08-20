@@ -11,17 +11,12 @@ use {
     solana_accounts_db::{
         account_info::{AccountInfo, StorageLocation},
         accounts::{AccountAddressFilter, Accounts},
-        accounts_db::{
-            test_utils::create_test_accounts, AccountFromStorage, AccountsDb,
-            VerifyAccountsHashAndLamportsConfig, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
-        },
+        accounts_db::{AccountFromStorage, AccountsDb, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS},
         accounts_index::ScanConfig,
         ancestors::Ancestors,
     },
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_rent_collector::RentCollector,
-    solana_sysvar::epoch_schedule::EpochSchedule,
     std::{
         collections::{HashMap, HashSet},
         path::PathBuf,
@@ -31,6 +26,10 @@ use {
     test::Bencher,
 };
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 fn new_accounts_db(account_paths: Vec<PathBuf>) -> AccountsDb {
     AccountsDb::new_with_config(
         account_paths,
@@ -38,69 +37,6 @@ fn new_accounts_db(account_paths: Vec<PathBuf>) -> AccountsDb {
         None,
         Arc::default(),
     )
-}
-
-#[bench]
-fn bench_accounts_hash_bank_hash(bencher: &mut Bencher) {
-    let accounts_db = new_accounts_db(vec![PathBuf::from("bench_accounts_hash_internal")]);
-    let accounts = Accounts::new(Arc::new(accounts_db));
-    let mut pubkeys: Vec<Pubkey> = vec![];
-    let num_accounts = 60_000;
-    let slot = 0;
-    create_test_accounts(&accounts, &mut pubkeys, num_accounts, slot);
-    let ancestors = Ancestors::from(vec![0]);
-    let (_, total_lamports) = accounts
-        .accounts_db
-        .update_accounts_hash_for_tests(0, &ancestors, false, false);
-    accounts.add_root(slot);
-    accounts.accounts_db.flush_accounts_cache(true, Some(slot));
-    bencher.iter(|| {
-        assert!(accounts
-            .accounts_db
-            .verify_accounts_hash_and_lamports_for_tests(
-                0,
-                total_lamports,
-                VerifyAccountsHashAndLamportsConfig {
-                    ancestors: &ancestors,
-                    test_hash_calculation: false,
-                    epoch_schedule: &EpochSchedule::default(),
-                    rent_collector: &RentCollector::default(),
-                    ignore_mismatch: false,
-                    store_detailed_debug_info: false,
-                    use_bg_thread_pool: false,
-                }
-            )
-            .is_ok())
-    });
-}
-
-#[bench]
-fn bench_update_accounts_hash(bencher: &mut Bencher) {
-    solana_logger::setup();
-    let accounts_db = new_accounts_db(vec![PathBuf::from("update_accounts_hash")]);
-    let accounts = Accounts::new(Arc::new(accounts_db));
-    let mut pubkeys: Vec<Pubkey> = vec![];
-    create_test_accounts(&accounts, &mut pubkeys, 50_000, 0);
-    accounts.accounts_db.add_root_and_flush_write_cache(0);
-    let ancestors = Ancestors::from(vec![0]);
-    bencher.iter(|| {
-        accounts
-            .accounts_db
-            .update_accounts_hash_for_tests(0, &ancestors, false, false);
-    });
-}
-
-#[bench]
-fn bench_accounts_delta_hash(bencher: &mut Bencher) {
-    solana_logger::setup();
-    let accounts_db = new_accounts_db(vec![PathBuf::from("accounts_delta_hash")]);
-    let accounts = Accounts::new(Arc::new(accounts_db));
-    let mut pubkeys: Vec<Pubkey> = vec![];
-    create_test_accounts(&accounts, &mut pubkeys, 100_000, 0);
-    accounts.accounts_db.add_root_and_flush_write_cache(0);
-    bencher.iter(|| {
-        accounts.accounts_db.calculate_accounts_delta_hash(0);
-    });
 }
 
 #[bench]
@@ -115,10 +51,10 @@ fn bench_delete_dependencies(bencher: &mut Bencher) {
         let account = AccountSharedData::new(i + 1, 0, AccountSharedData::default().owner());
         accounts
             .accounts_db
-            .store_for_tests(i, &[(&pubkey, &account)]);
+            .store_for_tests((i, [(&pubkey, &account)].as_slice()));
         accounts
             .accounts_db
-            .store_for_tests(i, &[(&old_pubkey, &zero_account)]);
+            .store_for_tests((i, [(&old_pubkey, &zero_account)].as_slice()));
         old_pubkey = pubkey;
         accounts.accounts_db.add_root_and_flush_write_cache(i);
     }
@@ -153,7 +89,7 @@ where
     )
     .collect();
     let storable_accounts: Vec<_> = pubkeys.iter().zip(accounts_data.iter()).collect();
-    accounts.store_accounts_cached((slot, storable_accounts.as_slice()));
+    accounts.store_accounts_par((slot, storable_accounts.as_slice()), None);
     accounts.add_root(slot);
     accounts
         .accounts_db
@@ -180,7 +116,7 @@ where
         // Write to a different slot than the one being read from. Because
         // there's a new account pubkey being written to every time, will
         // compete for the accounts index lock on every store
-        accounts.store_accounts_cached((slot + 1, new_storable_accounts.as_slice()));
+        accounts.store_accounts_par((slot + 1, new_storable_accounts.as_slice()), None);
     });
 }
 
@@ -298,7 +234,7 @@ fn bench_dashmap_par_iter(bencher: &mut Bencher) {
     let (accounts, dashmap) = setup_bench_dashmap_iter();
 
     bencher.iter(|| {
-        test::black_box(accounts.accounts_db.thread_pool.install(|| {
+        test::black_box(accounts.accounts_db.thread_pool_foreground.install(|| {
             dashmap
                 .par_iter()
                 .map(|cached_account| (*cached_account.key(), cached_account.value().1))
@@ -332,7 +268,7 @@ fn bench_load_largest_accounts(b: &mut Bencher) {
         let account = AccountSharedData::new(lamports, 0, &Pubkey::default());
         accounts
             .accounts_db
-            .store_for_tests(0, &[(&pubkey, &account)]);
+            .store_for_tests((0, [(&pubkey, &account)].as_slice()));
     }
     accounts.accounts_db.add_root_and_flush_write_cache(0);
     let ancestors = Ancestors::from(vec![0]);

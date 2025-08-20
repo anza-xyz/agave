@@ -20,6 +20,10 @@ use {
     test::Bencher,
 };
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 /// Copy the account metadata, account and hash to the internal buffer.
 /// Return the starting offset of the account metadata.
 /// After the account is appended, the internal `current_len` is updated.

@@ -90,7 +90,7 @@ mod test {
         // Initialize with an update authority.
         let max_size = 300;
         let ix = spl_token_group_interface::instruction::initialize_group(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &group_address,
             &group_mint,
             &group_mint_authority,
@@ -118,7 +118,7 @@ mod test {
         );
         // Initialize without an update authority.
         let ix = spl_token_group_interface::instruction::initialize_group(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &group_address,
             &group_mint,
             &group_mint_authority,
@@ -148,7 +148,7 @@ mod test {
         // UpdateGroupMaxSize
         let new_max_size = 500;
         let ix = spl_token_group_interface::instruction::update_group_max_size(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &group_address,
             &group_update_authority,
             new_max_size,
@@ -175,7 +175,7 @@ mod test {
         // Update authority to a new authority.
         let new_authority = Pubkey::new_unique();
         let ix = spl_token_group_interface::instruction::update_group_authority(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &group_address,
             &group_update_authority,
             Some(new_authority),
@@ -199,7 +199,7 @@ mod test {
         );
         // Update authority to None.
         let ix = spl_token_group_interface::instruction::update_group_authority(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &group_address,
             &group_update_authority,
             None,
@@ -224,7 +224,7 @@ mod test {
 
         // InitializeMember
         let ix = spl_token_group_interface::instruction::initialize_member(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &member_address,
             &member_mint,
             &member_mint_authority,

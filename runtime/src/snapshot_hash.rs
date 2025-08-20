@@ -1,12 +1,7 @@
 //! Helper types and functions for handling and dealing with snapshot hashes.
 use {
-    solana_accounts_db::{
-        accounts_hash::MerkleOrLatticeAccountsHash, epoch_accounts_hash::EpochAccountsHash,
-    },
-    solana_clock::Slot,
-    solana_hash::Hash,
+    solana_clock::Slot, solana_hash::Hash,
     solana_lattice_hash::lt_hash::Checksum as AccountsLtHashChecksum,
-    solana_sha256_hasher::Hasher,
 };
 
 /// At startup, when loading from snapshots, the starting snapshot hashes need to be passed to
@@ -36,30 +31,8 @@ pub struct SnapshotHash(pub Hash);
 impl SnapshotHash {
     /// Make a snapshot hash from accounts hashes
     #[must_use]
-    pub fn new(
-        merkle_or_lattice_accounts_hash: &MerkleOrLatticeAccountsHash,
-        epoch_accounts_hash: Option<&EpochAccountsHash>,
-        accounts_lt_hash_checksum: Option<AccountsLtHashChecksum>,
-    ) -> Self {
-        let accounts_hash = match merkle_or_lattice_accounts_hash {
-            MerkleOrLatticeAccountsHash::Merkle(accounts_hash_kind) => {
-                *accounts_hash_kind.as_hash()
-            }
-            MerkleOrLatticeAccountsHash::Lattice => Hash::new_from_array(
-                accounts_lt_hash_checksum
-                    .expect("lattice kind must have lt hash checksum")
-                    .0,
-            ),
-        };
-        let snapshot_hash = match epoch_accounts_hash {
-            None => accounts_hash,
-            Some(epoch_accounts_hash) => {
-                let mut hasher = Hasher::default();
-                hasher.hash(accounts_hash.as_ref());
-                hasher.hash(epoch_accounts_hash.as_ref().as_ref());
-                hasher.result()
-            }
-        };
-        Self(snapshot_hash)
+    pub fn new(accounts_lt_hash_checksum: AccountsLtHashChecksum) -> Self {
+        let accounts_hash = Hash::new_from_array(accounts_lt_hash_checksum.0);
+        Self(accounts_hash)
     }
 }

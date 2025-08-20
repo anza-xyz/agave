@@ -11,7 +11,7 @@ publish = false
 
 [dependencies]
 solana-account-info = "=2.3.0"
-solana-program-entrypoint = "=2.2.1"
+solana-program-entrypoint = "=2.3.0"
 solana-program-error = "=2.2.2"
 solana-pubkey = "=2.4.0"
 

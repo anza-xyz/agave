@@ -105,7 +105,7 @@ fn key_to_slot(key: &str) -> Option<Slot> {
         Ok(slot) => Some(slot),
         Err(err) => {
             // bucket data is probably corrupt
-            warn!("Failed to parse object key as a slot: {}: {}", key, err);
+            warn!("Failed to parse object key as a slot: {key}: {err}");
             None
         }
     }
@@ -529,11 +529,7 @@ impl LedgerStorage {
     /// start_slot: slot to start the search from (inclusive)
     /// limit: stop after this many slots have been found
     pub async fn get_confirmed_blocks(&self, start_slot: Slot, limit: usize) -> Result<Vec<Slot>> {
-        trace!(
-            "LedgerStorage::get_confirmed_blocks request received: {:?} {:?}",
-            start_slot,
-            limit
-        );
+        trace!("LedgerStorage::get_confirmed_blocks request received: {start_slot:?} {limit:?}");
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
         let blocks = bigtable
@@ -552,10 +548,7 @@ impl LedgerStorage {
         &self,
         slots: &'a [Slot],
     ) -> Result<impl Iterator<Item = (Slot, ConfirmedBlock)> + 'a> {
-        trace!(
-            "LedgerStorage::get_confirmed_blocks_with_data request received: {:?}",
-            slots
-        );
+        trace!("LedgerStorage::get_confirmed_blocks_with_data request received: {slots:?}");
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
         let row_keys = slots.iter().copied().map(slot_to_blocks_key);
@@ -579,10 +572,7 @@ impl LedgerStorage {
 
     /// Fetch the confirmed block from the desired slot
     pub async fn get_confirmed_block(&self, slot: Slot) -> Result<ConfirmedBlock> {
-        trace!(
-            "LedgerStorage::get_confirmed_block request received: {:?}",
-            slot
-        );
+        trace!("LedgerStorage::get_confirmed_block request received: {slot:?}");
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
         let block_cell_data = bigtable
@@ -605,10 +595,7 @@ impl LedgerStorage {
 
     /// Does the confirmed block exist in the Bigtable
     pub async fn confirmed_block_exists(&self, slot: Slot) -> Result<bool> {
-        trace!(
-            "LedgerStorage::confirmed_block_exists request received: {:?}",
-            slot
-        );
+        trace!("LedgerStorage::confirmed_block_exists request received: {slot:?}");
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
 
@@ -621,10 +608,7 @@ impl LedgerStorage {
 
     /// Fetches a vector of block entries via a multirow fetch
     pub async fn get_entries(&self, slot: Slot) -> Result<impl Iterator<Item = EntrySummary>> {
-        trace!(
-            "LedgerStorage::get_block_entries request received: {:?}",
-            slot
-        );
+        trace!("LedgerStorage::get_block_entries request received: {slot:?}");
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
         let entry_cell_data = bigtable
@@ -639,10 +623,7 @@ impl LedgerStorage {
     }
 
     pub async fn get_signature_status(&self, signature: &Signature) -> Result<TransactionStatus> {
-        trace!(
-            "LedgerStorage::get_signature_status request received: {:?}",
-            signature
-        );
+        trace!("LedgerStorage::get_signature_status request received: {signature:?}");
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
         let transaction_info = bigtable
@@ -660,10 +641,7 @@ impl LedgerStorage {
         &self,
         signatures: &[Signature],
     ) -> Result<Vec<ConfirmedTransactionWithStatusMeta>> {
-        trace!(
-            "LedgerStorage::get_confirmed_transactions request received: {:?}",
-            signatures
-        );
+        trace!("LedgerStorage::get_confirmed_transactions request received: {signatures:?}");
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
 
@@ -700,8 +678,8 @@ impl LedgerStorage {
                         .and_then(|tx_with_meta| {
                             if tx_with_meta.transaction_signature().to_string() != *signature {
                                 warn!(
-                                    "Transaction info or confirmed block for {} is corrupt",
-                                    signature
+                                    "Transaction info or confirmed block for {signature} is \
+                                     corrupt"
                                 );
                                 None
                             } else {
@@ -722,10 +700,7 @@ impl LedgerStorage {
         &self,
         signature: &Signature,
     ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
-        trace!(
-            "LedgerStorage::get_confirmed_transaction request received: {:?}",
-            signature
-        );
+        trace!("LedgerStorage::get_confirmed_transaction request received: {signature:?}");
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
 
@@ -743,15 +718,12 @@ impl LedgerStorage {
         match block.transactions.into_iter().nth(index as usize) {
             None => {
                 // report this somewhere actionable?
-                warn!("Transaction info for {} is corrupt", signature);
+                warn!("Transaction info for {signature} is corrupt");
                 Ok(None)
             }
             Some(tx_with_meta) => {
                 if tx_with_meta.transaction_signature() != signature {
-                    warn!(
-                        "Transaction info or confirmed block for {} is corrupt",
-                        signature
-                    );
+                    warn!("Transaction info or confirmed block for {signature} is corrupt");
                     Ok(None)
                 } else {
                     Ok(Some(ConfirmedTransactionWithStatusMeta {
@@ -782,10 +754,7 @@ impl LedgerStorage {
             u32, /*slot index*/
         )>,
     > {
-        trace!(
-            "LedgerStorage::get_confirmed_signatures_for_address request received: {:?}",
-            address
-        );
+        trace!("LedgerStorage::get_confirmed_signatures_for_address request received: {address:?}");
         self.stats.increment_num_queries();
         let mut bigtable = self.connection.client();
         let address_prefix = format!("{address}/");
@@ -919,10 +888,7 @@ impl LedgerStorage {
         slot: Slot,
         confirmed_block: VersionedConfirmedBlock,
     ) -> Result<()> {
-        trace!(
-            "LedgerStorage::upload_confirmed_block request received: {:?}",
-            slot
-        );
+        trace!("LedgerStorage::upload_confirmed_block request received: {slot:?}");
         self.upload_confirmed_block_with_entries(
             slot,
             VersionedConfirmedBlockWithEntries {
@@ -938,10 +904,7 @@ impl LedgerStorage {
         slot: Slot,
         confirmed_block: VersionedConfirmedBlockWithEntries,
     ) -> Result<()> {
-        trace!(
-            "LedgerStorage::upload_confirmed_block_with_entries request received: {:?}",
-            slot
-        );
+        trace!("LedgerStorage::upload_confirmed_block_with_entries request received: {slot:?}");
         let mut by_addr: HashMap<&Pubkey, Vec<TransactionByAddrInfo>> = HashMap::new();
         let VersionedConfirmedBlockWithEntries {
             block: confirmed_block,
@@ -1159,20 +1122,19 @@ impl LedgerStorage {
                     }
                     Some(Ok(fetched_tx_info)) => {
                         warn!(
-                            "skipped tx row {} because the bigtable entry ({:?}) did not match to {:?}",
-                            signature,
-                            fetched_tx_info,
-                            &expected_tx_info,
+                            "skipped tx row {} because the bigtable entry ({:?}) did not match to \
+                             {:?}",
+                            signature, fetched_tx_info, &expected_tx_info,
                         );
                     }
                     Some(Err(err)) => {
                         warn!(
-                            "skipped tx row {} because the bigtable entry was corrupted: {:?}",
-                            signature, err
+                            "skipped tx row {signature} because the bigtable entry was corrupted: \
+                             {err:?}"
                         );
                     }
                     None => {
-                        warn!("skipped tx row {} because it was not found", signature);
+                        warn!("skipped tx row {signature} because it was not found");
                     }
                 }
             }
@@ -1213,12 +1175,13 @@ impl LedgerStorage {
         }
 
         info!(
-            "{}deleted ledger data for slot {}: {} transaction rows, {} address slot rows, {} entry row",
+            "{}deleted ledger data for slot {}: {} transaction rows, {} address slot rows, {} \
+             entry row",
             if dry_run { "[dry run] " } else { "" },
             slot,
             tx_deletion_rows.len(),
             address_slot_rows.len(),
-            if entries_exist { "with" } else {"WITHOUT"}
+            if entries_exist { "with" } else { "WITHOUT" }
         );
 
         Ok(())

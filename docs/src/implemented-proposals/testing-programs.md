@@ -34,10 +34,6 @@ trait SyncClient {
 
 Users send transactions and asynchronously and synchronously await results.
 
-### ThinClient for Clusters
-
-The highest level implementation, ThinClient, targets a Solana cluster, which may be a deployed testnet or a local cluster running on a development machine.
-
 ### TpuClient for the TPU
 
 The next level is the TPU implementation, which is not yet implemented. At the TPU level, the application sends transactions over Rust channels, where there can be no surprises from network queues or dropped packets. The TPU implements all "normal" transaction errors. It does signature verification, may report account-in-use errors, and otherwise results in the ledger, complete with proof of history hashes.

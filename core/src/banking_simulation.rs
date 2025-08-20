@@ -18,16 +18,13 @@ use {
     log::*,
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
     solana_genesis_config::GenesisConfig,
-    solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
-        contact_info::ContactInfoQuery,
-    },
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery, node::Node},
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore::{Blockstore, PurgeType},
         leader_schedule_cache::LeaderScheduleCache,
     },
-    solana_net_utils::bind_to_localhost,
+    solana_net_utils::sockets::{bind_in_range_with_config, SocketConfiguration},
     solana_poh::{
         poh_recorder::{PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
         poh_service::{PohService, DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE},
@@ -49,6 +46,7 @@ use {
         fmt::Display,
         fs::File,
         io::{self, BufRead, BufReader},
+        net::{IpAddr, Ipv4Addr},
         path::PathBuf,
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -193,8 +191,8 @@ impl BankingTraceEvents {
             ) {
                 // Silence errors here as this can happen under normal operation...
                 warn!(
-                    "Reading {:?} failed {:?} due to file corruption or unclean validator shutdown",
-                    event_file_path, read_result,
+                    "Reading {event_file_path:?} failed {read_result:?} due to file corruption or \
+                     unclean validator shutdown",
                 );
             } else {
                 read_result?
@@ -304,11 +302,7 @@ impl SimulatorLoopLogger {
                     } else {
                         "-"
                     },
-                    if elapsed_simulation_time > elapsed_event_time {
-                        elapsed_simulation_time - elapsed_event_time
-                    } else {
-                        elapsed_event_time - elapsed_simulation_time
-                    },
+                    elapsed_simulation_time.abs_diff(elapsed_event_time),
                     elapsed_simulation_time,
                     elapsed_event_time,
                 );
@@ -346,10 +340,14 @@ struct SenderLoop {
 impl SenderLoop {
     fn log_starting(&self) {
         info!(
-            "simulating events: {} (out of {}), starting at slot {} (based on {} from traced event slot: {}) (warmup: -{:?})",
-            self.timed_batches_to_send.len(), self.total_batch_count, self.first_simulated_slot,
+            "simulating events: {} (out of {}), starting at slot {} (based on {} from traced \
+             event slot: {}) (warmup: -{:?})",
+            self.timed_batches_to_send.len(),
+            self.total_batch_count,
+            self.first_simulated_slot,
             SenderLoopLogger::format_as_timestamp(self.raw_base_event_time),
-            self.parent_slot, WARMUP_DURATION,
+            self.parent_slot,
+            WARMUP_DURATION,
         );
     }
 
@@ -501,7 +499,6 @@ impl SimulatorLoop {
                     &self.bank_forks,
                     &self.poh_recorder,
                     new_bank,
-                    false,
                 );
                 (bank, bank_created) = (
                     self.bank_forks
@@ -599,10 +596,7 @@ impl<'a> SenderLoopLogger<'a> {
         batch_count: usize,
         tx_count: usize,
     ) {
-        debug!(
-            "sent {:?} {} batches ({} txes)",
-            label, batch_count, tx_count
-        );
+        debug!("sent {label:?} {batch_count} batches ({tx_count} txes)");
 
         use ChannelLabel::*;
         let (total_batch_count, total_tx_count) = match label {
@@ -630,9 +624,16 @@ impl<'a> SenderLoopLogger<'a> {
             let gossip_vote_tps =
                 (self.gossip_vote_tx_count - self.last_gossip_vote_tx_count) as f64 / duration;
             info!(
-                "senders(non-,tpu-,gossip-vote): tps: {:.0} (={:.0}+{:.0}+{:.0}) over {:?} not-recved: ({}+{}+{})",
-                tps, non_vote_tps, tpu_vote_tps, gossip_vote_tps, log_interval,
-                self.non_vote_sender.len(), self.tpu_vote_sender.len(), self.gossip_vote_sender.len(),
+                "senders(non-,tpu-,gossip-vote): tps: {:.0} (={:.0}+{:.0}+{:.0}) over {:?} \
+                 not-recved: ({}+{}+{})",
+                tps,
+                non_vote_tps,
+                tpu_vote_tps,
+                gossip_vote_tps,
+                log_interval,
+                self.non_vote_sender.len(),
+                self.tpu_vote_sender.len(),
+                self.gossip_vote_sender.len(),
             );
             self.last_log_duration = simulation_duration;
             self.last_tx_count = current_tx_count;
@@ -768,15 +769,8 @@ impl BankingSimulator {
         )))
         .unwrap();
         assert!(retracer.is_enabled());
-        info!(
-            "Enabled banking retracer (dir_byte_limit: {})",
-            BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
-        );
+        info!("Enabled banking retracer (dir_byte_limit: {BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT})",);
 
-        // Create a partially-dummy ClusterInfo for the banking stage.
-        let cluster_info_for_banking = Arc::new(DummyClusterInfo {
-            id: simulated_leader.into(),
-        });
         let Channels {
             non_vote_sender,
             non_vote_receiver,
@@ -796,7 +790,7 @@ impl BankingSimulator {
 
         // Create a completely-dummy ClusterInfo for the broadcast stage.
         // We only need it to write shreds into the blockstore and it seems given ClusterInfo is
-        // irrelevant for the neccesary minimum work for this simulation.
+        // irrelevant for the necessary minimum work for this simulation.
         let random_keypair = Arc::new(Keypair::new());
         let cluster_info_for_broadcast = Arc::new(ClusterInfo::new(
             Node::new_localhost_with_pubkey(&random_keypair.pubkey()).info,
@@ -805,8 +799,14 @@ impl BankingSimulator {
         ));
         // Broadcast stage is needed to save the simulated blocks for post-run analysis by
         // inserting produced shreds into the blockstore.
+        let (_, socket) = bind_in_range_with_config(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            (1024, u16::MAX),
+            SocketConfiguration::default(),
+        )
+        .expect("should bind");
         let broadcast_stage = BroadcastStageType::Standard.new_broadcast_stage(
-            vec![bind_to_localhost().unwrap()],
+            vec![socket],
             cluster_info_for_broadcast.clone(),
             entry_receiver,
             retransmit_slots_receiver,
@@ -815,6 +815,7 @@ impl BankingSimulator {
             bank_forks.clone(),
             shred_version,
             sender,
+            None,
         );
 
         info!("Start banking stage!...");
@@ -822,18 +823,17 @@ impl BankingSimulator {
         let banking_stage = BankingStage::new_num_threads(
             block_production_method.clone(),
             transaction_struct.clone(),
-            &cluster_info_for_banking,
-            &poh_recorder,
+            poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
-            BankingStage::num_threads(),
+            BankingStage::default_num_workers(),
             None,
             replay_vote_sender,
             None,
             bank_forks.clone(),
-            prioritization_fee_cache,
+            prioritization_fee_cache.clone(),
         );
 
         let (&_slot, &raw_base_event_time) = freeze_time_by_slot

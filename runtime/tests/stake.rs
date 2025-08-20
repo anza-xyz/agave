@@ -2,11 +2,9 @@
 
 use {
     solana_account::{from_account, state_traits::StateMut},
-    solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
     solana_client_traits::SyncClient,
     solana_clock::Slot,
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_message::Message,
     solana_pubkey::Pubkey,
@@ -20,13 +18,14 @@ use {
     solana_signer::Signer,
     solana_stake_interface::{
         self as stake, instruction as stake_instruction,
+        stake_history::StakeHistory,
         state::{Authorized, Lockup, StakeStateV2},
+        sysvar,
     },
     solana_stake_program::stake_state,
-    solana_sysvar::{self as sysvar, stake_history::StakeHistory},
     solana_vote_program::{
         vote_instruction,
-        vote_state::{TowerSync, VoteInit, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+        vote_state::{TowerSync, VoteInit, VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY},
     },
     std::sync::{Arc, RwLock},
 };
@@ -310,19 +309,12 @@ fn test_stake_account_lifetime() {
     genesis_config.rent = Rent::default();
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let mint_pubkey = mint_keypair.pubkey();
-    // Need to set the EAH to Valid so that `Bank::new_from_parent()` doesn't panic during freeze
-    // when parent is in the EAH calculation window.
-    bank.rc
-        .accounts
-        .accounts_db
-        .epoch_accounts_hash_manager
-        .set_valid(EpochAccountsHash::new(Hash::new_unique()), bank.slot());
     let bank_client = BankClient::new_shared(bank.clone());
 
     let (vote_balance, stake_rent_exempt_reserve, stake_minimum_delegation) = {
         let rent = &bank.rent_collector().rent;
         (
-            rent.minimum_balance(VoteState::size_of()),
+            rent.minimum_balance(VoteStateV3::size_of()),
             rent.minimum_balance(StakeStateV2::size_of()),
             solana_stake_program::get_minimum_delegation(
                 bank.feature_set
@@ -430,9 +422,9 @@ fn test_stake_account_lifetime() {
 
     // Test that votes and credits are there
     let account = bank.get_account(&vote_pubkey).expect("account not found");
-    let vote_state: VoteState = StateMut::<VoteStateVersions>::state(&account)
+    let vote_state: VoteStateV3 = StateMut::<VoteStateVersions>::state(&account)
         .expect("couldn't unpack account data")
-        .convert_to_current();
+        .convert_to_v3();
 
     // 1 less vote, as the first vote should have cleared the lockout
     assert_eq!(vote_state.votes.len(), 31);

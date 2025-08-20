@@ -22,7 +22,6 @@ use {
         recycler::Recycler,
         sigverify,
     },
-    solana_rayon_threadlimit::get_max_thread_count,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_transaction::{
         versioned::VersionedTransaction, Transaction, TransactionVerificationMode,
@@ -112,10 +111,10 @@ pub struct Api<'a> {
 /// * For TPU: `solana_core::banking_stage::BankingStage::process_and_record_transactions()`
 /// * For TVU: `solana_core::replay_stage::ReplayStage::replay_blockstore_into_bank()`
 ///
+/// Until SIMD83 is activated:
 /// All transactions in the `transactions` field have to follow the read/write locking restrictions
 /// with regard to the accounts they reference. A single account can be either written by a single
 /// transaction, or read by one or more transactions, but not both.
-///
 /// This enforcement is done via a call to `solana_runtime::accounts::Accounts::lock_accounts()`
 /// with the `txs` argument holding all the `transactions` in the `Entry`.
 #[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq, Clone)]
@@ -959,9 +958,10 @@ pub fn thread_pool_for_tests() -> ThreadPool {
         .expect("new rayon threadpool")
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn thread_pool_for_benches() -> ThreadPool {
     rayon::ThreadPoolBuilder::new()
-        .num_threads(get_max_thread_count())
+        .num_threads(num_cpus::get())
         .thread_name(|i| format!("solEntryBnch{i:02}"))
         .build()
         .expect("new rayon threadpool")

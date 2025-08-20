@@ -31,7 +31,7 @@ use {
     solana_transaction::Transaction,
     solana_transaction_status::UiTransactionEncoding,
     spl_generic_token::token,
-    spl_token::state::Account,
+    spl_token_interface::state::Account,
     std::{
         cmp::min,
         collections::VecDeque,
@@ -46,6 +46,10 @@ use {
         time::{Duration, Instant},
     },
 };
+
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 pub const MAX_RPC_CALL_RETRIES: usize = 5;
 
@@ -224,8 +228,8 @@ fn make_create_message(
             )];
             if let Some(mint_address) = mint {
                 instructions.push(
-                    spl_token::instruction::initialize_account(
-                        &spl_token::id(),
+                    spl_token_interface::instruction::initialize_account(
+                        &spl_token_interface::id(),
                         &to_pubkey,
                         &mint_address,
                         &base_keypair.pubkey(),
@@ -233,8 +237,8 @@ fn make_create_message(
                     .unwrap(),
                 );
                 instructions.push(
-                    spl_token::instruction::approve(
-                        &spl_token::id(),
+                    spl_token_interface::instruction::approve(
+                        &spl_token_interface::id(),
                         &to_pubkey,
                         &base_keypair.pubkey(),
                         &base_keypair.pubkey(),
@@ -278,8 +282,8 @@ fn make_close_message(
                 Pubkey::create_with_seed(&base_keypair.pubkey(), &seed, &program_id).unwrap();
             if spl_token {
                 Some(
-                    spl_token::instruction::close_account(
-                        &spl_token::id(),
+                    spl_token_interface::instruction::close_account(
+                        &spl_token_interface::id(),
                         &address,
                         &keypair.pubkey(),
                         &base_keypair.pubkey(),
@@ -1416,13 +1420,11 @@ pub mod test {
             validator_configs::make_identical_validator_configs,
         },
         solana_measure::measure::Measure,
-        solana_native_token::sol_to_lamports,
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_poh_config::PohConfig,
+        solana_program_pack::Pack,
         solana_test_validator::TestValidator,
-        spl_token::{
-            solana_program::program_pack::Pack,
-            state::{Account, Mint},
-        },
+        spl_token_interface::state::{Account, Mint},
     };
 
     fn initialize_and_add_secondary_indexes(validator_config: &mut ValidatorConfig) {
@@ -1570,11 +1572,7 @@ pub mod test {
         let funder = Keypair::new();
         let latest_blockhash = rpc_client.get_latest_blockhash().unwrap();
         let signature = rpc_client
-            .request_airdrop_with_blockhash(
-                &funder.pubkey(),
-                sol_to_lamports(1.0),
-                &latest_blockhash,
-            )
+            .request_airdrop_with_blockhash(&funder.pubkey(), LAMPORTS_PER_SOL, &latest_blockhash)
             .unwrap();
         rpc_client
             .confirm_transaction_with_spinner(
@@ -1599,8 +1597,8 @@ pub mod test {
                     spl_mint_len as u64,
                     &token::id(),
                 ),
-                spl_token::instruction::initialize_mint(
-                    &spl_token::id(),
+                spl_token_interface::instruction::initialize_mint(
+                    &spl_token_interface::id(),
                     &spl_mint_keypair.pubkey(),
                     &spl_mint_keypair.pubkey(),
                     None,

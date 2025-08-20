@@ -56,10 +56,7 @@ impl Blockstore {
             )
         );
         if let Err(e) = purge_result {
-            error!(
-                "Error: {:?}; Purge failed in range {:?} to {:?}",
-                e, from_slot, to_slot
-            );
+            error!("Error: {e:?}; Purge failed in range {from_slot:?} to {to_slot:?}");
         }
     }
 
@@ -104,8 +101,7 @@ impl Blockstore {
             count += 1;
             if last_print.elapsed().as_millis() > 2000 {
                 info!(
-                    "purged: {} slots rewritten: {} retain_time: {}us",
-                    count, rewritten, total_retain_us
+                    "purged: {count} slots rewritten: {rewritten} retain_time: {total_retain_us}us"
                 );
                 count = 0;
                 rewritten = 0;
@@ -178,10 +174,7 @@ impl Blockstore {
             .put_in_batch(&mut write_batch, slot, &slot_meta)?;
 
         self.write_batch(write_batch).inspect_err(|e| {
-            error!(
-                "Error: {:?} while submitting write batch for slot {:?}",
-                e, slot
-            )
+            error!("Error: {e:?} while submitting write batch for slot {slot:?}")
         })?;
         Ok(columns_purged)
     }
@@ -211,8 +204,8 @@ impl Blockstore {
         let mut write_timer = Measure::start("write_batch");
         self.write_batch(write_batch).inspect_err(|e| {
             error!(
-                "Error: {:?} while submitting write batch for purge from_slot {} to_slot {}",
-                e, from_slot, to_slot
+                "Error: {e:?} while submitting write batch for purge from_slot {from_slot} \
+                 to_slot {to_slot}"
             )
         })?;
         write_timer.stop();
@@ -615,7 +608,6 @@ pub mod tests {
                 x.saturating_sub(1), // parent_slot
                 true,                // is_full_slot
                 0,                   // version
-                true,                // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
             let signature = entries
@@ -656,7 +648,6 @@ pub mod tests {
                 x.saturating_sub(1), // parent_slot
                 true,                // is_full_slot
                 0,                   // version
-                true,                // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
             let signature = entries
@@ -698,7 +689,6 @@ pub mod tests {
                 slot.saturating_sub(1),
                 true, // is_full_slot
                 0,    // version
-                true, // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
 
@@ -948,7 +938,6 @@ pub mod tests {
             slot - 1, // parent_slot
             true,     // is_full_slot
             0,        // version
-            true,     // merkle_variant
         );
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
@@ -1101,9 +1090,9 @@ pub mod tests {
 
         let (shreds, _) = make_many_slot_entries(0, 10, 5);
         blockstore.insert_shreds(shreds, None, false).unwrap();
-        let (slot_11, _) = make_slot_entries(11, 4, 5, true);
+        let (slot_11, _) = make_slot_entries(11, 4, 5);
         blockstore.insert_shreds(slot_11, None, false).unwrap();
-        let (slot_12, _) = make_slot_entries(12, 5, 5, true);
+        let (slot_12, _) = make_slot_entries(12, 5, 5);
         blockstore.insert_shreds(slot_12, None, false).unwrap();
 
         blockstore.purge_slot_cleanup_chaining(5).unwrap();

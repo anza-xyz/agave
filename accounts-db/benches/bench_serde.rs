@@ -7,6 +7,10 @@ use {
     std::mem,
 };
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 const KB: usize = 1024;
 const MB: usize = KB * KB;
 

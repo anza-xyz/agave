@@ -20,13 +20,12 @@ name = "solana_program_runtime"
 dev-context-only-utils = []
 dummy-for-ci-check = ["metrics"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
-metrics = ["dep:solana-metrics"]
-shuttle-test = ["solana-type-overrides/shuttle-test", "solana-sbpf/shuttle-test"]
+metrics = ["dep:solana-svm-metrics"]
+shuttle-test = ["solana-sbpf/shuttle-test", "solana-svm-type-overrides/shuttle-test"]
 
 [dependencies]
 base64 = { workspace = true }
 bincode = { workspace = true }
-enum-iterator = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 percentage = { workspace = true }
@@ -46,32 +45,36 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-last-restart-slot = { workspace = true }
-solana-log-collector = { workspace = true }
-solana-measure = { workspace = true }
-solana-metrics = { workspace = true, optional = true }
 solana-program-entrypoint = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
-solana-sbpf = { workspace = true }
+solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
-solana-stable-layout = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["bincode", "sysvar"] }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-svm-measure = { workspace = true }
+solana-svm-metrics = { workspace = true, optional = true }
+solana-svm-timings = { workspace = true }
+solana-svm-transaction = { workspace = true }
+solana-svm-type-overrides = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-sysvar = { workspace = true }
+solana-sysvar = { workspace = true, features = ["bincode"] }
 solana-sysvar-id = { workspace = true }
-solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true }
-solana-type-overrides = { workspace = true }
-thiserror = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
 solana-account-info = { workspace = true }
 solana-instruction = { workspace = true, features = ["bincode"] }
+solana-instruction-error = { workspace = true, features = ["serde"] }
+solana-keypair = { workspace = true }
 solana-program-runtime = { path = ".", features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { workspace = true, features = [
     "dev-context-only-utils",
 ] }

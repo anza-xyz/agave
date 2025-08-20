@@ -1,8 +1,5 @@
-#![feature(test)]
-
-extern crate test;
-
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     log::*,
     rand::distributions::{Distribution, Uniform},
     solana_metrics::{
@@ -10,12 +7,10 @@ use {
         datapoint::DataPoint,
         metrics::{serialize_points, test_mocks::MockMetricsWriter, MetricsAgent},
     },
-    std::{sync::Arc, time::Duration},
-    test::Bencher,
+    std::{hint::black_box, sync::Arc, time::Duration},
 };
 
-#[bench]
-fn bench_write_points(bencher: &mut Bencher) {
+fn bench_write_points(b: &mut Bencher) {
     let points = (0..10)
         .map(|_| {
             DataPoint::new("measurement")
@@ -26,19 +21,18 @@ fn bench_write_points(bencher: &mut Bencher) {
         })
         .collect();
     let host_id = "benchmark-host-id";
-    bencher.iter(|| {
+    b.iter(|| {
         for _ in 0..10 {
-            test::black_box(serialize_points(&points, host_id));
+            black_box(serialize_points(&points, host_id));
         }
     })
 }
 
-#[bench]
-fn bench_datapoint_submission(bencher: &mut Bencher) {
+fn bench_datapoint_submission(b: &mut Bencher) {
     let writer = Arc::new(MockMetricsWriter::new());
     let agent = MetricsAgent::new(writer, Duration::from_secs(10), 1000);
 
-    bencher.iter(|| {
+    b.iter(|| {
         for i in 0..1000 {
             agent.submit(
                 DataPoint::new("measurement")
@@ -51,12 +45,11 @@ fn bench_datapoint_submission(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
-fn bench_counter_submission(bencher: &mut Bencher) {
+fn bench_counter_submission(b: &mut Bencher) {
     let writer = Arc::new(MockMetricsWriter::new());
     let agent = MetricsAgent::new(writer, Duration::from_secs(10), 1000);
 
-    bencher.iter(|| {
+    b.iter(|| {
         for i in 0..1000 {
             agent.submit_counter(CounterPoint::new("counter 1"), Level::Info, i);
         }
@@ -64,14 +57,13 @@ fn bench_counter_submission(bencher: &mut Bencher) {
     })
 }
 
-#[bench]
-fn bench_random_submission(bencher: &mut Bencher) {
+fn bench_random_submission(b: &mut Bencher) {
     let writer = Arc::new(MockMetricsWriter::new());
     let agent = MetricsAgent::new(writer, Duration::from_secs(10), 1000);
     let mut rng = rand::thread_rng();
     let die = Uniform::<i32>::from(1..7);
 
-    bencher.iter(|| {
+    b.iter(|| {
         for i in 0..1000 {
             let dice = die.sample(&mut rng);
 
@@ -89,3 +81,12 @@ fn bench_random_submission(bencher: &mut Bencher) {
         agent.flush();
     })
 }
+
+benchmark_group!(
+    benches,
+    bench_write_points,
+    bench_datapoint_submission,
+    bench_counter_submission,
+    bench_random_submission
+);
+benchmark_main!(benches);

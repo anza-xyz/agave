@@ -54,11 +54,11 @@ use {
         self as stake,
         error::StakeError,
         instruction::{self as stake_instruction, LockupArgs},
+        stake_history::StakeHistory,
         state::{Authorized, Lockup, Meta, StakeActivationStatus, StakeAuthorize, StakeStateV2},
         tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
     },
     solana_system_interface::{error::SystemError, instruction as system_instruction},
-    solana_sysvar::stake_history::StakeHistory,
     solana_transaction::Transaction,
     std::{ops::Deref, rc::Rc},
 };
@@ -1709,8 +1709,12 @@ pub fn process_deactivate_stake_account(
         *stake_account_pubkey
     };
 
+    // DeactivateDelinquent parses a VoteState, which may change between simulation and execution
     let compute_unit_limit = match blockhash_query {
         BlockhashQuery::None(_) | BlockhashQuery::FeeCalculator(_, _) => ComputeUnitLimit::Default,
+        BlockhashQuery::All(_) if deactivate_delinquent => {
+            ComputeUnitLimit::SimulatedWithExtraPercentage(5)
+        }
         BlockhashQuery::All(_) => ComputeUnitLimit::Simulated,
     };
     let ixs = vec![if deactivate_delinquent {
@@ -2805,9 +2809,10 @@ pub fn process_delegate_stake(
 
     let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
+    // DelegateStake parses a VoteState, which may change between simulation and execution
     let compute_unit_limit = match blockhash_query {
         BlockhashQuery::None(_) | BlockhashQuery::FeeCalculator(_, _) => ComputeUnitLimit::Default,
-        BlockhashQuery::All(_) => ComputeUnitLimit::Simulated,
+        BlockhashQuery::All(_) => ComputeUnitLimit::SimulatedWithExtraPercentage(5),
     };
     let ixs = vec![stake_instruction::delegate_stake(
         stake_account_pubkey,

@@ -17,18 +17,19 @@ use {
     },
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
-    solana_net_utils::{SocketConfig, VALIDATOR_PORT_RANGE},
+    solana_net_utils::sockets,
     solana_quic_definitions::{
         QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS,
     },
     solana_rpc_client_api::client_error::ErrorKind as ClientErrorKind,
     solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
     solana_tls_utils::{
-        new_dummy_x509_certificate, tls_client_config_builder, QuicClientCertificate,
+        new_dummy_x509_certificate, socket_addr_to_quic_server_name, tls_client_config_builder,
+        QuicClientCertificate,
     },
     solana_transaction_error::TransportResult,
     std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+        net::{SocketAddr, UdpSocket},
         sync::{atomic::Ordering, Arc},
         thread,
     },
@@ -77,11 +78,12 @@ impl QuicLazyInitializedEndpoint {
         let mut endpoint = if let Some(endpoint) = &self.client_endpoint {
             endpoint.clone()
         } else {
-            let config = SocketConfig::default();
-            let client_socket = solana_net_utils::bind_in_range_with_config(
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                VALIDATOR_PORT_RANGE,
-                config,
+            // This will bind to random ports, but VALIDATOR_PORT_RANGE is outside
+            // of the range for CI tests when this is running in CI
+            let client_socket = sockets::bind_in_range_with_config(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                solana_net_utils::VALIDATOR_PORT_RANGE,
+                sockets::SocketConfiguration::default(),
             )
             .expect("QuicLazyInitializedEndpoint::create_endpoint bind_in_range")
             .1;
@@ -151,8 +153,8 @@ impl QuicNewConnection {
     ) -> Result<Self, QuicError> {
         let mut make_connection_measure = Measure::start("make_connection_measure");
         let endpoint = endpoint.get_endpoint().await;
-
-        let connecting = endpoint.connect(addr, "connect")?;
+        let server_name = socket_addr_to_quic_server_name(addr);
+        let connecting = endpoint.connect(addr, &server_name)?;
         stats.total_connections.fetch_add(1, Ordering::Relaxed);
         if let Ok(connecting_result) = timeout(QUIC_CONNECTION_HANDSHAKE_TIMEOUT, connecting).await
         {
@@ -187,7 +189,8 @@ impl QuicNewConnection {
         addr: SocketAddr,
         stats: &ClientStats,
     ) -> Result<Arc<Connection>, QuicError> {
-        let connecting = self.endpoint.connect(addr, "connect")?;
+        let server_name = socket_addr_to_quic_server_name(addr);
+        let connecting = self.endpoint.connect(addr, &server_name)?;
         stats.total_connections.fetch_add(1, Ordering::Relaxed);
         let connection = match connecting.into_0rtt() {
             Ok((connection, zero_rtt)) => {
@@ -224,6 +227,26 @@ pub struct QuicClient {
     connection: Arc<Mutex<Option<QuicNewConnection>>>,
     addr: SocketAddr,
     stats: Arc<ClientStats>,
+}
+
+const CONNECTION_CLOSE_CODE_APPLICATION_CLOSE: u32 = 0u32;
+const CONNECTION_CLOSE_REASON_APPLICATION_CLOSE: &[u8] = b"dropped";
+
+impl QuicClient {
+    /// Explicitly close the connection. Must be called manually if cleanup is needed.
+    pub async fn close(&self) {
+        let mut conn_guard = self.connection.lock().await;
+        if let Some(conn) = conn_guard.take() {
+            debug!(
+                "Closing connection to {} connection_id: {:?}",
+                self.addr, conn.connection
+            );
+            conn.connection.close(
+                CONNECTION_CLOSE_CODE_APPLICATION_CLOSE.into(),
+                CONNECTION_CLOSE_REASON_APPLICATION_CLOSE,
+            );
+        }
+    }
 }
 
 impl QuicClient {

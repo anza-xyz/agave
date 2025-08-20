@@ -11,7 +11,6 @@ use {
         result::{Error, Result},
     },
     agave_feature_set as feature_set,
-    assert_matches::debug_assert_matches,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     rayon::{prelude::*, ThreadPool},
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
@@ -96,7 +95,7 @@ impl WindowServiceMetrics {
             Error::RecvTimeout(_) => self.num_errors_cross_beam_recv_timeout += 1,
             Error::Blockstore(err) => {
                 self.num_errors_blockstore += 1;
-                error!("blockstore error: {}", err);
+                error!("blockstore error: {err}");
             }
             _ => self.num_errors_other += 1,
         }
@@ -208,9 +207,6 @@ where
         }
         if repair {
             ws_metrics.num_repairs.fetch_add(1, Ordering::Relaxed);
-            debug_assert_matches!(shred, shred::Payload::Unique(_));
-        } else {
-            debug_assert_matches!(shred, shred::Payload::Shared(_));
         }
         let shred = Shred::new_from_serialized_shred(shred).ok()?;
         Some((Cow::Owned(shred), repair))
@@ -485,15 +481,14 @@ mod test {
         keypair: &Keypair,
     ) -> Vec<Shred> {
         let shredder = Shredder::new(slot, parent, 0, 0).unwrap();
-        let (data_shreds, _) = shredder.entries_to_shreds(
+        let (data_shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             keypair,
             entries,
             true, // is_last_in_slot
             // chained_merkle_root
             Some(Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );

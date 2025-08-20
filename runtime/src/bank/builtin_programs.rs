@@ -102,13 +102,11 @@ mod tests_core_bpf_migration {
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
 
-            let target_program_id = transaction_context.get_key_of_account_at_index(
-                instruction_context.get_index_of_instruction_account_in_transaction(0)?,
-            )?;
+            let target_program_id = instruction_context.get_key_of_instruction_account(0)?;
 
             let instruction = Instruction::new_with_bytes(*target_program_id, &[], Vec::new());
 
-            invoke_context.native_invoke(instruction.into(), &[])
+            invoke_context.native_invoke(instruction, &[])
         });
     }
 
@@ -417,7 +415,7 @@ mod tests_core_bpf_migration {
         // Run `finish_init` to simulate starting up from a snapshot.
         // Clear all builtins to simulate a fresh bank init.
         bank.transaction_processor
-            .program_cache
+            .global_program_cache
             .write()
             .unwrap()
             .remove_programs(
@@ -586,7 +584,7 @@ mod tests_core_bpf_migration {
         // Run `finish_init` to simulate starting up from a snapshot.
         // Clear all builtins to simulate a fresh bank init.
         bank.transaction_processor
-            .program_cache
+            .global_program_cache
             .write()
             .unwrap()
             .remove_programs(

@@ -50,7 +50,8 @@ impl BytesPacket {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn from_bytes(dest: Option<&SocketAddr>, buffer: Bytes) -> Self {
+    pub fn from_bytes(dest: Option<&SocketAddr>, buffer: impl Into<Bytes>) -> Self {
+        let buffer = buffer.into();
         let mut meta = Meta {
             size: buffer.len(),
             ..Default::default()
@@ -132,6 +133,18 @@ impl BytesPacket {
     #[inline]
     pub fn as_mut(&mut self) -> PacketRefMut<'_> {
         PacketRefMut::Bytes(self)
+    }
+
+    #[inline]
+    pub fn buffer(&self) -> &Bytes {
+        &self.buffer
+    }
+
+    #[inline]
+    pub fn set_buffer(&mut self, buffer: impl Into<Bytes>) {
+        let buffer = buffer.into();
+        self.meta.size = buffer.len();
+        self.buffer = buffer;
     }
 }
 
@@ -685,7 +698,7 @@ impl PinnedPacketBatch {
                     // TODO: This should never happen. Instead the caller should
                     // break the payload into smaller messages, and here any errors
                     // should be propagated.
-                    error!("Couldn't write to packet {:?}. Data skipped.", e);
+                    error!("Couldn't write to packet {e:?}. Data skipped.");
                     packet.meta_mut().set_discard(true);
                 }
             } else {

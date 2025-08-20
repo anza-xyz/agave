@@ -24,7 +24,7 @@ fn bench_write_shreds(bench: &mut Bencher, entries: Vec<Entry>, ledger_path: &Pa
     let blockstore =
         Blockstore::open(ledger_path).expect("Expected to be able to open database ledger");
     bench.iter(move || {
-        let shreds = entries_to_test_shreds(&entries, 0, 0, true, 0, /*merkle_variant:*/ true);
+        let shreds = entries_to_test_shreds(&entries, 0, 0, true, 0);
         blockstore.insert_shreds(shreds, None, false).unwrap();
     });
 }
@@ -50,11 +50,10 @@ fn setup_read_bench(
         slot.saturating_sub(1), // parent_slot
         true,                   // is_full_slot
         0,                      // version
-        true,                   // merkle_variant
     );
     blockstore
         .insert_shreds(shreds, None, false)
-        .expect("Expectd successful insertion of shreds into ledger");
+        .expect("Expected successful insertion of shreds into ledger");
 }
 
 // Write small shreds to the ledger
@@ -140,7 +139,7 @@ fn bench_insert_data_shred_small(bench: &mut Bencher) {
     let num_entries = 32 * 1024;
     let entries = create_ticks(num_entries, 0, Hash::default());
     bench.iter(move || {
-        let shreds = entries_to_test_shreds(&entries, 0, 0, true, 0, /*merkle_variant:*/ true);
+        let shreds = entries_to_test_shreds(&entries, 0, 0, true, 0);
         blockstore.insert_shreds(shreds, None, false).unwrap();
     });
 }
@@ -154,7 +153,7 @@ fn bench_insert_data_shred_big(bench: &mut Bencher) {
     let num_entries = 32 * 1024;
     let entries = create_ticks(num_entries, 0, Hash::default());
     bench.iter(move || {
-        let shreds = entries_to_test_shreds(&entries, 0, 0, true, 0, /*merkle_variant:*/ true);
+        let shreds = entries_to_test_shreds(&entries, 0, 0, true, 0);
         blockstore.insert_shreds(shreds, None, false).unwrap();
     });
 }

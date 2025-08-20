@@ -43,7 +43,7 @@ fn program_account(program_data: &[u8]) -> AccountSharedData {
 fn test_bench_tps_local_cluster(config: Config) {
     let native_instruction_processors = vec![];
     let additional_accounts = vec![(
-        spl_instruction_padding::ID,
+        spl_instruction_padding_interface::ID,
         program_account(include_bytes!("fixtures/spl_instruction_padding.so")),
     )];
 
@@ -120,7 +120,10 @@ fn test_bench_tps_test_validator(config: Config) {
             ..Rent::default()
         })
         .faucet_addr(Some(faucet_addr))
-        .add_program("spl_instruction_padding", spl_instruction_padding::ID)
+        .add_program(
+            "spl_instruction_padding",
+            spl_instruction_padding_interface::ID,
+        )
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
@@ -203,7 +206,7 @@ fn test_bench_tps_local_cluster_with_padding() {
         tx_count: 100,
         duration: Duration::from_secs(10),
         instruction_padding_config: Some(InstructionPaddingConfig {
-            program_id: spl_instruction_padding::ID,
+            program_id: spl_instruction_padding_interface::ID,
             data_size: 0,
         }),
         ..Config::default()
@@ -217,7 +220,7 @@ fn test_bench_tps_tpu_client_with_padding() {
         tx_count: 100,
         duration: Duration::from_secs(10),
         instruction_padding_config: Some(InstructionPaddingConfig {
-            program_id: spl_instruction_padding::ID,
+            program_id: spl_instruction_padding_interface::ID,
             data_size: 0,
         }),
         ..Config::default()

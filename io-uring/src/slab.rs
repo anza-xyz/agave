@@ -1,6 +1,6 @@
 use slab::Slab;
 
-pub(crate) struct FixedSlab<T> {
+pub struct FixedSlab<T> {
     inner: Slab<T>,
 }
 

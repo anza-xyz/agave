@@ -13,10 +13,6 @@ use {
 /// offset within an append vec to account data
 pub type Offset = usize;
 
-/// bytes used to store this account in append vec
-/// Note this max needs to be big enough to handle max data len of 10MB, which is a const
-pub type StoredSize = u32;
-
 /// specify where account data is located
 #[derive(Debug, PartialEq, Eq)]
 pub enum StorageLocation {
@@ -86,30 +82,20 @@ pub struct AccountInfo {
     /// index identifying the append storage
     store_id: AccountsFileId,
 
-    account_offset_and_flags: AccountOffsetAndFlags,
-}
-
-#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
-pub struct AccountOffsetAndFlags {
     /// offset = 'packed_offset_and_flags.offset_reduced()' * ALIGN_BOUNDARY_OFFSET into the storage
     /// Note this is a smaller type than 'Offset'
-    packed_offset_and_flags: PackedOffsetAndFlags,
+    account_offset_and_flags: PackedOffsetAndFlags,
 }
 
 impl IsZeroLamport for AccountInfo {
     fn is_zero_lamport(&self) -> bool {
-        self.account_offset_and_flags
-            .packed_offset_and_flags
-            .is_zero_lamport()
+        self.account_offset_and_flags.is_zero_lamport()
     }
 }
 
 impl IsCached for AccountInfo {
     fn is_cached(&self) -> bool {
-        self.account_offset_and_flags
-            .packed_offset_and_flags
-            .offset_reduced()
-            == CACHED_OFFSET
+        self.account_offset_and_flags.offset_reduced() == CACHED_OFFSET
     }
 }
 
@@ -146,12 +132,9 @@ impl AccountInfo {
             }
         };
         packed_offset_and_flags.set_is_zero_lamport(is_zero_lamport);
-        let account_offset_and_flags = AccountOffsetAndFlags {
-            packed_offset_and_flags,
-        };
         Self {
             store_id,
-            account_offset_and_flags,
+            account_offset_and_flags: packed_offset_and_flags,
         }
     }
 
@@ -166,11 +149,7 @@ impl AccountInfo {
     }
 
     pub fn offset(&self) -> Offset {
-        Self::reduced_offset_to_offset(
-            self.account_offset_and_flags
-                .packed_offset_and_flags
-                .offset_reduced(),
-        )
+        Self::reduced_offset_to_offset(self.account_offset_and_flags.offset_reduced())
     }
 
     pub fn reduced_offset_to_offset(reduced_offset: OffsetReduced) -> Offset {

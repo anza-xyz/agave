@@ -1,6 +1,6 @@
 use {
-    crate::cli::CliError, solana_commitment_config::CommitmentConfig, solana_message::Message,
-    solana_native_token::lamports_to_sol, solana_pubkey::Pubkey,
+    crate::cli::CliError, solana_cli_output::display::build_balance_message,
+    solana_commitment_config::CommitmentConfig, solana_message::Message, solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::client_error::Result as ClientResult,
 };
@@ -83,8 +83,8 @@ pub fn check_account_for_spend_and_fee_with_commitment(
         balance
             .checked_add(fee)
             .ok_or(CliError::InsufficientFundsForSpendAndFee(
-                lamports_to_sol(balance),
-                lamports_to_sol(fee),
+                build_balance_message(balance, false, false),
+                build_balance_message(fee, false, false),
                 *account_pubkey,
             ))?;
 
@@ -96,13 +96,13 @@ pub fn check_account_for_spend_and_fee_with_commitment(
     )? {
         if balance > 0 {
             return Err(CliError::InsufficientFundsForSpendAndFee(
-                lamports_to_sol(balance),
-                lamports_to_sol(fee),
+                build_balance_message(balance, false, false),
+                build_balance_message(fee, false, false),
                 *account_pubkey,
             ));
         } else {
             return Err(CliError::InsufficientFundsForFee(
-                lamports_to_sol(fee),
+                build_balance_message(fee, false, false),
                 *account_pubkey,
             ));
         }

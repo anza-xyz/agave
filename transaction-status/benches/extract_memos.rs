@@ -1,19 +1,15 @@
-#![feature(test)]
-
-extern crate test;
-
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     solana_message::{compiled_instruction::CompiledInstruction, Message},
     solana_pubkey::Pubkey,
     solana_transaction_status::extract_memos::ExtractMemos,
-    test::Bencher,
 };
 
-#[bench]
+#[allow(clippy::arithmetic_side_effects)]
 fn bench_extract_memos(b: &mut Bencher) {
     let mut account_keys: Vec<Pubkey> = (0..64).map(|_| Pubkey::new_unique()).collect();
-    account_keys[62] = spl_memo::v1::id();
-    account_keys[63] = spl_memo::id();
+    account_keys[62] = spl_memo_interface::v1::id();
+    account_keys[63] = spl_memo_interface::v3::id();
     let memo = "Test memo";
 
     let instructions: Vec<_> = (0..20)
@@ -32,3 +28,6 @@ fn bench_extract_memos(b: &mut Bencher) {
 
     b.iter(|| message.extract_memos());
 }
+
+benchmark_group!(benches, bench_extract_memos);
+benchmark_main!(benches);

@@ -1,6 +1,6 @@
 //! The `recvmmsg` module provides recvmmsg() API implementation
 
-pub use solana_perf::packet::NUM_RCVMMSGS;
+pub use solana_perf::packet::PACKETS_PER_BATCH;
 #[cfg(target_os = "linux")]
 use {
     crate::msghdr::create_msghdr,
@@ -21,7 +21,7 @@ use {
 pub fn recv_mmsg(socket: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
     let mut i = 0;
-    let count = cmp::min(NUM_RCVMMSGS, packets.len());
+    let count = cmp::min(PACKETS_PER_BATCH, packets.len());
     for p in packets.iter_mut().take(count) {
         p.meta_mut().size = 0;
         match socket.recv_from(p.buffer_mut()) {
@@ -78,6 +78,18 @@ fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr
     None
 }
 
+/** Receive multiple messages from `sock` into buffer provided in `packets`.
+This is a wrapper around recvmmsg(7) call.
+
+The buffer provided in packets should have all `meta()` fields cleared before calling
+this function
+
+
+ This function is *supposed to* timeout in 1 second and *may* block forever
+ due to a bug in the linux kernel.
+ You may want to call `sock.set_read_timeout(Some(Duration::from_secs(1)));` or similar
+ prior to calling this function if you require this to actually time out after 1 second.
+*/
 #[cfg(target_os = "linux")]
 pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
     // Should never hit this, but bail if the caller didn't provide any Packets
@@ -89,9 +101,9 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
     const SOCKADDR_STORAGE_SIZE: socklen_t = mem::size_of::<sockaddr_storage>() as socklen_t;
 
-    let mut iovs = [MaybeUninit::uninit(); NUM_RCVMMSGS];
-    let mut addrs = [MaybeUninit::zeroed(); NUM_RCVMMSGS];
-    let mut hdrs = [MaybeUninit::uninit(); NUM_RCVMMSGS];
+    let mut iovs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
+    let mut addrs = [MaybeUninit::zeroed(); PACKETS_PER_BATCH];
+    let mut hdrs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
 
     let sock_fd = sock.as_raw_fd();
     let count = cmp::min(iovs.len(), packets.len());
@@ -151,7 +163,7 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     for (iov, addr, hdr) in izip!(&mut iovs, &mut addrs, &mut hdrs).take(count) {
         // SAFETY: We initialized `count` elements of each array above
         //
-        // It may be that `packets.len() != NUM_RCVMMSGS`; thus, some elements
+        // It may be that `packets.len() != PACKETS_PER_BATCH`; thus, some elements
         // in `iovs` / `addrs` / `hdrs` may not get initialized. So, we must
         // manually drop `count` elements from each array instead of being able
         // to convert [MaybeUninit<T>] to [T] and letting `Drop` do the work
@@ -170,8 +182,9 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
 mod tests {
     use {
         crate::{packet::PACKET_DATA_SIZE, recvmmsg::*},
-        solana_net_utils::{
-            bind_in_range_with_config, sockets::localhost_port_range_for_tests, SocketConfig,
+        solana_net_utils::sockets::{
+            bind_in_range_with_config, localhost_port_range_for_tests, unique_port_range_for_tests,
+            SocketConfiguration as SocketConfig,
         },
         std::{
             net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
@@ -182,10 +195,20 @@ mod tests {
     type TestConfig = (UdpSocket, SocketAddr, UdpSocket, SocketAddr);
 
     fn test_setup_reader_sender(ip: IpAddr) -> io::Result<TestConfig> {
-        let port_range = localhost_port_range_for_tests();
-        let reader = bind_in_range_with_config(ip, port_range, SocketConfig::default())?.1;
+        let port_range = unique_port_range_for_tests(2);
+        let reader = bind_in_range_with_config(
+            ip,
+            (port_range.start, port_range.end),
+            SocketConfig::default(),
+        )?
+        .1;
         let reader_addr = reader.local_addr()?;
-        let sender = bind_in_range_with_config(ip, port_range, SocketConfig::default())?.1;
+        let sender = bind_in_range_with_config(
+            ip,
+            (port_range.start, port_range.end),
+            SocketConfig::default(),
+        )?
+        .1;
         let sender_addr = sender.local_addr()?;
         Ok((reader, reader_addr, sender, sender_addr))
     }
@@ -213,7 +236,7 @@ mod tests {
 
         match test_setup_reader_sender(IpAddr::V6(Ipv6Addr::LOCALHOST)) {
             Ok(config) => test_one_iter(config),
-            Err(e) => warn!("Failed to configure IPv6: {:?}", e),
+            Err(e) => warn!("Failed to configure IPv6: {e:?}"),
         }
     }
 
@@ -249,7 +272,7 @@ mod tests {
 
         match test_setup_reader_sender(IpAddr::V6(Ipv6Addr::LOCALHOST)) {
             Ok(config) => test_multi_iter(config),
-            Err(e) => warn!("Failed to configure IPv6: {:?}", e),
+            Err(e) => warn!("Failed to configure IPv6: {e:?}"),
         }
     }
 

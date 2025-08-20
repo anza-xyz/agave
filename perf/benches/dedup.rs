@@ -1,17 +1,18 @@
 #![allow(clippy::arithmetic_side_effects)]
-#![feature(test)]
-
-extern crate test;
 
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     rand::prelude::*,
     solana_perf::{
         deduper::{self, Deduper},
         packet::{to_packet_batches, PacketBatch},
     },
     std::time::Duration,
-    test::Bencher,
 };
+
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 const NUM: usize = 4096;
 
@@ -22,11 +23,11 @@ fn test_packet_with_size(size: usize, rng: &mut ThreadRng) -> Vec<u8> {
         .collect()
 }
 
-fn do_bench_dedup_packets(bencher: &mut Bencher, mut batches: Vec<PacketBatch>) {
+fn do_bench_dedup_packets(b: &mut Bencher, mut batches: Vec<PacketBatch>) {
     // verify packets
     let mut rng = rand::thread_rng();
     let mut deduper = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
-    bencher.iter(|| {
+    b.iter(|| {
         let _ans = deduper::dedup_packets_and_count_discards(&deduper, &mut batches);
         deduper.maybe_reset(
             &mut rng,
@@ -40,9 +41,7 @@ fn do_bench_dedup_packets(bencher: &mut Bencher, mut batches: Vec<PacketBatch>) 
     });
 }
 
-#[bench]
-#[ignore]
-fn bench_dedup_same_small_packets(bencher: &mut Bencher) {
+fn bench_dedup_same_small_packets(b: &mut Bencher) {
     let mut rng = rand::thread_rng();
     let small_packet = test_packet_with_size(128, &mut rng);
 
@@ -51,12 +50,10 @@ fn bench_dedup_same_small_packets(bencher: &mut Bencher) {
         128,
     );
 
-    do_bench_dedup_packets(bencher, batches);
+    do_bench_dedup_packets(b, batches);
 }
 
-#[bench]
-#[ignore]
-fn bench_dedup_same_big_packets(bencher: &mut Bencher) {
+fn bench_dedup_same_big_packets(b: &mut Bencher) {
     let mut rng = rand::thread_rng();
     let big_packet = test_packet_with_size(1024, &mut rng);
 
@@ -65,12 +62,10 @@ fn bench_dedup_same_big_packets(bencher: &mut Bencher) {
         128,
     );
 
-    do_bench_dedup_packets(bencher, batches);
+    do_bench_dedup_packets(b, batches);
 }
 
-#[bench]
-#[ignore]
-fn bench_dedup_diff_small_packets(bencher: &mut Bencher) {
+fn bench_dedup_diff_small_packets(b: &mut Bencher) {
     let mut rng = rand::thread_rng();
 
     let batches = to_packet_batches(
@@ -80,12 +75,10 @@ fn bench_dedup_diff_small_packets(bencher: &mut Bencher) {
         128,
     );
 
-    do_bench_dedup_packets(bencher, batches);
+    do_bench_dedup_packets(b, batches);
 }
 
-#[bench]
-#[ignore]
-fn bench_dedup_diff_big_packets(bencher: &mut Bencher) {
+fn bench_dedup_diff_big_packets(b: &mut Bencher) {
     let mut rng = rand::thread_rng();
 
     let batches = to_packet_batches(
@@ -95,12 +88,10 @@ fn bench_dedup_diff_big_packets(bencher: &mut Bencher) {
         128,
     );
 
-    do_bench_dedup_packets(bencher, batches);
+    do_bench_dedup_packets(b, batches);
 }
 
-#[bench]
-#[ignore]
-fn bench_dedup_baseline(bencher: &mut Bencher) {
+fn bench_dedup_baseline(b: &mut Bencher) {
     let mut rng = rand::thread_rng();
 
     let batches = to_packet_batches(
@@ -110,15 +101,13 @@ fn bench_dedup_baseline(bencher: &mut Bencher) {
         128,
     );
 
-    do_bench_dedup_packets(bencher, batches);
+    do_bench_dedup_packets(b, batches);
 }
 
-#[bench]
-#[ignore]
-fn bench_dedup_reset(bencher: &mut Bencher) {
+fn bench_dedup_reset(b: &mut Bencher) {
     let mut rng = rand::thread_rng();
     let mut deduper = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
-    bencher.iter(|| {
+    b.iter(|| {
         deduper.maybe_reset(
             &mut rng,
             0.001,                    // false_positive_rate
@@ -126,3 +115,14 @@ fn bench_dedup_reset(bencher: &mut Bencher) {
         );
     });
 }
+
+benchmark_group!(
+    benches,
+    bench_dedup_reset,
+    bench_dedup_baseline,
+    bench_dedup_diff_big_packets,
+    bench_dedup_diff_small_packets,
+    bench_dedup_same_big_packets,
+    bench_dedup_same_small_packets
+);
+benchmark_main!(benches);

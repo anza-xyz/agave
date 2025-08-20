@@ -18,7 +18,7 @@ use {
     solana_vote_program::{
         vote_instruction::VoteInstruction,
         vote_state::{
-            TowerSync, Vote, VoteInit, VoteState, VoteStateUpdate, VoteStateVersions,
+            TowerSync, Vote, VoteInit, VoteStateUpdate, VoteStateV3, VoteStateVersions,
             MAX_LOCKOUT_HISTORY,
         },
     },
@@ -39,7 +39,7 @@ fn create_accounts() -> (Slot, SlotHashes, Vec<TransactionAccount>, Vec<AccountM
     let vote_pubkey = Pubkey::new_unique();
     let authority_pubkey = Pubkey::new_unique();
     let vote_account = {
-        let mut vote_state = VoteState::new(
+        let mut vote_state = VoteStateV3::new(
             &VoteInit {
                 node_pubkey: authority_pubkey,
                 authorized_voter: authority_pubkey,
@@ -52,9 +52,9 @@ fn create_accounts() -> (Slot, SlotHashes, Vec<TransactionAccount>, Vec<AccountM
         for next_vote_slot in 0..num_initial_votes {
             vote_state.process_next_vote_slot(next_vote_slot, 0, 0);
         }
-        let mut vote_account_data: Vec<u8> = vec![0; VoteState::size_of()];
-        let versioned = VoteStateVersions::new_current(vote_state);
-        VoteState::serialize(&versioned, &mut vote_account_data).unwrap();
+        let mut vote_account_data: Vec<u8> = vec![0; VoteStateV3::size_of()];
+        let versioned = VoteStateVersions::new_v3(vote_state);
+        VoteStateV3::serialize(&versioned, &mut vote_account_data).unwrap();
 
         Account {
             lamports: 1,
@@ -107,7 +107,7 @@ fn bench_process_deprecated_vote_instruction(
     bencher.iter(|| {
         mock_process_instruction_with_feature_set(
             &solana_vote_program::id(),
-            Vec::new(),
+            None,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_account_metas.clone(),
@@ -129,7 +129,7 @@ fn bench_process_vote_instruction(
     bencher.iter(|| {
         mock_process_instruction(
             &solana_vote_program::id(),
-            Vec::new(),
+            None,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_account_metas.clone(),

@@ -137,8 +137,8 @@ impl Program {
             None..None,
         )
         .map_err(|e| {
-            error!("Failed to deploy the program: {}", e);
-            format!("Failed to deploy the program: {}", e)
+            error!("Failed to deploy the program: {e}");
+            format!("Failed to deploy the program: {e}")
         })?;
 
         Ok(())
@@ -154,8 +154,8 @@ impl Program {
             &self.path,
         )
         .map_err(|e| {
-            error!("Failed to fetch the program: {}", e);
-            format!("Failed to fetch the program: {}", e)
+            error!("Failed to fetch the program: {e}");
+            format!("Failed to fetch the program: {e}")
         })?;
 
         if APPEND_CRATE_TO_ELF {
@@ -297,18 +297,17 @@ impl UnpackedCrate {
 
         let lib_name = UnpackedCrate::program_library_name(&tempdir, &meta)?;
 
-        let program_path =
-            UnpackedCrate::make_path(&tempdir, &meta, format!("out/{}.so", lib_name))
-                .into_os_string()
-                .into_string()
-                .map_err(|_| "Failed to get program file path")?;
+        let program_path = UnpackedCrate::make_path(&tempdir, &meta, format!("out/{lib_name}.so"))
+            .into_os_string()
+            .into_string()
+            .map_err(|_| "Failed to get program file path")?;
 
         let keypair = Keypair::read_from_file(UnpackedCrate::make_path(
             &tempdir,
             &meta,
-            format!("out/{}-keypair.json", lib_name),
+            format!("out/{lib_name}-keypair.json"),
         ))
-        .map_err(|e| format!("Failed to get keypair from the file: {}", e))?;
+        .map_err(|e| format!("Failed to get keypair from the file: {e}"))?;
 
         Ok(UnpackedCrate {
             meta,
@@ -406,7 +405,7 @@ impl UnpackedCrate {
         fs::create_dir_all(base_path)
             .map_err(|_| "Failed to create the base directory for output")?;
 
-        let program_path = Self::make_path(&tempdir, &meta, format!("out/{}.so", id))
+        let program_path = Self::make_path(&tempdir, &meta, format!("out/{id}.so"))
             .into_os_string()
             .into_string()
             .map_err(|_| "Failed to get program file path")?;

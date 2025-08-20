@@ -86,6 +86,11 @@ if [[ -n $CI ]]; then
         )
       fi
     fi
+
+    # Disable seccomp to allow io_uring operations (https://github.com/moby/moby/pull/46762)
+    ARGS+=(--security-opt seccomp=unconfined)
+    # Adjust memlock limit to let io_uring register buffers
+    ARGS+=(--ulimit memlock=-1:-1)
   fi
 fi
 

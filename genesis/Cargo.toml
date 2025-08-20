@@ -28,34 +28,35 @@ itertools = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-solana-account = "=2.2.1"
+solana-account = "=3.0.0"
 solana-accounts-db = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
-solana-clock = "=2.2.2"
-solana-commitment-config = "=2.2.1"
+solana-clock = "=3.0.0"
+solana-cluster-type = "=3.0.0"
+solana-commitment-config = "=3.0.0"
 solana-entry = { workspace = true }
-solana-epoch-schedule = "=2.2.1"
-solana-feature-gate-interface = "=2.2.2"
-solana-fee-calculator = "=2.2.1"
-solana-genesis-config = "=2.3.0"
-solana-inflation = "=2.2.1"
-solana-keypair = "=2.2.1"
+solana-epoch-schedule = "=3.0.0"
+solana-feature-gate-interface = "=3.0.0"
+solana-fee-calculator = "=3.0.0"
+solana-genesis-config = "=3.0.0"
+solana-inflation = "=3.0.0"
+solana-keypair = "=3.0.0"
 solana-ledger = { workspace = true }
-solana-loader-v3-interface = "5.0.0"
-solana-logger = "=2.3.1"
-solana-native-token = "=2.2.2"
-solana-poh-config = "=2.2.1"
-solana-pubkey = { version = "=2.4.0", default-features = false }
-solana-rent = "=2.2.1"
+solana-loader-v3-interface = "6.1.0"
+solana-logger = "=3.0.0"
+solana-native-token = "=3.0.0"
+solana-poh-config = "=3.0.0"
+solana-pubkey = { version = "=3.0.0", default-features = false }
+solana-rent = "=3.0.0"
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk-ids = "=2.2.1"
-solana-signer = "=2.2.1"
-solana-stake-interface = "=1.2.1"
+solana-sdk-ids = "=3.0.0"
+solana-signer = "=3.0.0"
+solana-stake-interface = { version = "=2.0.0", features = ["borsh"] }
 solana-stake-program = { workspace = true }
-solana-time-utils = "2.2.1"
+solana-time-utils = "3.0.0"
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 tempfile = { workspace = true }

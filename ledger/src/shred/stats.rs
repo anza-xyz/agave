@@ -47,9 +47,7 @@ pub struct ProcessShredsStats {
 pub struct ShredFetchStats {
     pub(super) index_overrun: usize,
     pub shred_count: usize,
-    pub(super) num_shreds_merkle_code: usize,
     pub(super) num_shreds_merkle_code_chained: usize,
-    pub(super) num_shreds_merkle_data: usize,
     pub(super) num_shreds_merkle_data_chained: usize,
     pub ping_count: usize,
     pub ping_err_verify_count: usize,
@@ -61,6 +59,7 @@ pub struct ShredFetchStats {
     pub(super) shred_version_mismatch: usize,
     pub(super) bad_parent_offset: usize,
     since: Option<Instant>,
+    pub overflow_shreds: usize,
 }
 
 impl ProcessShredsStats {
@@ -164,13 +163,11 @@ impl ShredFetchStats {
             name,
             ("index_overrun", self.index_overrun, i64),
             ("shred_count", self.shred_count, i64),
-            ("num_shreds_merkle_code", self.num_shreds_merkle_code, i64),
             (
                 "num_shreds_merkle_code_chained",
                 self.num_shreds_merkle_code_chained,
                 i64
             ),
-            ("num_shreds_merkle_data", self.num_shreds_merkle_data, i64),
             (
                 "num_shreds_merkle_data_chained",
                 self.num_shreds_merkle_data_chained,
@@ -185,6 +182,7 @@ impl ShredFetchStats {
             ("bad_shred_type", self.bad_shred_type, i64),
             ("shred_version_mismatch", self.shred_version_mismatch, i64),
             ("bad_parent_offset", self.bad_parent_offset, i64),
+            ("overflow_shreds", self.overflow_shreds, i64),
         );
         *self = Self {
             since: Some(Instant::now()),

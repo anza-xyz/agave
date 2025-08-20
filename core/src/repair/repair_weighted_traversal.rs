@@ -142,9 +142,10 @@ pub mod test {
         super::*,
         crate::repair::repair_service::sleep_shred_deferment_period,
         solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::{
             get_tmp_ledger_path,
-            shred::{Shred, ShredFlags},
+            shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
         solana_runtime::bank_utils,
         trees::tr,
@@ -281,22 +282,24 @@ pub mod test {
         repairs = vec![];
         outstanding_repairs = HashMap::new();
         slot_meta_cache = HashMap::default();
+        let keypair = Keypair::new();
+        let reed_solomon_cache = ReedSolomonCache::default();
+
         let completed_shreds: Vec<Shred> = [0, 2, 4, 6]
             .iter()
-            .map(|slot| {
-                let parent_offset = u16::from(*slot != 0);
-                let shred = Shred::new_from_data(
-                    *slot,
-                    last_shred as u32, // index
-                    parent_offset,
-                    &[0u8; 8], // data
-                    ShredFlags::LAST_SHRED_IN_SLOT,
-                    8,                 // reference_tick
-                    0,                 // version
-                    last_shred as u32, // fec_set_index
+            .flat_map(|slot| {
+                let shredder = Shredder::new(*slot, slot.saturating_sub(1), 0, 42).unwrap();
+                let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
+                    &keypair,
+                    &[],
+                    true,
+                    Some(Hash::default()),
+                    last_shred as u32,
+                    last_shred as u32,
+                    &reed_solomon_cache,
+                    &mut ProcessShredsStats::default(),
                 );
-                assert!(shred.sanitize().is_ok());
-                shred
+                shreds
             })
             .collect();
         blockstore

@@ -43,3 +43,4 @@ protobuf-src = { workspace = true }
 
 [dev-dependencies]
 enum-iterator = { workspace = true }
+test-case = { workspace = true }

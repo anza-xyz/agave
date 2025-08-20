@@ -46,7 +46,7 @@ impl From<Vec<Slot>> for Ancestors {
 
 impl From<&HashMap<Slot, usize>> for Ancestors {
     fn from(source: &HashMap<Slot, usize>) -> Ancestors {
-        let vec = source.iter().map(|(slot, _)| *slot).collect::<Vec<_>>();
+        let vec = source.keys().copied().collect::<Vec<_>>();
         Ancestors::from(vec)
     }
 }

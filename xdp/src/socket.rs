@@ -1,15 +1,16 @@
 use {
     crate::{
         device::{
-            mmap_ring, DeviceQueue, RingMmap, RingProducer, RxFillRing, TxCompletionRing, XdpDesc,
+            mmap_ring, DeviceQueue, RingConsumer, RingMmap, RingProducer, RxFillRing,
+            TxCompletionRing, XdpDesc,
         },
         umem::{Frame, Umem},
     },
     libc::{
         bind, getsockopt, sa_family_t, sendto, setsockopt, sockaddr, sockaddr_xdp, socket,
         socklen_t, xdp_mmap_offsets, xdp_umem_reg, AF_XDP, SOCK_RAW, SOL_XDP, XDP_COPY,
-        XDP_MMAP_OFFSETS, XDP_PGOFF_TX_RING, XDP_RING_NEED_WAKEUP, XDP_TX_RING,
-        XDP_UMEM_COMPLETION_RING, XDP_UMEM_FILL_RING, XDP_UMEM_PGOFF_COMPLETION_RING,
+        XDP_MMAP_OFFSETS, XDP_PGOFF_RX_RING, XDP_PGOFF_TX_RING, XDP_RING_NEED_WAKEUP, XDP_RX_RING,
+        XDP_TX_RING, XDP_UMEM_COMPLETION_RING, XDP_UMEM_FILL_RING, XDP_UMEM_PGOFF_COMPLETION_RING,
         XDP_UMEM_PGOFF_FILL_RING, XDP_USE_NEED_WAKEUP, XDP_ZEROCOPY,
     },
     std::{
@@ -32,10 +33,10 @@ impl<U: Umem> Socket<U> {
     #[allow(clippy::type_complexity)]
     pub fn new(
         dev_queue: DeviceQueue,
-        umem: U,
+        mut umem: U,
         zero_copy: bool,
         rx_fill_ring_size: usize,
-        _rx_ring_size: usize,
+        rx_ring_size: usize,
         tx_completion_ring_size: usize,
         tx_ring_size: usize,
     ) -> Result<(Self, Rx<U::Frame>, Tx<U::Frame>), io::Error> {
@@ -70,7 +71,13 @@ impl<U: Umem> Socket<U> {
                 (XDP_UMEM_COMPLETION_RING, tx_completion_ring_size),
                 (XDP_UMEM_FILL_RING, rx_fill_ring_size),
                 (XDP_TX_RING, tx_ring_size),
+                (XDP_RX_RING, rx_ring_size),
             ] {
+                if ring == XDP_RX_RING && size == 0 {
+                    // tx only
+                    continue;
+                }
+
                 if setsockopt(
                     fd.as_raw_fd(),
                     SOL_XDP,
@@ -106,7 +113,7 @@ impl<U: Umem> Socket<U> {
                 tx_completion_ring_size as u32,
             );
 
-            let rx_fill_ring = RxFillRing::new(
+            let mut rx_fill_ring = RxFillRing::new(
                 mmap_ring(
                     fd.as_raw_fd(),
                     rx_fill_ring_size.saturating_mul(mem::size_of::<u64>()),
@@ -116,6 +123,18 @@ impl<U: Umem> Socket<U> {
                 rx_fill_ring_size as u32,
                 fd.as_raw_fd(),
             );
+
+            if zero_copy {
+                // most drivers (intel) are buggy if ZC is enabled and the fill ring is not
+                // pre-populated before calling bind()
+                for _ in 0..rx_fill_ring_size {
+                    let Some(frame) = umem.reserve() else {
+                        return Err(io::Error::other("Failed to reserve frame for RX fill ring"));
+                    };
+                    rx_fill_ring.write(frame)?;
+                }
+                rx_fill_ring.commit();
+            }
 
             let tx_ring = Some(TxRing::new(
                 mmap_ring(
@@ -127,6 +146,21 @@ impl<U: Umem> Socket<U> {
                 tx_ring_size as u32,
                 fd.as_raw_fd(),
             ));
+
+            let rx_ring = if rx_ring_size > 0 {
+                Some(RxRing::new(
+                    mmap_ring(
+                        fd.as_raw_fd(),
+                        rx_ring_size.saturating_mul(mem::size_of::<XdpDesc>()),
+                        &offsets.rx,
+                        XDP_PGOFF_RX_RING as u64,
+                    )?,
+                    rx_ring_size as u32,
+                    fd.as_raw_fd(),
+                ))
+            } else {
+                None
+            };
 
             let sxdp = sockaddr_xdp {
                 sxdp_family: AF_XDP as sa_family_t,
@@ -150,7 +184,10 @@ impl<U: Umem> Socket<U> {
                 completion: tx_completion_ring,
                 ring: tx_ring,
             };
-            let rx = Rx { fill: rx_fill_ring };
+            let rx = Rx {
+                fill: rx_fill_ring,
+                ring: rx_ring,
+            };
             Ok((
                 Self {
                     fd,
@@ -170,7 +207,26 @@ impl<U: Umem> Socket<U> {
         completion_size: usize,
         ring_size: usize,
     ) -> Result<(Self, Tx<U::Frame>), io::Error> {
-        let (socket, _, tx) = Self::new(queue, umem, zero_copy, 1, 0, completion_size, ring_size)?;
+        let (fill_size, rx_size) = if zero_copy {
+            // See Socket::new() as to why this is needed
+            let rx = queue
+                .ring_sizes()
+                .ok_or_else(|| io::Error::other("zero copy requires a set ring size"))?
+                .rx;
+            (rx, rx)
+        } else {
+            // no RX fill ring needed for TX only sockets
+            (1, 0)
+        };
+        let (socket, _, tx) = Self::new(
+            queue,
+            umem,
+            zero_copy,
+            fill_size,
+            rx_size,
+            completion_size,
+            ring_size,
+        )?;
         Ok((socket, tx))
     }
 
@@ -195,7 +251,7 @@ impl<U: Umem> Socket<U> {
 }
 
 impl<U: Umem> AsFd for Socket<U> {
-    fn as_fd(&self) -> BorrowedFd {
+    fn as_fd(&self) -> BorrowedFd<'_> {
         self.fd.as_fd()
     }
 }
@@ -207,6 +263,7 @@ pub struct Tx<F: Frame> {
 
 pub struct Rx<F: Frame> {
     pub fill: RxFillRing<F>,
+    pub ring: Option<RxRing>,
 }
 
 pub struct TxRing<F: Frame> {
@@ -274,5 +331,42 @@ impl<F: Frame> TxRing<F> {
 
     pub fn sync(&mut self, commit: bool) {
         self.producer.sync(commit);
+    }
+}
+
+pub struct RxRing {
+    #[allow(dead_code)]
+    mmap: RingMmap<XdpDesc>,
+    consumer: RingConsumer,
+    size: u32,
+    #[allow(dead_code)]
+    fd: RawFd,
+}
+
+impl RxRing {
+    fn new(mmap: RingMmap<XdpDesc>, size: u32, fd: RawFd) -> Self {
+        debug_assert!(size.is_power_of_two());
+        Self {
+            consumer: RingConsumer::new(mmap.producer, mmap.consumer),
+            mmap,
+            size,
+            fd,
+        }
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.size as usize
+    }
+
+    pub fn available(&self) -> usize {
+        self.consumer.available() as usize
+    }
+
+    pub fn commit(&mut self) {
+        self.consumer.commit();
+    }
+
+    pub fn sync(&mut self, commit: bool) {
+        self.consumer.sync(commit);
     }
 }

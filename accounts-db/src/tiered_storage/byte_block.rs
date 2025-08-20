@@ -4,7 +4,7 @@
 use {
     crate::tiered_storage::{footer::AccountBlockFormat, meta::AccountMetaOptionalFields},
     std::{
-        io::{Cursor, Read, Result as IoResult, Write},
+        io::{self, Cursor, Read, Write},
         mem, ptr,
     },
 };
@@ -56,7 +56,7 @@ impl ByteBlockWriter {
     /// Write plain ol' data to the internal buffer of the ByteBlockWriter instance
     ///
     /// Prefer this over `write_type()`, as it prevents some undefined behavior.
-    pub fn write_pod<T: bytemuck::NoUninit>(&mut self, value: &T) -> IoResult<usize> {
+    pub fn write_pod<T: bytemuck::NoUninit>(&mut self, value: &T) -> io::Result<usize> {
         // SAFETY: Since T is NoUninit, it does not contain any uninitialized bytes.
         unsafe { self.write_type(value) }
     }
@@ -72,7 +72,7 @@ impl ByteBlockWriter {
     /// Caller must ensure casting T to bytes is safe.
     /// Refer to the Safety sections in std::slice::from_raw_parts()
     /// and bytemuck's Pod and NoUninit for more information.
-    pub unsafe fn write_type<T>(&mut self, value: &T) -> IoResult<usize> {
+    pub unsafe fn write_type<T>(&mut self, value: &T) -> io::Result<usize> {
         let size = mem::size_of::<T>();
         let ptr = ptr::from_ref(value).cast();
         // SAFETY: The caller ensures that `value` contains no uninitialized bytes,
@@ -90,7 +90,7 @@ impl ByteBlockWriter {
     pub fn write_optional_fields(
         &mut self,
         opt_fields: &AccountMetaOptionalFields,
-    ) -> IoResult<usize> {
+    ) -> io::Result<usize> {
         let mut size = 0;
         if let Some(rent_epoch) = opt_fields.rent_epoch {
             size += self.write_pod(&rent_epoch)?;
@@ -103,7 +103,7 @@ impl ByteBlockWriter {
 
     /// Write the specified typed bytes to the internal buffer of the
     /// ByteBlockWriter instance.
-    pub fn write(&mut self, buf: &[u8]) -> IoResult<()> {
+    pub fn write(&mut self, buf: &[u8]) -> io::Result<()> {
         match &mut self.encoder {
             ByteBlockEncoder::Raw(cursor) => cursor.write_all(buf)?,
             ByteBlockEncoder::Lz4(lz4_encoder) => lz4_encoder.write_all(buf)?,
@@ -114,7 +114,7 @@ impl ByteBlockWriter {
 
     /// Flush the internal byte buffer that collects all the previous writes
     /// into an encoded byte array.
-    pub fn finish(self) -> IoResult<Vec<u8>> {
+    pub fn finish(self) -> io::Result<Vec<u8>> {
         match self.encoder {
             ByteBlockEncoder::Raw(cursor) => Ok(cursor.into_inner()),
             ByteBlockEncoder::Lz4(lz4_encoder) => {
@@ -173,7 +173,7 @@ impl ByteBlockReader {
     ///
     /// Note that calling this function with AccountBlockFormat::AlignedRaw encoding
     /// will result in panic as the input is already decoded.
-    pub fn decode(encoding: AccountBlockFormat, input: &[u8]) -> IoResult<Vec<u8>> {
+    pub fn decode(encoding: AccountBlockFormat, input: &[u8]) -> io::Result<Vec<u8>> {
         match encoding {
             AccountBlockFormat::Lz4 => {
                 let mut decoder = lz4::Decoder::new(input).unwrap();
@@ -391,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn test_write_optionl_fields_raw_format() {
+    fn test_write_optional_fields_raw_format() {
         write_optional_fields(AccountBlockFormat::AlignedRaw);
     }
 

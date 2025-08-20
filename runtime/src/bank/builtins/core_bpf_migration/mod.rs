@@ -9,6 +9,7 @@ use {
     num_traits::{CheckedAdd, CheckedSub},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_builtins::core_bpf_migration::CoreBpfMigrationConfig,
+    solana_compute_budget::compute_budget::ComputeBudget,
     solana_hash::Hash,
     solana_instruction::error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
@@ -136,14 +137,22 @@ impl Bank {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
             self.slot,
             self.epoch,
-            &self.transaction_processor.program_cache.read().unwrap(),
+            &self
+                .transaction_processor
+                .global_program_cache
+                .read()
+                .unwrap(),
         );
 
         // Configure a dummy `InvokeContext` from the runtime's current
         // environment, as well as the two `ProgramCacheForTxBatch`
         // instances configured above, then invoke the loader.
         {
-            let compute_budget = self.compute_budget().unwrap_or_default();
+            let compute_budget = self
+                .compute_budget()
+                .unwrap_or(ComputeBudget::new_with_defaults(
+                    /* simd_0296_active */ false,
+                ));
             let mut sysvar_cache = SysvarCache::default();
             sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
                 if let Some(account) = self.get_account(pubkey) {
@@ -201,7 +210,7 @@ impl Bank {
         // Update the program cache by merging with `programs_modified`, which
         // should have been updated by the deploy function.
         self.transaction_processor
-            .program_cache
+            .global_program_cache
             .write()
             .unwrap()
             .merge(&program_cache_for_tx_batch.drain_modified_entries());
@@ -587,7 +596,11 @@ pub(crate) mod tests {
                 .contains(&self.target_program_address));
 
             // The cache should contain the target program.
-            let program_cache = bank.transaction_processor.program_cache.read().unwrap();
+            let program_cache = bank
+                .transaction_processor
+                .global_program_cache
+                .read()
+                .unwrap();
             let entries = program_cache.get_flattened_entries(true, true);
             let target_entry = entries
                 .iter()

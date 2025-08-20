@@ -3,13 +3,14 @@
 #[allow(deprecated)]
 use solana_sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
 use {
-    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_bpf_loader_program::syscalls::{
-        SyscallAbort, SyscallGetClockSysvar, SyscallGetRentSysvar, SyscallInvokeSignedRust,
-        SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove, SyscallMemset,
-        SyscallSetReturnData,
+    agave_syscalls::{
+        SyscallAbort, SyscallGetClockSysvar, SyscallGetEpochScheduleSysvar, SyscallGetRentSysvar,
+        SyscallInvokeSignedRust, SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove,
+        SyscallMemset, SyscallSetReturnData,
     },
+    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Clock, Slot, UnixTimestamp},
+    solana_epoch_schedule::EpochSchedule,
     solana_fee_structure::{FeeDetails, FeeStructure},
     solana_loader_v3_interface::{self as bpf_loader_upgradeable, state::UpgradeableLoaderState},
     solana_program_runtime::{
@@ -28,8 +29,8 @@ use {
     solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_type_overrides::sync::{Arc, RwLock},
     solana_sysvar_id::SysvarId,
-    solana_type_overrides::sync::{Arc, RwLock},
     std::{
         cmp::Ordering,
         collections::HashMap,
@@ -67,24 +68,12 @@ pub struct MockBankCallback {
 impl InvokeContextCallback for MockBankCallback {}
 
 impl TransactionProcessingCallback for MockBankCallback {
-    fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-        if let Some(data) = self.account_shared_data.read().unwrap().get(account) {
-            if data.lamports() == 0 {
-                None
-            } else {
-                owners.iter().position(|entry| data.owner() == entry)
-            }
-        } else {
-            None
-        }
-    }
-
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
         self.account_shared_data
             .read()
             .unwrap()
             .get(pubkey)
-            .cloned()
+            .map(|account| (account.clone(), 0))
     }
 
     fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
@@ -176,10 +165,20 @@ impl MockBankCallback {
             .write()
             .unwrap()
             .insert(RecentBlockhashes::id(), account_data);
+
+        // EpochSchedule is required for non-mocked LoaderV3 deploy
+        let epoch_schedule = EpochSchedule::without_warmup();
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_data(bincode::serialize(&epoch_schedule).unwrap());
+        self.account_shared_data
+            .write()
+            .unwrap()
+            .insert(EpochSchedule::id(), account_data);
     }
 }
 
-fn load_program(name: String) -> Vec<u8> {
+pub fn load_program(name: String) -> Vec<u8> {
     // Loading the program file
     let mut dir = env::current_dir().unwrap();
     dir.push("tests");
@@ -363,7 +362,7 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         sanitize_user_provided_values: true,
         enabled_sbpf_versions: SBPFVersion::V0..=SBPFVersion::V3,
         optimize_rodata: false,
-        aligned_memory_mapping: true,
+        aligned_memory_mapping: false,
     };
 
     // These functions are system calls the compile contract calls during execution, so they
@@ -398,6 +397,12 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         .expect("Registration failed");
     loader
         .register_function("sol_get_rent_sysvar", SyscallGetRentSysvar::vm)
+        .expect("Registration failed");
+    loader
+        .register_function(
+            "sol_get_epoch_schedule_sysvar",
+            SyscallGetEpochScheduleSysvar::vm,
+        )
         .expect("Registration failed");
     loader
 }

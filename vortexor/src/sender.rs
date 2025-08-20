@@ -64,7 +64,7 @@ impl PacketBatchSender {
     }
 
     /// Receive verified packets from the channel `packet_batch_receiver`
-    /// and send them to the desintations.
+    /// and send them to the destinations.
     fn recv_send(
         send_sock: UdpSocket,
         packet_batch_receiver: BankingPacketReceiver,
@@ -76,14 +76,16 @@ impl PacketBatchSender {
             let destinations = destinations.read().expect("Expected to get destinations");
             match Self::receive_until(packet_batch_receiver.clone(), recv_timeout, batch_size) {
                 Ok((packet_count, packet_batches)) => {
-                    trace!("Received packet counts: {}", packet_count);
+                    trace!("Received packet counts: {packet_count}");
                     // Collect all packets once for all destinations
                     let mut packets: Vec<&[u8]> = Vec::new();
 
                     for batch in &packet_batches {
                         for packet_batch in batch.iter() {
                             for packet in packet_batch {
-                                packets.push(packet.data(0..).unwrap());
+                                if let Some(data) = packet.data(0..) {
+                                    packets.push(data);
+                                }
                             }
                         }
                     }

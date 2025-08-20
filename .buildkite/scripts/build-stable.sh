@@ -8,31 +8,37 @@ source "$here"/common.sh
 
 agent="${1-solana}"
 
-partitions=$(
-  cat <<EOF
+parallelism=5
+partitions=()
+for i in $(seq 1 $parallelism); do
+  partitions+=("$(
+    cat <<EOF
 {
-  "name": "partitions",
-  "command": "ci/docker-run-default-image.sh ci/stable/run-partition.sh",
+  "name": "partition-$i",
+  "command": "ci/docker-run-default-image.sh ci/stable/run-partition.sh $i $parallelism",
   "timeout_in_minutes": 25,
   "agent": "$agent",
-  "parallelism": 5,
   "retry": 3
 }
 EOF
-)
+  )")
+done
 
-local_cluster_partitions=$(
-  cat <<EOF
+parallelism=10
+local_cluster_partitions=()
+for i in $(seq 1 $parallelism); do
+  local_cluster_partitions+=("$(
+    cat <<EOF
 {
-  "name": "local-cluster",
-  "command": "ci/docker-run-default-image.sh ci/stable/run-local-cluster-partially.sh",
+  "name": "local-cluster-$i",
+  "command": "ci/docker-run-default-image.sh ci/stable/run-local-cluster-partially.sh $i $parallelism",
   "timeout_in_minutes": 15,
   "agent": "$agent",
-  "parallelism": 10,
   "retry": 3
 }
 EOF
-)
+  )")
+done
 
 localnet=$(
   cat <<EOF
@@ -46,4 +52,6 @@ EOF
 )
 
 # shellcheck disable=SC2016
-group "stable" "$partitions" "$local_cluster_partitions" "$localnet"
+group "stable" "${partitions[@]}"
+group "local-cluster" "${local_cluster_partitions[@]}"
+group "localnet" "$localnet"

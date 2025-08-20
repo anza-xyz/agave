@@ -7,7 +7,7 @@ use {
 /// The subdirectory under ledger directory where the Blockstore lives
 pub const BLOCKSTORE_DIRECTORY_ROCKS_LEVEL: &str = "rocksdb";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BlockstoreOptions {
     // The access type of blockstore. Default: Primary
     pub access_type: AccessType,
@@ -59,7 +59,7 @@ pub enum AccessType {
     Secondary,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BlockstoreRecoveryMode {
     TolerateCorruptedTailRecords,
     AbsoluteConsistency,
@@ -99,7 +99,7 @@ impl From<BlockstoreRecoveryMode> for DBRecoveryMode {
 /// Options for LedgerColumn.
 /// Each field might also be used as a tag that supports group-by operation when
 /// reporting metrics.
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct LedgerColumnOptions {
     // Determine the way to compress column families which are eligible for
     // compression.
@@ -122,7 +122,7 @@ impl LedgerColumnOptions {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BlockstoreCompressionType {
     None,
     Snappy,

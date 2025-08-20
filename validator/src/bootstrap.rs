@@ -9,10 +9,11 @@ use {
     solana_download_utils::{download_snapshot_archive, DownloadProgressRecord},
     solana_genesis_utils::download_then_check_genesis_hash,
     solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
+        cluster_info::ClusterInfo,
         contact_info::{ContactInfo, Protocol},
         crds_data,
         gossip_service::GossipService,
+        node::Node,
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -56,7 +57,7 @@ pub const MAX_RPC_CONNECTIONS_EVALUATED_PER_ITERATION: usize = 32;
 
 pub const PING_TIMEOUT: Duration = Duration::from_secs(2);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct RpcBootstrapConfig {
     pub no_genesis_fetch: bool,
     pub no_snapshot_fetch: bool,
@@ -77,7 +78,9 @@ fn verify_reachable_ports(
             .map(|addr| socket_addr_space.check(addr))
             .unwrap_or_default()
     };
-    let mut udp_sockets = vec![&node.sockets.gossip, &node.sockets.repair];
+
+    let mut udp_sockets = vec![&node.sockets.repair];
+    udp_sockets.extend(node.sockets.gossip.iter());
 
     if verify_address(&node.info.serve_repair(Protocol::UDP)) {
         udp_sockets.push(&node.sockets.serve_repair);
@@ -141,7 +144,7 @@ fn start_gossip_node(
     cluster_entrypoints: &[ContactInfo],
     ledger_path: &Path,
     gossip_addr: &SocketAddr,
-    gossip_socket: UdpSocket,
+    gossip_sockets: Arc<[UdpSocket]>,
     expected_shred_version: u16,
     gossip_validators: Option<HashSet<Pubkey>>,
     should_check_duplicate_instance: bool,
@@ -161,7 +164,7 @@ fn start_gossip_node(
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        gossip_socket,
+        gossip_sockets,
         gossip_validators,
         should_check_duplicate_instance,
         None,
@@ -190,12 +193,7 @@ fn get_rpc_peers(
             .unwrap_or_default()
     );
 
-    let mut rpc_peers = cluster_info
-        .all_rpc_peers()
-        .into_iter()
-        .filter(|contact_info| contact_info.shred_version() == shred_version)
-        .collect::<Vec<_>>();
-
+    let mut rpc_peers = cluster_info.rpc_peers();
     if bootstrap_config.only_known_rpc {
         rpc_peers.retain(|rpc_peer| {
             is_known_validator(rpc_peer.pubkey(), &validator_config.known_validators)
@@ -366,8 +364,6 @@ pub fn attempt_download_genesis_and_snapshot(
     use_progress_bar: bool,
     gossip: &mut Option<(Arc<ClusterInfo>, Arc<AtomicBool>, GossipService)>,
     rpc_client: &RpcClient,
-    full_snapshot_archives_dir: &Path,
-    incremental_snapshot_archives_dir: &Path,
     maximum_local_snapshot_age: Slot,
     start_progress: &Arc<RwLock<ValidatorStartProgress>>,
     minimal_snapshot_download_speed: f32,
@@ -400,8 +396,6 @@ pub fn attempt_download_genesis_and_snapshot(
     info!("RPC node root slot: {rpc_client_slot}");
 
     download_snapshots(
-        full_snapshot_archives_dir,
-        incremental_snapshot_archives_dir,
         validator_config,
         bootstrap_config,
         use_progress_bar,
@@ -471,8 +465,8 @@ fn get_vetted_rpc_nodes(
             Err(err) => {
                 error!(
                     "Failed to get RPC nodes: {err}. Consider checking system clock, removing \
-                    `--no-port-check`, or adjusting `--known-validator ...` arguments as \
-                    applicable"
+                     `--no-port-check`, or adjusting `--known-validator ...` arguments as \
+                     applicable"
                 );
                 exit(1);
             }
@@ -557,8 +551,6 @@ pub fn rpc_bootstrap(
     node: &Node,
     identity_keypair: &Arc<Keypair>,
     ledger_path: &Path,
-    full_snapshot_archives_dir: &Path,
-    incremental_snapshot_archives_dir: &Path,
     vote_account: &Pubkey,
     authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     cluster_entrypoints: &[ContactInfo],
@@ -611,7 +603,7 @@ pub fn rpc_bootstrap(
                     .info
                     .gossip()
                     .expect("Operator must spin up node with valid gossip address"),
-                node.sockets.gossip.try_clone().unwrap(),
+                node.sockets.gossip.clone(),
                 validator_config
                     .expected_shred_version
                     .expect("expected_shred_version should not be None"),
@@ -641,8 +633,6 @@ pub fn rpc_bootstrap(
             use_progress_bar,
             &mut gossip,
             &rpc_client,
-            full_snapshot_archives_dir,
-            incremental_snapshot_archives_dir,
             maximum_local_snapshot_age,
             start_progress,
             minimal_snapshot_download_speed,
@@ -963,8 +953,7 @@ fn build_known_snapshot_hashes<'a>(
         if is_any_same_slot_and_different_hash(&full_snapshot_hash, known_snapshot_hashes.keys()) {
             warn!(
                 "Ignoring all snapshot hashes from node {node} since we've seen a different full \
-                 snapshot hash with this slot.\
-                 \nfull snapshot hash: {full_snapshot_hash:?}"
+                 snapshot hash with this slot. full snapshot hash: {full_snapshot_hash:?}"
             );
             debug!(
                 "known full snapshot hashes: {:#?}",
@@ -990,9 +979,9 @@ fn build_known_snapshot_hashes<'a>(
             ) {
                 warn!(
                     "Ignoring incremental snapshot hash from node {node} since we've seen a \
-                     different incremental snapshot hash with this slot.\
-                     \nfull snapshot hash: {full_snapshot_hash:?}\
-                     \nincremental snapshot hash: {incremental_snapshot_hash:?}"
+                     different incremental snapshot hash with this slot. full snapshot hash: \
+                     {full_snapshot_hash:?}, incremental snapshot hash: \
+                     {incremental_snapshot_hash:?}"
                 );
                 debug!(
                     "known incremental snapshot hashes based on this slot: {:#?}",
@@ -1104,8 +1093,6 @@ fn retain_peer_snapshot_hashes_with_highest_incremental_snapshot_slot(
 /// Check to see if we can use our local snapshots, otherwise download newer ones.
 #[allow(clippy::too_many_arguments)]
 fn download_snapshots(
-    full_snapshot_archives_dir: &Path,
-    incremental_snapshot_archives_dir: &Path,
     validator_config: &ValidatorConfig,
     bootstrap_config: &RpcBootstrapConfig,
     use_progress_bar: bool,
@@ -1124,6 +1111,10 @@ fn download_snapshots(
         full: full_snapshot_hash,
         incr: incremental_snapshot_hash,
     } = snapshot_hash.unwrap();
+    let full_snapshot_archives_dir = &validator_config.snapshot_config.full_snapshot_archives_dir;
+    let incremental_snapshot_archives_dir = &validator_config
+        .snapshot_config
+        .incremental_snapshot_archives_dir;
 
     // If the local snapshots are new enough, then use 'em; no need to download new snapshots
     if should_use_local_snapshot(
@@ -1151,8 +1142,6 @@ fn download_snapshots(
         );
     } else {
         download_snapshot(
-            full_snapshot_archives_dir,
-            incremental_snapshot_archives_dir,
             validator_config,
             bootstrap_config,
             use_progress_bar,
@@ -1184,8 +1173,6 @@ fn download_snapshots(
                 );
             } else {
                 download_snapshot(
-                    full_snapshot_archives_dir,
-                    incremental_snapshot_archives_dir,
                     validator_config,
                     bootstrap_config,
                     use_progress_bar,
@@ -1207,8 +1194,6 @@ fn download_snapshots(
 /// Download a snapshot
 #[allow(clippy::too_many_arguments)]
 fn download_snapshot(
-    full_snapshot_archives_dir: &Path,
-    incremental_snapshot_archives_dir: &Path,
     validator_config: &ValidatorConfig,
     bootstrap_config: &RpcBootstrapConfig,
     use_progress_bar: bool,
@@ -1226,6 +1211,10 @@ fn download_snapshot(
     let maximum_incremental_snapshot_archives_to_retain = validator_config
         .snapshot_config
         .maximum_incremental_snapshot_archives_to_retain;
+    let full_snapshot_archives_dir = &validator_config.snapshot_config.full_snapshot_archives_dir;
+    let incremental_snapshot_archives_dir = &validator_config
+        .snapshot_config
+        .incremental_snapshot_archives_dir;
 
     *start_progress.write().unwrap() = ValidatorStartProgress::DownloadingSnapshot {
         slot: desired_snapshot_hash.0,

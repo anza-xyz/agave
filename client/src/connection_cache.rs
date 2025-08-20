@@ -199,13 +199,16 @@ mod tests {
     use {
         super::*,
         crate::connection_cache::ConnectionCache,
-        solana_net_utils::bind_to_localhost,
+        solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
         std::net::{IpAddr, Ipv4Addr, SocketAddr},
     };
 
     #[test]
     fn test_connection_with_specified_client_endpoint() {
-        let client_socket = bind_to_localhost().unwrap();
+        let port_range = localhost_port_range_for_tests();
+        let mut port_range = port_range.0..port_range.1;
+        let client_socket =
+            bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.next().unwrap()).unwrap();
         let connection_cache = ConnectionCache::new_with_client_options(
             "connection_cache_test",
             1,                   // connection_pool_size
@@ -215,13 +218,13 @@ mod tests {
         );
 
         // server port 1:
-        let port1 = 9001;
+        let port1 = port_range.next().unwrap();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port1);
         let conn = connection_cache.get_connection(&addr);
         assert_eq!(conn.server_addr().port(), port1);
 
         // server port 2:
-        let port2 = 9002;
+        let port2 = port_range.next().unwrap();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port2);
         let conn = connection_cache.get_connection(&addr);
         assert_eq!(conn.server_addr().port(), port2);

@@ -70,6 +70,7 @@ Add
 
 ```
 LimitNOFILE=1000000
+LimitMEMLOCK=2000000000
 ```
 
 to the `[Service]` section of your systemd service file, if you use one,
@@ -77,6 +78,7 @@ otherwise add
 
 ```
 DefaultLimitNOFILE=1000000
+DefaultLimitMEMLOCK=2000000000
 ```
 
 to the `[Manager]` section of `/etc/systemd/system.conf`.
@@ -89,6 +91,8 @@ sudo systemctl daemon-reload
 sudo bash -c "cat >/etc/security/limits.d/90-solana-nofiles.conf <<EOF
 # Increase process file descriptor count limit
 * - nofile 1000000
+# Increase memory locked limit (kB)
+* - memlock 2000000
 EOF"
 ```
 
@@ -216,7 +220,7 @@ Or to see in finer detail:
 solana balance --lamports
 ```
 
-Read more about the [difference between SOL and lamports here](https://solana.com/docs/intro#what-are-sols).
+Read more about the difference between SOL and lamports here: [What is SOL?](https://solana.com/docs/references/terminology#sol), [What is a lamport?](https://solana.com/docs/references/terminology#lamport).
 
 ## Create Authorized Withdrawer Account
 
@@ -358,6 +362,7 @@ Restart=always
 RestartSec=1
 User=sol
 LimitNOFILE=1000000
+LimitMEMLOCK=2000000000
 LogRateLimitIntervalSec=0
 Environment="PATH=/bin:/usr/bin:/home/sol/.local/share/solana/install/active_release/bin"
 ExecStart=/home/sol/bin/validator.sh

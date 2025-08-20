@@ -402,7 +402,9 @@ fn filter_signature_result(
 ) -> (Option<RpcSignatureResult>, Slot) {
     (
         result.map(|result| {
-            RpcSignatureResult::ProcessedSignature(ProcessedSignatureResult { err: result.err() })
+            RpcSignatureResult::ProcessedSignature(ProcessedSignatureResult {
+                err: result.err().map(Into::into),
+            })
         }),
         last_notified_slot,
     )
@@ -446,7 +448,7 @@ fn filter_logs_results(
 ) -> (impl Iterator<Item = RpcLogsResponse>, Slot) {
     let responses = logs.into_iter().flatten().map(|log| RpcLogsResponse {
         signature: log.signature.to_string(),
-        err: log.result.err(),
+        err: log.result.err().map(Into::into),
         logs: log.log_messages,
     });
     (responses, last_notified_slot)
@@ -523,7 +525,7 @@ pub struct RpcSubscriptions {
 impl Drop for RpcSubscriptions {
     fn drop(&mut self) {
         self.shutdown().unwrap_or_else(|err| {
-            warn!("RPC Notification - shutdown error: {:?}", err);
+            warn!("RPC Notification - shutdown error: {err:?}");
         });
     }
 }
@@ -745,10 +747,7 @@ impl RpcSubscriptions {
             match notification_sender.send(notification_entry.into()) {
                 Ok(()) => (),
                 Err(SendError(notification)) => {
-                    warn!(
-                        "Dropped RPC Notification - receiver disconnected : {:?}",
-                        notification
-                    );
+                    warn!("Dropped RPC Notification - receiver disconnected : {notification:?}");
                 }
             }
         }
@@ -795,7 +794,7 @@ impl RpcSubscriptions {
                                 .node_progress_watchers()
                                 .get(&SubscriptionParams::Slot)
                             {
-                                debug!("slot notify: {:?}", slot_info);
+                                debug!("slot notify: {slot_info:?}");
                                 inc_new_counter_info!("rpc-subscription-notify-slot", 1);
                                 notifier.notify(slot_info, sub, false);
                             }
@@ -824,7 +823,7 @@ impl RpcSubscriptions {
                                     timestamp: vote_info.timestamp(),
                                     signature: signature.to_string(),
                                 };
-                                debug!("vote notify: {:?}", vote_info);
+                                debug!("vote notify: {vote_info:?}");
                                 inc_new_counter_info!("rpc-subscription-notify-vote", 1);
                                 notifier.notify(&rpc_vote, sub, false);
                             }
@@ -834,7 +833,7 @@ impl RpcSubscriptions {
                                 .node_progress_watchers()
                                 .get(&SubscriptionParams::Root)
                             {
-                                debug!("root notify: {:?}", root);
+                                debug!("root notify: {root:?}");
                                 inc_new_counter_info!("rpc-subscription-notify-root", 1);
                                 notifier.notify(root, sub, false);
                             }
@@ -1013,7 +1012,7 @@ impl RpcSubscriptions {
                                 let block_update_result = blockstore
                                     .get_complete_block(s, false)
                                     .map_err(|e| {
-                                        error!("get_complete_block error: {}", e);
+                                        error!("get_complete_block error: {e}");
                                         RpcBlockUpdateError::BlockStoreError
                                     })
                                     .and_then(|block| filter_block_result_txs(block, s, params));
@@ -1130,7 +1129,8 @@ impl RpcSubscriptions {
         let total_ms = total_time.as_ms();
         if total_notified > 0 || total_ms > 10 {
             debug!(
-                "notified({}): accounts: {} / {} logs: {} / {} programs: {} / {} signatures: {} / {}",
+                "notified({}): accounts: {} / {} logs: {} / {} programs: {} / {} signatures: {} / \
+                 {}",
                 source,
                 num_accounts_found.load(Ordering::Relaxed),
                 num_accounts_notified.load(Ordering::Relaxed),
@@ -1241,10 +1241,7 @@ pub(crate) mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
         solana_transaction_status::{TransactionDetails, UiTransactionEncoding},
-        std::{
-            collections::HashSet,
-            sync::atomic::{AtomicU64, Ordering::Relaxed},
-        },
+        std::{collections::HashSet, sync::atomic::AtomicU64},
     };
 
     struct AccountResult {
@@ -1889,7 +1886,6 @@ pub(crate) mod tests {
             ..
         } = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis_config);
-        bank.lazy_rent_collection.store(true, Relaxed);
 
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -1994,7 +1990,10 @@ pub(crate) mod tests {
         // Optimistically notifying slot 3 without notifying slot 1 and 2, bank3 is unfrozen, we expect
         // to see transaction for alice and bob to be notified in order.
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::OptimisticallyConfirmed(3),
+            (
+                BankNotification::OptimisticallyConfirmed(3),
+                None, /* no work sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2004,6 +2003,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no dependency tracker
         );
 
         // a closure to reduce code duplications in building expected responses:
@@ -2047,7 +2047,10 @@ pub(crate) mod tests {
 
         bank3.freeze();
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::Frozen(bank3),
+            (
+                BankNotification::Frozen(bank3),
+                None, /* no work sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2057,6 +2060,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no dependency tracker
         );
 
         let response = receiver.recv();
@@ -2082,7 +2086,6 @@ pub(crate) mod tests {
             ..
         } = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis_config);
-        bank.lazy_rent_collection.store(true, Relaxed);
 
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -2167,7 +2170,10 @@ pub(crate) mod tests {
         // Optimistically notifying slot 3 without notifying slot 1 and 2, bank3 is not in the bankforks, we do not
         // expect to see any RPC notifications.
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::OptimisticallyConfirmed(3),
+            (
+                BankNotification::OptimisticallyConfirmed(3),
+                None, /* no work sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2177,6 +2183,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no dependency tracker
         );
 
         // The following should panic
@@ -2196,7 +2203,6 @@ pub(crate) mod tests {
             ..
         } = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis_config);
-        bank.lazy_rent_collection.store(true, Relaxed);
 
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -2283,7 +2289,10 @@ pub(crate) mod tests {
         // to see transaction for alice and bob to be notified only when bank3 is added to the fork and
         // frozen. The notifications should be in the increasing order of the slot.
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::OptimisticallyConfirmed(3),
+            (
+                BankNotification::OptimisticallyConfirmed(3),
+                None, /* no work sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2293,6 +2302,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no dependency tracker
         );
 
         // a closure to reduce code duplications in building expected responses:
@@ -2338,7 +2348,10 @@ pub(crate) mod tests {
         bank3.process_transaction(&tx).unwrap();
         bank3.freeze();
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::Frozen(bank3),
+            (
+                BankNotification::Frozen(bank3),
+                None, /* no work sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2348,6 +2361,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no dependency tracker
         );
 
         let response = receiver.recv();
@@ -2706,7 +2720,6 @@ pub(crate) mod tests {
         let bank2 = Bank::new_from_parent(bank0, &Pubkey::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
 
-        // we need a pubkey that will pass its rent collection slot so rent_epoch gets updated to max since this account is exempt
         let alice = Keypair::from_base58_string("sfLnS4rZ5a8gXke3aGxCgM6usFAVPxLUaBSRdssGY9uS5eoiEWQ41CqDcpXbcekpKsie8Lyy3LNFdhEvjUE1wd9");
 
         let optimistically_confirmed_bank =
@@ -2769,7 +2782,7 @@ pub(crate) mod tests {
         let mut highest_root_slot: Slot = 0;
         let mut last_notified_confirmed_slot: Slot = 0;
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::OptimisticallyConfirmed(2),
+            (BankNotification::OptimisticallyConfirmed(2), None),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2779,12 +2792,16 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no dependency tracker
         );
 
         // Now, notify the frozen bank and ensure its notifications are processed
         highest_confirmed_slot = 0;
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::OptimisticallyConfirmed(1),
+            (
+                BankNotification::OptimisticallyConfirmed(1),
+                None, /* no work sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2794,6 +2811,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no dependency tracker
         );
 
         let response = receiver0.recv();
@@ -2839,7 +2857,10 @@ pub(crate) mod tests {
         bank2.freeze();
         highest_confirmed_slot = 0;
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::Frozen(bank2),
+            (
+                BankNotification::Frozen(bank2),
+                None, /* no work sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2849,6 +2870,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no dependency tracker
         );
         let response = receiver1.recv();
         let expected = json!({

@@ -7,22 +7,25 @@ use {
         append_vec::{self, AppendVec},
         tiered_storage::{
             file::TieredReadableFile,
-            hot::{HotStorageReader, HotStorageWriter},
+            hot::{HotStorageReader, HotStorageWriter, RENT_EXEMPT_RENT_EPOCH},
         },
     },
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::mem::ManuallyDrop,
 };
 
 mod utils;
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 const ACCOUNTS_COUNTS: [usize; 4] = [
     1,      // the smallest count; will bench overhead
-    100,    // number of accounts written per slot on mnb (with *no* rent rewrites)
-    1_000,  // number of accounts written slot on mnb (with rent rewrites)
+    100,    // lower range of accounts written per slot on mnb
+    1_000,  // higher range of accounts written per slot on mnb
     10_000, // reasonable largest number of accounts written per slot
 ];
 
@@ -161,14 +164,14 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("append_vec_mmap", accounts_count), |b| {
             b.iter(|| {
                 let mut count = 0;
-                append_vec_mmap.scan_pubkeys(|_| count += 1);
+                append_vec_mmap.scan_pubkeys(|_| count += 1).unwrap();
                 assert_eq!(count, accounts_count);
             });
         });
         group.bench_function(BenchmarkId::new("append_vec_file", accounts_count), |b| {
             b.iter(|| {
                 let mut count = 0;
-                append_vec_file.scan_pubkeys(|_| count += 1);
+                append_vec_file.scan_pubkeys(|_| count += 1).unwrap();
                 assert_eq!(count, accounts_count);
             });
         });

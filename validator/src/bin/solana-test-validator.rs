@@ -17,9 +17,10 @@ use {
     solana_core::consensus::tower_storage::FileTowerStorage,
     solana_epoch_schedule::EpochSchedule,
     solana_faucet::faucet::run_local_faucet_with_port,
+    solana_inflation::Inflation,
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_logger::redirect_stderr_to_file,
-    solana_native_token::sol_to_lamports,
+    solana_native_token::sol_str_to_lamports,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{
@@ -158,7 +159,9 @@ fn main() {
     let faucet_port = value_t_or_exit!(matches, "faucet_port", u16);
     let ticks_per_slot = value_t!(matches, "ticks_per_slot", u64).ok();
     let slots_per_epoch = value_t!(matches, "slots_per_epoch", Slot).ok();
+    let inflation_fixed = value_t!(matches, "inflation_fixed", f64).ok();
     let gossip_host = matches.value_of("gossip_host").map(|gossip_host| {
+        warn!("--gossip-host is deprecated. Use --bind-address instead.");
         solana_net_utils::parse_host(gossip_host).unwrap_or_else(|err| {
             eprintln!("Failed to parse --gossip-host: {err}");
             exit(1);
@@ -180,6 +183,15 @@ fn main() {
         eprintln!("Failed to parse --bind-address: {err}");
         exit(1);
     });
+
+    let advertised_ip = if let Some(ip) = gossip_host {
+        ip
+    } else if !bind_address.is_unspecified() && !bind_address.is_loopback() {
+        bind_address
+    } else {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    };
+
     let compute_unit_limit = value_t!(matches, "compute_unit_limit", u64).ok();
 
     let faucet_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), faucet_port);
@@ -312,7 +324,10 @@ fn main() {
         None
     };
 
-    let faucet_lamports = sol_to_lamports(value_of(&matches, "faucet_sol").unwrap());
+    let faucet_lamports = matches
+        .value_of("faucet_sol")
+        .and_then(sol_str_to_lamports)
+        .unwrap();
     let faucet_keypair_file = ledger_path.join("faucet-keypair.json");
     if !faucet_keypair_file.exists() {
         write_keypair_file(&Keypair::new(), faucet_keypair_file.to_str().unwrap()).unwrap_or_else(
@@ -339,12 +354,12 @@ fn main() {
     let faucet_pubkey = faucet_keypair.pubkey();
 
     let faucet_time_slice_secs = value_t_or_exit!(matches, "faucet_time_slice_secs", u64);
-    let faucet_per_time_cap = value_t!(matches, "faucet_per_time_sol_cap", f64)
-        .ok()
-        .map(sol_to_lamports);
-    let faucet_per_request_cap = value_t!(matches, "faucet_per_request_sol_cap", f64)
-        .ok()
-        .map(sol_to_lamports);
+    let faucet_per_time_cap = matches
+        .value_of("faucet_per_time_sol_cap")
+        .and_then(sol_str_to_lamports);
+    let faucet_per_request_cap = matches
+        .value_of("faucet_per_request_sol_cap")
+        .and_then(sol_str_to_lamports);
 
     let (sender, receiver) = unbounded();
     run_local_faucet_with_port(
@@ -370,6 +385,7 @@ fn main() {
             ("mint_address", "--mint"),
             ("ticks_per_slot", "--ticks-per-slot"),
             ("slots_per_epoch", "--slots-per-epoch"),
+            ("inflation_fixed", "--inflation-fixed"),
             ("faucet_sol", "--faucet-sol"),
             ("deactivate_feature", "--deactivate-feature"),
         ] {
@@ -559,9 +575,11 @@ fn main() {
         genesis.rent = Rent::with_slots_per_epoch(slots_per_epoch);
     }
 
-    if let Some(gossip_host) = gossip_host {
-        genesis.gossip_host(gossip_host);
+    if let Some(inflation_fixed) = inflation_fixed {
+        genesis.inflation(Inflation::new_fixed(inflation_fixed));
     }
+
+    genesis.gossip_host(advertised_ip);
 
     if let Some(gossip_port) = gossip_port {
         genesis.gossip_port(gossip_port);

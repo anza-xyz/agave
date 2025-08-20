@@ -8,7 +8,7 @@ use {
         feature::{status_from_account, CliFeatureStatus},
         program::calculate_max_chunk_size,
     },
-    agave_feature_set::{FeatureSet, FEATURE_NAMES},
+    agave_feature_set::{raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES},
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
     solana_account::Account,
@@ -625,13 +625,13 @@ pub fn process_program_v4_subcommand(
 // * Upload a new program account and deploy it
 //   - buffer_address must be `None`
 //   - upload_signer_index must be `Some(program_signer_index)`
-// * Single-step redeploy an exisiting program using the original program account
+// * Single-step redeploy an existing program using the original program account
 //   - buffer_address must be `None`
 //   - upload_signer_index must be `None`
-// * Single-step redeploy an exisiting program using a buffer account
+// * Single-step redeploy an existing program using a buffer account
 //   - buffer_address must be `Some(buffer_signer.pubkey())`
 //   - upload_signer_index must be `Some(buffer_signer_index)`
-// * Two-step redeploy an exisiting program using a buffer account
+// * Two-step redeploy an existing program using a buffer account
 //   - buffer_address must be `Some(buffer_signer.pubkey())`
 //   - upload_signer_index must be None
 pub fn process_deploy_program(
@@ -715,14 +715,15 @@ pub fn process_deploy_program(
                 }
             });
     }
-    let program_runtime_environment =
-        solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1(
-            &feature_set.runtime_features(),
-            &SVMTransactionExecutionBudget::default(),
-            true,
-            false,
-        )
-        .unwrap();
+    let program_runtime_environment = agave_syscalls::create_program_runtime_environment_v1(
+        &feature_set.runtime_features(),
+        &SVMTransactionExecutionBudget::new_with_defaults(
+            feature_set.is_active(&raise_cpi_nesting_limit_to_8::id()),
+        ),
+        true,
+        false,
+    )
+    .unwrap();
 
     // Verify the program
     let upload_range =
@@ -731,7 +732,7 @@ pub fn process_deploy_program(
         (MAX_PERMITTED_DATA_LENGTH as usize).saturating_sub(LoaderV4State::program_data_offset());
     if program_data.len() > MAX_LEN {
         return Err(format!(
-            "Program length {} exeeds maximum length {}",
+            "Program length {} exceeds maximum length {}",
             program_data.len(),
             MAX_LEN,
         )
@@ -739,7 +740,7 @@ pub fn process_deploy_program(
     }
     if upload_range.end > program_data.len() {
         return Err(format!(
-            "Range end {} exeeds program length {}",
+            "Range end {} exceeds program length {}",
             upload_range.end,
             program_data.len(),
         )

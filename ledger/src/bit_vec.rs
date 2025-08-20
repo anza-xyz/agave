@@ -610,8 +610,7 @@ mod tests {
                 .collect();
             assert_eq!(
                 result, expected,
-                "Failed for bounds: start={:?}, end={:?}",
-                start_bound, end_bound
+                "Failed for bounds: start={start_bound:?}, end={end_bound:?}"
             );
         }
     }

@@ -1,88 +1,48 @@
-//! Bank's wrapper around `RentCollector` to allow for overriding of some
-//! `SVMRentCollector` trait methods, which are otherwise implemented on
-//! `RentCollector` directly.
-//!
-//! Agave requires submission of logs and metrics during account rent state
-//! assessment, which is not included in the `RentCollector` implementation
-//! of the `SVMRentCollector` trait. This wrapper allows all `SVMRentCollector`
-//! methods to be passed through to the underlying `RentCollector`, except for
-//! those which require additional logging and metrics.
-
 use {
-    log::*,
-    solana_account::AccountSharedData,
-    solana_clock::Epoch,
-    solana_pubkey::Pubkey,
-    solana_rent::{Rent, RentDue},
-    solana_rent_collector::{CollectedInfo, RentCollector},
-    solana_svm_rent_collector::{rent_state::RentState, svm_rent_collector::SVMRentCollector},
-    solana_transaction_context::IndexOfAccount,
-    solana_transaction_error::{TransactionError, TransactionResult as Result},
+    solana_clock::Epoch, solana_epoch_schedule::EpochSchedule,
+    solana_genesis_config::GenesisConfig, solana_rent::Rent,
 };
 
-/// Wrapper around `RentCollector` to allow for overriding of some
-/// `SVMRentCollector` trait methods, which are otherwise implemented on
-/// `RentCollector` directly.
-///
-/// Overrides inject logging and metrics submission into the rent state
-/// assessment process.
-pub struct RentCollectorWithMetrics(RentCollector);
-
-impl RentCollectorWithMetrics {
-    pub fn new(rent_collector: RentCollector) -> Self {
-        Self(rent_collector)
-    }
+#[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
+#[derive(Clone, Debug, PartialEq, serde_derive::Deserialize, serde_derive::Serialize)]
+pub struct RentCollector {
+    pub epoch: Epoch,
+    pub epoch_schedule: EpochSchedule,
+    pub slots_per_year: f64,
+    pub rent: Rent,
 }
 
-impl SVMRentCollector for RentCollectorWithMetrics {
-    fn collect_rent(&self, address: &Pubkey, account: &mut AccountSharedData) -> CollectedInfo {
-        self.0.collect_rent(address, account)
-    }
-
-    fn get_rent(&self) -> &Rent {
-        self.0.get_rent()
-    }
-
-    fn get_rent_due(&self, lamports: u64, data_len: usize, account_rent_epoch: Epoch) -> RentDue {
-        self.0.get_rent_due(lamports, data_len, account_rent_epoch)
-    }
-
-    // Overriden to inject logging and metrics.
-    fn check_rent_state_with_account(
-        &self,
-        pre_rent_state: &RentState,
-        post_rent_state: &RentState,
-        address: &Pubkey,
-        account_state: &AccountSharedData,
-        account_index: IndexOfAccount,
-    ) -> Result<()> {
-        submit_rent_state_metrics(pre_rent_state, post_rent_state);
-        if !solana_sdk_ids::incinerator::check_id(address)
-            && !self.transition_allowed(pre_rent_state, post_rent_state)
-        {
-            debug!(
-                "Account {} not rent exempt, state {:?}",
-                address, account_state,
-            );
-            let account_index = account_index as u8;
-            Err(TransactionError::InsufficientFundsForRent { account_index })
-        } else {
-            Ok(())
+impl Default for RentCollector {
+    fn default() -> Self {
+        Self {
+            epoch: Epoch::default(),
+            epoch_schedule: EpochSchedule::default(),
+            // derive default value using GenesisConfig::default()
+            slots_per_year: GenesisConfig::default().slots_per_year(),
+            rent: Rent::default(),
         }
     }
 }
 
-fn submit_rent_state_metrics(pre_rent_state: &RentState, post_rent_state: &RentState) {
-    match (pre_rent_state, post_rent_state) {
-        (&RentState::Uninitialized, &RentState::RentPaying { .. }) => {
-            inc_new_counter_info!("rent_paying_err-new_account", 1);
+impl RentCollector {
+    pub(crate) fn new(
+        epoch: Epoch,
+        epoch_schedule: EpochSchedule,
+        slots_per_year: f64,
+        rent: Rent,
+    ) -> Self {
+        Self {
+            epoch,
+            epoch_schedule,
+            slots_per_year,
+            rent,
         }
-        (&RentState::RentPaying { .. }, &RentState::RentPaying { .. }) => {
-            inc_new_counter_info!("rent_paying_ok-legacy", 1);
+    }
+
+    pub(crate) fn clone_with_epoch(&self, epoch: Epoch) -> Self {
+        Self {
+            epoch,
+            ..self.clone()
         }
-        (_, &RentState::RentPaying { .. }) => {
-            inc_new_counter_info!("rent_paying_err-other", 1);
-        }
-        _ => {}
     }
 }

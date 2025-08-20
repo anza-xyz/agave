@@ -30,8 +30,8 @@ solana-ledger = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-shred-version = { workspace = true }
+solana-svm-timings = { workspace = true }
 solana-time-utils = { workspace = true }
-solana-timings = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
@@ -52,6 +52,7 @@ serial_test = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-entry = { workspace = true }
 solana-keypair = { workspace = true }
+solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-signer = { workspace = true }

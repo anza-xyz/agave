@@ -161,7 +161,7 @@ mod tests {
         let elgamal_keypair = ElGamalKeypair::new_rand();
         let expected_elgamal_pubkey: ElGamalPubkey = (*elgamal_keypair.pubkey()).into();
 
-        let elgamal_pubkey_base64_str = format!("{}", expected_elgamal_pubkey);
+        let elgamal_pubkey_base64_str = format!("{expected_elgamal_pubkey}");
         let computed_elgamal_pubkey = ElGamalPubkey::from_str(&elgamal_pubkey_base64_str).unwrap();
 
         assert_eq!(expected_elgamal_pubkey, computed_elgamal_pubkey);
@@ -173,7 +173,7 @@ mod tests {
         let expected_elgamal_ciphertext: ElGamalCiphertext =
             elgamal_keypair.pubkey().encrypt(0_u64).into();
 
-        let elgamal_ciphertext_base64_str = format!("{}", expected_elgamal_ciphertext);
+        let elgamal_ciphertext_base64_str = format!("{expected_elgamal_ciphertext}");
         let computed_elgamal_ciphertext =
             ElGamalCiphertext::from_str(&elgamal_ciphertext_base64_str).unwrap();
 

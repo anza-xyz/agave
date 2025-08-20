@@ -102,12 +102,10 @@ impl FeatureSet {
 
     pub fn runtime_features(&self) -> SVMFeatureSet {
         SVMFeatureSet {
-            lift_cpi_caller_restriction: self.is_active(&lift_cpi_caller_restriction::id()),
             move_precompile_verification_to_svm: self
                 .is_active(&move_precompile_verification_to_svm::id()),
-            remove_accounts_executable_flag_checks: self
-                .is_active(&remove_accounts_executable_flag_checks::id()),
-            bpf_account_data_direct_mapping: self.is_active(&bpf_account_data_direct_mapping::id()),
+            stricter_abi_and_runtime_constraints: self
+                .is_active(&stricter_abi_and_runtime_constraints::id()),
             enable_bpf_loader_set_authority_checked_ix: self
                 .is_active(&enable_bpf_loader_set_authority_checked_ix::id()),
             enable_loader_v4: self.is_active(&enable_loader_v4::id()),
@@ -149,9 +147,7 @@ impl FeatureSet {
                 .is_active(&simplify_alt_bn128_syscall_error_codes::id()),
             fix_alt_bn128_multiplication_input_length: self
                 .is_active(&fix_alt_bn128_multiplication_input_length::id()),
-            loosen_cpi_size_restriction: self.is_active(&loosen_cpi_size_restriction::id()),
             increase_tx_account_lock_limit: self.is_active(&increase_tx_account_lock_limit::id()),
-            disable_rent_fees_collection: self.is_active(&disable_rent_fees_collection::id()),
             enable_extend_program_checked: self.is_active(&enable_extend_program_checked::id()),
             formalize_loaded_transaction_data_size: self
                 .is_active(&formalize_loaded_transaction_data_size::id()),
@@ -159,6 +155,7 @@ impl FeatureSet {
                 .is_active(&disable_zk_elgamal_proof_program::id()),
             reenable_zk_elgamal_proof_program: self
                 .is_active(&reenable_zk_elgamal_proof_program::id()),
+            raise_cpi_nesting_limit_to_8: self.is_active(&raise_cpi_nesting_limit_to_8::id()),
         }
     }
 }
@@ -753,8 +750,8 @@ pub mod apply_cost_tracker_during_replay {
     solana_pubkey::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
 }
 
-pub mod bpf_account_data_direct_mapping {
-    solana_pubkey::declare_id!("1ncomp1ete111111111111111111111111111111111");
+pub mod stricter_abi_and_runtime_constraints {
+    solana_pubkey::declare_id!("C37iaPi6VE4CZDueU1vL8y6pGp5i8amAbEsF31xzz723");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
@@ -1014,15 +1011,11 @@ pub mod enable_sbpf_v2_deployment_and_execution {
 }
 
 pub mod enable_sbpf_v3_deployment_and_execution {
-    solana_pubkey::declare_id!("C8XZNs1bfzaiT3YDeXZJ7G5swQWQv7tVzDnCxtHvnSpw");
+    solana_pubkey::declare_id!("BUwGLeF3Lxyfv1J1wY8biFHBB2hrk2QhbNftQf3VV3cC");
 }
 
 pub mod remove_accounts_executable_flag_checks {
     solana_pubkey::declare_id!("FXs1zh47QbNnhXcnB6YiAQoJ4sGB91tKF3UFHLcKT7PM");
-}
-
-pub mod lift_cpi_caller_restriction {
-    solana_pubkey::declare_id!("HcW8ZjBezYYgvcbxNJwqv1t484Y2556qJsfNDWvJGZRH");
 }
 
 pub mod disable_account_loader_special_case {
@@ -1105,12 +1098,28 @@ pub mod formalize_loaded_transaction_data_size {
     solana_pubkey::declare_id!("DeS7sR48ZcFTUmt5FFEVDr1v1bh73aAbZiZq3SYr8Eh8");
 }
 
+pub mod alpenglow {
+    solana_pubkey::declare_id!("mustRekeyVm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
+}
+
 pub mod disable_zk_elgamal_proof_program {
     solana_pubkey::declare_id!("zkdoVwnSFnSLtGJG7irJPEYUpmb4i7sGMGcnN6T9rnC");
 }
 
 pub mod reenable_zk_elgamal_proof_program {
     solana_pubkey::declare_id!("zkemPXcuM3G4wpMDZ36Cpw34EjUpvm1nuioiSGbGZPR");
+}
+
+pub mod raise_block_limits_to_100m {
+    solana_pubkey::declare_id!("P1BCUMpAC7V2GRBRiJCNUgpMyWZhoqt3LKo712ePqsz");
+}
+
+pub mod raise_account_cu_limit {
+    solana_pubkey::declare_id!("htsptAwi2yRoZH83SKaUXykeZGtZHgxkS2QwW1pssR8");
+}
+
+pub mod raise_cpi_nesting_limit_to_8 {
+    solana_pubkey::declare_id!("6TkHkRmP7JZy1fdM6fg5uXn76wChQBWGokHBJzrLB3mj");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -1268,7 +1277,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (clean_up_delegation_errors::id(), "Return InsufficientDelegation instead of InsufficientFunds or InsufficientStake where applicable #31206"),
         (vote_state_add_vote_latency::id(), "replace Lockout with LandedVote (including vote latency) in vote state #31264"),
         (checked_arithmetic_in_fee_validation::id(), "checked arithmetic in fee validation #31273"),
-        (bpf_account_data_direct_mapping::id(), "use memory regions to map account data into the rbpf vm instead of copying the data"),
+        (stricter_abi_and_runtime_constraints::id(), "use memory regions to map account data into the rbpf vm instead of copying the data"),
         (last_restart_slot_sysvar::id(), "enable new sysvar last_restart_slot"),
         (reduce_stake_warmup_cooldown::id(), "reduce stake warmup cooldown from 25% to 9%"),
         (revise_turbine_epoch_stakes::id(), "revise turbine epoch stakes"),
@@ -1321,13 +1330,12 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (enable_turbine_extended_fanout_experiments::id(), "enable turbine extended fanout experiments #"),
         (deprecate_legacy_vote_ixs::id(), "Deprecate legacy vote instructions"),
         (partitioned_epoch_rewards_superfeature::id(), "SIMD-0118: replaces enable_partitioned_epoch_reward to enable partitioned rewards at epoch boundary"),
-        (disable_sbpf_v0_execution::id(), "SIMD-0161: Disables execution of SBPFv1 programs"),
-        (reenable_sbpf_v0_execution::id(), "Re-enables execution of SBPFv1 programs"),
-        (enable_sbpf_v1_deployment_and_execution::id(), "SIMD-0161: Enables deployment and execution of SBPFv1 programs"),
-        (enable_sbpf_v2_deployment_and_execution::id(), "SIMD-0161: Enables deployment and execution of SBPFv2 programs"),
-        (enable_sbpf_v3_deployment_and_execution::id(), "SIMD-0161: Enables deployment and execution of SBPFv3 programs"),
+        (disable_sbpf_v0_execution::id(), "SIMD-0161: Disables execution of SBPFv0 programs"),
+        (reenable_sbpf_v0_execution::id(), "Re-enables execution of SBPFv0 programs"),
+        (enable_sbpf_v1_deployment_and_execution::id(), "SIMD-0166: Enable deployment and execution of SBPFv1 programs"),
+        (enable_sbpf_v2_deployment_and_execution::id(), "SIMD-0173 and SIMD-0174: Enable deployment and execution of SBPFv2 programs"),
+        (enable_sbpf_v3_deployment_and_execution::id(), "SIMD-0178, SIMD-0179 and SIMD-0189: Enable deployment and execution of SBPFv3 programs"),
         (remove_accounts_executable_flag_checks::id(), "SIMD-0162: Remove checks of accounts is_executable flag"),
-        (lift_cpi_caller_restriction::id(), "Lift the restriction in CPI that the caller must have the callee as an instruction account #2202"),
         (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
         (accounts_lt_hash::id(), "SIMD-0215: enables lattice-based accounts hash"),
         (snapshots_lt_hash::id(), "SIMD-0220: snapshots use lattice-based accounts hash"),
@@ -1349,8 +1357,12 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (enshrine_slashing_program::id(), "SIMD-0204: Slashable event verification"),
         (enable_extend_program_checked::id(), "Enable ExtendProgramChecked instruction"),
         (formalize_loaded_transaction_data_size::id(), "SIMD-0186: Loaded transaction data size specification"),
+        (alpenglow::id(), "SIMD-0326: Alpenglow: new consensus algorithm"),
         (disable_zk_elgamal_proof_program::id(), "Disables zk-elgamal-proof program"),
         (reenable_zk_elgamal_proof_program::id(), "Re-enables zk-elgamal-proof program"),
+        (raise_block_limits_to_100m::id(), "SIMD-0286: Raise block limit to 100M"),
+        (raise_account_cu_limit::id(), "SIMD-0306: Raise account CU limit to 40% max"),
+        (raise_cpi_nesting_limit_to_8::id(), "SIMD-0296: Raise CPI nesting limit from 4 to 8"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

@@ -22,20 +22,17 @@ use {
     log::*,
     serde_derive::Serialize,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_accounts_db::{
-        accounts_db::CalcAccountsHashDataSource,
-        accounts_index::{ScanConfig, ScanOrder},
-    },
+    solana_accounts_db::accounts_index::{ScanConfig, ScanOrder},
     solana_clap_utils::{
-        hidden_unless_forced,
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
         input_validators::{
             is_parsable, is_pubkey, is_pubkey_or_keypair, is_slot, is_valid_percentage,
             is_within_range,
         },
     },
-    solana_cli_output::{CliAccount, OutputFormat},
+    solana_cli_output::{display::build_balance_message, CliAccount, OutputFormat},
     solana_clock::{Epoch, Slot},
+    solana_cluster_type::ClusterType,
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
@@ -43,7 +40,6 @@ use {
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
     solana_feature_gate_interface::{self as feature, Feature},
-    solana_genesis_config::ClusterType,
     solana_inflation::Inflation,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_ledger::{
@@ -55,7 +51,7 @@ use {
     },
     solana_measure::{measure::Measure, measure_time},
     solana_message::SimpleAddressLoader,
-    solana_native_token::{lamports_to_sol, sol_to_lamports, Sol},
+    solana_native_token::{Sol, LAMPORTS_PER_SOL},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -84,7 +80,7 @@ use {
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
-        vote_state::{self, VoteState},
+        vote_state::{self, VoteStateV3},
     },
     std::{
         collections::{HashMap, HashSet},
@@ -285,7 +281,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
                         format!(
                             "\nvotes: {}, stake: {:.1} SOL ({:.1}%)",
                             votes,
-                            lamports_to_sol(*stake),
+                            build_balance_message(*stake, false, false),
                             *stake as f64 / *total_stake as f64 * 100.,
                         )
                     } else {
@@ -381,7 +377,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
                 r#"  "last vote {}"[shape=box,label="Latest validator vote: {}\nstake: {} SOL\nroot slot: {}\n{}"];"#,
                 node_pubkey,
                 node_pubkey,
-                lamports_to_sol(*stake),
+                build_balance_message(*stake, false, false),
                 vote_state_view.root_slot().unwrap_or(0),
                 vote_history,
             ));
@@ -403,7 +399,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
         dot.push(format!(
             r#"    "..."[label="...\nvotes: {}, stake: {:.1} SOL {:.1}%"];"#,
             absent_votes,
-            lamports_to_sol(absent_stake),
+            build_balance_message(absent_stake, false, false),
             absent_stake as f64 / lowest_total_stake as f64 * 100.,
         ));
     }
@@ -476,7 +472,7 @@ fn compute_slot_cost(
                     &reserved_account_keys.active,
                 )
                 .map_err(|err| {
-                    warn!("Failed to compute cost of transaction: {:?}", err);
+                    warn!("Failed to compute cost of transaction: {err:?}");
                 })
                 .ok()
             })
@@ -516,6 +512,7 @@ fn minimize_bank_for_snapshot(
     bank: &Bank,
     snapshot_slot: Slot,
     ending_slot: Slot,
+    should_recalculate_accounts_lt_hash: bool,
 ) -> bool {
     let ((transaction_account_set, possibly_incomplete), transaction_accounts_measure) = measure_time!(
         blockstore.get_accounts_used_in_range(bank, snapshot_slot, ending_slot),
@@ -524,13 +521,22 @@ fn minimize_bank_for_snapshot(
     let total_accounts_len = transaction_account_set.len();
     info!("Added {total_accounts_len} accounts from transactions. {transaction_accounts_measure}");
 
-    SnapshotMinimizer::minimize(bank, snapshot_slot, ending_slot, transaction_account_set);
+    SnapshotMinimizer::minimize(
+        bank,
+        snapshot_slot,
+        transaction_account_set,
+        should_recalculate_accounts_lt_hash,
+    );
     possibly_incomplete
 }
 
 fn assert_capitalization(bank: &Bank) {
-    let debug_verify = true;
-    assert!(bank.calculate_and_verify_capitalization(debug_verify));
+    let calculated = bank.calculate_capitalization_for_tests();
+    let expected = bank.capitalization();
+    assert_eq!(
+        calculated, expected,
+        "Capitalization mismatch: calculated: {calculated} != expected: {expected}",
+    );
 }
 
 fn load_banking_trace_events_or_exit(ledger_path: &Path) -> BankingTraceEvents {
@@ -610,7 +616,34 @@ fn setup_slot_recording(
     let record_slots = arg_matches.occurrences_of("record_slots") > 0;
     let verify_slots = arg_matches.occurrences_of("verify_slots") > 0;
     match (record_slots, verify_slots) {
-        (false, false) => (None, None),
+        (false, false) => {
+            // for regualr replay ledger, report cost-tracker-stats after each
+            // slot is confirmed.
+            let slot_callback = Arc::new(move |bank: &Bank| {
+                // Block must be frozen by this point
+                assert!(bank.is_frozen());
+
+                let (total_transaction_fee, total_priority_fee) = {
+                    let collector_fee_details = bank.get_collector_fee_details();
+                    (
+                        collector_fee_details.total_transaction_fee(),
+                        collector_fee_details.total_priority_fee(),
+                    )
+                };
+
+                let cost_tracker = bank.read_cost_tracker().unwrap();
+                let slot = bank.slot();
+                let is_leader_block = false;
+                cost_tracker.report_stats(
+                    slot,
+                    is_leader_block,
+                    total_transaction_fee,
+                    total_priority_fee,
+                );
+            });
+
+            (Some(slot_callback as ProcessSlotCallback), None)
+        }
         (true, true) => {
             // .default_value() does not work with .conflicts_with() in clap 2.33
             // .conflicts_with("verify_slots")
@@ -618,7 +651,7 @@ fn setup_slot_recording(
             // So open-code the conflicts_with() here
             eprintln!(
                 "error: The argument '--verify-slots <FILENAME>' cannot be used with \
-                '--record-slots <FILENAME>'"
+                 '--record-slots <FILENAME>'"
             );
             exit(1);
         }
@@ -651,7 +684,10 @@ fn setup_slot_recording(
                 }));
 
                 (
-                    Some(TransactionStatusSender { sender }),
+                    Some(TransactionStatusSender {
+                        sender,
+                        dependency_tracker: None,
+                    }),
                     transaction_recorder,
                 )
             } else {
@@ -717,8 +753,12 @@ fn setup_slot_recording(
                         ..
                     } = slots.lock().unwrap().remove(0);
                     if bank.slot() != expected_slot || bank.hash().to_string() != expected_hash {
-                        error!("Expected slot: {expected_slot} hash: {expected_hash} got slot: {} hash: {}",
-                                    bank.slot(), bank.hash());
+                        error!(
+                            "Expected slot: {expected_slot} hash: {expected_hash} got slot: {} \
+                             hash: {}",
+                            bank.slot(),
+                            bank.hash()
+                        );
                     } else {
                         info!("Expected slot: {expected_slot} hash: {expected_hash} correct");
                     }
@@ -735,7 +775,7 @@ fn record_transactions(
     slots: Arc<Mutex<Vec<SlotDetails>>>,
 ) {
     for tsm in recv {
-        if let TransactionStatusMessage::Batch(batch) = tsm {
+        if let TransactionStatusMessage::Batch((batch, _work_sequence)) = tsm {
             assert_eq!(batch.transactions.len(), batch.commit_results.len());
 
             let transactions: Vec<_> = batch
@@ -822,9 +862,6 @@ fn main() {
     let accounts_db_config_args = accounts_db_args();
     let snapshot_config_args = snapshot_args();
 
-    let accounts_db_test_hash_calculation_arg = Arg::with_name("accounts_db_test_hash_calculation")
-        .long("accounts-db-test-hash-calculation")
-        .help("Enable hash calculation test");
     let halt_at_slot_arg = Arg::with_name("halt_at_slot")
         .long("halt-at-slot")
         .value_name("SLOT")
@@ -834,13 +871,6 @@ fn main() {
     let os_memory_stats_reporting_arg = Arg::with_name("os_memory_stats_reporting")
         .long("os-memory-stats-reporting")
         .help("Enable reporting of OS memory statistics.");
-    let halt_at_slot_store_hash_raw_data = Arg::with_name("halt_at_slot_store_hash_raw_data")
-        .long("halt-at-slot-store-hash-raw-data")
-        .help(
-            "After halting at slot, run an accounts hash calculation and store the raw hash data \
-             for debugging.",
-        )
-        .hidden(hidden_unless_forced());
     let verify_index_arg = Arg::with_name("verify_accounts_index")
         .long("verify-accounts-index")
         .takes_value(false)
@@ -911,10 +941,10 @@ fn main() {
         .help("Print account data in specified format when printing account contents.");
 
     let rent = Rent::default();
-    let default_bootstrap_validator_lamports = &sol_to_lamports(500.0)
-        .max(VoteState::get_rent_exempt_reserve(&rent))
+    let default_bootstrap_validator_lamports = &(500 * LAMPORTS_PER_SOL)
+        .max(VoteStateV3::get_rent_exempt_reserve(&rent))
         .to_string();
-    let default_bootstrap_validator_stake_lamports = &sol_to_lamports(0.5)
+    let default_bootstrap_validator_stake_lamports = &(LAMPORTS_PER_SOL / 2)
         .max(rent.minimum_balance(StakeStateV2::size_of()))
         .to_string();
     let default_graph_vote_account_mode = GraphVoteAccountMode::default();
@@ -1042,7 +1072,7 @@ fn main() {
         .subcommand(
             SubCommand::with_name("genesis-hash")
                 .about("Prints the ledger's genesis hash")
-                .arg(&load_genesis_config_arg)
+                .arg(&load_genesis_config_arg),
         )
         .subcommand(
             SubCommand::with_name("modify-genesis")
@@ -1070,7 +1100,7 @@ fn main() {
                 .arg(&load_genesis_config_arg)
                 .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
-                .arg(&hard_forks_arg)
+                .arg(&hard_forks_arg),
         )
         .subcommand(
             SubCommand::with_name("bank-hash")
@@ -1078,7 +1108,7 @@ fn main() {
                 .arg(&load_genesis_config_arg)
                 .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
-                .arg(&halt_at_slot_arg)
+                .arg(&halt_at_slot_arg),
         )
         .subcommand(
             SubCommand::with_name("verify")
@@ -1089,9 +1119,7 @@ fn main() {
                 .arg(&halt_at_slot_arg)
                 .arg(&limit_load_slot_count_from_snapshot_arg)
                 .arg(&verify_index_arg)
-                .arg(&halt_at_slot_store_hash_raw_data)
                 .arg(&hard_forks_arg)
-                .arg(&accounts_db_test_hash_calculation_arg)
                 .arg(&os_memory_stats_reporting_arg)
                 .arg(&allow_dead_slots_arg)
                 .arg(&debug_key_arg)
@@ -1124,8 +1152,8 @@ fn main() {
                         .requires("enable_rpc_transaction_history")
                         .takes_value(false)
                         .help(
-                            "Include CPI inner instructions, logs, and return data in the historical \
-                             transaction info stored",
+                            "Include CPI inner instructions, logs, and return data in the \
+                             historical transaction info stored",
                         ),
                 )
                 .arg(
@@ -1151,9 +1179,7 @@ fn main() {
                     Arg::with_name("print_bank_hash")
                         .long("print-bank-hash")
                         .takes_value(false)
-                        .help(
-                            "After verifying the ledger, print the working bank's hash"
-                        ),
+                        .help("After verifying the ledger, print the working bank's hash"),
                 )
                 .arg(
                     Arg::with_name("write_bank_file")
@@ -1190,7 +1216,10 @@ fn main() {
                             "enable_rpc_transaction_history",
                             "geyser_plugin_config",
                         ])
-                        .help("In addition to the bank hash, optionally include accounts and/or transactions details for the slot"),
+                        .help(
+                            "In addition to the bank hash, optionally include accounts and/or \
+                             transactions details for the slot",
+                        ),
                 )
                 .arg(
                     Arg::with_name("abort_on_invalid_block")
@@ -1212,8 +1241,8 @@ fn main() {
                         .takes_value(false)
                         .help(
                             "Enable override of blockhashes and bank hashes from banking trace \
-                             event files to correctly verify blocks produced by \
-                             the simulate-block-production subcommand",
+                             event files to correctly verify blocks produced by the \
+                             simulate-block-production subcommand",
                         ),
                 ),
         )
@@ -1287,8 +1316,8 @@ fn main() {
                         .value_name("DIR")
                         .takes_value(true)
                         .help(
-                            "Output directory for the snapshot \
-                            [default: --snapshot-archive-path if present else --ledger directory]",
+                            "Output directory for the snapshot [default: --snapshot-archive-path \
+                             if present else --ledger directory]",
                         ),
                 )
                 .arg(
@@ -1441,6 +1470,21 @@ fn main() {
                         .help("Ending slot for minimized snapshot creation"),
                 )
                 .arg(
+                    Arg::with_name("recalculate_accounts_lt_hash")
+                        .long("recalculate-accounts-lt-hash")
+                        .takes_value(false)
+                        .help("Recalculate the accounts lt hash for minimized snapshots")
+                        .long_help(
+                            "Recalculate the accounts lt hash for minimized snapshots. Without \
+                             this flag, loading the minimized snapshot will fail startup accounts \
+                             verification because the accounts lt hash will not match due to the \
+                             pruned account state. If not recalculating the accounts lt hash, \
+                             pass `--accounts-db-skip-initial-hash-calculation` to `leder-tool \
+                             verify` in order to bypass this check.",
+                        )
+                        .requires("minimized"),
+                )
+                .arg(
                     Arg::with_name("snapshot_archive_format")
                         .long("snapshot-archive-format")
                         .possible_values(SUPPORTED_ARCHIVE_COMPRESSION)
@@ -1458,10 +1502,10 @@ fn main() {
                         .takes_value(true)
                         .help("The compression level to use when archiving with zstd")
                         .long_help(
-                            "The compression level to use when archiving with zstd. \
-                             Higher compression levels generally produce higher \
-                             compression ratio at the expense of speed and memory. \
-                             See the zstd manpage for more information."
+                            "The compression level to use when archiving with zstd. Higher \
+                             compression levels generally produce higher compression ratio at the \
+                             expense of speed and memory. See the zstd manpage for more \
+                             information.",
                         ),
                 )
                 .arg(
@@ -1502,7 +1546,7 @@ fn main() {
                         .validator(is_slot)
                         .takes_value(true)
                         .required(true)
-                        .help("Start simulation at the given slot")
+                        .help("Start simulation at the given slot"),
                 )
                 .arg(
                     Arg::with_name("no_block_cost_limits")
@@ -1552,7 +1596,7 @@ fn main() {
                         .multiple(true)
                         .help(
                             "Limit output to accounts corresponding to the specified pubkey(s), \
-                            may be specified multiple times",
+                             may be specified multiple times",
                         ),
                 )
                 .arg(
@@ -1775,8 +1819,8 @@ fn main() {
                 }
                 ("bank-hash", Some(_)) => {
                     eprintln!(
-                        "The bank-hash command has been deprecated, use \
-                        agave-ledger-tool verify --print-bank-hash ... instead"
+                        "The bank-hash command has been deprecated, use agave-ledger-tool verify \
+                         --print-bank-hash ... instead"
                     );
                 }
                 ("verify", Some(arg_matches)) => {
@@ -1976,9 +2020,9 @@ fn main() {
                     let minimum_stake_lamports = rent.minimum_balance(StakeStateV2::size_of());
                     if bootstrap_validator_stake_lamports < minimum_stake_lamports {
                         eprintln!(
-                        "Error: insufficient --bootstrap-validator-stake-lamports. Minimum amount \
-                         is {minimum_stake_lamports}"
-                    );
+                            "Error: insufficient --bootstrap-validator-stake-lamports. Minimum \
+                             amount is {minimum_stake_lamports}"
+                        );
                         exit(1);
                     }
                     let bootstrap_validator_pubkeys =
@@ -2045,9 +2089,9 @@ fn main() {
                         .is_none()
                     {
                         eprintln!(
-                        "Error: snapshot slot {snapshot_slot} does not exist in blockstore or is \
-                         not full.",
-                    );
+                            "Error: snapshot slot {snapshot_slot} does not exist in blockstore or \
+                             is not full.",
+                        );
                         exit(1);
                     }
                     process_options.halt_at_slot = Some(snapshot_slot);
@@ -2057,7 +2101,7 @@ fn main() {
                         if ending_slot <= snapshot_slot {
                             eprintln!(
                                 "Error: ending_slot ({ending_slot}) must be greater than \
-                             snapshot_slot ({snapshot_slot})"
+                                 snapshot_slot ({snapshot_slot})"
                             );
                             exit(1);
                         }
@@ -2298,7 +2342,7 @@ fn main() {
                                 identity_pubkey,
                                 identity_pubkey,
                                 100,
-                                VoteState::get_rent_exempt_reserve(&rent).max(1),
+                                VoteStateV3::get_rent_exempt_reserve(&rent).max(1),
                             );
 
                             bank.store_account(
@@ -2326,13 +2370,12 @@ fn main() {
                         if let Some(warp_slot) = warp_slot {
                             if warp_slot < minimum_warp_slot {
                                 eprintln!(
-                                    "Error: --warp-slot too close.  Must be >= \
-                                         {minimum_warp_slot}"
+                                    "Error: --warp-slot too close.  Must be >= {minimum_warp_slot}"
                                 );
                                 exit(1);
                             }
                         } else {
-                            warn!("Warping to slot {}", minimum_warp_slot);
+                            warn!("Warping to slot {minimum_warp_slot}");
                             warp_slot = Some(minimum_warp_slot);
                         }
                     }
@@ -2342,10 +2385,8 @@ fn main() {
                     }
 
                     let pre_capitalization = bank.capitalization();
-
-                    bank.set_capitalization();
-
-                    let post_capitalization = bank.capitalization();
+                    let post_capitalization = bank.calculate_capitalization_for_tests();
+                    bank.set_capitalization_for_tests(post_capitalization);
 
                     let capitalization_message = if pre_capitalization != post_capitalization {
                         let amount = if pre_capitalization > post_capitalization {
@@ -2379,7 +2420,6 @@ fn main() {
                             bank.clone(),
                             bank.collector_id(),
                             warp_slot,
-                            CalcAccountsHashDataSource::Storages,
                         ))
                     } else {
                         bank
@@ -2391,6 +2431,7 @@ fn main() {
                             &bank,
                             snapshot_slot,
                             ending_slot.unwrap(),
+                            arg_matches.is_present("recalculate_accounts_lt_hash"),
                         )
                     } else {
                         false
@@ -2407,15 +2448,15 @@ fn main() {
                         if starting_snapshot_hashes.is_none() {
                             eprintln!(
                                 "Unable to create incremental snapshot without a base full \
-                                     snapshot"
+                                 snapshot"
                             );
                             exit(1);
                         }
                         let full_snapshot_slot = starting_snapshot_hashes.unwrap().full.0 .0;
                         if bank.slot() <= full_snapshot_slot {
                             eprintln!(
-                                "Unable to create incremental snapshot: Slot must be greater \
-                                     than full snapshot slot. slot: {}, full snapshot slot: {}",
+                                "Unable to create incremental snapshot: Slot must be greater than \
+                                 full snapshot slot. slot: {}, full snapshot slot: {}",
                                 bank.slot(),
                                 full_snapshot_slot,
                             );
@@ -2438,8 +2479,8 @@ fn main() {
                             });
 
                         println!(
-                            "Successfully created incremental snapshot for slot {}, hash {}, \
-                                 base slot: {}: {}",
+                            "Successfully created incremental snapshot for slot {}, hash {}, base \
+                             slot: {}: {}",
                             bank.slot(),
                             bank.hash(),
                             full_snapshot_slot,
@@ -2473,9 +2514,9 @@ fn main() {
                                 bank.epoch_schedule().get_epoch(ending_slot.unwrap());
                             if starting_epoch != ending_epoch {
                                 warn!(
-                                    "Minimized snapshot range crosses epoch boundary ({} to \
-                                         {}). Bank hashes after {} will not match replays from a \
-                                         full snapshot",
+                                    "Minimized snapshot range crosses epoch boundary ({} to {}). \
+                                     Bank hashes after {} will not match replays from a full \
+                                     snapshot",
                                     starting_epoch,
                                     ending_epoch,
                                     bank.epoch_schedule().get_last_slot_in_epoch(starting_epoch)
@@ -2484,9 +2525,9 @@ fn main() {
 
                             if minimize_snapshot_possibly_incomplete {
                                 warn!(
-                                    "Minimized snapshot may be incomplete due to missing \
-                                         accounts from CPI'd address lookup table extensions. \
-                                         This may lead to mismatched bank hashes while replaying."
+                                    "Minimized snapshot may be incomplete due to missing accounts \
+                                     from CPI'd address lookup table extensions. This may lead to \
+                                     mismatched bank hashes while replaying."
                                 );
                             }
                         }
@@ -2516,8 +2557,8 @@ fn main() {
                     let simulator = BankingSimulator::new(banking_trace_events, slot);
                     let Some(parent_slot) = simulator.parent_slot() else {
                         eprintln!(
-                            "Couldn't determine parent_slot of first_simulated_slot: {slot} \
-                             due to missing banking_trace_event data."
+                            "Couldn't determine parent_slot of first_simulated_slot: {slot} due \
+                             to missing banking_trace_event data."
                         );
                         exit(1);
                     };
@@ -2548,7 +2589,10 @@ fn main() {
                     let transaction_struct =
                         value_t_or_exit!(arg_matches, "transaction_struct", TransactionStructure);
 
-                    info!("Using: block-production-method: {block_production_method} transaction-structure: {transaction_struct}");
+                    info!(
+                        "Using: block-production-method: {block_production_method} \
+                         transaction-structure: {transaction_struct}"
+                    );
 
                     match simulator.start(
                         genesis_config,
@@ -2642,8 +2686,10 @@ fn main() {
 
                     if arg_matches.is_present("recalculate_capitalization") {
                         println!("Recalculating capitalization");
-                        let old_capitalization = bank.set_capitalization();
-                        if old_capitalization == bank.capitalization() {
+                        let old_capitalization = bank.capitalization();
+                        let new_capitalization = bank.calculate_capitalization_for_tests();
+                        bank.set_capitalization_for_tests(new_capitalization);
+                        if old_capitalization == new_capitalization {
                             eprintln!("Capitalization was identical: {}", Sol(old_capitalization));
                         }
                     }
@@ -2684,11 +2730,6 @@ fn main() {
                         let next_epoch = base_bank
                             .epoch_schedule()
                             .get_first_slot_in_epoch(warp_epoch);
-                        // disable eager rent collection because this creates many unrelated
-                        // rent collection account updates
-                        base_bank
-                            .lazy_rent_collection
-                            .store(true, std::sync::atomic::Ordering::Relaxed);
 
                         let feature_account_balance = std::cmp::max(
                             genesis_config.rent.minimum_balance(Feature::size_of()),
@@ -2734,13 +2775,13 @@ fn main() {
                             if store_failed_count >= 1 {
                                 // we have no choice; maybe locally created blank cluster with
                                 // not-Development cluster type.
-                                let old_cap = base_bank.set_capitalization();
-                                let new_cap = base_bank.capitalization();
+                                let old_cap = base_bank.capitalization();
+                                let new_cap = base_bank.calculate_capitalization_for_tests();
+                                base_bank.set_capitalization_for_tests(new_cap);
                                 warn!(
-                                    "Skewing capitalization a bit to enable \
-                                         credits_auto_rewind as requested: increasing {} from {} \
-                                         to {}",
-                                    feature_account_balance, old_cap, new_cap,
+                                    "Skewing capitalization a bit to enable credits_auto_rewind \
+                                     as requested: increasing {feature_account_balance} from \
+                                     {old_cap} to {new_cap}",
                                 );
                                 assert_eq!(
                                     old_cap + feature_account_balance * store_failed_count,
@@ -3100,7 +3141,7 @@ fn main() {
                                 }
                                 overall_delta += delta;
                             } else {
-                                error!("new account!?: {}", pubkey);
+                                error!("new account!?: {pubkey}");
                             }
                         }
                         if overall_delta > 0 {
@@ -3118,7 +3159,6 @@ fn main() {
 
                         assert_capitalization(&bank);
                         println!("Inflation: {:?}", bank.inflation());
-                        println!("RentCollector: {:?}", bank.rent_collector());
                         println!("Capitalization: {}", Sol(bank.capitalization()));
                     }
                 }
@@ -3151,5 +3191,5 @@ fn main() {
         }
     };
     measure_total_execution_time.stop();
-    info!("{}", measure_total_execution_time);
+    info!("{measure_total_execution_time}");
 }

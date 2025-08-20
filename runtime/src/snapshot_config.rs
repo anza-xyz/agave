@@ -1,9 +1,5 @@
 use {
-    crate::{
-        snapshot_bank_utils,
-        snapshot_utils::{self, ArchiveFormat, SnapshotVersion, ZstdConfig},
-    },
-    solana_clock::Slot,
+    crate::snapshot_utils::{self, ArchiveFormat, SnapshotInterval, SnapshotVersion, ZstdConfig},
     std::{num::NonZeroUsize, path::PathBuf},
 };
 
@@ -14,10 +10,10 @@ pub struct SnapshotConfig {
     pub usage: SnapshotUsage,
 
     /// Generate a new full snapshot archive every this many slots
-    pub full_snapshot_archive_interval_slots: Slot,
+    pub full_snapshot_archive_interval: SnapshotInterval,
 
     /// Generate a new incremental snapshot archive every this many slots
-    pub incremental_snapshot_archive_interval_slots: Slot,
+    pub incremental_snapshot_archive_interval: SnapshotInterval,
 
     /// Path to the directory where full snapshot archives are stored
     pub full_snapshot_archives_dir: PathBuf,
@@ -49,10 +45,12 @@ impl Default for SnapshotConfig {
     fn default() -> Self {
         Self {
             usage: SnapshotUsage::LoadAndGenerate,
-            full_snapshot_archive_interval_slots:
-                snapshot_bank_utils::DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-            incremental_snapshot_archive_interval_slots:
-                snapshot_bank_utils::DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+            full_snapshot_archive_interval: SnapshotInterval::Slots(
+                snapshot_utils::DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+            ),
+            incremental_snapshot_archive_interval: SnapshotInterval::Slots(
+                snapshot_utils::DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+            ),
             full_snapshot_archives_dir: PathBuf::default(),
             incremental_snapshot_archives_dir: PathBuf::default(),
             bank_snapshots_dir: PathBuf::default(),
@@ -74,6 +72,8 @@ impl SnapshotConfig {
     pub fn new_load_only() -> Self {
         Self {
             usage: SnapshotUsage::LoadOnly,
+            full_snapshot_archive_interval: SnapshotInterval::Disabled,
+            incremental_snapshot_archive_interval: SnapshotInterval::Disabled,
             ..Self::default()
         }
     }
@@ -83,6 +83,8 @@ impl SnapshotConfig {
     pub fn new_disabled() -> Self {
         Self {
             usage: SnapshotUsage::Disabled,
+            full_snapshot_archive_interval: SnapshotInterval::Disabled,
+            incremental_snapshot_archive_interval: SnapshotInterval::Disabled,
             ..Self::default()
         }
     }

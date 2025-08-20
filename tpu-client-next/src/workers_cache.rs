@@ -4,13 +4,12 @@
 
 use {
     crate::{
-        connection_worker::ConnectionWorker, transaction_batch::TransactionBatch,
+        connection_worker::ConnectionWorker, logging::debug, transaction_batch::TransactionBatch,
         SendTransactionStats,
     },
-    log::*,
     lru::LruCache,
     quinn::Endpoint,
-    std::{net::SocketAddr, sync::Arc},
+    std::{net::SocketAddr, sync::Arc, time::Duration},
     thiserror::Error,
     tokio::{
         sync::mpsc::{self, error::TrySendError},
@@ -78,6 +77,7 @@ pub(crate) fn spawn_worker(
     worker_channel_size: usize,
     skip_check_transaction_age: bool,
     max_reconnect_attempts: usize,
+    handshake_timeout: Duration,
     stats: Arc<SendTransactionStats>,
 ) -> WorkerInfo {
     let (txs_sender, txs_receiver) = mpsc::channel(worker_channel_size);
@@ -91,6 +91,7 @@ pub(crate) fn spawn_worker(
         skip_check_transaction_age,
         max_reconnect_attempts,
         stats,
+        handshake_timeout,
     );
     let handle = tokio::spawn(async move {
         worker.run().await;
@@ -185,8 +186,8 @@ impl WorkersCache {
         }
 
         let current_worker = workers.get(peer).expect(
-            "Failed to fetch worker for peer {peer}.\n\
-             Peer existence must be checked before this call using `contains` method.",
+            "Failed to fetch worker for peer {peer}. Peer existence must be checked before this \
+             call using `contains` method.",
         );
         let send_res = current_worker.try_send_transactions(txs_batch);
 
@@ -212,7 +213,8 @@ impl WorkersCache {
     /// is removed from the cache.
     #[allow(
         dead_code,
-        reason = "This method will be used in the upcoming changes to implement optional backpressure on the sender."
+        reason = "This method will be used in the upcoming changes to implement optional \
+                  backpressure on the sender."
     )]
     pub async fn send_transactions_to_address(
         &mut self,
@@ -225,8 +227,8 @@ impl WorkersCache {
 
         let body = async move {
             let current_worker = workers.get(peer).expect(
-                "Failed to fetch worker for peer {peer}.\n\
-                 Peer existence must be checked before this call using `contains` method.",
+                "Failed to fetch worker for peer {peer}. Peer existence must be checked before \
+                 this call using `contains` method.",
             );
             let send_res = current_worker.send_transactions(txs_batch).await;
             if let Err(WorkersCacheError::ReceiverDropped) = send_res {
@@ -278,7 +280,7 @@ impl WorkersCache {
         }
         while let Some(res) = tasks.join_next().await {
             if let Err(err) = res {
-                debug!("A shutdown task failed: {}", err);
+                debug!("A shutdown task failed: {err}");
             }
         }
     }
@@ -316,6 +318,7 @@ pub fn shutdown_worker(worker: ShutdownWorker) {
 mod tests {
     use {
         crate::{
+            connection_worker::DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             connection_workers_scheduler::BindTarget,
             quic_networking::{create_client_config, create_client_endpoint},
             send_transaction_stats::SendTransactionStatsNonAtomic,
@@ -324,10 +327,10 @@ mod tests {
             SendTransactionStats,
         },
         quinn::Endpoint,
-        solana_net_utils::{bind_in_range, sockets::localhost_port_range_for_tests},
+        solana_net_utils::sockets::{bind_to_localhost_unique, unique_port_range_for_tests},
         solana_tls_utils::QuicClientCertificate,
         std::{
-            net::{IpAddr, Ipv4Addr, SocketAddr},
+            net::{Ipv4Addr, SocketAddr},
             sync::Arc,
             time::Duration,
         },
@@ -339,10 +342,7 @@ mod tests {
     const TEST_MAX_TIME: Duration = Duration::from_secs(5);
 
     fn create_test_endpoint() -> Endpoint {
-        let port_range = localhost_port_range_for_tests();
-        let socket = bind_in_range(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range)
-            .unwrap()
-            .1;
+        let socket = bind_to_localhost_unique().unwrap();
         let client_config = create_client_config(&QuicClientCertificate::new(None));
         create_client_endpoint(BindTarget::Socket(socket), client_config).unwrap()
     }
@@ -351,8 +351,8 @@ mod tests {
     async fn test_worker_stopped_after_failed_connect() {
         let endpoint = create_test_endpoint();
 
-        let port_range = localhost_port_range_for_tests();
-        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.0);
+        let port_range = unique_port_range_for_tests(2);
+        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);
 
         let worker_channel_size = 1;
         let skip_check_transaction_age = true;
@@ -364,6 +364,7 @@ mod tests {
             worker_channel_size,
             skip_check_transaction_age,
             max_reconnect_attempts,
+            DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
         );
 
@@ -384,8 +385,8 @@ mod tests {
     async fn test_worker_shutdown() {
         let endpoint = create_test_endpoint();
 
-        let port_range = localhost_port_range_for_tests();
-        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.0);
+        let port_range = unique_port_range_for_tests(2);
+        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);
 
         let worker_channel_size = 1;
         let skip_check_transaction_age = true;
@@ -397,6 +398,7 @@ mod tests {
             worker_channel_size,
             skip_check_transaction_age,
             max_reconnect_attempts,
+            DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
         );
 
@@ -416,8 +418,8 @@ mod tests {
         let cancel = CancellationToken::new();
         let mut cache = WorkersCache::new(10, cancel.clone());
 
-        let port_range = localhost_port_range_for_tests();
-        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.0);
+        let port_range = unique_port_range_for_tests(2);
+        let peer: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);
         let worker_channel_size = 1;
         let skip_check_transaction_age = true;
         let max_reconnect_attempts = 0;
@@ -428,6 +430,7 @@ mod tests {
             worker_channel_size,
             skip_check_transaction_age,
             max_reconnect_attempts,
+            DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
         );
         assert!(cache.push(peer, worker).is_none());

@@ -90,8 +90,8 @@ async fn test_vortexor() {
 fn get_server_urls(validator: &ClusterValidatorInfo) -> (Url, Url) {
     let rpc_addr = validator.info.contact_info.rpc().unwrap();
     let rpc_pubsub_addr = validator.info.contact_info.rpc_pubsub().unwrap();
-    let rpc_url = Url::parse(format!("http://{}", rpc_addr).as_str()).unwrap();
-    let ws_url = Url::parse(format!("ws://{}", rpc_pubsub_addr).as_str()).unwrap();
+    let rpc_url = Url::parse(format!("http://{rpc_addr}").as_str()).unwrap();
+    let ws_url = Url::parse(format!("ws://{rpc_pubsub_addr}").as_str()).unwrap();
     (rpc_url, ws_url)
 }
 
@@ -135,7 +135,7 @@ fn test_stake_update() {
             .recv_timeout(slot_receive_timeout)
             .unwrap_or_else(|_| panic!("Expected a slot within {slot_receive_timeout:?}"));
         i += 1;
-        info!("Received a slot update: {}", slot);
+        info!("Received a slot update: {slot}");
     }
 
     let rpc_load_balancer = Arc::new(rpc_load_balancer);
@@ -154,10 +154,10 @@ fn test_stake_update() {
     loop {
         let stakes = shared_staked_nodes.read().unwrap();
         if let Some(stake) = stakes.get_node_stake(pubkey) {
-            info!("Stake for {}: {}", pubkey, stake);
+            info!("Stake for {pubkey}: {stake}");
             assert_eq!(stake, default_node_stake);
             let total_stake = stakes.total_stake();
-            info!("total_stake: {}", total_stake);
+            info!("total_stake: {total_stake}");
             assert!(total_stake >= default_node_stake);
             break;
         }

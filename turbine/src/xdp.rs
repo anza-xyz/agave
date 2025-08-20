@@ -53,44 +53,69 @@ impl XdpConfig {
     }
 }
 
-pub(crate) struct XdpSender {
-    senders: Vec<Sender<(Vec<SocketAddr>, shred::Payload)>>,
+#[derive(Clone)]
+pub struct XdpSender {
+    senders: Vec<Sender<(XdpAddrs, shred::Payload)>>,
+}
+
+pub enum XdpAddrs {
+    Single(SocketAddr),
+    Multi(Vec<SocketAddr>),
+}
+
+impl From<SocketAddr> for XdpAddrs {
+    #[inline]
+    fn from(addr: SocketAddr) -> Self {
+        XdpAddrs::Single(addr)
+    }
+}
+
+impl From<Vec<SocketAddr>> for XdpAddrs {
+    #[inline]
+    fn from(addrs: Vec<SocketAddr>) -> Self {
+        XdpAddrs::Multi(addrs)
+    }
+}
+
+impl AsRef<[SocketAddr]> for XdpAddrs {
+    #[inline]
+    fn as_ref(&self) -> &[SocketAddr] {
+        match self {
+            XdpAddrs::Single(addr) => std::slice::from_ref(addr),
+            XdpAddrs::Multi(addrs) => addrs,
+        }
+    }
 }
 
 impl XdpSender {
     #[inline]
     pub(crate) fn try_send(
         &self,
-        sender_index: u32,
-        addr: Vec<SocketAddr>,
+        sender_index: usize,
+        addr: impl Into<XdpAddrs>,
         payload: shred::Payload,
-    ) -> Result<(), TrySendError<(Vec<SocketAddr>, shred::Payload)>> {
-        self.senders[sender_index as usize % self.senders.len()].try_send((addr.clone(), payload))
+    ) -> Result<(), TrySendError<(XdpAddrs, shred::Payload)>> {
+        self.senders[sender_index % self.senders.len()].try_send((addr.into(), payload))
     }
 }
 
-pub(crate) struct XdpRetransmitter {
+pub struct XdpRetransmitter {
     threads: Vec<thread::JoinHandle<()>>,
 }
 
 impl XdpRetransmitter {
     #[cfg(not(target_os = "linux"))]
-    pub(crate) fn new(
-        _config: XdpConfig,
-        _src_port: u16,
-    ) -> Result<(Self, XdpSender), Box<dyn Error>> {
+    pub fn new(_config: XdpConfig, _src_port: u16) -> Result<(Self, XdpSender), Box<dyn Error>> {
         Err("XDP is only supported on Linux".into())
     }
 
     #[cfg(target_os = "linux")]
-    pub(crate) fn new(
-        config: XdpConfig,
-        src_port: u16,
-    ) -> Result<(Self, XdpSender), Box<dyn Error>> {
+    pub fn new(config: XdpConfig, src_port: u16) -> Result<(Self, XdpSender), Box<dyn Error>> {
         use caps::{
             CapSet,
             Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW},
         };
+        const DROP_CHANNEL_CAP: usize = 1_000_000;
 
         // switch to higher caps while we setup XDP. We assume that an error in
         // this function is irrecoverable so we don't try to drop on errors.
@@ -124,7 +149,7 @@ impl XdpRetransmitter {
 
         let mut threads = vec![];
 
-        let (drop_sender, drop_receiver) = crossbeam_channel::bounded(1_000_000);
+        let (drop_sender, drop_receiver) = crossbeam_channel::bounded(DROP_CHANNEL_CAP);
         threads.push(
             Builder::new()
                 .name("solRetransmDrop".to_owned())
@@ -160,11 +185,14 @@ impl XdpRetransmitter {
                     .name(format!("solRetransmIO{i:02}"))
                     .spawn(move || {
                         tx_loop(
+                            cpu_id,
                             &dev,
-                            src_port,
                             QueueId(i as u64),
                             config.zero_copy,
-                            cpu_id,
+                            None,
+                            None,
+                            src_port,
+                            None,
                             receiver,
                             drop_sender,
                         )

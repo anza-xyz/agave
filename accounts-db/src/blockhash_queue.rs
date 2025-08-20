@@ -69,12 +69,6 @@ impl BlockhashQueue {
             .map(|hash_age| hash_age.fee_calculator.lamports_per_signature)
     }
 
-    /// Check if the age of the hash is within the queue's max age
-    #[deprecated(since = "2.0.0", note = "Please use `is_hash_valid_for_age` instead")]
-    pub fn is_hash_valid(&self, hash: &Hash) -> bool {
-        self.hashes.contains_key(hash)
-    }
-
     /// Check if the age of the hash is within the specified age
     pub fn is_hash_valid_for_age(&self, hash: &Hash, max_age: usize) -> bool {
         self.get_hash_info_if_valid(hash, max_age).is_some()

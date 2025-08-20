@@ -1,15 +1,8 @@
 //! Contains utility functions to create server and client for test purposes.
 use {
-    super::quic::{
-        spawn_server_multi, SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID,
-        DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-    },
+    super::quic::{spawn_server, SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID},
     crate::{
-        quic::{
-            QuicServerParams, StreamerStats, DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
-            DEFAULT_MAX_STAKED_CONNECTIONS, DEFAULT_MAX_STREAMS_PER_MS,
-            DEFAULT_MAX_UNSTAKED_CONNECTIONS, DEFAULT_TPU_COALESCE,
-        },
+        quic::{QuicServerParams, StreamerStats},
         streamer::StakedNodes,
     },
     crossbeam_channel::{unbounded, Receiver},
@@ -18,9 +11,9 @@ use {
         TokioRuntime, TransportConfig,
     },
     solana_keypair::Keypair,
-    solana_net_utils::{
-        bind_to_localhost, multi_bind_in_range_with_config,
-        sockets::localhost_port_range_for_tests, SocketConfig,
+    solana_net_utils::sockets::{
+        bind_to_localhost_unique, localhost_port_range_for_tests, multi_bind_in_range_with_config,
+        SocketConfiguration as SocketConfig,
     },
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
@@ -55,29 +48,6 @@ pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     config
 }
 
-#[derive(Debug, Clone)]
-pub struct TestServerConfig {
-    pub max_connections_per_peer: usize,
-    pub max_staked_connections: usize,
-    pub max_unstaked_connections: usize,
-    pub max_streams_per_ms: u64,
-    pub max_connections_per_ipaddr_per_min: u64,
-    pub coalesce_channel_size: usize,
-}
-
-impl Default for TestServerConfig {
-    fn default() -> Self {
-        Self {
-            max_connections_per_peer: 1,
-            max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
-            max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
-            max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
-            max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
-            coalesce_channel_size: 100_000, // use a smaller value for test as create a huge bounded channel can take time
-        }
-    }
-}
-
 pub struct SpawnTestServerResult {
     pub join_handle: JoinHandle<()>,
     pub exit: Arc<AtomicBool>,
@@ -96,7 +66,7 @@ pub fn create_quic_server_sockets() -> Vec<UdpSocket> {
     multi_bind_in_range_with_config(
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         port_range,
-        SocketConfig::default().reuseport(true),
+        SocketConfig::default(),
         num,
     )
     .expect("bind operation for quic server sockets should succeed")
@@ -105,45 +75,29 @@ pub fn create_quic_server_sockets() -> Vec<UdpSocket> {
 
 pub fn setup_quic_server(
     option_staked_nodes: Option<StakedNodes>,
-    config: TestServerConfig,
+    quic_server_params: QuicServerParams,
 ) -> SpawnTestServerResult {
     let sockets = create_quic_server_sockets();
-    setup_quic_server_with_sockets(sockets, option_staked_nodes, config)
+    setup_quic_server_with_sockets(sockets, option_staked_nodes, quic_server_params)
 }
 
 pub fn setup_quic_server_with_sockets(
     sockets: Vec<UdpSocket>,
     option_staked_nodes: Option<StakedNodes>,
-    TestServerConfig {
-        max_connections_per_peer,
-        max_staked_connections,
-        max_unstaked_connections,
-        max_streams_per_ms,
-        max_connections_per_ipaddr_per_min,
-        coalesce_channel_size,
-    }: TestServerConfig,
+    quic_server_params: QuicServerParams,
 ) -> SpawnTestServerResult {
     let exit = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = unbounded();
     let keypair = Keypair::new();
     let server_address = sockets[0].local_addr().unwrap();
     let staked_nodes = Arc::new(RwLock::new(option_staked_nodes.unwrap_or_default()));
-    let quic_server_params = QuicServerParams {
-        max_connections_per_peer,
-        max_staked_connections,
-        max_unstaked_connections,
-        max_streams_per_ms,
-        max_connections_per_ipaddr_per_min,
-        wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-        coalesce: DEFAULT_TPU_COALESCE,
-        coalesce_channel_size,
-    };
+
     let SpawnNonBlockingServerResult {
         endpoints: _,
         stats,
         thread: handle,
         max_concurrent_connections: _,
-    } = spawn_server_multi(
+    } = spawn_server(
         "quic_streamer_test",
         sockets,
         &keypair,
@@ -166,7 +120,7 @@ pub async fn make_client_endpoint(
     addr: &SocketAddr,
     client_keypair: Option<&Keypair>,
 ) -> Connection {
-    let client_socket = bind_to_localhost().unwrap();
+    let client_socket = bind_to_localhost_unique().expect("should bind - client");
     let mut endpoint = quinn::Endpoint::new(
         EndpointConfig::default(),
         None,
@@ -194,7 +148,7 @@ pub async fn check_multiple_streams(
     let conn2 = Arc::new(make_client_endpoint(&server_address, client_keypair).await);
     let mut num_expected_packets = 0;
     for i in 0..10 {
-        info!("sending: {}", i);
+        info!("sending: {i}");
         let c1 = conn1.clone();
         let c2 = conn2.clone();
         let mut s1 = c1.open_uni().await.unwrap();
