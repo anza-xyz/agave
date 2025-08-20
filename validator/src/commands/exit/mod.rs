@@ -37,11 +37,18 @@ impl FromClapArgMatches for ExitArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         let post_exit_action = if matches.is_present("monitor") {
             Some(PostExitAction::Monitor)
-        } else if matches.is_present("wait_for_exit") {
-            Some(PostExitAction::Wait)
-        } else {
+        } else if matches.is_present("skip_wait_for_exit") {
             None
+        } else {
+            Some(PostExitAction::Wait)
         };
+
+        if matches.is_present("wait_for_exit") {
+            eprintln!(
+                "WARN: The --wait-for-exit flag has been deprecated, waiting for exit is now the \
+                 default behavior"
+            );
+        }
 
         Ok(ExitArgs {
             force: matches.is_present("force"),
@@ -72,6 +79,7 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .short("m")
                 .long("monitor")
                 .takes_value(false)
+                .requires("skip_wait_for_exit")
                 .help("Monitor the validator after sending the exit request"),
         )
         .arg(
@@ -79,6 +87,13 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .long("wait-for-exit")
                 .conflicts_with("monitor")
                 .help("Wait for the validator to terminate after sending the exit request"),
+        )
+        .arg(
+            Arg::with_name("skip_wait_for_exit")
+                .long("skip-wait-for-exit")
+                .takes_value(false)
+                .conflicts_with("wait_for_exit")
+                .help("Skip waiting for the validator to terminate after sending the exit request"),
         )
         .arg(
             Arg::with_name("min_idle_time")
@@ -126,26 +141,15 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
 
     // Grab the pid from the process before initiating exit as the running
     // validator will be unable to respond after exit has returned.
-    //
-    // Additionally, only check the pid() RPC call result if it will be used.
-    // In an upgrade scenario, it is possible that a binary that calls pid()
-    // will be initating exit against a process that doesn't support pid().
-    // Since PostExitAction::Wait case is opt-in (via --wait-for-exit), the
-    // result is checked ONLY in that case to provide a friendlier upgrade
-    // path for users who are NOT using --wait-for-exit
     const WAIT_FOR_EXIT_UNSUPPORTED_ERROR: &str = "remote process exit cannot be waited on. \
                                                    `--wait-for-exit` is not supported by the \
                                                    remote process";
-    let post_exit_action = exit_args.post_exit_action.clone();
     let validator_pid = admin_rpc_service::runtime().block_on(async move {
         let admin_client = admin_rpc_service::connect(ledger_path).await?;
-        let validator_pid = match post_exit_action {
-            Some(PostExitAction::Wait) => admin_client
-                .pid()
-                .await
-                .map_err(|_err| Error::Dynamic(WAIT_FOR_EXIT_UNSUPPORTED_ERROR.into()))?,
-            _ => 0,
-        };
+        let validator_pid = admin_client
+            .pid()
+            .await
+            .map_err(|_err| Error::Dynamic(WAIT_FOR_EXIT_UNSUPPORTED_ERROR.into()))?;
         admin_client.exit().await?;
 
         Ok::<u32, Error>(validator_pid)
@@ -232,7 +236,7 @@ mod tests {
                     .parse()
                     .expect("invalid DEFAULT_MAX_DELINQUENT_STAKE"),
                 force: false,
-                post_exit_action: None,
+                post_exit_action: Some(PostExitAction::Wait),
                 skip_new_snapshot_check: false,
                 skip_health_check: false,
             }
@@ -260,9 +264,18 @@ mod tests {
     fn verify_args_struct_by_command_exit_with_post_exit_action() {
         verify_args_struct_by_command(
             command(),
-            vec![COMMAND, "--monitor"],
+            vec![COMMAND, "--monitor", "--skip-wait-for-exit"],
             ExitArgs {
                 post_exit_action: Some(PostExitAction::Monitor),
+                ..ExitArgs::default()
+            },
+        );
+
+        verify_args_struct_by_command(
+            command(),
+            vec![COMMAND, "--skip-wait-for-exit"],
+            ExitArgs {
+                post_exit_action: None,
                 ..ExitArgs::default()
             },
         );
