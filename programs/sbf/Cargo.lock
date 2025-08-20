@@ -313,7 +313,7 @@ dependencies = [
  "solana-runtime",
  "solana-signature",
  "solana-signer",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-transaction",
  "thiserror 2.0.14",
 ]
@@ -5681,7 +5681,7 @@ dependencies = [
  "solana-svm-transaction",
  "solana-system-interface",
  "solana-sysvar",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
@@ -5835,7 +5835,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-sanitize",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
 ]
 
 [[package]]
@@ -6059,7 +6059,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-streamer",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-tpu-client",
  "solana-transaction",
  "solana-transaction-error",
@@ -6215,7 +6215,7 @@ dependencies = [
  "solana-keypair",
  "solana-measure",
  "solana-metrics",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-transaction-error",
  "thiserror 2.0.14",
  "tokio",
@@ -6330,7 +6330,7 @@ dependencies = [
  "solana-system-interface",
  "solana-system-transaction",
  "solana-sysvar",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-tls-utils",
  "solana-tpu-client",
  "solana-tpu-client-next",
@@ -6703,7 +6703,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-shred-version",
  "solana-signer",
- "solana-time-utils",
+ "solana-time-utils 2.2.1",
 ]
 
 [[package]]
@@ -6805,7 +6805,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-streamer",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-tpu-client",
  "solana-transaction",
  "solana-version",
@@ -7021,7 +7021,7 @@ dependencies = [
  "solana-svm-transaction",
  "solana-system-interface",
  "solana-system-transaction",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
@@ -7197,7 +7197,7 @@ dependencies = [
  "reqwest 0.12.22",
  "solana-cluster-type",
  "solana-sha256-hasher",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "thiserror 2.0.14",
 ]
 
@@ -7323,7 +7323,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-short-vec",
  "solana-signature",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
 ]
 
 [[package]]
@@ -7344,7 +7344,7 @@ dependencies = [
  "solana-poh-config",
  "solana-pubkey",
  "solana-runtime",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-transaction",
  "thiserror 2.0.14",
 ]
@@ -7830,7 +7830,7 @@ dependencies = [
  "solana-system-interface",
  "solana-system-transaction",
  "solana-sysvar",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-tpu-client",
  "solana-transaction",
  "solana-transaction-context",
@@ -8058,7 +8058,7 @@ dependencies = [
  "solana-system-transaction",
  "solana-sysvar",
  "solana-sysvar-id",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
@@ -8968,7 +8968,7 @@ dependencies = [
  "solana-quic-definitions",
  "solana-runtime",
  "solana-signature",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-tpu-client-next",
  "tokio",
  "tokio-util 0.7.16",
@@ -9173,7 +9173,7 @@ dependencies = [
  "solana-serde",
  "solana-signature",
  "solana-storage-proto",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-transaction",
  "solana-transaction-error",
  "solana-transaction-status",
@@ -9243,7 +9243,7 @@ dependencies = [
  "solana-quic-definitions",
  "solana-signature",
  "solana-signer",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-tls-utils",
  "solana-transaction-error",
  "solana-transaction-metrics-tracker",
@@ -9331,7 +9331,7 @@ dependencies = [
  "reqwest 0.12.22",
  "solana-cluster-type",
  "solana-sha256-hasher",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "thiserror 2.0.14",
 ]
 
@@ -9522,6 +9522,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6af261afb0e8c39252a04d026e3ea9c405342b08c871a2ad8aa5448e068c784c"
 
 [[package]]
+name = "solana-time-utils"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ced92c60aa76ec4780a9d93f3bd64dfa916e1b998eacc6f1c110f3f444f02c9"
+
+[[package]]
 name = "solana-tls-utils"
 version = "3.0.0"
 dependencies = [
@@ -9581,7 +9587,7 @@ dependencies = [
  "solana-quic-definitions",
  "solana-rpc-client",
  "solana-streamer",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-tls-utils",
  "solana-tpu-client",
  "thiserror 2.0.14",
@@ -9765,7 +9771,7 @@ dependencies = [
  "solana-signer",
  "solana-streamer",
  "solana-system-transaction",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-tls-utils",
  "solana-transaction-error",
  "static_assertions",
@@ -9956,7 +9962,7 @@ dependencies = [
  "solana-runtime",
  "solana-shred-version",
  "solana-svm-timings",
- "solana-time-utils",
+ "solana-time-utils 3.0.0",
  "solana-vote",
  "solana-vote-interface",
  "solana-vote-program",
