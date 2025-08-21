@@ -5744,7 +5744,13 @@ impl AccountsDb {
                     .collect::<Vec<_>>()
             })
         } else {
-            vec![update(0, len)]
+            let reclaims = update(0, len);
+            if reclaims.is_empty() {
+                // If no reclaims, return an empty vector
+                vec![]
+            } else {
+                vec![reclaims]
+            }
         }
     }
 
