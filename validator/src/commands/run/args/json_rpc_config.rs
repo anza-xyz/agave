@@ -263,6 +263,7 @@ mod tests {
     fn verify_args_struct_by_command_run_with_rpc_niceness_adj() {
         verify_args_struct_by_command_run_is_error_with_identity_setup(
             crate::commands::run::args::RunArgs::default(),
+            &ValidatorConfig::default(),
             vec!["--rpc-niceness-adjustment", "10"],
         );
     }
