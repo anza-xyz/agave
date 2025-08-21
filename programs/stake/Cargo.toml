@@ -1,6 +1,6 @@
 [package]
 name = "solana-stake-program"
-description = "Solana Stake program"
+description = "Solana Stake program helpers"
 documentation = "https://docs.rs/solana-stake-program"
 version = { workspace = true }
 authors = { workspace = true }
