@@ -937,16 +937,19 @@ impl UsageQueueInner {
                         Ok(())
                     }
                     (Some(PriorityUsage::Readonly(_current_tasks)), RequestedUsage::Readonly) => {
-                        match self.peek_blocked() {
-                            None => Ok(()),
-                            Some((usage, peeked_task)) => {
-                                assert_matches!(usage, RequestedUsage::Writable);
-                                if !new_task.is_higher_priority(peeked_task) {
-                                    return Err(());
-                                }
-                                Ok(())
-                            }
+                        let Some((peeked_usage, peeked_task)) = self.peek_blocked() else {
+                            return Ok(());
+                        };
+
+                        // Current usage is Readonly. This means that the highest-priority
+                        // blocked task must be Writable. So, we assert this here as a
+                        // precaution. Note that peeked_usage must be Writable regardless requested
+                        // usage is Readonly or Writable.
+                        assert_matches!(peeked_usage, RequestedUsage::Writable);
+                        if !new_task.is_higher_priority(peeked_task) {
+                            return Err(());
                         }
+                        Ok(())
                     }
                     (Some(PriorityUsage::Readonly(current_tasks)), RequestedUsage::Writable) => {
                         // Use extract_if once stablized to remove Vec creation and the repeating
@@ -965,6 +968,13 @@ impl UsageQueueInner {
                             Usage::take_readable(current_and_requested_usage.0);
                             Ok(())
                         } else {
+                            // In this case, new_task will still be inserted as the
+                            // highest-priority blocked writable task, nevertheless any of readonly
+                            // tasks are reblocked above. That's because all of such tasks should
+                            // be of lower-priority than new_task by the very `range()` lookup
+                            // above. So, the write-always-follows-read critical invariant is still
+                            // intact. So is the assertion in current-and-requested-readonly
+                            // match arm.
                             Err(())
                         }
                     }
