@@ -89,19 +89,18 @@ For **Data Shreds**, the body consists of **ledger entries**, and if the availab
 For **Coding Shreds**, the body holds **Reed-Solomon encoded parity data**, ensuring recoverability in case of missing data shreds. Coding Shreds are always **fixed in size** and do not require padding.
 
 The **trailer section** follows the body and may include:
-- **Merkle Root (32 bytes)** – If the shred is part of a chained Merkle structure.
+- **Merkle Root (32 bytes)**
 - **Merkle Proof Entries (20 bytes per entry)** – Provides cryptographic proof of inclusion in the Merkle tree.
 - **Retransmitter Signature (64 bytes)** – Present if the shred is **resigned**.
 - **Repair nonce (4 bytes)** – Present if the shred is **repaired**.
 
-The presence of these extra fields depends on the **shred variant** and is determined dynamically.
 
 ### **Merkle Proof & Extra Data**
-Some shreds contain **Merkle proof** fields for integrity verification.
+Shreds contain **Merkle proof** fields for integrity verification.
 
 | Field Name | Size (bytes) | Description |
 |------------|-------------|-------------|
-| **Merkle Root** | 32 | Root hash of the Merkle tree (if `has_chained() == True`). |
+| **Merkle Root** | 32 | Root hash of the Merkle tree. |
 | **Merkle Proof Entries** | 20 * proof_size | Merkle proof array. |
 | **Retransmitter Signature** | 64 | Signature from the retransmitter (if present). |
 
@@ -109,7 +108,7 @@ Some shreds contain **Merkle proof** fields for integrity verification.
 
 ### **7. Body Size Calculation**
 
-The **body size** is determined based on the shred type and the presence of trailer fields at the end of the packet. The final body size is affected by factors such as the shred's base structure, optional merkle proofs, and retransmitter signatures.
+The **body size** is determined based on the shred type and the presence of trailer fields at the end of the packet. The final body size is affected by factors such as the shred's base structure, and retransmitter signatures.
 
 The general formula for calculating the **body size** is:
 
@@ -120,17 +119,15 @@ The general formula for calculating the **body size** is:
 Where:
 - **total_shred_size** – The overall size of the shred (1203 bytes (**SIZE_OF_DATA_SHRED_PKT = 1203**) for Data Shreds, 1228 bytes (**SIZE_OF_CODING_SHRED_PKT = 1228**) for Coding Shreds).
 - **header_size** – The size of the shred's header (88 bytes for Data Shreds, 89 bytes for Coding Shreds).
-- **has_chained** (`True` or `False`) – Whether the shred includes a **Merkle Root (32 bytes)**.
 - **has_retransmitter_signature** (`True` or `False`) – Whether the shred includes a **Retransmitter Signature (64 bytes)**.
 - **proof_size** – The number of **Merkle Proof Entries (20 bytes each)**.
 
 This formula applies to both Data and Coding Shreds and directly calculates the final available space for transaction data (in Data Shreds) or erasure coding (in Coding Shreds).
 
 #### **Examples**
-1. **A Data Shred with a Merkle Root and 3 Merkle Proof Entries:**
+1. **A Data Shred with 3 Merkle Proof Entries:**
    - `total_shred_size = 1203`
    - `header_size = 88`
-   - `has_chained = True`
    - `has_retransmitter_signature = False`
    - `proof_size = 3`
    - **Final body size:** `1203 - 88 - 32 - 0 - 60 = 1051 bytes`
@@ -138,7 +135,6 @@ This formula applies to both Data and Coding Shreds and directly calculates the 
 2. **A Coding Shred with a retransmitter signature and 2 Merkle Proof Entries:**
    - `total_shred_size = 1228`
    - `header_size = 89`
-   - `has_chained = False`
    - `has_retransmitter_signature = True`
    - `proof_size = 2`
    - **Final body size:** `1228 - 89 - 0 - 64 - 40 = 1035 bytes`
