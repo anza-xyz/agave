@@ -594,7 +594,6 @@ Make sure your ledger is on drive with at least `2TB` of space.
 ### Validator not catching up
 
 This could be a networking/hardware issue, or you may need to get the latest
-snapshot from another validator node.
 
 ### PoH hashes/second rate is slower than the cluster target
 
@@ -611,4 +610,4 @@ Force minimum frequency to maximum
 ```bash
 # Example if your maximum GHz is 2.8
 echo 2850000 | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_min_freq
-```
+snapshot from another validator node.
