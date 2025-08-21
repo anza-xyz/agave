@@ -3,22 +3,22 @@
 ## Overview
 Solana uses **shreds** as fundamental data units in block propagation.
 
-Solana uses two distinct types of shreds:
+There are two distinct types of shreds:
 1. **Data Shreds** – Contain actual ledger data (transactions).
 2. **Coding Shreds** – Used for **Forward Error Correction (FEC)**, allowing shreds to be reconstructed in case of packet loss and/or deliberate censoring by validators.
 
 ### Notes:
- a) Coding shreds encode entire data shreds: both of the headers AND the payload.
+ a) Coding shreds encode entire data shreds: both of the headers and the payload.
  b) Coding shreds require their own headers for identification and etc.
  c) The erasure algorithm requires data shred and coding shred bytestreams to be equal in gth.
 
- So, when choosing maximum shred size, we must restrict data shred's payload length such that the entire data shred can fit into one coding shred / packet.
+Based on that, when choosing maximum shred size, we must restrict data shred's payload length such that the entire data shred can fit into one coding shred / packet.
 
 ---
 
 ## **Shred Structure**
 
-Each shred consists of three main components:
+Each shred comprises three main components:
 - **Header** – Metadata describing the shred, such as type, slot, index, and cryptographic signature.
 - **Body** – The main data section, which stores either ledger data (for Data Shreds) or error correction information (for Coding Shreds).
 - **Trailer** – Additional fields, such as **Merkle proofs**, **chained signatures**, and **retransmitter signatures**, which help verify shred authenticity and integrity. Shreds may also contain a **repair nonce** which indicates that a shred has been sent in response to a repair request.
