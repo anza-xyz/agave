@@ -665,7 +665,9 @@ mod tests {
         solana_sbpf::{memory_region::MemoryMapping, program::SBPFVersion, vm::Config},
         solana_sdk_ids::bpf_loader,
         solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
-        solana_transaction_context::{InstructionAccount, TransactionContext},
+        solana_transaction_context::{
+            InstructionAccount, TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
+        },
         std::{
             cell::RefCell,
             mem::transmute,
@@ -768,7 +770,7 @@ mod tests {
                     // Special case implementation of configure_next_instruction_for_tests()
                     // which avoids the overflow when constructing the dedup_map
                     // by simply not filling it.
-                    let dedup_map = vec![u8::MAX; u8::MAX as usize + 1];
+                    let dedup_map = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
                     invoke_context
                         .transaction_context
                         .configure_next_instruction(
