@@ -10,10 +10,12 @@ pub mod test_utils;
 // Used all over the accounts-db crate.  Probably should be minimized.
 pub(crate) use meta::StoredAccountMeta;
 // Some tests/benches use AccountMeta/StoredMeta
+use crate::file_io::write_buffer_to_file;
 #[cfg(feature = "dev-context-only-utils")]
 pub use meta::{AccountMeta, StoredMeta};
 #[cfg(not(feature = "dev-context-only-utils"))]
 use meta::{AccountMeta, StoredMeta};
+
 use {
     crate::{
         account_info::Offset,
@@ -167,6 +169,7 @@ struct AccountOffsets {
 #[derive(Debug)]
 enum AppendVecFileBacking {
     /// A file-backed block of memory that is used to store the data for each appended item.
+    #[allow(dead_code)]
     Mmap(MmapMut),
     /// This was opened as a read only file
     File(File),
@@ -320,13 +323,13 @@ impl AppendVec {
         data.flush().unwrap();
 
         //UNSAFE: Required to create a Mmap
-        let mmap = unsafe { MmapMut::map_mut(&data) };
-        let mmap = mmap.unwrap_or_else(|err| {
-            panic!(
-                "Failed to map the data file (size: {size}): {err}. Please increase sysctl \
-                 vm.max_map_count or equivalent for your platform.",
-            );
-        });
+        // let mmap = unsafe { MmapMut::map_mut(&data) };
+        // let mmap = mmap.unwrap_or_else(|err| {
+        //     panic!(
+        //         "Failed to map the data file (size: {size}): {err}. Please increase sysctl \
+        //          vm.max_map_count or equivalent for your platform.",
+        //     );
+        // });
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 
         APPEND_VEC_STATS
@@ -535,23 +538,24 @@ impl AppendVec {
             });
         }
 
-        let mmap = unsafe {
-            let result = MmapMut::map_mut(&data);
-            if result.is_err() {
-                // for vm.max_map_count, error is: {code: 12, kind: Other, message: "Cannot allocate memory"}
-                info!(
-                    "memory map error: {result:?}. This may be because vm.max_map_count is not \
-                     set correctly."
-                );
-            }
-            result?
-        };
+        panic!("unsupported access");
+        // let mmap = unsafe {
+        //     let result = MmapMut::map_mut(&data);
+        //     if result.is_err() {
+        //         // for vm.max_map_count, error is: {code: 12, kind: Other, message: "Cannot allocate memory"}
+        //         info!(
+        //             "memory map error: {result:?}. This may be because vm.max_map_count is not \
+        //              set correctly."
+        //         );
+        //     }
+        //     result?
+        // };
 
-        APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
+        // APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 
-        APPEND_VEC_STATS
-            .open_as_mmap
-            .fetch_add(1, Ordering::Relaxed);
+        // APPEND_VEC_STATS
+        //     .open_as_mmap
+        //     .fetch_add(1, Ordering::Relaxed);
 
         Ok(AppendVec {
             path,
@@ -629,12 +633,14 @@ impl AppendVec {
                     let dst = data.as_ptr() as *mut _;
                     ptr::copy(src, dst, len);
                 };
-                *offset = pos + len;
             }
-            AppendVecFileBacking::File(_file) => {
-                unimplemented!();
+            AppendVecFileBacking::File(file) => {
+                // Safety: caller should ensure the passed pointer and length are valid.
+                let data = unsafe { slice::from_raw_parts(src, len) };
+                write_buffer_to_file(file, data, pos as u64).unwrap();
             }
         }
+        *offset = pos + len;
     }
 
     /// Copy each value in `vals`, in order, to the first 64-byte boundary after position `offset`.
@@ -1332,7 +1338,7 @@ impl AppendVec {
     #[cfg(test)]
     pub(crate) fn can_append(&self) -> bool {
         match &self.backing {
-            AppendVecFileBacking::File(_file) => false,
+            AppendVecFileBacking::File(_file) => true,
             AppendVecFileBacking::Mmap(_mmap) => true,
         }
     }

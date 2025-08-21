@@ -49,6 +49,35 @@ fn arch_read_at(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<
     file.seek_read(buffer, offset)
 }
 
+#[cfg(unix)]
+fn arch_write_at(file: &File, buffer: &[u8], offset: u64) -> io::Result<usize> {
+    use std::os::unix::prelude::FileExt;
+    file.write_at(buffer, offset)
+}
+
+#[cfg(windows)]
+fn arch_write_at(file: &File, buffer: &[u8], offset: u64) -> io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    // Note: as opposed to unix `write_at` this call will update the internal file offset,
+    // so all callers should consistently use the file only through this module
+    file.seek_write(buffer, offset)
+}
+
+/// Write, starting at `offset`, the whole buffer to a file irrespective of the file's current length.
+///
+/// After this operation file size may be extended and the file cursor may be moved (platform-dependent).
+pub fn write_buffer_to_file(file: &File, mut buffer: &[u8], mut offset: u64) -> io::Result<()> {
+    while !buffer.is_empty() {
+        let wrote_len = arch_write_at(file, buffer, offset)?;
+        if wrote_len == 0 {
+            return Err(io::ErrorKind::WriteZero.into());
+        }
+        buffer = &buffer[wrote_len..];
+        offset += wrote_len as u64;
+    }
+    Ok(())
+}
+
 /// Read, starting at `start_offset`, until `buffer` is full or we read past `valid_file_len`/eof.
 /// `valid_file_len` is # of valid bytes in the file. This may be <= file length.
 /// return # bytes read
