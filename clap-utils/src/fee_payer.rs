@@ -6,8 +6,8 @@ use {
 pub const FEE_PAYER_ARG: ArgConstant<'static> = ArgConstant {
     name: "fee_payer",
     long: "fee-payer",
-    help: "Specify the fee-payer account. This may be a keypair file, the ASK keyword \n\
-           or the pubkey of an offline signer, provided an appropriate --signer argument \n\
+    help: "Specify the fee-payer account. This may be a keypair file, the ASK keyword \
+           or the pubkey of an offline signer, provided an appropriate --signer argument \
            is also passed. Defaults to the client keypair.",
 };
 
