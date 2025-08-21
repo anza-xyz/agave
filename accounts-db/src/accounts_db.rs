@@ -5455,6 +5455,9 @@ impl AccountsDb {
         }
     }
 
+    /// Updates the accounts index with the given `infos` and `accounts`.
+    /// Returns a vector of `SlotList<AccountInfo>` containing the reclaims for each batch processed.
+    /// The element of the returned vector is guaranteed to be non-empty.
     fn update_index<'a>(
         &self,
         infos: Vec<AccountInfo>,
@@ -5512,6 +5515,7 @@ impl AccountsDb {
                         let end = std::cmp::min(start + chunk_size, len);
                         update(start, end)
                     })
+                    .filter(|reclaims| !reclaims.is_empty())
                     .collect()
             })
         } else {
@@ -5990,8 +5994,10 @@ impl AccountsDb {
         // all storages, and may result in the removal of dead storages.
         let mut handle_reclaims_elapsed = 0;
 
-        let is_empty = reclaims.is_empty() || reclaims.iter().all(|r| r.is_empty());
-        if !is_empty {
+        // since reclaims only contains non-empty SlotList<AccountInfo>, we
+        // should skip handle_reclaims only when reclaims is empty. No need to
+        // check the elements of reclaims are empty.
+        if !reclaims.is_empty() {
             let purge_stats = PurgeStats::default();
             let mut handle_reclaims_time = Measure::start("handle_reclaims");
             self.handle_reclaims(
