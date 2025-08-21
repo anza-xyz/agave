@@ -4,7 +4,6 @@ use {
     serde::Serialize,
     solana_account::{AccountSharedData, WritableAccount},
     solana_client_traits::{Client, SyncClient},
-    solana_clock::Clock,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
@@ -116,100 +115,6 @@ pub fn load_upgradeable_buffer<T: Client>(
     }
 
     program
-}
-
-#[deprecated(since = "2.2.0", note = "Use load_program_of_loader_v4() instead")]
-pub fn load_upgradeable_program(
-    bank_client: &BankClient,
-    from_keypair: &Keypair,
-    buffer_keypair: &Keypair,
-    executable_keypair: &Keypair,
-    authority_keypair: &Keypair,
-    name: &str,
-) {
-    let program = load_upgradeable_buffer(
-        bank_client,
-        from_keypair,
-        buffer_keypair,
-        authority_keypair,
-        name,
-    );
-
-    #[allow(deprecated)]
-    let message = Message::new(
-        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-            &from_keypair.pubkey(),
-            &executable_keypair.pubkey(),
-            &buffer_keypair.pubkey(),
-            &authority_keypair.pubkey(),
-            1.max(
-                bank_client
-                    .get_minimum_balance_for_rent_exemption(
-                        UpgradeableLoaderState::size_of_program(),
-                    )
-                    .unwrap(),
-            ),
-            program.len() * 2,
-        )
-        .unwrap(),
-        Some(&from_keypair.pubkey()),
-    );
-    bank_client
-        .send_and_confirm_message(
-            &[from_keypair, executable_keypair, authority_keypair],
-            message,
-        )
-        .unwrap();
-    bank_client.set_sysvar_for_tests(&Clock {
-        slot: 1,
-        ..Clock::default()
-    });
-}
-
-#[deprecated(since = "2.2.0", note = "Use load_program_of_loader_v4() instead")]
-pub fn load_upgradeable_program_wrapper(
-    bank_client: &BankClient,
-    mint_keypair: &Keypair,
-    authority_keypair: &Keypair,
-    name: &str,
-) -> Pubkey {
-    let buffer_keypair = Keypair::new();
-    let program_keypair = Keypair::new();
-    #[allow(deprecated)]
-    load_upgradeable_program(
-        bank_client,
-        mint_keypair,
-        &buffer_keypair,
-        &program_keypair,
-        authority_keypair,
-        name,
-    );
-    program_keypair.pubkey()
-}
-
-#[deprecated(since = "2.2.0", note = "Use load_program_of_loader_v4() instead")]
-pub fn load_upgradeable_program_and_advance_slot(
-    bank_client: &mut BankClient,
-    bank_forks: &RwLock<BankForks>,
-    mint_keypair: &Keypair,
-    authority_keypair: &Keypair,
-    name: &str,
-) -> (Arc<Bank>, Pubkey) {
-    #[allow(deprecated)]
-    let program_id =
-        load_upgradeable_program_wrapper(bank_client, mint_keypair, authority_keypair, name);
-
-    // load_upgradeable_program sets clock sysvar to 1, which causes the program to be effective
-    // after 2 slots. They need to be called individually to create the correct fork graph in between.
-    bank_client
-        .advance_slot(1, bank_forks, &Pubkey::default())
-        .expect("Failed to advance the slot");
-
-    let bank = bank_client
-        .advance_slot(1, bank_forks, &Pubkey::default())
-        .expect("Failed to advance the slot");
-
-    (bank, program_id)
 }
 
 pub fn upgrade_program<T: Client>(
