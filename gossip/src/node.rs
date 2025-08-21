@@ -24,7 +24,7 @@ use {
     std::{
         io,
         net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
-        num::{NonZero, NonZeroUsize},
+        num::NonZero,
         sync::Arc,
     },
 };
@@ -34,7 +34,6 @@ pub struct Node {
     pub info: ContactInfo,
     pub sockets: Sockets,
     pub bind_ip_addrs: Arc<BindIpAddrs>,
-    pub num_tvu_receive_sockets: NonZeroUsize,
 }
 
 impl Node {
@@ -337,7 +336,6 @@ impl Node {
             info,
             sockets,
             bind_ip_addrs,
-            num_tvu_receive_sockets,
         }
     }
 
@@ -369,7 +367,6 @@ mod multihoming {
         solana_net_utils::multihomed_sockets::BindIpAddrs,
         std::{
             net::{IpAddr, UdpSocket},
-            num::NonZeroUsize,
             sync::Arc,
         },
     };
@@ -385,7 +382,6 @@ mod multihoming {
     pub struct NodeMultihoming {
         pub sockets: SocketsMultihomed,
         pub bind_ip_addrs: Arc<BindIpAddrs>,
-        pub num_tvu_receive_sockets: NonZeroUsize,
     }
 
     impl NodeMultihoming {
@@ -419,7 +415,9 @@ mod multihoming {
                 .map_err(|e| e.to_string())?;
 
             // update tvu ingress advertised socket
-            let sockets_per_interface = self.num_tvu_receive_sockets.get();
+            // Note: this assumes that the number of tvu sockets per interface is the same across all interfaces
+            // `bind_ip_addrs` is guaranteed to have at least one address
+            let sockets_per_interface = self.sockets.tvu.len() / self.bind_ip_addrs.len();
             let offset = interface_index.saturating_mul(sockets_per_interface);
             if offset >= self.sockets.tvu.len() {
                 return Err(format!(
@@ -462,7 +460,6 @@ mod multihoming {
                     tvu: node.sockets.tvu.clone(),
                 },
                 bind_ip_addrs: node.bind_ip_addrs.clone(),
-                num_tvu_receive_sockets: node.num_tvu_receive_sockets,
             }
         }
     }
