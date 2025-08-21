@@ -3,7 +3,7 @@
 extern crate solana_core;
 
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
+    bencher::{benchmark_main, Bencher, TDynBenchFn, TestDesc, TestDescAndFn, TestFn},
     crossbeam_channel::unbounded,
     log::*,
     rand::{
@@ -25,10 +25,23 @@ use {
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
     std::{
+        borrow::Cow,
         hint::black_box,
         time::{Duration, Instant},
     },
 };
+
+/// Orphan rules workaround that allows for implementation of `TDynBenchFn`.
+struct Bench<T>(T);
+
+impl<T> TDynBenchFn for Bench<T>
+where
+    T: Fn(&mut Bencher) + Send,
+{
+    fn run(&self, harness: &mut Bencher) {
+        (self.0)(harness)
+    }
+}
 
 fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
     solana_logger::setup();
@@ -254,41 +267,68 @@ fn bench_shrink_sigverify_stage_core(bencher: &mut Bencher, discard_factor: i32)
     );
 }
 
-macro_rules! GEN_SHRINK_SIGVERIFY_BENCH {
-    ($i:ident, $n:literal) => {
-        fn $i(bencher: &mut Bencher) {
-            bench_shrink_sigverify_stage_core(bencher, $n);
-        }
-    };
+/// Benchmark cases for the [`bench_shrink_sigverify_stage_core`] where values represent discard factor.
+const BENCH_CASES_SHRINK_SIGVERIFY_STAGE_CORE: &[i32] = &[0, 10, 20, 30, 40, 50, 60, 70, 80, 90];
+
+fn benches() -> Vec<TestDescAndFn> {
+    let mut benches = vec![
+        TestDescAndFn {
+            desc: TestDesc {
+                name: Cow::from("bench_packet_discard_many_senders"),
+                ignore: false,
+            },
+            testfn: TestFn::StaticBenchFn(bench_packet_discard_many_senders),
+        },
+        TestDescAndFn {
+            desc: TestDesc {
+                name: Cow::from("bench_packet_discard_single_sender"),
+                ignore: false,
+            },
+            testfn: TestFn::StaticBenchFn(bench_packet_discard_single_sender),
+        },
+        TestDescAndFn {
+            desc: TestDesc {
+                name: Cow::from("bench_packet_discard_mixed_senders"),
+                ignore: false,
+            },
+            testfn: TestFn::StaticBenchFn(bench_packet_discard_mixed_senders),
+        },
+        TestDescAndFn {
+            desc: TestDesc {
+                name: Cow::from("bench_sigverify_stage_with_same_tx"),
+                ignore: false,
+            },
+            testfn: TestFn::StaticBenchFn(bench_sigverify_stage_with_same_tx),
+        },
+        TestDescAndFn {
+            desc: TestDesc {
+                name: Cow::from("bench_sigverify_stage_without_same_tx"),
+                ignore: false,
+            },
+            testfn: TestFn::StaticBenchFn(bench_sigverify_stage_without_same_tx),
+        },
+    ];
+
+    BENCH_CASES_SHRINK_SIGVERIFY_STAGE_CORE
+        .iter()
+        .enumerate()
+        .for_each(|(i, &discard_factor)| {
+            let name = format!(
+                "{:?}-bench_shrink_sigverify_stage_core - discard_factor: {:?}",
+                i, discard_factor
+            );
+            benches.push(TestDescAndFn {
+                desc: TestDesc {
+                    name: Cow::from(name),
+                    ignore: false,
+                },
+                testfn: TestFn::DynBenchFn(Box::new(Bench(move |b: &mut Bencher| {
+                    bench_shrink_sigverify_stage_core(b, discard_factor);
+                }))),
+            });
+        });
+
+    benches
 }
 
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_0, 0);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_10, 10);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_20, 20);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_30, 30);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_40, 40);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_50, 50);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_60, 60);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_70, 70);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_80, 80);
-GEN_SHRINK_SIGVERIFY_BENCH!(bsv_90, 90);
-
-benchmark_group!(
-    benches,
-    bench_packet_discard_many_senders,
-    bench_packet_discard_single_sender,
-    bench_packet_discard_mixed_senders,
-    bench_sigverify_stage_with_same_tx,
-    bench_sigverify_stage_without_same_tx,
-    bsv_0,
-    bsv_10,
-    bsv_20,
-    bsv_30,
-    bsv_40,
-    bsv_50,
-    bsv_60,
-    bsv_70,
-    bsv_80,
-    bsv_90,
-);
 benchmark_main!(benches);
