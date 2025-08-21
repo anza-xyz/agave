@@ -462,6 +462,9 @@ pub struct TaskInner {
     /// dynamically generated from the poh in the case of block production.
     index: Index,
     lock_contexts: Vec<LockContext>,
+    /// The number of remaining usages which are currently occupied by other tasks. In other words,
+    /// the task is said to be _blocked_ and needs to be _unblocked_ exactly this number of times
+    /// before running.
     blocked_usage_count: TokenCell<ShortCounter>,
     consumed_block_size: BlockSize,
 }
@@ -498,6 +501,13 @@ impl TaskInner {
             })
     }
 
+    /// Try to change the counter's state of this task towards the runnable state (called
+    /// _unblocking_), returning itself if finished completely.
+    ///
+    /// This should be called exactly once each time one of blocked usages of this task is newly
+    /// unlocked for proper book-keeping. Eventually, when this particular unblocking is determined
+    /// to be the last (i.e. [`Self::blocked_usage_count`] reaches to 0), this task should be run
+    /// by consuming the returned task itself properly.
     #[must_use]
     fn try_unblock(self: Task, token: &mut BlockedUsageCountToken) -> Option<Task> {
         let did_unblock = self
@@ -506,6 +516,18 @@ impl TaskInner {
         did_unblock.then_some(self)
     }
 
+    /// Try to change the counter's state of this task against the runnable state (called
+    /// _reblocking_), returning `true` if succeeded.
+    ///
+    /// This should be called with care to be consistent with usage queue's
+    /// [`blocked_usages_from_tasks`](UsageQueueInner::Priority::blocked_usages_from_tasks).
+    /// Blocked usage count of tasks are usually expected only to decrement over time by
+    /// [unblocking](Self::try_unblock). However, sometimes it's needed to do the opposite (
+    /// [`Capability::PriorityQueueing`]). In other words, previously successfully acquired usage
+    /// must be taken from a task to assign the usage to a even more higher-priority task. Note
+    /// that this can't be done if usage_count has already reached to 0, meaning it's possible for
+    /// it to be running already. In that case, this method returns `false` with no state change.
+    /// Otherwise, returns `true` after incrementing [`Self::blocked_usage_count`].
     fn try_reblock(&self, token: &mut BlockedUsageCountToken) -> bool {
         self.blocked_usage_count
             .with_borrow_mut(token, |usage_count| {
