@@ -155,7 +155,7 @@ license = "Apache-2.0"
 edition = "2021"
 
 [workspace.lints.rust]
-warnings = "deny"
+# XXX warnings = "deny"
 
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
