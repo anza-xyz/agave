@@ -31,7 +31,6 @@ use qualifier_attr::qualifiers;
 use {
     super::{
         decision_maker::{BufferedPacketsDecision, DecisionMaker, DecisionMakerWrapper},
-        immutable_deserialized_packet::FEATURE_SET,
         packet_deserializer::PacketDeserializer,
         transaction_scheduler::receive_and_buffer::calculate_priority_and_cost,
     },
@@ -101,7 +100,7 @@ pub(crate) fn ensure_banking_stage_setup(
 
                     let Some(compute_budget_limits) = process_compute_budget_instructions(
                         SVMMessage::program_instructions_iter(transaction.message()),
-                        &FEATURE_SET,
+                        &bank.feature_set,
                     ).ok() else {
                         continue;
                     };
