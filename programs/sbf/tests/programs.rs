@@ -27,7 +27,7 @@ use {
     solana_keypair::Keypair,
     solana_loader_v3_interface::instruction as loader_v3_instruction,
     solana_loader_v4_interface::instruction as loader_v4_instruction,
-    solana_message::{Message, SanitizedMessage},
+    solana_message::{inner_instruction::InnerInstruction, Message, SanitizedMessage},
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -55,7 +55,6 @@ use {
     solana_stake_interface as stake,
     solana_svm::{
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
-        transaction_execution_result::InnerInstruction,
         transaction_processor::ExecutionRecordingConfig,
     },
     solana_svm_timings::ExecuteTimings,
