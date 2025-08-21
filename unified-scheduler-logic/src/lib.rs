@@ -696,6 +696,11 @@ impl UsageQueueInner {
     fn with_priority() -> Self {
         Self::Priority {
             current_usage: None,
+            // PriorityUsageQueue (i.e. BTreeMap) doesn't support capacity provisioning unlike
+            // VecDeque above. For efficient key-based lookup, BTreeMap can't usually be backed by
+            // some continuous provisioning-friendly collection (i.e. Vec). And, due to the need of
+            // those lookups by the current implementation, we can't use BinaryHeap and its family
+            // _for now_.
             blocked_usages_from_tasks: PriorityUsageQueue::new(),
         }
     }
