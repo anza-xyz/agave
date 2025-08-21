@@ -60,6 +60,17 @@ const CONFIRM_AFTER_HELP_MESSAGE: &str =
      \n    w: writable\
      \n    x: program account (inner instructions excluded)";
 
+#[rustfmt::skip]
+const SEEDS_ARG_HELP_MESSAGE: &str =
+    "The seeds. \n\
+     Each one must match the pattern PREFIX:VALUE. \n\
+     PREFIX can be one of [string, pubkey, hex, u8] \n\
+     or matches the pattern [u,i][16,32,64,128][le,be] \
+     (for example u64le) for number values \n\
+     [u,i] - represents whether the number is unsigned or signed, \n\
+     [16,32,64,128] - represents the bit length, and \n\
+     [le,be] - represents the byte order - little endian or big endian";
+
 pub trait WalletSubCommands {
     fn wallet_subcommands(self) -> Self;
 }
@@ -204,16 +215,7 @@ impl WalletSubCommands for App<'_, '_> {
                         .value_name("SEED")
                         .takes_value(true)
                         .validator(is_structured_seed)
-                        .help(
-                            "The seeds. \n\
-                            Each one must match the pattern PREFIX:VALUE. \n\
-                            PREFIX can be one of [string, pubkey, hex, u8] \n\
-                            or matches the pattern [u,i][16,32,64,128][le,be] \
-                            (for example u64le) for number values \n\
-                            [u,i] - represents whether the number is unsigned or signed, \n\
-                            [16,32,64,128] - represents the bit length, and \n\
-                            [le,be] - represents the byte order - little endian or big endian",
-                        ),
+                        .help(SEEDS_ARG_HELP_MESSAGE),
                 ),
         )
         .subcommand(
