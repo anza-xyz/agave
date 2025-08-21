@@ -47,6 +47,19 @@ use {
     std::{fmt::Write as FmtWrite, fs::File, io::Write, rc::Rc, str::FromStr},
 };
 
+// Formatted specifically for the manually-indented heredoc string
+#[rustfmt::skip]
+const CONFIRM_AFTER_HELP_MESSAGE: &str =
+    "Note: This will show more detailed information for finalized \
+     transactions with verbose mode (-v/--verbose).\
+     \n\
+     \nAccount modes:\
+     \n  |srwx|\
+     \n    s: signed\
+     \n    r: readable (always true)\
+     \n    w: writable\
+     \n    x: program account (inner instructions excluded)";
+
 pub trait WalletSubCommands {
     fn wallet_subcommands(self) -> Self;
 }
@@ -135,19 +148,7 @@ impl WalletSubCommands for App<'_, '_> {
                         .required(true)
                         .help("The transaction signature to confirm"),
                 )
-                .after_help(
-                    // Formatted specifically for the manually-indented heredoc string
-                    "Note: This will show more detailed information for finalized \
-                    transactions with verbose mode (-v/--verbose).\
-                    \n\
-                    \nAccount modes:\
-                    \n  |srwx|\
-                    \n    s: signed\
-                    \n    r: readable (always true)\
-                    \n    w: writable\
-                    \n    x: program account (inner instructions excluded)\
-                    ",
-                ),
+                .after_help(CONFIRM_AFTER_HELP_MESSAGE),
         )
         .subcommand(
             SubCommand::with_name("create-address-with-seed")
