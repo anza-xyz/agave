@@ -157,7 +157,7 @@ dependencies = [
  "dirs-next",
  "indicatif 0.18.0",
  "nix",
- "reqwest 0.12.22",
+ "reqwest 0.12.23",
  "scopeguard",
  "semver 1.0.26",
  "serde",
@@ -5988,9 +5988,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.12.22"
+version = "0.12.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbc931937e6ca3a06e3b6c0aa7841849b160a90351d6ab467a8b9b9959767531"
+checksum = "d429f34c8092b2d42c7c93cec323bb4adeb7c67698f70839adec842ec10c7ceb"
 dependencies = [
  "async-compression",
  "base64 0.22.1",
@@ -6037,7 +6037,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "http 1.1.0",
- "reqwest 0.12.22",
+ "reqwest 0.12.23",
  "serde",
  "thiserror 1.0.69",
  "tower-service",
@@ -7560,7 +7560,7 @@ dependencies = [
  "log",
  "predicates",
  "regex",
- "reqwest 0.12.22",
+ "reqwest 0.12.23",
  "semver 1.0.26",
  "serial_test",
  "solana-file-download",
@@ -7663,7 +7663,7 @@ dependencies = [
  "log",
  "num-traits",
  "pretty-hex",
- "reqwest 0.12.22",
+ "reqwest 0.12.23",
  "semver 1.0.26",
  "serde",
  "serde_derive",
@@ -9362,7 +9362,7 @@ dependencies = [
  "gethostname",
  "log",
  "rand 0.8.5",
- "reqwest 0.12.22",
+ "reqwest 0.12.23",
  "serial_test",
  "solana-cluster-type",
  "solana-sha256-hasher 3.0.0",
@@ -9456,7 +9456,7 @@ name = "solana-notifier"
 version = "3.0.0"
 dependencies = [
  "log",
- "reqwest 0.12.22",
+ "reqwest 0.12.23",
  "serde_json",
  "solana-hash 3.0.0",
 ]
@@ -10117,7 +10117,7 @@ dependencies = [
  "jsonrpc-core",
  "jsonrpc-http-server",
  "log",
- "reqwest 0.12.22",
+ "reqwest 0.12.23",
  "reqwest-middleware",
  "semver 1.0.26",
  "serde",
@@ -10155,7 +10155,7 @@ version = "3.0.0"
 dependencies = [
  "anyhow",
  "jsonrpc-core",
- "reqwest 0.12.22",
+ "reqwest 0.12.23",
  "reqwest-middleware",
  "serde",
  "serde_derive",
@@ -10233,7 +10233,7 @@ dependencies = [
  "crossbeam-channel",
  "futures-util",
  "log",
- "reqwest 0.12.22",
+ "reqwest 0.12.23",
  "serde",
  "serde_json",
  "solana-account-decoder",
@@ -11100,7 +11100,7 @@ dependencies = [
  "gethostname",
  "log",
  "rand 0.8.5",
- "reqwest 0.12.22",
+ "reqwest 0.12.23",
  "serial_test",
  "solana-cluster-type",
  "solana-sha256-hasher 3.0.0",
