@@ -396,16 +396,13 @@ mod tests {
     };
 
     #[test]
-    #[ignore]
     // test that stage will exit when flag is set
     fn test_exit() {
         let exit = Arc::new(AtomicBool::new(false));
-        let tn = Node::new_localhost();
-        let cluster_info = ClusterInfo::new(
-            tn.info.clone(),
-            Arc::new(Keypair::new()),
-            SocketAddrSpace::Unspecified,
-        );
+        let kp = Keypair::new();
+        let tn = Node::new_localhost_with_pubkey(&kp.pubkey());
+        let cluster_info =
+            ClusterInfo::new(tn.info.clone(), Arc::new(kp), SocketAddrSpace::Unspecified);
         let c = Arc::new(cluster_info);
         let d = GossipService::new(
             &c,
