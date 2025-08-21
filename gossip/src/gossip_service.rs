@@ -144,16 +144,6 @@ impl GossipService {
     }
 }
 
-/// Discover Validators in a cluster
-#[deprecated(since = "3.0.0", note = "use `discover_validators` instead")]
-pub fn discover_cluster(
-    entrypoint: &SocketAddr,
-    num_nodes: usize,
-    socket_addr_space: SocketAddrSpace,
-) -> std::io::Result<Vec<ContactInfo>> {
-    discover_validators(entrypoint, num_nodes, 0, socket_addr_space)
-}
-
 pub fn discover_validators(
     entrypoint: &SocketAddr,
     num_nodes: usize,

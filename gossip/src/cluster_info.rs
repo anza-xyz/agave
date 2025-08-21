@@ -1035,15 +1035,6 @@ impl ClusterInfo {
             .unwrap_or_default()
     }
 
-    /// all validators that have a valid rpc port regardless of `shred_version`.
-    #[deprecated(
-        since = "3.0.0",
-        note = "use `rpc_peers` instead to ensure shred version is the same"
-    )]
-    pub fn all_rpc_peers(&self) -> Vec<ContactInfo> {
-        self.rpc_peers()
-    }
-
     /// all validators that have a valid rpc port and are on the same `shred_version`.
     pub fn rpc_peers(&self) -> Vec<ContactInfo> {
         let self_pubkey = self.id();
