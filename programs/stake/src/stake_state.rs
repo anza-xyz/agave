@@ -11,9 +11,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::stake::id,
-    solana_stake_interface::{
-        stake_flags::StakeFlags,
-    },
+    solana_stake_interface::stake_flags::StakeFlags,
     solana_vote_interface::state::VoteStateV3,
 };
 
