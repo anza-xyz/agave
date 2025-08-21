@@ -798,25 +798,22 @@ impl UsageQueueInner {
         }
 
         if is_newly_lockable {
-            self.pop_usage_from_task()
+            self.pop()
         } else {
             None
         }
     }
 
-    fn push_blocked_usage_from_task(&mut self, usage_from_task: UsageFromTask) {
+    fn push_blocked(&mut self, usage_from_task: UsageFromTask) {
         assert_matches!(self.current_usage(), Some(_));
-        self.push_usage_from_task(usage_from_task);
+        self.push(usage_from_task);
     }
 
     #[must_use]
-    fn pop_lockable_readonly_usage_from_task(&mut self) -> Option<UsageFromTask> {
-        if matches!(
-            self.peek_usage_from_task(),
-            Some((RequestedUsage::Readonly, _))
-        ) {
+    fn pop_lockable_readonly(&mut self) -> Option<UsageFromTask> {
+        if matches!(self.peek_blocked(), Some((RequestedUsage::Readonly, _))) {
             assert_matches!(self.current_usage(), Some(RequestedUsage::Readonly));
-            self.pop_usage_from_task()
+            self.pop()
         } else {
             None
         }
@@ -845,7 +842,7 @@ impl UsageQueueInner {
         }
     }
 
-    fn pop_usage_from_task(&mut self) -> Option<UsageFromTask> {
+    fn pop(&mut self) -> Option<UsageFromTask> {
         match self {
             Self::Fifo {
                 blocked_usages_from_tasks,
@@ -858,7 +855,7 @@ impl UsageQueueInner {
         }
     }
 
-    fn push_usage_from_task(&mut self, usage_from_task: UsageFromTask) {
+    fn push(&mut self, usage_from_task: UsageFromTask) {
         match self {
             Self::Fifo {
                 blocked_usages_from_tasks,
@@ -871,7 +868,7 @@ impl UsageQueueInner {
         }
     }
 
-    fn peek_usage_from_task(&self) -> Option<&UsageFromTask> {
+    fn peek_blocked(&self) -> Option<&UsageFromTask> {
         match self {
             Self::Fifo {
                 blocked_usages_from_tasks,
@@ -940,7 +937,7 @@ impl UsageQueueInner {
                         Ok(())
                     }
                     (Some(PriorityUsage::Readonly(_current_tasks)), RequestedUsage::Readonly) => {
-                        match self.peek_usage_from_task() {
+                        match self.peek_blocked() {
                             None => Ok(()),
                             Some((usage, peeked_task)) => {
                                 assert_matches!(usage, RequestedUsage::Writable);
@@ -1157,7 +1154,7 @@ impl SchedulingStateMachine {
                 if let Err(()) = lock_result {
                     blocked_usage_count.increment_self();
                     let usage_from_task = (context.requested_usage, task.clone());
-                    usage_queue.push_blocked_usage_from_task(usage_from_task);
+                    usage_queue.push_blocked(usage_from_task);
                 }
             });
         }
@@ -1192,7 +1189,7 @@ impl SchedulingStateMachine {
                     // Try to further schedule blocked task for parallelism in the case of readonly
                     // usages
                     newly_lockable = matches!(lockable_usage, RequestedUsage::Readonly)
-                        .then(|| usage_queue.pop_lockable_readonly_usage_from_task())
+                        .then(|| usage_queue.pop_lockable_readonly())
                         .flatten();
                 }
             });
