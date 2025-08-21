@@ -43,7 +43,7 @@ pub enum DeserializedPacketError {
 
 // Make a dummy feature_set with all features enabled to
 // fetch compute_unit_price and compute_unit_limit for legacy leader.
-pub(crate) static FEATURE_SET: std::sync::LazyLock<FeatureSet> =
+static FEATURE_SET: std::sync::LazyLock<FeatureSet> =
     std::sync::LazyLock::new(FeatureSet::all_enabled);
 
 #[derive(Debug)]
