@@ -377,6 +377,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         let mut vote_batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
 
         // determine the client to use for next batch based on current active interface
+        // use primary interface bind (index 0) if not in multihoming context.
         let active_non_vote_client = {
             let active_index = self
                 .bind_ip_addrs

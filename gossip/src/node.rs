@@ -23,6 +23,7 @@ use {
     solana_time_utils::timestamp,
     std::{
         io,
+        iter::once,
         net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         num::NonZero,
         sync::Arc,
@@ -244,12 +245,22 @@ impl Node {
         // vote forwarding is only bound to primary interface for now
         let (_, tpu_vote_forwarding_client) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
-        let tpu_transaction_forwarding_clients =
-        bind_ip_addrs.iter().map(
-            |&addr |{let (_, socket) =
-            bind_in_range_with_config(addr, port_range, socket_config).expect("TPU transaction forwarding client bind on interface {bind_ip_addr} should succeed" );
-            socket
-            }).collect();
+
+        let (tpu_transaction_forwarding_client_port, tpu_transaction_forwarding_clients) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config).expect(
+                "TPU transaction forwarding client bind on interface {bind_ip_addr} should succeed",
+            );
+        let tpu_transaction_forwarding_clients = once(tpu_transaction_forwarding_clients)
+            .chain(
+                Self::bind_to_extra_ip(
+                    &bind_ip_addrs,
+                    tpu_transaction_forwarding_client_port,
+                    1,
+                    socket_config,
+                )
+                .expect("Secondary interface binds for tpu forward clients should succeed"),
+            )
+            .collect();
 
         let (_, quic_vote_client) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config).unwrap();
