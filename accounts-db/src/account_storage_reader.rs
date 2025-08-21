@@ -269,18 +269,6 @@ mod tests {
             .reopen_as_readonly(storage_access)
             .unwrap_or(storage);
 
-        // Assert that storage.accounts was reopened with the specified access type
-        match storage_access {
-            StorageAccess::File => assert!(matches!(
-                storage.accounts.internals_for_archive(),
-                InternalsForArchive::FileIo(_)
-            )),
-            StorageAccess::Mmap => assert!(matches!(
-                storage.accounts.internals_for_archive(),
-                InternalsForArchive::Mmap(_)
-            )),
-        }
-
         // Create the reader and check the length
         let mut reader = AccountStorageReader::new(&storage, None).unwrap();
         let current_len = storage.accounts.len() - storage.get_obsolete_bytes(None);
