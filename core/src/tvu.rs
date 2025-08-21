@@ -82,7 +82,7 @@ pub struct Tvu {
 }
 
 pub struct TvuSockets {
-    pub fetch: Vec<Arc<UdpSocket>>,
+    pub fetch: Vec<UdpSocket>,
     pub repair: UdpSocket,
     pub retransmit: Vec<UdpSocket>,
     pub ancestor_hashes_requests: UdpSocket,
@@ -188,6 +188,7 @@ impl Tvu {
 
         let repair_socket = Arc::new(repair_socket);
         let ancestor_hashes_socket = Arc::new(ancestor_hashes_socket);
+        let fetch_sockets: Vec<Arc<UdpSocket>> = fetch_sockets.into_iter().map(Arc::new).collect();
         let fetch_stage = ShredFetchStage::new(
             fetch_sockets,
             turbine_quic_endpoint_receiver,
@@ -554,7 +555,12 @@ pub mod tests {
                 TvuSockets {
                     repair: target1.sockets.repair,
                     retransmit: target1.sockets.retransmit_sockets,
-                    fetch: target1.sockets.tvu,
+                    fetch: target1
+                        .sockets
+                        .tvu
+                        .iter()
+                        .map(|socket| socket.as_ref().try_clone().unwrap())
+                        .collect(),
                     ancestor_hashes_requests: target1.sockets.ancestor_hashes_requests,
                     alpenglow: target1.sockets.alpenglow,
                 }

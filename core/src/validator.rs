@@ -1500,7 +1500,12 @@ impl Validator {
             TvuSockets {
                 repair: node.sockets.repair.try_clone().unwrap(),
                 retransmit: node.sockets.retransmit_sockets,
-                fetch: node.sockets.tvu,
+                fetch: node
+                    .sockets
+                    .tvu
+                    .iter()
+                    .map(|socket| socket.as_ref().try_clone().unwrap())
+                    .collect(),
                 ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,
                 alpenglow: alpenglow_socket,
             },
