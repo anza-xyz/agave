@@ -1,0 +1,19 @@
+[package]
+name = "solana-program-binaries"
+description = "Prebuilt SPL and Core BPF programs"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+bincode = { workspace = true }
+serde = { workspace = true }
+solana-account = { workspace = true }
+solana-loader-v3-interface = { workspace = true, features = ["bincode", "serde"] }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
+solana-sdk-ids = { workspace = true }
+spl-generic-token = { workspace = true }

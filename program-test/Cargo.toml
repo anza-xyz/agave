@@ -41,6 +41,7 @@ solana-message = { workspace = true }
 solana-msg = { workspace = true }
 solana-native-token = { workspace = true }
 solana-poh-config = { workspace = true }
+solana-program-binaries = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true }
 solana-program-runtime = { workspace = true }

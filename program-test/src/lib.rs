@@ -26,6 +26,7 @@ use {
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_poh_config::PohConfig,
+    solana_program_binaries as programs,
     solana_program_entrypoint::{deserialize, SUCCESS},
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
@@ -76,8 +77,6 @@ pub use {
     },
     solana_transaction_context::IndexOfAccount,
 };
-
-pub mod programs;
 
 /// Errors from the program test environment
 #[derive(Error, Debug, PartialEq, Eq)]
