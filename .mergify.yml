@@ -104,9 +104,9 @@ pull_request_rules:
           - automerge
       comment:
         message: automerge label removed due to a CI failure
-  - name: v2.2 feature-gate backport
+  - name: v3.0 feature-gate backport
     conditions:
-      - label=v2.2
+      - label=v3.0
       - label=feature-gate
     actions:
       backport:
@@ -117,10 +117,10 @@ pull_request_rules:
         labels:
           - feature-gate
         branches:
-          - v2.2
-  - name: v2.2 non-feature-gate backport
+          - v3.0
+  - name: v3.0 non-feature-gate backport
     conditions:
-      - label=v2.2
+      - label=v3.0
       - label!=feature-gate
     actions:
       backport:
@@ -128,10 +128,10 @@ pull_request_rules:
         title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
         ignore_conflicts: true
         branches:
-          - v2.2
-  - name: v2.2 backport warning comment
+          - v3.0
+  - name: v3.0 backport warning comment
     conditions:
-      - label=v2.2
+      - label=v3.0
     actions:
       comment:
         message: >
