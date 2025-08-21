@@ -245,7 +245,7 @@ pub fn bank_from_snapshot_archives(
         accounts_db_skip_shrink || !full_snapshot_archive_info.is_remote(),
         accounts_db_force_initial_clean,
         full_snapshot_archive_info.slot(),
-        info.duplicates_lt_hash,
+        Some(&info.calculated_accounts_lt_hash),
     ) && limit_load_slot_count_from_snapshot.is_none()
     {
         panic!("Snapshot bank for slot {} failed to verify", bank.slot());
@@ -382,7 +382,7 @@ pub fn bank_from_snapshot_dir(
     };
     let snapshot_bank_fields = SnapshotBankFields::new(bank_fields, None);
     let snapshot_accounts_db_fields = SnapshotAccountsDbFields::new(accounts_db_fields, None);
-    let ((bank, _info), measure_rebuild_bank) = measure_time!(
+    let ((bank, info), measure_rebuild_bank) = measure_time!(
         reconstruct_bank_from_fields(
             snapshot_bank_fields,
             snapshot_accounts_db_fields,
@@ -417,8 +417,15 @@ pub fn bank_from_snapshot_dir(
 
     bank.status_cache.write().unwrap().append(&slot_deltas);
 
-    // We trust our local state, so skip the startup accounts verification.
-    bank.set_initial_accounts_hash_verification_completed();
+    if !bank.verify_snapshot_bank(
+        true,
+        false,
+        0, // since force_clean is false, this value is unused
+        Some(&info.calculated_accounts_lt_hash),
+    ) && limit_load_slot_count_from_snapshot.is_none()
+    {
+        panic!("Snapshot bank for slot {} failed to verify", bank.slot());
+    }
 
     datapoint_info!(
         "bank_from_snapshot_dir",

@@ -899,11 +899,13 @@ mod tests {
 
     #[test_matrix(
         [Features::None, Features::All],
-        [IndexLimitMb::Minimal, IndexLimitMb::InMemOnly]
+        [IndexLimitMb::Minimal, IndexLimitMb::InMemOnly],
+        [MarkObsoleteAccounts::Disabled, MarkObsoleteAccounts::Enabled]
     )]
     fn test_verify_accounts_lt_hash_at_startup(
         features: Features,
         accounts_index_limit: IndexLimitMb,
+        mark_obsolete_accounts: MarkObsoleteAccounts,
     ) {
         let (mut genesis_config, mint_keypair) = genesis_config_with(features);
         // This test requires zero fees so that we can easily transfer an account's entire balance.
@@ -994,6 +996,7 @@ mod tests {
         };
         let accounts_db_config = AccountsDbConfig {
             index: Some(accounts_index_config),
+            mark_obsolete_accounts,
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
         let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(

@@ -948,7 +948,6 @@ impl VerifyAccountsHashConfig {
     fn default_for_test() -> Self {
         Self {
             require_rooted_bank: false,
-            run_in_background: false,
         }
     }
 }
