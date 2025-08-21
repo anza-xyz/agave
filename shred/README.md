@@ -67,7 +67,7 @@ These header fields are **only present** in **Data Shreds**.
 |------------|-------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Parent Offset** | 2 | Distance to the parent shred (for chained shreds).                                                                                                                                                                                                                    |
 | **Flags** | 1 | Metadata flags (e.g., last shred in FEC set).                                                                                                                                                                                                                         |
-| **Size** | 2 | The size field represents the total length of the shred's meaningful content, including the common headers and payload data. It does not account for any padding or trailer content |
+| **Size** | 2 | The size field represents the total length of the shred's meaningful content, including the common headers and payload data. It does not account for any padding or trailer content. |
 
 ---
 
