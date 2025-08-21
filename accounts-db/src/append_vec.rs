@@ -10,7 +10,6 @@ pub mod test_utils;
 // Used all over the accounts-db crate.  Probably should be minimized.
 pub(crate) use meta::StoredAccountMeta;
 // Some tests/benches use AccountMeta/StoredMeta
-use crate::file_io::write_buffer_to_file;
 #[cfg(feature = "dev-context-only-utils")]
 pub use meta::{AccountMeta, StoredMeta};
 #[cfg(not(feature = "dev-context-only-utils"))]
@@ -27,7 +26,7 @@ use {
             BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufFileRead,
             RequiredLenBufRead as _, Stack,
         },
-        file_io::read_into_buffer,
+        file_io::{read_into_buffer, write_buffer_to_file},
         is_zero_lamport::IsZeroLamport,
         storable_accounts::StorableAccounts,
         u64_align,
@@ -507,8 +506,9 @@ impl AppendVec {
     pub fn new_from_file_unchecked(
         path: impl Into<PathBuf>,
         current_len: usize,
-        storage_access: StorageAccess,
+        _storage_access: StorageAccess,
     ) -> Result<Self> {
+        let storage_access = StorageAccess::File;
         let path = path.into();
         let file_size = std::fs::metadata(&path)?.len();
         Self::sanitize_len_and_size(current_len, file_size as usize)?;
@@ -538,24 +538,23 @@ impl AppendVec {
             });
         }
 
-        panic!("unsupported access");
-        // let mmap = unsafe {
-        //     let result = MmapMut::map_mut(&data);
-        //     if result.is_err() {
-        //         // for vm.max_map_count, error is: {code: 12, kind: Other, message: "Cannot allocate memory"}
-        //         info!(
-        //             "memory map error: {result:?}. This may be because vm.max_map_count is not \
-        //              set correctly."
-        //         );
-        //     }
-        //     result?
-        // };
+        let mmap = unsafe {
+            let result = MmapMut::map_mut(&data);
+            if result.is_err() {
+                // for vm.max_map_count, error is: {code: 12, kind: Other, message: "Cannot allocate memory"}
+                info!(
+                    "memory map error: {result:?}. This may be because vm.max_map_count is not \
+                     set correctly."
+                );
+            }
+            result?
+        };
 
-        // APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
+        APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 
-        // APPEND_VEC_STATS
-        //     .open_as_mmap
-        //     .fetch_add(1, Ordering::Relaxed);
+        APPEND_VEC_STATS
+            .open_as_mmap
+            .fetch_add(1, Ordering::Relaxed);
 
         Ok(AppendVec {
             path,
