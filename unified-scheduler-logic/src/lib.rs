@@ -929,10 +929,9 @@ impl UsageQueueInner {
                         Ok(())
                     }
                     (Some(PriorityUsage::Writable(current_task)), _) => {
-                        if !new_task.is_higher_priority(current_task) {
-                            return Err(());
-                        }
-                        if !current_task.try_reblock(token) {
+                        if !new_task.is_higher_priority(current_task)
+                            || !current_task.try_reblock(token)
+                        {
                             return Err(());
                         }
                         let reblocked_task = Usage::take_writable(current_and_requested_usage.0);
