@@ -1476,7 +1476,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  This feature tracks obsolete accounts in the account storage entry allowing \
                  for earlier cleaning of obsolete accounts in the storages and index. \
                  At this time this feature is not compatible with booting from local \
-                 snapshot state and must unpack from archives."
+                 snapshot state and must unpack from archives.",
             )
             .hidden(hidden_unless_forced()),
     )
