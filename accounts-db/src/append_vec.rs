@@ -1332,15 +1332,6 @@ impl AppendVec {
         })
     }
 
-    // NOTE: Only used by ancient append vecs "append" method, which is test-only now.
-    #[cfg(test)]
-    pub(crate) fn can_append(&self) -> bool {
-        match &self.backing {
-            AppendVecFileBacking::File(_file) => true,
-            AppendVecFileBacking::Mmap(_mmap) => true,
-        }
-    }
-
     /// Returns the way to access this accounts file when archiving
     pub(crate) fn internals_for_archive(&self) -> InternalsForArchive {
         match &self.backing {

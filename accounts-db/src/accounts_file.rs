@@ -102,7 +102,7 @@ impl AccountsFile {
     #[cfg(test)]
     pub(crate) fn can_append(&self) -> bool {
         match self {
-            Self::AppendVec(av) => av.can_append(),
+            Self::AppendVec(_) => true,
             // once created, tiered storages cannot be appended to
             Self::TieredStorage(_) => false,
         }
