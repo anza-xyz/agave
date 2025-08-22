@@ -13,7 +13,8 @@ use {
     solana_sdk_ids::bpf_loader_deprecated,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_context::{
-        BorrowedInstructionAccount, IndexOfAccount, InstructionContext, MAX_ACCOUNTS_PER_INSTRUCTION,
+        BorrowedInstructionAccount, IndexOfAccount, InstructionContext,
+        MAX_ACCOUNTS_PER_INSTRUCTION,
     },
     std::mem::{self, size_of},
 };
@@ -1611,7 +1612,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(
-            transaction_context.accounts_resize_delta(),
+            transaction_context.accounts().resize_delta(),
             MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
                 - remaining_allowed_growth as i64,
         );
