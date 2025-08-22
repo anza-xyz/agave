@@ -46,6 +46,7 @@ impl FromClapArgMatches for ExitArgs {
             Some(PostExitAction::Wait)
         };
 
+        // Deprecated in v3.0.0
         if matches.is_present("wait_for_exit") {
             eprintln!(
                 "WARN: The --wait-for-exit flag has been deprecated, waiting for exit is now the \
