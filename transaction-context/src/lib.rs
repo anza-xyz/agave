@@ -3,14 +3,14 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 use {
-    crate::transaction_accounts::{TransactionAccount, TransactionAccounts},
+    crate::transaction_accounts::{AccountRefMut, TransactionAccount, TransactionAccounts},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
     solana_instructions_sysvar as instructions,
     solana_pubkey::Pubkey,
     solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
     std::{
-        cell::{Cell, RefCell, RefMut},
+        cell::{Cell, UnsafeCell},
         collections::HashSet,
         pin::Pin,
         rc::Rc,
@@ -132,7 +132,7 @@ impl TransactionContext {
     ) -> Self {
         let (account_keys, accounts): (Vec<_>, Vec<_>) = transaction_accounts
             .into_iter()
-            .map(|(key, account)| (key, RefCell::new(account)))
+            .map(|(key, account)| (key, UnsafeCell::new(account)))
             .unzip();
         Self {
             account_keys: Pin::new(account_keys.into_boxed_slice()),
@@ -157,7 +157,7 @@ impl TransactionContext {
         let (accounts, _, _) = Rc::try_unwrap(self.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs")
             .take();
-        Ok(accounts.into_iter().map(RefCell::into_inner).collect())
+        Ok(accounts.into_iter().map(UnsafeCell::into_inner).collect())
     }
 
     #[cfg(not(target_os = "solana"))]
@@ -715,7 +715,7 @@ impl<'a> InstructionContext<'a> {
 #[derive(Debug)]
 pub struct BorrowedInstructionAccount<'a> {
     transaction_context: &'a TransactionContext,
-    account: RefMut<'a, AccountSharedData>,
+    account: AccountRefMut<'a>,
     instruction_account: InstructionAccount,
     index_in_transaction_of_instruction_program: IndexOfAccount,
 }
@@ -915,9 +915,7 @@ impl BorrowedInstructionAccount<'_> {
     /// Deserializes the account data into a state
     #[cfg(all(not(target_os = "solana"), feature = "bincode"))]
     pub fn get_state<T: serde::de::DeserializeOwned>(&self) -> Result<T, InstructionError> {
-        self.account
-            .deserialize_data()
-            .map_err(|_| InstructionError::InvalidAccountData)
+        bincode::deserialize(self.account.data()).map_err(|_| InstructionError::InvalidAccountData)
     }
 
     /// Serializes a state into the account data
@@ -1064,7 +1062,7 @@ impl From<TransactionContext> for ExecutionRecord {
             .take();
         let accounts = Vec::from(Pin::into_inner(context.account_keys))
             .into_iter()
-            .zip(accounts.into_iter().map(RefCell::into_inner))
+            .zip(accounts.into_iter().map(UnsafeCell::into_inner))
             .collect();
         let touched_account_count = touched_flags
             .iter()
