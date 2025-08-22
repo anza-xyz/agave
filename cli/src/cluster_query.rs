@@ -106,7 +106,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .index(1)
                         .help(
                             "A list of accounts which if provided the fee response will \
-                             representthe fee to land a transaction with those accounts as \
+                             represent the fee to land a transaction with those accounts as \
                              writable",
                         ),
                 )
