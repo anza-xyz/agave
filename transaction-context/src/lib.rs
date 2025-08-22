@@ -747,7 +747,7 @@ impl<'a> InstructionContext<'a> {
     pub fn try_borrow_instruction_account(
         &self,
         index_in_instruction: IndexOfAccount,
-    ) -> Result<BorrowedAccount, InstructionError> {
+    ) -> Result<BorrowedInstructionAccount, InstructionError> {
         let instruction_account = *self
             .instruction_accounts
             .get(index_in_instruction as usize)
@@ -758,7 +758,7 @@ impl<'a> InstructionContext<'a> {
             .accounts
             .try_borrow_mut(instruction_account.index_in_transaction)?;
 
-        Ok(BorrowedAccount {
+        Ok(BorrowedInstructionAccount {
             transaction_context: self.transaction_context,
             instruction_account,
             account,
@@ -820,14 +820,14 @@ impl<'a> InstructionContext<'a> {
 
 /// Shared account borrowed from the TransactionContext and an InstructionContext.
 #[derive(Debug)]
-pub struct BorrowedAccount<'a> {
+pub struct BorrowedInstructionAccount<'a> {
     transaction_context: &'a TransactionContext,
     account: RefMut<'a, AccountSharedData>,
     instruction_account: InstructionAccount,
     index_in_transaction_of_instruction_program: IndexOfAccount,
 }
 
-impl BorrowedAccount<'_> {
+impl BorrowedInstructionAccount<'_> {
     /// Returns the index of this account (transaction wide)
     #[inline]
     pub fn get_index_in_transaction(&self) -> IndexOfAccount {
