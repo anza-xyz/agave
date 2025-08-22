@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
 
+if [[ -n "$SOLANA_PERF_LIBS_PATH" ]]; then
+  mkdir -p target
+
+  ln -sfT "$SOLANA_PERF_LIBS_PATH" target/perf-libs
+
+  for dir in target/{debug,release}/{,deps/}; do
+    mkdir -p "$dir"
+    ln -sfT "$SOLANA_PERF_LIBS_PATH" "${dir}perf-libs"
+  done
+
+  exit 0
+fi
+
 PERF_LIBS_VERSION=v0.19.3
 VERSION=$PERF_LIBS_VERSION-1
 
