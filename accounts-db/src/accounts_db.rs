@@ -6394,11 +6394,6 @@ impl AccountsDb {
             datapoint_info!(
                 "accounts_db_store_timings",
                 (
-                    "hash_accounts",
-                    self.stats.store_hash_accounts.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
                     "store_accounts",
                     self.stats.store_accounts.swap(0, Ordering::Relaxed),
                     i64

@@ -11,7 +11,6 @@ use {
 #[derive(Debug, Default)]
 pub struct AccountsStats {
     pub last_store_report: AtomicInterval,
-    pub store_hash_accounts: AtomicU64,
     pub store_accounts: AtomicU64,
     pub store_update_index: AtomicU64,
     pub store_handle_reclaims: AtomicU64,
