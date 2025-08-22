@@ -54,20 +54,6 @@ use {
     },
 };
 
-#[derive(Debug)]
-pub struct BankFromArchivesTimings {
-    pub untar_full_snapshot_archive_us: u64,
-    pub untar_incremental_snapshot_archive_us: Option<u64>,
-    pub rebuild_bank_us: u64,
-    pub verify_bank_us: u64,
-}
-
-#[derive(Debug)]
-pub struct BankFromDirTimings {
-    pub rebuild_storages_us: u64,
-    pub rebuild_bank_us: u64,
-}
-
 /// Parses out bank specific information from a snapshot archive including the leader schedule.
 /// epoch schedule, etc.
 #[cfg(feature = "dev-context-only-utils")]
@@ -157,7 +143,7 @@ pub fn bank_from_snapshot_archives(
     accounts_db_config: Option<AccountsDbConfig>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<(Bank, BankFromArchivesTimings)> {
+) -> snapshot_utils::Result<Bank> {
     info!(
         "Loading bank from full snapshot archive: {}, and incremental snapshot archive: {:?}",
         full_snapshot_archive_info.path().display(),
@@ -266,30 +252,22 @@ pub fn bank_from_snapshot_archives(
     }
     measure_verify.stop();
 
-    let timings = BankFromArchivesTimings {
-        untar_full_snapshot_archive_us: full_measure_untar.as_us(),
-        untar_incremental_snapshot_archive_us: incremental_measure_untar
-            .as_ref()
-            .map(Measure::as_us),
-        rebuild_bank_us: measure_rebuild.as_us(),
-        verify_bank_us: measure_verify.as_us(),
-    };
     datapoint_info!(
         "bank_from_snapshot_archives",
         (
             "untar_full_snapshot_archive_us",
-            timings.untar_full_snapshot_archive_us,
+            full_measure_untar.as_us(),
             i64
         ),
         (
             "untar_incremental_snapshot_archive_us",
-            timings.untar_incremental_snapshot_archive_us,
+            incremental_measure_untar.as_ref().map(Measure::as_us),
             Option<i64>
         ),
-        ("rebuild_bank_us", timings.rebuild_bank_us, i64),
-        ("verify_bank_us", timings.verify_bank_us, i64),
+        ("rebuild_bank_us", measure_rebuild.as_us(), i64),
+        ("verify_bank_us", measure_verify.as_us(), i64),
     );
-    Ok((bank, timings))
+    Ok(bank)
 }
 
 /// Rebuild bank from snapshot archives
@@ -328,7 +306,7 @@ pub fn bank_from_latest_snapshot_archives(
         full_snapshot_archive_info.slot(),
     );
 
-    let (bank, _) = bank_from_snapshot_archives(
+    let bank = bank_from_snapshot_archives(
         account_paths,
         bank_snapshots_dir.as_ref(),
         &full_snapshot_archive_info,
@@ -367,7 +345,7 @@ pub fn bank_from_snapshot_dir(
     accounts_db_config: Option<AccountsDbConfig>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<(Bank, BankFromDirTimings)> {
+) -> snapshot_utils::Result<Bank> {
     info!(
         "Loading bank from snapshot dir: {}",
         bank_snapshot.snapshot_dir.display()
@@ -442,16 +420,12 @@ pub fn bank_from_snapshot_dir(
     // We trust our local state, so skip the startup accounts verification.
     bank.set_initial_accounts_hash_verification_completed();
 
-    let timings = BankFromDirTimings {
-        rebuild_storages_us: measure_rebuild_storages.as_us(),
-        rebuild_bank_us: measure_rebuild_bank.as_us(),
-    };
     datapoint_info!(
         "bank_from_snapshot_dir",
-        ("rebuild_storages_us", timings.rebuild_storages_us, i64),
-        ("rebuild_bank_us", timings.rebuild_bank_us, i64),
+        ("rebuild_storages_us", measure_rebuild_storages.as_us(), i64),
+        ("rebuild_bank_us", measure_rebuild_bank.as_us(), i64),
     );
-    Ok((bank, timings))
+    Ok(bank)
 }
 
 /// follow the prototype of fn bank_from_latest_snapshot_archives, implement the from_dir case
@@ -472,7 +446,7 @@ pub fn bank_from_latest_snapshot_dir(
     let bank_snapshot = get_highest_bank_snapshot_post(&bank_snapshots_dir).ok_or_else(|| {
         SnapshotError::NoSnapshotSlotDir(bank_snapshots_dir.as_ref().to_path_buf())
     })?;
-    let (bank, _) = bank_from_snapshot_dir(
+    let bank = bank_from_snapshot_dir(
         account_paths,
         &bank_snapshot,
         genesis_config,
@@ -955,7 +929,7 @@ mod tests {
         )
         .unwrap();
 
-        let (roundtrip_bank, _) = bank_from_snapshot_archives(
+        let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &snapshot_archive_info,
@@ -1055,7 +1029,7 @@ mod tests {
         )
         .unwrap();
 
-        let (roundtrip_bank, _) = bank_from_snapshot_archives(
+        let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -1156,7 +1130,7 @@ mod tests {
         )
         .unwrap();
 
-        let (roundtrip_bank, _) = bank_from_snapshot_archives(
+        let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -1275,7 +1249,7 @@ mod tests {
         )
         .unwrap();
 
-        let (roundtrip_bank, _) = bank_from_snapshot_archives(
+        let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -1514,7 +1488,7 @@ mod tests {
             snapshot_archive_format,
         )
         .unwrap();
-        let (deserialized_bank, _) = bank_from_snapshot_archives(
+        let deserialized_bank = bank_from_snapshot_archives(
             &[accounts_dir.clone()],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -1573,7 +1547,7 @@ mod tests {
         )
         .unwrap();
 
-        let (deserialized_bank, _) = bank_from_snapshot_archives(
+        let deserialized_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -1948,7 +1922,7 @@ mod tests {
 
         let accounts_dir = tempfile::TempDir::new().unwrap();
         let other_bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let (deserialized_bank, _) = bank_from_snapshot_archives(
+        let deserialized_bank = bank_from_snapshot_archives(
             &[accounts_dir.path().to_path_buf()],
             other_bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -1989,7 +1963,7 @@ mod tests {
         let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
         let account_paths = &bank.rc.accounts.accounts_db.paths;
 
-        let (bank_constructed, ..) = bank_from_snapshot_dir(
+        let bank_constructed = bank_from_snapshot_dir(
             account_paths,
             &bank_snapshot,
             &genesis_config,

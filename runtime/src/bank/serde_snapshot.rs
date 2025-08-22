@@ -294,7 +294,7 @@ mod tests {
         .unwrap();
 
         // Deserialize
-        let (dbank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+        let dbank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &snapshot_archive_info,

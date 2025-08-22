@@ -970,7 +970,7 @@ mod tests {
             index: Some(accounts_index_config),
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
-        let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+        let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
             &bank_snapshots_dir,
             &snapshot,
@@ -1070,7 +1070,7 @@ mod tests {
         )
         .unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
-        let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+        let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
             &bank_snapshots_dir,
             &snapshot,
