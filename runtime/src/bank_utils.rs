@@ -42,13 +42,13 @@ pub fn setup_bank_and_vote_pubkeys_for_tests(
 
 pub fn find_and_send_votes(
     sanitized_txs: &[impl TransactionWithMeta],
-    commit_results: &[TransactionCommitResult],
+    commit_results: impl Iterator<Item = TransactionCommitResult>,
     vote_sender: Option<&ReplayVoteSender>,
 ) {
     if let Some(vote_sender) = vote_sender {
         sanitized_txs
             .iter()
-            .zip(commit_results.iter())
+            .zip(commit_results)
             .for_each(|(tx, commit_result)| {
                 if tx.is_simple_vote_transaction() && commit_result.was_executed_successfully() {
                     if let Some(parsed_vote) = vote_parser::parse_sanitized_vote_transaction(tx) {

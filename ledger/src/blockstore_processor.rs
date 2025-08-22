@@ -311,13 +311,12 @@ pub fn execute_batch<'a>(
 // Get actual transaction execution costs from transaction commit results
 fn get_transaction_costs<'a, Tx: TransactionWithMeta>(
     bank: &Bank,
-    commit_results: &[TransactionCommitResult],
+    commit_results: impl Iterator<Item = TransactionCommitResult>,
     sanitized_transactions: &'a [Tx],
 ) -> Vec<Option<TransactionCost<'a, Tx>>> {
     assert_eq!(sanitized_transactions.len(), commit_results.len());
 
     commit_results
-        .iter()
         .zip(sanitized_transactions)
         .map(|(commit_result, tx)| {
             if let Ok(committed_tx) = commit_result {
@@ -2285,12 +2284,13 @@ impl TransactionStatusSender {
         &self,
         slot: Slot,
         transactions: Vec<SanitizedTransaction>,
-        commit_results: Vec<TransactionCommitResult>,
+        commit_results: impl Iterator<Item = TransactionCommitResult>,
         balances: TransactionBalancesSet,
         token_balances: TransactionTokenBalancesSet,
         costs: Vec<Option<u64>>,
         transaction_indexes: Vec<usize>,
     ) {
+        let commit_results: Vec<_> = commit_results.collect();
         let work_sequence = self
             .dependency_tracker
             .as_ref()

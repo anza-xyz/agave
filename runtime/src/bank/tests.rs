@@ -1844,7 +1844,7 @@ fn test_interleaving_locks() {
     let pay_alice = vec![tx1];
 
     let lock_result = bank.prepare_batch_for_tests(pay_alice);
-    let commit_results = bank
+    let mut commit_results = bank
         .load_execute_and_commit_transactions(
             &lock_result,
             MAX_PROCESSING_AGE,
@@ -1853,7 +1853,7 @@ fn test_interleaving_locks() {
             None,
         )
         .0;
-    assert!(commit_results[0].is_ok());
+    assert!(commit_results.next().unwrap().is_ok());
 
     // try executing an interleaved transfer twice
     assert_eq!(
@@ -1929,7 +1929,7 @@ fn test_load_and_execute_commit_transactions_fees_only() {
     ));
 
     let batch = bank.prepare_batch_for_tests(vec![transaction]);
-    let commit_results = bank
+    let commit_results: Vec<_> = bank
         .load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
@@ -1937,7 +1937,8 @@ fn test_load_and_execute_commit_transactions_fees_only() {
             &mut ExecuteTimings::default(),
             None,
         )
-        .0;
+        .0
+        .collect();
 
     assert_eq!(
         commit_results,
@@ -4626,7 +4627,7 @@ fn test_pre_post_transaction_balances() {
     let txs = vec![tx0, tx1, tx2];
 
     let lock_result = bank0.prepare_batch_for_tests(txs);
-    let (commit_results, balance_collector) = bank0.load_execute_and_commit_transactions(
+    let (mut commit_results, balance_collector) = bank0.load_execute_and_commit_transactions(
         &lock_result,
         MAX_PROCESSING_AGE,
         ExecutionRecordingConfig {
@@ -4645,7 +4646,7 @@ fn test_pre_post_transaction_balances() {
     assert_eq!(transaction_balances_set.pre_balances.len(), 3);
     assert_eq!(transaction_balances_set.post_balances.len(), 3);
 
-    assert!(commit_results[0].was_executed_successfully());
+    assert!(commit_results.next().unwrap().was_executed_successfully());
     assert_eq!(
         transaction_balances_set.pre_balances[0],
         vec![908_000, 911_000, 1]
@@ -4657,14 +4658,17 @@ fn test_pre_post_transaction_balances() {
 
     // Failed transactions still produce balance sets
     // This is a TransactionError - not possible to charge fees
-    assert_matches!(commit_results[1], Err(TransactionError::AccountNotFound));
+    assert_matches!(
+        commit_results.next().unwrap(),
+        Err(TransactionError::AccountNotFound)
+    );
     assert_eq!(transaction_balances_set.pre_balances[1], vec![0, 0, 1]);
     assert_eq!(transaction_balances_set.post_balances[1], vec![0, 0, 1]);
 
     // Failed transactions still produce balance sets
     // This is an InstructionError - fees charged
     assert_eq!(
-        commit_results[2].as_ref().unwrap().status,
+        commit_results.next().unwrap().as_ref().unwrap().status,
         Err(TransactionError::InstructionError(
             0,
             InstructionError::Custom(1),
@@ -8274,7 +8278,7 @@ fn test_tx_log_order(relax_intrabatch_account_locks: bool) {
     let txs = vec![tx0, tx1, tx2];
     let batch = bank.prepare_batch_for_tests(txs);
 
-    let commit_results = bank
+    let mut commit_results = bank
         .load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
@@ -8289,29 +8293,31 @@ fn test_tx_log_order(relax_intrabatch_account_locks: bool) {
         )
         .0;
 
-    assert_eq!(commit_results.len(), 3);
-
-    assert!(commit_results[0].is_ok());
-    assert!(commit_results[0]
+    let commit_result = commit_results.next().unwrap();
+    assert!(commit_result.is_ok());
+    assert!(commit_result
         .as_ref()
         .unwrap()
         .log_messages
         .as_ref()
         .unwrap()[1]
         .contains(&"success".to_string()));
-    assert!(commit_results[1].is_ok());
-    assert!(commit_results[1]
+    let commit_result = commit_results.next().unwrap();
+    assert!(commit_result.is_ok());
+    assert!(commit_result
         .as_ref()
         .unwrap()
         .log_messages
         .as_ref()
         .unwrap()[2]
         .contains(&"failed".to_string()));
+    let commit_result = commit_results.next().unwrap();
     if relax_intrabatch_account_locks {
-        assert!(commit_results[2].is_ok());
+        assert!(commit_result.is_ok());
     } else {
-        assert!(commit_results[2].is_err());
+        assert!(commit_result.is_err());
     }
+    assert!(commit_results.next().is_none());
 
     let stored_logs = &bank.transaction_log_collector.read().unwrap().logs;
     let success_log_info = stored_logs
@@ -8386,7 +8392,7 @@ fn test_tx_return_data() {
             blockhash,
         )];
         let batch = bank.prepare_batch_for_tests(txs);
-        let commit_results = bank
+        let mut commit_results = bank
             .load_execute_and_commit_transactions(
                 &batch,
                 MAX_PROCESSING_AGE,
@@ -8400,7 +8406,13 @@ fn test_tx_return_data() {
                 None,
             )
             .0;
-        let return_data = commit_results[0].as_ref().unwrap().return_data.clone();
+        let return_data = commit_results
+            .next()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .return_data
+            .clone();
         if let Some(index) = index {
             let return_data = return_data.unwrap();
             assert_eq!(return_data.program_id, mock_program_id);

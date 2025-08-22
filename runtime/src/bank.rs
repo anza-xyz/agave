@@ -3569,7 +3569,7 @@ impl Bank {
         processing_results: Vec<TransactionProcessingResult>,
         processed_counts: &ProcessedTransactionCounts,
         timings: &mut ExecuteTimings,
-    ) -> Vec<TransactionCommitResult> {
+    ) -> impl Iterator<Item = TransactionCommitResult> {
         assert!(
             !self.freeze_started(),
             "commit_transactions() working on a bank that is already frozen or is undergoing \
@@ -3691,51 +3691,48 @@ impl Bank {
 
     fn create_commit_results(
         processing_results: Vec<TransactionProcessingResult>,
-    ) -> Vec<TransactionCommitResult> {
-        processing_results
-            .into_iter()
-            .map(|processing_result| {
-                let processing_result = processing_result?;
-                let executed_units = processing_result.executed_units();
-                let loaded_accounts_data_size = processing_result.loaded_accounts_data_size();
+    ) -> impl Iterator<Item = TransactionCommitResult> {
+        processing_results.into_iter().map(|processing_result| {
+            let processing_result = processing_result?;
+            let executed_units = processing_result.executed_units();
+            let loaded_accounts_data_size = processing_result.loaded_accounts_data_size();
 
-                match processing_result {
-                    ProcessedTransaction::Executed(executed_tx) => {
-                        let execution_details = executed_tx.execution_details;
-                        let LoadedTransaction {
-                            accounts: loaded_accounts,
-                            fee_details,
-                            ..
-                        } = executed_tx.loaded_transaction;
+            match processing_result {
+                ProcessedTransaction::Executed(executed_tx) => {
+                    let execution_details = executed_tx.execution_details;
+                    let LoadedTransaction {
+                        accounts: loaded_accounts,
+                        fee_details,
+                        ..
+                    } = executed_tx.loaded_transaction;
 
-                        Ok(CommittedTransaction {
-                            status: execution_details.status,
-                            log_messages: execution_details.log_messages,
-                            inner_instructions: execution_details.inner_instructions,
-                            return_data: execution_details.return_data,
-                            executed_units,
-                            fee_details,
-                            loaded_account_stats: TransactionLoadedAccountsStats {
-                                loaded_accounts_count: loaded_accounts.len(),
-                                loaded_accounts_data_size,
-                            },
-                        })
-                    }
-                    ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
-                        status: Err(fees_only_tx.load_error),
-                        log_messages: None,
-                        inner_instructions: None,
-                        return_data: None,
+                    Ok(CommittedTransaction {
+                        status: execution_details.status,
+                        log_messages: execution_details.log_messages,
+                        inner_instructions: execution_details.inner_instructions,
+                        return_data: execution_details.return_data,
                         executed_units,
-                        fee_details: fees_only_tx.fee_details,
+                        fee_details,
                         loaded_account_stats: TransactionLoadedAccountsStats {
-                            loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
+                            loaded_accounts_count: loaded_accounts.len(),
                             loaded_accounts_data_size,
                         },
-                    }),
+                    })
                 }
-            })
-            .collect()
+                ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
+                    status: Err(fees_only_tx.load_error),
+                    log_messages: None,
+                    inner_instructions: None,
+                    return_data: None,
+                    executed_units,
+                    fee_details: fees_only_tx.fee_details,
+                    loaded_account_stats: TransactionLoadedAccountsStats {
+                        loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
+                        loaded_accounts_data_size,
+                    },
+                }),
+            }
+        })
     }
 
     fn run_incinerator(&self) {
@@ -3768,14 +3765,17 @@ impl Bank {
 
     /// Process a batch of transactions.
     #[must_use]
-    pub fn load_execute_and_commit_transactions(
-        &self,
-        batch: &TransactionBatch<impl TransactionWithMeta>,
+    pub fn load_execute_and_commit_transactions<'a>(
+        &'a self,
+        batch: &TransactionBatch<impl TransactionWithMeta + 'a>,
         max_age: usize,
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-    ) -> (Vec<TransactionCommitResult>, Option<BalanceCollector>) {
+    ) -> (
+        impl Iterator<Item = TransactionCommitResult> + 'a,
+        Option<BalanceCollector>,
+    ) {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
             max_age,
@@ -3798,7 +3798,10 @@ impl Bank {
             &mut ExecuteTimings,
             &[TransactionProcessingResult],
         ) -> PreCommitResult<'a>,
-    ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
+    ) -> Result<(
+        impl Iterator<Item = TransactionCommitResult>,
+        Option<BalanceCollector>,
+    )> {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
             max_age,
@@ -3819,7 +3822,10 @@ impl Bank {
         pre_commit_callback: Option<
             impl FnOnce(&mut ExecuteTimings, &[TransactionProcessingResult]) -> PreCommitResult<'a>,
         >,
-    ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
+    ) -> Result<(
+        impl Iterator<Item = TransactionCommitResult>,
+        Option<BalanceCollector>,
+    )> {
         let LoadAndExecuteTransactionsOutput {
             processing_results,
             processed_counts,
@@ -3885,7 +3891,9 @@ impl Bank {
             Some(1000 * 1000),
         );
 
-        commit_results.remove(0)
+        commit_results
+            .next()
+            .expect("there should be more than one commit result")
     }
 
     /// Process multiple transaction in a single batch. This is used for benches and unit tests.
