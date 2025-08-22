@@ -6533,16 +6533,6 @@ impl AccountsDb {
                     i64
                 ),
                 (
-                    "store_get_slot_store",
-                    self.stats.store_get_slot_store.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "store_find_existing",
-                    self.stats.store_find_existing.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
                     "dropped_stores",
                     self.stats.dropped_stores.swap(0, Ordering::Relaxed),
                     i64
