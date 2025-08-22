@@ -157,7 +157,7 @@ use {
         versioned::VersionedTransaction,
         Transaction, TransactionVerificationMode,
     },
-    solana_transaction_context::{TransactionAccount, TransactionReturnData},
+    solana_transaction_context::{transaction_accounts::TransactionAccount, TransactionReturnData},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     std::{

@@ -24,7 +24,7 @@ use {
         message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
     },
     solana_transaction::sanitized::SanitizedTransaction,
-    solana_transaction_context::TransactionAccount,
+    solana_transaction_context::transaction_accounts::TransactionAccount,
     solana_transaction_error::TransactionResult as Result,
     std::{
         cmp::Reverse,
