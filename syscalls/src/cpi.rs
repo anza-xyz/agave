@@ -1284,7 +1284,9 @@ mod tests {
             ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
         solana_sdk_ids::system_program,
-        solana_transaction_context::{InstructionAccount, TransactionAccount},
+        solana_transaction_context::{
+            transaction_accounts::TransactionAccount, InstructionAccount,
+        },
         std::{
             cell::{Cell, RefCell},
             mem, ptr,
