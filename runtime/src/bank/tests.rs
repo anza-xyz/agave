@@ -1958,6 +1958,149 @@ fn test_load_and_execute_commit_transactions_fees_only() {
 }
 
 #[test]
+fn test_load_and_execute_commit_transactions_failure() {
+    let GenesisConfigInfo {
+        mut genesis_config, ..
+    } = genesis_utils::create_genesis_config(100 * LAMPORTS_PER_SOL);
+    genesis_config.rent = Rent::default();
+    genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
+    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let bank = Bank::new_from_parent(
+        bank,
+        &Pubkey::new_unique(),
+        genesis_config.epoch_schedule.get_first_slot_in_epoch(1),
+    );
+
+    let fee_payer = Pubkey::new_unique();
+    let starting_balance = 2 * genesis_config.rent.minimum_balance(0) + 10_000;
+    bank.store_account(
+        &fee_payer,
+        &AccountSharedData::new(starting_balance, 0, &system_program::id()),
+    );
+
+    let recipient = Pubkey::new_unique();
+    let transfer_amount = genesis_config.rent.minimum_balance(0);
+
+    // Invoke transaction with valid system-program instruction followed by a
+    // failing instruction to trigger a failed execution.
+    // The system transfer is used to modify the loaded account state to verify the
+    // fee payer post balance is correct.
+    let transaction = Transaction::new_unsigned(Message::new_with_blockhash(
+        &[
+            system_instruction::transfer(&fee_payer, &recipient, transfer_amount),
+            Instruction::new_with_bincode(system_program::id(), &(), vec![]),
+        ],
+        Some(&fee_payer),
+        &bank.last_blockhash(),
+    ));
+
+    let batch = bank.prepare_batch_for_tests(vec![transaction]);
+    let commit_results = bank
+        .load_execute_and_commit_transactions(
+            &batch,
+            MAX_PROCESSING_AGE,
+            ExecutionRecordingConfig::new_single_setting(true),
+            &mut ExecuteTimings::default(),
+            None,
+        )
+        .0;
+
+    assert_eq!(
+        commit_results,
+        vec![Ok(CommittedTransaction {
+            status: Err(TransactionError::InstructionError(
+                1,
+                InstructionError::InvalidInstructionData
+            )),
+            log_messages: Some(vec![
+                "Program 11111111111111111111111111111111 invoke [1]".to_string(),
+                "Program 11111111111111111111111111111111 success".to_string(),
+                "Program 11111111111111111111111111111111 invoke [1]".to_string(),
+                "Program 11111111111111111111111111111111 failed: invalid instruction data"
+                    .to_string()
+            ]),
+            inner_instructions: Some(vec![vec![], vec![]]),
+            return_data: None,
+            executed_units: 300,
+            fee_details: FeeDetails::new(5000, 0),
+            loaded_account_stats: TransactionLoadedAccountsStats {
+                loaded_accounts_count: 3,
+                loaded_accounts_data_size: 142, // size of system account (initially recipient does not exist)
+            },
+            fee_payer_post_balance: starting_balance - 5000,
+        })]
+    );
+}
+
+#[test]
+fn test_load_and_execute_commit_transactions_success() {
+    let GenesisConfigInfo {
+        mut genesis_config, ..
+    } = genesis_utils::create_genesis_config(100 * LAMPORTS_PER_SOL);
+    genesis_config.rent = Rent::default();
+    genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
+    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let bank = Bank::new_from_parent(
+        bank,
+        &Pubkey::new_unique(),
+        genesis_config.epoch_schedule.get_first_slot_in_epoch(1),
+    );
+
+    let fee_payer = Pubkey::new_unique();
+    let starting_balance = 2 * genesis_config.rent.minimum_balance(0) + 10_000;
+    bank.store_account(
+        &fee_payer,
+        &AccountSharedData::new(starting_balance, 0, &system_program::id()),
+    );
+
+    let recipient = Pubkey::new_unique();
+    let transfer_amount = genesis_config.rent.minimum_balance(0);
+
+    // Invoke transaction with valid system-program instruction to trigger
+    // a successful execution
+    let transaction = Transaction::new_unsigned(Message::new_with_blockhash(
+        &[system_instruction::transfer(
+            &fee_payer,
+            &recipient,
+            transfer_amount,
+        )],
+        Some(&fee_payer),
+        &bank.last_blockhash(),
+    ));
+
+    let batch = bank.prepare_batch_for_tests(vec![transaction]);
+    let commit_results = bank
+        .load_execute_and_commit_transactions(
+            &batch,
+            MAX_PROCESSING_AGE,
+            ExecutionRecordingConfig::new_single_setting(true),
+            &mut ExecuteTimings::default(),
+            None,
+        )
+        .0;
+
+    assert_eq!(
+        commit_results,
+        vec![Ok(CommittedTransaction {
+            status: Ok(()),
+            log_messages: Some(vec![
+                "Program 11111111111111111111111111111111 invoke [1]".to_string(),
+                "Program 11111111111111111111111111111111 success".to_string(),
+            ]),
+            inner_instructions: Some(vec![vec![]]),
+            return_data: None,
+            executed_units: 150,
+            fee_details: FeeDetails::new(5000, 0),
+            loaded_account_stats: TransactionLoadedAccountsStats {
+                loaded_accounts_count: 3,
+                loaded_accounts_data_size: 142, // size of system account (initially recipient does not exist)
+            },
+            fee_payer_post_balance: starting_balance - 5000 - transfer_amount,
+        })]
+    );
+}
+
+#[test]
 fn test_readonly_relaxed_locks() {
     let (genesis_config, _) = create_genesis_config(3);
     let bank = Bank::new_for_tests(&genesis_config);
