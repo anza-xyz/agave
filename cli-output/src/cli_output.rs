@@ -3541,9 +3541,8 @@ mod tests {
             recent_timestamp: BlockTimestamp::default(),
             ..CliVoteAccount::default()
         };
-        let s = format!("{c}");
         #[rustfmt::skip]
-        let expected_output =
+        let expected_output_common =
             "Account Balance: 0.00001 SOL\n\
              Validator Identity: 11111111111111111111111111111111\n\
              Vote Authority: None\n\
@@ -3551,32 +3550,33 @@ mod tests {
              Credits: 0\n\
              Commission: 0%\n\
              Root Slot: ~\n\
-             Recent Timestamp: 1970-01-01T00:00:00Z from slot 0\n\
-             Epoch Rewards:\n  \
+             Recent Timestamp: 1970-01-01T00:00:00Z from slot 0\n";
+
+        let s = format!("{c}");
+        #[rustfmt::skip]
+        let expected_epoch_rewards_output =
+            "Epoch Rewards:\n  \
              Epoch   Reward Slot  Time                        Amount              New Balance         Percent Change             APR  Commission\n  \
              1       100          1970-01-01 00:00:00 UTC  ◎0.00000001         ◎0.0000001                 11.000%          10.00%          1%\n  \
              2       200          1970-01-12 13:46:40 UTC  ◎0.000000012        ◎0.0000001                 11.000%          13.00%          1%\n";
-        assert_eq!(s, expected_output);
+        assert_eq!(
+            s,
+            format!("{expected_output_common}{expected_epoch_rewards_output}")
+        );
         println!("{s}");
 
         c.use_csv = true;
         let s = format!("{c}");
         #[rustfmt::skip]
-        let expected_output =
-            "Account Balance: 0.00001 SOL\n\
-             Validator Identity: \
-             11111111111111111111111111111111\n\
-             Vote Authority: None\n\
-             Withdraw Authority: \n\
-             Credits: 0\n\
-             Commission: 0%\n\
-             Root Slot: ~\n\
-             Recent Timestamp: 1970-01-01T00:00:00Z from slot 0\n\
-             Epoch Rewards:\n\
+        let expected_epoch_rewards_output =
+            "Epoch Rewards:\n\
              Epoch,Reward Slot,Time,Amount,New Balance,Percent Change,APR,Commission\n\
              1,100,1970-01-01 00:00:00 UTC,0.00000001,0.0000001,11%,10.00%,1%\n\
              2,200,1970-01-12 13:46:40 UTC,0.000000012,0.0000001,11%,13.00%,1%\n";
-        assert_eq!(s, expected_output);
+        assert_eq!(
+            s,
+            format!("{expected_output_common}{expected_epoch_rewards_output}")
+        );
         println!("{s}");
     }
 }
