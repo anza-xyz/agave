@@ -74,7 +74,7 @@ impl std::fmt::Debug for BankNotification {
 
 pub type BankNotificationWithEventSequence = (
     BankNotification,
-    Option<u64>, // dependecy work sequence number
+    Option<u64>, // dependency work sequence number
 );
 
 pub type BankNotificationReceiver = Receiver<BankNotificationWithEventSequence>;
