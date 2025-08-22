@@ -154,9 +154,14 @@ impl Node {
             .expect("Secondary bind TPU forwards"),
         );
 
-        let (tpu_vote_port, tpu_vote_sockets) =
+        let (tpu_vote_port, mut tpu_vote_sockets) =
             multi_bind_in_range_with_config(bind_ip_addr, port_range, socket_config, 1)
                 .expect("tpu_vote multi_bind");
+
+        tpu_vote_sockets.extend(
+            Self::bind_to_extra_ip(&bind_ip_addrs, tpu_vote_port, 1, socket_config)
+                .expect("Secondary binds for tpu vote"),
+        );
 
         let (tpu_vote_quic_port, tpu_vote_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
