@@ -40,7 +40,7 @@ use {
         self,
         convert::TryFrom,
         fs::{remove_file, File, OpenOptions},
-        io::{BufRead, Seek, SeekFrom, Write},
+        io::{self, BufRead, Seek, SeekFrom, Write},
         mem::{self, MaybeUninit},
         path::{Path, PathBuf},
         ptr, slice,
@@ -619,7 +619,7 @@ impl AppendVec {
 
     /// Copy `len` bytes from `src` to the first 64-byte boundary after position `offset` of
     /// the internal buffer. Then update `offset` to the first byte after the copied data.
-    fn append_ptr(&self, offset: &mut usize, src: *const u8, len: usize) {
+    fn append_ptr(&self, offset: &mut usize, src: *const u8, len: usize) -> io::Result<()> {
         let pos = u64_align!(*offset);
         match &self.backing {
             AppendVecFileBacking::Mmap(mmap) => {
@@ -635,17 +635,22 @@ impl AppendVec {
             AppendVecFileBacking::File(file) => {
                 // Safety: caller should ensure the passed pointer and length are valid.
                 let data = unsafe { slice::from_raw_parts(src, len) };
-                write_buffer_to_file(file, data, pos as u64).unwrap();
+                write_buffer_to_file(file, data, pos as u64)?;
             }
         }
         *offset = pos + len;
+        Ok(())
     }
 
     /// Copy each value in `vals`, in order, to the first 64-byte boundary after position `offset`.
     /// If there is sufficient space, then update `offset` and the internal `current_len` to the
     /// first byte after the copied data and return the starting position of the copied data.
     /// Otherwise return None and leave `offset` unchanged.
-    fn append_ptrs_locked(&self, offset: &mut usize, vals: &[(*const u8, usize)]) -> Option<usize> {
+    fn append_ptrs_locked(
+        &self,
+        offset: &mut usize,
+        vals: &[(*const u8, usize)],
+    ) -> io::Result<Option<usize>> {
         let mut end = *offset;
         for val in vals {
             end = u64_align!(end);
@@ -653,15 +658,15 @@ impl AppendVec {
         }
 
         if (self.file_size as usize) < end {
-            return None;
+            return Ok(None);
         }
 
         let pos = u64_align!(*offset);
         for val in vals {
-            self.append_ptr(offset, val.0, val.1)
+            self.append_ptr(offset, val.0, val.1)?
         }
         self.current_len.store(*offset, Ordering::Release);
-        Some(pos)
+        Ok(Some(pos))
     }
 
     /// Return a reference to the type at `offset` if its data doesn't overrun the internal buffer.
@@ -1302,7 +1307,10 @@ impl AppendVec {
                     (hash_ptr, mem::size_of::<ObsoleteAccountHash>()),
                     (data_ptr, stored_meta.data_len as usize),
                 ];
-                if let Some(start_offset) = self.append_ptrs_locked(&mut offset, &ptrs) {
+                if let Some(start_offset) = self
+                    .append_ptrs_locked(&mut offset, &ptrs)
+                    .expect("must append data to append_vec")
+                {
                     offsets.push(start_offset)
                 } else {
                     stop = true;
@@ -2334,22 +2342,22 @@ pub mod tests {
             av1.append_account_test(&create_test_account(10)).unwrap();
         }
         assert_eq!(*av1.is_dirty.get_mut(), begins_dirty);
-        // let mut av2 = av1.reopen_as_readonly().unwrap();
-        // // don't delete the file when the AppendVec is dropped (let TempFile do it)
-        // *av2.remove_file_on_drop.get_mut() = false;
+        let mut av2 = av1.reopen_as_readonly();
+        let av2 = av2
+            .as_mut()
+            .inspect(|_|
+                // when av1 was reopened, ensure `is_dirty` is moved
+                assert!(!*av1.is_dirty.get_mut()))
+            .unwrap_or(&mut av1);
+        // don't delete the file when the AppendVec is dropped (let TempFile do it)
+        *av2.remove_file_on_drop.get_mut() = false;
 
-        // // ensure `is_dirty` is moved
-        // assert!(!*av1.is_dirty.get_mut());
-        // assert_eq!(*av2.is_dirty.get_mut(), begins_dirty);
+        // ensure `is_dirty` is moved
+        assert_eq!(*av2.is_dirty.get_mut(), begins_dirty);
 
-        // // ensure we can flush the new append vec
-        // assert!(av2.flush().is_ok());
-        // // and now should not be dirty
-        // assert!(!*av2.is_dirty.get_mut());
-
-        // // ensure we can flush the old append vec too
-        // assert!(av1.flush().is_ok());
-        // // and now should not be dirty
-        // assert!(!*av1.is_dirty.get_mut());
+        // ensure we can flush the new append vec
+        assert!(av2.flush().is_ok());
+        // and now should not be dirty
+        assert!(!*av2.is_dirty.get_mut());
     }
 }
