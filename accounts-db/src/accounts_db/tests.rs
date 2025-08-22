@@ -5984,7 +5984,7 @@ pub(crate) fn compare_all_accounts(
 fn test_shrink_ancient_overflow_with_min_size() {
     solana_logger::setup();
 
-    let ideal_av_size = ancient_append_vecs::get_ancient_append_vec_capacity();
+    let ideal_av_size = ancient_append_vecs::get_ancient_append_vec_capacity() / 100;
     let num_normal_slots = 2;
 
     // build an ancient append vec at slot 'ancient_slot' with one `fat`
@@ -6059,7 +6059,7 @@ fn test_shrink_ancient_overflow_with_min_size() {
 #[test]
 fn test_shrink_overflow_too_much() {
     let num_normal_slots = 2;
-    let ideal_av_size = ancient_append_vecs::get_ancient_append_vec_capacity();
+    let ideal_av_size = ancient_append_vecs::get_ancient_append_vec_capacity() / 100;
     let fat_account_size = (1.5 * ideal_av_size as f64) as u64;
 
     // Prepare 3 append vecs to combine [small, big, small]

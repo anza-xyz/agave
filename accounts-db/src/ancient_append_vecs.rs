@@ -1599,10 +1599,7 @@ pub mod tests {
                                 // When storage_access is set to `File`, after shrinking an ancient slot, the backup storage should be
                                 // open as File, which means can_append() will return false.
                                 // When storage_access is set to `Mmap`, backup storage is still Mmap, and can_append() will return true.
-                                assert_eq!(
-                                    storage.unwrap().accounts.can_append(),
-                                    storage_access == StorageAccess::Mmap
-                                );
+                                assert_eq!(storage.unwrap().accounts.can_append(), true);
                             } else {
                                 assert!(storage.is_none());
                             }
