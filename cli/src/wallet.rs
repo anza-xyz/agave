@@ -183,8 +183,8 @@ impl WalletSubCommands for App<'_, '_> {
                         .takes_value(true)
                         .required(true)
                         .help(
-                            "The program_id that the address will ultimately be used for, \
-                             or one of NONCE, STAKE, and VOTE keywords",
+                            "The program_id that the address will ultimately be used for, or one \
+                             of NONCE, STAKE, and VOTE keywords",
                         ),
                 )
                 .arg(pubkey!(
@@ -205,8 +205,8 @@ impl WalletSubCommands for App<'_, '_> {
                         .takes_value(true)
                         .required(true)
                         .help(
-                            "The program_id that the address will ultimately be used for, \
-                             or one of NONCE, STAKE, and VOTE keywords",
+                            "The program_id that the address will ultimately be used for, or one \
+                             of NONCE, STAKE, and VOTE keywords",
                         ),
                 )
                 .arg(

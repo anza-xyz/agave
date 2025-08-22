@@ -77,8 +77,7 @@ fn expect_command_failure(config: &CliConfig, should_fail_because: &str, error_e
     let error_actual = error_actual.to_string();
     assert!(
         error_expected == error_actual,
-        "Command failed as expected, but with an unexpected error. \
-         Expected: {error_expected}, \
+        "Command failed as expected, but with an unexpected error. Expected: {error_expected}, \
          Actual:   {error_actual}",
     );
 }
@@ -89,9 +88,8 @@ fn expect_account_absent(rpc_client: &RpcClient, pubkey: Pubkey, absent_because:
     let error_actual = error_actual.to_string();
     assert!(
         format!("AccountNotFound: pubkey={pubkey}") == error_actual,
-        "Failed to retrieve an account details. \
-         Expected account to be absent, but got a different error: \
-         {error_actual}",
+        "Failed to retrieve an account details. Expected account to be absent, but got a \
+         different error: {error_actual}",
     );
 }
 
@@ -476,10 +474,11 @@ fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
         assert!(res.is_ok());
     } else {
         expect_command_failure(
-                &config,
-                "Program contains a syscall from a deactivated feature",
-                "ELF error: ELF error: Unresolved symbol (sol_alt_bn128_group_op) at instruction #49 (ELF file offset 0x188)"
-            );
+            &config,
+            "Program contains a syscall from a deactivated feature",
+            "ELF error: ELF error: Unresolved symbol (sol_alt_bn128_group_op) at instruction #49 \
+             (ELF file offset 0x188)",
+        );
 
         // If we bypass the verification, there should be no error
         config.command = CliCommand::Program(ProgramCliCommand::Deploy {
@@ -654,7 +653,12 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         expect_command_failure(
             &config,
             "Program contains a syscall to a disabled feature",
-            format!("Buffer account {} has invalid program data: \"ELF error: ELF error: Unresolved symbol (sol_alt_bn128_group_op) at instruction #49 (ELF file offset 0x188)\"", buffer_signer.pubkey()).as_str(),
+            format!(
+                "Buffer account {} has invalid program data: \"ELF error: ELF error: Unresolved \
+                 symbol (sol_alt_bn128_group_op) at instruction #49 (ELF file offset 0x188)\"",
+                buffer_signer.pubkey()
+            )
+            .as_str(),
         );
 
         // If we skip verification, the failure should be at a later stage
@@ -1176,7 +1180,8 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         expect_command_failure(
             &config,
             "Cannot upgrade a program when ELF does not fit into the allocated data account",
-            "Deploying program failed: Error processing Instruction 0: account data too small for instruction",
+            "Deploying program failed: Error processing Instruction 0: account data too small for \
+             instruction",
         );
     } else {
         #[rustfmt::skip]
@@ -1192,7 +1197,7 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         expect_command_failure(
             &config,
             "Can not upgrade a program when ELF does not fit into the allocated data account",
-            expected_error
+            expected_error,
         );
     }
 
@@ -1495,7 +1500,7 @@ fn test_cli_program_extend_program() {
     expect_command_failure(
         &config,
         "Program upgrade must fail, as the buffer is 1 byte too short",
-        expected_error
+        expected_error,
     );
 
     // Wait one slot to avoid "Program was deployed in this block already" error
@@ -1995,7 +2000,8 @@ fn test_cli_program_write_buffer() {
         &config,
         "It should not be possible to deploy a program into an account that is too small",
         &format!(
-            "Buffer account data size ({buffer_account_len}) is smaller than the minimum size ({min_buffer_account_len})"
+            "Buffer account data size ({buffer_account_len}) is smaller than the minimum size \
+             ({min_buffer_account_len})"
         ),
     );
 }
@@ -2070,7 +2076,8 @@ fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         expect_command_failure(
             &config,
             "Program contains a syscall from a deactivated feature",
-            "ELF error: ELF error: Unresolved symbol (sol_alt_bn128_group_op) at instruction #49 (ELF file offset 0x188)"
+            "ELF error: ELF error: Unresolved symbol (sol_alt_bn128_group_op) at instruction #49 \
+             (ELF file offset 0x188)",
         );
 
         // If we bypass the verification, there should be no error
