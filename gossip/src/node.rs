@@ -172,7 +172,7 @@ impl Node {
         tpu_vote_quic.append(
             &mut Self::bind_to_extra_ip(
                 &bind_ip_addrs,
-                tpu_vote_port,
+                tpu_vote_quic_port,
                 num_quic_endpoints.get(),
                 socket_config,
             )
