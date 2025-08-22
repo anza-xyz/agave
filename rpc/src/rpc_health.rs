@@ -1,3 +1,4 @@
+use chrono::Utc;
 use {
     crate::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
     solana_clock::Slot,
@@ -99,6 +100,22 @@ impl RpcHealth {
             >= cluster_latest_optimistically_confirmed_slot
                 .saturating_sub(self.health_check_slot_distance)
         {
+            let block_time = match self
+                .blockstore
+                .get_block_time(cluster_latest_optimistically_confirmed_slot)
+            {
+                Ok(Some(block_time)) => block_time,
+                Ok(None) | Err(_) => return RpcHealthStatus::Ok,
+            };
+            let current_time = Utc::now().timestamp();
+            let time_diff = current_time.saturating_sub(block_time);
+            if time_diff > 30 {
+                warn!(
+                    "health check: latest block is too old: block_time={block_time} \
+                    current_time={current_time}"
+                );
+                return RpcHealthStatus::Unknown;
+            }
             RpcHealthStatus::Ok
         } else {
             let num_slots = cluster_latest_optimistically_confirmed_slot
