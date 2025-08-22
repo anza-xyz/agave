@@ -77,8 +77,8 @@ fn expect_command_failure(config: &CliConfig, should_fail_because: &str, error_e
     let error_actual = error_actual.to_string();
     assert!(
         error_expected == error_actual,
-        "Command failed as expected, but with an unexpected error.\n\
-         Expected: {error_expected}\n\
+        "Command failed as expected, but with an unexpected error. \
+         Expected: {error_expected}, \
          Actual:   {error_actual}",
     );
 }
@@ -89,8 +89,8 @@ fn expect_account_absent(rpc_client: &RpcClient, pubkey: Pubkey, absent_because:
     let error_actual = error_actual.to_string();
     assert!(
         format!("AccountNotFound: pubkey={pubkey}") == error_actual,
-        "Failed to retrieve an account details.\n\
-         Expected account to be absent, but got a different error:\n\
+        "Failed to retrieve an account details. \
+         Expected account to be absent, but got a different error: \
          {error_actual}",
     );
 }
