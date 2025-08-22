@@ -3701,12 +3701,21 @@ impl Bank {
 
                 match processing_result {
                     ProcessedTransaction::Executed(executed_tx) => {
+                        let successful = executed_tx.was_successful();
                         let execution_details = executed_tx.execution_details;
                         let LoadedTransaction {
                             accounts: loaded_accounts,
                             fee_details,
+                            rollback_accounts,
                             ..
                         } = executed_tx.loaded_transaction;
+
+                        // Rollback value is used for failure.
+                        let fee_payer_post_balance = if successful {
+                            loaded_accounts[0].1.lamports()
+                        } else {
+                            rollback_accounts.fee_payer().1.lamports()
+                        };
 
                         Ok(CommittedTransaction {
                             status: execution_details.status,
@@ -3719,7 +3728,7 @@ impl Bank {
                                 loaded_accounts_count: loaded_accounts.len(),
                                 loaded_accounts_data_size,
                             },
-                            fee_payer_post_balance: loaded_accounts[0].1.lamports(),
+                            fee_payer_post_balance,
                         })
                     }
                     ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
