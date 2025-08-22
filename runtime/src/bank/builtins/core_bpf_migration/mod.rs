@@ -1172,7 +1172,7 @@ pub(crate) mod tests {
     #[test_case(TestPrototype::Builtin(&BUILTINS[1]); "vote")]
     #[test_case(TestPrototype::Builtin(&BUILTINS[2]); "bpf_loader_deprecated")]
     #[test_case(TestPrototype::Builtin(&BUILTINS[3]); "bpf_loader")]
-    fn test_core_bpf_migration(prototype: TestPrototype) {
+    fn test_migrate_builtin_e2e(prototype: TestPrototype) {
         let (mut genesis_config, mint_keypair) =
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let slots_per_epoch = 32;
@@ -1326,7 +1326,7 @@ pub(crate) mod tests {
     // Here we want to see that the bank handles the failure gracefully and
     // advances to the next epoch without issue.
     #[test]
-    fn test_core_bpf_migration_failure() {
+    fn test_migrate_builtin_e2e_failure() {
         let (genesis_config, _mint_keypair) = create_genesis_config(0);
         let mut root_bank = Bank::new_for_tests(&genesis_config);
 
@@ -1406,7 +1406,7 @@ pub(crate) mod tests {
     // Here we want to see that the bank recognizes the failed migration and
     // adds the original builtin to the new bank.
     #[test]
-    fn test_core_bpf_migration_init_after_failed_migration() {
+    fn test_migrate_builtin_e2e_init_after_failed_migration() {
         let (genesis_config, _mint_keypair) = create_genesis_config(0);
 
         let test_prototype = TestPrototype::Builtin(&BUILTINS[0]); // System program
@@ -1491,7 +1491,7 @@ pub(crate) mod tests {
     // Here we want to see that the bank recognizes the migration and
     // _does not_ add the original builtin to the new bank.
     #[test]
-    fn test_core_bpf_migration_init_after_successful_migration() {
+    fn test_migrate_builtin_e2e_init_after_successful_migration() {
         let (mut genesis_config, _mint_keypair) = create_genesis_config(0);
 
         let test_prototype = TestPrototype::Builtin(&BUILTINS[0]); // System program
