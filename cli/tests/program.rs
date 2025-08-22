@@ -1193,7 +1193,8 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
              account data too small for instruction; 3 log messages:\n  \
              Program BPFLoaderUpgradeab1e11111111111111111111111 invoke [1]\n  \
              ProgramData account not large enough\n  \
-             Program BPFLoaderUpgradeab1e11111111111111111111111 failed: account data too small for instruction\n";
+             Program BPFLoaderUpgradeab1e11111111111111111111111 failed: account data too small \
+             for instruction\n";
         expect_command_failure(
             &config,
             "Can not upgrade a program when ELF does not fit into the allocated data account",
@@ -1496,7 +1497,8 @@ fn test_cli_program_extend_program() {
          account data too small for instruction; 3 log messages:\n  \
          Program BPFLoaderUpgradeab1e11111111111111111111111 invoke [1]\n  \
          ProgramData account not large enough\n  \
-         Program BPFLoaderUpgradeab1e11111111111111111111111 failed: account data too small for instruction\n";
+         Program BPFLoaderUpgradeab1e11111111111111111111111 failed: account data too small for \
+         instruction\n";
     expect_command_failure(
         &config,
         "Program upgrade must fail, as the buffer is 1 byte too short",
