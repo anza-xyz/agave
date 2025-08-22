@@ -29,7 +29,7 @@ usage() {
     echo "Error: $*"
   fi
   cat <<EOF
-usage: $0 [+<cargo version>] [--debug] [--validator-only] [--release-with-debug] <install directory>
+usage: $0 [+<cargo version>] [--debug] [--validator-only] [--release-with-debug] [--no-spl-token] <install directory>
 EOF
   exit $exitcode
 }
@@ -42,6 +42,7 @@ installDir=
 buildProfileArg='--profile release'
 buildProfile='release'
 validatorOnly=
+noSPLToken=
 
 while [[ -n $1 ]]; do
   if [[ ${1:0:1} = - ]]; then
@@ -59,6 +60,9 @@ while [[ -n $1 ]]; do
       shift
     elif [[ $1 = --validator-only ]]; then
       validatorOnly=true
+      shift
+    elif [[ $1 = --no-spl-token ]]; then
+      noSPLToken=true
       shift
     else
       usage "Unknown option: $1"
@@ -163,8 +167,8 @@ check_dcou() {
     cargo_build "${dcouBinArgs[@]}"
   fi
 
-  # Exclude `spl-token` binary for net.sh builds
-  if [[ -z "$validatorOnly" ]]; then
+  # Exclude `spl-token` if requested
+  if [[ -z "$noSPLToken" ]]; then
     # shellcheck source=scripts/spl-token-cli-version.sh
     source "$SOLANA_ROOT"/scripts/spl-token-cli-version.sh
 

@@ -1,5 +1,21 @@
 #!/usr/bin/env bash
 
+function installPerfLibSymlinks() {
+  for dir in target/{debug,release}/{,deps/}; do
+    mkdir -p "$dir"
+    ln -sfT "$1" "${dir}perf-libs"
+  done
+}
+
+if [[ -n "$SOLANA_PERF_LIBS_PATH" ]]; then
+  mkdir -p target
+
+  ln -sfT "$SOLANA_PERF_LIBS_PATH" target/perf-libs
+  installPerfLibSymlinks "$SOLANA_PERF_LIBS_PATH"
+
+  exit 0
+fi
+
 PERF_LIBS_VERSION=v0.19.3
 VERSION=$PERF_LIBS_VERSION-1
 
@@ -41,11 +57,7 @@ if [[ $VERSION != "$(cat target/perf-libs/.version 2> /dev/null)" ]]; then
 
   # Setup symlinks so the perf-libs/ can be found from all binaries run out of
   # target/
-  for dir in target/{debug,release}/{,deps/}; do
-    mkdir -p $dir
-    ln -sfT ../perf-libs ${dir}perf-libs
-  done
-
+  installPerfLibSymlinks ../perf-libs
 fi
 
 exit 0
