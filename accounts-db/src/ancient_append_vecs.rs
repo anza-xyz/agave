@@ -1596,7 +1596,7 @@ pub mod tests {
                             if all_slots_shrunk {
                                 assert!(storage.is_some());
                                 // Here we use can_append() as a proxy to assert the backup storage of the accounts after shrinking.
-                                // When is AppendVec, can_append() will return true.
+                                // When storage is AppendVec, can_append() will return true.
                                 assert!(storage.unwrap().accounts.can_append());
                             } else {
                                 assert!(storage.is_none());
