@@ -13,14 +13,14 @@ use {
     solana_sdk_ids::bpf_loader_deprecated,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_context::{
-        BorrowedAccount, IndexOfAccount, InstructionContext, MAX_ACCOUNTS_PER_INSTRUCTION,
+        BorrowedInstructionAccount, IndexOfAccount, InstructionContext, MAX_ACCOUNTS_PER_INSTRUCTION,
     },
     std::mem::{self, size_of},
 };
 
 /// Modifies the memory mapping in serialization and CPI return for stricter_abi_and_runtime_constraints
 pub fn modify_memory_region_of_account(
-    account: &mut BorrowedAccount<'_>,
+    account: &mut BorrowedInstructionAccount<'_>,
     region: &mut MemoryRegion,
 ) {
     region.len = account.get_data().len() as u64;
@@ -35,7 +35,7 @@ pub fn modify_memory_region_of_account(
 
 /// Creates the memory mapping in serialization and CPI return for account_data_direct_mapping
 pub fn create_memory_region_of_account(
-    account: &mut BorrowedAccount<'_>,
+    account: &mut BorrowedInstructionAccount<'_>,
     vaddr: u64,
 ) -> Result<MemoryRegion, InstructionError> {
     let can_data_be_changed = account.can_data_be_changed().is_ok();
@@ -52,7 +52,7 @@ pub fn create_memory_region_of_account(
 
 #[allow(dead_code)]
 enum SerializeAccount<'a> {
-    Account(IndexOfAccount, BorrowedAccount<'a>),
+    Account(IndexOfAccount, BorrowedInstructionAccount<'a>),
     Duplicate(IndexOfAccount),
 }
 
@@ -126,7 +126,7 @@ impl Serializer {
 
     fn write_account(
         &mut self,
-        account: &mut BorrowedAccount<'_>,
+        account: &mut BorrowedInstructionAccount<'_>,
     ) -> Result<u64, InstructionError> {
         if !self.stricter_abi_and_runtime_constraints {
             let vm_data_addr = self.vaddr.saturating_add(self.buffer.len() as u64);

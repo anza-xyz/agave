@@ -11,7 +11,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_slot_hashes::SlotHash,
-    solana_transaction_context::{BorrowedAccount, IndexOfAccount, InstructionContext},
+    solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
     solana_vote_interface::{error::VoteError, program::id},
     std::{
         cmp::Ordering,
@@ -32,7 +32,7 @@ pub fn to<T: WritableAccount>(versioned: &VoteStateVersions, account: &mut T) ->
 // Updates the vote account state with a new VoteStateV3 instance.  This is required temporarily during the
 // upgrade of vote account state from V1_14_11 to Current.
 fn set_vote_account_state(
-    vote_account: &mut BorrowedAccount,
+    vote_account: &mut BorrowedInstructionAccount,
     vote_state: VoteStateV3,
 ) -> Result<(), InstructionError> {
     // If the account is not large enough to store the vote state, then attempt a realloc to make it large enough.
@@ -681,7 +681,7 @@ pub fn process_slot_vote_unchecked(vote_state: &mut VoteStateV3, slot: Slot) {
 /// but will implicitly withdraw authorization from the previously authorized
 /// key
 pub fn authorize<S: std::hash::BuildHasher>(
-    vote_account: &mut BorrowedAccount,
+    vote_account: &mut BorrowedInstructionAccount,
     authorized: &Pubkey,
     vote_authorize: VoteAuthorize,
     signers: &HashSet<Pubkey, S>,
@@ -725,7 +725,7 @@ pub fn authorize<S: std::hash::BuildHasher>(
 
 /// Update the node_pubkey, requires signature of the authorized voter
 pub fn update_validator_identity<S: std::hash::BuildHasher>(
-    vote_account: &mut BorrowedAccount,
+    vote_account: &mut BorrowedInstructionAccount,
     node_pubkey: &Pubkey,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
@@ -746,7 +746,7 @@ pub fn update_validator_identity<S: std::hash::BuildHasher>(
 
 /// Update the vote account's commission
 pub fn update_commission<S: std::hash::BuildHasher>(
-    vote_account: &mut BorrowedAccount,
+    vote_account: &mut BorrowedInstructionAccount,
     commission: u8,
     signers: &HashSet<Pubkey, S>,
     epoch_schedule: &EpochSchedule,
@@ -867,7 +867,7 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 /// Assumes that the account is being init as part of a account creation or balance transfer and
 /// that the transaction must be signed by the staker's keys
 pub fn initialize_account<S: std::hash::BuildHasher>(
-    vote_account: &mut BorrowedAccount,
+    vote_account: &mut BorrowedInstructionAccount,
     vote_init: &VoteInit,
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
@@ -888,7 +888,7 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
 }
 
 fn verify_and_get_vote_state<S: std::hash::BuildHasher>(
-    vote_account: &BorrowedAccount,
+    vote_account: &BorrowedInstructionAccount,
     clock: &Clock,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<VoteStateV3, InstructionError> {
@@ -906,7 +906,7 @@ fn verify_and_get_vote_state<S: std::hash::BuildHasher>(
 }
 
 pub fn process_vote_with_account<S: std::hash::BuildHasher>(
-    vote_account: &mut BorrowedAccount,
+    vote_account: &mut BorrowedInstructionAccount,
     slot_hashes: &[SlotHash],
     clock: &Clock,
     vote: &Vote,
@@ -926,7 +926,7 @@ pub fn process_vote_with_account<S: std::hash::BuildHasher>(
 }
 
 pub fn process_vote_state_update<S: std::hash::BuildHasher>(
-    vote_account: &mut BorrowedAccount,
+    vote_account: &mut BorrowedInstructionAccount,
     slot_hashes: &[SlotHash],
     clock: &Clock,
     vote_state_update: VoteStateUpdate,
@@ -972,7 +972,7 @@ pub fn do_process_vote_state_update(
 }
 
 pub fn process_tower_sync<S: std::hash::BuildHasher>(
-    vote_account: &mut BorrowedAccount,
+    vote_account: &mut BorrowedInstructionAccount,
     slot_hashes: &[SlotHash],
     clock: &Clock,
     tower_sync: TowerSync,
