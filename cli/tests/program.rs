@@ -1482,9 +1482,8 @@ fn test_cli_program_extend_program() {
         skip_feature_verification: true,
     });
 
-    expect_command_failure(
-        &config,
-        "Program upgrade must fail, as the buffer is 1 byte too short",
+    #[rustfmt::skip]
+    let expected_error =
         "Deploying program failed: \
          RPC response error -32002: \
          Transaction simulation failed: \
@@ -1492,7 +1491,11 @@ fn test_cli_program_extend_program() {
          account data too small for instruction; 3 log messages:\n  \
          Program BPFLoaderUpgradeab1e11111111111111111111111 invoke [1]\n  \
          ProgramData account not large enough\n  \
-         Program BPFLoaderUpgradeab1e11111111111111111111111 failed: account data too small for instruction\n",
+         Program BPFLoaderUpgradeab1e11111111111111111111111 failed: account data too small for instruction\n";
+    expect_command_failure(
+        &config,
+        "Program upgrade must fail, as the buffer is 1 byte too short",
+        expected_error
     );
 
     // Wait one slot to avoid "Program was deployed in this block already" error
