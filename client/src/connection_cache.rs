@@ -90,7 +90,11 @@ impl ConnectionCache {
         }
         if let Some(client_socket) = client_socket {
             config.update_client_endpoint(client_socket);
+        } else if cfg!(debug_assertions) {
+            let client_socket = solana_net_utils::sockets::bind_to_localhost_unique().unwrap();
+            config.update_client_endpoint(client_socket);
         }
+
         if let Some(stake_info) = stake_info {
             config.set_staked_nodes(stake_info.0, stake_info.1);
         }

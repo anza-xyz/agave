@@ -33,6 +33,7 @@ solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }

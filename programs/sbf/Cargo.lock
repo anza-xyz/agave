@@ -6164,6 +6164,7 @@ dependencies = [
  "solana-keypair",
  "solana-measure",
  "solana-message",
+ "solana-net-utils",
  "solana-pubkey",
  "solana-pubsub-client",
  "solana-quic-client",
