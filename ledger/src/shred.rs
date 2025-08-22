@@ -838,8 +838,6 @@ pub fn max_ticks_per_n_shreds(num_shreds: u64, shred_data_size: Option<usize>) -
     max_entries_per_n_shred(&ticks[0], num_shreds, shred_data_size)
 }
 
-// created this to use in lieu of `max_entries_per_n_shred`
-// in test_multi_fec_block_coding
 pub fn max_entries_per_n_shred_last_or_not(
     entry: &Entry,
     num_shreds: u64,
