@@ -1179,17 +1179,20 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
             "Deploying program failed: Error processing Instruction 0: account data too small for instruction",
         );
     } else {
+        #[rustfmt::skip]
+        let expected_error =
+            "Deploying program failed: \
+             RPC response error -32002: \
+             Transaction simulation failed: \
+             Error processing Instruction 0: \
+             account data too small for instruction; 3 log messages:\n  \
+             Program BPFLoaderUpgradeab1e11111111111111111111111 invoke [1]\n  \
+             ProgramData account not large enough\n  \
+             Program BPFLoaderUpgradeab1e11111111111111111111111 failed: account data too small for instruction\n";
         expect_command_failure(
             &config,
             "Can not upgrade a program when ELF does not fit into the allocated data account",
-            "Deploying program failed: \
-            RPC response error -32002: \
-            Transaction simulation failed: \
-            Error processing Instruction 0: \
-            account data too small for instruction; 3 log messages:\n  \
-            Program BPFLoaderUpgradeab1e11111111111111111111111 invoke [1]\n  \
-            ProgramData account not large enough\n  \
-            Program BPFLoaderUpgradeab1e11111111111111111111111 failed: account data too small for instruction\n",
+            expected_error
         );
     }
 
