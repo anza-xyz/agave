@@ -1897,11 +1897,7 @@ pub mod tests {
         };
         let (av, _) = AppendVec::new_from_file(path, accounts_len, storage_access).unwrap();
         let reopen = av.reopen_as_readonly();
-        if storage_access == StorageAccess::File {
-            assert!(reopen.is_none());
-        } else {
-            assert!(reopen.is_none());
-        }
+        assert!(reopen.is_none());
     }
 
     #[test_case(StorageAccess::Mmap)]
