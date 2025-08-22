@@ -5359,7 +5359,7 @@ fn test_same_program_id_uses_unique_executable_accounts() {
         let instruction_context = transaction_context.get_current_instruction_context()?;
         let program_idx = instruction_context.get_index_of_program_account_in_transaction()?;
         let mut acc = transaction_context.accounts().try_borrow_mut(program_idx)?;
-        acc.set_data(vec![1, 2]);
+        acc.set_data_from_slice(&[1, 2]);
         Ok(())
     });
 
