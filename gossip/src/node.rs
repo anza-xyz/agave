@@ -34,6 +34,8 @@ pub struct Node {
     pub info: ContactInfo,
     pub sockets: Sockets,
     pub bind_ip_addrs: Arc<BindIpAddrs>,
+    // Store TVU addresses for each interface (one per interface)
+    pub tvu_addresses: Vec<SocketAddr>,
 }
 
 impl Node {
@@ -144,6 +146,10 @@ impl Node {
             )
             .expect("Secondary bind TVU"),
         );
+        let tvu_addresses: Vec<SocketAddr> = bind_ip_addrs
+            .iter()
+            .map(|&ip| SocketAddr::new(ip, tvu_port))
+            .collect();
 
         let (tvu_quic_port, tvu_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
@@ -308,7 +314,7 @@ impl Node {
         let sockets = Sockets {
             alpenglow: Some(alpenglow),
             gossip: gossip_sockets.into_iter().collect(),
-            tvu: tvu_sockets.into_iter().map(Arc::new).collect(),
+            tvu: tvu_sockets,
             tvu_quic,
             tpu: tpu_sockets,
             tpu_forwards: tpu_forwards_sockets,
@@ -336,6 +342,7 @@ impl Node {
             info,
             sockets,
             bind_ip_addrs,
+            tvu_addresses,
         }
     }
 
@@ -366,7 +373,7 @@ mod multihoming {
         crate::{cluster_info::ClusterInfo, node::Node},
         solana_net_utils::multihomed_sockets::BindIpAddrs,
         std::{
-            net::{IpAddr, UdpSocket},
+            net::{IpAddr, SocketAddr, UdpSocket},
             sync::Arc,
         },
     };
@@ -374,8 +381,7 @@ mod multihoming {
     #[derive(Debug, Clone)]
     pub struct SocketsMultihomed {
         pub gossip: Arc<[UdpSocket]>,
-        // add tvu, retransmit_sockets, etc below
-        pub tvu: Vec<Arc<UdpSocket>>,
+        pub tvu_ingress: Vec<SocketAddr>,
     }
 
     #[derive(Debug, Clone)]
@@ -415,32 +421,17 @@ mod multihoming {
                 .map_err(|e| e.to_string())?;
 
             // update tvu ingress advertised socket
-            // Note: this assumes that the number of tvu sockets per interface is the same across all interfaces
-            // `bind_ip_addrs` is guaranteed to have at least one address
-            let sockets_per_interface = self.sockets.tvu.len() / self.bind_ip_addrs.len();
-            let offset = interface_index.saturating_mul(sockets_per_interface);
-            if offset >= self.sockets.tvu.len() {
+            let tvu_ingress_address = self.sockets.tvu_ingress[interface_index];
+            if tvu_ingress_address.ip() != interface {
                 return Err(format!(
-                    "Interface index {interface_index} out of range: tvu has {} sockets but needs offset {offset}",
-                    self.sockets.tvu.len()
-                ));
-            }
-            let tvu_ingress_socket_address =
-                self.sockets.tvu[offset].local_addr().map_err(|e| {
-                    format!(
-                        "Failed to get socket address at tvu socket offset {}: {}",
-                        offset, e
-                    )
-                })?;
-            if interface != tvu_ingress_socket_address.ip() {
-                return Err(format!(
-                    "IP address mismatch: expected {} but got {}",
+                    "TVU IP address mismatch: expected {} but got {}",
                     interface,
-                    tvu_ingress_socket_address.ip()
+                    tvu_ingress_address.ip()
                 ));
             }
+
             cluster_info
-                .set_tvu_socket(tvu_ingress_socket_address)
+                .set_tvu_socket(tvu_ingress_address)
                 .map_err(|e| e.to_string())?;
 
             // This will never fail since we have checked index validity above
@@ -457,7 +448,7 @@ mod multihoming {
             NodeMultihoming {
                 sockets: SocketsMultihomed {
                     gossip: node.sockets.gossip.clone(),
-                    tvu: node.sockets.tvu.clone(),
+                    tvu_ingress: node.tvu_addresses.clone(),
                 },
                 bind_ip_addrs: node.bind_ip_addrs.clone(),
             }

@@ -555,12 +555,7 @@ pub mod tests {
                 TvuSockets {
                     repair: target1.sockets.repair,
                     retransmit: target1.sockets.retransmit_sockets,
-                    fetch: target1
-                        .sockets
-                        .tvu
-                        .iter()
-                        .map(|socket| socket.as_ref().try_clone().unwrap())
-                        .collect(),
+                    fetch: target1.sockets.tvu,
                     ancestor_hashes_requests: target1.sockets.ancestor_hashes_requests,
                     alpenglow: target1.sockets.alpenglow,
                 }

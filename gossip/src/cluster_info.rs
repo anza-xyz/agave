@@ -2367,7 +2367,7 @@ impl ClusterInfo {
 pub struct Sockets {
     pub gossip: Arc<[UdpSocket]>,
     pub ip_echo: Option<TcpListener>,
-    pub tvu: Vec<Arc<UdpSocket>>,
+    pub tvu: Vec<UdpSocket>,
     pub tvu_quic: UdpSocket,
     pub tpu: Vec<UdpSocket>,
     pub tpu_forwards: Vec<UdpSocket>,
