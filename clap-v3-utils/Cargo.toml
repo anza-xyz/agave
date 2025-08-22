@@ -20,6 +20,7 @@ default = []
 elgamal = ["dep:solana-zk-sdk"]
 
 [dependencies]
+bs58 = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 clap = { version = "3.2.23", features = ["cargo"] }
 rpassword = { workspace = true }
