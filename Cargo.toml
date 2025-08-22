@@ -191,7 +191,7 @@ agave-xdp = { path = "xdp", version = "=3.1.0" }
 ahash = "0.8.11"
 anyhow = "1.0.99"
 aquamarine = "0.6.0"
-arbitrary = "1.4.1"
+arbitrary = "1.4.2"
 arc-swap = "1.7.1"
 ark-bn254 = "0.4.0"
 ark-ec = "0.4.0"
