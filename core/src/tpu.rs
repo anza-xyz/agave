@@ -27,7 +27,7 @@ use {
     bytes::Bytes,
     crossbeam_channel::{bounded, unbounded, Receiver},
     solana_clock::Slot,
-    solana_gossip::cluster_info::ClusterInfo,
+    solana_gossip::{cluster_info::ClusterInfo, sockets::TpuSockets},
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
@@ -58,7 +58,7 @@ use {
     },
     std::{
         collections::HashMap,
-        net::{SocketAddr, UdpSocket},
+        net::SocketAddr,
         num::NonZeroUsize,
         sync::{atomic::AtomicBool, Arc, RwLock},
         thread::{self, JoinHandle},
@@ -66,19 +66,6 @@ use {
     },
     tokio::sync::mpsc::Sender as AsyncSender,
 };
-
-pub struct TpuSockets {
-    pub transactions: Vec<UdpSocket>,
-    pub transaction_forwards: Vec<UdpSocket>,
-    pub vote: Vec<UdpSocket>,
-    pub broadcast: Vec<UdpSocket>,
-    pub transactions_quic: Vec<UdpSocket>,
-    pub transactions_forwards_quic: Vec<UdpSocket>,
-    pub vote_quic: Vec<UdpSocket>,
-    /// Client-side socket for the forwarding votes.
-    pub vote_forwarding_client: UdpSocket,
-    pub vortexor_receivers: Option<Vec<UdpSocket>>,
-}
 
 /// The `SigVerifier` enum is used to determine whether to use a local or remote signature verifier.
 enum SigVerifier {
@@ -157,25 +144,13 @@ impl Tpu {
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
         key_notifiers: Arc<RwLock<KeyUpdaters>>,
     ) -> Self {
-        let TpuSockets {
-            transactions: transactions_sockets,
-            transaction_forwards: tpu_forwards_sockets,
-            vote: tpu_vote_sockets,
-            broadcast: broadcast_sockets,
-            transactions_quic: transactions_quic_sockets,
-            transactions_forwards_quic: transactions_forwards_quic_sockets,
-            vote_quic: tpu_vote_quic_sockets,
-            vote_forwarding_client: vote_forwarding_client_socket,
-            vortexor_receivers,
-        } = sockets;
-
         let (packet_sender, packet_receiver) = unbounded();
         let (vote_packet_sender, vote_packet_receiver) = unbounded();
         let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
         let fetch_stage = FetchStage::new_with_sender(
-            transactions_sockets,
-            tpu_forwards_sockets,
-            tpu_vote_sockets,
+            sockets.transactions,
+            sockets.transaction_forwards,
+            sockets.vote,
             exit.clone(),
             &packet_sender,
             &vote_packet_sender,
@@ -211,7 +186,7 @@ impl Tpu {
         } = spawn_server(
             "solQuicTVo",
             "quic_streamer_tpu_vote",
-            tpu_vote_quic_sockets,
+            sockets.vote_quic,
             keypair,
             vote_packet_sender.clone(),
             exit.clone(),
@@ -220,7 +195,7 @@ impl Tpu {
         )
         .unwrap();
 
-        let (tpu_quic_t, key_updater) = if vortexor_receivers.is_none() {
+        let (tpu_quic_t, key_updater) = if sockets.vortexor_receivers.is_none() {
             // Streamer for TPU
             let SpawnServerResult {
                 endpoints: _,
@@ -229,7 +204,7 @@ impl Tpu {
             } = spawn_server(
                 "solQuicTpu",
                 "quic_streamer_tpu",
-                transactions_quic_sockets,
+                sockets.transactions_quic,
                 keypair,
                 packet_sender,
                 exit.clone(),
@@ -242,7 +217,7 @@ impl Tpu {
             (None, None)
         };
 
-        let (tpu_forwards_quic_t, forwards_key_updater) = if vortexor_receivers.is_none() {
+        let (tpu_forwards_quic_t, forwards_key_updater) = if sockets.vortexor_receivers.is_none() {
             // Streamer for TPU forward
             let SpawnServerResult {
                 endpoints: _,
@@ -251,7 +226,7 @@ impl Tpu {
             } = spawn_server(
                 "solQuicTpuFwd",
                 "quic_streamer_tpu_forwards",
-                transactions_forwards_quic_sockets,
+                sockets.transactions_forwards_quic,
                 keypair,
                 forwarded_packet_sender,
                 exit.clone(),
@@ -265,7 +240,7 @@ impl Tpu {
         };
 
         let (forward_stage_sender, forward_stage_receiver) = bounded(1024);
-        let sig_verifier = if let Some(vortexor_receivers) = vortexor_receivers {
+        let sig_verifier = if let Some(vortexor_receivers) = sockets.vortexor_receivers {
             info!("starting vortexor adapter");
             let sockets = vortexor_receivers.into_iter().map(Arc::new).collect();
             let adapter = VortexorReceiverAdapter::new(
@@ -341,7 +316,7 @@ impl Tpu {
         } = spawn_forwarding_stage(
             forward_stage_receiver,
             client,
-            vote_forwarding_client_socket,
+            sockets.vote_forwarding_client,
             bank_forks.read().unwrap().sharable_root_bank(),
             ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
             DataBudget::default(),
@@ -362,7 +337,7 @@ impl Tpu {
             };
 
         let broadcast_stage = broadcast_type.new_broadcast_stage(
-            broadcast_sockets,
+            sockets.broadcast,
             cluster_info.clone(),
             entry_receiver,
             retransmit_slots_receiver,
