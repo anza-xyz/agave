@@ -8,6 +8,9 @@ use {
         },
     },
     solana_keypair::Keypair,
+    solana_net_utils::sockets::{
+        bind_to_with_config, unique_port_range_for_tests, SocketConfiguration,
+    },
     solana_pubkey::Pubkey,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
     solana_quic_definitions::NotifyKeyUpdate,
@@ -91,7 +94,15 @@ impl ConnectionCache {
         if let Some(client_socket) = client_socket {
             config.update_client_endpoint(client_socket);
         } else if cfg!(debug_assertions) {
-            let client_socket = solana_net_utils::sockets::bind_to_localhost_unique().unwrap();
+            // if in debug build, we likely want a unique allocation to avoid trampling
+            // other tests that might be running
+            let port_range = unique_port_range_for_tests(1);
+            let client_socket = bind_to_with_config(
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                port_range.start,
+                SocketConfiguration::default(),
+            )
+            .unwrap();
             config.update_client_endpoint(client_socket);
         }
 
