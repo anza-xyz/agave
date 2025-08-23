@@ -3,14 +3,16 @@ use {
     solana_short_vec as short_vec,
 };
 
+pub mod signature;
+
 /// Type-Length-Value encoding wrapper for bincode
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct TlvRecord {
+pub struct TlvRecord {
     // type
-    pub(crate) typ: u8,
+    pub typ: u8,
     // length and serialized bytes of the value
     #[serde(with = "short_vec")]
-    pub(crate) bytes: Vec<u8>,
+    pub bytes: Vec<u8>,
 }
 
 /// Macro that provides a quick and easy way to define TLV compatible enums
@@ -85,21 +87,19 @@ pub enum TlvDecodeError {
 
 /// Parses a slice of serialized TLV records into a provided type. Unsupported
 /// TLV records are ignored.
-pub(crate) fn parse<'a, T: TryFrom<&'a TlvRecord>>(entries: &'a [TlvRecord]) -> Vec<T> {
+pub fn parse<'a, T: TryFrom<&'a TlvRecord>>(entries: &'a [TlvRecord]) -> Vec<T> {
     entries.iter().filter_map(|v| T::try_from(v).ok()).collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        define_tlv_enum,
-        tlv::{TlvDecodeError, TlvRecord},
-    };
+    use crate::{define_tlv_enum, signature::Signature, TlvDecodeError, TlvRecord};
 
     define_tlv_enum! (pub(crate) enum ExtensionNew {
         1=>Test(u64),
         2=>LegacyString(String),
         3=>NewString(String),
+        4=>Mac(Signature<16>),
     });
 
     define_tlv_enum! ( pub(crate) enum ExtensionLegacy {
@@ -120,7 +120,7 @@ mod tests {
         let new_bytes = bincode::serialize(&new_tlv_data).unwrap();
         let tlv_vec: Vec<TlvRecord> = bincode::deserialize(&new_bytes).unwrap();
         // check that both TLV are encoded correctly
-        let new: Vec<ExtensionNew> = crate::tlv::parse(&tlv_vec);
+        let new: Vec<ExtensionNew> = crate::parse(&tlv_vec);
         assert!(matches!(new[0], ExtensionNew::Test(42)));
         if let ExtensionNew::NewString(s) = &new[1] {
             assert_eq!(s, "bla");
@@ -128,7 +128,7 @@ mod tests {
             panic!("Wrong deserialization")
         };
         // Make sure legacy recover works correctly
-        let legacy: Vec<ExtensionLegacy> = crate::tlv::parse(&tlv_vec);
+        let legacy: Vec<ExtensionLegacy> = crate::parse(&tlv_vec);
         assert!(matches!(legacy[0], ExtensionLegacy::Test(42)));
         assert_eq!(
             legacy.len(),
@@ -150,7 +150,7 @@ mod tests {
 
         let tlv_vec: Vec<TlvRecord> = bincode::deserialize(&legacy_bytes).unwrap();
         // Just in case make sure that legacy data is serialized correctly
-        let legacy: Vec<ExtensionLegacy> = crate::tlv::parse(&tlv_vec);
+        let legacy: Vec<ExtensionLegacy> = crate::parse(&tlv_vec);
         assert!(matches!(legacy[0], ExtensionLegacy::Test(42)));
         if let ExtensionLegacy::LegacyString(s) = &legacy[1] {
             assert_eq!(s, "foo");
@@ -158,7 +158,7 @@ mod tests {
             panic!("Wrong deserialization")
         };
         // Parse the same bytes using new parser
-        let new: Vec<ExtensionNew> = crate::tlv::parse(&tlv_vec);
+        let new: Vec<ExtensionNew> = crate::parse(&tlv_vec);
         assert!(matches!(new[0], ExtensionNew::Test(42)));
         if let ExtensionNew::LegacyString(s) = &new[1] {
             assert_eq!(s, "foo");

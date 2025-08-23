@@ -115,6 +115,7 @@ members = [
     "test-validator",
     "thread-manager",
     "tls-utils",
+    "tlv",
     "tokens",
     "tps-client",
     "tpu-client",
@@ -537,11 +538,14 @@ solana-sysvar-id = "3.0.0"
 solana-test-validator = { path = "test-validator", version = "=3.1.0" }
 solana-time-utils = "3.0.0"
 solana-tls-utils = { path = "tls-utils", version = "=3.1.0" }
+solana-tlv = { path = "tlv", version = "=3.1.0" }
 solana-tps-client = { path = "tps-client", version = "=3.1.0" }
 solana-tpu-client = { path = "tpu-client", version = "=3.1.0", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=3.1.0" }
 solana-transaction = "3.0.0"
-solana-transaction-context = { path = "transaction-context", version = "=3.1.0", features = ["bincode"] }
+solana-transaction-context = { path = "transaction-context", version = "=3.1.0", features = [
+    "bincode",
+] }
 solana-transaction-error = "3.0.0"
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=3.1.0" }
 solana-transaction-status = { path = "transaction-status", version = "=3.1.0" }
