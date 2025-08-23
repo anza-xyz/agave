@@ -6,7 +6,7 @@ use {
     solana_net_utils::sockets::{bind_to_with_config, SocketConfiguration},
     solana_pubkey::Pubkey,
     solana_streamer::{
-        quic::{spawn_server, QuicServerParams, SpawnServerResult},
+        nonblocking::quic::SpawnNonBlockingServerResult, quic::QuicServerParams,
         streamer::StakedNodes,
     },
     std::{
@@ -68,7 +68,8 @@ struct Cli {
     stake_amounts: String,
 }
 
-pub fn main() {
+#[tokio::main(flavor = "multi_thread", worker_threads = 16)]
+async fn main() {
     solana_logger::setup();
     let cli = Cli::parse();
     let socket = bind_to_with_config(
@@ -90,12 +91,12 @@ pub fn main() {
         Arc::new(RwLock::new(nodes))
     };
 
-    let SpawnServerResult {
+    let SpawnNonBlockingServerResult {
         endpoints,
-        thread,
-        key_updater: _,
-    } = spawn_server(
-        "solQuicTest",
+        stats,
+        thread: run_thread,
+        max_concurrent_connections: _,
+    } = solana_streamer::nonblocking::quic::spawn_server(
         "quic_streamer_test",
         [socket.try_clone().unwrap()],
         &keypair,
@@ -110,33 +111,32 @@ pub fn main() {
     .unwrap();
     info!("Server listening on {}", socket.local_addr().unwrap());
 
-    std::thread::scope(|scope| {
-        scope.spawn(|| {
-            let start = Instant::now();
-            let path = "./results/serverlog.bin";
-            let logfile = std::fs::File::create(path).unwrap();
-            info!("Logfile in {}", path);
-            let mut logfile = std::io::BufWriter::new(logfile);
-            for batch in receiver {
-                let delta_time = start.elapsed().as_micros() as u32;
-                for pkt in batch.iter() {
-                    let pkt = pkt.to_bytes_packet();
-                    let pubkey: [u8; 32] = pkt.buffer()[16..16 + 32].try_into().unwrap();
-                    logfile.write_all(&pubkey).unwrap();
-                    let pkt_len = pkt.buffer().len();
-                    logfile.write_all(&pkt_len.to_ne_bytes()).unwrap();
-                    logfile.write_all(&delta_time.to_ne_bytes()).unwrap();
-                    let pubkey = Pubkey::new_from_array(pubkey);
-                    debug!("{pubkey}: {pkt_len} bytes");
-                }
+    tokio::task::spawn_blocking(|| {
+        let start = Instant::now();
+        let path = "./results/serverlog.bin";
+        let logfile = std::fs::File::create(path).unwrap();
+        info!("Logfile in {}", path);
+        let mut logfile = std::io::BufWriter::new(logfile);
+        for batch in receiver {
+            let delta_time = start.elapsed().as_micros() as u32;
+            for pkt in batch.iter() {
+                let pkt = pkt.to_bytes_packet();
+                let pubkey: [u8; 32] = pkt.buffer()[16..16 + 32].try_into().unwrap();
+                logfile.write_all(&pubkey).unwrap();
+                let pkt_len = pkt.buffer().len();
+                logfile.write_all(&pkt_len.to_ne_bytes()).unwrap();
+                logfile.write_all(&delta_time.to_ne_bytes()).unwrap();
+                let pubkey = Pubkey::new_from_array(pubkey);
+                debug!("{pubkey}: {pkt_len} bytes");
             }
-            logfile.flush().unwrap();
-        });
-
-        std::thread::sleep(cli.test_duration);
-        exit.store(true, std::sync::atomic::Ordering::Relaxed);
-        drop(endpoints);
-        thread.join().unwrap();
+        }
+        logfile.flush().unwrap();
     });
+
+    tokio::time::sleep(cli.test_duration).await;
     info!("Server terminating");
+    exit.store(true, std::sync::atomic::Ordering::Relaxed);
+    drop(endpoints);
+    run_thread.await.unwrap();
+    stats.report("final_stats");
 }

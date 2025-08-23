@@ -463,7 +463,7 @@ fn get_connection_stake(
 }
 
 fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u64) -> usize {
-    match peer_type {
+    let streams = match peer_type {
         ConnectionPeerType::Staked(peer_stake) => {
             // No checked math for f64 type. So let's explicitly check for 0 here
             if total_stake == 0 || peer_stake > total_stake {
@@ -486,7 +486,9 @@ fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u
             }
         }
         ConnectionPeerType::Unstaked => QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
-    }
+    };
+    debug!("Number of streams is {streams}");
+    streams * 10
 }
 
 enum ConnectionHandlerError {
@@ -672,7 +674,7 @@ fn compute_recieve_window(
         ConnectionPeerType::Staked(peer_stake) => {
             let ratio =
                 compute_receive_window_ratio_for_staked_node(max_stake, min_stake, peer_stake);
-            VarInt::from_u64(PACKET_DATA_SIZE as u64 * ratio)
+            VarInt::from_u64(PACKET_DATA_SIZE as u64 * ratio * 10)
         }
     }
 }
@@ -784,6 +786,7 @@ async fn setup_connection(
                                 wait_for_chunk_timeout,
                                 stream_load_ema.clone(),
                             ) {
+                                info!("Added staked connection from peer");
                                 stats
                                     .connection_added_from_staked_peer
                                     .fetch_add(1, Ordering::Relaxed);
