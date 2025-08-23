@@ -165,9 +165,9 @@ impl ShredFlags {
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]
-    BincodeError(#[from] bincode::Error),
+    Bincode(#[from] bincode::Error),
     #[error(transparent)]
-    ErasureError(#[from] reed_solomon_erasure::Error),
+    Erasure(#[from] reed_solomon_erasure::Error),
     #[error("Invalid data size: {size}, payload: {payload}")]
     InvalidDataSize { size: u16, payload: usize },
     #[error("Invalid deshred set")]
@@ -203,7 +203,7 @@ pub enum Error {
     #[error("Invalid packet size, could not get the shred")]
     InvalidPacketSize,
     #[error(transparent)]
-    IoError(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
     #[error("Unknown proof size")]
     UnknownProofSize,
 }

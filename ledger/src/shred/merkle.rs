@@ -1590,14 +1590,14 @@ mod test {
             }) {
                 assert_matches!(
                     recover(shreds, reed_solomon_cache).err(),
-                    Some(Error::ErasureError(TooFewParityShards))
+                    Some(Error::Erasure(TooFewParityShards))
                 );
                 continue;
             }
             if shreds.len() < num_data_shreds {
                 assert_matches!(
                     recover(shreds, reed_solomon_cache).err(),
-                    Some(Error::ErasureError(TooFewShardsPresent))
+                    Some(Error::Erasure(TooFewShardsPresent))
                 );
                 continue;
             }
