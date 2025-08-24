@@ -211,36 +211,29 @@ mod tests {
             "Legacy parser should only recover  1 entry"
         )
     }
-    /*
+
     /// Test that TLV encoded data is forwards-compatible,
     /// i.e. that legacy TLV data can be decoded by a new
     /// receiver
     #[test]
     fn test_tlv_forward_compat() {
-        let legacy_tlv_data = vec![
+        let legacy_tlv_data = [
             ExtensionLegacy::Test(42),
             ExtensionLegacy::LegacyString(String::from("foo")),
         ];
-        let legacy_bytes = bincode::serialize(&legacy_tlv_data).unwrap();
+        let mut buffer = BytesMut::with_capacity(2000);
+        serialize_into_buffer(&legacy_tlv_data, &mut buffer).unwrap();
 
-        let tlv_vec: Vec<TlvRecord> = bincode::deserialize(&legacy_bytes).unwrap();
-        // Just in case make sure that legacy data is serialized correctly
-        let legacy: Vec<ExtensionLegacy> = crate::parse(&tlv_vec);
-        assert!(matches!(legacy[0], ExtensionLegacy::Test(42)));
-        if let ExtensionLegacy::LegacyString(s) = &legacy[1] {
-            assert_eq!(s, "foo");
-        } else {
-            panic!("Wrong deserialization")
-        };
+        let buffer = buffer.freeze();
         // Parse the same bytes using new parser
-        let new: Vec<ExtensionNew> = crate::parse(&tlv_vec);
-        assert!(matches!(new[0], ExtensionNew::Test(42)));
-        if let ExtensionNew::LegacyString(s) = &new[1] {
+        let new_recovered: Vec<ExtensionNew> = deserialize_from_buffer(buffer.clone()).collect();
+        assert!(matches!(new_recovered[0], ExtensionNew::Test(42)));
+        if let ExtensionNew::LegacyString(s) = &new_recovered[1] {
             assert_eq!(s, "foo");
         } else {
             panic!("Wrong deserialization")
         };
-    }*/
+    }
 
     #[test]
     fn test_tlv_wire_format() {

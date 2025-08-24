@@ -10,9 +10,11 @@ use {
     std::{net::SocketAddr, ops::Deref},
 };
 
+/// Poly 1305 signature for a packet.
+/// Can be truncated from default of 16 bytes down.
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]
-pub struct Signature<const N: usize> {
+pub struct Signature<const N: usize = 16> {
     #[serde_as(as = "[_; N]")]
     signature: [u8; N],
 }
