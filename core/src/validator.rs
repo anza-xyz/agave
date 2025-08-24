@@ -56,7 +56,6 @@ use {
         },
         contact_info::ContactInfo,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
-        egress_socket_select::EgressSocketSelect,
         gossip_service::GossipService,
         node::{Node, NodeMultihoming},
     },
@@ -80,6 +79,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::{datapoint_info, metrics::metrics_config_sanity_check},
+    solana_net_utils::multihomed_sockets::EgressSocketSelect,
     solana_poh::{
         poh_recorder::PohRecorder,
         poh_service::{self, PohService},

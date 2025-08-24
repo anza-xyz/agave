@@ -28,7 +28,6 @@ use {
         },
         crds_value::{CrdsValue, CrdsValueLabel},
         duplicate_shred::DuplicateShred,
-        egress_socket_select::EgressSocketSelect,
         epoch_slots::EpochSlots,
         epoch_specs::EpochSpecs,
         gossip_error::GossipError,
@@ -54,7 +53,7 @@ use {
     solana_ledger::shred::Shred,
     solana_net_utils::{
         bind_in_range,
-        multihomed_sockets::BindIpAddrs,
+        multihomed_sockets::{BindIpAddrs, EgressSocketSelect},
         sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
         PortRange, VALIDATOR_PORT_RANGE,
     },
