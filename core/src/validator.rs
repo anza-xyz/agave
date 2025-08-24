@@ -56,6 +56,7 @@ use {
         },
         contact_info::ContactInfo,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
+        egress_socket_select::EgressSocketSelect,
         gossip_service::GossipService,
         node::{Node, NodeMultihoming},
     },
@@ -839,6 +840,11 @@ impl Validator {
         cluster_info.set_entrypoints(cluster_entrypoints);
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
         cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
+        let tvu_sockets_per_interface =
+            node.sockets.retransmit_sockets.len() / node.bind_ip_addrs.len();
+        cluster_info.init_egress_socket_select(Arc::new(EgressSocketSelect::new(
+            tvu_sockets_per_interface,
+        )));
         let cluster_info = Arc::new(cluster_info);
         let node_multihoming = NodeMultihoming::from(&node);
 

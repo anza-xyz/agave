@@ -12,7 +12,7 @@ use {
     rand::Rng,
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
     solana_clock::Slot,
-    solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, egress_socket_select},
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
         shred::{self, ShredFlags, ShredId, ShredType},
@@ -342,11 +342,12 @@ fn retransmit(
         )
     };
 
-    let num_retransmit_sockets_per_interface =
-        egress_socket_select::num_retransmit_sockets_per_interface();
+    let num_retransmit_sockets_per_interface = cluster_info
+        .egress_socket_select()
+        .num_retransmit_sockets_per_interface();
     let retransmit_socket = |index: usize| {
         let socket = xdp_sender.map(RetransmitSocket::Xdp).unwrap_or_else(|| {
-            let interface_offset = egress_socket_select::active_offset();
+            let interface_offset = cluster_info.egress_socket_select().active_offset();
             let socket: &UdpSocket = &retransmit_sockets
                 [interface_offset + (index % num_retransmit_sockets_per_interface)];
             RetransmitSocket::Socket(socket)

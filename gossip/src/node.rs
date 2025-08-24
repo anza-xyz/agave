@@ -361,7 +361,7 @@ impl Node {
 #[cfg(feature = "agave-unstable-api")]
 mod multihoming {
     use {
-        crate::{cluster_info::ClusterInfo, egress_socket_select, node::Node},
+        crate::{cluster_info::ClusterInfo, node::Node},
         solana_net_utils::multihomed_sockets::BindIpAddrs,
         std::{
             net::{IpAddr, SocketAddr, UdpSocket},
@@ -407,7 +407,6 @@ mod multihoming {
             let gossip_addr = self.sockets.gossip[interface_index]
                 .local_addr()
                 .map_err(|e| e.to_string())?;
-
             // Set the new gossip address in contact-info
             cluster_info
                 .set_gossip_socket(gossip_addr)
@@ -415,7 +414,6 @@ mod multihoming {
 
             // update tvu ingress advertised socket
             let tvu_ingress_address = self.sockets.tvu_ingress[interface_index];
-
             cluster_info
                 .set_tvu_socket(tvu_ingress_address)
                 .map_err(|e| e.to_string())?;
@@ -427,7 +425,9 @@ mod multihoming {
                 .expect("Interface index out of range");
 
             // Send from correct tvu retransmit sockets
-            egress_socket_select::select_interface(interface_index);
+            cluster_info
+                .egress_socket_select()
+                .select_interface(interface_index);
 
             Ok(())
         }
