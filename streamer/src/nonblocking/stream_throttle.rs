@@ -31,6 +31,7 @@ pub(crate) struct StakedStreamLoadEMA {
     max_staked_load_in_ema_window: u64,
     // Maximum number of streams for an unstaked connection in stream throttling window
     max_unstaked_load_in_throttling_window: u64,
+    max_streams_per_ms: u64,
 }
 
 impl StakedStreamLoadEMA {
@@ -63,6 +64,7 @@ impl StakedStreamLoadEMA {
             stats,
             max_staked_load_in_ema_window,
             max_unstaked_load_in_throttling_window,
+            max_streams_per_ms,
         }
     }
 
@@ -181,16 +183,20 @@ impl StakedStreamLoadEMA {
             }
         }
     }
+
+    pub(crate) fn max_streams_per_ms(&self) -> u64 {
+        self.max_streams_per_ms
+    }
 }
 
 #[derive(Debug)]
-pub(crate) struct ConnectionStreamCounter {
+pub struct ConnectionStreamCounter {
     pub(crate) stream_count: AtomicU64,
     last_throttling_instant: RwLock<tokio::time::Instant>,
 }
 
 impl ConnectionStreamCounter {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             stream_count: AtomicU64::default(),
             last_throttling_instant: RwLock::new(tokio::time::Instant::now()),
