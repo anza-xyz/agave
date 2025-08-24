@@ -1,6 +1,11 @@
 pub use solana_client::connection_cache::Protocol;
 use {
-    crate::{crds_data::MAX_WALLCLOCK, legacy_contact_info::LegacyContactInfo},
+    crate::{
+        crds_data::MAX_WALLCLOCK,
+        define_tlv_enum,
+        legacy_contact_info::LegacyContactInfo,
+        tlv::{self, TlvDecodeError, TlvRecord},
+    },
     assert_matches::{assert_matches, debug_assert_matches},
     serde::{Deserialize, Deserializer, Serialize},
     solana_pubkey::Pubkey,
@@ -8,7 +13,6 @@ use {
     solana_sanitize::{Sanitize, SanitizeError},
     solana_serde_varint as serde_varint, solana_short_vec as short_vec,
     solana_streamer::socket::SocketAddrSpace,
-    solana_tlv::{self, define_tlv_enum, TlvDecodeError, TlvRecord},
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,
@@ -111,7 +115,7 @@ define_tlv_enum!(
     /// TLV encoded Extensions in ContactInfo messages
     ///
     /// On the wire each record is: [type: u8][len: varint][bytes]
-    /// Extensions with unknown types are skipped by solana_tlv::parse,
+    /// Extensions with unknown types are skipped by tlv::parse,
     /// so new types can be added without breaking legacy code,
     /// and support by all clients is not required.
     ///
@@ -557,7 +561,7 @@ impl TryFrom<ContactInfoLite> for ContactInfo {
             version,
             addrs,
             sockets,
-            extensions: solana_tlv::parse(&extensions),
+            extensions: tlv::parse(&extensions),
             cache: EMPTY_SOCKET_ADDR_CACHE,
         };
         // Populate node.cache.

@@ -8851,7 +8851,6 @@ dependencies = [
  "solana-streamer",
  "solana-system-transaction",
  "solana-time-utils",
- "solana-tlv",
  "solana-tpu-client",
  "solana-transaction",
  "solana-version",
@@ -11231,6 +11230,7 @@ name = "solana-tlv"
 version = "3.1.0"
 dependencies = [
  "bincode",
+ "bytes",
  "chacha20",
  "chacha20poly1305",
  "poly1305",

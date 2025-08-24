@@ -33,6 +33,8 @@ pub mod gossip_error;
 pub mod gossip_service;
 pub mod node;
 #[macro_use]
+mod tlv;
+#[macro_use]
 mod legacy_contact_info;
 pub mod ping_pong;
 mod protocol;

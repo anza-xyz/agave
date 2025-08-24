@@ -62,7 +62,6 @@ solana-account = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
-solana-tlv = { workspace = true }
 solana-clock = "=3.0.0"
 solana-cluster-type = "=3.0.0"
 solana-connection-cache = { workspace = true }

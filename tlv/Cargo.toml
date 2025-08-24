@@ -6,9 +6,11 @@ repository.workspace = true
 homepage.workspace = true
 license.workspace = true
 edition.workspace = true
+publish = false
 
 [dependencies]
 bincode = { workspace = true }
+bytes = { workspace = true }
 chacha20 = "0.9.1"
 chacha20poly1305 = { version = "0.10.1" }
 poly1305 = "0.8.0"

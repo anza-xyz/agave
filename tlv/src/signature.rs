@@ -1,6 +1,8 @@
 use {
-    chacha20::cipher::{KeyIvInit, StreamCipher},
-    chacha20::ChaCha20,
+    chacha20::{
+        cipher::{KeyIvInit, StreamCipher},
+        ChaCha20,
+    },
     chacha20poly1305::aead::KeyInit,
     poly1305::{universal_hash::UniversalHash, Poly1305},
     serde::{Deserialize, Serialize},
