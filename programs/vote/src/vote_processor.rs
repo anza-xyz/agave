@@ -10,7 +10,7 @@ use {
         sysvar_cache::get_sysvar_with_account_check,
     },
     solana_pubkey::Pubkey,
-    solana_transaction_context::{BorrowedAccount, InstructionContext},
+    solana_transaction_context::{BorrowedInstructionAccount, InstructionContext},
     solana_vote_interface::{instruction::VoteInstruction, program::id, state::VoteAuthorize},
     std::collections::HashSet,
 };
@@ -18,7 +18,7 @@ use {
 fn process_authorize_with_seed_instruction(
     invoke_context: &InvokeContext,
     instruction_context: &InstructionContext,
-    vote_account: &mut BorrowedAccount,
+    vote_account: &mut BorrowedInstructionAccount,
     new_authority: &Pubkey,
     authorization_type: VoteAuthorize,
     current_authority_derived_key_owner: &Pubkey,

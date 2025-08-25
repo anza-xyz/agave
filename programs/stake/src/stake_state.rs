@@ -24,7 +24,7 @@ use {
         tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
     },
     solana_svm_log_collector::ic_msg,
-    solana_transaction_context::{BorrowedAccount, IndexOfAccount, InstructionContext},
+    solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
     solana_vote_interface::state::{VoteStateV3, VoteStateVersions},
     std::{collections::HashSet, convert::TryFrom},
 };
@@ -122,9 +122,9 @@ fn redelegate_stake(
 fn move_stake_or_lamports_shared_checks(
     invoke_context: &InvokeContext,
     instruction_context: &InstructionContext,
-    source_account: &BorrowedAccount,
+    source_account: &BorrowedInstructionAccount,
     lamports: u64,
-    destination_account: &BorrowedAccount,
+    destination_account: &BorrowedInstructionAccount,
     stake_authority_index: IndexOfAccount,
 ) -> Result<(MergeKind, MergeKind), InstructionError> {
     // authority must sign
@@ -209,7 +209,7 @@ pub(crate) fn new_stake(
 }
 
 pub fn initialize(
-    stake_account: &mut BorrowedAccount,
+    stake_account: &mut BorrowedInstructionAccount,
     authorized: &Authorized,
     lockup: &Lockup,
     rent: &Rent,
@@ -238,7 +238,7 @@ pub fn initialize(
 /// multiple times, but will implicitly withdraw authorization from the previously authorized
 /// staker. The default staker is the owner of the stake account's pubkey.
 pub fn authorize(
-    stake_account: &mut BorrowedAccount,
+    stake_account: &mut BorrowedInstructionAccount,
     signers: &HashSet<Pubkey>,
     new_authority: &Pubkey,
     stake_authorize: StakeAuthorize,
@@ -271,7 +271,7 @@ pub fn authorize(
 #[allow(clippy::too_many_arguments)]
 pub fn authorize_with_seed(
     instruction_context: &InstructionContext,
-    stake_account: &mut BorrowedAccount,
+    stake_account: &mut BorrowedInstructionAccount,
     authority_base_index: IndexOfAccount,
     authority_seed: &str,
     authority_owner: &Pubkey,
@@ -353,7 +353,7 @@ pub fn delegate(
 }
 
 pub fn deactivate(
-    stake_account: &mut BorrowedAccount,
+    stake_account: &mut BorrowedInstructionAccount,
     clock: &Clock,
     signers: &HashSet<Pubkey>,
 ) -> Result<(), InstructionError> {
@@ -367,7 +367,7 @@ pub fn deactivate(
 }
 
 pub fn set_lockup(
-    stake_account: &mut BorrowedAccount,
+    stake_account: &mut BorrowedInstructionAccount,
     lockup: &LockupArgs,
     signers: &HashSet<Pubkey>,
     clock: &Clock,
@@ -867,7 +867,7 @@ pub fn withdraw(
 
 pub(crate) fn deactivate_delinquent(
     instruction_context: &InstructionContext,
-    stake_account: &mut BorrowedAccount,
+    stake_account: &mut BorrowedInstructionAccount,
     delinquent_vote_account_index: IndexOfAccount,
     reference_vote_account_index: IndexOfAccount,
     current_epoch: Epoch,
@@ -923,7 +923,7 @@ struct ValidatedDelegatedInfo {
 /// Ensure the stake delegation amount is valid.  This checks that the account meets the minimum
 /// balance requirements of delegated stake.  If not, return an error.
 fn validate_delegated_amount(
-    account: &BorrowedAccount,
+    account: &BorrowedInstructionAccount,
     meta: &Meta,
     invoke_context: &InvokeContext,
 ) -> Result<ValidatedDelegatedInfo, InstructionError> {
