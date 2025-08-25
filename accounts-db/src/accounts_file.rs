@@ -434,11 +434,19 @@ pub enum AccountsFileProvider {
 }
 
 impl AccountsFileProvider {
-    pub fn new_writable(&self, path: impl Into<PathBuf>, file_size: u64) -> AccountsFile {
+    pub fn new_writable(
+        &self,
+        path: impl Into<PathBuf>,
+        file_size: u64,
+        storage_access: StorageAccess,
+    ) -> AccountsFile {
         match self {
-            Self::AppendVec => {
-                AccountsFile::AppendVec(AppendVec::new(path, true, file_size as usize))
-            }
+            Self::AppendVec => AccountsFile::AppendVec(AppendVec::new(
+                path,
+                true,
+                file_size as usize,
+                storage_access,
+            )),
             Self::HotStorage => AccountsFile::TieredStorage(TieredStorage::new_writable(path)),
         }
     }

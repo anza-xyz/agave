@@ -64,7 +64,7 @@ fn bench_write_accounts_file(c: &mut Criterion) {
                 || {
                     let path = temp_dir.path().join(format!("append_vec_{accounts_count}"));
                     let file_size = accounts.len() * (space + append_vec::STORE_META_OVERHEAD);
-                    AppendVec::new(path, true, file_size)
+                    AppendVec::new(path, true, file_size, StorageAccess::File)
                 },
                 |append_vec| {
                     let res = append_vec.append_accounts(&storable_accounts, 0).unwrap();
@@ -125,7 +125,7 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
             .iter()
             .map(|(_, account)| append_vec::aligned_stored_size(account.data().len()))
             .sum();
-        let append_vec = AppendVec::new(append_vec_path, true, file_size);
+        let append_vec = AppendVec::new(append_vec_path, true, file_size, StorageAccess::File);
         let stored_accounts_info = append_vec
             .append_accounts(&(Slot::MAX, storable_accounts.as_slice()), 0)
             .unwrap();
@@ -210,7 +210,7 @@ fn bench_get_account_shared_data(c: &mut Criterion) {
             .iter()
             .map(|(_, account)| append_vec::aligned_stored_size(account.data().len()))
             .sum();
-        let append_vec = AppendVec::new(append_vec_path, true, file_size);
+        let append_vec = AppendVec::new(append_vec_path, true, file_size, StorageAccess::File);
         let stored_accounts_info = append_vec
             .append_accounts(&(Slot::MAX, storable_accounts.as_slice()), 0)
             .unwrap();
