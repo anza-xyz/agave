@@ -19,6 +19,7 @@ use {
     },
     solana_lattice_hash::lt_hash::Checksum as LtHashChecksum,
     solana_pubkey::PUBKEY_BYTES,
+    solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
         iter::{self, FromIterator},
         ops::Range,
@@ -6005,16 +6006,14 @@ pub(crate) fn compare_all_accounts(
 fn test_shrink_ancient_overflow_with_min_size() {
     solana_logger::setup();
 
-    let ideal_av_size = ancient_append_vecs::get_ancient_append_vec_capacity() / 100;
     let num_normal_slots = 2;
 
     // build an ancient append vec at slot 'ancient_slot' with one `fat`
     // account that's larger than the ideal size of ancient append vec to
     // simulate the *oversized* append vec for shrinking.
-    let account_size = (1.5 * ideal_av_size as f64) as u64;
     let (db, ancient_slot) = get_one_ancient_append_vec_and_others_with_account_size(
         num_normal_slots,
-        Some(account_size),
+        Some(MAX_PERMITTED_DATA_LENGTH),
     );
 
     let max_slot_inclusive = ancient_slot + (num_normal_slots as Slot);
@@ -6024,7 +6023,7 @@ fn test_shrink_ancient_overflow_with_min_size() {
 
     // assert that the min_size, which about 1.5 * ideal_av_size, kicked in
     // and result that the ancient append vec capacity exceeds the ideal_av_size
-    assert!(ancient.capacity() > ideal_av_size);
+    assert!(ancient.capacity() > MAX_PERMITTED_DATA_LENGTH);
 
     // combine 1 normal append vec into existing oversize ancient append vec.
     db.combine_ancient_slots_packed(
@@ -6044,7 +6043,7 @@ fn test_shrink_ancient_overflow_with_min_size() {
         .storage
         .get_slot_storage_entry(max_slot_inclusive - 1)
         .unwrap();
-    assert!(ancient2.capacity() > ideal_av_size); // min_size kicked in, which cause the appendvec to be larger than the ideal_av_size
+    assert!(ancient2.capacity() > MAX_PERMITTED_DATA_LENGTH); // min_size kicked in, which cause the appendvec to be larger than the ideal_av_size
 
     // Combine normal append vec(s) into existing ancient append vec this
     // will overflow the original ancient append vec because of the oversized
@@ -6062,29 +6061,28 @@ fn test_shrink_ancient_overflow_with_min_size() {
     // Nothing should be combined because the append vec are oversized.
     // min_size kicked in, which cause the appendvecs to be larger than the ideal_av_size.
     let ancient = db.storage.get_slot_storage_entry(ancient_slot).unwrap();
-    assert!(ancient.capacity() > ideal_av_size);
+    assert!(ancient.capacity() > MAX_PERMITTED_DATA_LENGTH);
 
     let ancient2 = db
         .storage
         .get_slot_storage_entry(max_slot_inclusive - 1)
         .unwrap();
-    assert!(ancient2.capacity() > ideal_av_size);
+    assert!(ancient2.capacity() > MAX_PERMITTED_DATA_LENGTH);
 
     let ancient3 = db
         .storage
         .get_slot_storage_entry(max_slot_inclusive)
         .unwrap();
-    assert!(ancient3.capacity() > ideal_av_size);
+    assert!(ancient3.capacity() > MAX_PERMITTED_DATA_LENGTH);
 }
 
 #[test]
 fn test_shrink_overflow_too_much() {
     let num_normal_slots = 2;
-    let ideal_av_size = ancient_append_vecs::get_ancient_append_vec_capacity() / 100;
-    let fat_account_size = (1.5 * ideal_av_size as f64) as u64;
+    let ideal_av_size = ancient_append_vecs::get_ancient_append_vec_capacity();
 
     // Prepare 3 append vecs to combine [small, big, small]
-    let account_data_sizes = vec![100, fat_account_size, 100];
+    let account_data_sizes = vec![100, MAX_PERMITTED_DATA_LENGTH, 100];
     let (db, slot1) = create_db_with_storages_and_index_with_customized_account_size_per_slot(
         true,
         num_normal_slots + 1,
@@ -6130,7 +6128,7 @@ fn test_shrink_overflow_too_much() {
     // slot2, even after shrinking, is still oversized. Therefore, slot 2
     // exists as an ancient append vec.
     let storage2_after = db.storage.get_slot_storage_entry(slot2).unwrap();
-    assert!(storage2_after.capacity() > ideal_av_size);
+    assert!(storage2_after.capacity() > MAX_PERMITTED_DATA_LENGTH);
     let after_store = db.get_storage_for_slot(slot2).unwrap();
     let GetUniqueAccountsResult {
         stored_accounts: after_stored_accounts,

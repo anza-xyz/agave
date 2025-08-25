@@ -96,18 +96,6 @@ impl AccountsFile {
         Ok(Self::AppendVec(av))
     }
 
-    /// true if this storage can possibly be appended to (independent of capacity check)
-    //
-    // NOTE: Only used by ancient append vecs "append" method, which is test-only now.
-    #[cfg(test)]
-    pub(crate) fn can_append(&self) -> bool {
-        match self {
-            Self::AppendVec(_) => true,
-            // once created, tiered storages cannot be appended to
-            Self::TieredStorage(_) => false,
-        }
-    }
-
     /// if storage is not readonly, reopen another instance that is read only
     pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
         match self {
