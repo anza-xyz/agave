@@ -16,8 +16,6 @@ const MIN_NUM_STAKED_NODES: usize = 500;
 /// Minimum stake that a node should have so that all its CRDS values are
 /// propagated through gossip (below this only subset of CRDS is propagated).
 pub(crate) const MIN_STAKE_FOR_GOSSIP: u64 = solana_native_token::LAMPORTS_PER_SOL;
-/// Minimum stake required for a node to bypass the initial ping check when joining gossip.
-pub(crate) const MIN_STAKE_TO_SKIP_PING: u64 = 1000 * solana_native_token::LAMPORTS_PER_SOL;
 
 /// Returns false if the CRDS value should be discarded.
 /// `direction` controls whether we are looking at
