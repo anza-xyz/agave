@@ -605,17 +605,30 @@ pub fn spawn_server_multi(
     )
 }
 
+#[derive(Clone, Debug)]
+pub enum QosMode {
+    /// The maximum number of streams per millisecond across all connections
+    StakeWeighted {
+        max_streams_per_ms: u64,
+    },
+    // The maximum number of streams per second allowed for each peer
+    SimpleStreamsPerSecond {
+        max_streams_per_second: u64,
+    },
+}
+
 #[derive(Clone)]
 pub struct QuicServerParams {
     pub max_connections_per_peer: usize,
     pub max_staked_connections: usize,
     pub max_unstaked_connections: usize,
-    pub max_streams_per_ms: u64,
+    // pub max_streams_per_ms: u64,
     pub max_connections_per_ipaddr_per_min: u64,
     pub wait_for_chunk_timeout: Duration,
     pub coalesce: Duration,
     pub coalesce_channel_size: usize,
     pub num_threads: NonZeroUsize,
+    pub qos_mode: QosMode,
 }
 
 impl Default for QuicServerParams {
@@ -624,12 +637,14 @@ impl Default for QuicServerParams {
             max_connections_per_peer: 1,
             max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
-            max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             coalesce: DEFAULT_TPU_COALESCE,
             coalesce_channel_size: DEFAULT_MAX_COALESCE_CHANNEL_SIZE,
             num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
+            qos_mode: QosMode::StakeWeighted {
+                max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
+            },
         }
     }
 }
