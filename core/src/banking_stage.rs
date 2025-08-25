@@ -404,6 +404,7 @@ impl BankingStage {
             committer,
             log_messages_bytes_limit,
         };
+        // + 1 for the scheduler thread
         let mut non_vote_thread_hdls = Vec::with_capacity(num_workers.get() + 1);
         Self::new_central_scheduler(
             &mut non_vote_thread_hdls,
