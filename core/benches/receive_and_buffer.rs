@@ -6,7 +6,6 @@ use {
         receive_and_buffer::{
             ReceiveAndBuffer, SanitizedTransactionReceiveAndBuffer, TransactionViewReceiveAndBuffer,
         },
-        scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics},
         transaction_state_container::StateContainer,
     },
     std::time::{Duration, Instant},
@@ -41,8 +40,6 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator
             let mut total: Duration = std::time::Duration::ZERO;
             for _ in 0..iters {
                 // Setup
-                let mut count_metrics = SchedulerCountMetrics::default();
-                let mut timing_metrics = SchedulerTimingMetrics::default();
                 {
                     if sender.send(txs.clone()).is_err() {
                         panic!("Unexpectedly dropped receiver!");
@@ -54,13 +51,9 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator
 
                 let start = Instant::now();
                 {
-                    let res = receive_and_buffer.receive_and_buffer_packets(
-                        &mut container,
-                        &mut timing_metrics,
-                        &mut count_metrics,
-                        &decision,
-                    );
-                    assert!(res.unwrap() == num_txs && !container.is_empty());
+                    let res =
+                        receive_and_buffer.receive_and_buffer_packets(&mut container, &decision);
+                    assert!(res.unwrap().num_received == num_txs && !container.is_empty());
                     black_box(&container);
                 }
                 total = total.saturating_add(start.elapsed());

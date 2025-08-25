@@ -1,6 +1,6 @@
 use {
-    solana_account::AccountSharedData, solana_precompile_error::PrecompileError,
-    solana_pubkey::Pubkey,
+    solana_account::AccountSharedData, solana_clock::Slot,
+    solana_precompile_error::PrecompileError, solana_pubkey::Pubkey,
 };
 
 /// Callback used by InvokeContext in SVM
@@ -33,22 +33,11 @@ pub trait InvokeContextCallback {
 
 /// Runtime callbacks for transaction processing.
 pub trait TransactionProcessingCallback: InvokeContextCallback {
-    fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize>;
-
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData>;
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)>;
 
     fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey) {}
 
     fn inspect_account(&self, _address: &Pubkey, _account_state: AccountState, _is_writable: bool) {
-    }
-
-    #[deprecated(
-        since = "2.3.0",
-        note = "Use `get_epoch_stake_for_vote_account` on the `InvokeContextCallback` trait \
-                instead"
-    )]
-    fn get_current_epoch_vote_account_stake(&self, vote_address: &Pubkey) -> u64 {
-        Self::get_epoch_stake_for_vote_account(self, vote_address)
     }
 }
 

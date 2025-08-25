@@ -1,6 +1,6 @@
 use {
     super::{Bank, BankStatusCache},
-    agave_feature_set::FeatureSet,
+    agave_feature_set::{raise_cpi_nesting_limit_to_8, FeatureSet},
     solana_account::{state_traits::StateMut, AccountSharedData},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_clock::{
@@ -122,6 +122,8 @@ impl Bank {
                                 limit.get_compute_budget_and_limits(
                                     fee_budget.loaded_accounts_data_size_limit,
                                     fee_details,
+                                    self.feature_set
+                                        .is_active(&raise_cpi_nesting_limit_to_8::id()),
                                 )
                             }
                         });

@@ -408,7 +408,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 pubkey,
                 AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
             ));
-            instruction_accounts.push(InstructionAccount::new(0, 0, false, true));
+            instruction_accounts.push(InstructionAccount::new(0, false, true));
             vec![]
         }
         Err(_) => {
@@ -481,7 +481,6 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                     };
                     InstructionAccount::new(
                         txn_acct_index as IndexOfAccount,
-                        txn_acct_index as IndexOfAccount,
                         account_info.is_signer.unwrap_or(false),
                         account_info.is_writable.unwrap_or(false),
                     )
@@ -521,21 +520,20 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
 
     invoke_context
         .transaction_context
-        .get_next_instruction_context_mut()
-        .unwrap()
-        .configure(
-            vec![program_index, program_index.saturating_add(1)],
+        .configure_next_instruction_for_tests(
+            program_index.saturating_add(1),
             instruction_accounts,
             &instruction_data,
-        );
+        )
+        .unwrap();
     invoke_context.push().unwrap();
     let (_parameter_bytes, regions, account_lengths) = serialize_parameters(
-        invoke_context.transaction_context,
-        invoke_context
+        &invoke_context
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        false, // direct_mapping
+        false, // stricter_abi_and_runtime_constraints
+        false, // account_data_direct_mapping
         true,  // for mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();

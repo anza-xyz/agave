@@ -61,7 +61,7 @@ macro_rules! with_mock_invoke_context {
                 AccountSharedData::new(2, $account_size, &program_key),
             ),
         ];
-        let instruction_accounts = vec![InstructionAccount::new(2, 0, false, true)];
+        let instruction_accounts = vec![InstructionAccount::new(2, false, true)];
         solana_program_runtime::with_mock_invoke_context!(
             $invoke_context,
             transaction_context,
@@ -69,9 +69,8 @@ macro_rules! with_mock_invoke_context {
         );
         $invoke_context
             .transaction_context
-            .get_next_instruction_context_mut()
-            .unwrap()
-            .configure(vec![0, 1], instruction_accounts, &[]);
+            .configure_next_instruction_for_tests(1, instruction_accounts, &[])
+            .unwrap();
         $invoke_context.push().unwrap();
     };
 }
@@ -80,9 +79,10 @@ macro_rules! with_mock_invoke_context {
 fn bench_program_create_executable(bencher: &mut Bencher) {
     let elf = load_program_from_file("bench_alu");
 
+    let feature_set = SVMFeatureSet::default();
     let program_runtime_environment = create_program_runtime_environment_v1(
-        &SVMFeatureSet::default(),
-        &SVMTransactionExecutionBudget::default(),
+        &feature_set,
+        &SVMTransactionExecutionBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8),
         true,
         false,
     );
@@ -106,9 +106,10 @@ fn bench_program_alu(bencher: &mut Bencher) {
     let elf = load_program_from_file("bench_alu");
     with_mock_invoke_context!(invoke_context, bpf_loader::id(), 10000001);
 
+    let feature_set = invoke_context.get_feature_set();
     let program_runtime_environment = create_program_runtime_environment_v1(
-        invoke_context.get_feature_set(),
-        &SVMTransactionExecutionBudget::default(),
+        feature_set,
+        &SVMTransactionExecutionBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8),
         true,
         false,
     );
@@ -222,12 +223,15 @@ fn bench_create_vm(bencher: &mut Bencher) {
     const BUDGET: u64 = 200_000;
     invoke_context.mock_set_remaining(BUDGET);
 
-    let direct_mapping = invoke_context
+    let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping;
+        .stricter_abi_and_runtime_constraints;
+    let raise_cpi_nesting_limit_to_8 = invoke_context
+        .get_feature_set()
+        .raise_cpi_nesting_limit_to_8;
     let program_runtime_environment = create_program_runtime_environment_v1(
         invoke_context.get_feature_set(),
-        &SVMTransactionExecutionBudget::default(),
+        &SVMTransactionExecutionBudget::new_with_defaults(raise_cpi_nesting_limit_to_8),
         true,
         false,
     );
@@ -239,13 +243,13 @@ fn bench_create_vm(bencher: &mut Bencher) {
 
     // Serialize account data
     let (_serialized, regions, account_lengths) = serialize_parameters(
-        invoke_context.transaction_context,
-        invoke_context
+        &invoke_context
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        direct_mapping,
-        true, // mask_out_rent_epoch_in_vm_serialization
+        stricter_abi_and_runtime_constraints,
+        false, // account_data_direct_mapping
+        true,  // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 
@@ -268,25 +272,26 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
     const BUDGET: u64 = 200_000;
     invoke_context.mock_set_remaining(BUDGET);
 
-    let direct_mapping = invoke_context
+    let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping;
+        .stricter_abi_and_runtime_constraints;
 
     // Serialize account data
     let (_serialized, regions, account_lengths) = serialize_parameters(
-        invoke_context.transaction_context,
-        invoke_context
+        &invoke_context
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        direct_mapping,
-        true, // mask_out_rent_epoch_in_vm_serialization
+        stricter_abi_and_runtime_constraints,
+        false, // account_data_direct_mapping
+        true,  // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 
+    let feature_set = invoke_context.get_feature_set();
     let program_runtime_environment = create_program_runtime_environment_v1(
-        invoke_context.get_feature_set(),
-        &SVMTransactionExecutionBudget::default(),
+        feature_set,
+        &SVMTransactionExecutionBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8),
         true,
         false,
     );

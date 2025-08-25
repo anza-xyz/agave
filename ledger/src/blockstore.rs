@@ -104,11 +104,6 @@ pub use {
 pub const MAX_REPLAY_WAKE_UP_SIGNALS: usize = 1;
 pub const MAX_COMPLETED_SLOTS_IN_CHANNEL: usize = 100_000;
 
-// An upper bound on maximum number of data shreds we can handle in a slot
-// 32K shreds would allow ~320K peak TPS
-// (32K shreds per slot * 4 TX per shred * 2.5 slots per sec)
-pub const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
-
 pub type CompletedSlotsSender = Sender<Vec<Slot>>;
 pub type CompletedSlotsReceiver = Receiver<Vec<Slot>>;
 
@@ -1009,13 +1004,11 @@ impl Blockstore {
                 match shred.shred_type() {
                     ShredType::Code => {
                         // Don't need Arc overhead here!
-                        debug_assert_matches!(shred.payload(), shred::Payload::Unique(_));
                         recovered_shreds.push(shred.into_payload());
                         None
                     }
                     ShredType::Data => {
                         // Verify that the cloning is cheap here.
-                        debug_assert_matches!(shred.payload(), shred::Payload::Shared(_));
                         recovered_shreds.push(shred.payload().clone());
                         Some(shred)
                     }
@@ -5267,7 +5260,7 @@ fn adjust_ulimit_nofile(enforce_ulimit_nofile: bool) -> Result<()> {
     // usually not enough
     // AppendVecs and disk Account Index are also heavy users of mmapped files.
     // This should be kept in sync with published validator instructions.
-    // https://docs.solanalabs.com/operations/guides/validator-start#increased-memory-mapped-files-limit
+    // https://docs.anza.xyz/operations/guides/validator-start#system-tuning
     let desired_nofile = 1_000_000;
 
     fn get_nofile() -> libc::rlimit {
@@ -5315,7 +5308,7 @@ pub mod tests {
         crate::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
-            shred::{max_ticks_per_n_shreds, ShredFlags},
+            shred::{max_ticks_per_n_shreds, MAX_DATA_SHREDS_PER_SLOT},
         },
         assert_matches::assert_matches,
         bincode::{serialize, Options},
@@ -6859,7 +6852,7 @@ pub mod tests {
 
     #[test]
     fn test_find_missing_data_indexes_timeout() {
-        let slot = 0;
+        let slot = 1;
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
@@ -6872,18 +6865,27 @@ pub mod tests {
 
         // Write entries
         let gap: u64 = 10;
-        let shreds: Vec<_> = (0..64)
+
+        let keypair = Keypair::new();
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let mut stats = ProcessShredsStats::default();
+        let shreds: Vec<_> = (0u64..64)
             .map(|i| {
-                Shred::new_from_data(
-                    slot,
-                    (i * gap) as u32,
-                    0,
-                    &[],
-                    ShredFlags::empty(),
-                    i as u8,
-                    0,
-                    (i * gap) as u32,
-                )
+                let shredder = Shredder::new(slot, slot - 1, i as u8, 42).unwrap();
+
+                let mut shreds = shredder
+                    .make_shreds_from_data_slice(
+                        &keypair,
+                        &[],
+                        false,
+                        None,
+                        (i * gap) as u32,
+                        (i * gap) as u32,
+                        &reed_solomon_cache,
+                        &mut stats,
+                    )
+                    .unwrap();
+                shreds.next().unwrap()
             })
             .collect();
         blockstore.insert_shreds(shreds, None, false).unwrap();
@@ -7533,18 +7535,25 @@ pub mod tests {
             index
         );
 
-        // Add a shred from different fec set
+        let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
+        let keypair = Keypair::new();
+        let reed_solomon_cache = ReedSolomonCache::default();
         let new_index = fec_set_index + 31;
-        let new_data_shred = Shred::new_from_data(
-            slot,
-            new_index,
-            1,          // parent_offset
-            &[3, 3, 3], // data
-            ShredFlags::empty(),
-            0, // reference_tick,
-            0, // version
-            fec_set_index + 30,
-        );
+        // Add a shred from different fec set
+        let new_data_shred = shredder
+            .make_shreds_from_data_slice(
+                &keypair,
+                &[3, 3, 3],
+                false,
+                Some(Hash::default()),
+                new_index,
+                new_index,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap()
+            .next()
+            .unwrap();
 
         let mut shred_insertion_tracker =
             ShredInsertionTracker::new(data_shreds.len(), blockstore.db.batch().unwrap());
@@ -7859,16 +7868,25 @@ pub mod tests {
         );
 
         // Insert an empty shred that won't deshred into entries
-        let shreds = vec![Shred::new_from_data(
-            slot,
-            next_shred_index as u32,
-            1,
-            &[1, 1, 1],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            next_shred_index as u32,
-        )];
+
+        let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
+        let keypair = Keypair::new();
+        let reed_solomon_cache = ReedSolomonCache::default();
+
+        let shreds: Vec<Shred> = shredder
+            .make_shreds_from_data_slice(
+                &keypair,
+                &[1, 1, 1],
+                true,
+                Some(Hash::default()),
+                next_shred_index as u32,
+                next_shred_index as u32,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            )
+            .unwrap()
+            .take(DATA_SHREDS_PER_FEC_BLOCK)
+            .collect();
 
         // With the corruption, nothing should be returned, even though an
         // earlier data block was valid

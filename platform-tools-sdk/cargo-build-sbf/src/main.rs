@@ -7,9 +7,9 @@ use {
         post_processing::post_process,
         toolchain::{
             corrupted_toolchain, generate_toolchain_name, get_base_rust_version, install_tools,
-            DEFAULT_PLATFORM_TOOLS_VERSION,
+            rust_target_triple, DEFAULT_PLATFORM_TOOLS_VERSION,
         },
-        utils::{rust_target_triple, spawn},
+        utils::spawn,
     },
     cargo_metadata::camino::Utf8PathBuf,
     clap::{crate_description, crate_name, crate_version, Arg},
@@ -42,6 +42,7 @@ pub struct Config<'a> {
     remap_cwd: bool,
     debug: bool,
     verbose: bool,
+    quiet: bool,
     workspace: bool,
     jobs: Option<String>,
     arch: &'a str,
@@ -74,6 +75,7 @@ impl Default for Config<'_> {
             remap_cwd: true,
             debug: false,
             verbose: false,
+            quiet: false,
             workspace: false,
             jobs: None,
             arch: "v0",
@@ -84,7 +86,7 @@ impl Default for Config<'_> {
 }
 
 pub fn is_version_string(arg: &str) -> Result<(), String> {
-    let semver_re = Regex::new(r"^v?[0-9]+\.[0-9]+(\.[0-9]+)?").unwrap();
+    let semver_re = Regex::new(r"^v?[0-9]+\.[0-9]+(\.[0-9]+)?$").unwrap();
     if semver_re.is_match(arg) {
         return Ok(());
     }
@@ -116,22 +118,6 @@ fn home_dir() -> PathBuf {
                 exit(1);
             }),
     )
-}
-
-fn semver_version(version: &str) -> String {
-    let starts_with_v = version.starts_with('v');
-    let dots = version.as_bytes().iter().fold(
-        0,
-        |n: u32, c| if *c == b'.' { n.saturating_add(1) } else { n },
-    );
-    match (dots, starts_with_v) {
-        (0, false) => format!("{version}.0.0"),
-        (0, true) => format!("{}.0.0", &version[1..]),
-        (1, false) => format!("{version}.0"),
-        (1, true) => format!("{}.0", &version[1..]),
-        (_, false) => version.to_string(),
-        (_, true) => version[1..].to_string(),
-    }
 }
 
 fn prepare_environment(
@@ -245,6 +231,9 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
     }
     if config.verbose {
         cargo_build_args.push("--verbose");
+    }
+    if config.quiet {
+        cargo_build_args.push("--quiet");
     }
     if let Some(jobs) = &config.jobs {
         cargo_build_args.push("--jobs");
@@ -511,6 +500,13 @@ fn main() {
                 .help("Use verbose output"),
         )
         .arg(
+            Arg::new("quiet")
+                .short('q')
+                .long("quiet")
+                .takes_value(false)
+                .help("Do not print cargo log messages"),
+        )
+        .arg(
             Arg::new("workspace")
                 .long("workspace")
                 .takes_value(false)
@@ -613,6 +609,7 @@ fn main() {
         debug: matches.is_present("debug"),
         offline: matches.is_present("offline"),
         verbose: matches.is_present("verbose"),
+        quiet: matches.is_present("quiet"),
         workspace: matches.is_present("workspace"),
         jobs: matches.value_of_t("jobs").ok(),
         arch: matches.value_of("arch").unwrap(),
@@ -625,4 +622,51 @@ fn main() {
         debug!("manifest_path: {manifest_path:?}");
     }
     build_solana(config, manifest_path);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_version_string_valid_versions() {
+        // Test valid versions that should pass validation
+        assert!(is_version_string("1.2.3").is_ok());
+        assert!(is_version_string("v2.1.0").is_ok());
+        assert!(is_version_string("1.32").is_ok());
+        assert!(is_version_string("v1.32").is_ok());
+        assert!(is_version_string("0.1").is_ok());
+        assert!(is_version_string("v0.1").is_ok());
+        assert!(is_version_string("10.20.30").is_ok());
+        assert!(is_version_string("v10.20.30").is_ok());
+    }
+
+    #[test]
+    fn test_is_version_string_invalid_versions() {
+        // Test invalid versions that should fail validation
+        assert!(is_version_string("1.2.3abc").is_err());
+        assert!(is_version_string("v2.1.0-extra").is_err());
+        assert!(is_version_string("abc1.2.3").is_err());
+        assert!(is_version_string("1").is_err());
+        assert!(is_version_string("v1").is_err());
+        assert!(is_version_string("1.2.3.4.5").is_err());
+        assert!(is_version_string("").is_err());
+        assert!(is_version_string("v").is_err());
+        assert!(is_version_string("1.").is_err());
+        assert!(is_version_string("v1.").is_err());
+        assert!(is_version_string(".1.2").is_err());
+        assert!(is_version_string("1.2.3-beta").is_err());
+        assert!(is_version_string("v1.2.3+build").is_err());
+    }
+
+    #[test]
+    fn test_is_version_string_error_message() {
+        // Test that error message is descriptive
+        let result = is_version_string("invalid");
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err();
+        assert!(error_msg.contains("version string may start with 'v'"));
+        assert!(error_msg.contains("major and minor version numbers"));
+        assert!(error_msg.contains("separated by a dot"));
+    }
 }

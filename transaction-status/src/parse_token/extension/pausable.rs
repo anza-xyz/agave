@@ -1,6 +1,6 @@
 use {
     super::*,
-    spl_token_2022::{
+    spl_token_2022_interface::{
         extension::pausable::instruction::{InitializeInstructionData, PausableInstruction},
         instruction::{decode_instruction_data, decode_instruction_type},
     },

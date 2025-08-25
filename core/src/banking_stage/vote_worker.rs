@@ -19,7 +19,7 @@ use {
     solana_accounts_db::account_locks::validate_account_locks,
     solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
     solana_measure::{measure::Measure, measure_us},
-    solana_poh::poh_recorder::{BankStart, PohRecorderError},
+    solana_poh::poh_recorder::PohRecorderError,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
@@ -121,18 +121,19 @@ impl VoteWorker {
     ) {
         let (decision, make_decision_us) =
             measure_us!(self.decision_maker.make_consume_or_forward_decision());
-        let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(decision.bank_start());
+        let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(decision.bank());
         slot_metrics_tracker.increment_make_decision_us(make_decision_us);
 
+        // Take metrics action before processing packets (potentially resetting the
+        // slot metrics tracker to the next slot) so that we don't count the
+        // packet processing metrics from the next slot towards the metrics
+        // of the previous slot
+        slot_metrics_tracker.apply_action(metrics_action);
+
         match decision {
-            BufferedPacketsDecision::Consume(bank_start) => {
-                // Take metrics action before consume packets (potentially resetting the
-                // slot metrics tracker to the next slot) so that we don't count the
-                // packet processing metrics from the next slot towards the metrics
-                // of the previous slot
-                slot_metrics_tracker.apply_action(metrics_action);
+            BufferedPacketsDecision::Consume(bank) => {
                 let (_, consume_buffered_packets_us) = measure_us!(self.consume_buffered_packets(
-                    &bank_start,
+                    &bank,
                     banking_stage_stats,
                     slot_metrics_tracker,
                 ));
@@ -158,7 +159,7 @@ impl VoteWorker {
 
     fn consume_buffered_packets(
         &mut self,
-        bank_start: &BankStart,
+        bank: &Bank,
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
@@ -172,7 +173,7 @@ impl VoteWorker {
         let num_packets_to_process = self.storage.len();
 
         let reached_end_of_slot = self.process_packets(
-            bank_start,
+            bank,
             &mut consumed_buffered_packets_count,
             &mut rebuffered_packet_count,
             banking_stage_stats,
@@ -207,7 +208,7 @@ impl VoteWorker {
     // returns `true` if the end of slot is reached
     fn process_packets(
         &mut self,
-        bank_start: &BankStart,
+        bank: &Bank,
         consumed_buffered_packets_count: &mut usize,
         rebuffered_packet_count: &mut usize,
         banking_stage_stats: &BankingStageStats,
@@ -216,7 +217,7 @@ impl VoteWorker {
         // Based on the stake distribution present in the supplied bank, drain the unprocessed votes
         // from each validator using a weighted random ordering. Votes from validators with
         // 0 stake are ignored.
-        let all_vote_packets = self.storage.drain_unprocessed(&bank_start.working_bank);
+        let all_vote_packets = self.storage.drain_unprocessed(bank);
 
         let mut reached_end_of_slot = false;
         let mut sanitized_transactions = Vec::with_capacity(UNPROCESSED_BUFFER_STEP_SIZE);
@@ -227,7 +228,7 @@ impl VoteWorker {
             vote_packets.clear();
             chunk.iter().for_each(|packet| {
                 if consume_scan_should_process_packet(
-                    &bank_start.working_bank,
+                    bank,
                     banking_stage_stats,
                     packet,
                     reached_end_of_slot,
@@ -240,7 +241,7 @@ impl VoteWorker {
             });
 
             if let Some(retryable_vote_indices) = self.do_process_packets(
-                bank_start,
+                bank,
                 &mut reached_end_of_slot,
                 &mut sanitized_transactions,
                 banking_stage_stats,
@@ -264,7 +265,7 @@ impl VoteWorker {
 
     fn do_process_packets(
         &self,
-        bank_start: &BankStart,
+        bank: &Bank,
         reached_end_of_slot: &mut bool,
         sanitized_transactions: &mut Vec<RuntimeTransaction<SanitizedTransaction>>,
         banking_stage_stats: &BankingStageStats,
@@ -279,8 +280,7 @@ impl VoteWorker {
 
         let (process_transactions_summary, process_packets_transactions_us) = measure_us!(self
             .process_packets_transactions(
-                &bank_start.working_bank,
-                &bank_start.bank_creation_time,
+                bank,
                 sanitized_transactions,
                 banking_stage_stats,
                 slot_metrics_tracker,
@@ -298,7 +298,7 @@ impl VoteWorker {
             ..
         } = process_transactions_summary;
 
-        if reached_max_poh_height || !bank_start.should_working_bank_still_be_processing_txs() {
+        if reached_max_poh_height || !bank.is_complete() {
             *reached_end_of_slot = true;
         }
 
@@ -324,15 +324,13 @@ impl VoteWorker {
 
     fn process_packets_transactions(
         &self,
-        bank: &Arc<Bank>,
-        bank_creation_time: &Instant,
+        bank: &Bank,
         sanitized_transactions: &[impl TransactionWithMeta],
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) -> ProcessTransactionsSummary {
-        let (mut process_transactions_summary, process_transactions_us) = measure_us!(
-            self.process_transactions(bank, bank_creation_time, sanitized_transactions)
-        );
+        let (mut process_transactions_summary, process_transactions_us) =
+            measure_us!(self.process_transactions(bank, sanitized_transactions));
         slot_metrics_tracker.increment_process_transactions_us(process_transactions_us);
         banking_stage_stats
             .transaction_processing_elapsed
@@ -380,8 +378,7 @@ impl VoteWorker {
     /// than the total number if max PoH height was reached and the bank halted
     fn process_transactions(
         &self,
-        bank: &Arc<Bank>,
-        bank_creation_time: &Instant,
+        bank: &Bank,
         transactions: &[impl TransactionWithMeta],
     ) -> ProcessTransactionsSummary {
         let process_transaction_batch_output = self
@@ -407,8 +404,7 @@ impl VoteWorker {
         total_transaction_counts
             .accumulate(&transaction_counts, commit_transactions_result.is_ok());
 
-        let should_bank_still_be_processing_txs =
-            Bank::should_bank_still_be_processing_txs(bank_creation_time, bank.ns_per_slot);
+        let should_bank_still_be_processing_txs = bank.is_complete();
         let reached_max_poh_height = match (
             commit_transactions_result,
             should_bank_still_be_processing_txs,

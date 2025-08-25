@@ -8,7 +8,7 @@
 //! [`::schedule_task()`](SchedulingStateMachine::schedule_task) while maintaining the account
 //! readonly/writable lock rules. Those returned runnable tasks are guaranteed to be safe to
 //! execute in parallel. Lastly, `SchedulingStateMachine` should be notified about the completion
-//! of the exeuction via [`::deschedule_task()`](SchedulingStateMachine::deschedule_task), so that
+//! of the execution via [`::deschedule_task()`](SchedulingStateMachine::deschedule_task), so that
 //! conflicting tasks can be returned from
 //! [`::schedule_next_unblocked_task()`](SchedulingStateMachine::schedule_next_unblocked_task) as
 //! newly-unblocked runnable ones.
@@ -16,7 +16,7 @@
 //! The design principle of this crate (`solana-unified-scheduler-logic`) is simplicity for the
 //! separation of concern. It is interacted only with a few of its public API by
 //! `solana-unified-scheduler-pool`. This crate doesn't know about banks, slots, solana-runtime,
-//! threads, crossbeam-channel at all. Becasue of this, it's deterministic, easy-to-unit-test, and
+//! threads, crossbeam-channel at all. Because of this, it's deterministic, easy-to-unit-test, and
 //! its perf footprint is well understood. It really focuses on its single job: sorting
 //! transactions in executable order.
 //!
@@ -50,7 +50,7 @@
 //! Put differently, this algorithm tries to gradually lock all of addresses of tasks at different
 //! timings while not deviating the execution order from the original task ingestion order. This
 //! implies there's no locking retries in general, which is the primary source of non-linear perf.
-//! degration.
+//! degradation.
 //!
 //! As a ballpark number from a synthesized micro benchmark on usual CPU for `mainnet-beta`
 //! validators, it takes roughly 100ns to schedule and deschedule a transaction with 10 accounts.
@@ -67,7 +67,7 @@
 //! the job to other threads from the scheduler thread. This preloading is done inside
 //! [`create_task()`](SchedulingStateMachine::create_task). In this way, task scheduling
 //! computational complexity is basically reduced to several word-sized loads and stores in the
-//! schduler thread (i.e.  constant; no allocations nor syscalls), while being proportional to the
+//! scheduler thread (i.e.  constant; no allocations nor syscalls), while being proportional to the
 //! number of addresses in a given transaction. Note that this statement is held true, regardless
 //! of conflicts. This is because the preloading also pre-allocates some scratch-pad area
 //! ([`blocked_usages_from_tasks`](UsageQueueInner::blocked_usages_from_tasks)) to stash blocked
@@ -135,7 +135,7 @@ mod utils {
 
     /// A really tiny counter to hide `.checked_{add,sub}` all over the place.
     ///
-    /// It's caller's reponsibility to ensure this (backed by [`CounterInner`]) never overflow.
+    /// It's caller's responsibility to ensure this (backed by [`CounterInner`]) never overflow.
     #[derive(Debug, Clone, Copy)]
     pub(super) struct ShortCounter(CounterInner);
 

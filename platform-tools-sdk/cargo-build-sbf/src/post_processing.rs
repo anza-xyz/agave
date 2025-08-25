@@ -1,5 +1,5 @@
 use {
-    crate::{spawn, utils::rust_target_triple, Config},
+    crate::{spawn, toolchain::rust_target_triple, Config},
     log::{debug, error, info, warn},
     regex::Regex,
     solana_keypair::{write_keypair_file, Keypair},

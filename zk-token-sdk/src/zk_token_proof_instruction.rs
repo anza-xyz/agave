@@ -29,8 +29,8 @@
 //! this instruction must be signed by the context account's owner. This instruction can be used by
 //! the account owner to reclaim lamports for storage.
 //!
-//! [`ZK Token proof`]: https://docs.solanalabs.com/runtime/zk-token-proof
-//! [`context-state`]: https://docs.solanalabs.com/runtime/zk-token-proof#context-data
+//! [`ZK Token proof`]: https://docs.anza.xyz/runtime/zk-elgamal-proof
+//! [`context-state`]: https://docs.anza.xyz/runtime/zk-elgamal-proof#context-data
 
 pub use crate::instruction::*;
 use {

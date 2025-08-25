@@ -119,17 +119,12 @@ impl Bank {
         let rewards_calculation = epoch_rewards_calculation_cache
             .entry(self.parent_hash)
             .or_insert_with(|| {
-                let calculation = self.calculate_rewards_for_partitioning(
+                Arc::new(self.calculate_rewards_for_partitioning(
                     prev_epoch,
                     reward_calc_tracer,
                     thread_pool,
                     metrics,
-                );
-                info!(
-                    "calculated rewards for epoch: {}, parent_slot: {}, parent_hash: {}",
-                    self.epoch, self.parent_slot, self.parent_hash
-                );
-                Arc::new(calculation)
+                ))
             })
             .clone();
         drop(epoch_rewards_calculation_cache);
@@ -146,9 +141,7 @@ impl Bank {
 
         let total_vote_rewards = vote_account_rewards.total_vote_rewards_lamports;
         self.store_vote_accounts_partitioned(vote_account_rewards, metrics);
-
-        // update reward history of JUST vote_rewards, stake_rewards is vec![] here
-        self.update_reward_history(vec![], vote_account_rewards);
+        self.update_vote_rewards(vote_account_rewards);
 
         let StakeRewardCalculation {
             stake_rewards,
@@ -253,6 +246,11 @@ impl Bank {
             )
             .unwrap_or_default();
 
+        info!(
+            "calculated rewards for epoch: {}, parent_slot: {}, parent_hash: {}",
+            self.epoch, self.parent_slot, self.parent_hash
+        );
+
         PartitionedRewardsCalculation {
             vote_account_rewards,
             stake_rewards,
@@ -311,8 +309,12 @@ impl Bank {
 
         // Use `EpochStakes` for vote accounts
         let leader_schedule_epoch = self.epoch_schedule().get_leader_schedule_epoch(self.slot());
-        let cached_vote_accounts = self.epoch_stakes(leader_schedule_epoch)
-            .expect("calculation should always run after Bank::update_epoch_stakes(leader_schedule_epoch)")
+        let cached_vote_accounts = self
+            .epoch_stakes(leader_schedule_epoch)
+            .expect(
+                "calculation should always run after \
+                 Bank::update_epoch_stakes(leader_schedule_epoch)",
+            )
             .stakes()
             .vote_accounts();
 
@@ -373,8 +375,8 @@ impl Bank {
                             ) && VoteAccount::try_from(account_from_db.clone()).is_ok()
                             {
                                 panic!(
-                                    "Vote account {} not found in cache, but found in db: {:?}",
-                                    vote_pubkey, account_from_db
+                                    "Vote account {vote_pubkey} not found in cache, but found in \
+                                     db: {account_from_db:?}"
                                 );
                             }
                         }
@@ -422,10 +424,7 @@ impl Bank {
                             commission,
                         });
                     } else {
-                        debug!(
-                            "redeem_rewards() failed for {}: {:?}",
-                            stake_pubkey, redeemed
-                        );
+                        debug!("redeem_rewards() failed for {stake_pubkey}: {redeemed:?}");
                     }
                     None
                 })
@@ -583,10 +582,10 @@ mod tests {
         },
         rayon::ThreadPoolBuilder,
         solana_account::{accounts_equal, state_traits::StateMut, ReadableAccount},
-        solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
         solana_stake_interface::state::{Delegation, StakeStateV2},
-        solana_vote_interface::state::VoteState,
+        solana_vote_interface::state::VoteStateV3,
         std::sync::{Arc, RwLockReadGuard},
     };
 
@@ -741,7 +740,7 @@ mod tests {
         solana_logger::setup();
 
         // bank with no rewards to distribute
-        let (genesis_config, _mint_keypair) = create_genesis_config(sol_to_lamports(1.0));
+        let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
@@ -803,7 +802,7 @@ mod tests {
             .load_slow_with_fixed_root(&bank.ancestors, vote_pubkey)
             .unwrap()
             .0;
-        let vote_state = VoteState::deserialize(vote_account.data()).unwrap();
+        let vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
 
         assert_eq!(
             vote_rewards_accounts.accounts_with_rewards.len(),

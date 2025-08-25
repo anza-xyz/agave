@@ -8,7 +8,7 @@ use {
     solana_pubkey::Pubkey,
     solana_reward_info::{RewardInfo, RewardType},
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
+    solana_svm::rent_calculator::{get_account_rent_state, transition_allowed},
     solana_system_interface::program as system_program,
     std::{result::Result, sync::atomic::Ordering::Relaxed},
     thiserror::Error,
@@ -153,16 +153,17 @@ impl Bank {
             return Err(DepositFeeError::InvalidAccountOwner);
         }
 
-        let recipient_pre_rent_state = self.rent_collector().get_account_rent_state(&account);
+        let recipient_pre_rent_state =
+            get_account_rent_state(&self.rent_collector().rent, &account);
         let distribution = account.checked_add_lamports(fees);
         if distribution.is_err() {
             return Err(DepositFeeError::LamportOverflow);
         }
 
-        let recipient_post_rent_state = self.rent_collector().get_account_rent_state(&account);
-        let rent_state_transition_allowed = self
-            .rent_collector()
-            .transition_allowed(&recipient_pre_rent_state, &recipient_post_rent_state);
+        let recipient_post_rent_state =
+            get_account_rent_state(&self.rent_collector().rent, &account);
+        let rent_state_transition_allowed =
+            transition_allowed(&recipient_pre_rent_state, &recipient_post_rent_state);
         if !rent_state_transition_allowed {
             return Err(DepositFeeError::InvalidRentPayingAccount);
         }

@@ -2,11 +2,12 @@ use {
     agave_feature_set::{FeatureSet, FEATURE_NAMES},
     log::*,
     solana_account::{Account, AccountSharedData},
+    solana_cluster_type::ClusterType,
     solana_feature_gate_interface::{self as feature, Feature},
     solana_fee_calculator::FeeRateGovernor,
-    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_genesis_config::GenesisConfig,
     solana_keypair::Keypair,
-    solana_native_token::sol_to_lamports,
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_seed_derivable::SeedDerivable,
@@ -28,7 +29,7 @@ pub fn bootstrap_validator_stake_lamports() -> u64 {
 
 // Number of lamports automatically used for genesis accounts
 pub const fn genesis_sysvar_and_builtin_program_lamports() -> u64 {
-    const NUM_BUILTIN_PROGRAMS: u64 = 7;
+    const NUM_BUILTIN_PROGRAMS: u64 = 6;
     const NUM_PRECOMPILES: u64 = 2;
     const STAKE_HISTORY_MIN_BALANCE: u64 = 114_979_200;
     const CLOCK_SYSVAR_MIN_BALANCE: u64 = 1_169_280;
@@ -246,8 +247,8 @@ pub fn deactivate_features(
             genesis_config.accounts.remove(deactivate_feature_pk);
         } else {
             warn!(
-                "Feature {:?} set for deactivation is not a known Feature public key",
-                deactivate_feature_pk
+                "Feature {deactivate_feature_pk:?} set for deactivation is not a known Feature \
+                 public key"
             );
         }
     }
@@ -308,7 +309,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     let native_mint_account = solana_account::AccountSharedData::from(Account {
         owner: spl_generic_token::token::id(),
         data: spl_generic_token::token::native_mint::ACCOUNT_DATA.to_vec(),
-        lamports: sol_to_lamports(1.),
+        lamports: LAMPORTS_PER_SOL,
         executable: false,
         rent_epoch: 1,
     });

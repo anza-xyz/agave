@@ -391,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn test_write_optionl_fields_raw_format() {
+    fn test_write_optional_fields_raw_format() {
         write_optional_fields(AccountBlockFormat::AlignedRaw);
     }
 

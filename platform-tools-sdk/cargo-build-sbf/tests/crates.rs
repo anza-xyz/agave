@@ -1,18 +1,56 @@
 use {
     assert_cmd::assert::Assert,
     predicates::prelude::*,
-    std::{
-        env, fs,
-        path::PathBuf,
-        str::FromStr,
-        sync::atomic::{AtomicBool, Ordering},
-    },
+    std::{env, fs, path::PathBuf, str::FromStr},
 };
 
 #[macro_use]
 extern crate serial_test;
 
-static SBF_TOOLS_INSTALL: AtomicBool = AtomicBool::new(true);
+fn should_install_tools() -> bool {
+    let tools_path = env::var("HOME").unwrap();
+    let toolchain_path = PathBuf::from(tools_path)
+        .join(".cache")
+        .join("solana")
+        .join("v1.50")
+        .join("platform-tools");
+
+    let rust_path = toolchain_path.join("rust");
+    let llvm_path = toolchain_path.join("llvm");
+    let binaries = rust_path.join("bin");
+
+    let rustc = binaries.join(if cfg!(windows) { "rustc.exe" } else { "rustc" });
+    let cargo = binaries.join(if cfg!(windows) { "cargo.exe" } else { "cargo" });
+
+    if !toolchain_path.try_exists().unwrap_or(false)
+        || !rust_path.try_exists().unwrap_or(false)
+        || !llvm_path.try_exists().unwrap_or(false)
+        || !binaries.try_exists().unwrap_or(false)
+        || !rustc.try_exists().unwrap_or(false)
+        || !cargo.try_exists().unwrap_or(false)
+    {
+        return true;
+    }
+
+    let Ok(folder_metadata) = fs::metadata(rust_path) else {
+        return true;
+    };
+    let Ok(creation_time) = folder_metadata.created() else {
+        return true;
+    };
+
+    let now = std::time::SystemTime::now();
+    let Ok(elapsed_time) = now.duration_since(creation_time) else {
+        return true;
+    };
+
+    if elapsed_time.as_secs() > 300 {
+        return true;
+    }
+
+    false
+}
+
 fn run_cargo_build(crate_name: &str, extra_args: &[&str], fail: bool) {
     let cwd = env::current_dir().expect("Unable to get current working directory");
     let toml = cwd
@@ -22,7 +60,7 @@ fn run_cargo_build(crate_name: &str, extra_args: &[&str], fail: bool) {
         .join("Cargo.toml");
     let toml = format!("{}", toml.display());
     let mut args = vec!["-v", "--sbf-sdk", "../sbf", "--manifest-path", &toml];
-    if SBF_TOOLS_INSTALL.fetch_and(false, Ordering::SeqCst) {
+    if should_install_tools() {
         args.push("--force-tools-install");
     }
     for arg in extra_args {

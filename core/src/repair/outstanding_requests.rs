@@ -85,10 +85,8 @@ pub struct RequestStatus<T> {
 #[cfg(test)]
 pub(crate) mod tests {
     use {
-        super::*,
-        crate::repair::serve_repair::ShredRepairType,
-        solana_ledger::shred::{Shred, ShredFlags},
-        solana_time_utils::timestamp,
+        super::*, crate::repair::serve_repair::ShredRepairType, solana_keypair::Keypair,
+        solana_ledger::shred::Shredder, solana_time_utils::timestamp,
     };
 
     #[test]
@@ -109,7 +107,8 @@ pub(crate) mod tests {
         let repair_type = ShredRepairType::Orphan(9);
         let mut outstanding_requests = OutstandingRequests::default();
         let nonce = outstanding_requests.add_request(repair_type, timestamp());
-        let shred = Shred::new_from_data(0, 0, 0, &[], ShredFlags::empty(), 0, 0, 0);
+        let keypair = Keypair::new();
+        let shred = Shredder::single_shred_for_tests(0, &keypair);
 
         let expire_timestamp = outstanding_requests
             .requests
@@ -128,8 +127,8 @@ pub(crate) mod tests {
         let repair_type = ShredRepairType::Orphan(9);
         let mut outstanding_requests = OutstandingRequests::default();
         let nonce = outstanding_requests.add_request(repair_type, timestamp());
-
-        let shred = Shred::new_from_data(0, 0, 0, &[], ShredFlags::empty(), 0, 0, 0);
+        let keypair = Keypair::new();
+        let shred = Shredder::single_shred_for_tests(0, &keypair);
         let mut expire_timestamp = outstanding_requests
             .requests
             .get(&nonce)

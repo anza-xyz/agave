@@ -11,9 +11,8 @@ use {
     crate::{
         bank::{Bank, BankSlotDelta, DropCallback},
         bank_forks::BankForks,
-        snapshot_bank_utils,
         snapshot_controller::SnapshotController,
-        snapshot_package::{AccountsPackage, AccountsPackageKind, SnapshotKind, SnapshotPackage},
+        snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::SnapshotError,
     },
     crossbeam_channel::{Receiver, SendError, Sender},
@@ -157,12 +156,8 @@ impl SnapshotRequestHandler {
             ),
         );
 
-        let accounts_package_kind = new_accounts_package_kind(&snapshot_request)?;
-        Some(self.handle_snapshot_request(
-            non_snapshot_time_us,
-            snapshot_request,
-            accounts_package_kind,
-        ))
+        let snapshot_kind = new_snapshot_kind(&snapshot_request)?;
+        Some(self.handle_snapshot_request(non_snapshot_time_us, snapshot_request, snapshot_kind))
     }
 
     /// Get the next snapshot request to handle
@@ -228,21 +223,21 @@ impl SnapshotRequestHandler {
         &self,
         non_snapshot_time_us: u128,
         snapshot_request: SnapshotRequest,
-        accounts_package_kind: AccountsPackageKind,
+        snapshot_kind: SnapshotKind,
     ) -> Result<Slot, SnapshotError> {
-        info!("handling snapshot request: {snapshot_request:?}, {accounts_package_kind:?}");
+        info!("handling snapshot request: {snapshot_request:?}, {snapshot_kind:?}");
         let mut total_time = Measure::start("snapshot_request_receiver_total_time");
         let SnapshotRequest {
             snapshot_root_bank,
             status_cache_slot_deltas,
-            request_kind,
+            request_kind: _,
             enqueued: _,
         } = snapshot_request;
 
         // we should not rely on the state of this validator until startup verification is complete
         assert!(snapshot_root_bank.has_initial_accounts_hash_verification_completed());
 
-        if accounts_package_kind == AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot) {
+        if snapshot_kind.is_full_snapshot() {
             // The latest full snapshot slot is what accounts-db uses to properly handle
             // zero lamport accounts.  We are handling a full snapshot request here, and
             // since taking a snapshot is not allowed to fail, we can update accounts-db now.
@@ -283,30 +278,22 @@ impl SnapshotRequestHandler {
         snapshot_root_bank.shrink_candidate_slots();
         shrink_time.stop();
 
-        // Snapshot the bank and send over an accounts package
+        // Snapshot the bank and send over a snapshot package
         let mut snapshot_time = Measure::start("snapshot_time");
-        let snapshot_storages = snapshot_bank_utils::get_snapshot_storages(&snapshot_root_bank);
-        let accounts_package = match request_kind {
-            SnapshotRequestKind::FullSnapshot | SnapshotRequestKind::IncrementalSnapshot => {
-                match &accounts_package_kind {
-                    AccountsPackageKind::Snapshot(_) => AccountsPackage::new_for_snapshot(
-                        accounts_package_kind,
-                        &snapshot_root_bank,
-                        snapshot_storages,
-                        status_cache_slot_deltas,
-                    ),
-                }
-            }
-        };
-        let snapshot_package = SnapshotPackage::new(accounts_package);
+        let snapshot_package = SnapshotPackage::new(
+            snapshot_kind,
+            &snapshot_root_bank,
+            snapshot_root_bank.get_snapshot_storages(None),
+            status_cache_slot_deltas,
+        );
         self.pending_snapshot_packages
             .lock()
             .unwrap()
             .push(snapshot_package);
         snapshot_time.stop();
         info!(
-            "Handled snapshot request. accounts package kind: {:?}, slot: {}, bank hash: {}",
-            accounts_package_kind,
+            "Handled snapshot request. snapshot kind: {:?}, slot: {}, bank hash: {}",
+            snapshot_kind,
             snapshot_root_bank.slot(),
             snapshot_root_bank.hash(),
         );
@@ -381,7 +368,7 @@ impl PrunedBanksRequestHandler {
         // Purge all the slots in parallel
         // Banks for the same slot are purged sequentially
         let accounts_db = bank.rc.accounts.accounts_db.as_ref();
-        accounts_db.thread_pool_clean.install(|| {
+        accounts_db.thread_pool_background.install(|| {
             grouped_banks_to_purge.into_par_iter().for_each(|group| {
                 group.iter().for_each(|(slot, bank_id)| {
                     accounts_db.purge_slot(*slot, *bank_id, true);
@@ -522,10 +509,9 @@ impl AccountsBackgroundService {
                                 Ok(snapshot_slot) => {
                                     assert!(
                                         last_cleaned_slot <= snapshot_slot,
-                                        "last cleaned slot: {last_cleaned_slot}, \
-                                         snapshot request slot: {snapshot_slot}, \
-                                         is startup verification complete: {}, \
-                                         enqueued snapshot requests: {:?}",
+                                        "last cleaned slot: {last_cleaned_slot}, snapshot request \
+                                         slot: {snapshot_slot}, is startup verification complete: \
+                                         {}, enqueued snapshot requests: {:?}",
                                         bank.has_initial_accounts_hash_verification_completed(),
                                         request_handlers
                                             .snapshot_request_handler
@@ -539,8 +525,8 @@ impl AccountsBackgroundService {
                                 }
                                 Err(err) => {
                                     error!(
-                                        "Stopping AccountsBackgroundService! \
-                                         Fatal error while handling snapshot requests: {err}",
+                                        "Stopping AccountsBackgroundService! Fatal error while \
+                                         handling snapshot requests: {err}",
                                     );
                                     exit.store(true, Ordering::Relaxed);
                                     break;
@@ -673,13 +659,11 @@ impl AbsStatus {
     }
 }
 
-/// Get the AccountsPackageKind from a given SnapshotRequest
+/// Get the SnapshotKind from a given SnapshotRequest
 #[must_use]
-fn new_accounts_package_kind(snapshot_request: &SnapshotRequest) -> Option<AccountsPackageKind> {
+fn new_snapshot_kind(snapshot_request: &SnapshotRequest) -> Option<SnapshotKind> {
     match snapshot_request.request_kind {
-        SnapshotRequestKind::FullSnapshot => {
-            Some(AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot))
-        }
+        SnapshotRequestKind::FullSnapshot => Some(SnapshotKind::FullSnapshot),
         SnapshotRequestKind::IncrementalSnapshot => {
             if let Some(latest_full_snapshot_slot) = snapshot_request
                 .snapshot_root_bank
@@ -688,9 +672,7 @@ fn new_accounts_package_kind(snapshot_request: &SnapshotRequest) -> Option<Accou
                 .accounts_db
                 .latest_full_snapshot_slot()
             {
-                Some(AccountsPackageKind::Snapshot(
-                    SnapshotKind::IncrementalSnapshot(latest_full_snapshot_slot),
-                ))
+                Some(SnapshotKind::IncrementalSnapshot(latest_full_snapshot_slot))
             } else {
                 warn!(
                     "Ignoring IncrementalSnapshot request for slot {} because there is no latest \

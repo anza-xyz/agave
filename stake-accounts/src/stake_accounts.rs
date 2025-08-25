@@ -290,16 +290,36 @@ mod tests {
         solana_signer::Signer,
         solana_stake_interface::state::StakeStateV2,
         solana_stake_program::stake_state,
+        solana_sysvar::epoch_rewards::EpochRewards,
         std::sync::{Arc, RwLock},
     };
 
     fn create_bank(lamports: u64) -> (Arc<Bank>, Arc<RwLock<BankForks>>, Keypair, u64, u64) {
         let (mut genesis_config, mint_keypair) = create_genesis_config(lamports);
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
+
+        for (pubkey, account) in
+            solana_program_binaries::by_id(&stake::program::id(), &genesis_config.rent)
+                .unwrap()
+                .into_iter()
+        {
+            genesis_config.add_account(pubkey, account);
+        }
+
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        bank.squash();
+        let bank = Bank::new_from_parent(bank, &Pubkey::new_unique(), 1);
+        bank.set_sysvar_for_tests(&EpochRewards::default());
+
         let stake_rent = bank.get_minimum_balance_for_rent_exemption(StakeStateV2::size_of());
         let system_rent = bank.get_minimum_balance_for_rent_exemption(0);
-        (bank, bank_forks, mint_keypair, stake_rent, system_rent)
+        (
+            bank.into(),
+            bank_forks,
+            mint_keypair,
+            stake_rent,
+            system_rent,
+        )
     }
 
     fn create_account<C: SyncClient>(

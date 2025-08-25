@@ -35,8 +35,8 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .value_name("PATHS")
             .takes_value(true)
             .help(
-                "Persistent accounts location. May be specified multiple times. \
-                [default: <LEDGER>/accounts]",
+                "Persistent accounts location. May be specified multiple times. [default: \
+                 <LEDGER>/accounts]",
             ),
         Arg::with_name("accounts_index_path")
             .long("accounts-index-path")
@@ -44,8 +44,8 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .takes_value(true)
             .multiple(true)
             .help(
-                "Persistent accounts-index location. May be specified multiple times. \
-                [default: <LEDGER>/accounts_index]",
+                "Persistent accounts-index location. May be specified multiple times. [default: \
+                 <LEDGER>/accounts_index]",
             ),
         Arg::with_name("accounts_index_bins")
             .long("accounts-index-bins")
@@ -157,18 +157,23 @@ pub fn snapshot_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .help("Do not start from a local snapshot if present"),
         Arg::with_name("snapshots")
             .long("snapshots")
-            .alias("snapshot-archive-path")
-            .alias("full-snapshot-archive-path")
             .value_name("DIR")
             .takes_value(true)
             .global(true)
             .help("Use DIR for snapshot location [default: --ledger value]"),
+        Arg::with_name("full_snapshot_archive_path")
+            .long("full-snapshot-archive-path")
+            .alias("snapshot-archive-path")
+            .value_name("DIR")
+            .takes_value(true)
+            .global(true)
+            .help("Use DIR as full snapshot archives location [default: --snapshots value]"),
         Arg::with_name("incremental_snapshot_archive_path")
             .long("incremental-snapshot-archive-path")
             .value_name("DIR")
             .takes_value(true)
             .global(true)
-            .help("Use DIR for separate incremental snapshot location"),
+            .help("Use DIR as incremental snapshot archives location [default: --snapshots value]"),
         Arg::with_name(use_snapshot_archives_at_startup::cli::NAME)
             .long(use_snapshot_archives_at_startup::cli::LONG_ARG)
             .takes_value(true)

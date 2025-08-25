@@ -1,5 +1,4 @@
 #![allow(clippy::arithmetic_side_effects)]
-pub mod atomic_udp_socket;
 pub mod evicting_sender;
 pub mod msghdr;
 pub mod nonblocking;

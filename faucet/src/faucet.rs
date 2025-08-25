@@ -9,12 +9,12 @@ use {
     crossbeam_channel::{unbounded, Sender},
     log::*,
     serde_derive::{Deserialize, Serialize},
+    solana_cli_output::display::build_balance_message,
     solana_hash::Hash,
     solana_instruction::Instruction,
     solana_keypair::Keypair,
     solana_message::Message,
     solana_metrics::datapoint_info,
-    solana_native_token::lamports_to_sol,
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
@@ -67,10 +67,10 @@ pub enum FaucetError {
     NoDataReceived,
 
     #[error("request too large; req: ◎{0}, cap: ◎{1}")]
-    PerRequestCapExceeded(f64, f64),
+    PerRequestCapExceeded(String, String),
 
     #[error("limit reached; req: ◎{0}, to: {1}, current: ◎{2}, cap: ◎{3}")]
-    PerTimeCapExceeded(f64, String, f64, f64),
+    PerTimeCapExceeded(String, String, String, String),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -126,8 +126,8 @@ impl Faucet {
                 warn!(
                     "per_time_cap {} SOL < per_request_cap {} SOL; \
                     maximum single requests will fail",
-                    lamports_to_sol(per_time_cap),
-                    lamports_to_sol(per_request_cap),
+                    build_balance_message(per_time_cap, false, false),
+                    build_balance_message(per_request_cap, false, false),
                 );
             }
         }
@@ -152,10 +152,10 @@ impl Faucet {
         if let Some(cap) = self.per_time_cap {
             if new_total > cap {
                 return Err(FaucetError::PerTimeCapExceeded(
-                    lamports_to_sol(request_amount),
+                    build_balance_message(request_amount, false, false),
                     to.to_string(),
-                    lamports_to_sol(new_total),
-                    lamports_to_sol(cap),
+                    build_balance_message(new_total, false, false),
+                    build_balance_message(cap, false, false),
                 ));
             }
         }
@@ -186,7 +186,7 @@ impl Faucet {
                 let mint_pubkey = self.faucet_keypair.pubkey();
                 info!(
                     "Requesting airdrop of {} SOL to {:?}",
-                    lamports_to_sol(lamports),
+                    build_balance_message(lamports, false, false),
                     to
                 );
 
@@ -195,12 +195,12 @@ impl Faucet {
                         let memo = format!(
                             "{}",
                             FaucetError::PerRequestCapExceeded(
-                                lamports_to_sol(lamports),
-                                lamports_to_sol(cap),
+                                build_balance_message(lamports, false, false),
+                                build_balance_message(cap, false, false),
                             )
                         );
                         let memo_instruction = Instruction {
-                            program_id: Pubkey::from(spl_memo::id().to_bytes()),
+                            program_id: spl_memo_interface::v3::id(),
                             accounts: vec![],
                             data: memo.as_bytes().to_vec(),
                         };
@@ -630,7 +630,7 @@ mod tests {
             assert_eq!(tx.signatures.len(), 1);
             assert_eq!(
                 message.account_keys,
-                vec![mint_pubkey, Pubkey::from(spl_memo::id().to_bytes())]
+                vec![mint_pubkey, spl_memo_interface::v3::id()]
             );
             assert_eq!(message.recent_blockhash, blockhash);
 

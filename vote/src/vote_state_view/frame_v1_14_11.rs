@@ -100,7 +100,7 @@ mod tests {
         super::*,
         solana_clock::Clock,
         solana_vote_interface::state::{
-            LandedVote, Lockout, VoteInit, VoteState, VoteState1_14_11, VoteStateVersions,
+            LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3, VoteStateVersions,
         },
     };
 
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn test_try_new_simple() {
-        let mut target_vote_state = VoteState::new(&VoteInit::default(), &Clock::default());
+        let mut target_vote_state = VoteStateV3::new(&VoteInit::default(), &Clock::default());
         target_vote_state.root_slot = Some(42);
         target_vote_state.epoch_credits.push((1, 2, 3));
         target_vote_state.votes.push_back(LandedVote {

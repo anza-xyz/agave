@@ -1102,7 +1102,7 @@ pub(crate) mod tests {
             new_rand_coding_shreds(&mut rng, next_shred_index, 10, &shredder, &leader)[0].clone();
         let mut data_shred_different_retransmitter_payload = data_shred.clone().into_payload();
         shred::layout::set_retransmitter_signature(
-            &mut data_shred_different_retransmitter_payload,
+            &mut data_shred_different_retransmitter_payload.as_mut(),
             &Signature::new_unique(),
         )
         .unwrap();
@@ -1110,7 +1110,7 @@ pub(crate) mod tests {
             Shred::new_from_serialized_shred(data_shred_different_retransmitter_payload).unwrap();
         let mut coding_shred_different_retransmitter_payload = coding_shred.clone().into_payload();
         shred::layout::set_retransmitter_signature(
-            &mut coding_shred_different_retransmitter_payload,
+            &mut coding_shred_different_retransmitter_payload.as_mut(),
             &Signature::new_unique(),
         )
         .unwrap();

@@ -4,7 +4,7 @@
 // Export tokio for test clients
 pub use tokio;
 use {
-    agave_feature_set::FEATURE_NAMES,
+    agave_feature_set::{raise_cpi_nesting_limit_to_8, FEATURE_NAMES},
     async_trait::async_trait,
     base64::{prelude::BASE64_STANDARD, Engine},
     chrono_humanize::{Accuracy, HumanTime, Tense},
@@ -14,18 +14,19 @@ use {
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
     solana_clock::{Epoch, Slot},
+    solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_fee_calculator::{FeeRateGovernor, DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE},
-    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
     solana_instruction::{
         error::{InstructionError, UNSUPPORTED_SYSVAR},
         Instruction,
     },
     solana_keypair::Keypair,
-    solana_log_collector::ic_msg,
-    solana_native_token::sol_to_lamports,
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_poh_config::PohConfig,
+    solana_program_binaries as programs,
     solana_program_entrypoint::{deserialize, SUCCESS},
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
@@ -42,9 +43,10 @@ use {
         runtime_config::RuntimeConfig,
     },
     solana_signer::Signer,
-    solana_sysvar::Sysvar,
+    solana_svm_log_collector::ic_msg,
+    solana_svm_timings::ExecuteTimings,
+    solana_sysvar::SysvarSerialize,
     solana_sysvar_id::SysvarId,
-    solana_timings::ExecuteTimings,
     solana_vote_program::vote_state::{self, VoteStateV3, VoteStateVersions},
     std::{
         cell::RefCell,
@@ -75,8 +77,6 @@ pub use {
     },
     solana_transaction_context::IndexOfAccount,
 };
-
-pub mod programs;
 
 /// Errors from the program test environment
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -116,7 +116,7 @@ pub fn invoke_builtin_function(
     invoke_context.consume_checked(1)?;
 
     let log_collector = invoke_context.get_log_collector();
-    let program_id = instruction_context.get_last_program_key(transaction_context)?;
+    let program_id = instruction_context.get_program_key()?;
     stable_log::program_invoke(
         &log_collector,
         program_id,
@@ -131,9 +131,9 @@ pub fn invoke_builtin_function(
         .get_feature_set()
         .mask_out_rent_epoch_in_vm_serialization;
     let (mut parameter_bytes, _regions, _account_lengths) = serialize_parameters(
-        transaction_context,
-        instruction_context,
-        false, // direct_mapping // There is no VM so direct mapping can not be implemented here
+        &instruction_context,
+        false, // There is no VM so stricter_abi_and_runtime_constraints can not be implemented here
+        false, // There is no VM so account_data_direct_mapping can not be implemented here
         mask_out_rent_epoch_in_vm_serialization,
     )?;
 
@@ -173,8 +173,7 @@ pub fn invoke_builtin_function(
 
     // Commit AccountInfo changes back into KeyedAccounts
     for i in deduplicated_indices.into_iter() {
-        let mut borrowed_account =
-            instruction_context.try_borrow_instruction_account(transaction_context, i)?;
+        let mut borrowed_account = instruction_context.try_borrow_instruction_account(i)?;
         if borrowed_account.is_writable() {
             if let Some(account_info) = account_info_map.get(borrowed_account.get_key()) {
                 if borrowed_account.get_lamports() != account_info.lamports() {
@@ -215,7 +214,7 @@ macro_rules! processor {
     };
 }
 
-fn get_sysvar<T: Default + Sysvar + Sized + serde::de::DeserializeOwned + Clone>(
+fn get_sysvar<T: Default + SysvarSerialize + Sized + serde::de::DeserializeOwned + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
     var_addr: *mut u8,
 ) -> u64 {
@@ -255,9 +254,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
-        let caller = instruction_context
-            .get_last_program_key(transaction_context)
-            .unwrap();
+        let caller = instruction_context.get_program_key().unwrap();
 
         stable_log::program_invoke(
             &log_collector,
@@ -279,11 +276,8 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
-
-        let next_instruction_accounts = transaction_context
-            .get_next_instruction_context()
-            .unwrap()
-            .instruction_accounts();
+        let next_instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let next_instruction_accounts = next_instruction_context.instruction_accounts();
         let mut account_indices = Vec::with_capacity(next_instruction_accounts.len());
         for instruction_account in next_instruction_accounts.iter() {
             let account_key = transaction_context
@@ -299,7 +293,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                 .get_index_of_account_in_instruction(instruction_account.index_in_transaction)
                 .unwrap();
             let mut borrowed_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, index_in_caller)
+                .try_borrow_instruction_account(index_in_caller)
                 .unwrap();
             if borrowed_account.get_lamports() != account_info.lamports() {
                 borrowed_account
@@ -344,7 +338,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                 .get_index_of_account_in_instruction(index_in_transaction)
                 .unwrap();
             let borrowed_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, index_in_caller)
+                .try_borrow_instruction_account(index_in_caller)
                 .unwrap();
             let account_info = &account_infos[account_info_index];
             **account_info.try_borrow_mut_lamports().unwrap() = borrowed_account.get_lamports();
@@ -424,9 +418,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
-        let caller = *instruction_context
-            .get_last_program_key(transaction_context)
-            .unwrap();
+        let caller = *instruction_context.get_program_key().unwrap();
         transaction_context
             .set_return_data(caller, data.to_vec())
             .unwrap();
@@ -611,7 +603,7 @@ impl ProgramTest {
         );
     }
 
-    pub fn add_sysvar_account<S: Sysvar>(&mut self, address: Pubkey, sysvar: &S) {
+    pub fn add_sysvar_account<S: SysvarSerialize>(&mut self, address: Pubkey, sysvar: &S) {
         let account = create_account_shared_data_for_test(sysvar);
         self.add_account(address, account.into());
     }
@@ -800,13 +792,13 @@ impl ProgramTest {
         };
         let bootstrap_validator_pubkey = Pubkey::new_unique();
         let bootstrap_validator_stake_lamports =
-            rent.minimum_balance(VoteStateV3::size_of()) + sol_to_lamports(1_000_000.0);
+            rent.minimum_balance(VoteStateV3::size_of()) + 1_000_000 * LAMPORTS_PER_SOL;
 
         let mint_keypair = Keypair::new();
         let voting_keypair = Keypair::new();
 
         let mut genesis_config = create_genesis_config_with_leader_ex(
-            sol_to_lamports(1_000_000.0),
+            1_000_000 * LAMPORTS_PER_SOL,
             &mint_keypair.pubkey(),
             &bootstrap_validator_pubkey,
             &voting_keypair.pubkey(),
@@ -847,7 +839,11 @@ impl ProgramTest {
             Arc::new(RuntimeConfig {
                 compute_budget: self.compute_max_units.map(|max_units| ComputeBudget {
                     compute_unit_limit: max_units,
-                    ..ComputeBudget::default()
+                    ..ComputeBudget::new_with_defaults(
+                        genesis_config
+                            .accounts
+                            .contains_key(&raise_cpi_nesting_limit_to_8::id()),
+                    )
                 }),
                 transaction_account_lock_limit: self.transaction_account_lock_limit,
                 ..RuntimeConfig::default()
@@ -1103,7 +1099,7 @@ impl ProgramTestContext {
         for _ in 0..number_of_credits {
             vote_state.increment_credits(epoch, 1);
         }
-        let versioned = VoteStateVersions::new_current(vote_state);
+        let versioned = VoteStateVersions::new_v3(vote_state);
         vote_state::to(&versioned, &mut vote_account).unwrap();
         bank.store_account(vote_account_address, &vote_account);
     }
@@ -1126,7 +1122,7 @@ impl ProgramTestContext {
     /// that would be difficult to replicate on a new test cluster. Beware
     /// that it can be used to create states that would not be reachable
     /// under normal conditions!
-    pub fn set_sysvar<T: SysvarId + Sysvar>(&self, sysvar: &T) {
+    pub fn set_sysvar<T: SysvarId + SysvarSerialize>(&self, sysvar: &T) {
         let bank_forks = self.bank_forks.read().unwrap();
         let bank = bank_forks.working_bank();
         bank.set_sysvar_for_tests(sysvar);

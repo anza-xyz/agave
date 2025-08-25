@@ -6,7 +6,7 @@ use {
     solana_program_option::COption,
     solana_program_pack::Pack,
     solana_pubkey::Pubkey,
-    spl_token_2022::{
+    spl_token_2022_interface::{
         extension::{BaseStateWithExtensions, StateWithExtensions},
         generic_token_account::GenericTokenAccount,
         state::{Account, AccountState, Mint, Multisig},
@@ -176,7 +176,7 @@ mod test {
         crate::parse_token_extension::{UiMemoTransfer, UiMintCloseAuthority},
         solana_account_decoder_client_types::token::UiExtension,
         spl_pod::optional_keys::OptionalNonZeroPubkey,
-        spl_token_2022::extension::{
+        spl_token_2022_interface::extension::{
             immutable_owner::ImmutableOwner, interest_bearing_mint::InterestBearingConfig,
             memo_transfer::MemoTransfer, mint_close_authority::MintCloseAuthority,
             scaled_ui_amount::ScaledUiAmountConfig, BaseStateWithExtensionsMut, ExtensionType,

@@ -27,7 +27,7 @@ use {
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const CACHE_ENTRY_SIZE: usize =
-    std::mem::size_of::<ReadOnlyAccountCacheEntry>() + 2 * std::mem::size_of::<ReadOnlyCacheKey>();
+    size_of::<ReadOnlyAccountCacheEntry>() + size_of::<ReadOnlyCacheKey>();
 
 type ReadOnlyCacheKey = Pubkey;
 

@@ -197,6 +197,8 @@ impl QosService {
                         CommitTransactionDetails::Committed {
                             compute_units,
                             loaded_accounts_data_size,
+                            result: _,
+                            fee_payer_post_balance: _,
                         } => {
                             cost_tracker.update_execution_cost(
                                 tx_cost,
@@ -207,7 +209,7 @@ impl QosService {
                                 ),
                             );
                         }
-                        CommitTransactionDetails::NotCommitted => {
+                        CommitTransactionDetails::NotCommitted(_err) => {
                             cost_tracker.remove(tx_cost);
                         }
                     }
@@ -750,6 +752,8 @@ mod tests {
                         + execute_units_adjustment,
                     loaded_accounts_data_size: loaded_accounts_data_size
                         + loaded_accounts_data_size_adjustment,
+                    result: Ok(()),
+                    fee_payer_post_balance: 0,
                 })
                 .collect();
             let final_txs_cost = total_txs_cost
@@ -871,13 +875,17 @@ mod tests {
                 .enumerate()
                 .map(|(n, tx_cost)| {
                     if n % 2 == 0 {
-                        CommitTransactionDetails::NotCommitted
+                        CommitTransactionDetails::NotCommitted(
+                            TransactionError::InsufficientFundsForFee,
+                        )
                     } else {
                         CommitTransactionDetails::Committed {
                             compute_units: tx_cost.as_ref().unwrap().programs_execution_cost()
                                 + execute_units_adjustment,
                             loaded_accounts_data_size: loaded_accounts_data_size
                                 + loaded_accounts_data_size_adjustment,
+                            result: Ok(()),
+                            fee_payer_post_balance: 1,
                         }
                     }
                 })

@@ -8,7 +8,7 @@
 //! The protocol guarantees computational soundness (by the hardness of discrete log) and perfect
 //! zero-knowledge in the random oracle model.
 //!
-//! [`ZK Token proof program`]: https://docs.solanalabs.com/runtime/zk-token-proof
+//! [`ZK Token proof program`]: https://docs.anza.xyz/runtime/zk-elgamal-proof
 
 #[cfg(not(target_os = "solana"))]
 use {

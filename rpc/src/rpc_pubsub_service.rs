@@ -37,7 +37,7 @@ pub const DEFAULT_TEST_QUEUE_CAPACITY_ITEMS: usize = 100;
 pub const DEFAULT_QUEUE_CAPACITY_BYTES: usize = 256 * 1024 * 1024;
 pub const DEFAULT_WORKER_THREADS: usize = 1;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PubSubConfig {
     pub enable_block_subscription: bool,
     pub enable_vote_subscription: bool,

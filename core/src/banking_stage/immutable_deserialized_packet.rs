@@ -4,7 +4,7 @@ use {
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_hash::Hash,
-    solana_message::{v0::LoadedAddresses, AddressLoaderError, Message, SimpleAddressLoader},
+    solana_message::{v0::LoadedAddresses, Message, SimpleAddressLoader},
     solana_perf::packet::PacketRef,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
@@ -19,6 +19,7 @@ use {
         sanitized::{MessageHash, SanitizedTransaction},
         versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
     },
+    solana_transaction_error::AddressLoaderError,
     std::{cmp::Ordering, collections::HashSet, mem::size_of},
     thiserror::Error,
 };

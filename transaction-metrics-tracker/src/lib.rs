@@ -12,7 +12,7 @@ static TXN_MASK: std::sync::LazyLock<u16> =
     std::sync::LazyLock::new(|| rand::thread_rng().gen_range(0..4096));
 
 /// Check if a transaction given its signature matches the randomly selected mask.
-/// The signaure should be from the reference of Signature
+/// The signature should be from the reference of Signature
 pub fn should_track_transaction(signature: &[u8; SIGNATURE_BYTES]) -> bool {
     // We do not use the highest signature byte as it is not really random
     let match_portion: u16 = u16::from_le_bytes([signature[61], signature[62]]) >> 4;
@@ -21,7 +21,7 @@ pub fn should_track_transaction(signature: &[u8; SIGNATURE_BYTES]) -> bool {
 }
 
 /// Check if a transaction packet's signature matches the mask.
-/// This does a rudimentry verification to make sure the packet at least
+/// This does a rudimentary verification to make sure the packet at least
 /// contains the signature data and it returns the reference to the signature.
 pub fn signature_if_should_track_packet(
     packet: &BytesPacket,
@@ -31,7 +31,7 @@ pub fn signature_if_should_track_packet(
 }
 
 /// Get the signature of the transaction packet
-/// This does a rudimentry verification to make sure the packet at least
+/// This does a rudimentary verification to make sure the packet at least
 /// contains the signature data and it returns the reference to the signature.
 pub fn get_signature_from_packet(
     packet: &BytesPacket,

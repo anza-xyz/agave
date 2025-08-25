@@ -1,7 +1,8 @@
 use {
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
-    solana_program_test::{programs::spl_programs, ProgramTest},
+    solana_program_binaries::spl_programs,
+    solana_program_test::ProgramTest,
     solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
     solana_signer::Signer,

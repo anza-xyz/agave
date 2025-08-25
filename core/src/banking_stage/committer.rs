@@ -20,6 +20,7 @@ use {
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processing_result::TransactionProcessingResult,
     },
+    solana_transaction_error::TransactionError,
     std::{num::Saturating, sync::Arc},
 };
 
@@ -28,8 +29,10 @@ pub enum CommitTransactionDetails {
     Committed {
         compute_units: u64,
         loaded_accounts_data_size: u32,
+        fee_payer_post_balance: u64,
+        result: Result<(), TransactionError>,
     },
-    NotCommitted,
+    NotCommitted(TransactionError),
 }
 
 #[derive(Clone)]
@@ -61,7 +64,7 @@ impl Committer {
         batch: &TransactionBatch<impl TransactionWithMeta>,
         processing_results: Vec<TransactionProcessingResult>,
         starting_transaction_index: Option<usize>,
-        bank: &Arc<Bank>,
+        bank: &Bank,
         balance_collector: Option<BalanceCollector>,
         execute_and_commit_timings: &mut LeaderExecuteAndCommitTimings,
         processed_counts: &ProcessedTransactionCounts,
@@ -85,8 +88,10 @@ impl Committer {
                     loaded_accounts_data_size: committed_tx
                         .loaded_account_stats
                         .loaded_accounts_data_size,
+                    result: committed_tx.status.clone(),
+                    fee_payer_post_balance: committed_tx.fee_payer_post_balance,
                 },
-                Err(_) => CommitTransactionDetails::NotCommitted,
+                Err(err) => CommitTransactionDetails::NotCommitted(err.clone()),
             })
             .collect();
 
@@ -119,7 +124,7 @@ impl Committer {
     fn collect_balances_and_send_status_batch(
         &self,
         commit_results: Vec<TransactionCommitResult>,
-        bank: &Arc<Bank>,
+        bank: &Bank,
         batch: &TransactionBatch<impl TransactionWithMeta>,
         balance_collector: Option<BalanceCollector>,
         starting_transaction_index: Option<usize>,

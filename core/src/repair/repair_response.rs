@@ -48,8 +48,8 @@ mod test {
         super::*,
         solana_keypair::Keypair,
         solana_ledger::{
-            shred::{Shred, ShredFlags},
-            sigverify_shreds::{verify_shred_cpu, LruCache},
+            shred::Shredder,
+            sigverify_shreds::{verify_shred_cpu, LruCache, SlotPubkeys},
         },
         solana_packet::PacketFlags,
         solana_signer::Signer,
@@ -63,19 +63,9 @@ mod test {
     fn run_test_sigverify_shred_cpu_repair(slot: Slot) {
         solana_logger::setup();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-        let mut shred = Shred::new_from_data(
-            slot,
-            0xc0de,
-            0xdead,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            0xc0de,
-        );
-        assert_eq!(shred.slot(), slot);
         let keypair = Keypair::new();
-        shred.sign(&keypair);
+        let shred = Shredder::single_shred_for_tests(slot, &keypair);
+
         trace!("signature {}", shred.signature());
         let nonce = 9;
         let mut packet = repair_response_packet_from_bytes(
@@ -86,14 +76,14 @@ mod test {
         .unwrap();
         packet.meta_mut().flags |= PacketFlags::REPAIR;
 
-        let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
+        let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
         assert!(verify_shred_cpu((&packet).into(), &leader_slots, &cache));
 
         let wrong_keypair = Keypair::new();
-        let leader_slots = HashMap::from([(slot, wrong_keypair.pubkey())]);
+        let leader_slots: SlotPubkeys = [(slot, wrong_keypair.pubkey())].into_iter().collect();
         assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
 
-        let leader_slots = HashMap::new();
+        let leader_slots: SlotPubkeys = HashMap::default();
         assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
     }
 

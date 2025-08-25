@@ -177,7 +177,8 @@ impl DefaultSigner {
                 })
                 .map_err(|_| {
                     std::io::Error::other(format!(
-                        "No default signer found, run \"solana-keygen new -o {}\" to create a new one",
+                        "No default signer found, run \"solana-keygen new -o {}\" to create a new \
+                         one",
                         self.path
                     ))
                 })?;
@@ -774,7 +775,8 @@ pub fn signer_from_path_with_config(
         }
         SignerSourceKind::Filepath(path) => match read_keypair_file(&path) {
             Err(e) => Err(std::io::Error::other(format!(
-                "could not read keypair file \"{path}\". Run \"solana-keygen new\" to create a keypair file: {e}"
+                "could not read keypair file \"{path}\". Run \"solana-keygen new\" to create a \
+                 keypair file: {e}"
             ))
             .into()),
             Ok(file) => Ok(Box::new(file)),
@@ -808,9 +810,9 @@ pub fn signer_from_path_with_config(
             } else if config.allow_null_signer || matches.is_present(SIGN_ONLY_ARG.name) {
                 Ok(Box::new(NullSigner::new(&pubkey)))
             } else {
-                Err(std::io::Error::other(
-                    format!("missing signature for supplied pubkey: {pubkey}"),
-                )
+                Err(std::io::Error::other(format!(
+                    "missing signature for supplied pubkey: {pubkey}"
+                ))
                 .into())
             }
         }
@@ -894,8 +896,8 @@ pub fn resolve_signer_from_path(
         }
         SignerSourceKind::Filepath(path) => match read_keypair_file(&path) {
             Err(e) => Err(std::io::Error::other(format!(
-                "could not read keypair file \"{path}\". \
-                    Run \"solana-keygen new\" to create a keypair file: {e}"
+                "could not read keypair file \"{path}\". Run \"solana-keygen new\" to create a \
+                 keypair file: {e}"
             ))
             .into()),
             Ok(_) => Ok(Some(path.to_string())),
@@ -934,7 +936,8 @@ pub const ASK_KEYWORD: &str = "ASK";
 pub const SKIP_SEED_PHRASE_VALIDATION_ARG: ArgConstant<'static> = ArgConstant {
     long: "skip-seed-phrase-validation",
     name: "skip_seed_phrase_validation",
-    help: "Skip validation of seed phrases. Use this if your phrase does not use the BIP39 official English word list",
+    help: "Skip validation of seed phrases. Use this if your phrase does not use the BIP39 \
+           official English word list",
 };
 
 /// Prompts user for a passphrase and then asks for confirmirmation to check for mistakes
@@ -1013,8 +1016,8 @@ pub fn keypair_from_path(
         }
         SignerSourceKind::Filepath(path) => match read_keypair_file(&path) {
             Err(e) => Err(std::io::Error::other(format!(
-                "could not read keypair file \"{path}\". \
-                    Run \"solana-keygen new\" to create a keypair file: {e}"
+                "could not read keypair file \"{path}\". Run \"solana-keygen new\" to create a \
+                 keypair file: {e}"
             ))
             .into()),
             Ok(file) => Ok(file),
@@ -1044,7 +1047,8 @@ pub fn keypair_from_seed_phrase(
     let seed_phrase = prompt_password(format!("[{keypair_name}] seed phrase: "))?;
     let seed_phrase = seed_phrase.trim();
     let passphrase_prompt = format!(
-        "[{keypair_name}] If this seed phrase has an associated passphrase, enter it now. Otherwise, press ENTER to continue: ",
+        "[{keypair_name}] If this seed phrase has an associated passphrase, enter it now. \
+         Otherwise, press ENTER to continue: ",
     );
 
     let keypair = if skip_validation {

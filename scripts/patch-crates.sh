@@ -61,10 +61,9 @@ update_solana_dependencies() {
     solana-storage-bigtable
     solana-storage-proto
     solana-streamer
-    solana-svm-rent-collector
+    solana-svm-rent-calculator
     solana-svm-transaction
     solana-test-validator
-    solana-thin-client
     solana-tpu-client
     solana-transaction-status
     solana-transaction-status-client-types
@@ -152,7 +151,6 @@ patch_crates_io_solana_no_header() {
   crates_map+=("solana-svm-rent-collector svm-rent-collector")
   crates_map+=("solana-svm-transaction svm-transaction")
   crates_map+=("solana-test-validator test-validator")
-  crates_map+=("solana-thin-client thin-client")
   crates_map+=("solana-tpu-client tpu-client")
   crates_map+=("solana-transaction-status transaction-status")
   crates_map+=("solana-transaction-status-client-types transaction-status-client-types")

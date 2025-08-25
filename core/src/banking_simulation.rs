@@ -18,10 +18,7 @@ use {
     log::*,
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
     solana_genesis_config::GenesisConfig,
-    solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
-        contact_info::ContactInfoQuery,
-    },
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery, node::Node},
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore::{Blockstore, PurgeType},
@@ -826,17 +823,17 @@ impl BankingSimulator {
         let banking_stage = BankingStage::new_num_threads(
             block_production_method.clone(),
             transaction_struct.clone(),
-            &poh_recorder,
+            poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
-            BankingStage::num_threads(),
+            BankingStage::default_num_workers(),
             None,
             replay_vote_sender,
             None,
             bank_forks.clone(),
-            prioritization_fee_cache,
+            prioritization_fee_cache.clone(),
         );
 
         let (&_slot, &raw_base_event_time) = freeze_time_by_slot

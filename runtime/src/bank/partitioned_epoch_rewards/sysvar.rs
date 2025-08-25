@@ -12,7 +12,7 @@ impl Bank {
         if let Some(account) = self.get_account(&sysvar::epoch_rewards::id()) {
             let epoch_rewards: sysvar::epoch_rewards::EpochRewards =
                 from_account(&account).unwrap();
-            info!("{prefix} epoch_rewards sysvar: {:?}", epoch_rewards);
+            info!("{prefix} epoch_rewards sysvar: {epoch_rewards:?}");
         } else {
             info!("{prefix} epoch_rewards sysvar: none");
         }

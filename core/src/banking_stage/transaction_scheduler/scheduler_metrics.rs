@@ -2,7 +2,6 @@ use {
     super::scheduler::SchedulingSummary,
     itertools::MinMaxResult,
     solana_clock::Slot,
-    solana_poh::poh_recorder::BankStart,
     solana_time_utils::AtomicInterval,
     std::{
         num::Saturating,
@@ -69,16 +68,22 @@ pub struct SchedulerCountMetricsInner {
     /// Number of transactions that were immediately dropped on receive.
     pub num_dropped_on_receive: Saturating<usize>,
     /// Number of transactions that were dropped due to sanitization failure.
-    pub num_dropped_on_sanitization: Saturating<usize>,
+    pub num_dropped_on_parsing_and_sanitization: Saturating<usize>,
     /// Number of transactions that were dropped due to failed lock validation.
     pub num_dropped_on_validate_locks: Saturating<usize>,
-    /// Number of transactions that were dropped due to failed transaction
-    /// checks during receive.
-    pub num_dropped_on_receive_transaction_checks: Saturating<usize>,
+    /// Number of transactions that were dropped in checking compute budget configuration
+    /// during receive checks.
+    pub num_dropped_on_receive_compute_budget: Saturating<usize>,
+    /// Number of transactions that were dropped due to age/nonce during receive checks.
+    pub num_dropped_on_receive_age: Saturating<usize>,
+    /// Number of transactions that were dropped due to already processed during receive checks.
+    pub num_dropped_on_receive_already_processed: Saturating<usize>,
+    /// Number of transactions that were dropped on fee payer checks during receive checks.
+    pub num_dropped_on_receive_fee_payer: Saturating<usize>,
     /// Number of transactions that were dropped due to clearing.
     pub num_dropped_on_clear: Saturating<usize>,
-    /// Number of transactions that were dropped due to age and status checks.
-    pub num_dropped_on_age_and_status: Saturating<usize>,
+    /// Number of transactions that were dropped during cleaning.
+    pub num_dropped_on_clean: Saturating<usize>,
     /// Number of transactions that were dropped due to exceeded capacity.
     pub num_dropped_on_capacity: Saturating<usize>,
     /// Min prioritization fees in the transaction container
@@ -125,12 +130,16 @@ impl SchedulerCountMetricsInner {
             num_finished: Saturating(num_finished),
             num_retryable: Saturating(num_retryable),
             num_dropped_on_receive: Saturating(num_dropped_on_receive),
-            num_dropped_on_sanitization: Saturating(num_dropped_on_sanitization),
+            num_dropped_on_parsing_and_sanitization:
+                Saturating(num_dropped_on_parsing_and_sanitization),
             num_dropped_on_validate_locks: Saturating(num_dropped_on_validate_locks),
-            num_dropped_on_receive_transaction_checks:
-                Saturating(num_dropped_on_receive_transaction_checks),
+            num_dropped_on_receive_compute_budget: Saturating(num_dropped_on_receive_compute_budget),
+            num_dropped_on_receive_age: Saturating(num_dropped_on_receive_age),
+            num_dropped_on_receive_already_processed:
+                Saturating(num_dropped_on_receive_already_processed),
+            num_dropped_on_receive_fee_payer: Saturating(num_dropped_on_receive_fee_payer),
             num_dropped_on_clear: Saturating(num_dropped_on_clear),
-            num_dropped_on_age_and_status: Saturating(num_dropped_on_age_and_status),
+            num_dropped_on_clean: Saturating(num_dropped_on_clean),
             num_dropped_on_capacity: Saturating(num_dropped_on_capacity),
             min_prioritization_fees: _min_prioritization_fees,
             max_prioritization_fees: _max_prioritization_fees,
@@ -151,8 +160,8 @@ impl SchedulerCountMetricsInner {
             ("num_retryable", num_retryable, i64),
             ("num_dropped_on_receive", num_dropped_on_receive, i64),
             (
-                "num_dropped_on_sanitization",
-                num_dropped_on_sanitization,
+                "num_dropped_on_parsing_and_sanitization",
+                num_dropped_on_parsing_and_sanitization,
                 i64
             ),
             (
@@ -161,14 +170,25 @@ impl SchedulerCountMetricsInner {
                 i64
             ),
             (
-                "num_dropped_on_receive_transaction_checks",
-                num_dropped_on_receive_transaction_checks,
+                "num_dropped_on_receive_compute_budget",
+                num_dropped_on_receive_compute_budget,
+                i64
+            ),
+            ("num_dropped_on_receive_age", num_dropped_on_receive_age, i64),
+            (
+                "num_dropped_on_receive_already_processed",
+                num_dropped_on_receive_already_processed,
+                i64
+            ),
+            (
+                "num_dropped_on_receive_fee_payer",
+                num_dropped_on_receive_fee_payer,
                 i64
             ),
             ("num_dropped_on_clear", num_dropped_on_clear, i64),
             (
-                "num_dropped_on_age_and_status",
-                num_dropped_on_age_and_status,
+                "num_dropped_on_clean",
+                num_dropped_on_clean,
                 i64
             ),
             ("num_dropped_on_capacity", num_dropped_on_capacity, i64),
@@ -190,13 +210,6 @@ impl SchedulerCountMetricsInner {
             || self.num_schedule_filtered_out != Saturating(0)
             || self.num_finished != Saturating(0)
             || self.num_retryable != Saturating(0)
-            || self.num_dropped_on_receive != Saturating(0)
-            || self.num_dropped_on_sanitization != Saturating(0)
-            || self.num_dropped_on_validate_locks != Saturating(0)
-            || self.num_dropped_on_receive_transaction_checks != Saturating(0)
-            || self.num_dropped_on_clear != Saturating(0)
-            || self.num_dropped_on_age_and_status != Saturating(0)
-            || self.num_dropped_on_capacity != Saturating(0)
     }
 
     fn reset(&mut self) {
@@ -209,11 +222,14 @@ impl SchedulerCountMetricsInner {
         self.num_finished = Saturating(0);
         self.num_retryable = Saturating(0);
         self.num_dropped_on_receive = Saturating(0);
-        self.num_dropped_on_sanitization = Saturating(0);
+        self.num_dropped_on_parsing_and_sanitization = Saturating(0);
         self.num_dropped_on_validate_locks = Saturating(0);
-        self.num_dropped_on_receive_transaction_checks = Saturating(0);
+        self.num_dropped_on_receive_compute_budget = Saturating(0);
+        self.num_dropped_on_receive_age = Saturating(0);
+        self.num_dropped_on_receive_already_processed = Saturating(0);
+        self.num_dropped_on_receive_fee_payer = Saturating(0);
         self.num_dropped_on_clear = Saturating(0);
-        self.num_dropped_on_age_and_status = Saturating(0);
+        self.num_dropped_on_clean = Saturating(0);
         self.num_dropped_on_capacity = Saturating(0);
         self.min_prioritization_fees = u64::MAX;
         self.max_prioritization_fees = 0;
@@ -374,69 +390,6 @@ impl SchedulerTimingMetricsInner {
     }
 }
 
-#[derive(Default)]
-pub struct SchedulerLeaderDetectionMetrics {
-    inner: Option<SchedulerLeaderDetectionMetricsInner>,
-}
-
-struct SchedulerLeaderDetectionMetricsInner {
-    slot: Slot,
-    bank_creation_time: Instant,
-    bank_detected_time: Instant,
-}
-
-impl SchedulerLeaderDetectionMetrics {
-    pub fn update_and_maybe_report(&mut self, bank_start: Option<&BankStart>) {
-        match (&self.inner, bank_start) {
-            (None, Some(bank_start)) => self.initialize_inner(bank_start),
-            (Some(_inner), None) => self.report_and_reset(),
-            (Some(inner), Some(bank_start)) if inner.slot != bank_start.working_bank.slot() => {
-                self.report_and_reset();
-                self.initialize_inner(bank_start);
-            }
-            _ => {}
-        }
-    }
-
-    fn initialize_inner(&mut self, bank_start: &BankStart) {
-        let bank_detected_time = Instant::now();
-        self.inner = Some(SchedulerLeaderDetectionMetricsInner {
-            slot: bank_start.working_bank.slot(),
-            bank_creation_time: *bank_start.bank_creation_time,
-            bank_detected_time,
-        });
-    }
-
-    fn report_and_reset(&mut self) {
-        let SchedulerLeaderDetectionMetricsInner {
-            slot,
-            bank_creation_time,
-            bank_detected_time,
-        } = self.inner.take().expect("inner must be present");
-
-        let bank_detected_delay_us = bank_detected_time
-            .duration_since(bank_creation_time)
-            .as_micros()
-            .try_into()
-            .unwrap_or(i64::MAX);
-        let bank_detected_to_slot_end_detected_us = bank_detected_time
-            .elapsed()
-            .as_micros()
-            .try_into()
-            .unwrap_or(i64::MAX);
-        datapoint_info!(
-            "banking_stage_scheduler_leader_detection",
-            ("slot", slot, i64),
-            ("bank_detected_delay_us", bank_detected_delay_us, i64),
-            (
-                "bank_detected_to_slot_end_detected_us",
-                bank_detected_to_slot_end_detected_us,
-                i64
-            ),
-        );
-    }
-}
-
 pub struct SchedulingDetails {
     pub last_report: Instant,
     pub num_schedule_calls: usize,
@@ -459,10 +412,10 @@ impl Default for SchedulingDetails {
         Self {
             last_report: Instant::now(),
             num_schedule_calls: 0,
-            min_starting_queue_size: 0,
+            min_starting_queue_size: usize::MAX,
             max_starting_queue_size: 0,
             sum_starting_queue_size: 0,
-            min_starting_buffer_size: 0,
+            min_starting_buffer_size: usize::MAX,
             max_starting_buffer_size: 0,
             sum_starting_buffer_size: 0,
             sum_num_scheduled: 0,

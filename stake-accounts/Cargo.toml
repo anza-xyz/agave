@@ -17,6 +17,7 @@ clap = { workspace = true }
 solana-account = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
+solana-cli-output = { workspace = true }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-fee-calculator = { workspace = true }
@@ -33,9 +34,11 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-stake-program = { workspace = true }
+solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true }
 solana-version = { workspace = true }
 
 [dev-dependencies]
 solana-client-traits = { workspace = true }
+solana-program-binaries = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }

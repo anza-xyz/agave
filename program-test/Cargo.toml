@@ -25,6 +25,7 @@ solana-banks-client = { workspace = true }
 solana-banks-interface = { workspace = true }
 solana-banks-server = { workspace = true }
 solana-clock = { workspace = true }
+solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-epoch-rewards = { workspace = true }
@@ -35,12 +36,12 @@ solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-loader-v3-interface = { workspace = true }
-solana-log-collector = { workspace = true }
 solana-logger = { workspace = true }
 solana-message = { workspace = true }
 solana-msg = { workspace = true }
 solana-native-token = { workspace = true }
 solana-poh-config = { workspace = true }
+solana-program-binaries = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true }
 solana-program-runtime = { workspace = true }
@@ -53,10 +54,11 @@ solana-signer = { workspace = true }
 solana-stable-layout = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-svm = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-svm-timings = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
-solana-timings = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }

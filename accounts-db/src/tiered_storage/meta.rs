@@ -27,7 +27,7 @@ const _: () = assert!(std::mem::size_of::<AccountMetaFlags>() == 4);
 /// A trait that allows different implementations of the account meta that
 /// support different tiers of the accounts storage.
 pub trait TieredAccountMeta: Sized {
-    /// Constructs a TieredAcountMeta instance.
+    /// Constructs a TieredAccountMeta instance.
     fn new() -> Self;
 
     /// A builder function that initializes lamports.

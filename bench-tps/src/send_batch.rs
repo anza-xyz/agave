@@ -31,7 +31,7 @@ pub fn get_latest_blockhash<T: TpsClient + ?Sized>(client: &T) -> Hash {
         match client.get_latest_blockhash() {
             Ok(blockhash) => return blockhash,
             Err(err) => {
-                info!("Couldn't get last blockhash: {:?}", err);
+                info!("Couldn't get last blockhash: {err:?}");
                 sleep(Duration::from_secs(1));
             }
         };
@@ -110,7 +110,7 @@ pub fn generate_durable_nonce_accounts<T: 'static + TpsClient + Send + Sync + ?S
     let (mut nonce_keypairs, _extra) = generate_keypairs(seed_keypair, count as u64);
     nonce_keypairs.truncate(count);
 
-    info!("Creating {} nonce accounts...", count);
+    info!("Creating {count} nonce accounts...");
     let to_fund: Vec<NonceCreateSigners> = authority_keypairs
         .iter()
         .zip(nonce_keypairs.iter())
@@ -155,7 +155,7 @@ fn verify_funding_transfer<T: TpsClient + ?Sized>(
     for a in &tx.message().account_keys[1..] {
         match client.get_balance_with_commitment(a, CommitmentConfig::processed()) {
             Ok(balance) => return balance >= amount,
-            Err(err) => error!("failed to get balance {:?}", err),
+            Err(err) => error!("failed to get balance {err:?}"),
         }
     }
     false
@@ -231,7 +231,7 @@ where
             //  retry
             tries += 1;
         }
-        info!("transactions sent in {} tries", tries);
+        info!("transactions sent in {tries} tries");
     }
 
     fn sign(&mut self, blockhash: Hash) {
@@ -295,16 +295,16 @@ where
                     if failed_verify > 100 && failed_verify > verified_txs {
                         too_many_failures.store(true, Ordering::Relaxed);
                         warn!(
-                            "Too many failed transfers... {} remaining, {} verified, {} failures",
-                            remaining_count, verified_txs, failed_verify
+                            "Too many failed transfers... {remaining_count} remaining, \
+                             {verified_txs} verified, {failed_verify} failures"
                         );
                     }
                     if remaining_count > 0 {
                         let mut time_l = time.lock().unwrap();
                         if time_l.elapsed().as_secs() > 2 {
                             info!(
-                                "Verifying transfers... {} remaining, {} verified, {} failures",
-                                remaining_count, verified_txs, failed_verify
+                                "Verifying transfers... {remaining_count} remaining, \
+                                 {verified_txs} verified, {failed_verify} failures"
                             );
                             *time_l = Instant::now();
                         }
@@ -324,8 +324,8 @@ where
             let failed_verify = failed_verify.load(Ordering::Relaxed);
             let remaining_count = starting_txs.saturating_sub(verified_txs + failed_verify);
             info!(
-                "Verifying transfers... {} remaining, {} verified, {} failures",
-                remaining_count, verified_txs, failed_verify
+                "Verifying transfers... {remaining_count} remaining, {verified_txs} verified, \
+                 {failed_verify} failures"
             );
             sleep(Duration::from_millis(100));
         }

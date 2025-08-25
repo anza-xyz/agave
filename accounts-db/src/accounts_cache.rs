@@ -1,10 +1,9 @@
 use {
-    ahash::RandomState as AHashRandomState,
     dashmap::DashMap,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
     solana_nohash_hasher::BuildNoHashHasher,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::{
         collections::BTreeSet,
         ops::Deref,
@@ -17,7 +16,7 @@ use {
 
 #[derive(Debug)]
 pub struct SlotCache {
-    cache: DashMap<Pubkey, Arc<CachedAccount>, AHashRandomState>,
+    cache: DashMap<Pubkey, Arc<CachedAccount>, PubkeyHasherBuilder>,
     same_account_writes: AtomicU64,
     same_account_writes_size: AtomicU64,
     unique_account_writes_size: AtomicU64,
@@ -128,7 +127,7 @@ impl SlotCache {
 }
 
 impl Deref for SlotCache {
-    type Target = DashMap<Pubkey, Arc<CachedAccount>, AHashRandomState>;
+    type Target = DashMap<Pubkey, Arc<CachedAccount>, PubkeyHasherBuilder>;
     fn deref(&self) -> &Self::Target {
         &self.cache
     }

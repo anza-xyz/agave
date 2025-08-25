@@ -294,7 +294,7 @@ mod tests {
         .unwrap();
 
         // Deserialize
-        let (dbank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+        let dbank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &snapshot_archive_info,
@@ -352,7 +352,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "CCsPFzrwkgWmiYh25nwNvBSRdgiUW45Rh6jGh1XGcNZt")
+            frozen_abi(digest = "4zSePLuo5DnagjcFySpN2xSmQ1JqYmbQm59vfjS7qKpc")
         )]
         #[derive(Serialize)]
         pub struct BankAbiTestWrapper {

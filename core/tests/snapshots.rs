@@ -128,7 +128,7 @@ fn restore_from_snapshot(
     let full_snapshot_archive_info =
         FullSnapshotArchiveInfo::new_from_path(full_snapshot_archive_path).unwrap();
 
-    let (deserialized_bank, _timing) = snapshot_bank_utils::bank_from_snapshot_archives(
+    let deserialized_bank = snapshot_bank_utils::bank_from_snapshot_archives(
         account_paths,
         &snapshot_config.bank_snapshots_dir,
         &full_snapshot_archive_info,

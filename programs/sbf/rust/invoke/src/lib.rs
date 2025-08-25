@@ -538,7 +538,7 @@ fn process_instruction<'a>(
             let data = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
             let mut lamports = accounts[FROM_INDEX].lamports();
             let from_info =
-                AccountInfo::new(&pubkey, false, true, &mut lamports, data, &owner, false, 0);
+                AccountInfo::new(&pubkey, false, true, &mut lamports, data, &owner, false);
 
             let pubkey = *accounts[DERIVED_KEY1_INDEX].key;
             let owner = *accounts[DERIVED_KEY1_INDEX].owner;
@@ -546,7 +546,7 @@ fn process_instruction<'a>(
             let data = unsafe { std::slice::from_raw_parts_mut(0x300007ff8 as *mut _, 0) };
             let mut lamports = accounts[DERIVED_KEY1_INDEX].lamports();
             let derived_info =
-                AccountInfo::new(&pubkey, false, true, &mut lamports, data, &owner, false, 0);
+                AccountInfo::new(&pubkey, false, true, &mut lamports, data, &owner, false);
 
             let pubkey = *accounts[SYSTEM_PROGRAM_INDEX].key;
             let owner = *accounts[SYSTEM_PROGRAM_INDEX].owner;
@@ -555,7 +555,7 @@ fn process_instruction<'a>(
             let data = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
             let mut lamports = accounts[SYSTEM_PROGRAM_INDEX].lamports();
             let system_info =
-                AccountInfo::new(&pubkey, false, false, &mut lamports, data, &owner, true, 0);
+                AccountInfo::new(&pubkey, false, false, &mut lamports, data, &owner, true);
 
             let instruction = system_instruction::create_account(
                 accounts[FROM_INDEX].key,
@@ -651,6 +651,14 @@ fn process_instruction<'a>(
         }
         TEST_NESTED_INVOKE_TOO_DEEP => {
             let _ = do_nested_invokes(5, accounts);
+        }
+        TEST_NESTED_INVOKE_SIMD_0296_OK => {
+            // Test that 8 nested invokes succeed with SIMD-0296 enabled
+            let _ = do_nested_invokes(8, accounts);
+        }
+        TEST_NESTED_INVOKE_SIMD_0296_TOO_DEEP => {
+            // Test that 9 nested invokes fail even with SIMD-0296 enabled
+            let _ = do_nested_invokes(9, accounts);
         }
         TEST_CALL_PRECOMPILE => {
             msg!("Test calling precompiled program from cpi");
@@ -869,7 +877,7 @@ fn process_instruction<'a>(
                         // TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE_MOVING_DATA_POINTER
                         // is that we don't move the data pointer past the
                         // RcBox. This is needed to avoid the "Invalid account
-                        // info pointer" check when direct mapping is enabled.
+                        // info pointer" check when stricter_abi_and_runtime_constraints is enabled.
                         // This also means we don't need to update the
                         // serialized len like we do in the other test.
                         value: RefCell::new(slice::from_raw_parts_mut(
@@ -1024,7 +1032,7 @@ fn process_instruction<'a>(
             let realloc_program_id = accounts[REALLOC_PROGRAM_INDEX].key;
             let realloc_program_owner = accounts[REALLOC_PROGRAM_INDEX].owner;
             let invoke_program_id = accounts[INVOKE_PROGRAM_INDEX].key;
-            let direct_mapping = instruction_data[1];
+            let stricter_abi_and_runtime_constraints = instruction_data[1];
             let new_len = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
             let prev_len = account.data_len();
             let expected = account.data.borrow()[..new_len].to_vec();
@@ -1046,7 +1054,9 @@ fn process_instruction<'a>(
 
             // deserialize_parameters_unaligned predates realloc support, and
             // hardcodes the account data length to the original length.
-            if !bpf_loader_deprecated::check_id(realloc_program_owner) && direct_mapping == 0 {
+            if !bpf_loader_deprecated::check_id(realloc_program_owner)
+                && stricter_abi_and_runtime_constraints == 0
+            {
                 assert_eq!(&*account.data.borrow(), &expected);
                 assert_eq!(
                     unsafe {
@@ -1085,7 +1095,7 @@ fn process_instruction<'a>(
             };
 
             let mut expected = account.data.borrow().to_vec();
-            let direct_mapping = instruction_data[1];
+            let stricter_abi_and_runtime_constraints = instruction_data[1];
             let new_len = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
             expected.extend_from_slice(&instruction_data[10..]);
             let mut instruction_data =
@@ -1105,7 +1115,7 @@ fn process_instruction<'a>(
             .unwrap();
 
             assert_eq!(*account.data.borrow(), &prev_data[..new_len]);
-            if direct_mapping == 0 {
+            if stricter_abi_and_runtime_constraints == 0 {
                 assert_eq!(
                     unsafe {
                         slice::from_raw_parts(
@@ -1294,7 +1304,7 @@ fn process_instruction<'a>(
             }
 
             if !invoke_struction.is_empty() {
-                // Invoke another program. With direct mapping, before CPI the callee will update the accounts (incl resizing)
+                // Invoke another program. With stricter_abi_and_runtime_constraints, before CPI the callee will update the accounts (incl resizing)
                 // so the pointer may change.
                 let invoked_program_id = accounts[INVOKED_PROGRAM_INDEX].key;
 
@@ -1369,7 +1379,7 @@ fn process_instruction<'a>(
             #[cfg(target_feature = "dynamic-frames")]
             // When we have dynamic frames, the stack grows from the higher addresses, so we
             // compare from zero until the beginning of a function frame.
-            {
+            unsafe {
                 const ZEROED_BYTES_LENGTH: usize = (MAX_CALL_DEPTH - 2) * STACK_FRAME_SIZE;
                 assert_eq!(sol_memcmp(stack, &ZEROS, ZEROED_BYTES_LENGTH), 0);
                 stack[..ZEROED_BYTES_LENGTH].fill(42);

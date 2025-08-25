@@ -186,7 +186,7 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
         let (shreds, _) = receiver.recv()?;
         broadcast_shreds(
             sock,
-            shreds,
+            &shreds,
             &self.cluster_nodes_cache,
             &AtomicInterval::default(),
             &mut TransmitShredsStats::default(),

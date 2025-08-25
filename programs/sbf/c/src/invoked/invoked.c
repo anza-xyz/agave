@@ -53,7 +53,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
 
     sol_assert(SolPubkey_same(accounts[INVOKED_ARGUMENT_INDEX].owner,
                               accounts[INVOKED_PROGRAM_INDEX].key));
-    sol_assert(*accounts[INVOKED_ARGUMENT_INDEX].lamports == 10);
+    sol_assert(*accounts[INVOKED_ARGUMENT_INDEX].lamports == 20);
     sol_assert(accounts[INVOKED_ARGUMENT_INDEX].data_len == 10);
     sol_assert(accounts[INVOKED_ARGUMENT_INDEX].is_signer);
     sol_assert(accounts[INVOKED_ARGUMENT_INDEX].is_writable);

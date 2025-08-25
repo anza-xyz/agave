@@ -15,6 +15,7 @@ use {
     solana_clock::{
         self as clock, Slot, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE,
     },
+    solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_core::{
         consensus::{
@@ -27,7 +28,6 @@ use {
     solana_download_utils::download_snapshot_archive,
     solana_entry::entry::create_ticks,
     solana_epoch_schedule::{MAX_LEADER_SCHEDULE_EPOCH_OFFSET, MINIMUM_SLOTS_PER_EPOCH},
-    solana_genesis_config::ClusterType,
     solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover_validators},
     solana_hard_forks::HardForks,
     solana_hash::Hash,
@@ -74,7 +74,7 @@ use {
         snapshot_bank_utils,
         snapshot_config::SnapshotConfig,
         snapshot_package::SnapshotKind,
-        snapshot_utils::{self, SnapshotInterval},
+        snapshot_utils::{self, SnapshotInterval, BANK_SNAPSHOTS_DIR},
     },
     solana_signer::Signer,
     solana_stake_interface::{self as stake, state::NEW_WARMUP_COOLDOWN_RATE},
@@ -2321,7 +2321,7 @@ fn test_run_test_load_program_accounts_root() {
 fn create_simple_snapshot_config(ledger_path: &Path) -> SnapshotConfig {
     SnapshotConfig {
         full_snapshot_archives_dir: ledger_path.to_path_buf(),
-        bank_snapshots_dir: ledger_path.join("snapshot"),
+        bank_snapshots_dir: ledger_path.join(BANK_SNAPSHOTS_DIR),
         ..SnapshotConfig::default()
     }
 }

@@ -209,7 +209,11 @@ impl<U: Umem> Socket<U> {
     ) -> Result<(Self, Tx<U::Frame>), io::Error> {
         let (fill_size, rx_size) = if zero_copy {
             // See Socket::new() as to why this is needed
-            (queue.rx_size(), queue.rx_size())
+            let rx = queue
+                .ring_sizes()
+                .ok_or_else(|| io::Error::other("zero copy requires a set ring size"))?
+                .rx;
+            (rx, rx)
         } else {
             // no RX fill ring needed for TX only sockets
             (1, 0)

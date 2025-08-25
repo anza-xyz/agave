@@ -54,72 +54,12 @@ struct BlockHashData {
     pub last_valid_block_height: u64,
 }
 
-// Deprecated struct to maintain backward compatibility
-#[deprecated(
-    since = "2.2.0",
-    note = "Use SendAndConfirmConfigV2 with send_and_confirm_transactions_in_parallel_v2"
-)]
-#[derive(Clone, Debug, Copy)]
-pub struct SendAndConfirmConfig {
-    pub with_spinner: bool,
-    pub resign_txs_count: Option<usize>,
-}
-
 // New struct with RpcSendTransactionConfig for non-breaking change
 #[derive(Clone, Debug, Copy)]
 pub struct SendAndConfirmConfigV2 {
     pub with_spinner: bool,
     pub resign_txs_count: Option<usize>,
     pub rpc_send_transaction_config: RpcSendTransactionConfig,
-}
-
-#[allow(deprecated)]
-#[deprecated(
-    since = "2.2.0",
-    note = "Use send_and_confirm_transactions_in_parallel_v2"
-)]
-pub async fn send_and_confirm_transactions_in_parallel<T: Signers + ?Sized>(
-    rpc_client: Arc<RpcClient>,
-    tpu_client: Option<QuicTpuClient>,
-    messages: &[Message],
-    signers: &T,
-    config: SendAndConfirmConfig,
-) -> Result<Vec<Option<TransactionError>>> {
-    let config_v2 = SendAndConfirmConfigV2 {
-        with_spinner: config.with_spinner,
-        resign_txs_count: config.resign_txs_count,
-        rpc_send_transaction_config: RpcSendTransactionConfig {
-            ..RpcSendTransactionConfig::default()
-        },
-    };
-    send_and_confirm_transactions_in_parallel_v2(
-        rpc_client, tpu_client, messages, signers, config_v2,
-    )
-    .await
-}
-
-#[allow(deprecated)]
-#[deprecated(
-    since = "2.2.0",
-    note = "Use send_and_confirm_transactions_in_parallel_blocking_v2"
-)]
-pub fn send_and_confirm_transactions_in_parallel_blocking<T: Signers + ?Sized>(
-    rpc_client: Arc<BlockingRpcClient>,
-    tpu_client: Option<QuicTpuClient>,
-    messages: &[Message],
-    signers: &T,
-    config: SendAndConfirmConfig,
-) -> Result<Vec<Option<TransactionError>>> {
-    let config_v2 = SendAndConfirmConfigV2 {
-        with_spinner: config.with_spinner,
-        resign_txs_count: config.resign_txs_count,
-        rpc_send_transaction_config: RpcSendTransactionConfig {
-            ..RpcSendTransactionConfig::default()
-        },
-    };
-    send_and_confirm_transactions_in_parallel_blocking_v2(
-        rpc_client, tpu_client, messages, signers, config_v2,
-    )
 }
 
 /// Sends and confirms transactions concurrently in a sync context
