@@ -2,7 +2,7 @@
 //! "ticks", a measure of time in the PoH stream
 use {
     crate::{
-        poh_controller::PohServiceMessageReceiver,
+        poh_controller::{PohServiceMessage, PohServiceMessageGuard, PohServiceMessageReceiver},
         poh_recorder::{PohRecorder, Record},
     },
     crossbeam_channel::Receiver,
@@ -179,6 +179,8 @@ impl PohService {
     ) {
         let mut last_tick = Instant::now();
         while !poh_exit.load(Ordering::Relaxed) {
+            let service_message = poh_service_receiver.try_recv();
+
             let remaining_tick_time = poh_config
                 .target_tick_duration
                 .saturating_sub(last_tick.elapsed());
@@ -190,6 +192,10 @@ impl PohService {
             if remaining_tick_time.is_zero() {
                 last_tick = Instant::now();
                 poh_recorder.write().unwrap().tick();
+            }
+
+            if let Ok(service_message) = service_message {
+                Self::handle_service_message(&poh_recorder, service_message);
             }
         }
     }
@@ -227,6 +233,8 @@ impl PohService {
         let mut last_tick = Instant::now();
         let num_ticks = poh_config.target_tick_count.unwrap();
         while elapsed_ticks < num_ticks {
+            let service_message = poh_service_receiver.try_recv();
+
             let remaining_tick_time = poh_config
                 .target_tick_duration
                 .saturating_sub(last_tick.elapsed());
@@ -243,6 +251,10 @@ impl PohService {
             if poh_exit.load(Ordering::Relaxed) && !warned {
                 warned = true;
                 warn!("exit signal is ignored because PohService is scheduled to exit soon");
+            }
+
+            if let Ok(service_message) = service_message {
+                Self::handle_service_message(&poh_recorder, service_message);
             }
         }
     }
@@ -348,7 +360,9 @@ impl PohService {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut timing = PohTiming::new();
         let mut next_record = None;
+
         loop {
+            let service_message = poh_service_receiver.try_recv();
             let should_tick = Self::record_or_hash(
                 &mut next_record,
                 &poh_recorder,
@@ -375,6 +389,30 @@ impl PohService {
                 timing.report(ticks_per_slot);
                 if poh_exit.load(Ordering::Relaxed) {
                     break;
+                }
+            }
+
+            if let Ok(service_message) = service_message {
+                Self::handle_service_message(&poh_recorder, service_message);
+            }
+        }
+    }
+
+    fn handle_service_message(
+        poh_recorder: &RwLock<PohRecorder>,
+        mut service_message: PohServiceMessageGuard,
+    ) {
+        {
+            let mut recorder = poh_recorder.write().unwrap();
+            match service_message.take() {
+                PohServiceMessage::Reset {
+                    reset_bank,
+                    next_leader_slot,
+                } => {
+                    recorder.reset(reset_bank, next_leader_slot);
+                }
+                PohServiceMessage::SetBank { bank } => {
+                    recorder.set_bank(bank);
                 }
             }
         }

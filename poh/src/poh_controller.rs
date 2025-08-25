@@ -116,16 +116,36 @@ pub struct PohServiceMessageReceiver {
 }
 
 impl PohServiceMessageReceiver {
-    pub(crate) fn try_recv(&self) -> Result<PohServiceMessage, TryRecvError> {
-        self.receiver.try_recv()
+    pub(crate) fn try_recv(&self) -> Result<PohServiceMessageGuard, TryRecvError> {
+        self.receiver
+            .try_recv()
+            .map(|message| PohServiceMessageGuard {
+                message_receiver: self,
+                message: Some(message),
+            })
     }
+}
 
-    /// Mark that a message has been fully processed.
-    ///
-    /// # Safety
-    /// - This must only be called after `try_recv` returns a message,
-    ///   and that message has been fully processed.
-    pub(crate) unsafe fn mark_processed_message(&self) {
-        self.pending_message.fetch_sub(1, Ordering::AcqRel);
+pub(crate) struct PohServiceMessageGuard<'a> {
+    message_receiver: &'a PohServiceMessageReceiver,
+    message: Option<PohServiceMessage>,
+}
+
+impl PohServiceMessageGuard<'_> {
+    pub(crate) fn take(&mut self) -> PohServiceMessage {
+        self.message.take().unwrap()
+    }
+}
+
+impl Drop for PohServiceMessageGuard<'_> {
+    fn drop(&mut self) {
+        // If the message was taken (processed), decrement the pending count.
+        if self.message.is_none() {
+            self.message_receiver
+                .pending_message
+                .fetch_sub(1, Ordering::AcqRel);
+        } else {
+            panic!("PohServiceMessageGuard dropped without processing the message");
+        }
     }
 }
