@@ -1,11 +1,13 @@
 [package]
 name = "solana-tlv"
-version.workspace = true
-authors.workspace = true
-repository.workspace = true
-homepage.workspace = true
-license.workspace = true
-edition.workspace = true
+description = "Solana TLV implementation"
+documentation = "https://docs.rs/solana-tlv"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
 publish = false
 
 [dependencies]
