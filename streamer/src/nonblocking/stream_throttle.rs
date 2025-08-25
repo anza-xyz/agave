@@ -4,8 +4,8 @@ use {
     std::{
         cmp,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
         time::{Duration, Instant},
     },
@@ -225,10 +225,10 @@ pub mod test {
         super::*,
         crate::{
             nonblocking::stream_throttle::STREAM_LOAD_EMA_INTERVAL_MS,
-            quic::{StreamerStats, DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS},
+            quic::{DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS, StreamerStats},
         },
         std::{
-            sync::{atomic::Ordering, Arc},
+            sync::{Arc, atomic::Ordering},
             time::{Duration, Instant},
         },
     };
