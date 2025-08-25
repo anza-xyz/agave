@@ -23,8 +23,11 @@ impl FromClapArgMatches for RpcBigtableConfig {
 mod tests {
     use {
         super::*,
-        crate::commands::run::args::{
-            tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
+        crate::{
+            commands::run::args::{
+                tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
+            },
+            config_file::ValidatorConfig,
         },
         solana_rpc::rpc::JsonRpcConfig,
     };
@@ -49,8 +52,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec![
                 "--enable-rpc-transaction-history", // required by enable-rpc-bigtable-ledger-storage
                 "--enable-rpc-bigtable-ledger-storage",
@@ -73,8 +78,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec![
                 "--enable-rpc-transaction-history", // required by enable-bigtable-ledger-upload
                 "--enable-bigtable-ledger-upload",
@@ -98,8 +105,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec![
                 "--enable-rpc-transaction-history", // required by enable-bigtable-ledger-upload
                 "--enable-bigtable-ledger-upload",  // required by all rpc_bigtable_config
@@ -125,8 +134,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec![
                 "--enable-rpc-transaction-history", // required by enable-bigtable-ledger-upload
                 "--enable-bigtable-ledger-upload",  // required by all rpc_bigtable_config
@@ -152,8 +163,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec![
                 "--enable-rpc-transaction-history", // required by enable-bigtable-ledger-upload
                 "--enable-bigtable-ledger-upload",  // required by all rpc_bigtable_config
@@ -179,8 +192,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec![
                 "--enable-rpc-transaction-history", // required by enable-bigtable-ledger-upload
                 "--enable-bigtable-ledger-upload",  // required by all rpc_bigtable_config

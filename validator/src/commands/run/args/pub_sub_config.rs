@@ -29,8 +29,11 @@ impl FromClapArgMatches for PubSubConfig {
 mod tests {
     use {
         super::*,
-        crate::commands::run::args::{
-            tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
+        crate::{
+            commands::run::args::{
+                tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
+            },
+            config_file::ValidatorConfig,
         },
         solana_rpc::rpc::JsonRpcConfig,
     };
@@ -49,8 +52,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec![
                 "--enable-rpc-transaction-history", // required by enable-rpc-bigtable-ledger-storage
                 "--rpc-pubsub-enable-block-subscription",
@@ -69,8 +74,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec!["--rpc-pubsub-enable-vote-subscription"],
             expected_args,
         );
@@ -86,8 +93,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec!["--rpc-pubsub-max-active-subscriptions", "1000"],
             expected_args,
         );
@@ -103,8 +112,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec!["--rpc-pubsub-queue-capacity-items", "9999"],
             expected_args,
         );
@@ -120,8 +131,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec!["--rpc-pubsub-queue-capacity-bytes", "9999"],
             expected_args,
         );
@@ -137,8 +150,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec!["--rpc-pubsub-worker-threads", "9999"],
             expected_args,
         );
@@ -158,8 +173,10 @@ mod tests {
             },
             ..default_run_args.clone()
         };
+        let validator_config = ValidatorConfig::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec![
                 "--full-rpc-api", // required by --rpc-pubsub-notification-threads
                 "--rpc-pubsub-notification-threads",

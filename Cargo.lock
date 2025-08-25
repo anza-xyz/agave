@@ -451,6 +451,7 @@ dependencies = [
  "console 0.16.0",
  "core_affinity",
  "crossbeam-channel",
+ "dirs-next",
  "fd-lock",
  "indicatif 0.18.0",
  "itertools 0.12.1",
@@ -529,6 +530,7 @@ dependencies = [
  "thiserror 2.0.16",
  "tikv-jemallocator",
  "tokio",
+ "toml 0.8.12",
 ]
 
 [[package]]

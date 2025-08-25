@@ -1,8 +1,10 @@
 use {
     crate::{
         bootstrap::RpcBootstrapConfig,
+        clap_ext::*,
         cli::{hash_validator, port_range_validator, port_validator, DefaultArgs},
         commands::{FromClapArgMatches, Result},
+        config_file::ValidatorConfig,
     },
     clap::{values_t, App, Arg, ArgMatches},
     solana_clap_utils::{
@@ -127,7 +129,11 @@ impl FromClapArgMatches for RunArgs {
     }
 }
 
-pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 'a> {
+pub fn add_args<'a>(
+    app: App<'a, 'a>,
+    default_args: &'a DefaultArgs,
+    validator_config: &'a ValidatorConfig,
+) -> App<'a, 'a> {
     app.arg(
         Arg::with_name(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
             .long(SKIP_SEED_PHRASE_VALIDATION_ARG.long)
@@ -1657,6 +1663,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .value_name("INTERFACE")
             .requires("retransmit_xdp_cpu_cores")
+            .default_value_if_is_some(validator_config.net.xdp.interface.as_deref())
             .help("EXPERIMENTAL: The network interface to use for XDP retransmit"),
     )
     .arg(
@@ -1664,6 +1671,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced())
             .long("experimental-retransmit-xdp-cpu-cores")
             .takes_value(true)
+            .default_value_if_is_some(validator_config.net.xdp.cpus.as_deref())
             .value_name("CPU_LIST")
             .validator(|value| {
                 validate_cpu_ranges(value, "--experimental-retransmit-xdp-cpu-cores")
@@ -1675,6 +1683,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced())
             .long("experimental-retransmit-xdp-zero-copy")
             .takes_value(false)
+            .default_value_if_is_some(validator_config.net.xdp.zero_copy.map(|x| x.as_str()))
             .requires("retransmit_xdp_cpu_cores")
             .help("EXPERIMENTAL: Enable XDP zero copy. Requires hardware support"),
     )
@@ -1775,10 +1784,11 @@ mod tests {
 
     fn verify_args_struct_by_command(
         default_args: &DefaultArgs,
+        validator_config: &ValidatorConfig,
         args: Vec<&str>,
         expected_args: RunArgs,
     ) {
-        let app = add_args(App::new("run_command"), default_args)
+        let app = add_args(App::new("run_command"), default_args, validator_config)
             .args(&thread_args(&default_args.thread_args));
 
         crate::commands::tests::verify_args_struct_by_command::<RunArgs>(
@@ -1791,6 +1801,7 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_run_with_identity() {
         let default_args = DefaultArgs::default();
+        let validator_config = ValidatorConfig::default();
         let default_run_args = RunArgs::default();
 
         // generate a keypair
@@ -1808,6 +1819,7 @@ mod tests {
         {
             verify_args_struct_by_command(
                 &default_args,
+                &validator_config,
                 vec!["-i", file.to_str().unwrap()],
                 expected_args.clone(),
             );
@@ -1817,6 +1829,7 @@ mod tests {
         {
             verify_args_struct_by_command(
                 &default_args,
+                &validator_config,
                 vec!["--identity", file.to_str().unwrap()],
                 expected_args.clone(),
             );
@@ -1825,6 +1838,7 @@ mod tests {
 
     pub fn verify_args_struct_by_command_run_with_identity_setup(
         default_run_args: RunArgs,
+        validator_config: &ValidatorConfig,
         args: Vec<&str>,
         expected_args: RunArgs,
     ) {
@@ -1837,11 +1851,12 @@ mod tests {
         solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
         let args = [&["--identity", file.to_str().unwrap()], &args[..]].concat();
-        verify_args_struct_by_command(&default_args, args, expected_args);
+        verify_args_struct_by_command(&default_args, validator_config, args, expected_args);
     }
 
     pub fn verify_args_struct_by_command_run_is_error_with_identity_setup(
         default_run_args: RunArgs,
+        validator_config: &ValidatorConfig,
         args: Vec<&str>,
     ) {
         let default_args = DefaultArgs::default();
@@ -1852,7 +1867,7 @@ mod tests {
         let keypair = default_run_args.identity_keypair.insecure_clone();
         solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
-        let app = add_args(App::new("run_command"), &default_args)
+        let app = add_args(App::new("run_command"), &default_args, validator_config)
             .args(&thread_args(&default_args.thread_args));
 
         crate::commands::tests::verify_args_struct_by_command_is_error::<RunArgs>(
@@ -1869,6 +1884,7 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_run_with_log() {
         let default_run_args = RunArgs::default();
+        let validator_config = ValidatorConfig::default();
 
         // default
         {
@@ -1880,6 +1896,7 @@ mod tests {
             };
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
+                &validator_config,
                 vec![],
                 expected_args,
             );
@@ -1893,6 +1910,7 @@ mod tests {
             };
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
+                &validator_config,
                 vec!["-o", "-"],
                 expected_args,
             );
@@ -1906,6 +1924,7 @@ mod tests {
             };
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
+                &validator_config,
                 vec!["--log", "custom_log.log"],
                 expected_args,
             );
@@ -1924,8 +1943,10 @@ mod tests {
                 )],
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
+                &validator_config,
                 vec!["-n", "127.0.0.1:8000"],
                 expected_args,
             );
@@ -1941,8 +1962,10 @@ mod tests {
                 )],
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
+                &validator_config,
                 vec!["--entrypoint", "127.0.0.1:8000"],
                 expected_args,
             );
@@ -1959,8 +1982,10 @@ mod tests {
                 ],
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
+                &validator_config,
                 vec![
                     "--entrypoint",
                     "127.0.0.1:8000",
@@ -1984,8 +2009,10 @@ mod tests {
                 ],
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
+                &validator_config,
                 vec![
                     "--entrypoint",
                     "127.0.0.1:8000",
@@ -2012,8 +2039,10 @@ mod tests {
                 known_validators,
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--known-validator", &known_validators_pubkey.to_string()],
                 expected_args,
             );
@@ -2028,8 +2057,10 @@ mod tests {
                 known_validators,
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec!["--trusted-validator", &known_validators_pubkey.to_string()],
                 expected_args,
             );
@@ -2050,8 +2081,10 @@ mod tests {
                 known_validators,
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec![
                     "--known-validator",
                     &known_validators_pubkey_1.to_string(),
@@ -2077,8 +2110,10 @@ mod tests {
                 known_validators,
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec![
                     "--known-validator",
                     &known_validators_pubkey_1.to_string(),
@@ -2095,19 +2130,21 @@ mod tests {
         {
             let default_args = DefaultArgs::default();
             let default_run_args = RunArgs::default();
+            let validator_config = ValidatorConfig::default();
 
             // generate a keypair
             let tmp_dir = tempfile::tempdir().unwrap();
             let file = tmp_dir.path().join("id.json");
             solana_keypair::write_keypair_file(&default_run_args.identity_keypair, &file).unwrap();
 
-            let matches = add_args(App::new("run_command"), &default_args).get_matches_from(vec![
-                "run_command",
-                "--identity",
-                file.to_str().unwrap(),
-                "--known-validator",
-                &default_run_args.identity_keypair.pubkey().to_string(),
-            ]);
+            let matches = add_args(App::new("run_command"), &default_args, &validator_config)
+                .get_matches_from(vec![
+                    "run_command",
+                    "--identity",
+                    file.to_str().unwrap(),
+                    "--known-validator",
+                    &default_run_args.identity_keypair.pubkey().to_string(),
+                ]);
             let result = RunArgs::from_clap_arg_match(&matches);
             assert!(result.is_err());
             let error = result.unwrap_err();
@@ -2134,8 +2171,10 @@ mod tests {
                 },
                 ..default_run_args.clone()
             };
+            let validator_config = ValidatorConfig::default();
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
+                &validator_config,
                 vec![
                     "--max-genesis-archive-unpacked-size",
                     &max_genesis_archive_unpacked_size.to_string(),
@@ -2148,12 +2187,14 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_run_with_allow_private_addr() {
         let default_run_args = RunArgs::default();
+        let validator_config = ValidatorConfig::default();
         let expected_args = RunArgs {
             socket_addr_space: SocketAddrSpace::Unspecified,
             ..default_run_args.clone()
         };
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
+            &validator_config,
             vec!["--allow-private-addr"],
             expected_args,
         );
