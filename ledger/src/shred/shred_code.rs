@@ -4,9 +4,8 @@ use {
         merkle,
         payload::Payload,
         traits::{Shred, ShredCode as ShredCodeTrait},
-        CodingShredHeader, Error, ShredCommonHeader, ShredType, SignedData,
-        DATA_SHREDS_PER_FEC_BLOCK, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT,
-        SIZE_OF_NONCE,
+        CodingShredHeader, Error, ShredCommonHeader, ShredType, DATA_SHREDS_PER_FEC_BLOCK,
+        MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT, SIZE_OF_NONCE,
     },
     solana_hash::Hash,
     solana_packet::PACKET_DATA_SIZE,
@@ -34,10 +33,9 @@ impl ShredCode {
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     dispatch!(pub(super) fn set_signature(&mut self, signature: Signature));
 
-    pub(super) fn signed_data(&self) -> Result<SignedData, Error> {
-        match self {
-            Self::Merkle(shred) => Ok(SignedData::MerkleRoot(shred.signed_data()?)),
-        }
+    pub(super) fn signed_data(&self) -> Result<Hash, Error> {
+        let Self::Merkle(shred) = self;
+        shred.signed_data()
     }
 
     pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error> {
