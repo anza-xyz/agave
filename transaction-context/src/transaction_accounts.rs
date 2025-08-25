@@ -14,14 +14,14 @@ use {
 /// An account key and the matching account
 pub type TransactionAccount = (Pubkey, AccountSharedData);
 pub(crate) type OwnedTransactionAccounts = (
-    Vec<UnsafeCell<AccountSharedData>>,
+    UnsafeCell<Box<[AccountSharedData]>>,
     Box<[Cell<bool>]>,
     Cell<i64>,
 );
 
 #[derive(Debug)]
 pub struct TransactionAccounts {
-    accounts: Vec<UnsafeCell<AccountSharedData>>,
+    accounts: UnsafeCell<Box<[AccountSharedData]>>,
     borrow_counters: Box<[BorrowCounter]>,
     touched_flags: Box<[Cell<bool>]>,
     resize_delta: Cell<i64>,
@@ -30,9 +30,10 @@ pub struct TransactionAccounts {
 
 impl TransactionAccounts {
     #[cfg(not(target_os = "solana"))]
-    pub(crate) fn new(accounts: Vec<UnsafeCell<AccountSharedData>>) -> TransactionAccounts {
+    pub(crate) fn new(accounts: Vec<AccountSharedData>) -> TransactionAccounts {
         let touched_flags = vec![Cell::new(false); accounts.len()].into_boxed_slice();
         let borrow_counters = vec![BorrowCounter::default(); accounts.len()].into_boxed_slice();
+        let accounts = UnsafeCell::new(accounts.into_boxed_slice());
         TransactionAccounts {
             accounts,
             borrow_counters,
@@ -43,7 +44,9 @@ impl TransactionAccounts {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.accounts.len()
+        // SAFETY: The borrow is local to this function and is only reading length.
+        let accounts = unsafe { &*self.accounts.get() };
+        accounts.len()
     }
 
     #[cfg(not(target_os = "solana"))]
@@ -97,13 +100,10 @@ impl TransactionAccounts {
             .ok_or(InstructionError::MissingAccount)?;
         borrow_counter.try_borrow_mut()?;
 
-        let account = unsafe {
-            &mut *self
-                .accounts
-                .get(index as usize)
-                .ok_or(InstructionError::MissingAccount)?
-                .get()
-        };
+        // SAFETY: The borrow counter guarantees this is the only mutable borrow of this account.
+        // The unwrap is safe because accounts.len() == borrow_counters.len(), so the missing
+        // account error should have been returned above.
+        let account = unsafe { (*self.accounts.get()).get_mut(index as usize).unwrap() };
 
         Ok(AccountRefMut {
             account,
@@ -117,13 +117,11 @@ impl TransactionAccounts {
             .get(index as usize)
             .ok_or(InstructionError::MissingAccount)?;
         borrow_counter.try_borrow()?;
-        let account = unsafe {
-            &*self
-                .accounts
-                .get(index as usize)
-                .ok_or(InstructionError::MissingAccount)?
-                .get()
-        };
+
+        // SAFETY: The borrow counter guarantees there are no mutable borrow of this account.
+        // The unwrap is safe because accounts.len() == borrow_counters.len(), so the missing
+        // account error should have been returned above.
+        let account = unsafe { (*self.accounts.get()).get(index as usize).unwrap() };
 
         Ok(AccountRef {
             account,

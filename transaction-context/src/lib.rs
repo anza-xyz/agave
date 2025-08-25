@@ -130,10 +130,7 @@ impl TransactionContext {
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
     ) -> Self {
-        let (account_keys, accounts): (Vec<_>, Vec<_>) = transaction_accounts
-            .into_iter()
-            .map(|(key, account)| (key, UnsafeCell::new(account)))
-            .unzip();
+        let (account_keys, accounts): (Vec<_>, Vec<_>) = transaction_accounts.into_iter().unzip();
         Self {
             account_keys: Pin::new(account_keys.into_boxed_slice()),
             accounts: Rc::new(TransactionAccounts::new(accounts)),
@@ -157,7 +154,7 @@ impl TransactionContext {
         let (accounts, _, _) = Rc::try_unwrap(self.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs")
             .take();
-        Ok(accounts.into_iter().map(UnsafeCell::into_inner).collect())
+        Ok(Vec::from(UnsafeCell::into_inner(accounts)))
     }
 
     #[cfg(not(target_os = "solana"))]
@@ -1062,7 +1059,7 @@ impl From<TransactionContext> for ExecutionRecord {
             .take();
         let accounts = Vec::from(Pin::into_inner(context.account_keys))
             .into_iter()
-            .zip(accounts.into_iter().map(UnsafeCell::into_inner))
+            .zip(UnsafeCell::into_inner(accounts))
             .collect();
         let touched_account_count = touched_flags
             .iter()
