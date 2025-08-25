@@ -168,7 +168,7 @@ pub(crate) use dispatch;
 impl ClientConnection for BlockingClientConnection {
     dispatch!(fn server_addr(&self) -> &SocketAddr);
     dispatch!(fn send_data(&self, buffer: &[u8]) -> TransportResult<()>);
-    dispatch!(fn send_data_async(&self, buffer: Vec<u8>) -> TransportResult<()>);
+    dispatch!(fn send_data_async(&self, buffer: Arc<Vec<u8>>) -> TransportResult<()>);
     dispatch!(fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()>);
     dispatch!(fn send_data_batch_async(&self, buffers: Vec<Vec<u8>>) -> TransportResult<()>);
 }

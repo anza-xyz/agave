@@ -110,7 +110,7 @@ where
         transaction: &Transaction,
     ) -> TransportResult<()> {
         let wire_transaction =
-            bincode::serialize(&transaction).expect("should serialize transaction");
+            Arc::new(bincode::serialize(&transaction).expect("should serialize transaction"));
 
         let leaders = self
             .tpu_client
