@@ -1066,7 +1066,15 @@ fn test_clean_dead_slot_with_obsolete_accounts() {
 
     // Obsolete accounts are already unreffed so they should not be unreffed again
 
-    let accounts = AccountsDb::new_single_for_tests();
+    let accounts = AccountsDb::new_with_config(
+        Vec::new(),
+        Some(AccountsDbConfig {
+            mark_obsolete_accounts: true,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        }),
+        None,
+        Arc::default(),
+    );
     let pubkey = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
 
@@ -1084,24 +1092,6 @@ fn test_clean_dead_slot_with_obsolete_accounts() {
     accounts.add_root_and_flush_write_cache(1);
     accounts.add_root_and_flush_write_cache(2);
 
-    // Pubkey1 should be in 3 slots, 0 and 1 and 2
-    accounts.assert_ref_count(&pubkey, 3);
-
-    // Mark pubkey in slot 1 as obsolete, simulating obsolete accounts being enabled
-    let old_storage = accounts
-        .storage
-        .get_slot_storage_entry_shrinking_in_progress_ok(1)
-        .unwrap();
-    old_storage.mark_accounts_obsolete(vec![(0, 1)].into_iter(), 2);
-
-    // Unreference pubkey, which would occur during the normal mark_accounts_obsolete flow
-    accounts.unref_pubkeys([pubkey].iter(), 1, &HashSet::new());
-
-    // Pubkey1 should now have two references: Slot0 and Slot2.
-    accounts.assert_ref_count(&pubkey, 2);
-
-    // Clean, remove slot0/1.
-    accounts.clean_accounts_for_tests();
     assert!(accounts.storage.get_slot_storage_entry(0).is_none());
     assert!(accounts.storage.get_slot_storage_entry(1).is_none());
 
