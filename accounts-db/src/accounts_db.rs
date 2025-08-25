@@ -963,10 +963,11 @@ impl AccountStorageEntry {
         id: AccountsFileId,
         file_size: u64,
         provider: AccountsFileProvider,
+        storage_access: StorageAccess,
     ) -> Self {
         let tail = AccountsFile::file_name(slot, id);
         let path = Path::new(path).join(tail);
-        let accounts = provider.new_writable(path, file_size);
+        let accounts = provider.new_writable(path, file_size, storage_access);
 
         Self {
             id,
@@ -1609,6 +1610,7 @@ impl AccountsDb {
             self.next_id(),
             size,
             self.accounts_file_provider,
+            self.storage_access,
         )
     }
 
@@ -2974,6 +2976,11 @@ impl AccountsDb {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn set_storage_access(&mut self, storage_access: StorageAccess) {
         self.storage_access = storage_access;
+    }
+
+    #[cfg(test)]
+    pub fn storage_access(&self) -> StorageAccess {
+        self.storage_access
     }
 
     /// Sort `accounts` by pubkey and removes all but the *last* of consecutive
