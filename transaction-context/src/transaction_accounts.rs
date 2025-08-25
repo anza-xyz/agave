@@ -45,8 +45,7 @@ impl TransactionAccounts {
 
     pub(crate) fn len(&self) -> usize {
         // SAFETY: The borrow is local to this function and is only reading length.
-        let accounts = unsafe { &*self.accounts.get() };
-        accounts.len()
+        unsafe { (*self.accounts.get()).len() }
     }
 
     #[cfg(not(target_os = "solana"))]
@@ -240,5 +239,100 @@ impl Deref for AccountRefMut<'_> {
 impl DerefMut for AccountRefMut<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.account
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        crate::transaction_accounts::TransactionAccounts, solana_account::AccountSharedData,
+        solana_instruction::error::InstructionError, solana_pubkey::Pubkey,
+    };
+
+    #[test]
+    fn test_missing_account() {
+        let accounts = vec![
+            AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+            AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+        ];
+
+        let tx_accounts = TransactionAccounts::new(accounts);
+
+        let res = tx_accounts.try_borrow(3);
+        assert_eq!(res.err(), Some(InstructionError::MissingAccount));
+
+        let res = tx_accounts.try_borrow_mut(3);
+        assert_eq!(res.err(), Some(InstructionError::MissingAccount));
+    }
+
+    #[test]
+    fn test_invalid_borrow() {
+        let accounts = vec![
+            AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+            AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+        ];
+
+        let tx_accounts = TransactionAccounts::new(accounts);
+
+        // Two immutable borrows are valid
+        {
+            let acc_1 = tx_accounts.try_borrow(0);
+            assert!(acc_1.is_ok());
+
+            let acc_2 = tx_accounts.try_borrow(1);
+            assert!(acc_2.is_ok());
+
+            let acc_1_new = tx_accounts.try_borrow(0);
+            assert!(acc_1_new.is_ok());
+
+            assert_eq!(&*acc_1.unwrap(), &*acc_1_new.unwrap());
+        }
+
+        // Two mutable borrows are invalid
+        {
+            let acc_1 = tx_accounts.try_borrow_mut(0);
+            assert!(acc_1.is_ok());
+
+            let acc_2 = tx_accounts.try_borrow_mut(1);
+            assert!(acc_2.is_ok());
+
+            let acc_1_new = tx_accounts.try_borrow_mut(0);
+            assert_eq!(acc_1_new.err(), Some(InstructionError::AccountBorrowFailed));
+        }
+
+        // Mutable after immutable must fail
+        {
+            let acc_1 = tx_accounts.try_borrow(0);
+            assert!(acc_1.is_ok());
+
+            let acc_2 = tx_accounts.try_borrow(1);
+            assert!(acc_2.is_ok());
+
+            let acc_1_new = tx_accounts.try_borrow_mut(0);
+            assert_eq!(acc_1_new.err(), Some(InstructionError::AccountBorrowFailed));
+        }
+
+        // Immutable after mutable must fail
+        {
+            let acc_1 = tx_accounts.try_borrow_mut(0);
+            assert!(acc_1.is_ok());
+
+            let acc_2 = tx_accounts.try_borrow_mut(1);
+            assert!(acc_2.is_ok());
+
+            let acc_1_new = tx_accounts.try_borrow(0);
+            assert_eq!(acc_1_new.err(), Some(InstructionError::AccountBorrowFailed));
+        }
+
+        // Different scopes are good
+        {
+            let acc_1 = tx_accounts.try_borrow_mut(0);
+            assert!(acc_1.is_ok());
+        }
+
+        {
+            let acc_1 = tx_accounts.try_borrow_mut(0);
+            assert!(acc_1.is_ok());
+        }
     }
 }
