@@ -384,6 +384,7 @@ fn sample_storage_with_entries_id_fill_percentage(
     mark_alive: bool,
     account_data_size: Option<u64>,
     fill_percentage: u64,
+    storage_access: StorageAccess,
 ) -> Arc<AccountStorageEntry> {
     let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
     let file_size = account_data_size.unwrap_or(123) * 100 / fill_percentage;
@@ -394,11 +395,13 @@ fn sample_storage_with_entries_id_fill_percentage(
         id,
         size_aligned as u64,
         AccountsFileProvider::AppendVec,
+        storage_access,
     );
     let av = AccountsFile::AppendVec(AppendVec::new(
         &tf.path,
         true,
         (1024 * 1024).max(size_aligned),
+        storage_access,
     ));
     data.accounts = av;
 
@@ -414,6 +417,7 @@ fn sample_storage_with_entries_id(
     id: AccountsFileId,
     mark_alive: bool,
     account_data_size: Option<u64>,
+    storage_access: StorageAccess,
 ) -> Arc<AccountStorageEntry> {
     sample_storage_with_entries_id_fill_percentage(
         tf,
@@ -423,6 +427,7 @@ fn sample_storage_with_entries_id(
         mark_alive,
         account_data_size,
         100,
+        storage_access,
     )
 }
 
@@ -2485,8 +2490,9 @@ fn test_select_candidates_by_total_usage_no_candidates() {
     assert_eq!(0, next_candidates.len());
 }
 
-#[test]
-fn test_select_candidates_by_total_usage_3_way_split_condition() {
+#[test_case(StorageAccess::Mmap)]
+#[test_case(StorageAccess::File)]
+fn test_select_candidates_by_total_usage_3_way_split_condition(storage_access: StorageAccess) {
     // three candidates, one selected for shrink, one is put back to the candidate list and one is ignored
     solana_logger::setup();
     let mut candidates = ShrinkCandidates::default();
@@ -2502,6 +2508,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
         store1_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
+        storage_access,
     ));
     db.storage.insert(store1_slot, Arc::clone(&store1));
     store1.alive_bytes.store(0, Ordering::Release);
@@ -2514,6 +2521,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
         store2_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
+        storage_access,
     ));
     db.storage.insert(store2_slot, Arc::clone(&store2));
     store2
@@ -2528,6 +2536,7 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
         store3_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
+        storage_access,
     ));
     db.storage.insert(store3_slot, Arc::clone(&store3));
     store3
@@ -2548,8 +2557,9 @@ fn test_select_candidates_by_total_usage_3_way_split_condition() {
     assert!(next_candidates.contains(&store2_slot));
 }
 
-#[test]
-fn test_select_candidates_by_total_usage_2_way_split_condition() {
+#[test_case(StorageAccess::Mmap)]
+#[test_case(StorageAccess::File)]
+fn test_select_candidates_by_total_usage_2_way_split_condition(storage_access: StorageAccess) {
     // three candidates, 2 are selected for shrink, one is ignored
     solana_logger::setup();
     let db = AccountsDb::new_single_for_tests();
@@ -2565,6 +2575,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
         store1_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
+        storage_access,
     ));
     db.storage.insert(store1_slot, Arc::clone(&store1));
     store1.alive_bytes.store(0, Ordering::Release);
@@ -2577,6 +2588,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
         store2_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
+        storage_access,
     ));
     db.storage.insert(store2_slot, Arc::clone(&store2));
     store2
@@ -2591,6 +2603,7 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
         store3_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
+        storage_access,
     ));
     db.storage.insert(store3_slot, Arc::clone(&store3));
     store3
@@ -2608,8 +2621,9 @@ fn test_select_candidates_by_total_usage_2_way_split_condition() {
     assert_eq!(0, next_candidates.len());
 }
 
-#[test]
-fn test_select_candidates_by_total_usage_all_clean() {
+#[test_case(StorageAccess::Mmap)]
+#[test_case(StorageAccess::File)]
+fn test_select_candidates_by_total_usage_all_clean(storage_access: StorageAccess) {
     // 2 candidates, they must be selected to achieve the target alive ratio
     solana_logger::setup();
     let db = AccountsDb::new_single_for_tests();
@@ -2625,6 +2639,7 @@ fn test_select_candidates_by_total_usage_all_clean() {
         store1_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
+        storage_access,
     ));
     db.storage.insert(store1_slot, Arc::clone(&store1));
     store1
@@ -2639,6 +2654,7 @@ fn test_select_candidates_by_total_usage_all_clean() {
         store2_slot as AccountsFileId,
         store_file_size,
         AccountsFileProvider::AppendVec,
+        storage_access,
     ));
     db.storage.insert(store2_slot, Arc::clone(&store2));
     store2
@@ -4679,8 +4695,9 @@ fn test_remove_uncleaned_slots_and_collect_pubkeys_up_to_slot() {
     assert!(candidates_contain(&pubkey3));
 }
 
-#[test]
-fn test_shrink_productive() {
+#[test_case(StorageAccess::Mmap)]
+#[test_case(StorageAccess::File)]
+fn test_shrink_productive(storage_access: StorageAccess) {
     solana_logger::setup();
     let path = Path::new("");
     let file_size = 100;
@@ -4692,6 +4709,7 @@ fn test_shrink_productive() {
         slot as AccountsFileId,
         file_size,
         AccountsFileProvider::AppendVec,
+        storage_access,
     ));
     store.add_account(file_size as usize);
     assert!(!AccountsDb::is_shrinking_productive(&store));
@@ -4702,6 +4720,7 @@ fn test_shrink_productive() {
         slot as AccountsFileId,
         file_size,
         AccountsFileProvider::AppendVec,
+        storage_access,
     ));
     store.add_account(file_size as usize / 2);
     store.add_account(file_size as usize / 4);
@@ -4712,8 +4731,9 @@ fn test_shrink_productive() {
     assert!(!AccountsDb::is_shrinking_productive(&store));
 }
 
-#[test]
-fn test_is_candidate_for_shrink() {
+#[test_case(StorageAccess::Mmap)]
+#[test_case(StorageAccess::File)]
+fn test_is_candidate_for_shrink(storage_access: StorageAccess) {
     solana_logger::setup();
 
     let mut accounts = AccountsDb::new_single_for_tests();
@@ -4725,6 +4745,7 @@ fn test_is_candidate_for_shrink() {
         1,
         store_file_size,
         AccountsFileProvider::AppendVec,
+        storage_access,
     ));
     match accounts.shrink_ratio {
         AccountShrinkThreshold::TotalSpace { shrink_ratio } => {
@@ -6050,6 +6071,7 @@ pub(crate) fn create_storages_and_update_index(
             id,
             alive,
             account_data_size,
+            db.storage_access(),
         );
         insert_store(db, Arc::clone(&storage));
     }
@@ -6136,9 +6158,10 @@ fn insert_store(db: &AccountsDb, append_vec: Arc<AccountStorageEntry>) {
     db.storage.insert(append_vec.slot(), append_vec);
 }
 
-#[test]
+#[test_case(StorageAccess::Mmap)]
+#[test_case(StorageAccess::File)]
 #[should_panic(expected = "self.storage.remove")]
-fn test_handle_dropped_roots_for_ancient_assert() {
+fn test_handle_dropped_roots_for_ancient_assert(storage_access: StorageAccess) {
     solana_logger::setup();
     let common_store_path = Path::new("");
     let store_file_size = 10_000;
@@ -6148,6 +6171,7 @@ fn test_handle_dropped_roots_for_ancient_assert() {
         1,
         store_file_size,
         AccountsFileProvider::AppendVec,
+        storage_access,
     ));
     let db = AccountsDb::new_single_for_tests();
     let slot0 = 0;

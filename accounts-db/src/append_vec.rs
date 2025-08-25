@@ -287,7 +287,12 @@ impl Drop for AppendVec {
 }
 
 impl AppendVec {
-    pub fn new(file: impl Into<PathBuf>, create: bool, size: usize) -> Self {
+    pub fn new(
+        file: impl Into<PathBuf>,
+        create: bool,
+        size: usize,
+        storage_access: StorageAccess,
+    ) -> Self {
         let file = file.into();
         let initial_len = 0;
         AppendVec::sanitize_len_and_size(initial_len, size).unwrap();
@@ -320,19 +325,24 @@ impl AppendVec {
         data.rewind().unwrap();
         data.flush().unwrap();
 
-        //UNSAFE: Required to create a Mmap
-        // let mmap = unsafe { MmapMut::map_mut(&data) };
-        // let mmap = mmap.unwrap_or_else(|err| {
-        //     panic!(
-        //         "Failed to map the data file (size: {size}): {err}. Please increase sysctl \
-        //          vm.max_map_count or equivalent for your platform.",
-        //     );
-        // });
+        let backing = match storage_access {
+            StorageAccess::Mmap => {
+                //UNSAFE: Required to create a Mmap
+                let mmap = unsafe { MmapMut::map_mut(&data) };
+                let mmap = mmap.unwrap_or_else(|err| {
+                    panic!(
+                        "Failed to map the data file (size: {size}): {err}. Please increase sysctl \
+                         vm.max_map_count or equivalent for your platform.",
+                    );
+                });
+                APPEND_VEC_STATS
+                    .open_as_mmap
+                    .fetch_add(1, Ordering::Relaxed);
+                AppendVecFileBacking::Mmap(mmap)
+            }
+            StorageAccess::File => AppendVecFileBacking::File(data),
+        };
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
-
-        APPEND_VEC_STATS
-            .open_as_mmap
-            .fetch_add(1, Ordering::Relaxed);
 
         AppendVec {
             path: file,
@@ -505,9 +515,8 @@ impl AppendVec {
     pub fn new_from_file_unchecked(
         path: impl Into<PathBuf>,
         current_len: usize,
-        _storage_access: StorageAccess,
+        storage_access: StorageAccess,
     ) -> Result<Self> {
-        let storage_access = StorageAccess::File;
         let path = path.into();
         let file_size = std::fs::metadata(&path)?.len();
         Self::sanitize_len_and_size(current_len, file_size as usize)?;
@@ -1443,11 +1452,12 @@ pub mod tests {
         assert_eq!(&def1, &def2);
     }
 
-    #[test]
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
     #[should_panic(expected = "AppendVecError(FileSizeTooSmall(0))")]
-    fn test_append_vec_new_bad_size() {
+    fn test_append_vec_new_bad_size(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append_vec_new_bad_size");
-        let _av = AppendVec::new(&path.path, true, 0);
+        let _av = AppendVec::new(&path.path, true, 0, storage_access);
     }
 
     #[test_case(StorageAccess::Mmap)]
@@ -1507,10 +1517,11 @@ pub mod tests {
         assert_matches!(result, Err(ref message) if message.to_string().contains("is larger than file size (1048576)"));
     }
 
-    #[test]
-    fn test_append_vec_one() {
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_append_vec_one(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append");
-        let av = AppendVec::new(&path.path, true, 1024 * 1024);
+        let av = AppendVec::new(&path.path, true, 1024 * 1024, storage_access);
         let account = create_test_account(0);
         let index = av.append_account_test(&account).unwrap();
         assert_eq!(av.get_account_test(index).unwrap(), account);
@@ -1531,10 +1542,11 @@ pub mod tests {
         assert_eq!(av.get_account_test(index), None);
     }
 
-    #[test]
-    fn test_append_vec_one_with_data() {
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_append_vec_one_with_data(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append");
-        let av = AppendVec::new(&path.path, true, 1024 * 1024);
+        let av = AppendVec::new(&path.path, true, 1024 * 1024, storage_access);
         let data_len = 1;
         let account = create_test_account(data_len);
         let index = av.append_account_test(&account).unwrap();
@@ -1547,12 +1559,13 @@ pub mod tests {
         truncate_and_test(av, index);
     }
 
-    #[test]
-    fn test_remaining_bytes() {
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_remaining_bytes(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append");
         let sz = 1024 * 1024;
         let sz64 = sz as u64;
-        let av = AppendVec::new(&path.path, true, sz);
+        let av = AppendVec::new(&path.path, true, sz, storage_access);
         assert_eq!(av.capacity(), sz64);
         assert_eq!(av.remaining_bytes(), sz64);
 
@@ -1587,10 +1600,11 @@ pub mod tests {
         assert_eq!(av.remaining_bytes(), sz64 - u64_align!(av_len) as u64);
     }
 
-    #[test]
-    fn test_append_vec_data() {
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_append_vec_data(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append_data");
-        let av = AppendVec::new(&path.path, true, 1024 * 1024);
+        let av = AppendVec::new(&path.path, true, 1024 * 1024, storage_access);
         let account = create_test_account(5);
         let index = av.append_account_test(&account).unwrap();
         assert_eq!(av.get_account_test(index).unwrap(), account);
@@ -1665,7 +1679,12 @@ pub mod tests {
         }
 
         let path = get_append_vec_path("test_scan_accounts_stored_meta_correctness");
-        let av = ManuallyDrop::new(AppendVec::new(&path.path, true, file_size));
+        let av = ManuallyDrop::new(AppendVec::new(
+            &path.path,
+            true,
+            file_size,
+            StorageAccess::File,
+        ));
         let slot = 42;
         av.append_accounts(&(slot, test_accounts.as_slice()), 0)
             .unwrap();
@@ -1694,10 +1713,11 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_append_vec_append_many() {
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_append_vec_append_many(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append_many");
-        let av = AppendVec::new(&path.path, true, 1024 * 1024);
+        let av = AppendVec::new(&path.path, true, 1024 * 1024, storage_access);
         let size = 1000;
         let mut indexes = vec![];
         let now = Instant::now();
@@ -1824,7 +1844,7 @@ pub mod tests {
         let path = &file.path;
         let accounts_len = {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
-            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
+            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024, storage_access));
 
             av.append_account_test(&create_test_account(10)).unwrap();
             av.flush().unwrap();
@@ -1853,11 +1873,12 @@ pub mod tests {
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
 
-    #[test]
-    fn test_append_vec_reset() {
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_append_vec_reset(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_append_vec_reset");
         let path = &file.path;
-        let av = AppendVec::new(path, true, 1024 * 1024);
+        let av = AppendVec::new(path, true, 1024 * 1024, storage_access);
         av.append_account_test(&create_test_account(10)).unwrap();
 
         assert!(!av.is_empty());
@@ -1872,7 +1893,7 @@ pub mod tests {
         let path = &file.path;
         let accounts_len = {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
-            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
+            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024, storage_access));
             av.append_account_test(&create_test_account(10)).unwrap();
             av.len()
         };
@@ -1890,7 +1911,7 @@ pub mod tests {
         let path = &file.path;
         let accounts_len = {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
-            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
+            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024, storage_access));
             av.append_account_test(&create_test_account(10)).unwrap();
             av.len()
         };
@@ -1906,7 +1927,7 @@ pub mod tests {
         let path = &file.path;
         let accounts_len = {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
-            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
+            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024, storage_access));
 
             av.append_account_test(&create_test_account(10)).unwrap();
 
@@ -1945,7 +1966,7 @@ pub mod tests {
         // Write a valid append vec file.
         let accounts_len = {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
-            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
+            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024, storage_access));
             av.append_account_test(&create_test_account(10)).unwrap();
             let offset_1 = {
                 let mut executable_account = create_test_account(10);
@@ -2019,7 +2040,12 @@ pub mod tests {
             let data_len: usize = 2 * PAGE_SIZE;
             let account = create_test_account_with(data_len);
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
-            let av = ManuallyDrop::new(AppendVec::new(path, true, aligned_stored_size(data_len)));
+            let av = ManuallyDrop::new(AppendVec::new(
+                path,
+                true,
+                aligned_stored_size(data_len),
+                storage_access,
+            ));
             av.append_account_test(&account).unwrap();
             av.flush().unwrap();
         }
@@ -2059,7 +2085,8 @@ pub mod tests {
 
         let temp_file = get_append_vec_path("test_get_account_sizes");
         let account_offsets = {
-            let append_vec = AppendVec::new(&temp_file.path, true, total_stored_size);
+            let append_vec =
+                AppendVec::new(&temp_file.path, true, total_stored_size, storage_access);
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let append_vec = ManuallyDrop::new(append_vec);
             let slot = 77; // the specific slot does not matter
@@ -2114,8 +2141,12 @@ pub mod tests {
         let temp_file = get_append_vec_path("test_scan");
         let account_offsets = {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
-            let append_vec =
-                ManuallyDrop::new(AppendVec::new(&temp_file.path, true, total_stored_size));
+            let append_vec = ManuallyDrop::new(AppendVec::new(
+                &temp_file.path,
+                true,
+                total_stored_size,
+                storage_access,
+            ));
             let slot = 42; // the specific slot does not matter
             let storable_accounts: Vec<_> = std::iter::zip(&pubkeys, &accounts).collect();
             let stored_accounts_info = append_vec
@@ -2326,12 +2357,14 @@ pub mod tests {
     // Test to make sure that `is_dirty` is tracked properly
     // * `reopen_as_readonly()` moves `is_dirty`
     // * `flush()` clears `is_dirty`
-    #[test_case(false)]
-    #[test_case(true)]
-    fn test_is_dirty(begins_dirty: bool) {
+    #[test_case(false, StorageAccess::Mmap)]
+    #[test_case(false, StorageAccess::File)]
+    #[test_case(true, StorageAccess::Mmap)]
+    #[test_case(true, StorageAccess::File)]
+    fn test_is_dirty(begins_dirty: bool, storage_access: StorageAccess) {
         let file = get_append_vec_path("test_is_dirty");
 
-        let mut av1 = AppendVec::new(&file.path, true, 1024 * 1024);
+        let mut av1 = AppendVec::new(&file.path, true, 1024 * 1024, storage_access);
         // don't delete the file when the AppendVec is dropped (let TempFile do it)
         *av1.remove_file_on_drop.get_mut() = false;
 
