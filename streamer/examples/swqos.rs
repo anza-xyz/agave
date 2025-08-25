@@ -1,3 +1,4 @@
+#![allow(clippy::arithmetic_side_effects)]
 use {
     clap::Parser,
     crossbeam_channel::bounded,
@@ -111,12 +112,13 @@ async fn main() {
     .unwrap();
     info!("Server listening on {}", socket.local_addr().unwrap());
 
-    tokio::task::spawn_blocking(|| {
+    let logger_thread = tokio::task::spawn_blocking(|| {
         let start = Instant::now();
         let path = "./results/serverlog.bin";
         let logfile = std::fs::File::create(path).unwrap();
         info!("Logfile in {}", path);
         let mut logfile = std::io::BufWriter::new(logfile);
+        let mut sum = 0;
         for batch in receiver {
             let delta_time = start.elapsed().as_micros() as u32;
             for pkt in batch.iter() {
@@ -128,8 +130,10 @@ async fn main() {
                 logfile.write_all(&delta_time.to_ne_bytes()).unwrap();
                 let pubkey = Pubkey::new_from_array(pubkey);
                 debug!("{pubkey}: {pkt_len} bytes");
+                sum += 1;
             }
         }
+        info!("Server captured {sum} TXs");
         logfile.flush().unwrap();
     });
 
@@ -138,5 +142,6 @@ async fn main() {
     exit.store(true, std::sync::atomic::Ordering::Relaxed);
     drop(endpoints);
     run_thread.await.unwrap();
+    logger_thread.await.unwrap();
     stats.report("final_stats");
 }
