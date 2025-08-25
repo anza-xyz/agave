@@ -39,14 +39,14 @@ pub(crate) struct PartitionedStakeReward {
     pub commission: u8,
 }
 
-type PartitionedStakeRewards = Vec<PartitionedStakeReward>;
+type PartitionedStakeRewards = Vec<Option<PartitionedStakeReward>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct StartBlockHeightAndRewards {
     /// the block height of the slot at which rewards distribution began
     pub(crate) distribution_starting_block_height: u64,
     /// calculated epoch rewards before partitioning
-    pub(crate) all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+    pub(crate) all_stake_rewards: Arc<PartitionedStakeRewards>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,7 +55,7 @@ pub(crate) struct StartBlockHeightAndPartitionedRewards {
     pub(crate) distribution_starting_block_height: u64,
 
     /// calculated epoch rewards pending distribution
-    pub(crate) all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+    pub(crate) all_stake_rewards: Arc<PartitionedStakeRewards>,
 
     /// indices of calculated epoch rewards per partition, outer Vec is by
     /// partition (one partition per block), inner Vec is the indices for one
@@ -196,7 +196,7 @@ pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
     /// vote accounts
     pub(super) point_value: PointValue,
     /// stake rewards that still need to be distributed
-    pub(super) stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+    pub(super) stake_rewards: Arc<PartitionedStakeRewards>,
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
@@ -234,7 +234,7 @@ impl Bank {
     pub(crate) fn set_epoch_reward_status_calculation(
         &mut self,
         distribution_starting_block_height: u64,
-        stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+        stake_rewards: Arc<PartitionedStakeRewards>,
     ) {
         self.epoch_reward_status =
             EpochRewardStatus::Active(EpochRewardPhase::Calculation(StartBlockHeightAndRewards {
@@ -246,7 +246,7 @@ impl Bank {
     pub(crate) fn set_epoch_reward_status_distribution(
         &mut self,
         distribution_starting_block_height: u64,
-        all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+        all_stake_rewards: Arc<PartitionedStakeRewards>,
         partition_indices: Vec<Vec<usize>>,
     ) {
         self.epoch_reward_status = EpochRewardStatus::Active(EpochRewardPhase::Distribution(
@@ -351,9 +351,9 @@ mod tests {
     }
 
     pub fn build_partitioned_stake_rewards(
-        stake_rewards: &[PartitionedStakeReward],
+        stake_rewards: &[Option<PartitionedStakeReward>],
         partition_indices: &[Vec<usize>],
-    ) -> Vec<Vec<PartitionedStakeReward>> {
+    ) -> Vec<Vec<Option<PartitionedStakeReward>>> {
         partition_indices
             .iter()
             .map(|partition_index| {
@@ -372,7 +372,7 @@ mod tests {
     ) -> PartitionedStakeRewards {
         stake_rewards
             .into_iter()
-            .map(|stake_reward| PartitionedStakeReward::maybe_from(&stake_reward).unwrap())
+            .map(|stake_reward| Some(PartitionedStakeReward::maybe_from(&stake_reward).unwrap()))
             .collect()
     }
 
@@ -546,7 +546,7 @@ mod tests {
         let expected_num = 100;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| PartitionedStakeReward::new_random())
+            .map(|_| Some(PartitionedStakeReward::new_random()))
             .collect::<Vec<_>>();
 
         let partition_indices = vec![(0..expected_num).collect()];
@@ -598,7 +598,7 @@ mod tests {
             |num_stakes: u64, expected_num_reward_distribution_blocks: u64| {
                 // Given the short epoch, i.e. 32 slots, we should cap the number of reward distribution blocks to 32/10 = 3.
                 let stake_rewards = (0..num_stakes)
-                    .map(|_| PartitionedStakeReward::new_random())
+                    .map(|_| Some(PartitionedStakeReward::new_random()))
                     .collect::<Vec<_>>();
 
                 assert_eq!(
@@ -636,7 +636,7 @@ mod tests {
         // Given 8k rewards, it will take 2 blocks to credit all the rewards
         let expected_num = 8192;
         let stake_rewards = (0..expected_num)
-            .map(|_| PartitionedStakeReward::new_random())
+            .map(|_| Some(PartitionedStakeReward::new_random()))
             .collect::<Vec<_>>();
 
         assert_eq!(bank.get_reward_distribution_num_blocks(&stake_rewards), 2);

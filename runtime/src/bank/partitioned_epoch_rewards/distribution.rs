@@ -271,6 +271,10 @@ impl Bank {
                         "partition reward out of bound: {index} >= {}",
                         partition_rewards.all_stake_rewards.len()
                     )
+                })
+                .as_ref()
+                .unwrap_or_else(|| {
+                    panic!("partition reward {index} is empty");
                 });
             let stake_pubkey = partitioned_stake_reward.stake_pubkey;
             let reward_amount = partitioned_stake_reward.stake_reward;
@@ -339,7 +343,7 @@ mod tests {
         let expected_num = 100;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| PartitionedStakeReward::new_random())
+            .map(|_| Some(PartitionedStakeReward::new_random()))
             .collect::<Vec<_>>();
 
         let partition_indices =
@@ -363,7 +367,7 @@ mod tests {
         let expected_num = 1;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| PartitionedStakeReward::new_random())
+            .map(|_| Some(PartitionedStakeReward::new_random()))
             .collect::<Vec<_>>();
 
         let partition_indices = hash_rewards_into_partitions(
@@ -749,7 +753,11 @@ mod tests {
 
         let expected_total = converted_rewards
             .iter()
-            .map(|stake_reward| stake_reward.stake_reward)
+            .filter_map(|stake_reward| {
+                stake_reward
+                    .as_ref()
+                    .map(|stake_reward| stake_reward.stake_reward)
+            })
             .sum::<u64>();
 
         let partitioned_rewards = StartBlockHeightAndPartitionedRewards {
