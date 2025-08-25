@@ -546,6 +546,40 @@ impl Accounts {
         }
     }
 
+    fn notify_geyser_accounts_update<'a>(
+        &self,
+        accounts: &impl StorableAccounts<'a>,
+        transactions: Option<&'a [&'a SanitizedTransaction]>,
+    ) {
+        let mut current_write_version = if self.accounts_db.accounts_update_notifier.is_some() {
+            self.accounts_db
+                .write_version
+                .fetch_add(accounts.len() as u64, Ordering::AcqRel)
+        } else {
+            0
+        };
+
+        let slot = accounts.target_slot();
+
+        for index in 0..accounts.len() {
+            accounts.account_default_if_zero_lamport(index, |account| {
+                let txn = transactions
+                    .map(|txs| *txs.get(index).expect("txs must be present if provided"));
+                let account_shared_data = account.to_account_shared_data();
+                let pubkey = account.pubkey();
+
+                self.accounts_db.notify_account_at_accounts_update(
+                    slot,
+                    &account_shared_data,
+                    &txn,
+                    pubkey,
+                    current_write_version,
+                );
+                current_write_version = current_write_version.saturating_add(1);
+            });
+        }
+    }
+
     /// Store `accounts` into the DB
     ///
     /// This version updates the accounts index sequentially,
@@ -555,27 +589,20 @@ impl Accounts {
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
     ) {
-        self.accounts_db.store_accounts_unfrozen(
-            accounts,
-            transactions,
-            UpdateIndexThreadSelection::Inline,
-        );
+        self.notify_geyser_accounts_update(&accounts, transactions);
+
+        self.accounts_db
+            .store_accounts_unfrozen(accounts, UpdateIndexThreadSelection::Inline);
     }
 
     /// Store `accounts` into the DB
     ///
     /// This version updates the accounts index in parallel,
     /// using the foreground AccountsDb thread pool.
-    pub fn store_accounts_par<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-    ) {
-        self.accounts_db.store_accounts_unfrozen(
-            accounts,
-            transactions,
-            UpdateIndexThreadSelection::PoolWithThreshold,
-        );
+    pub fn store_accounts_par<'a>(&self, accounts: impl StorableAccounts<'a>) {
+        self.notify_geyser_accounts_update(&accounts, None);
+        self.accounts_db
+            .store_accounts_unfrozen(accounts, UpdateIndexThreadSelection::PoolWithThreshold);
     }
 
     /// Add a slot to root.  Root slots cannot be purged
