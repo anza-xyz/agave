@@ -2364,8 +2364,8 @@ pub mod tests {
             av1.append_account_test(&create_test_account(10)).unwrap();
         }
         assert_eq!(*av1.is_dirty.get_mut(), begins_dirty);
-        let mut av2 = av1.reopen_as_readonly().unwrap();
 
+        let mut av2 = av1.reopen_as_readonly().unwrap();
         // don't delete the file when the AppendVec is dropped (let TempFile do it)
         *av2.remove_file_on_drop.get_mut() = false;
 
