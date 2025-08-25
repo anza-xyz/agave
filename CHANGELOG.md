@@ -19,6 +19,8 @@ Release channels have their own copy of this changelog:
 #### Changes
 ### Validator
 #### Breaking
+#### Deprecations
+* The `--monitor` flag with `agave-validator exit` is now deprecated. Operators can use the `monitor` command after `exit` instead.
 
 ## 3.0.0
 
