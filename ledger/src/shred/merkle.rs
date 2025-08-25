@@ -1313,7 +1313,7 @@ fn finish_erasure_batch(
 mod test {
     use {
         super::*,
-        crate::shred::{merkle_tree::get_proof_size, ShredFlags, ShredId, SignedData},
+        crate::shred::{merkle_tree::get_proof_size, ShredFlags, ShredId},
         assert_matches::assert_matches,
         itertools::Itertools,
         rand::{seq::SliceRandom, CryptoRng, Rng},
@@ -1769,7 +1769,7 @@ mod test {
                 chained_merkle_root
             );
             let data = shred::layout::get_signed_data(shred).unwrap();
-            assert_eq!(data, SignedData::MerkleRoot(merkle_root));
+            assert_eq!(data, merkle_root);
             assert!(signature.verify(pubkey.as_ref(), data.as_ref()));
         }
         // Verify common, data and coding headers.

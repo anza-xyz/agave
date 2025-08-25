@@ -4,7 +4,7 @@
 use {
     crate::shred::{
         self, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags, ShredId,
-        ShredType, ShredVariant, SignedData, SIZE_OF_COMMON_SHRED_HEADER,
+        ShredType, ShredVariant, SIZE_OF_COMMON_SHRED_HEADER,
     },
     solana_clock::Slot,
     solana_hash::Hash,
@@ -172,26 +172,18 @@ pub fn get_shred_id(shred: &[u8]) -> Option<ShredId> {
     ))
 }
 
-pub(crate) fn get_signed_data(shred: &[u8]) -> Option<SignedData> {
+pub(crate) fn get_signed_data(shred: &[u8]) -> Option<Hash> {
     let data = match get_shred_variant(shred).ok()? {
         ShredVariant::MerkleCode {
             proof_size,
             chained,
             resigned,
-        } => {
-            let merkle_root =
-                shred::merkle::ShredCode::get_merkle_root(shred, proof_size, chained, resigned)?;
-            SignedData::MerkleRoot(merkle_root)
-        }
+        } => shred::merkle::ShredCode::get_merkle_root(shred, proof_size, chained, resigned)?,
         ShredVariant::MerkleData {
             proof_size,
             chained,
             resigned,
-        } => {
-            let merkle_root =
-                shred::merkle::ShredData::get_merkle_root(shred, proof_size, chained, resigned)?;
-            SignedData::MerkleRoot(merkle_root)
-        }
+        } => shred::merkle::ShredData::get_merkle_root(shred, proof_size, chained, resigned)?,
     };
     Some(data)
 }
@@ -563,7 +555,7 @@ mod tests {
             });
             assert_eq!(
                 get_signed_data(bytes).unwrap(),
-                SignedData::MerkleRoot(shred.merkle_root().unwrap())
+                shred.merkle_root().unwrap()
             );
             assert_eq!(
                 get_merkle_root(bytes).unwrap(),

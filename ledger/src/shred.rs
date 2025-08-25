@@ -275,19 +275,6 @@ pub enum Shred {
     ShredData(ShredData),
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum SignedData {
-    MerkleRoot(Hash),
-}
-
-impl AsRef<[u8]> for SignedData {
-    fn as_ref(&self) -> &[u8] {
-        match self {
-            Self::MerkleRoot(root) => root.as_ref(),
-        }
-    }
-}
-
 /// Tuple which uniquely identifies a shred should it exists.
 #[derive(Clone, Copy, Eq, Debug, Hash, PartialEq)]
 pub struct ShredId(Slot, /*shred index:*/ u32, ShredType);
@@ -394,7 +381,7 @@ impl Shred {
     dispatch!(fn common_header(&self) -> &ShredCommonHeader);
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     dispatch!(fn set_signature(&mut self, signature: Signature));
-    dispatch!(fn signed_data(&self) -> Result<SignedData, Error>);
+    dispatch!(fn signed_data(&self) -> Result<Hash, Error>);
 
     dispatch!(pub fn chained_merkle_root(&self) -> Result<Hash, Error>);
     dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);

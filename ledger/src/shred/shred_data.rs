@@ -5,7 +5,7 @@ use {
         merkle,
         payload::Payload,
         traits::{Shred as _, ShredData as ShredDataTrait},
-        DataShredHeader, Error, ShredCommonHeader, ShredFlags, ShredType, ShredVariant, SignedData,
+        DataShredHeader, Error, ShredCommonHeader, ShredFlags, ShredType, ShredVariant,
         MAX_DATA_SHREDS_PER_SLOT,
     },
     solana_clock::Slot,
@@ -29,10 +29,9 @@ impl ShredData {
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     dispatch!(pub(super) fn set_signature(&mut self, signature: Signature));
 
-    pub(super) fn signed_data(&self) -> Result<SignedData, Error> {
-        match self {
-            Self::Merkle(shred) => Ok(SignedData::MerkleRoot(shred.signed_data()?)),
-        }
+    pub(super) fn signed_data(&self) -> Result<Hash, Error> {
+        let Self::Merkle(shred) = self;
+        shred.signed_data()
     }
 
     pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error> {
