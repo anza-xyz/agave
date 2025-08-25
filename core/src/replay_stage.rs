@@ -720,6 +720,8 @@ impl ReplayStage {
                 &mut poh_controller,
                 &leader_schedule_cache,
             );
+            // initially we wait for poh service to pick up the bank.
+            while poh_controller.has_pending_message() && !exit.load(Ordering::Relaxed) {}
 
             loop {
                 // Stop getting entries if we get exit signal
@@ -740,7 +742,10 @@ impl ReplayStage {
                 );
                 generate_new_bank_forks_time.stop();
 
-                let mut tpu_has_bank = poh_recorder.read().unwrap().has_bank();
+                // We either have a bank currently, OR there is a pending message to either reset or set
+                // the bank.
+                let tpu_has_bank =
+                    poh_recorder.read().unwrap().has_bank() || poh_controller.has_pending_message();
 
                 let mut replay_active_banks_time = Measure::start("replay_active_banks_time");
                 let (mut ancestors, mut descendants) = {
@@ -1091,16 +1096,17 @@ impl ReplayStage {
                             warn!("Identity changed from {my_old_pubkey} to {my_pubkey}");
                         }
 
-                        Self::reset_poh_recorder(
-                            &my_pubkey,
-                            &blockstore,
-                            reset_bank.clone(),
-                            &mut poh_controller,
-                            &leader_schedule_cache,
-                        );
-                        last_reset = reset_bank.last_blockhash();
-                        last_reset_bank_descendants = vec![];
-                        tpu_has_bank = false;
+                        if !poh_controller.has_pending_message() {
+                            Self::reset_poh_recorder(
+                                &my_pubkey,
+                                &blockstore,
+                                reset_bank.clone(),
+                                &mut poh_controller,
+                                &leader_schedule_cache,
+                            );
+                            last_reset = reset_bank.last_blockhash();
+                            last_reset_bank_descendants = vec![];
+                        }
 
                         if let Some(last_voted_slot) = tower.last_voted_slot() {
                             // If the current heaviest bank is not a descendant of the last voted slot,
@@ -1159,7 +1165,7 @@ impl ReplayStage {
                 // may add a bank that will not included in either of these maps.
                 drop(ancestors);
                 drop(descendants);
-                if !tpu_has_bank {
+                if !tpu_has_bank && !poh_controller.has_pending_message() {
                     Self::maybe_start_leader(
                         &my_pubkey,
                         &bank_forks,
@@ -2851,7 +2857,7 @@ impl ReplayStage {
             GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
         );
 
-        if poh_controller.reset_sync(bank, next_leader_slot).is_err() {
+        if poh_controller.reset(bank, next_leader_slot).is_err() {
             warn!("Failed to reset poh, poh service is disconnected");
             return;
         }
