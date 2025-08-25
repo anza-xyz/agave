@@ -25,22 +25,19 @@ use {
     solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch, PACKETS_PER_BATCH},
     solana_pubkey::Pubkey,
     solana_quic_definitions::{
-        QUIC_MAX_STAKED_CONCURRENT_STREAMS, QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO,
-        QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS, QUIC_MIN_STAKED_CONCURRENT_STREAMS,
-        QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO, QUIC_TOTAL_STAKED_CONCURRENT_STREAMS,
-        QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO,
+        QUIC_MAX_STAKED_CONCURRENT_STREAMS, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
+        QUIC_MIN_STAKED_CONCURRENT_STREAMS, QUIC_TOTAL_STAKED_CONCURRENT_STREAMS,
     },
     solana_signature::Signature,
     solana_time_utils as timing,
     solana_tls_utils::get_pubkey_from_tls_certificate,
     solana_transaction_metrics_tracker::signature_if_should_track_packet,
     std::{
-        array,
-        fmt,
+        array, fmt,
         iter::repeat_with,
         net::{IpAddr, SocketAddr, UdpSocket},
+        ops::Range,
         pin::Pin,
-        // CAUTION: be careful not to introduce any awaits while holding an RwLock.
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
@@ -84,6 +81,14 @@ const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
 
 const CONNECTION_CLOSE_CODE_INVALID_STREAM: u32 = 5;
 const CONNECTION_CLOSE_REASON_INVALID_STREAM: &[u8] = b"invalid_stream";
+
+/// The receive window for QUIC connection from unstaked nodes is
+/// set to this ratio times BDP
+pub const QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO: u64 = 128;
+
+/// The receive window for QUIC connection from maximum staked nodes is
+/// set to this ratio times BDP
+pub const QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO: u64 = 512;
 
 /// Total new connection counts per second. Heuristically taken from
 /// the default staked and unstaked connection limits. Might be adjusted
@@ -540,15 +545,12 @@ fn handle_and_cache_new_connection(
     ) as u64)
     {
         let remote_addr = connection.remote_address();
-        let receive_window =
-            compute_recieve_window(params.max_stake, params.min_stake, params.peer_type);
 
         debug!(
-            "Peer type {:?}, total stake {}, max streams {} receive_window {:?} from peer {}",
+            "Peer type {:?}, total stake {}, max streams {} from peer {}",
             params.peer_type,
             params.total_stake,
             max_uni_streams.into_inner(),
-            receive_window,
             remote_addr,
         );
 
@@ -565,9 +567,6 @@ fn handle_and_cache_new_connection(
         {
             drop(connection_table_l);
 
-            if let Ok(receive_window) = receive_window {
-                connection.set_receive_window(receive_window);
-            }
             connection.set_max_concurrent_uni_streams(max_uni_streams);
 
             tokio::spawn(handle_connection(
@@ -635,46 +634,33 @@ async fn prune_unstaked_connections_and_add_new_connection(
 }
 
 /// Calculate the ratio for per connection receive window from a staked peer
-fn compute_receive_window_ratio_for_staked_node(max_stake: u64, min_stake: u64, stake: u64) -> u64 {
-    // Testing shows the maximum througput from a connection is achieved at receive_window =
-    // PACKET_DATA_SIZE * 10. Beyond that, there is not much gain. We linearly map the
-    // stake to the ratio range from QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO to
-    // QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO. Where the linear algebra of finding the ratio 'r'
-    // for stake 's' is,
-    // r(s) = a * s + b. Given the max_stake, min_stake, max_ratio, min_ratio, we can find
-    // a and b.
+fn compute_recieve_window_base(max_stake: u64, peer_type: ConnectionPeerType) -> u64 {
+    let stake = match peer_type {
+        ConnectionPeerType::Unstaked => 0,
+        ConnectionPeerType::Staked(peer_stake) => peer_stake,
+    };
 
-    if stake > max_stake {
+    if stake >= max_stake {
         return QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
     }
 
     let max_ratio = QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
-    let min_ratio = QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO;
-    if max_stake > min_stake {
-        let a = (max_ratio - min_ratio) as f64 / (max_stake - min_stake) as f64;
-        let b = max_ratio as f64 - ((max_stake as f64) * a);
-        let ratio = (a * stake as f64) + b;
-        ratio.round() as u64
-    } else {
-        QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO
-    }
+    let min_ratio = QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO;
+    // Linear interpolation between min_ratio and max_ratio as stake approaches
+    // max_stake
+    min_ratio + (stake * (max_ratio - min_ratio) + max_stake / 2) / max_stake;
 }
 
-fn compute_recieve_window(
-    max_stake: u64,
-    min_stake: u64,
-    peer_type: ConnectionPeerType,
-) -> Result<VarInt, VarIntBoundsExceeded> {
-    match peer_type {
-        ConnectionPeerType::Unstaked => {
-            VarInt::from_u64(PACKET_DATA_SIZE as u64 * QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO)
-        }
-        ConnectionPeerType::Staked(peer_stake) => {
-            let ratio =
-                compute_receive_window_ratio_for_staked_node(max_stake, min_stake, peer_stake);
-            VarInt::from_u64(PACKET_DATA_SIZE as u64 * ratio)
-        }
-    }
+/// Target bitrate for an unstaked connection
+const TARGET_UNSTAKED_KBPS: u64 = 50000;
+
+/// Maximal allowed RTT for SWQOS calculations (to limit abuse)
+const MAX_ALLOWED_RTT: Duration = Duration::from_millis(200);
+
+fn compute_receive_window_bdp(window_base: u64, rtt: Duration) -> VarInt {
+    let millis = rtt.as_millis().min(MAX_ALLOWED_RTT.as_millis()) as u64;
+    let receive_window = millis * TARGET_UNSTAKED_KBPS;
+    VarInt::from_u64(receive_window).unwrap_or(VarInt::MAX)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1059,9 +1045,13 @@ async fn handle_connection(
         ..
     } = params;
 
+    let receive_window_base = compute_recieve_window_base(params.max_stake, params.peer_type);
+    connection.set_receive_window(compute_receive_window_bdp(
+        receive_window_base,
+        connection.rtt(),
+    ));
     debug!(
-        "quic new connection {} streams: {} connections: {}",
-        remote_addr,
+        "quic new connection {remote_addr}, receive_window_base {receive_window_base} streams: {} connections: {}",
         stats.total_streams.load(Ordering::Relaxed),
         stats.total_connections.load(Ordering::Relaxed),
     );
@@ -1199,6 +1189,10 @@ async fn handle_connection(
 
         stats.total_streams.fetch_sub(1, Ordering::Relaxed);
         stream_load_ema.update_ema_if_needed();
+
+        let new_window = compute_receive_window_bdp(receive_window_base, connection.rtt());
+        debug!("Updating receive window for {remote_addr:?} to {new_window:?}");
+        connection.set_receive_window(new_window);
     }
 
     let stable_id = connection.stable_id();
@@ -2355,34 +2349,23 @@ pub mod test {
     #[test]
     fn test_cacluate_receive_window_ratio_for_staked_node() {
         let mut max_stake = 10000;
-        let mut min_stake = 0;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, min_stake);
-        assert_eq!(ratio, QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO);
+        let ratio = compute_recieve_window_base(max_stake, ConnectionPeerType::Unstaked);
+        assert_eq!(ratio, QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO);
 
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        let max_ratio = QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO;
-        assert_eq!(ratio, max_ratio);
+        let ratio = compute_recieve_window_base(max_stake, ConnectionPeerType::Staked(max_stake));
+        assert_eq!(ratio, QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO);
 
         let ratio =
-            compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake / 2);
+            compute_recieve_window_base(max_stake, ConnectionPeerType::Staked(max_stake / 2));
         let average_ratio =
             (QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO + QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO) / 2;
         assert_eq!(ratio, average_ratio);
 
-        max_stake = 10000;
-        min_stake = 10000;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
+        let ratio = compute_recieve_window_base(max_stake, ConnectionPeerType::Staked(max_stake));
         assert_eq!(ratio, max_ratio);
 
-        max_stake = 0;
-        min_stake = 0;
-        let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake);
-        assert_eq!(ratio, max_ratio);
-
-        max_stake = 1000;
-        min_stake = 10;
         let ratio =
-            compute_receive_window_ratio_for_staked_node(max_stake, min_stake, max_stake + 10);
+            compute_recieve_window_base(max_stake, ConnectionPeerType::Staked(max_stake + 10));
         assert_eq!(ratio, max_ratio);
     }
 
