@@ -11,7 +11,7 @@ use {
     },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::sanitized::SanitizedTransaction,
-    solana_transaction_context::TransactionAccount,
+    solana_transaction_context::transaction_accounts::TransactionAccount,
 };
 
 // Used to approximate how many accounts will be calculated for storage so that

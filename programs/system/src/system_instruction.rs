@@ -10,7 +10,7 @@ use {
     solana_svm_log_collector::ic_msg,
     solana_system_interface::error::SystemError,
     solana_sysvar::rent::Rent,
-    solana_transaction_context::{BorrowedAccount, IndexOfAccount, InstructionContext},
+    solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
     std::collections::HashSet,
 };
 
@@ -20,7 +20,7 @@ fn checked_add(a: u64, b: u64) -> Result<u64, InstructionError> {
 }
 
 pub fn advance_nonce_account(
-    account: &mut BorrowedAccount,
+    account: &mut BorrowedInstructionAccount,
     signers: &HashSet<Pubkey>,
     invoke_context: &InvokeContext,
 ) -> Result<(), InstructionError> {
@@ -154,7 +154,7 @@ pub(crate) fn withdraw_nonce_account(
 }
 
 pub(crate) fn initialize_nonce_account(
-    account: &mut BorrowedAccount,
+    account: &mut BorrowedInstructionAccount,
     nonce_authority: &Pubkey,
     rent: &Rent,
     invoke_context: &InvokeContext,
@@ -204,7 +204,7 @@ pub(crate) fn initialize_nonce_account(
 }
 
 pub(crate) fn authorize_nonce_account(
-    account: &mut BorrowedAccount,
+    account: &mut BorrowedInstructionAccount,
     nonce_authority: &Pubkey,
     signers: &HashSet<Pubkey>,
     invoke_context: &InvokeContext,

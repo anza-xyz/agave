@@ -14,7 +14,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
     solana_slot_hashes::{SlotHashes, MAX_ENTRIES},
-    solana_transaction_context::TransactionAccount,
+    solana_transaction_context::transaction_accounts::TransactionAccount,
     solana_vote_program::{
         vote_instruction::VoteInstruction,
         vote_state::{

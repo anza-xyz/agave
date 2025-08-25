@@ -82,7 +82,7 @@ use {
         sanitized::{MessageHash, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
         versioned::VersionedTransaction,
     },
-    solana_transaction_context::TransactionAccount,
+    solana_transaction_context::transaction_accounts::TransactionAccount,
     solana_transaction_error::TransactionError,
     solana_transaction_status::{
         map_inner_instructions, BlockEncodingOptions, ConfirmedBlock,
