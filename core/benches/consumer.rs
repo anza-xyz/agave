@@ -121,7 +121,7 @@ fn setup() -> BenchFrame {
     let blockstore = Arc::new(
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
     );
-    let (exit, _poh_recorder, transaction_recorder, poh_service, signal_receiver) =
+    let (exit, _poh_recorder, _poh_controller, transaction_recorder, poh_service, signal_receiver) =
         create_test_recorder(bank.clone(), blockstore, None, None);
 
     BenchFrame {

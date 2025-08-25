@@ -7,13 +7,14 @@ use {
         get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
     },
     solana_poh::{
+        poh_controller::PohController,
         poh_recorder::PohRecorder,
         poh_service::{PohService, DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE},
         transaction_recorder::TransactionRecorder,
     },
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
+    solana_runtime::bank::Bank,
     solana_transaction::versioned::VersionedTransaction,
     std::{
         sync::{atomic::AtomicBool, Arc, RwLock},
@@ -57,7 +58,7 @@ fn bench_record_transactions(c: &mut Criterion) {
         &genesis_config_info.genesis_config.poh_config,
         exit.clone(),
     );
-    poh_recorder.set_bank(BankWithScheduler::new_without_scheduler(bank.clone()));
+    poh_recorder.set_bank_for_test(bank.clone());
 
     let (record_sender, record_receiver) = crossbeam_channel::unbounded();
     let transaction_recorder = TransactionRecorder::new(record_sender, exit.clone());
@@ -74,6 +75,7 @@ fn bench_record_transactions(c: &mut Criterion) {
         .collect();
 
     let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+    let (_poh_controller, poh_service_message_receiver) = PohController::new();
     let poh_service = PohService::new(
         poh_recorder.clone(),
         &genesis_config_info.genesis_config.poh_config,
@@ -82,6 +84,7 @@ fn bench_record_transactions(c: &mut Criterion) {
         DEFAULT_PINNED_CPU_CORE,
         DEFAULT_HASHES_PER_BATCH,
         record_receiver,
+        poh_service_message_receiver,
     );
 
     let mut group = c.benchmark_group("record_transactions");
@@ -103,7 +106,7 @@ fn bench_record_transactions(c: &mut Criterion) {
                 poh_recorder
                     .write()
                     .unwrap()
-                    .set_bank(BankWithScheduler::new_without_scheduler(bank.clone()));
+                    .set_bank_for_test(bank.clone());
 
                 let start = Instant::now();
                 for txs in tx_batches {
