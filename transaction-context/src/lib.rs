@@ -109,7 +109,7 @@ pub type TransactionAccount = (Pubkey, AccountSharedData);
 #[derive(Debug)]
 pub struct TransactionAccounts {
     accounts: Vec<RefCell<AccountSharedData>>,
-    touched_flags: RefCell<Box<[bool]>>,
+    touched_flags: Box<[Cell<bool>]>,
     resize_delta: Cell<i64>,
     lamports_delta: Cell<i128>,
 }
@@ -117,10 +117,10 @@ pub struct TransactionAccounts {
 impl TransactionAccounts {
     #[cfg(not(target_os = "solana"))]
     fn new(accounts: Vec<RefCell<AccountSharedData>>) -> TransactionAccounts {
-        let touched_flags = vec![false; accounts.len()].into_boxed_slice();
+        let touched_flags = vec![Cell::new(false); accounts.len()].into_boxed_slice();
         TransactionAccounts {
             accounts,
-            touched_flags: RefCell::new(touched_flags),
+            touched_flags,
             resize_delta: Cell::new(0),
             lamports_delta: Cell::new(0),
         }
@@ -132,11 +132,10 @@ impl TransactionAccounts {
 
     #[cfg(not(target_os = "solana"))]
     pub fn touch(&self, index: IndexOfAccount) -> Result<(), InstructionError> {
-        *self
-            .touched_flags
-            .borrow_mut()
-            .get_mut(index as usize)
-            .ok_or(InstructionError::NotEnoughAccountKeys)? = true;
+        self.touched_flags
+            .get(index as usize)
+            .ok_or(InstructionError::NotEnoughAccountKeys)?
+            .set(true);
         Ok(())
     }
 
@@ -1179,10 +1178,9 @@ impl From<TransactionContext> for ExecutionRecord {
             .zip(accounts.into_iter().map(RefCell::into_inner))
             .collect();
         let touched_account_count = touched_flags
-            .borrow()
             .iter()
             .fold(0usize, |accumulator, was_touched| {
-                accumulator.saturating_add(*was_touched as usize)
+                accumulator.saturating_add(was_touched.get() as usize)
             }) as u64;
         Self {
             accounts,
