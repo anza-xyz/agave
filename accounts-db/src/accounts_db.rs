@@ -3000,6 +3000,7 @@ impl AccountsDb {
         self.storage_access = storage_access;
     }
 
+    #[cfg(test)]
     pub fn storage_access(&self) -> StorageAccess {
         self.storage_access
     }

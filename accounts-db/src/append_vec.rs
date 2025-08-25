@@ -167,7 +167,6 @@ struct AccountOffsets {
 #[derive(Debug)]
 enum AppendVecFileBacking {
     /// A file-backed block of memory that is used to store the data for each appended item.
-    #[allow(dead_code)]
     Mmap(MmapMut),
     /// This was opened as a read only file
     File(File),
@@ -340,7 +339,12 @@ impl AppendVec {
                     .fetch_add(1, Ordering::Relaxed);
                 AppendVecFileBacking::Mmap(mmap)
             }
-            StorageAccess::File => AppendVecFileBacking::File(data),
+            StorageAccess::File => {
+                APPEND_VEC_STATS
+                    .open_as_file_io
+                    .fetch_add(1, Ordering::Relaxed);
+                AppendVecFileBacking::File(data)
+            }
         };
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 
@@ -1383,7 +1387,7 @@ pub mod tests {
         solana_account::{Account, AccountSharedData},
         solana_clock::Slot,
         std::{mem::ManuallyDrop, time::Instant},
-        test_case::test_case,
+        test_case::{test_case, test_matrix},
     };
 
     impl AppendVec {
@@ -2346,10 +2350,7 @@ pub mod tests {
     // Test to make sure that `is_dirty` is tracked properly
     // * `reopen_as_readonly()` moves `is_dirty`
     // * `flush()` clears `is_dirty`
-    #[test_case(false, StorageAccess::Mmap)]
-    #[test_case(false, StorageAccess::File)]
-    #[test_case(true, StorageAccess::Mmap)]
-    #[test_case(true, StorageAccess::File)]
+    #[test_matrix([false, true], [StorageAccess::Mmap, StorageAccess::File])]
     fn test_is_dirty(begins_dirty: bool, storage_access: StorageAccess) {
         let file = get_append_vec_path("test_is_dirty");
 
