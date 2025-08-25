@@ -928,6 +928,16 @@ impl AppendVec {
         self.path.as_path()
     }
 
+    /// Returns the `&File` of the file where the data is stored
+    pub fn file(&self) -> &File {
+        match self.backing {
+            AppendVecFileBacking::File(ref file) => file,
+            AppendVecFileBacking::Mmap(_) => {
+                panic!("Memory-mapped AppendVec does not have a File")
+            }
+        }
+    }
+
     /// help with the math of offsets when navigating the on-disk layout in an AppendVec.
     /// data is at the end of each account and is variable sized
     /// the next account is then aligned on a 64 bit boundary.
@@ -1025,7 +1035,7 @@ impl AppendVec {
                 {}
             }
             AppendVecFileBacking::File(file) => {
-                reader.set_file(file, self.len())?;
+                reader.activate_file(file, self.len())?;
 
                 let mut min_buf_len = STORE_META_OVERHEAD;
                 loop {
@@ -1314,18 +1324,48 @@ impl AppendVec {
     }
 }
 
+/// Ratio of number of small files to large files fetched in chunks when scanning accounts.
+pub const SCAN_ACCOUNTS_SMALL_TO_LARGE_FILE_RATIO: (usize, usize) = (7, 1);
+
 /// Create a reusable buffered reader tuned for scanning storages with account data.
 pub(crate) fn new_scan_accounts_reader<'a>() -> impl RequiredLenBufFileRead<'a> {
     // 128KiB covers a reasonably large distribution of typical account sizes.
     // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
     const MIN_CAPACITY: usize = 1024 * 128;
     const MAX_CAPACITY: usize = STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
-    const BUFFER_SIZE: usize = PAGE_SIZE * 8;
-    BufReaderWithOverflow::new(
-        BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(),
-        MIN_CAPACITY,
-        MAX_CAPACITY,
-    )
+
+    #[cfg(target_os = "linux")]
+    {
+        use crate::io_uring::sequential_file_reader::SequentialFileReaderBuilder;
+
+        // Small files will each use one `READ_SIZE` buffer, large files get to around 8-10MB,
+        // try to pick buffer that can hold two `SCAN_ACCOUNTS_SMALL_TO_LARGE_FILE_RATIO` cycles.
+        const SCAN_ACCOUNTS_BUFFER_SIZE: usize = 32 * 1024 * 1024;
+        // Vast majority of files are small - compromise between buffer use and faster large reads.
+        const READ_SIZE: usize = 512 * 1024;
+        // scan accounts implementations will submit operations to kernel using
+        // FileBufRead::add_files_to_prefetch - large submission queue avoids stalls when adding ops.
+        const RING_SQSIZE: u32 = (SCAN_ACCOUNTS_BUFFER_SIZE.div_ceil(READ_SIZE)) as u32;
+        BufReaderWithOverflow::new(
+            SequentialFileReaderBuilder::new()
+                .max_iowq_workers(1)
+                .read_size(READ_SIZE)
+                .ring_squeue_size(RING_SQSIZE)
+                .build(SCAN_ACCOUNTS_BUFFER_SIZE)
+                .unwrap(),
+            MIN_CAPACITY,
+            MAX_CAPACITY,
+        )
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        const BUFFER_SIZE: usize = PAGE_SIZE * 8;
+        BufReaderWithOverflow::new(
+            BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(),
+            MIN_CAPACITY,
+            MAX_CAPACITY,
+        )
+    }
 }
 
 /// The per-account hash, stored in the AppendVec.

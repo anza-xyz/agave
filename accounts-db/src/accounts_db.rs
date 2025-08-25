@@ -51,7 +51,7 @@ use {
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
         append_vec::{self, aligned_stored_size, IndexInfo, IndexInfoInner, STORE_META_OVERHEAD},
-        buffered_reader::RequiredLenBufFileRead,
+        buffered_reader::{FileBufRead, RequiredLenBufFileRead},
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         partitioned_rewards::{
@@ -5517,21 +5517,38 @@ impl AccountsDb {
         startup_slot: Slot,
         num_threads: NonZeroUsize,
     ) -> AccountsLtHash {
-        // Randomized order works well with rayon work splitting, since we only care about
-        // uniform distribution of total work size per batch (other ordering strategies might be
-        // useful for optimizing disk read sizes and buffers usage in a single IO queue).
-        let storages =
-            AccountStoragesOrderer::with_random_order(storages).into_concurrent_consumer();
+        // Balance ratio of small to large files to amortize per-operation cost across the
+        // whole scan process and keep total bytes in pending reads similar at all times.
+        let ratio = append_vec::SCAN_ACCOUNTS_SMALL_TO_LARGE_FILE_RATIO;
+        let storages = AccountStoragesOrderer::with_small_to_large_ratio(storages, ratio)
+            .into_concurrent_consumer();
         let mut lt_hash = thread::scope(|s| {
+            let storages = &storages;
             let handles = (0..num_threads.get())
                 .map(|i| {
                     thread::Builder::new()
                         .name(format!("solAcctLtHash{i:02}"))
-                        .spawn_scoped(s, || {
-                            let mut thread_lt_hash = LtHash::identity();
+                        .spawn_scoped(s, move || {
                             let mut reader = append_vec::new_scan_accounts_reader();
+                            let mut thread_lt_hash = LtHash::identity();
+                            // Always consume a multiple of small/large files cycle, when chunk
+                            // is replenished, it will get a single cycle (half capacity) and
+                            // add it to prefetch, while the existing cycle is being read.
+                            let mut chunk = VecDeque::with_capacity(2 * (ratio.0 + ratio.1));
 
-                            while let Some(storage) = storages.next() {
+                            loop {
+                                if chunk.is_empty() || chunk.len() == chunk.capacity() / 2 {
+                                    let new_indices = storages.take_up_to_capacity(&mut chunk);
+                                    let new_files =
+                                        chunk.range(new_indices).map(|s| s.accounts.file());
+                                    reader
+                                        .add_files_to_prefetch(new_files)
+                                        .expect("must prefetch accounts storage");
+                                }
+
+                                let Some(storage) = chunk.pop_front() else {
+                                    break;
+                                };
                                 // Function is calculating the accounts_lt_hash from all accounts in the
                                 // storages as of startup_slot. This means that any accounts marked obsolete at a
                                 // slot newer than startup_slot should be included in the accounts_lt_hash
