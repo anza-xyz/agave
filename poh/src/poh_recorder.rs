@@ -13,7 +13,10 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
-    crate::{poh_service::PohService, transaction_recorder::TransactionRecorder},
+    crate::{
+        poh_controller::PohController, poh_service::PohService,
+        transaction_recorder::TransactionRecorder,
+    },
     arc_swap::ArcSwapOption,
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TrySendError},
     log::*,
@@ -930,6 +933,7 @@ fn do_create_test_recorder(
     let (record_sender, record_receiver) = unbounded();
     let transaction_recorder = TransactionRecorder::new(record_sender, exit.clone());
     let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+    let (_poh_controller, poh_service_message_receiver) = PohController::new();
     let poh_service = PohService::new(
         poh_recorder.clone(),
         &poh_config,
@@ -938,6 +942,7 @@ fn do_create_test_recorder(
         crate::poh_service::DEFAULT_PINNED_CPU_CORE,
         crate::poh_service::DEFAULT_HASHES_PER_BATCH,
         record_receiver,
+        poh_service_message_receiver,
     );
 
     (

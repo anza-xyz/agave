@@ -1,8 +1,11 @@
 use {
-    crossbeam_channel::{Receiver, SendError, Sender},
+    crossbeam_channel::{Receiver, SendError, Sender, TryRecvError},
     solana_clock::Slot,
     solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
-    std::sync::Arc,
+    std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 
 pub enum PohServiceMessage {
@@ -16,37 +19,55 @@ pub enum PohServiceMessage {
 }
 
 /// Handle to control the Bank/slot that the PoH service is operating on.
-#[derive(Clone)]
 pub struct PohController {
     sender: Sender<PohServiceMessage>,
+    /// Used to indicate if there are any pending messages in the channel
+    /// OR that the receiver is currently processing.
+    /// This is necessary because crossbeam does not support peeking the
+    /// channel.
+    pending_message: Arc<AtomicUsize>,
 }
 
 impl PohController {
-    pub fn new() -> (Self, Receiver<PohServiceMessage>) {
+    pub fn new() -> (Self, PohServiceMessageReceiver) {
         const CHANNEL_SIZE: usize = 16; // small size, we should never hit this.
         let (sender, receiver) = crossbeam_channel::bounded(CHANNEL_SIZE);
-        (Self { sender }, receiver)
+        let pending_message = Arc::new(AtomicUsize::new(0));
+        let receiver = PohServiceMessageReceiver {
+            receiver,
+            pending_message: pending_message.clone(),
+        };
+        (
+            Self {
+                sender,
+                pending_message,
+            },
+            receiver,
+        )
     }
 
     pub fn has_pending_message(&self) -> bool {
-        !self.sender.is_empty()
+        self.pending_message.load(Ordering::Acquire) > 0
     }
 
     /// Signal to PoH to use a new bank.
     pub fn set_bank_sync(
-        &self,
+        &mut self,
         bank: BankWithScheduler,
     ) -> Result<(), SendError<PohServiceMessage>> {
         self.send_and_wait_on_pending_message(PohServiceMessage::SetBank { bank })
     }
 
-    pub fn set_bank(&self, bank: BankWithScheduler) -> Result<(), SendError<PohServiceMessage>> {
+    pub fn set_bank(
+        &mut self,
+        bank: BankWithScheduler,
+    ) -> Result<(), SendError<PohServiceMessage>> {
         self.send_message(PohServiceMessage::SetBank { bank })
     }
 
     /// Signal to reset PoH to specified bank.
     pub fn reset_sync(
-        &self,
+        &mut self,
         reset_bank: Arc<Bank>,
         next_leader_slot: Option<(Slot, Slot)>,
     ) -> Result<(), SendError<PohServiceMessage>> {
@@ -57,7 +78,7 @@ impl PohController {
     }
 
     pub fn reset(
-        &self,
+        &mut self,
         reset_bank: Arc<Bank>,
         next_leader_slot: Option<(Slot, Slot)>,
     ) -> Result<(), SendError<PohServiceMessage>> {
@@ -79,7 +100,32 @@ impl PohController {
     }
 
     fn send_message(&self, message: PohServiceMessage) -> Result<(), SendError<PohServiceMessage>> {
+        self.pending_message.fetch_add(1, Ordering::AcqRel);
         self.sender.send(message)?;
         Ok(())
+    }
+}
+
+pub struct PohServiceMessageReceiver {
+    receiver: Receiver<PohServiceMessage>,
+    /// Used to indicate if there are any pending messages in the channel
+    /// OR that the receiver is currently processing.
+    /// This is necessary because crossbeam does not support peeking the
+    /// channel.
+    pending_message: Arc<AtomicUsize>,
+}
+
+impl PohServiceMessageReceiver {
+    pub(crate) fn try_recv(&self) -> Result<PohServiceMessage, TryRecvError> {
+        self.receiver.try_recv()
+    }
+
+    /// Mark that a message has been fully processed.
+    ///
+    /// # Safety
+    /// - This must only be called after `try_recv` returns a message,
+    ///   and that message has been fully processed.
+    pub(crate) unsafe fn mark_processed_message(&self) {
+        self.pending_message.fetch_sub(1, Ordering::AcqRel);
     }
 }

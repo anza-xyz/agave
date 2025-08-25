@@ -7,6 +7,7 @@ use {
         get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
     },
     solana_poh::{
+        poh_controller::PohController,
         poh_recorder::PohRecorder,
         poh_service::{PohService, DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE},
         transaction_recorder::TransactionRecorder,
@@ -74,6 +75,7 @@ fn bench_record_transactions(c: &mut Criterion) {
         .collect();
 
     let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+    let (_poh_controller, poh_service_message_receiver) = PohController::new();
     let poh_service = PohService::new(
         poh_recorder.clone(),
         &genesis_config_info.genesis_config.poh_config,
@@ -82,6 +84,7 @@ fn bench_record_transactions(c: &mut Criterion) {
         DEFAULT_PINNED_CPU_CORE,
         DEFAULT_HASHES_PER_BATCH,
         record_receiver,
+        poh_service_message_receiver,
     );
 
     let mut group = c.benchmark_group("record_transactions");
