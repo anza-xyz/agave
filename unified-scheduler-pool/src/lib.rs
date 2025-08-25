@@ -4021,7 +4021,7 @@ mod tests {
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         let (
             exit,
-            poh_recorder,
+            _poh_recorder,
             mut poh_controller,
             transaction_recorder,
             poh_service,
@@ -4034,10 +4034,9 @@ mod tests {
                 Some(leader_schedule_cache),
             )
         };
-        poh_recorder
-            .write()
-            .unwrap()
-            .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
+        poh_controller
+            .reset_sync(bank.clone(), Some((bank.slot(), bank.slot() + 1)))
+            .unwrap();
 
         pool.register_banking_stage(
             None,
@@ -4075,10 +4074,9 @@ mod tests {
         assert_eq!(bank.transaction_count(), 0);
 
         // Create new bank to observe behavior difference around session ending
-        poh_recorder
-            .write()
-            .unwrap()
-            .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
+        poh_controller
+            .reset_sync(bank.clone(), Some((bank.slot(), bank.slot() + 1)))
+            .unwrap();
         let bank = Arc::new(Bank::new_from_parent(
             bank.clone_without_scheduler(),
             &Pubkey::default(),
