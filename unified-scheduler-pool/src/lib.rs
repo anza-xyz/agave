@@ -3881,7 +3881,14 @@ mod tests {
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) = {
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = {
             // Create a dummy bank to prevent it from being frozen; otherwise, the following panic
             // will happen:
             //    thread 'solPohTickProd' panicked at runtime/src/bank.rs:LL:CC:
@@ -4012,7 +4019,14 @@ mod tests {
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (exit, poh_recorder, transaction_recorder, poh_service, _signal_receiver) = {
+        let (
+            exit,
+            poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = {
             create_test_recorder_with_index_tracking(
                 bank.clone(),
                 blockstore.clone(),
@@ -4527,13 +4541,19 @@ mod tests {
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (
+            exit,
+            poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
         let handler_context = &HandlerContext {
             thread_count: 0,
             log_messages_bytes_limit: None,
@@ -4639,13 +4659,19 @@ mod tests {
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
@@ -4708,13 +4734,19 @@ mod tests {
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
 
         // send fake packet batch to trigger banking_packet_handler
         let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
@@ -4782,13 +4814,19 @@ mod tests {
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
 
         // Create a dummy handler which unconditionally sends tx0 back to the scheduler thread
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -4871,13 +4909,19 @@ mod tests {
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
             None,
@@ -4931,13 +4975,19 @@ mod tests {
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
@@ -5017,13 +5067,19 @@ mod tests {
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
@@ -5074,13 +5130,19 @@ mod tests {
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
@@ -5168,13 +5230,19 @@ mod tests {
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
         pool.register_banking_stage(
             None,
             banking_packet_receiver,

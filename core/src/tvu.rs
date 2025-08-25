@@ -515,8 +515,14 @@ pub mod tests {
             .expect("Expected to successfully open ledger");
         let blockstore = Arc::new(blockstore);
         let bank = bank_forks.read().unwrap().working_bank();
-        let (exit, poh_recorder, _transaction_recorder, poh_service, _entry_receiver) =
-            create_test_recorder(bank.clone(), blockstore.clone(), None, None);
+        let (
+            exit,
+            poh_recorder,
+            _poh_controller,
+            _transaction_recorder,
+            poh_service,
+            _entry_receiver,
+        ) = create_test_recorder(bank.clone(), blockstore.clone(), None, None);
         let vote_keypair = Keypair::new();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
