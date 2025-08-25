@@ -54,7 +54,10 @@ use {
         leader_schedule_utils::first_of_consecutive_leader_slots,
     },
     solana_measure::measure::Measure,
-    solana_poh::poh_recorder::{PohLeaderStatus, PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
+    solana_poh::{
+        poh_controller::PohController,
+        poh_recorder::{PohLeaderStatus, PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
+    },
     solana_pubkey::Pubkey,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
@@ -279,6 +282,7 @@ pub struct ReplayStageConfig {
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub cluster_info: Arc<ClusterInfo>,
     pub poh_recorder: Arc<RwLock<PohRecorder>>,
+    pub poh_controller: PohController,
     pub tower: Tower,
     pub vote_tracker: Arc<VoteTracker>,
     pub cluster_slots: Arc<ClusterSlots>,
@@ -579,6 +583,7 @@ impl ReplayStage {
             bank_forks,
             cluster_info,
             poh_recorder,
+            mut poh_controller,
             mut tower,
             vote_tracker,
             cluster_slots,
@@ -1159,6 +1164,7 @@ impl ReplayStage {
                         &my_pubkey,
                         &bank_forks,
                         &poh_recorder,
+                        &mut poh_controller,
                         &leader_schedule_cache,
                         rpc_subscriptions.as_deref(),
                         &slot_status_notifier,
@@ -2078,6 +2084,7 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         bank_forks: &Arc<RwLock<BankForks>>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
+        poh_controller: &mut PohController,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
@@ -2089,8 +2096,6 @@ impl ReplayStage {
     ) -> bool {
         // all the individual calls to poh_recorder.read() are designed to
         // increase granularity, decrease contention
-
-        assert!(!poh_recorder.read().unwrap().has_bank());
 
         let (poh_slot, parent_slot) =
             match poh_recorder.read().unwrap().reached_leader_slot(my_pubkey) {
@@ -2203,7 +2208,11 @@ impl ReplayStage {
             // new()-ing of its child bank
             banking_tracer.hash_event(parent.slot(), &parent.last_blockhash(), &parent.hash());
 
-            update_bank_forks_and_poh_recorder_for_new_tpu_bank(bank_forks, poh_recorder, tpu_bank);
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank(
+                bank_forks,
+                poh_controller,
+                tpu_bank,
+            );
             true
         } else {
             error!("{my_pubkey} No next leader found");
@@ -4329,6 +4338,7 @@ pub(crate) mod tests {
             get_tmp_ledger_path, get_tmp_ledger_path_auto_delete,
             shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
+        solana_poh::poh_recorder::create_test_recorder,
         solana_poh_config::PohConfig,
         solana_rpc::{
             optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
@@ -4394,7 +4404,8 @@ pub(crate) mod tests {
         pub(crate) my_pubkey: Pubkey,
         cluster_info: ClusterInfo,
         pub(crate) leader_schedule_cache: Arc<LeaderScheduleCache>,
-        poh_recorder: RwLock<PohRecorder>,
+        poh_recorder: Arc<RwLock<PohRecorder>>,
+        poh_controller: PohController,
         tower: Tower,
         rpc_subscriptions: Arc<RpcSubscriptions>,
         pub vote_simulator: VoteSimulator,
@@ -4443,22 +4454,14 @@ pub(crate) mod tests {
         let root_bank = bank_forks.read().unwrap().root_bank();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&root_bank));
 
-        // PohRecorder
         let working_bank = bank_forks.read().unwrap().working_bank();
-        let poh_recorder = RwLock::new(
-            PohRecorder::new(
-                working_bank.tick_height(),
-                working_bank.last_blockhash(),
-                working_bank.clone(),
-                None,
-                working_bank.ticks_per_slot(),
+        let (_exit, poh_recorder, poh_controller, _transaction_recorder, _poh_service, _) =
+            create_test_recorder(
+                working_bank,
                 blockstore.clone(),
-                &leader_schedule_cache,
-                &PohConfig::default(),
-                Arc::new(AtomicBool::new(false)),
-            )
-            .0,
-        );
+                Some(PohConfig::default()),
+                Some(leader_schedule_cache.clone()),
+            );
 
         // Tower
         let my_vote_pubkey = my_keypairs.vote_keypair.pubkey();
@@ -4488,6 +4491,7 @@ pub(crate) mod tests {
             cluster_info,
             leader_schedule_cache,
             poh_recorder,
+            poh_controller,
             tower,
             rpc_subscriptions,
             vote_simulator,
@@ -8553,6 +8557,7 @@ pub(crate) mod tests {
             validator_node_to_vote_keys,
             leader_schedule_cache,
             poh_recorder,
+            mut poh_controller,
             vote_simulator,
             rpc_subscriptions,
             ref my_pubkey,
@@ -8656,6 +8661,7 @@ pub(crate) mod tests {
             my_pubkey,
             bank_forks,
             &poh_recorder,
+            &mut poh_controller,
             &leader_schedule_cache,
             rpc_subscriptions.as_deref(),
             &None,
@@ -9249,6 +9255,7 @@ pub(crate) mod tests {
             my_pubkey,
             leader_schedule_cache,
             poh_recorder,
+            mut poh_controller,
             vote_simulator,
             rpc_subscriptions,
             ..
@@ -9315,6 +9322,7 @@ pub(crate) mod tests {
             &my_pubkey,
             &bank_forks,
             &poh_recorder,
+            &mut poh_controller,
             &leader_schedule_cache,
             rpc_subscriptions.as_deref(),
             &None,
@@ -9341,6 +9349,7 @@ pub(crate) mod tests {
             &my_pubkey,
             &bank_forks,
             &poh_recorder,
+            &mut poh_controller,
             &leader_schedule_cache,
             rpc_subscriptions.as_deref(),
             &None,

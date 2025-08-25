@@ -14,7 +14,7 @@ use {
     },
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
+    solana_runtime::bank::Bank,
     solana_transaction::versioned::VersionedTransaction,
     std::{
         sync::{atomic::AtomicBool, Arc, RwLock},
@@ -58,7 +58,7 @@ fn bench_record_transactions(c: &mut Criterion) {
         &genesis_config_info.genesis_config.poh_config,
         exit.clone(),
     );
-    poh_recorder.set_bank(BankWithScheduler::new_without_scheduler(bank.clone()));
+    poh_recorder.set_bank_for_test(bank.clone());
 
     let (record_sender, record_receiver) = crossbeam_channel::unbounded();
     let transaction_recorder = TransactionRecorder::new(record_sender, exit.clone());
@@ -106,7 +106,7 @@ fn bench_record_transactions(c: &mut Criterion) {
                 poh_recorder
                     .write()
                     .unwrap()
-                    .set_bank(BankWithScheduler::new_without_scheduler(bank.clone()));
+                    .set_bank_for_test(bank.clone());
 
                 let start = Instant::now();
                 for txs in tx_batches {
