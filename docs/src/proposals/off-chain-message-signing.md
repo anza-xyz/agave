@@ -52,8 +52,8 @@ This field **SHOULD NOT** be displayed to users
 
 #### Header version
 
-The header version is represented as an 8-bit unsigned integer. Only the version
-0 header format is specified in this document
+The header version is represented as an 8-bit unsigned integer. Only the version 
+1 and earlier of the header format are specified in this document.
 
 This field **SHOULD NOT** be displayed to users
 
@@ -79,7 +79,9 @@ compatibility and composition of messages.
 
 \* Combined length of the [message preamble](#message-preamble) and message body<br/>
 \*\* Those characters for which [`isprint(3)`](https://linux.die.net/man/3/isprint)
-returns true.  That is, `0x20..=0x7e`.
+returns true or the newline - `\n` character.  That is, `0x20..=0x7e` or `0x0a`. 
+The newline character was added as part of the header version 1 specification and is
+not recognised under the previous revision.
 
 Both the message encoding and maximum message length **MUST** be enforced by
 signer and verifier.
