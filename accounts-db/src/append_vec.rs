@@ -2364,22 +2364,23 @@ pub mod tests {
             av1.append_account_test(&create_test_account(10)).unwrap();
         }
         assert_eq!(*av1.is_dirty.get_mut(), begins_dirty);
-        let mut av2 = av1.reopen_as_readonly();
-        let av2 = av2
-            .as_mut()
-            .inspect(|_|
-                // when av1 was reopened, ensure `is_dirty` is moved
-                assert!(!*av1.is_dirty.get_mut()))
-            .unwrap_or(&mut av1);
+        let mut av2 = av1.reopen_as_readonly().unwrap();
+
         // don't delete the file when the AppendVec is dropped (let TempFile do it)
         *av2.remove_file_on_drop.get_mut() = false;
 
         // ensure `is_dirty` is moved
+        assert!(!*av1.is_dirty.get_mut());
         assert_eq!(*av2.is_dirty.get_mut(), begins_dirty);
 
         // ensure we can flush the new append vec
         assert!(av2.flush().is_ok());
         // and now should not be dirty
         assert!(!*av2.is_dirty.get_mut());
+
+        // ensure we can flush the old append vec too
+        assert!(av1.flush().is_ok());
+        // and now should not be dirty
+        assert!(!*av1.is_dirty.get_mut());
     }
 }
