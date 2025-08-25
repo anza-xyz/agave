@@ -131,6 +131,11 @@ impl BindIpAddrs {
     pub fn active_index(&self) -> usize {
         self.active_index.load(Ordering::Acquire)
     }
+
+    #[inline]
+    pub fn multihoming_enabled(&self) -> bool {
+        self.addrs.len() > 1
+    }
 }
 
 // Makes BindIpAddrs behave like &[IpAddr]
