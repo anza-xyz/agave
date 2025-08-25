@@ -2785,7 +2785,7 @@ impl AccountsDb {
     /// pubkeys_removed_from_accounts_index - These keys have already been removed from the accounts index
     ///    and should not be unref'd. If they exist in the accounts index, they are NEW.
     /// clean_stored_dead_slots - clean_stored_dead_slots iterates through all the pubkeys in the dead
-    ///    slots and unrefs them in the acocunts index if they are not present in
+    ///    slots and unrefs them in the accounts index if they are not present in
     ///    pubkeys_removed_from_accounts_index. Skipping clean is the equivilent to
     ///    pubkeys_removed_from_accounts_index containing all the pubkeys in the dead slots
     fn process_dead_slots(
