@@ -514,6 +514,7 @@ mod serde_snapshot_tests {
             let accounts =
                 reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access);
             accounts.print_accounts_stats("after_reconstruct");
+            accounts.set_latest_full_snapshot_slot(0);
             accounts.clean_accounts_for_tests();
             reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access)
         });
@@ -579,6 +580,7 @@ mod serde_snapshot_tests {
         accounts.print_count_and_status("before reconstruct");
         let accounts =
             reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access);
+        accounts.set_latest_full_snapshot_slot(0);
         accounts.print_count_and_status("before purge zero");
         accounts.clean_accounts_for_tests();
         accounts.print_count_and_status("after purge zero");
