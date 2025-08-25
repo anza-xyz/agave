@@ -634,9 +634,9 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     tpu_bank: Bank,
 ) {
     let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
-    poh_controller
-        .set_bank_sync(tpu_bank)
-        .expect("poh service is connected");
+    if poh_controller.set_bank_sync(tpu_bank).is_err() {
+        warn!("Failed to set poh bank, poh service is disconnected");
+    }
 }
 
 #[cfg(test)]

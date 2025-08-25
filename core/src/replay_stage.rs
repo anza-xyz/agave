@@ -2851,9 +2851,10 @@ impl ReplayStage {
             GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
         );
 
-        poh_controller
-            .reset_sync(bank, next_leader_slot)
-            .expect("poh service is connected");
+        if poh_controller.reset_sync(bank, next_leader_slot).is_err() {
+            warn!("Failed to reset poh, poh service is disconnected");
+            return;
+        }
 
         let next_leader_msg = if let Some(next_leader_slot) = next_leader_slot {
             format!("My next leader slot is {}", next_leader_slot.0)
