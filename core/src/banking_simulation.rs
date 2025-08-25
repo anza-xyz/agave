@@ -453,10 +453,9 @@ impl SimulatorLoop {
                     GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
                 );
                 debug!("{next_leader_slot:?}");
-                self.poh_recorder
-                    .write()
-                    .unwrap()
-                    .reset(bank.clone_without_scheduler(), next_leader_slot);
+                self.poh_controller
+                    .reset_sync(bank.clone_without_scheduler(), next_leader_slot)
+                    .unwrap();
                 info!("Bank::new_from_parent()!");
 
                 logger.log_jitter(&bank);

@@ -717,7 +717,7 @@ impl ReplayStage {
                 &my_pubkey,
                 &blockstore,
                 working_bank,
-                &poh_recorder,
+                &mut poh_controller,
                 &leader_schedule_cache,
             );
 
@@ -1095,7 +1095,7 @@ impl ReplayStage {
                             &my_pubkey,
                             &blockstore,
                             reset_bank.clone(),
-                            &poh_recorder,
+                            &mut poh_controller,
                             &leader_schedule_cache,
                         );
                         last_reset = reset_bank.last_blockhash();
@@ -2837,7 +2837,7 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         blockstore: &Blockstore,
         bank: Arc<Bank>,
-        poh_recorder: &RwLock<PohRecorder>,
+        poh_controller: &mut PohController,
         leader_schedule_cache: &LeaderScheduleCache,
     ) {
         let slot = bank.slot();
@@ -2851,7 +2851,9 @@ impl ReplayStage {
             GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
         );
 
-        poh_recorder.write().unwrap().reset(bank, next_leader_slot);
+        poh_controller
+            .reset_sync(bank, next_leader_slot)
+            .expect("poh service is connected");
 
         let next_leader_msg = if let Some(next_leader_slot) = next_leader_slot {
             format!("My next leader slot is {}", next_leader_slot.0)
@@ -8608,10 +8610,9 @@ pub(crate) mod tests {
             .expect("Just inserted");
 
         progress.get_retransmit_info_mut(0).unwrap().retry_time = Instant::now();
-        poh_recorder
-            .write()
-            .unwrap()
-            .reset(bank_to_dump, Some((slot_to_dump + 1, slot_to_dump + 1)));
+        poh_controller
+            .reset_sync(bank_to_dump, Some((slot_to_dump + 1, slot_to_dump + 1)))
+            .unwrap();
         assert_eq!(poh_recorder.read().unwrap().start_slot(), slot_to_dump);
 
         // Now dump and repair slot_to_dump
@@ -9288,7 +9289,7 @@ pub(crate) mod tests {
             &my_pubkey,
             &blockstore,
             working_bank.clone(),
-            &poh_recorder,
+            &mut poh_controller,
             &leader_schedule_cache,
         );
 
