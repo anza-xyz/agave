@@ -53,7 +53,7 @@ use {
     solana_ledger::shred::Shred,
     solana_net_utils::{
         bind_in_range,
-        multihomed_sockets::BindIpAddrs,
+        multihomed_sockets::{BindIpAddrs, EgressSocketSelect},
         sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
         PortRange, VALIDATOR_PORT_RANGE,
     },
@@ -170,6 +170,8 @@ pub struct ClusterInfo {
     contact_info_path: PathBuf,
     socket_addr_space: SocketAddrSpace,
     bind_ip_addrs: Arc<BindIpAddrs>,
+    // Egress Multihoming
+    egress_socket_select: Arc<EgressSocketSelect>,
 }
 
 impl ClusterInfo {
@@ -199,6 +201,7 @@ impl ClusterInfo {
             contact_save_interval: 0, // disabled
             socket_addr_space,
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
+            egress_socket_select: Arc::new(EgressSocketSelect::default()),
         };
         me.refresh_my_gossip_contact_info();
         me
@@ -218,6 +221,14 @@ impl ClusterInfo {
 
     pub fn bind_ip_addrs(&self) -> Arc<BindIpAddrs> {
         self.bind_ip_addrs.clone()
+    }
+
+    pub fn init_egress_socket_select(&mut self, egress_socket_select: Arc<EgressSocketSelect>) {
+        self.egress_socket_select = egress_socket_select;
+    }
+
+    pub fn egress_socket_select(&self) -> &EgressSocketSelect {
+        &self.egress_socket_select
     }
 
     fn refresh_push_active_set(

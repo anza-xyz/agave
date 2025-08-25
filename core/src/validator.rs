@@ -79,6 +79,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::{datapoint_info, metrics::metrics_config_sanity_check},
+    solana_net_utils::multihomed_sockets::EgressSocketSelect,
     solana_poh::{
         poh_recorder::PohRecorder,
         poh_service::{self, PohService},
@@ -865,6 +866,11 @@ impl Validator {
         cluster_info.set_entrypoints(cluster_entrypoints);
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
         cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
+        let tvu_sockets_per_interface =
+            node.sockets.retransmit_sockets.len() / node.bind_ip_addrs.len();
+        cluster_info.init_egress_socket_select(Arc::new(EgressSocketSelect::new(
+            tvu_sockets_per_interface,
+        )));
         let cluster_info = Arc::new(cluster_info);
         let node_multihoming = Arc::new(NodeMultihoming::from(&node));
 
