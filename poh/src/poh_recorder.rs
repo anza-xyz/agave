@@ -431,7 +431,7 @@ impl PohRecorder {
         }
     }
 
-    pub fn set_bank(&mut self, bank: BankWithScheduler) {
+    pub(crate) fn set_bank(&mut self, bank: BankWithScheduler) {
         assert!(self.working_bank.is_none());
         let working_bank = WorkingBank {
             min_tick_height: bank.tick_height(),

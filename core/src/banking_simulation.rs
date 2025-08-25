@@ -411,6 +411,7 @@ struct SimulatorLoop {
     freeze_time_by_slot: FreezeTimeBySlot,
     base_event_time: SystemTime,
     poh_recorder: Arc<RwLock<PohRecorder>>,
+    poh_controller: PohController,
     simulated_leader: Pubkey,
     bank_forks: Arc<RwLock<BankForks>>,
     blockstore: Arc<Blockstore>,
@@ -431,7 +432,7 @@ impl SimulatorLoop {
     }
 
     fn start(
-        self,
+        mut self,
         base_simulation_time: SystemTime,
         sender_thread: EventSenderThread,
     ) -> (EventSenderThread, Sender<Slot>) {
@@ -498,7 +499,7 @@ impl SimulatorLoop {
                 self.retransmit_slots_sender.send(bank.slot()).unwrap();
                 update_bank_forks_and_poh_recorder_for_new_tpu_bank(
                     &self.bank_forks,
-                    &self.poh_recorder,
+                    &mut self.poh_controller,
                     new_bank,
                 );
                 (bank, bank_created) = (
@@ -743,7 +744,7 @@ impl BankingSimulator {
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let (record_sender, record_receiver) = unbounded();
         let transaction_recorder = TransactionRecorder::new(record_sender, exit.clone());
-        let (_poh_controller, poh_service_message_receiver) = PohController::new();
+        let (poh_controller, poh_service_message_receiver) = PohController::new();
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &genesis_config.poh_config,
@@ -885,6 +886,7 @@ impl BankingSimulator {
             freeze_time_by_slot,
             base_event_time,
             poh_recorder,
+            poh_controller,
             simulated_leader,
             bank_forks,
             blockstore,

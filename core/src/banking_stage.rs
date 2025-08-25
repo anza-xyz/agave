@@ -27,7 +27,10 @@ use {
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_perf::packet::PACKETS_PER_BATCH,
-    solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
+    solana_poh::{
+        poh_controller::PohController, poh_recorder::PohRecorder,
+        transaction_recorder::TransactionRecorder,
+    },
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
@@ -627,11 +630,13 @@ struct BankingStageNonVoteContext {
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     bank_forks: &RwLock<BankForks>,
-    poh_recorder: &RwLock<PohRecorder>,
+    poh_controller: &mut PohController,
     tpu_bank: Bank,
 ) {
     let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
-    poh_recorder.write().unwrap().set_bank(tpu_bank);
+    poh_controller
+        .set_bank_sync(tpu_bank)
+        .expect("poh service is connected");
 }
 
 #[cfg(test)]

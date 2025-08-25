@@ -932,7 +932,7 @@ impl Validator {
         let transaction_recorder =
             TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-        let (_poh_controller, poh_service_message_receiver) = PohController::new();
+        let (poh_controller, poh_service_message_receiver) = PohController::new();
 
         let (banking_tracer, tracer_thread) =
             BankingTracer::new((config.banking_trace_dir_byte_limit > 0).then_some((
@@ -1511,6 +1511,7 @@ impl Validator {
             ledger_signal_receiver,
             rpc_subscriptions.clone(),
             &poh_recorder,
+            poh_controller,
             tower,
             config.tower_storage.clone(),
             &leader_schedule_cache,
