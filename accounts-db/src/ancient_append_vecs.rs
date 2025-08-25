@@ -1595,9 +1595,7 @@ pub mod tests {
                             let storage = db.storage.get_slot_storage_entry(slot);
                             if all_slots_shrunk {
                                 assert!(storage.is_some());
-                                // Here we use can_append() as a proxy to assert the backup storage of the accounts after shrinking.
-                                // When storage is AppendVec, can_append() will return true.
-                                assert!(storage.unwrap().accounts.can_append());
+                                assert!(!storage.unwrap().has_accounts());
                             } else {
                                 assert!(storage.is_none());
                             }
