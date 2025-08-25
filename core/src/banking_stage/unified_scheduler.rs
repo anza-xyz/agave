@@ -55,7 +55,7 @@ pub(crate) fn ensure_banking_stage_setup(
     transaction_recorder: TransactionRecorder,
     num_threads: NonZeroUsize,
 ) {
-    let root_bank = bank_forks.read().unwrap().sharable_root_bank();
+    let sharable_banks = bank_forks.read().unwrap().sharable_banks();
     let unified_receiver = channels.unified_receiver().clone();
 
     let (is_exited, decision_maker) = {
@@ -77,7 +77,7 @@ pub(crate) fn ensure_banking_stage_setup(
                 // by solScCleaner.
                 return;
             }
-            let bank = root_bank.load();
+            let bank = sharable_banks.root();
             for batch in batches.iter() {
                 // over-provision nevertheless some of packets could be invalid.
                 let task_id_base = helper.generate_task_ids(batch.len());

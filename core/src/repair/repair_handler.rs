@@ -18,7 +18,7 @@ use {
     },
     solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, PinnedPacketBatch},
     solana_pubkey::Pubkey,
-    solana_runtime::bank_forks::SharableBank,
+    solana_runtime::bank_forks::SharableBanks,
     std::{
         collections::HashSet,
         net::SocketAddr,
@@ -150,12 +150,12 @@ impl RepairHandlerType {
         &self,
         blockstore: Arc<Blockstore>,
         cluster_info: Arc<ClusterInfo>,
-        sharable_root_bank: SharableBank,
+        sharable_banks: SharableBanks,
         serve_repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
     ) -> ServeRepair {
         ServeRepair::new(
             cluster_info,
-            sharable_root_bank,
+            sharable_banks,
             serve_repair_whitelist,
             self.to_handler(blockstore),
         )

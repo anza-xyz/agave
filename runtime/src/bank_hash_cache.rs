@@ -10,7 +10,7 @@
 use {
     crate::{
         bank::Bank,
-        bank_forks::{BankForks, SharableBank},
+        bank_forks::{BankForks, SharableBanks},
     },
     solana_clock::Slot,
     solana_hash::Hash,
@@ -26,14 +26,14 @@ pub type DumpedSlotSubscription = Arc<Mutex<bool>>;
 pub struct BankHashCache {
     hashes: BTreeMap<Slot, Hash>,
     bank_forks: Arc<RwLock<BankForks>>,
-    root_bank: SharableBank,
+    sharable_banks: SharableBanks,
     last_root: Slot,
     dumped_slot_subscription: DumpedSlotSubscription,
 }
 
 impl BankHashCache {
     pub fn new(bank_forks: Arc<RwLock<BankForks>>) -> Self {
-        let root_bank = bank_forks.read().unwrap().sharable_root_bank();
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let dumped_slot_subscription = DumpedSlotSubscription::default();
         bank_forks
             .write()
@@ -42,7 +42,7 @@ impl BankHashCache {
         Self {
             hashes: BTreeMap::default(),
             bank_forks,
-            root_bank,
+            sharable_banks,
             last_root: 0,
             dumped_slot_subscription,
         }
@@ -94,7 +94,7 @@ impl BankHashCache {
 
     /// Returns the root bank and also prunes cache of any slots < root
     pub fn get_root_bank_and_prune_cache(&mut self) -> Arc<Bank> {
-        let root_bank = self.root_bank.load();
+        let root_bank = self.sharable_banks.root();
         if root_bank.slot() != self.last_root {
             self.last_root = root_bank.slot();
             self.hashes = self.hashes.split_off(&self.last_root);

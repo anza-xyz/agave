@@ -21,7 +21,7 @@ use {
     solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::{
         bank::{Bank, CollectorFeeDetails},
-        bank_forks::SharableBank,
+        bank_forks::SharableBanks,
     },
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
@@ -134,7 +134,7 @@ pub(crate) fn spawn_forwarding_stage(
     receiver: Receiver<(BankingPacketBatch, bool)>,
     client: ForwardingClientOption<'_>,
     vote_client_udp_socket: UdpSocket,
-    root_bank: SharableBank,
+    sharable_banks: SharableBanks,
     forward_address_getter: ForwardAddressGetter,
     data_budget: DataBudget,
 ) -> SpawnForwardingStageResult {
@@ -147,7 +147,7 @@ pub(crate) fn spawn_forwarding_stage(
                 receiver,
                 vote_client,
                 Box::new([non_vote_client]),
-                root_bank,
+                sharable_banks,
                 data_budget,
                 None,
             );
@@ -185,7 +185,7 @@ pub(crate) fn spawn_forwarding_stage(
                 receiver,
                 vote_client,
                 non_vote_clients.clone(),
-                root_bank,
+                sharable_banks,
                 data_budget,
                 Some(node_multihoming.bind_ip_addrs.clone()),
             );
@@ -212,7 +212,7 @@ impl NotifyKeyUpdate for UpdateHandles {
 struct ForwardingStage<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient> {
     receiver: Receiver<(BankingPacketBatch, bool)>,
     packet_container: PacketContainer,
-    root_bank: SharableBank,
+    sharable_banks: SharableBanks,
     vote_client: VoteClient,
     non_vote_clients: Box<[NonVoteClient]>,
     data_budget: DataBudget,
@@ -227,14 +227,14 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         receiver: Receiver<(BankingPacketBatch, bool)>,
         vote_client: VoteClient,
         non_vote_clients: Box<[NonVoteClient]>,
-        root_bank: SharableBank,
+        sharable_banks: SharableBanks,
         data_budget: DataBudget,
         bind_ip_addrs: Option<Arc<BindIpAddrs>>,
     ) -> Self {
         Self {
             receiver,
             packet_container: PacketContainer::with_capacity(4 * 4096),
-            root_bank,
+            sharable_banks,
             non_vote_clients,
             vote_client,
             data_budget,
@@ -246,7 +246,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
     /// Runs `ForwardingStage`'s main loop, to receive, order, and forward packets.
     fn run(mut self) {
         loop {
-            let root_bank = self.root_bank.load();
+            let root_bank = self.sharable_banks.root();
             if !self.receive_and_buffer(&root_bank) {
                 break;
             }
@@ -939,14 +939,14 @@ mod tests {
 
         let (_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
-        let root_bank = bank_forks.read().unwrap().sharable_root_bank();
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let vote_mock_client = MockClient::new();
         let non_vote_mock_client = MockClient::new();
         let mut forwarding_stage = ForwardingStage::new(
             packet_batch_receiver,
             vote_mock_client.clone(),
             Box::new([non_vote_mock_client.clone()]),
-            root_bank,
+            sharable_banks,
             DataBudget::default(),
             None,
         );
@@ -982,7 +982,7 @@ mod tests {
             .send((vote_packets.clone(), true))
             .unwrap();
 
-        let bank = forwarding_stage.root_bank.load();
+        let bank = forwarding_stage.sharable_banks.root();
         forwarding_stage.receive_and_buffer(&bank);
         if !packet_batch_sender.is_empty() {
             forwarding_stage.receive_and_buffer(&bank);

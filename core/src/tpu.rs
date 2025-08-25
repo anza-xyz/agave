@@ -342,7 +342,7 @@ impl Tpu {
             forward_stage_receiver,
             client,
             vote_forwarding_client_socket,
-            bank_forks.read().unwrap().sharable_root_bank(),
+            bank_forks.read().unwrap().sharable_banks(),
             ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
             DataBudget::default(),
         );
