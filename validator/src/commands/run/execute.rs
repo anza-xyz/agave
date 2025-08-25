@@ -232,6 +232,12 @@ pub fn execute(
         BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
     };
 
+    if bind_addresses.len() > 1 && matches.is_present("use_connection_cache") {
+        Err(String::from(
+            "Connection cache can not be used in a multihoming context",
+        ))?;
+    }
+
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
             .expect("invalid rpc_bind_address")
