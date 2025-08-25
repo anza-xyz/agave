@@ -8056,6 +8056,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "base64 0.22.1",
+ "bencher",
  "bincode",
  "bs58",
  "bytemuck",

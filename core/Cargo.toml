@@ -185,6 +185,7 @@ sysctl = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
+bencher = { workspace = true }
 criterion = { workspace = true }
 fs_extra = { workspace = true }
 serde_json = { workspace = true }
@@ -226,6 +227,11 @@ name = "gen_keys"
 
 [[bench]]
 name = "sigverify_stage"
+harness = false
+
+[[bench]]
+name = "shredder"
+harness = false
 
 [[bench]]
 name = "receive_and_buffer"
