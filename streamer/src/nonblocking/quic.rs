@@ -88,7 +88,7 @@ const TARGET_UNSTAKED_KBPS: u64 = 5000;
 const TARGET_MAX_STAKED_KBPS: u64 = TARGET_UNSTAKED_KBPS * 4;
 
 /// Maximal allowed RTT for SWQOS calculations (to limit abuse)
-const MAX_ALLOWED_RTT: Duration = Duration::from_millis(200);
+const MAX_ALLOWED_RTT: Duration = Duration::from_millis(300);
 
 /// Total new connection counts per second. Heuristically taken from
 /// the default staked and unstaked connection limits. Might be adjusted
@@ -1038,18 +1038,17 @@ async fn handle_connection(
     } = params;
 
     let max_receive_rate_kbps = compute_max_receive_rate_kbps(params.max_stake, params.peer_type);
-    connection.set_receive_window(compute_receive_window_bdp(
-        max_receive_rate_kbps,
-        connection.rtt(),
-    ));
+    let initial_rx_window = compute_receive_window_bdp(max_receive_rate_kbps, connection.rtt());
+    connection.set_receive_window(initial_rx_window);
     debug!(
-        "quic new connection {remote_addr}, max_receive_rate {max_receive_rate_kbps} Kbps, streams: {} connections: {}",
-        stats.total_streams.load(Ordering::Relaxed),
-        stats.total_connections.load(Ordering::Relaxed),
+        "quic new connection {remote_addr}, max_receive_rate {max_receive_rate_kbps} Kbps (receive_window= {initial_rx_window} RTT={rtt}ms), streams: {streams} connections: {connections}",
+        rtt = connection.rtt().as_millis(),
+        streams=stats.total_streams.load(Ordering::Relaxed),
+        connections=stats.total_connections.load(Ordering::Relaxed),
     );
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
 
-    'conn: loop {
+    'conn: for stream_number in 0.. {
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
         // the connection task.
         let mut stream = select! {
@@ -1183,11 +1182,12 @@ async fn handle_connection(
 
         stats.total_streams.fetch_sub(1, Ordering::Relaxed);
         stream_load_ema.update_ema_if_needed();
-
-        let new_window = compute_receive_window_bdp(max_receive_rate_kbps, connection.rtt());
-        trace!("Updating receive window for {remote_addr:?} to {new_window:?} based on rtt {:?} and target bitrate {} kbps",
+        if (stream_number % 64) == 0 {
+            let new_window = compute_receive_window_bdp(max_receive_rate_kbps, connection.rtt());
+            trace!("Updating receive window for {remote_addr:?} to {new_window:?} based on rtt {:?} and target bitrate {} kbps",
             connection.rtt(), max_receive_rate_kbps);
-        connection.set_receive_window(new_window);
+            connection.set_receive_window(new_window);
+        }
     }
 
     let stable_id = connection.stable_id();
