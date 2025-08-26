@@ -410,11 +410,14 @@ impl AppendVec {
         self.current_len.store(0, Ordering::Release);
     }
 
-    /// when append_lock isn't set, this is the trigger to tell us
-    /// that no more appending will occur and we can close the initial append_vec.
-    pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
-        // Early return if already in read-only mode
-        self.append_lock.as_ref()?;
+    /// Return AppendVec opened in read-only file-io mode or `None` if it already is such
+    pub(crate) fn reopen_as_readonly_file_io(&self) -> Option<Self> {
+        if self.append_lock.as_ref().is_none()
+            && matches!(self.backing, AppendVecFileBacking::File(_))
+        {
+            // Early return if already in read-only mode *and* already a file-io
+            return None;
+        }
 
         // we are re-opening the file, so don't remove the file on disk when the old one is dropped
         self.remove_file_on_drop.store(false, Ordering::Release);
@@ -1903,14 +1906,24 @@ pub mod tests {
         let file = get_append_vec_path("test_append_vec_flush");
         let path = &file.path;
         let accounts_len = {
-            // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
-            let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024, storage_access));
+            let av = AppendVec::new(path, true, 1024 * 1024, storage_access);
             av.append_account_test(&create_test_account(10)).unwrap();
-            av.len()
+            // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
+            let ro_av = ManuallyDrop::new(
+                av.reopen_as_readonly_file_io()
+                    .expect("appendable AppendVec should always re-open as read-only"),
+            );
+            ro_av.len()
         };
+
         let (av, _) = AppendVec::new_from_file(path, accounts_len, storage_access).unwrap();
-        let reopen = av.reopen_as_readonly();
-        assert!(reopen.is_none());
+        let reopen = av.reopen_as_readonly_file_io();
+        // even if AppendVec is already read-only, but uses mmap, it should reopen as file_io
+        if storage_access == StorageAccess::File {
+            assert!(reopen.is_none());
+        } else {
+            assert!(reopen.is_some());
+        }
     }
 
     #[test_case(StorageAccess::Mmap)]
@@ -2366,7 +2379,7 @@ pub mod tests {
         }
         assert_eq!(*av1.is_dirty.get_mut(), begins_dirty);
 
-        let mut av2 = av1.reopen_as_readonly().unwrap();
+        let mut av2 = av1.reopen_as_readonly_file_io().unwrap();
         // don't delete the file when the AppendVec is dropped (let TempFile do it)
         *av2.remove_file_on_drop.get_mut() = false;
 
