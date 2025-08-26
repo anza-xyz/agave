@@ -74,7 +74,7 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_rayon_threadlimit::get_thread_count,
     solana_transaction::sanitized::SanitizedTransaction,
     std::{
@@ -662,56 +662,6 @@ impl IsZeroLamport for AccountSharedData {
 impl IsZeroLamport for Account {
     fn is_zero_lamport(&self) -> bool {
         self.lamports() == 0
-    }
-}
-
-struct MultiThreadProgress<'a> {
-    last_update: Instant,
-    my_last_report_count: u64,
-    total_count: &'a AtomicU64,
-    report_delay_secs: u64,
-    first_caller: bool,
-    ultimate_count: u64,
-    start_time: Instant,
-}
-
-impl<'a> MultiThreadProgress<'a> {
-    fn new(total_count: &'a AtomicU64, report_delay_secs: u64, ultimate_count: u64) -> Self {
-        Self {
-            last_update: Instant::now(),
-            my_last_report_count: 0,
-            total_count,
-            report_delay_secs,
-            first_caller: false,
-            ultimate_count,
-            start_time: Instant::now(),
-        }
-    }
-    fn report(&mut self, my_current_count: u64) {
-        let now = Instant::now();
-        if now.duration_since(self.last_update).as_secs() >= self.report_delay_secs {
-            let my_total_newly_processed_slots_since_last_report =
-                my_current_count - self.my_last_report_count;
-
-            self.my_last_report_count = my_current_count;
-            let previous_total_processed_slots_across_all_threads = self.total_count.fetch_add(
-                my_total_newly_processed_slots_since_last_report,
-                Ordering::Relaxed,
-            );
-            self.first_caller =
-                self.first_caller || 0 == previous_total_processed_slots_across_all_threads;
-            if self.first_caller {
-                let total = previous_total_processed_slots_across_all_threads
-                    + my_total_newly_processed_slots_since_last_report;
-                info!(
-                    "generating index: {}/{} slots... ({}/s)",
-                    total,
-                    self.ultimate_count,
-                    total / self.start_time.elapsed().as_secs().max(1),
-                );
-            }
-            self.last_update = now;
-        }
     }
 }
 
@@ -6755,139 +6705,191 @@ impl AccountsDb {
         if let Some(limit) = limit_load_slot_count_from_snapshot {
             storages.truncate(limit); // get rid of the newer slots and keep just the older
         }
-        let accounts_data_len = AtomicU64::new(0);
-
-        let zero_lamport_pubkeys = Mutex::new(HashSet::new());
-        let total_lt_hash = Mutex::new(LtHash::identity());
+        let num_storages = storages.len();
 
         self.accounts_index
             .set_startup(Startup::StartupWithExtraThreads);
         let storage_info = StorageSizeAndCountMap::default();
-        let total_processed_slots_across_all_threads = AtomicU64::new(0);
-        let outer_slots_len = storages.len();
-        let threads = num_cpus::get();
-        let chunk_size = (outer_slots_len / (std::cmp::max(1, threads.saturating_sub(1)))) + 1; // approximately 400k slots in a snapshot
+
+        let mut total_insert_us = 0;
+        let mut total_num_accounts = 0;
+        let mut total_accounts_data_len = 0;
+        let mut total_zero_lamport_pubkeys = HashSet::with_hasher(PubkeyHasherBuilder::default());
+        let mut total_all_accounts_are_zero_lamports_slots = 0;
+        let mut total_all_zeros_slots = Vec::new();
+        let mut total_num_did_not_exist = 0;
+        let mut total_num_existed_in_mem = 0;
+        let mut total_num_existed_on_disk = 0;
+        let mut total_lt_hash = LtHash::identity();
+
+        let storages_orderer =
+            AccountStoragesOrderer::with_random_order(&storages).into_concurrent_consumer();
+        let exit_logger = AtomicBool::new(false);
+        let num_processed = AtomicU64::new(0);
+        let num_threads = num_cpus::get();
         let mut index_time = Measure::start("index");
-        let insertion_time_us = AtomicU64::new(0);
-        let total_including_duplicates = AtomicU64::new(0);
-        let all_accounts_are_zero_lamports_slots = AtomicU64::new(0);
-        let mut all_zeros_slots = Mutex::new(Vec::<(Slot, Arc<AccountStorageEntry>)>::new());
-        let scan_time: u64 = storages
-            .par_chunks(chunk_size)
-            .map(|storages| {
-                let mut reader = append_vec::new_scan_accounts_reader();
-                let mut log_status = MultiThreadProgress::new(
-                    &total_processed_slots_across_all_threads,
-                    2,
-                    outer_slots_len as u64,
-                );
-                let mut scan_time_sum = 0;
-                let mut all_accounts_are_zero_lamports_slots_inner = 0;
-                let mut all_zeros_slots_inner = vec![];
-                let mut local_zero_lamport_pubkeys = Vec::new();
-                let mut insert_time_sum = 0;
-                let mut total_including_duplicates_sum = 0;
-                let mut accounts_data_len_sum = 0;
-                let mut local_num_did_not_exist = 0;
-                let mut local_num_existed_in_mem = 0;
-                let mut local_num_existed_on_disk = 0;
-                let mut local_lt_hash = LtHash::identity();
-                for (index, storage) in storages.iter().enumerate() {
-                    let mut scan_time = Measure::start("scan");
-                    log_status.report(index as u64);
-                    let store_id = storage.id();
-                    let slot = storage.slot();
-
-                    scan_time.stop();
-                    scan_time_sum += scan_time.as_us();
-
-                    let insert_us = {
-                        // generate index
-                        self.maybe_throttle_index_generation();
-                        let SlotIndexGenerationInfo {
-                            insert_time_us: insert_us,
-                            num_accounts: total_this_slot,
-                            accounts_data_len: accounts_data_len_this_slot,
-                            zero_lamport_pubkeys: mut zero_lamport_pubkeys_this_slot,
-                            all_accounts_are_zero_lamports,
-                            num_did_not_exist,
-                            num_existed_in_mem,
-                            num_existed_on_disk,
-                            slot_lt_hash,
-                        } = self.generate_index_for_slot(
-                            &mut reader,
-                            storage,
-                            slot,
-                            store_id,
-                            &storage_info,
-                        );
-
-                        local_num_did_not_exist += num_did_not_exist;
-                        local_num_existed_in_mem += num_existed_in_mem;
-                        local_num_existed_on_disk += num_existed_on_disk;
-                        total_including_duplicates_sum += total_this_slot;
-                        accounts_data_len_sum += accounts_data_len_this_slot;
-                        if all_accounts_are_zero_lamports {
-                            all_accounts_are_zero_lamports_slots_inner += 1;
-                            all_zeros_slots_inner.push((slot, Arc::clone(storage)));
+        thread::scope(|s| {
+            let thread_handles = (0..num_threads)
+                .map(|i| {
+                    thread::Builder::new()
+                        .name(format!("solGenIndex{i:02}"))
+                        .spawn_scoped(s, || {
+                            let mut thread_insert_us = 0;
+                            let mut thread_num_accounts = 0;
+                            let mut thread_accounts_data_len = 0;
+                            let mut thread_zero_lamport_pubkeys = Vec::new();
+                            let mut thread_all_accounts_are_zero_lamports_slots = 0;
+                            let mut thread_all_zeros_slots = Vec::new();
+                            let mut thread_num_did_not_exist = 0;
+                            let mut thread_num_existed_in_mem = 0;
+                            let mut thread_num_existed_on_disk = 0;
+                            let mut thread_lt_hash = LtHash::identity();
+                            let mut reader = append_vec::new_scan_accounts_reader();
+                            while let Some(next_item) = storages_orderer.next() {
+                                let storage = next_item.storage;
+                                let store_id = storage.id();
+                                let slot = storage.slot();
+                                self.maybe_throttle_index_generation();
+                                let SlotIndexGenerationInfo {
+                                    insert_time_us,
+                                    num_accounts,
+                                    accounts_data_len,
+                                    mut zero_lamport_pubkeys,
+                                    all_accounts_are_zero_lamports,
+                                    num_did_not_exist,
+                                    num_existed_in_mem,
+                                    num_existed_on_disk,
+                                    slot_lt_hash,
+                                } = self.generate_index_for_slot(
+                                    &mut reader,
+                                    storage,
+                                    slot,
+                                    store_id,
+                                    &storage_info,
+                                );
+                                thread_insert_us += insert_time_us;
+                                thread_num_accounts += num_accounts;
+                                thread_accounts_data_len += accounts_data_len;
+                                thread_zero_lamport_pubkeys.append(&mut zero_lamport_pubkeys);
+                                if all_accounts_are_zero_lamports {
+                                    thread_all_accounts_are_zero_lamports_slots += 1;
+                                    thread_all_zeros_slots.push((
+                                        slot,
+                                        Arc::clone(&storages[next_item.original_index]),
+                                    ));
+                                }
+                                thread_num_did_not_exist += num_did_not_exist;
+                                thread_num_existed_in_mem += num_existed_in_mem;
+                                thread_num_existed_on_disk += num_existed_on_disk;
+                                thread_lt_hash.mix_in(&slot_lt_hash.0);
+                                num_processed.fetch_add(1, Ordering::Relaxed);
+                            }
+                            (
+                                thread_insert_us,
+                                thread_num_accounts,
+                                thread_accounts_data_len,
+                                thread_zero_lamport_pubkeys,
+                                thread_all_accounts_are_zero_lamports_slots,
+                                thread_all_zeros_slots,
+                                thread_num_did_not_exist,
+                                thread_num_existed_in_mem,
+                                thread_num_existed_on_disk,
+                                thread_lt_hash,
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .expect("spawn threads");
+            let logger_thread_handle = thread::Builder::new()
+                .name("solGenIndexLog".to_string())
+                .spawn_scoped(s, || {
+                    let mut last_update = Instant::now();
+                    loop {
+                        if exit_logger.load(Ordering::Relaxed) {
+                            break;
                         }
-                        local_zero_lamport_pubkeys.append(&mut zero_lamport_pubkeys_this_slot);
-                        local_lt_hash.mix_in(&slot_lt_hash.0);
+                        let num_processed = num_processed.load(Ordering::Relaxed);
+                        if num_processed == num_storages as u64 {
+                            info!("generating index: processed all slots");
+                            break;
+                        }
+                        let now = Instant::now();
+                        if now - last_update > Duration::from_secs(2) {
+                            info!("generating index: processed {num_processed}/{num_storages} slots...");
+                            last_update = now;
+                        }
+                        thread::sleep(Duration::from_millis(500))
+                    }
+                })
+                .expect("spawn thread");
+            for thread_handle in thread_handles {
+                let thread_retvals = thread_handle.join().unwrap_or_else(|err| {
+                    exit_logger.store(true, Ordering::Relaxed);
+                    if cfg!(test) {
+                        // test_generate_index_duplicates_within_slot() relies on the panic
+                        // message, so we need to propagate the message from the child thread.
+                        std::panic::resume_unwind(err);
+                    } else {
+                        panic!("index generation failed");
+                    }
+                });
+                let (
+                    thread_insert_us,
+                    thread_num_accounts,
+                    thread_accounts_data_len,
+                    thread_zero_lamport_pubkeys,
+                    thread_all_accounts_are_zero_lamports_slots,
+                    mut thread_all_zeros_slots,
+                    thread_num_did_not_exist,
+                    thread_num_existed_in_mem,
+                    thread_num_existed_on_disk,
+                    thread_lt_hash,
+                ) = thread_retvals;
 
-                        insert_us
-                    };
-
-                    insert_time_sum += insert_us;
-                }
-
-                let mut zero_lamport_pubkeys_lock = zero_lamport_pubkeys.lock().unwrap();
-                zero_lamport_pubkeys_lock.reserve(local_zero_lamport_pubkeys.len());
-                zero_lamport_pubkeys_lock.extend(local_zero_lamport_pubkeys);
-                drop(zero_lamport_pubkeys_lock);
-
-                total_lt_hash.lock().unwrap().mix_in(&local_lt_hash);
-
-                // This thread has finished processing its chunk of slots.
-                // Update the index stats now.
-                let index_stats = self.accounts_index.bucket_map_holder_stats();
-
-                // stats for inserted entries that previously did *not* exist
-                index_stats.inc_insert_count(local_num_did_not_exist);
-                index_stats.add_mem_count(local_num_did_not_exist as usize);
-
-                // stats for inserted entries that previous did exist *in-mem*
-                index_stats
-                    .entries_from_mem
-                    .fetch_add(local_num_existed_in_mem, Ordering::Relaxed);
-                index_stats
-                    .updates_in_mem
-                    .fetch_add(local_num_existed_in_mem, Ordering::Relaxed);
-
-                // stats for inserted entries that previously did exist *on-disk*
-                index_stats.add_mem_count(local_num_existed_on_disk as usize);
-                index_stats
-                    .entries_missing
-                    .fetch_add(local_num_existed_on_disk, Ordering::Relaxed);
-                index_stats
-                    .updates_in_mem
-                    .fetch_add(local_num_existed_on_disk, Ordering::Relaxed);
-
-                all_accounts_are_zero_lamports_slots.fetch_add(
-                    all_accounts_are_zero_lamports_slots_inner,
-                    Ordering::Relaxed,
-                );
-                all_zeros_slots
-                    .lock()
-                    .unwrap()
-                    .append(&mut all_zeros_slots_inner);
-                insertion_time_us.fetch_add(insert_time_sum, Ordering::Relaxed);
-                total_including_duplicates
-                    .fetch_add(total_including_duplicates_sum, Ordering::Relaxed);
-                accounts_data_len.fetch_add(accounts_data_len_sum, Ordering::Relaxed);
-                scan_time_sum
-            })
-            .sum();
+                total_insert_us += thread_insert_us;
+                total_num_accounts += thread_num_accounts;
+                total_accounts_data_len += thread_accounts_data_len;
+                total_zero_lamport_pubkeys.extend(thread_zero_lamport_pubkeys);
+                total_all_accounts_are_zero_lamports_slots +=
+                    thread_all_accounts_are_zero_lamports_slots;
+                total_all_zeros_slots.append(&mut thread_all_zeros_slots);
+                total_num_did_not_exist += thread_num_did_not_exist;
+                total_num_existed_in_mem += thread_num_existed_in_mem;
+                total_num_existed_on_disk += thread_num_existed_on_disk;
+                total_lt_hash.mix_in(&thread_lt_hash);
+            }
+            // Make sure to join the logger thread *after* the main threads.
+            // This way, if a main thread errors, we won't spin indefinitely
+            // waiting for the logger thread to finish (it never will).
+            logger_thread_handle.join().expect("join thread");
+        });
         index_time.stop();
+
+        {
+            // Update the index stats now.
+            let index_stats = self.accounts_index.bucket_map_holder_stats();
+
+            // stats for inserted entries that previously did *not* exist
+            index_stats.inc_insert_count(total_num_did_not_exist);
+            index_stats.add_mem_count(total_num_did_not_exist as usize);
+
+            // stats for inserted entries that previous did exist *in-mem*
+            index_stats
+                .entries_from_mem
+                .fetch_add(total_num_existed_in_mem, Ordering::Relaxed);
+            index_stats
+                .updates_in_mem
+                .fetch_add(total_num_existed_in_mem, Ordering::Relaxed);
+
+            // stats for inserted entries that previously did exist *on-disk*
+            index_stats.add_mem_count(total_num_existed_on_disk as usize);
+            index_stats
+                .entries_missing
+                .fetch_add(total_num_existed_on_disk, Ordering::Relaxed);
+            index_stats
+                .updates_in_mem
+                .fetch_add(total_num_existed_on_disk, Ordering::Relaxed);
+        }
 
         if verify {
             info!("Verifying index...");
@@ -6957,17 +6959,16 @@ impl AccountsDb {
 
         let mut timings = GenerateIndexTimings {
             index_flush_us,
-            scan_time,
+            scan_time: 0,
             index_time: index_time.as_us(),
-            insertion_time_us: insertion_time_us.load(Ordering::Relaxed),
+            insertion_time_us: total_insert_us,
             total_duplicate_slot_keys: total_duplicate_slot_keys.load(Ordering::Relaxed),
             total_num_unique_duplicate_keys: total_num_unique_duplicate_keys
                 .load(Ordering::Relaxed),
             populate_duplicate_keys_us,
-            total_including_duplicates: total_including_duplicates.load(Ordering::Relaxed),
-            total_slots: storages.len() as u64,
-            all_accounts_are_zero_lamports_slots: all_accounts_are_zero_lamports_slots
-                .load(Ordering::Relaxed),
+            total_including_duplicates: total_num_accounts,
+            total_slots: num_storages as u64,
+            all_accounts_are_zero_lamports_slots: total_all_accounts_are_zero_lamports_slots,
             ..GenerateIndexTimings::default()
         };
 
@@ -6988,10 +6989,8 @@ impl AccountsDb {
             }
         }
 
-        let zero_lamport_pubkeys_to_visit =
-            std::mem::take(&mut *zero_lamport_pubkeys.lock().unwrap());
         let (num_zero_lamport_single_refs, visit_zero_lamports_us) = measure_us!(
-            self.visit_zero_lamport_pubkeys_during_startup(&zero_lamport_pubkeys_to_visit)
+            self.visit_zero_lamport_pubkeys_during_startup(&total_zero_lamport_pubkeys)
         );
         timings.visit_zero_lamports_us = visit_zero_lamports_us;
         timings.num_zero_lamport_single_refs = num_zero_lamport_single_refs;
@@ -7038,20 +7037,16 @@ impl AccountsDb {
         timings.accounts_data_len_dedup_time_us = accounts_data_len_dedup_timer.as_us();
         timings.num_duplicate_accounts = num_duplicate_accounts;
 
-        total_lt_hash.lock().unwrap().mix_out(&duplicates_lt_hash.0);
-        accounts_data_len.fetch_sub(accounts_data_len_from_duplicates, Ordering::Relaxed);
-        info!(
-            "accounts data len: {}",
-            accounts_data_len.load(Ordering::Relaxed)
-        );
+        total_lt_hash.mix_out(&duplicates_lt_hash.0);
+        total_accounts_data_len -= accounts_data_len_from_duplicates;
+        info!("accounts data len: {total_accounts_data_len}");
 
         // insert all zero lamport account storage into the dirty stores and add them into the uncleaned roots for clean to pick up
-        let all_zero_slots_to_clean = std::mem::take(all_zeros_slots.get_mut().unwrap());
         info!(
             "insert all zero slots to clean at startup {}",
-            all_zero_slots_to_clean.len()
+            total_all_zeros_slots.len()
         );
-        for (slot, storage) in all_zero_slots_to_clean {
+        for (slot, storage) in total_all_zeros_slots {
             self.dirty_stores.insert(slot, storage);
         }
 
@@ -7085,8 +7080,8 @@ impl AccountsDb {
         self.accounts_index.log_secondary_indexes();
 
         IndexGenerationInfo {
-            accounts_data_len: accounts_data_len.load(Ordering::Relaxed),
-            calculated_accounts_lt_hash: AccountsLtHash(total_lt_hash.into_inner().unwrap()),
+            accounts_data_len: total_accounts_data_len,
+            calculated_accounts_lt_hash: AccountsLtHash(total_lt_hash),
         }
     }
 
@@ -7159,7 +7154,10 @@ impl AccountsDb {
     /// Visit zero lamport pubkeys and populate zero_lamport_single_ref info on
     /// storage.
     /// Returns the number of zero lamport single ref accounts found.
-    fn visit_zero_lamport_pubkeys_during_startup(&self, pubkeys: &HashSet<Pubkey>) -> u64 {
+    fn visit_zero_lamport_pubkeys_during_startup(
+        &self,
+        pubkeys: &HashSet<Pubkey, PubkeyHasherBuilder>,
+    ) -> u64 {
         let mut slot_offsets = HashMap::<_, Vec<_>>::default();
         self.accounts_index.scan(
             pubkeys.iter(),
