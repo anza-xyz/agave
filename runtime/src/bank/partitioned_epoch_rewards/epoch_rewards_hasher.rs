@@ -1,10 +1,10 @@
 use {
-    crate::bank::partitioned_epoch_rewards::PartitionedStakeReward, itertools::enumerate,
+    crate::bank::partitioned_epoch_rewards::PartitionedStakeRewards, itertools::enumerate,
     solana_epoch_rewards_hasher::EpochRewardsHasher, solana_hash::Hash,
 };
 
 pub(in crate::bank::partitioned_epoch_rewards) fn hash_rewards_into_partitions(
-    stake_rewards: &[PartitionedStakeReward],
+    stake_rewards: &PartitionedStakeRewards,
     parent_blockhash: &Hash,
     num_partitions: usize,
 ) -> Vec<Vec<usize>> {
@@ -12,13 +12,15 @@ pub(in crate::bank::partitioned_epoch_rewards) fn hash_rewards_into_partitions(
     let mut indices = vec![vec![]; num_partitions];
 
     for (i, reward) in enumerate(stake_rewards) {
-        // clone here so the hasher's state is re-used on each call to `hash_address_to_partition`.
-        // This prevents us from re-hashing the seed each time.
-        // The clone is explicit (as opposed to an implicit copy) so it is clear this is intended.
-        let partition_index = hasher
-            .clone()
-            .hash_address_to_partition(&reward.stake_pubkey);
-        indices[partition_index].push(i);
+        if let Some(ref reward) = reward {
+            // clone here so the hasher's state is re-used on each call to `hash_address_to_partition`.
+            // This prevents us from re-hashing the seed each time.
+            // The clone is explicit (as opposed to an implicit copy) so it is clear this is intended.
+            let partition_index = hasher
+                .clone()
+                .hash_address_to_partition(&reward.stake_pubkey);
+            indices[partition_index].push(i);
+        }
     }
     indices
 }
@@ -43,7 +45,7 @@ mod tests {
         let expected_num = 12345;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| PartitionedStakeReward::new_random())
+            .map(|_| Some(PartitionedStakeReward::new_random()))
             .collect::<Vec<_>>();
 
         let partition_indices = hash_rewards_into_partitions(&stake_rewards, &Hash::default(), 5);
@@ -79,7 +81,7 @@ mod tests {
         // simulate 40K - 1 rewards, the expected num of credit blocks should be 10.
         let expected_num = 40959;
         let stake_rewards = (0..expected_num)
-            .map(|_| PartitionedStakeReward::new_random())
+            .map(|_| Some(PartitionedStakeReward::new_random()))
             .collect::<Vec<_>>();
 
         let partition_indices =

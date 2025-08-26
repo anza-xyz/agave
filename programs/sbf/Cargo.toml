@@ -157,6 +157,7 @@ solana-sbpf = "=0.12.2"
 solana-sdk-ids = "=3.0.0"
 solana-secp256k1-recover = "=3.0.0"
 solana-sha256-hasher = { version = "=3.0.0", features = ["sha2"] }
+<<<<<<< HEAD
 solana-stake-interface = { version = "=2.0.0", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=3.0.1" }
 solana-svm-callback = { path = "../../svm-callback", version = "=3.0.1" }
@@ -165,6 +166,16 @@ solana-svm-log-collector = { path = "../../svm-log-collector", version = "=3.0.1
 solana-svm-timings = { path = "../../svm-timings", version = "=3.0.1" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=3.0.1" }
 solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=3.0.1" }
+=======
+solana-stake-interface = { version = "=2.0.1", features = ["bincode"] }
+solana-svm = { path = "../../svm", version = "=3.1.0" }
+solana-svm-callback = { path = "../../svm-callback", version = "=3.1.0" }
+solana-svm-feature-set = { path = "../../svm-feature-set", version = "=3.1.0" }
+solana-svm-log-collector = { path = "../../svm-log-collector", version = "=3.1.0" }
+solana-svm-timings = { path = "../../svm-timings", version = "=3.1.0" }
+solana-svm-transaction = { path = "../../svm-transaction", version = "=3.1.0" }
+solana-svm-type-overrides = { path = "../../svm-type-overrides", version = "=3.1.0" }
+>>>>>>> e752ae6d8 (runtime: Avoid locking during stake vote rewards calculation (#6900))
 solana-system-interface = { version = "=2.0", features = ["bincode"] }
 solana-sysvar = "=3.0.0"
 solana-transaction-context = { path = "../../transaction-context", version = "=3.0.1" }
