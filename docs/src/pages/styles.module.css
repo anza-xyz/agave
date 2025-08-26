@@ -30,7 +30,7 @@
 
 .features {
   display: flex;
-  align-items: top;
+  align-items: flex-start;
   padding: 2rem 0;
   width: 100%;
 }
