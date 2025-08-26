@@ -52,9 +52,10 @@ This field **SHOULD NOT** be displayed to users
 
 #### Header version
 
-The header version is represented as an 8-bit unsigned integer. Only the version 
-1 and earlier of the header format are specified in this document.
-
+The header version is represented as an 8-bit unsigned integer. Only the versions 
+1 and 0 of the header format are specified in this document.
+Version 0 and 1 are nearly identical: the only difference between them is treatment of acceptable
+characters for message format 0. See the message format section for more information.
 This field **SHOULD NOT** be displayed to users
 
 #### Application domain
@@ -82,6 +83,7 @@ compatibility and composition of messages.
 returns true or the newline - `\n` character.  That is, `0x20..=0x7e` or `0x0a`. 
 The newline character was added as part of the header version 1 specification and is
 not recognised under the previous revision.
+NOTE: header version 0 does not allow the newline character, only header version 1 allows it.
 
 Both the message encoding and maximum message length **MUST** be enforced by
 signer and verifier.
