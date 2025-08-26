@@ -1,7 +1,7 @@
 use {
     crate::shred::{
         common::dispatch,
-        legacy, merkle,
+        merkle,
         payload::Payload,
         traits::{Shred, ShredCode as ShredCodeTrait},
         CodingShredHeader, Error, ShredCommonHeader, ShredType, SignedData,
@@ -18,7 +18,6 @@ const_assert_eq!(ShredCode::SIZE_OF_PAYLOAD, 1228);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShredCode {
-    Legacy(legacy::ShredCode),
     Merkle(merkle::ShredCode),
 }
 
@@ -37,21 +36,18 @@ impl ShredCode {
 
     pub(super) fn signed_data(&self) -> Result<SignedData, Error> {
         match self {
-            Self::Legacy(shred) => Ok(SignedData::Chunk(shred.signed_data()?)),
             Self::Merkle(shred) => Ok(SignedData::MerkleRoot(shred.signed_data()?)),
         }
     }
 
     pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error> {
         match self {
-            Self::Legacy(_) => Err(Error::InvalidShredType),
             Self::Merkle(shred) => shred.chained_merkle_root(),
         }
     }
 
     pub(super) fn merkle_root(&self) -> Result<Hash, Error> {
         match self {
-            Self::Legacy(_) => Err(Error::InvalidShredType),
             Self::Merkle(shred) => shred.merkle_root(),
         }
     }
@@ -67,9 +63,6 @@ impl ShredCode {
     // Returns true if the erasure coding of the two shreds mismatch.
     pub(super) fn erasure_mismatch(&self, other: &ShredCode) -> bool {
         match (self, other) {
-            (Self::Legacy(shred), Self::Legacy(other)) => erasure_mismatch(shred, other),
-            (Self::Legacy(_), Self::Merkle(_)) => true,
-            (Self::Merkle(_), Self::Legacy(_)) => true,
             (Self::Merkle(shred), Self::Merkle(other)) => {
                 // Merkle shreds within the same erasure batch have the same
                 // merkle root. The root of the merkle tree is signed. So
@@ -82,15 +75,8 @@ impl ShredCode {
 
     pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error> {
         match self {
-            Self::Legacy(_) => Err(Error::InvalidShredVariant),
             Self::Merkle(shred) => shred.retransmitter_signature(),
         }
-    }
-}
-
-impl From<legacy::ShredCode> for ShredCode {
-    fn from(shred: legacy::ShredCode) -> Self {
-        Self::Legacy(shred)
     }
 }
 

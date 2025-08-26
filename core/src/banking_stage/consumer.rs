@@ -1157,6 +1157,7 @@ mod tests {
                         compute_units,
                         loaded_accounts_data_size,
                         result: _,
+                        fee_payer_post_balance: _,
                     } => (
                         *compute_units,
                         CostModel::calculate_loaded_accounts_data_size_cost(
@@ -1560,7 +1561,7 @@ mod tests {
             mut genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(solana_native_token::sol_to_lamports(1000.0));
+        } = create_slow_genesis_config(solana_native_token::LAMPORTS_PER_SOL * 1000);
         genesis_config.rent.lamports_per_byte_year = 50;
         genesis_config.rent.exemption_threshold = 2.0;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
@@ -1804,6 +1805,7 @@ mod tests {
             compute_units,
             loaded_accounts_data_size,
             result: _,
+            fee_payer_post_balance: _,
         } = consumer_output
             .execute_and_commit_transactions_output
             .commit_transactions_result

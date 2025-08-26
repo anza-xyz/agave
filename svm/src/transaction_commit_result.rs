@@ -16,6 +16,7 @@ pub struct CommittedTransaction {
     pub executed_units: u64,
     pub fee_details: FeeDetails,
     pub loaded_account_stats: TransactionLoadedAccountsStats,
+    pub fee_payer_post_balance: u64,
 }
 
 pub trait TransactionCommitResultExtensions {

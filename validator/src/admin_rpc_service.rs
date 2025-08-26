@@ -11,9 +11,10 @@ use {
     solana_accounts_db::accounts_index::AccountIndex,
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
+        banking_stage::BankingStage,
         consensus::{tower_storage::TowerStorage, Tower},
         repair::repair_service,
-        validator::ValidatorStartProgress,
+        validator::{BlockProductionMethod, TransactionStructure, ValidatorStartProgress},
     },
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
@@ -28,6 +29,7 @@ use {
         env, error,
         fmt::{self, Display},
         net::{IpAddr, SocketAddr},
+        num::NonZeroUsize,
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -259,6 +261,15 @@ pub trait AdminRpc {
         meta: Self::Metadata,
         public_tpu_forwards_addr: SocketAddr,
     ) -> Result<()>;
+
+    #[rpc(meta, name = "manageBlockProduction")]
+    fn manage_block_production(
+        &self,
+        meta: Self::Metadata,
+        block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
+        num_workers: NonZeroUsize,
+    ) -> Result<()>;
 }
 
 pub struct AdminRpcImpl;
@@ -476,7 +487,7 @@ impl AdminRpc for AdminRpcImpl {
     ) -> Result<()> {
         debug!("add_authorized_voter_from_bytes request received");
 
-        let authorized_voter = Keypair::from_bytes(&keypair).map_err(|err| {
+        let authorized_voter = Keypair::try_from(keypair.as_ref()).map_err(|err| {
             jsonrpc_core::error::Error::invalid_params(format!(
                 "Failed to read authorized voter keypair from provided byte array: {err}"
             ))
@@ -516,7 +527,7 @@ impl AdminRpc for AdminRpcImpl {
     ) -> Result<()> {
         debug!("set_identity_from_bytes request received");
 
-        let identity_keypair = Keypair::from_bytes(&identity_keypair).map_err(|err| {
+        let identity_keypair = Keypair::try_from(identity_keypair.as_ref()).map_err(|err| {
             jsonrpc_core::error::Error::invalid_params(format!(
                 "Failed to read identity keypair from provided byte array: {err}"
             ))
@@ -538,8 +549,8 @@ impl AdminRpc for AdminRpcImpl {
         let mut write_staked_nodes = meta.staked_nodes_overrides.write().unwrap();
         write_staked_nodes.clear();
         write_staked_nodes.extend(loaded_config);
-        info!("Staked nodes overrides loaded from {}", path);
-        debug!("overrides map: {:?}", write_staked_nodes);
+        info!("Staked nodes overrides loaded from {path}");
+        debug!("overrides map: {write_staked_nodes:?}");
         Ok(())
     }
 
@@ -548,7 +559,7 @@ impl AdminRpc for AdminRpcImpl {
     }
 
     fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()> {
-        debug!("select_active_interface received: {}", interface);
+        debug!("select_active_interface received: {interface}");
         meta.with_post_init(|post_init| {
             let node = post_init.node.as_ref().ok_or_else(|| {
                 jsonrpc_core::Error::invalid_params("`Node` not initialized in post_init")
@@ -557,8 +568,7 @@ impl AdminRpc for AdminRpcImpl {
             node.switch_active_interface(interface, &post_init.cluster_info)
                 .map_err(|e| {
                     jsonrpc_core::Error::invalid_params(format!(
-                        "Switching failed due to error {}",
-                        e
+                        "Switching failed due to error {e}"
                     ))
                 })?;
             info!("Switched primary interface to {interface}");
@@ -623,10 +633,7 @@ impl AdminRpc for AdminRpcImpl {
         meta: Self::Metadata,
         pubkey_str: String,
     ) -> Result<HashMap<RpcAccountIndex, usize>> {
-        debug!(
-            "get_secondary_index_key_size rpc request received: {:?}",
-            pubkey_str
-        );
+        debug!("get_secondary_index_key_size rpc request received: {pubkey_str:?}");
         let index_key = verify_pubkey(&pubkey_str)?;
         meta.with_post_init(|post_init| {
             let bank = post_init.bank_forks.read().unwrap().root_bank();
@@ -743,6 +750,41 @@ impl AdminRpc for AdminRpcImpl {
             Ok(())
         })
     }
+
+    fn manage_block_production(
+        &self,
+        meta: Self::Metadata,
+        block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
+        num_workers: NonZeroUsize,
+    ) -> Result<()> {
+        debug!("manage_block_production rpc request received");
+
+        if num_workers > BankingStage::max_num_workers() {
+            return Err(jsonrpc_core::error::Error::invalid_params(format!(
+                "Number of workers ({}) exceeds maximum allowed ({})",
+                num_workers,
+                BankingStage::max_num_workers()
+            )));
+        }
+
+        meta.with_post_init(|post_init| {
+            let mut banking_stage = post_init.banking_stage.write().unwrap();
+            let Some(banking_stage) = banking_stage.as_mut() else {
+                error!("banking stage is not initialized");
+                return Err(jsonrpc_core::error::Error::internal_error());
+            };
+
+            banking_stage
+                .spawn_non_vote_threads(transaction_struct, block_production_method, num_workers)
+                .map_err(|err| {
+                    error!("Failed to spawn new non-vote threads: {err:?}");
+                    jsonrpc_core::error::Error::internal_error()
+                })?;
+
+            Ok(())
+        })
+    }
 }
 
 impl AdminRpcImpl {
@@ -832,7 +874,7 @@ pub fn run(ledger_path: &Path, metadata: AdminRpcRequestMetadata) {
 
             match server {
                 Err(err) => {
-                    warn!("Unable to start admin rpc service: {:?}", err);
+                    warn!("Unable to start admin rpc service: {err:?}");
                 }
                 Ok(server) => {
                     info!("started admin rpc service!");
@@ -919,7 +961,7 @@ where
 pub fn load_staked_nodes_overrides(
     path: &String,
 ) -> std::result::Result<StakedNodesOverrides, Box<dyn error::Error>> {
-    debug!("Loading staked nodes overrides configuration from {}", path);
+    debug!("Loading staked nodes overrides configuration from {path}");
     if Path::new(&path).exists() {
         let file = std::fs::File::open(path)?;
         Ok(serde_yaml::from_reader(file)?)
@@ -1029,6 +1071,7 @@ mod tests {
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
                     node: None,
+                    banking_stage: Arc::new(RwLock::new(None)),
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,

@@ -823,7 +823,7 @@ impl BankingSimulator {
         let banking_stage = BankingStage::new_num_threads(
             block_production_method.clone(),
             transaction_struct.clone(),
-            &poh_recorder,
+            poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
@@ -833,7 +833,7 @@ impl BankingSimulator {
             replay_vote_sender,
             None,
             bank_forks.clone(),
-            prioritization_fee_cache,
+            prioritization_fee_cache.clone(),
         );
 
         let (&_slot, &raw_base_event_time) = freeze_time_by_slot

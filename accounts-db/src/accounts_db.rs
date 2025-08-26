@@ -297,7 +297,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalTest,
-    mark_obsolete_accounts: false,
+    mark_obsolete_accounts: MarkObsoleteAccounts::Disabled,
     num_background_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
@@ -319,7 +319,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
-    mark_obsolete_accounts: false,
+    mark_obsolete_accounts: MarkObsoleteAccounts::Disabled,
     num_background_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
@@ -442,7 +442,7 @@ pub struct AccountsDbConfig {
     pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
     pub storage_access: StorageAccess,
     pub scan_filter_for_shrinking: ScanFilter,
-    pub mark_obsolete_accounts: bool,
+    pub mark_obsolete_accounts: MarkObsoleteAccounts,
     /// Number of threads for background operations (`thread_pool_background')
     pub num_background_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool_foreground`)
@@ -1208,6 +1208,16 @@ struct CleaningInfo {
     might_contain_zero_lamport_entry: bool,
 }
 
+/// Indicates when to mark accounts obsolete
+/// * Disabled - do not mark accounts obsolete
+/// * Enabled - mark accounts obsolete during write cache flush
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkObsoleteAccounts {
+    #[default]
+    Disabled,
+    Enabled,
+}
+
 /// This is the return type of AccountsDb::construct_candidate_clean_keys.
 /// It's a collection of pubkeys with associated information to
 /// facilitate the decision making about which accounts can be removed
@@ -1366,7 +1376,7 @@ pub struct AccountsDb {
     /// Flag to indicate if the experimental obsolete account tracking feature is enabled.
     /// This feature tracks obsolete accounts in the account storage entry allowing
     /// for earlier cleaning of obsolete accounts in the storages and index.
-    pub mark_obsolete_accounts: bool,
+    pub mark_obsolete_accounts: MarkObsoleteAccounts,
 }
 
 pub fn quarter_thread_count() -> usize {
@@ -1400,10 +1410,14 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
 impl AccountsDb {
     // The default high and low watermark sizes for the accounts read cache.
     // If the cache size exceeds MAX_SIZE_HI, it'll evict entries until the size is <= MAX_SIZE_LO.
+    //
+    // These default values were chosen empirically to minimize evictions on mainnet-beta.
+    // As of 2025-08-15 on mainnet-beta, the read cache size's steady state is around 2.5 GB,
+    // and add a bit more to buffer future growth.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO: usize = 400 * 1024 * 1024;
+    const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO: usize = 3_000_000_000;
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI: usize = 410 * 1024 * 1024;
+    const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI: usize = 3_100_000_000;
 
     // See AccountsDbConfig::read_cache_evict_sample_size.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -4408,16 +4422,13 @@ impl AccountsDb {
 
     /// Load account with `pubkey` and maybe put into read cache.
     ///
-    /// If the account is not already cached, invoke `should_put_in_read_cache_fn`.
-    /// The caller can inspect the account and indicate if it should be put into the read cache or not.
-    ///
     /// Return the account and the slot when the account was last stored.
     /// Return None for ZeroLamport accounts.
     pub fn load_account_with(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
-        should_put_in_read_cache_fn: impl Fn(&AccountSharedData) -> bool,
+        should_put_in_read_cache: bool,
     ) -> Option<(AccountSharedData, Slot)> {
         let (slot, storage_location, _maybe_account_accessor) =
             self.read_index_for_accessor_or_load_slow(ancestors, pubkey, None, false)?;
@@ -4451,7 +4462,7 @@ impl AccountsDb {
             return None;
         }
 
-        if !in_write_cache && should_put_in_read_cache_fn(&account) {
+        if !in_write_cache && should_put_in_read_cache {
             /*
             We show this store into the read-only cache for account 'A' and future loads of 'A' from the read-only cache are
             safe/reflect 'A''s latest state on this fork.
@@ -5305,10 +5316,25 @@ impl AccountsDb {
                 flush_stats.num_bytes_flushed.0,
                 "flush_slot_cache",
             );
+
+            // Use ReclaimOldSlots to reclaim old slots if marking obsolete accounts and cleaning
+            // Cleaning is enabled if `should_flush_f` is Some.
+            // should_flush_f is set to None when
+            // 1) There's an ongoing scan to avoid reclaiming accounts being scanned.
+            // 2) The slot is > max_clean_root to prevent unrooted slots from reclaiming rooted versions.
+            let reclaim_method = if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
+                && should_flush_f.is_some()
+            {
+                UpsertReclaim::ReclaimOldSlots
+            } else {
+                UpsertReclaim::IgnoreReclaims
+            };
+
             let (store_accounts_timing_inner, store_accounts_total_inner_us) = measure_us!(self
-                .store_accounts_frozen(
+                ._store_accounts_frozen(
                     (slot, &accounts[..]),
                     &flushed_store,
+                    reclaim_method,
                     UpdateIndexThreadSelection::PoolWithThreshold,
                 ));
             flush_stats.store_accounts_timing = store_accounts_timing_inner;
@@ -5551,7 +5577,7 @@ impl AccountsDb {
                 })
         });
 
-        if self.mark_obsolete_accounts {
+        if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
             // If `mark_obsolete_accounts` is true, then none if the duplicate accounts were
             // included in the lt_hash, and do not need to be mixed out.
             // The duplicates_lt_hash should be the default value.
@@ -6159,10 +6185,6 @@ impl AccountsDb {
         let slot = accounts.target_slot();
         let mut store_accounts_time = Measure::start("store_accounts");
 
-        // Other values for UpsertReclaim are not supported yet
-        #[cfg(not(test))]
-        assert_eq!(reclaim_handling, UpsertReclaim::IgnoreReclaims);
-
         // Flush the read cache if necessary. This will occur during shrink or clean
         if self.read_only_accounts_cache.can_slot_be_in_cache(slot) {
             (0..accounts.len()).for_each(|index| {
@@ -6388,11 +6410,6 @@ impl AccountsDb {
             datapoint_info!(
                 "accounts_db_store_timings",
                 (
-                    "hash_accounts",
-                    self.stats.store_hash_accounts.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
                     "store_accounts",
                     self.stats.store_accounts.swap(0, Ordering::Relaxed),
                     i64
@@ -6525,16 +6542,6 @@ impl AccountsDb {
                 (
                     "create_store_count",
                     self.stats.create_store_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "store_get_slot_store",
-                    self.stats.store_get_slot_store.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "store_find_existing",
-                    self.stats.store_find_existing.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -7078,7 +7085,7 @@ impl AccountsDb {
 
                 self.set_storage_count_and_alive_bytes(storage_info, &mut timings);
 
-                if self.mark_obsolete_accounts {
+                if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
                     let mut mark_obsolete_accounts_time =
                         Measure::start("mark_obsolete_accounts_time");
                     // Mark all reclaims at max_slot. This is safe because only the snapshot paths care about
@@ -7234,8 +7241,10 @@ impl AccountsDb {
         let mut num_duplicate_accounts = 0_u64;
         // With obsolete accounts, the duplicates_lt_hash should NOT be created.
         // And skip calculating the lt_hash from accounts too.
-        let mut duplicates_lt_hash =
-            (!self.mark_obsolete_accounts).then(|| Box::new(DuplicatesLtHash::default()));
+        let mut duplicates_lt_hash = match self.mark_obsolete_accounts {
+            MarkObsoleteAccounts::Disabled => Some(Box::new(DuplicatesLtHash::default())),
+            MarkObsoleteAccounts::Enabled => None,
+        };
         let mut lt_hash_time = Duration::default();
         self.accounts_index.scan(
             pubkeys.iter(),
@@ -7554,8 +7563,20 @@ impl AccountsDb {
         sizes
     }
 
-    pub fn ref_count_for_pubkey(&self, pubkey: &Pubkey) -> RefCount {
-        self.accounts_index.ref_count_from_storage(pubkey)
+    // With obsolete accounts marked, obsolete references are marked in the storage
+    // and no longer need to be referenced. This leads to a static reference count
+    // of 1. As referencing checking is common in tests, this test wrapper abstracts the behavior
+    pub fn assert_ref_count(&self, pubkey: &Pubkey, expected_ref_count: RefCount) {
+        let expected_ref_count = match self.mark_obsolete_accounts {
+            MarkObsoleteAccounts::Disabled => expected_ref_count,
+            // When obsolete accounts are marked, the ref count is always 1 or 0
+            MarkObsoleteAccounts::Enabled => expected_ref_count.min(1),
+        };
+
+        assert_eq!(
+            expected_ref_count,
+            self.accounts_index.ref_count_from_storage(pubkey)
+        );
     }
 
     pub fn alive_account_count_in_slot(&self, slot: Slot) -> usize {

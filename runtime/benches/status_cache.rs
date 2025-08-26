@@ -6,9 +6,7 @@ use {
     rand::{rngs::SmallRng, Rng, SeedableRng},
     solana_accounts_db::ancestors::Ancestors,
     solana_hash::{Hash, HASH_BYTES},
-    solana_runtime::{
-        bank::BankStatusCache, snapshot_bank_utils::serialize_status_cache, status_cache::*,
-    },
+    solana_runtime::{bank::BankStatusCache, status_cache::*},
     solana_sha256_hasher::hash,
     solana_signature::{Signature, SIGNATURE_BYTES},
     test::Bencher,
@@ -46,9 +44,8 @@ fn bench_status_cache_serialize_max(bencher: &mut Bencher) {
     fill_status_cache(&mut status_cache, max_cache_entries, 100_000);
 
     assert!(status_cache.roots().contains(&0));
-    let path = tempfile::NamedTempFile::new().unwrap().into_temp_path();
     bencher.iter(|| {
-        let _ = serialize_status_cache(&status_cache.root_slot_deltas(), &path).unwrap();
+        let _ = serialize(&status_cache.root_slot_deltas()).unwrap();
     });
 }
 

@@ -5,7 +5,7 @@ sidebar_position: 5
 ---
 
 This is a guide for getting your validator setup on the Solana testnet cluster
-for the first time. Testnet is a Solana cluster that is used for performance
+for the first time. Testnet is a Solana cluster used for performance
 testing of the software before the software is used on mainnet. Since testnet is
 stress tested daily, it is a good cluster to practice validator operations.
 
@@ -31,19 +31,12 @@ locate the terminal program on your _trusted computer_.
 
 ## Install The Solana CLI Locally
 
-To create your validator vote account, you need to install the
-[Solana command line interface](../cli/index.md) on your local computer.
-
-You can either use
-[Solana's Install Tool](../cli/install.md#use-solanas-install-tool) section from
-the within these docs to install the CLI, or alternatively, you can also
-[build from source](../cli/install.md#build-from-source).
-
-> Building from source is a great option for those that want a more secure and
-> potentially more performant executable.
+Validator operators are required to install the tools included in the Solana CLI using the [installation instructions](../cli/install.md).
 
 Once the Solana CLI is installed, you can return to this document once you are
-able to run the following command and get an answer on your terminal:
+able to run two commands and get an answer on your terminal.
+
+First, run the following command to verify that the Solana CLI is installed:
 
 ```
 solana --version
@@ -56,14 +49,28 @@ may be higher):
 solana-cli 1.14.17 (src:b29a37cf; feat:3488713414)
 ```
 
-Once you have successfully installed the cli, the next step is to change your
+Now, run the following command to verify that the agave-validator binary is
+installed:
+
+```
+agave-validator --version
+```
+
+You should see an output that looks similar to this (note your version number
+may be higher):
+
+```
+agave-validator 2.3.1 (src:e3eca4c1; feat:3640012085, client:Agave)
+```
+
+Once you have successfully installed the cli and validator binary, the next step is to change your
 config so that it is making requests to the `testnet` cluster:
 
 ```
 solana config set --url https://api.testnet.solana.com
 ```
 
-To verify that your config has change run:
+To verify that your config has changed, run:
 
 ```
 solana config get
@@ -266,7 +273,7 @@ sudo mount /dev/nvme0n1 /mnt/ledger
 You will also want to mount the accounts db on a separate hard drive. The
 process will be similar to the ledger example above.
 
-Assuming you have device at `/dev/nvme1n1`, format the device and verify it
+Assuming you have a device at `/dev/nvme1n1`, format the device and verify it
 exists:
 
 ```
@@ -301,7 +308,7 @@ sudo mount /dev/nvme1n1 /mnt/accounts
 
 ### Linux
 
-Your system will need to be tuned in order to run properly. Your validator may
+Your system will need to be tuned to run properly. Your validator may
 not start without the settings below.
 
 #### **Optimize sysctl knobs**
@@ -383,13 +390,11 @@ On the validator server, switch to the `sol` user:
 su - sol
 ```
 
-## Install The Solana CLI on Remote Machine
+## Install agave-validator on Remote Machine
 
-Your remote machine will need the Solana CLI installed to run the Agave validator
-software. For simplicity, install the cli with user `sol`. Refer again to
-[Solana's Install Tool](../cli/install.md#use-solanas-install-tool) or
-[build from source](../cli/install.md#build-from-source). It is best for
-operators to build from source rather than using the pre built binaries.
+Your remote machine will need `agave-validator` installed to run the Agave validator
+software. For simplicity, install the application with user `sol`. Refer again to
+[build from source](../cli/install.md#build-from-source).
 
 ## Create A Validator Startup Script
 
@@ -595,3 +600,19 @@ Make sure your ledger is on drive with at least `2TB` of space.
 
 This could be a networking/hardware issue, or you may need to get the latest
 snapshot from another validator node.
+
+### PoH hashes/second rate is slower than the cluster target
+
+If you are using `agave-validator` built from source, ensure that you are using a `release` build and not a `debug` build
+
+Ensure that your machine's CPU base clock speed is 2.8GHz or faster. Use `lscpu` to check your clock speed. `CPU(s) scaling MHz` can cause your clock speed to be underclocked. Some additional tuning:
+
+Set performance governor
+```bash
+echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+```
+
+Force minimum frequency to maximum
+```bash
+# Example if your maximum GHz is 2.8
+echo 2850000 | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_min_freq

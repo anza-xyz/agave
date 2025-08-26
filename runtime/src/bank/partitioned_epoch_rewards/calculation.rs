@@ -119,17 +119,12 @@ impl Bank {
         let rewards_calculation = epoch_rewards_calculation_cache
             .entry(self.parent_hash)
             .or_insert_with(|| {
-                let calculation = self.calculate_rewards_for_partitioning(
+                Arc::new(self.calculate_rewards_for_partitioning(
                     prev_epoch,
                     reward_calc_tracer,
                     thread_pool,
                     metrics,
-                );
-                info!(
-                    "calculated rewards for epoch: {}, parent_slot: {}, parent_hash: {}",
-                    self.epoch, self.parent_slot, self.parent_hash
-                );
-                Arc::new(calculation)
+                ))
             })
             .clone();
         drop(epoch_rewards_calculation_cache);
@@ -250,6 +245,11 @@ impl Bank {
                 metrics,
             )
             .unwrap_or_default();
+
+        info!(
+            "calculated rewards for epoch: {}, parent_slot: {}, parent_hash: {}",
+            self.epoch, self.parent_slot, self.parent_hash
+        );
 
         PartitionedRewardsCalculation {
             vote_account_rewards,
@@ -582,10 +582,10 @@ mod tests {
         },
         rayon::ThreadPoolBuilder,
         solana_account::{accounts_equal, state_traits::StateMut, ReadableAccount},
-        solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
         solana_stake_interface::state::{Delegation, StakeStateV2},
-        solana_vote_interface::state::VoteState,
+        solana_vote_interface::state::VoteStateV3,
         std::sync::{Arc, RwLockReadGuard},
     };
 
@@ -740,7 +740,7 @@ mod tests {
         solana_logger::setup();
 
         // bank with no rewards to distribute
-        let (genesis_config, _mint_keypair) = create_genesis_config(sol_to_lamports(1.0));
+        let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
@@ -802,7 +802,7 @@ mod tests {
             .load_slow_with_fixed_root(&bank.ancestors, vote_pubkey)
             .unwrap()
             .0;
-        let vote_state = VoteState::deserialize(vote_account.data()).unwrap();
+        let vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
 
         assert_eq!(
             vote_rewards_accounts.accounts_with_rewards.len(),

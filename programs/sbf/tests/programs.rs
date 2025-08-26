@@ -16,18 +16,18 @@ use {
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
     solana_clock::{UnixTimestamp, MAX_PROCESSING_AGE},
+    solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::{FeeBin, FeeBudgetLimits, FeeStructure},
-    solana_genesis_config::ClusterType,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_loader_v3_interface::instruction as loader_v3_instruction,
     solana_loader_v4_interface::instruction as loader_v4_instruction,
-    solana_message::{Message, SanitizedMessage},
+    solana_message::{inner_instruction::InnerInstruction, Message, SanitizedMessage},
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -52,10 +52,8 @@ use {
     solana_sdk_ids::sysvar::{self as sysvar, clock},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_signer::Signer,
-    solana_stake_interface as stake,
     solana_svm::{
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
-        transaction_execution_result::InnerInstruction,
         transaction_processor::ExecutionRecordingConfig,
     },
     solana_svm_timings::ExecuteTimings,
@@ -1445,15 +1443,15 @@ fn assert_instruction_count() {
         programs.extend_from_slice(&[
             ("solana_sbf_rust_128bit", 801),
             ("solana_sbf_rust_alloc", 4983),
-            ("solana_sbf_rust_custom_heap", 303),
+            ("solana_sbf_rust_custom_heap", 339),
             ("solana_sbf_rust_dep_crate", 22),
             ("solana_sbf_rust_iter", 1414),
             ("solana_sbf_rust_many_args", 1287),
-            ("solana_sbf_rust_mem", 1297),
+            ("solana_sbf_rust_mem", 1322),
             ("solana_sbf_rust_membuiltins", 329),
-            ("solana_sbf_rust_noop", 312),
+            ("solana_sbf_rust_noop", 334),
             ("solana_sbf_rust_param_passing", 109),
-            ("solana_sbf_rust_rand", 276),
+            ("solana_sbf_rust_rand", 312),
             ("solana_sbf_rust_sanity", 17902),
             ("solana_sbf_rust_secp256k1_recover", 88670),
             ("solana_sbf_rust_sha", 22175),
@@ -3665,34 +3663,6 @@ fn test_program_fees() {
         .unwrap();
     let post_balance = bank_client.get_balance(&mint_keypair.pubkey()).unwrap();
     assert_eq!(pre_balance - post_balance, expected_prioritized_fee);
-}
-
-#[test]
-#[cfg(feature = "sbf_rust")]
-fn test_get_minimum_delegation() {
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
-
-    let bank = Bank::new_for_tests(&genesis_config);
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
-
-    let (_bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_get_minimum_delegation",
-    );
-
-    let account_metas = vec![AccountMeta::new_readonly(stake::program::id(), false)];
-    let instruction = Instruction::new_with_bytes(program_id, &[], account_metas);
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-    assert!(result.is_ok());
 }
 
 #[test]

@@ -49,7 +49,7 @@ mod test {
         solana_keypair::Keypair,
         solana_ledger::{
             shred::Shredder,
-            sigverify_shreds::{verify_shred_cpu, LruCache},
+            sigverify_shreds::{verify_shred_cpu, LruCache, SlotPubkeys},
         },
         solana_packet::PacketFlags,
         solana_signer::Signer,
@@ -76,14 +76,14 @@ mod test {
         .unwrap();
         packet.meta_mut().flags |= PacketFlags::REPAIR;
 
-        let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
+        let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
         assert!(verify_shred_cpu((&packet).into(), &leader_slots, &cache));
 
         let wrong_keypair = Keypair::new();
-        let leader_slots = HashMap::from([(slot, wrong_keypair.pubkey())]);
+        let leader_slots: SlotPubkeys = [(slot, wrong_keypair.pubkey())].into_iter().collect();
         assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
 
-        let leader_slots = HashMap::new();
+        let leader_slots: SlotPubkeys = HashMap::default();
         assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
     }
 

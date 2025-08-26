@@ -1,4 +1,7 @@
 #![forbid(unsafe_code)]
+// Allow deprecated warnings since this crate will be removed along with
+// `solana-zk-token-sdk` will be removed
+#![allow(deprecated)]
 
 use {
     bytemuck::Pod,

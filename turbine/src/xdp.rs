@@ -115,6 +115,7 @@ impl XdpRetransmitter {
             CapSet,
             Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW},
         };
+        const DROP_CHANNEL_CAP: usize = 1_000_000;
 
         // switch to higher caps while we setup XDP. We assume that an error in
         // this function is irrecoverable so we don't try to drop on errors.
@@ -148,7 +149,7 @@ impl XdpRetransmitter {
 
         let mut threads = vec![];
 
-        let (drop_sender, drop_receiver) = crossbeam_channel::bounded(1_000_000);
+        let (drop_sender, drop_receiver) = crossbeam_channel::bounded(DROP_CHANNEL_CAP);
         threads.push(
             Builder::new()
                 .name("solRetransmDrop".to_owned())

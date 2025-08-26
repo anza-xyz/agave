@@ -519,7 +519,7 @@ pub(crate) mod tests {
         solana_rent::Rent,
         solana_stake_interface as stake,
         solana_stake_program::stake_state,
-        solana_vote_interface::state::{VoteState, VoteStateVersions},
+        solana_vote_interface::state::{VoteStateV3, VoteStateVersions},
         solana_vote_program::vote_state,
     };
 
@@ -696,8 +696,8 @@ pub(crate) mod tests {
         }
 
         // Vote account uninitialized
-        let default_vote_state = VoteState::default();
-        let versioned = VoteStateVersions::new_current(default_vote_state);
+        let default_vote_state = VoteStateV3::default();
+        let versioned = VoteStateVersions::new_v3(default_vote_state);
         vote_state::to(&versioned, &mut vote_account).unwrap();
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
 

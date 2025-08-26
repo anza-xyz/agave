@@ -218,8 +218,9 @@ mod tests {
         super::*,
         crate::genesis_utils::genesis_sysvar_and_builtin_program_lamports,
         solana_account::{Account, AccountSharedData},
+        solana_cluster_type::ClusterType,
         solana_epoch_schedule::EpochSchedule,
-        solana_genesis_config::{ClusterType, GenesisConfig},
+        solana_genesis_config::GenesisConfig,
         solana_stake_interface::state::{Authorized, Lockup, Meta},
         std::{collections::BTreeMap, sync::Arc},
     };

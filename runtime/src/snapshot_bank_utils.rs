@@ -17,7 +17,7 @@ use {
         epoch_stakes::VersionedEpochStakes,
         runtime_config::RuntimeConfig,
         serde_snapshot::{
-            reconstruct_bank_from_fields, SnapshotAccountsDbFields, SnapshotBankFields,
+            self, reconstruct_bank_from_fields, SnapshotAccountsDbFields, SnapshotBankFields,
         },
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
@@ -26,16 +26,14 @@ use {
         snapshot_hash::SnapshotHash,
         snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::{
-            self, deserialize_snapshot_data_file, get_highest_bank_snapshot_post,
-            get_highest_full_snapshot_archive_info, get_highest_incremental_snapshot_archive_info,
-            rebuild_storages_from_snapshot_dir, serialize_snapshot_data_file,
+            self, get_highest_bank_snapshot_post, get_highest_full_snapshot_archive_info,
+            get_highest_incremental_snapshot_archive_info, rebuild_storages_from_snapshot_dir,
             verify_and_unarchive_snapshots, ArchiveFormat, BankSnapshotInfo, SnapshotError,
             SnapshotVersion, StorageAndNextAccountsFileId, UnarchivedSnapshots,
             VerifyEpochStakesError, VerifySlotDeltasError, VerifySlotHistoryError,
         },
         status_cache,
     },
-    bincode::{config::Options, serialize_into},
     log::*,
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
@@ -45,79 +43,16 @@ use {
     solana_builtins::prototype::BuiltinPrototype,
     solana_clock::{Epoch, Slot},
     solana_genesis_config::GenesisConfig,
-    solana_hash::Hash,
-    solana_instruction::error::InstructionError,
     solana_measure::{measure::Measure, measure_time},
     solana_pubkey::Pubkey,
     solana_slot_history::{Check, SlotHistory},
-    solana_transaction_error::TransactionError,
     std::{
         collections::{HashMap, HashSet},
         ops::RangeInclusive,
         path::{Path, PathBuf},
-        sync::{atomic::AtomicBool, Arc, Mutex},
+        sync::{atomic::AtomicBool, Arc},
     },
 };
-
-type SerdeStatus<T> = HashMap<Hash, (usize, Vec<(status_cache::KeySlice, T)>)>;
-type SerdeSlotDelta<T> = (Slot, bool, SerdeStatus<T>);
-#[cfg_attr(
-    feature = "frozen-abi",
-    frozen_abi(digest = "EKEe5eQhdd78XHfWaskKuKbMKqcmnz63jsabK5KUFgxj")
-)]
-type SerdeBankSlotDelta = SerdeSlotDelta<Result<(), SerdeTransactionError>>;
-
-pub fn serialize_status_cache(
-    slot_deltas: &[BankSlotDelta],
-    status_cache_path: &Path,
-) -> snapshot_utils::Result<u64> {
-    serialize_snapshot_data_file(status_cache_path, |stream| {
-        let snapshot_slot_deltas = slot_deltas
-            .iter()
-            .map(|slot_delta| {
-                let status_map = slot_delta.2.lock().unwrap();
-                let snapshot_status_map = status_map
-                    .iter()
-                    .map(|(key, value)| {
-                        (
-                            *key,
-                            (
-                                value.0,
-                                value
-                                    .1
-                                    .iter()
-                                    .map(|(key_slice, result)| {
-                                        (
-                                            *key_slice,
-                                            result.clone().map_err(SerdeTransactionError::from),
-                                        )
-                                    })
-                                    .collect::<Vec<_>>(),
-                            ),
-                        )
-                    })
-                    .collect::<HashMap<_, _>>();
-                (slot_delta.0, slot_delta.1, snapshot_status_map)
-            })
-            .collect::<Vec<_>>();
-        serialize_into(stream, &snapshot_slot_deltas)?;
-        Ok(())
-    })
-}
-
-#[derive(Debug)]
-pub struct BankFromArchivesTimings {
-    pub untar_full_snapshot_archive_us: u64,
-    pub untar_incremental_snapshot_archive_us: u64,
-    pub rebuild_bank_us: u64,
-    pub verify_bank_us: u64,
-}
-
-#[derive(Debug)]
-pub struct BankFromDirTimings {
-    pub rebuild_storages_us: u64,
-    pub rebuild_bank_us: u64,
-}
 
 /// Parses out bank specific information from a snapshot archive including the leader schedule.
 /// epoch schedule, etc.
@@ -208,7 +143,7 @@ pub fn bank_from_snapshot_archives(
     accounts_db_config: Option<AccountsDbConfig>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<(Bank, BankFromArchivesTimings)> {
+) -> snapshot_utils::Result<Bank> {
     info!(
         "Loading bank from full snapshot archive: {}, and incremental snapshot archive: {:?}",
         full_snapshot_archive_info.path().display(),
@@ -280,20 +215,14 @@ pub fn bank_from_snapshot_archives(
     // snapshot, use that.  Otherwise use the full snapshot.
     let status_cache_path = incremental_unpacked_snapshots_dir_and_version
         .as_ref()
-        .map_or_else(
-            || {
-                full_unpacked_snapshots_dir_and_version
-                    .unpacked_snapshots_dir
-                    .as_path()
-            },
-            |unarchived_incremental_snapshot| {
-                unarchived_incremental_snapshot
-                    .unpacked_snapshots_dir
-                    .as_path()
-            },
-        )
+        .unwrap_or(&full_unpacked_snapshots_dir_and_version)
+        .unpacked_snapshots_dir
         .join(snapshot_utils::SNAPSHOT_STATUS_CACHE_FILENAME);
-    let slot_deltas = deserialize_status_cache(&status_cache_path)?;
+    info!(
+        "Rebuilding status cache from {}",
+        status_cache_path.display()
+    );
+    let slot_deltas = serde_snapshot::deserialize_status_cache(&status_cache_path)?;
 
     verify_slot_deltas(slot_deltas.as_slice(), &bank)?;
 
@@ -323,31 +252,22 @@ pub fn bank_from_snapshot_archives(
     }
     measure_verify.stop();
 
-    let timings = BankFromArchivesTimings {
-        untar_full_snapshot_archive_us: full_measure_untar.as_us(),
-        untar_incremental_snapshot_archive_us: incremental_measure_untar
-            .map_or(0, |incremental_measure_untar| {
-                incremental_measure_untar.as_us()
-            }),
-        rebuild_bank_us: measure_rebuild.as_us(),
-        verify_bank_us: measure_verify.as_us(),
-    };
     datapoint_info!(
         "bank_from_snapshot_archives",
         (
             "untar_full_snapshot_archive_us",
-            timings.untar_full_snapshot_archive_us,
+            full_measure_untar.as_us(),
             i64
         ),
         (
             "untar_incremental_snapshot_archive_us",
-            timings.untar_incremental_snapshot_archive_us,
-            i64
+            incremental_measure_untar.as_ref().map(Measure::as_us),
+            Option<i64>
         ),
-        ("rebuild_bank_us", timings.rebuild_bank_us, i64),
-        ("verify_bank_us", timings.verify_bank_us, i64),
+        ("rebuild_bank_us", measure_rebuild.as_us(), i64),
+        ("verify_bank_us", measure_verify.as_us(), i64),
     );
-    Ok((bank, timings))
+    Ok(bank)
 }
 
 /// Rebuild bank from snapshot archives
@@ -386,7 +306,7 @@ pub fn bank_from_latest_snapshot_archives(
         full_snapshot_archive_info.slot(),
     );
 
-    let (bank, _) = bank_from_snapshot_archives(
+    let bank = bank_from_snapshot_archives(
         account_paths,
         bank_snapshots_dir.as_ref(),
         &full_snapshot_archive_info,
@@ -425,7 +345,7 @@ pub fn bank_from_snapshot_dir(
     accounts_db_config: Option<AccountsDbConfig>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<(Bank, BankFromDirTimings)> {
+) -> snapshot_utils::Result<Bank> {
     info!(
         "Loading bank from snapshot dir: {}",
         bank_snapshot.snapshot_dir.display()
@@ -487,7 +407,11 @@ pub fn bank_from_snapshot_dir(
     let status_cache_path = bank_snapshot
         .snapshot_dir
         .join(snapshot_utils::SNAPSHOT_STATUS_CACHE_FILENAME);
-    let slot_deltas = deserialize_status_cache(&status_cache_path)?;
+    info!(
+        "Rebuilding status cache from {}",
+        status_cache_path.display()
+    );
+    let slot_deltas = serde_snapshot::deserialize_status_cache(&status_cache_path)?;
 
     verify_slot_deltas(slot_deltas.as_slice(), &bank)?;
 
@@ -496,16 +420,12 @@ pub fn bank_from_snapshot_dir(
     // We trust our local state, so skip the startup accounts verification.
     bank.set_initial_accounts_hash_verification_completed();
 
-    let timings = BankFromDirTimings {
-        rebuild_storages_us: measure_rebuild_storages.as_us(),
-        rebuild_bank_us: measure_rebuild_bank.as_us(),
-    };
     datapoint_info!(
         "bank_from_snapshot_dir",
-        ("rebuild_storages_us", timings.rebuild_storages_us, i64),
-        ("rebuild_bank_us", timings.rebuild_bank_us, i64),
+        ("rebuild_storages_us", measure_rebuild_storages.as_us(), i64),
+        ("rebuild_bank_us", measure_rebuild_bank.as_us(), i64),
     );
-    Ok((bank, timings))
+    Ok(bank)
 }
 
 /// follow the prototype of fn bank_from_latest_snapshot_archives, implement the from_dir case
@@ -526,7 +446,7 @@ pub fn bank_from_latest_snapshot_dir(
     let bank_snapshot = get_highest_bank_snapshot_post(&bank_snapshots_dir).ok_or_else(|| {
         SnapshotError::NoSnapshotSlotDir(bank_snapshots_dir.as_ref().to_path_buf())
     })?;
-    let (bank, _) = bank_from_snapshot_dir(
+    let bank = bank_from_snapshot_dir(
         account_paths,
         &bank_snapshot,
         genesis_config,
@@ -594,49 +514,6 @@ fn snapshot_version_and_root_paths(
     };
 
     Ok((snapshot_version, snapshot_root_paths))
-}
-
-fn deserialize_status_cache(
-    status_cache_path: &Path,
-) -> snapshot_utils::Result<Vec<BankSlotDelta>> {
-    deserialize_snapshot_data_file(status_cache_path, |stream| {
-        info!(
-            "Rebuilding status cache from {}",
-            status_cache_path.display()
-        );
-        let snapshot_slot_deltas: Vec<SerdeBankSlotDelta> = bincode::options()
-            .with_limit(snapshot_utils::MAX_SNAPSHOT_DATA_FILE_SIZE)
-            .with_fixint_encoding()
-            .allow_trailing_bytes()
-            .deserialize_from(stream)?;
-
-        let slot_deltas = snapshot_slot_deltas
-            .iter()
-            .map(|slot_delta| {
-                let status_map = slot_delta
-                    .2
-                    .iter()
-                    .map(|(key, value)| {
-                        (
-                            *key,
-                            (
-                                value.0,
-                                value
-                                    .1
-                                    .iter()
-                                    .map(|(key_slice, result)| {
-                                        (*key_slice, result.clone().map_err(TransactionError::from))
-                                    })
-                                    .collect::<Vec<_>>(),
-                            ),
-                        )
-                    })
-                    .collect::<HashMap<_, _>>();
-                (slot_delta.0, slot_delta.1, Arc::new(Mutex::new(status_map)))
-            })
-            .collect::<Vec<_>>();
-        Ok(slot_deltas)
-    })
 }
 
 /// Verify that the snapshot's slot deltas are not corrupt/invalid
@@ -936,394 +813,6 @@ pub fn bank_to_incremental_snapshot_archive(
     ))
 }
 
-/// Copy of `TransactionError` that uses a different `InstructionError` type to
-/// contain a string in the BorshIoError variant.
-#[cfg_attr(
-    feature = "frozen-abi",
-    frozen_abi(digest = "GyjBLQFupLXxDhBYR6mh9ZhFbW1WMHRPg5mGARu3su56"),
-    derive(AbiExample, AbiEnumVisitor)
-)]
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-enum SerdeTransactionError {
-    AccountInUse,
-    AccountLoadedTwice,
-    AccountNotFound,
-    ProgramAccountNotFound,
-    InsufficientFundsForFee,
-    InvalidAccountForFee,
-    AlreadyProcessed,
-    BlockhashNotFound,
-    InstructionError(u8, SerdeInstructionError),
-    CallChainTooDeep,
-    MissingSignatureForFee,
-    InvalidAccountIndex,
-    SignatureFailure,
-    InvalidProgramForExecution,
-    SanitizeFailure,
-    ClusterMaintenance,
-    AccountBorrowOutstanding,
-    WouldExceedMaxBlockCostLimit,
-    UnsupportedVersion,
-    InvalidWritableAccount,
-    WouldExceedMaxAccountCostLimit,
-    WouldExceedAccountDataBlockLimit,
-    TooManyAccountLocks,
-    AddressLookupTableNotFound,
-    InvalidAddressLookupTableOwner,
-    InvalidAddressLookupTableData,
-    InvalidAddressLookupTableIndex,
-    InvalidRentPayingAccount,
-    WouldExceedMaxVoteCostLimit,
-    WouldExceedAccountDataTotalLimit,
-    DuplicateInstruction(u8),
-    InsufficientFundsForRent { account_index: u8 },
-    MaxLoadedAccountsDataSizeExceeded,
-    InvalidLoadedAccountsDataSizeLimit,
-    ResanitizationNeeded,
-    ProgramExecutionTemporarilyRestricted { account_index: u8 },
-    UnbalancedTransaction,
-    ProgramCacheHitMaxLimit,
-    CommitCancelled,
-}
-
-/// Copy of `InstructionError` type in which the `BorshIoError` variant
-/// contains a string.
-#[cfg_attr(test, derive(strum_macros::FromRepr, strum_macros::EnumIter))]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-enum SerdeInstructionError {
-    GenericError,
-    InvalidArgument,
-    InvalidInstructionData,
-    InvalidAccountData,
-    AccountDataTooSmall,
-    InsufficientFunds,
-    IncorrectProgramId,
-    MissingRequiredSignature,
-    AccountAlreadyInitialized,
-    UninitializedAccount,
-    UnbalancedInstruction,
-    ModifiedProgramId,
-    ExternalAccountLamportSpend,
-    ExternalAccountDataModified,
-    ReadonlyLamportChange,
-    ReadonlyDataModified,
-    DuplicateAccountIndex,
-    ExecutableModified,
-    RentEpochModified,
-    NotEnoughAccountKeys,
-    AccountDataSizeChanged,
-    AccountNotExecutable,
-    AccountBorrowFailed,
-    AccountBorrowOutstanding,
-    DuplicateAccountOutOfSync,
-    Custom(u32),
-    InvalidError,
-    ExecutableDataModified,
-    ExecutableLamportChange,
-    ExecutableAccountNotRentExempt,
-    UnsupportedProgramId,
-    CallDepth,
-    MissingAccount,
-    ReentrancyNotAllowed,
-    MaxSeedLengthExceeded,
-    InvalidSeeds,
-    InvalidRealloc,
-    ComputationalBudgetExceeded,
-    PrivilegeEscalation,
-    ProgramEnvironmentSetupFailure,
-    ProgramFailedToComplete,
-    ProgramFailedToCompile,
-    Immutable,
-    IncorrectAuthority,
-    BorshIoError(String),
-    AccountNotRentExempt,
-    InvalidAccountOwner,
-    ArithmeticOverflow,
-    UnsupportedSysvar,
-    IllegalOwner,
-    MaxAccountsDataAllocationsExceeded,
-    MaxAccountsExceeded,
-    MaxInstructionTraceLengthExceeded,
-    BuiltinProgramsMustConsumeComputeUnits,
-}
-
-impl From<SerdeInstructionError> for InstructionError {
-    fn from(err: SerdeInstructionError) -> Self {
-        match err {
-            SerdeInstructionError::GenericError => Self::GenericError,
-            SerdeInstructionError::InvalidArgument => Self::InvalidArgument,
-            SerdeInstructionError::InvalidInstructionData => Self::InvalidInstructionData,
-            SerdeInstructionError::InvalidAccountData => Self::InvalidAccountData,
-            SerdeInstructionError::AccountDataTooSmall => Self::AccountDataTooSmall,
-            SerdeInstructionError::InsufficientFunds => Self::InsufficientFunds,
-            SerdeInstructionError::IncorrectProgramId => Self::IncorrectProgramId,
-            SerdeInstructionError::MissingRequiredSignature => Self::MissingRequiredSignature,
-            SerdeInstructionError::AccountAlreadyInitialized => Self::AccountAlreadyInitialized,
-            SerdeInstructionError::UninitializedAccount => Self::UninitializedAccount,
-            SerdeInstructionError::UnbalancedInstruction => Self::UnbalancedInstruction,
-            SerdeInstructionError::ModifiedProgramId => Self::ModifiedProgramId,
-            SerdeInstructionError::ExternalAccountLamportSpend => Self::ExternalAccountLamportSpend,
-            SerdeInstructionError::ExternalAccountDataModified => Self::ExternalAccountDataModified,
-            SerdeInstructionError::ReadonlyLamportChange => Self::ReadonlyLamportChange,
-            SerdeInstructionError::ReadonlyDataModified => Self::ReadonlyDataModified,
-            SerdeInstructionError::DuplicateAccountIndex => Self::DuplicateAccountIndex,
-            SerdeInstructionError::ExecutableModified => Self::ExecutableModified,
-            SerdeInstructionError::RentEpochModified => Self::RentEpochModified,
-            SerdeInstructionError::NotEnoughAccountKeys => Self::NotEnoughAccountKeys,
-            SerdeInstructionError::AccountDataSizeChanged => Self::AccountDataSizeChanged,
-            SerdeInstructionError::AccountNotExecutable => Self::AccountNotExecutable,
-            SerdeInstructionError::AccountBorrowFailed => Self::AccountBorrowFailed,
-            SerdeInstructionError::AccountBorrowOutstanding => Self::AccountBorrowOutstanding,
-            SerdeInstructionError::DuplicateAccountOutOfSync => Self::DuplicateAccountOutOfSync,
-            SerdeInstructionError::Custom(n) => Self::Custom(n),
-            SerdeInstructionError::InvalidError => Self::InvalidError,
-            SerdeInstructionError::ExecutableDataModified => Self::ExecutableDataModified,
-            SerdeInstructionError::ExecutableLamportChange => Self::ExecutableLamportChange,
-            SerdeInstructionError::ExecutableAccountNotRentExempt => {
-                Self::ExecutableAccountNotRentExempt
-            }
-            SerdeInstructionError::UnsupportedProgramId => Self::UnsupportedProgramId,
-            SerdeInstructionError::CallDepth => Self::CallDepth,
-            SerdeInstructionError::MissingAccount => Self::MissingAccount,
-            SerdeInstructionError::ReentrancyNotAllowed => Self::ReentrancyNotAllowed,
-            SerdeInstructionError::MaxSeedLengthExceeded => Self::MaxSeedLengthExceeded,
-            SerdeInstructionError::InvalidSeeds => Self::InvalidSeeds,
-            SerdeInstructionError::InvalidRealloc => Self::InvalidRealloc,
-            SerdeInstructionError::ComputationalBudgetExceeded => Self::ComputationalBudgetExceeded,
-            SerdeInstructionError::PrivilegeEscalation => Self::PrivilegeEscalation,
-            SerdeInstructionError::ProgramEnvironmentSetupFailure => {
-                Self::ProgramEnvironmentSetupFailure
-            }
-            SerdeInstructionError::ProgramFailedToComplete => Self::ProgramFailedToComplete,
-            SerdeInstructionError::ProgramFailedToCompile => Self::ProgramFailedToCompile,
-            SerdeInstructionError::Immutable => Self::Immutable,
-            SerdeInstructionError::IncorrectAuthority => Self::IncorrectAuthority,
-            SerdeInstructionError::BorshIoError(_) => Self::BorshIoError(String::new()),
-            SerdeInstructionError::AccountNotRentExempt => Self::AccountNotRentExempt,
-            SerdeInstructionError::InvalidAccountOwner => Self::InvalidAccountOwner,
-            SerdeInstructionError::ArithmeticOverflow => Self::ArithmeticOverflow,
-            SerdeInstructionError::UnsupportedSysvar => Self::UnsupportedSysvar,
-            SerdeInstructionError::IllegalOwner => Self::IllegalOwner,
-            SerdeInstructionError::MaxAccountsDataAllocationsExceeded => {
-                Self::MaxAccountsDataAllocationsExceeded
-            }
-            SerdeInstructionError::MaxAccountsExceeded => Self::MaxAccountsExceeded,
-            SerdeInstructionError::MaxInstructionTraceLengthExceeded => {
-                Self::MaxInstructionTraceLengthExceeded
-            }
-            SerdeInstructionError::BuiltinProgramsMustConsumeComputeUnits => {
-                Self::BuiltinProgramsMustConsumeComputeUnits
-            }
-        }
-    }
-}
-
-impl From<InstructionError> for SerdeInstructionError {
-    fn from(err: InstructionError) -> Self {
-        match err {
-            InstructionError::GenericError => Self::GenericError,
-            InstructionError::InvalidArgument => Self::InvalidArgument,
-            InstructionError::InvalidInstructionData => Self::InvalidInstructionData,
-            InstructionError::InvalidAccountData => Self::InvalidAccountData,
-            InstructionError::AccountDataTooSmall => Self::AccountDataTooSmall,
-            InstructionError::InsufficientFunds => Self::InsufficientFunds,
-            InstructionError::IncorrectProgramId => Self::IncorrectProgramId,
-            InstructionError::MissingRequiredSignature => Self::MissingRequiredSignature,
-            InstructionError::AccountAlreadyInitialized => Self::AccountAlreadyInitialized,
-            InstructionError::UninitializedAccount => Self::UninitializedAccount,
-            InstructionError::UnbalancedInstruction => Self::UnbalancedInstruction,
-            InstructionError::ModifiedProgramId => Self::ModifiedProgramId,
-            InstructionError::ExternalAccountLamportSpend => Self::ExternalAccountLamportSpend,
-            InstructionError::ExternalAccountDataModified => Self::ExternalAccountDataModified,
-            InstructionError::ReadonlyLamportChange => Self::ReadonlyLamportChange,
-            InstructionError::ReadonlyDataModified => Self::ReadonlyDataModified,
-            InstructionError::DuplicateAccountIndex => Self::DuplicateAccountIndex,
-            InstructionError::ExecutableModified => Self::ExecutableModified,
-            InstructionError::RentEpochModified => Self::RentEpochModified,
-            InstructionError::NotEnoughAccountKeys => Self::NotEnoughAccountKeys,
-            InstructionError::AccountDataSizeChanged => Self::AccountDataSizeChanged,
-            InstructionError::AccountNotExecutable => Self::AccountNotExecutable,
-            InstructionError::AccountBorrowFailed => Self::AccountBorrowFailed,
-            InstructionError::AccountBorrowOutstanding => Self::AccountBorrowOutstanding,
-            InstructionError::DuplicateAccountOutOfSync => Self::DuplicateAccountOutOfSync,
-            InstructionError::Custom(n) => Self::Custom(n),
-            InstructionError::InvalidError => Self::InvalidError,
-            InstructionError::ExecutableDataModified => Self::ExecutableDataModified,
-            InstructionError::ExecutableLamportChange => Self::ExecutableLamportChange,
-            InstructionError::ExecutableAccountNotRentExempt => {
-                Self::ExecutableAccountNotRentExempt
-            }
-            InstructionError::UnsupportedProgramId => Self::UnsupportedProgramId,
-            InstructionError::CallDepth => Self::CallDepth,
-            InstructionError::MissingAccount => Self::MissingAccount,
-            InstructionError::ReentrancyNotAllowed => Self::ReentrancyNotAllowed,
-            InstructionError::MaxSeedLengthExceeded => Self::MaxSeedLengthExceeded,
-            InstructionError::InvalidSeeds => Self::InvalidSeeds,
-            InstructionError::InvalidRealloc => Self::InvalidRealloc,
-            InstructionError::ComputationalBudgetExceeded => Self::ComputationalBudgetExceeded,
-            InstructionError::PrivilegeEscalation => Self::PrivilegeEscalation,
-            InstructionError::ProgramEnvironmentSetupFailure => {
-                Self::ProgramEnvironmentSetupFailure
-            }
-            InstructionError::ProgramFailedToComplete => Self::ProgramFailedToComplete,
-            InstructionError::ProgramFailedToCompile => Self::ProgramFailedToCompile,
-            InstructionError::Immutable => Self::Immutable,
-            InstructionError::IncorrectAuthority => Self::IncorrectAuthority,
-            InstructionError::BorshIoError(_) => Self::BorshIoError(String::new()),
-            InstructionError::AccountNotRentExempt => Self::AccountNotRentExempt,
-            InstructionError::InvalidAccountOwner => Self::InvalidAccountOwner,
-            InstructionError::ArithmeticOverflow => Self::ArithmeticOverflow,
-            InstructionError::UnsupportedSysvar => Self::UnsupportedSysvar,
-            InstructionError::IllegalOwner => Self::IllegalOwner,
-            InstructionError::MaxAccountsDataAllocationsExceeded => {
-                Self::MaxAccountsDataAllocationsExceeded
-            }
-            InstructionError::MaxAccountsExceeded => Self::MaxAccountsExceeded,
-            InstructionError::MaxInstructionTraceLengthExceeded => {
-                Self::MaxInstructionTraceLengthExceeded
-            }
-            InstructionError::BuiltinProgramsMustConsumeComputeUnits => {
-                Self::BuiltinProgramsMustConsumeComputeUnits
-            }
-        }
-    }
-}
-
-impl From<TransactionError> for SerdeTransactionError {
-    fn from(err: TransactionError) -> Self {
-        match err {
-            TransactionError::AccountInUse => Self::AccountInUse,
-            TransactionError::AccountLoadedTwice => Self::AccountLoadedTwice,
-            TransactionError::AccountNotFound => Self::AccountNotFound,
-            TransactionError::ProgramAccountNotFound => Self::ProgramAccountNotFound,
-            TransactionError::InsufficientFundsForFee => Self::InsufficientFundsForFee,
-            TransactionError::InvalidAccountForFee => Self::InvalidAccountForFee,
-            TransactionError::AlreadyProcessed => Self::AlreadyProcessed,
-            TransactionError::BlockhashNotFound => Self::BlockhashNotFound,
-            TransactionError::InstructionError(i, inner) => Self::InstructionError(i, inner.into()),
-            TransactionError::CallChainTooDeep => Self::CallChainTooDeep,
-            TransactionError::MissingSignatureForFee => Self::MissingSignatureForFee,
-            TransactionError::InvalidAccountIndex => Self::InvalidAccountIndex,
-            TransactionError::SignatureFailure => Self::SignatureFailure,
-            TransactionError::InvalidProgramForExecution => Self::InvalidProgramForExecution,
-            TransactionError::SanitizeFailure => Self::SanitizeFailure,
-            TransactionError::ClusterMaintenance => Self::ClusterMaintenance,
-            TransactionError::AccountBorrowOutstanding => Self::AccountBorrowOutstanding,
-            TransactionError::WouldExceedMaxBlockCostLimit => Self::WouldExceedMaxBlockCostLimit,
-            TransactionError::UnsupportedVersion => Self::UnsupportedVersion,
-            TransactionError::InvalidWritableAccount => Self::InvalidWritableAccount,
-            TransactionError::WouldExceedMaxAccountCostLimit => {
-                Self::WouldExceedMaxAccountCostLimit
-            }
-            TransactionError::WouldExceedAccountDataBlockLimit => {
-                Self::WouldExceedAccountDataBlockLimit
-            }
-            TransactionError::TooManyAccountLocks => Self::TooManyAccountLocks,
-            TransactionError::AddressLookupTableNotFound => Self::AddressLookupTableNotFound,
-            TransactionError::InvalidAddressLookupTableOwner => {
-                Self::InvalidAddressLookupTableOwner
-            }
-            TransactionError::InvalidAddressLookupTableData => Self::InvalidAddressLookupTableData,
-            TransactionError::InvalidAddressLookupTableIndex => {
-                Self::InvalidAddressLookupTableIndex
-            }
-            TransactionError::InvalidRentPayingAccount => Self::InvalidRentPayingAccount,
-            TransactionError::WouldExceedMaxVoteCostLimit => Self::WouldExceedMaxVoteCostLimit,
-            TransactionError::WouldExceedAccountDataTotalLimit => {
-                Self::WouldExceedAccountDataTotalLimit
-            }
-            TransactionError::DuplicateInstruction(i) => Self::DuplicateInstruction(i),
-            TransactionError::InsufficientFundsForRent { account_index } => {
-                Self::InsufficientFundsForRent { account_index }
-            }
-            TransactionError::MaxLoadedAccountsDataSizeExceeded => {
-                Self::MaxLoadedAccountsDataSizeExceeded
-            }
-            TransactionError::InvalidLoadedAccountsDataSizeLimit => {
-                Self::InvalidLoadedAccountsDataSizeLimit
-            }
-            TransactionError::ResanitizationNeeded => Self::ResanitizationNeeded,
-            TransactionError::ProgramExecutionTemporarilyRestricted { account_index } => {
-                Self::ProgramExecutionTemporarilyRestricted { account_index }
-            }
-            TransactionError::UnbalancedTransaction => Self::UnbalancedTransaction,
-            TransactionError::ProgramCacheHitMaxLimit => Self::ProgramCacheHitMaxLimit,
-            TransactionError::CommitCancelled => Self::CommitCancelled,
-        }
-    }
-}
-
-impl From<SerdeTransactionError> for TransactionError {
-    fn from(err: SerdeTransactionError) -> Self {
-        match err {
-            SerdeTransactionError::AccountInUse => Self::AccountInUse,
-            SerdeTransactionError::AccountLoadedTwice => Self::AccountLoadedTwice,
-            SerdeTransactionError::AccountNotFound => Self::AccountNotFound,
-            SerdeTransactionError::ProgramAccountNotFound => Self::ProgramAccountNotFound,
-            SerdeTransactionError::InsufficientFundsForFee => Self::InsufficientFundsForFee,
-            SerdeTransactionError::InvalidAccountForFee => Self::InvalidAccountForFee,
-            SerdeTransactionError::AlreadyProcessed => Self::AlreadyProcessed,
-            SerdeTransactionError::BlockhashNotFound => Self::BlockhashNotFound,
-            SerdeTransactionError::InstructionError(i, inner) => {
-                Self::InstructionError(i, inner.into())
-            }
-            SerdeTransactionError::CallChainTooDeep => Self::CallChainTooDeep,
-            SerdeTransactionError::MissingSignatureForFee => Self::MissingSignatureForFee,
-            SerdeTransactionError::InvalidAccountIndex => Self::InvalidAccountIndex,
-            SerdeTransactionError::SignatureFailure => Self::SignatureFailure,
-            SerdeTransactionError::InvalidProgramForExecution => Self::InvalidProgramForExecution,
-            SerdeTransactionError::SanitizeFailure => Self::SanitizeFailure,
-            SerdeTransactionError::ClusterMaintenance => Self::ClusterMaintenance,
-            SerdeTransactionError::AccountBorrowOutstanding => Self::AccountBorrowOutstanding,
-            SerdeTransactionError::WouldExceedMaxBlockCostLimit => {
-                Self::WouldExceedMaxBlockCostLimit
-            }
-            SerdeTransactionError::UnsupportedVersion => Self::UnsupportedVersion,
-            SerdeTransactionError::InvalidWritableAccount => Self::InvalidWritableAccount,
-            SerdeTransactionError::WouldExceedMaxAccountCostLimit => {
-                Self::WouldExceedMaxAccountCostLimit
-            }
-            SerdeTransactionError::WouldExceedAccountDataBlockLimit => {
-                Self::WouldExceedAccountDataBlockLimit
-            }
-            SerdeTransactionError::TooManyAccountLocks => Self::TooManyAccountLocks,
-            SerdeTransactionError::AddressLookupTableNotFound => Self::AddressLookupTableNotFound,
-            SerdeTransactionError::InvalidAddressLookupTableOwner => {
-                Self::InvalidAddressLookupTableOwner
-            }
-            SerdeTransactionError::InvalidAddressLookupTableData => {
-                Self::InvalidAddressLookupTableData
-            }
-            SerdeTransactionError::InvalidAddressLookupTableIndex => {
-                Self::InvalidAddressLookupTableIndex
-            }
-            SerdeTransactionError::InvalidRentPayingAccount => Self::InvalidRentPayingAccount,
-            SerdeTransactionError::WouldExceedMaxVoteCostLimit => Self::WouldExceedMaxVoteCostLimit,
-            SerdeTransactionError::WouldExceedAccountDataTotalLimit => {
-                Self::WouldExceedAccountDataTotalLimit
-            }
-            SerdeTransactionError::DuplicateInstruction(i) => Self::DuplicateInstruction(i),
-            SerdeTransactionError::InsufficientFundsForRent { account_index } => {
-                Self::InsufficientFundsForRent { account_index }
-            }
-            SerdeTransactionError::MaxLoadedAccountsDataSizeExceeded => {
-                Self::MaxLoadedAccountsDataSizeExceeded
-            }
-            SerdeTransactionError::InvalidLoadedAccountsDataSizeLimit => {
-                Self::InvalidLoadedAccountsDataSizeLimit
-            }
-            SerdeTransactionError::ResanitizationNeeded => Self::ResanitizationNeeded,
-            SerdeTransactionError::ProgramExecutionTemporarilyRestricted { account_index } => {
-                Self::ProgramExecutionTemporarilyRestricted { account_index }
-            }
-            SerdeTransactionError::UnbalancedTransaction => Self::UnbalancedTransaction,
-            SerdeTransactionError::ProgramCacheHitMaxLimit => Self::ProgramCacheHitMaxLimit,
-            SerdeTransactionError::CommitCancelled => Self::CommitCancelled,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
@@ -1348,7 +837,7 @@ mod tests {
         solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_genesis_config::create_genesis_config,
         solana_keypair::Keypair,
-        solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction::sanitized::SanitizedTransaction,
@@ -1440,7 +929,7 @@ mod tests {
         )
         .unwrap();
 
-        let (roundtrip_bank, _) = bank_from_snapshot_archives(
+        let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &snapshot_archive_info,
@@ -1472,16 +961,16 @@ mod tests {
         let key3 = Keypair::new();
 
         // Create a few accounts
-        let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(2.), &mint_keypair, &key2.pubkey())
+            .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank0.fill_bank_with_ticks_for_tests();
 
@@ -1517,7 +1006,7 @@ mod tests {
         let bank1 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
-            .transfer(sol_to_lamports(1.), &key3, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &key3, &key1.pubkey())
             .unwrap();
 
         bank1.fill_bank_with_ticks_for_tests();
@@ -1540,7 +1029,7 @@ mod tests {
         )
         .unwrap();
 
-        let (roundtrip_bank, _) = bank_from_snapshot_archives(
+        let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -1574,16 +1063,16 @@ mod tests {
         let key4 = Keypair::new();
         let key5 = Keypair::new();
 
-        let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(2.), &mint_keypair, &key2.pubkey())
+            .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank0.fill_bank_with_ticks_for_tests();
 
@@ -1591,13 +1080,13 @@ mod tests {
         let bank1 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank1
-            .transfer(sol_to_lamports(4.), &mint_keypair, &key4.pubkey())
+            .transfer(4 * LAMPORTS_PER_SOL, &mint_keypair, &key4.pubkey())
             .unwrap();
         bank1
-            .transfer(sol_to_lamports(5.), &mint_keypair, &key5.pubkey())
+            .transfer(5 * LAMPORTS_PER_SOL, &mint_keypair, &key5.pubkey())
             .unwrap();
         bank1.fill_bank_with_ticks_for_tests();
 
@@ -1605,7 +1094,7 @@ mod tests {
         let bank2 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank2.fill_bank_with_ticks_for_tests();
 
@@ -1613,7 +1102,7 @@ mod tests {
         let bank3 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         bank3
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank3.fill_bank_with_ticks_for_tests();
 
@@ -1621,7 +1110,7 @@ mod tests {
         let bank4 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank4.fill_bank_with_ticks_for_tests();
 
@@ -1641,7 +1130,7 @@ mod tests {
         )
         .unwrap();
 
-        let (roundtrip_bank, _) = bank_from_snapshot_archives(
+        let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -1681,16 +1170,16 @@ mod tests {
         let key4 = Keypair::new();
         let key5 = Keypair::new();
 
-        let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(2.), &mint_keypair, &key2.pubkey())
+            .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank0.fill_bank_with_ticks_for_tests();
 
@@ -1698,13 +1187,13 @@ mod tests {
         let bank1 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank1
-            .transfer(sol_to_lamports(4.), &mint_keypair, &key4.pubkey())
+            .transfer(4 * LAMPORTS_PER_SOL, &mint_keypair, &key4.pubkey())
             .unwrap();
         bank1
-            .transfer(sol_to_lamports(5.), &mint_keypair, &key5.pubkey())
+            .transfer(5 * LAMPORTS_PER_SOL, &mint_keypair, &key5.pubkey())
             .unwrap();
         bank1.fill_bank_with_ticks_for_tests();
 
@@ -1729,7 +1218,7 @@ mod tests {
         let bank2 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank2.fill_bank_with_ticks_for_tests();
 
@@ -1737,7 +1226,7 @@ mod tests {
         let bank3 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         bank3
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank3.fill_bank_with_ticks_for_tests();
 
@@ -1745,7 +1234,7 @@ mod tests {
         let bank4 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank4.fill_bank_with_ticks_for_tests();
 
@@ -1760,7 +1249,7 @@ mod tests {
         )
         .unwrap();
 
-        let (roundtrip_bank, _) = bank_from_snapshot_archives(
+        let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -1790,16 +1279,16 @@ mod tests {
         let key2 = Keypair::new();
         let key3 = Keypair::new();
 
-        let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(2.), &mint_keypair, &key2.pubkey())
+            .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank0
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank0.fill_bank_with_ticks_for_tests();
 
@@ -1807,13 +1296,13 @@ mod tests {
         let bank1 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
         bank1
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank1
-            .transfer(sol_to_lamports(2.), &mint_keypair, &key2.pubkey())
+            .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank1
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank1.fill_bank_with_ticks_for_tests();
 
@@ -1838,7 +1327,7 @@ mod tests {
         let bank2 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank2.fill_bank_with_ticks_for_tests();
 
@@ -1846,7 +1335,7 @@ mod tests {
         let bank3 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank2, &collector, slot);
         bank3
-            .transfer(sol_to_lamports(2.), &mint_keypair, &key2.pubkey())
+            .transfer(2 * LAMPORTS_PER_SOL, &mint_keypair, &key2.pubkey())
             .unwrap();
         bank3.fill_bank_with_ticks_for_tests();
 
@@ -1854,7 +1343,7 @@ mod tests {
         let bank4 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank3, &collector, slot);
         bank4
-            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .transfer(3 * LAMPORTS_PER_SOL, &mint_keypair, &key3.pubkey())
             .unwrap();
         bank4.fill_bank_with_ticks_for_tests();
 
@@ -1925,11 +1414,12 @@ mod tests {
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
-        let (mut genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (mut genesis_config, mint_keypair) =
+            create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         // test expects 0 transaction fee
         genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
-        let lamports_to_transfer = sol_to_lamports(123_456.);
+        let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
         let (bank0, bank_forks) = Bank::new_with_paths_for_tests(
             &genesis_config,
             Arc::<RuntimeConfig>::default(),
@@ -1998,7 +1488,7 @@ mod tests {
             snapshot_archive_format,
         )
         .unwrap();
-        let (deserialized_bank, _) = bank_from_snapshot_archives(
+        let deserialized_bank = bank_from_snapshot_archives(
             &[accounts_dir.clone()],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -2057,7 +1547,7 @@ mod tests {
         )
         .unwrap();
 
-        let (deserialized_bank, _) = bank_from_snapshot_archives(
+        let deserialized_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -2094,7 +1584,7 @@ mod tests {
         let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
 
-        let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0.fill_bank_with_ticks_for_tests();
 
@@ -2121,7 +1611,7 @@ mod tests {
         let bank2 =
             new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank1, &collector, slot);
         bank2
-            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
         bank2.fill_bank_with_ticks_for_tests();
 
@@ -2345,9 +1835,9 @@ mod tests {
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
-        let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
 
-        let lamports_to_transfer = sol_to_lamports(123_456.);
+        let lamports_to_transfer = 123_456 * LAMPORTS_PER_SOL;
         let bank_test_config = BankTestConfig {
             accounts_db_config: AccountsDbConfig {
                 storage_access,
@@ -2432,7 +1922,7 @@ mod tests {
 
         let accounts_dir = tempfile::TempDir::new().unwrap();
         let other_bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let (deserialized_bank, _) = bank_from_snapshot_archives(
+        let deserialized_bank = bank_from_snapshot_archives(
             &[accounts_dir.path().to_path_buf()],
             other_bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
@@ -2473,7 +1963,7 @@ mod tests {
         let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
         let account_paths = &bank.rc.accounts.accounts_db.paths;
 
-        let (bank_constructed, ..) = bank_from_snapshot_dir(
+        let bank_constructed = bank_from_snapshot_dir(
             account_paths,
             &bank_snapshot,
             &genesis_config,

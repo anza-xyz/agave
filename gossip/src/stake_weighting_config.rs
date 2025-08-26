@@ -73,7 +73,7 @@ pub(crate) fn get_gossip_config_from_account(bank: &Bank) -> Option<WeightingCon
         .load_account_with(
             &bank.ancestors,
             &weighting_config_control_pubkey::id(),
-            |_| true,
+            true,
         )?
         .0;
     bincode::deserialize::<WeightingConfig>(data.data()).ok()

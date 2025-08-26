@@ -737,7 +737,7 @@ fn get_test_config_from_account<T: DeserializeOwned>(bank: &Bank) -> Option<T> {
     let data = bank
         .accounts()
         .accounts_db
-        .load_account_with(&bank.ancestors, &control_pubkey::ID, |_| true)?
+        .load_account_with(&bank.ancestors, &control_pubkey::ID, true)?
         .0;
     data.deserialize_data().ok()
 }

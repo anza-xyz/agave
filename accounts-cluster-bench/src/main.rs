@@ -1420,7 +1420,7 @@ pub mod test {
             validator_configs::make_identical_validator_configs,
         },
         solana_measure::measure::Measure,
-        solana_native_token::sol_to_lamports,
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_poh_config::PohConfig,
         solana_program_pack::Pack,
         solana_test_validator::TestValidator,
@@ -1572,11 +1572,7 @@ pub mod test {
         let funder = Keypair::new();
         let latest_blockhash = rpc_client.get_latest_blockhash().unwrap();
         let signature = rpc_client
-            .request_airdrop_with_blockhash(
-                &funder.pubkey(),
-                sol_to_lamports(1.0),
-                &latest_blockhash,
-            )
+            .request_airdrop_with_blockhash(&funder.pubkey(), LAMPORTS_PER_SOL, &latest_blockhash)
             .unwrap();
         rpc_client
             .confirm_transaction_with_spinner(

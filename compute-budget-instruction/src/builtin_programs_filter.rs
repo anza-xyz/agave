@@ -64,8 +64,10 @@ impl BuiltinProgramsFilter {
 #[cfg(test)]
 mod test {
     use {
-        super::*, agave_feature_set as feature_set,
-        solana_builtins_default_costs::get_migration_feature_position,
+        super::*,
+        solana_builtins_default_costs::{
+            get_migration_feature_id, BuiltinCost, MigratingBuiltinCost, MIGRATING_BUILTINS_COSTS,
+        },
     };
 
     const DUMMY_PROGRAM_ID: &str = "dummmy1111111111111111111111111111111111111";
@@ -110,15 +112,29 @@ mod test {
         );
 
         // migrating builtins
-        index += 1;
-        assert_eq!(
-            test_store.get_program_kind(index, &solana_sdk_ids::stake::id()),
-            ProgramKind::MigratingBuiltin {
-                core_bpf_migration_feature_index: get_migration_feature_position(
-                    &feature_set::migrate_stake_program_to_core_bpf::id()
-                ),
-            }
-        );
+        for (program_id, migrating_builtin) in MIGRATING_BUILTINS_COSTS {
+            index += 1;
+
+            let BuiltinCost::Migrating(MigratingBuiltinCost {
+                core_bpf_migration_feature,
+                position,
+            }) = migrating_builtin
+            else {
+                panic!("MIGRATING_BUILTINS_COSTS must only contain BuiltinCost::Migrating");
+            };
+
+            assert_eq!(
+                get_migration_feature_id(*position),
+                core_bpf_migration_feature
+            );
+
+            assert_eq!(
+                test_store.get_program_kind(index, program_id),
+                ProgramKind::MigratingBuiltin {
+                    core_bpf_migration_feature_index: *position,
+                }
+            );
+        }
     }
 
     #[test]

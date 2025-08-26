@@ -28,7 +28,7 @@ solana-address-lookup-table-interface = { workspace = true, features = [
     "bytemuck",
 ] }
 solana-clock = { workspace = true }
-solana-config-program-client = { workspace = true, features = ["serde"] }
+solana-config-interface = { workspace = true, features = ["bincode"] }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
@@ -41,7 +41,7 @@ solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-slot-history = { workspace = true }
-solana-stake-interface = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["bincode", "sysvar"] }
 solana-sysvar = { workspace = true }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
 spl-generic-token = { workspace = true }

@@ -465,8 +465,8 @@ fn get_vetted_rpc_nodes(
             Err(err) => {
                 error!(
                     "Failed to get RPC nodes: {err}. Consider checking system clock, removing \
-                    `--no-port-check`, or adjusting `--known-validator ...` arguments as \
-                    applicable"
+                     `--no-port-check`, or adjusting `--known-validator ...` arguments as \
+                     applicable"
                 );
                 exit(1);
             }
@@ -953,8 +953,7 @@ fn build_known_snapshot_hashes<'a>(
         if is_any_same_slot_and_different_hash(&full_snapshot_hash, known_snapshot_hashes.keys()) {
             warn!(
                 "Ignoring all snapshot hashes from node {node} since we've seen a different full \
-                 snapshot hash with this slot.\
-                 \nfull snapshot hash: {full_snapshot_hash:?}"
+                 snapshot hash with this slot. full snapshot hash: {full_snapshot_hash:?}"
             );
             debug!(
                 "known full snapshot hashes: {:#?}",
@@ -980,9 +979,9 @@ fn build_known_snapshot_hashes<'a>(
             ) {
                 warn!(
                     "Ignoring incremental snapshot hash from node {node} since we've seen a \
-                     different incremental snapshot hash with this slot.\
-                     \nfull snapshot hash: {full_snapshot_hash:?}\
-                     \nincremental snapshot hash: {incremental_snapshot_hash:?}"
+                     different incremental snapshot hash with this slot. full snapshot hash: \
+                     {full_snapshot_hash:?}, incremental snapshot hash: \
+                     {incremental_snapshot_hash:?}"
                 );
                 debug!(
                     "known incremental snapshot hashes based on this slot: {:#?}",

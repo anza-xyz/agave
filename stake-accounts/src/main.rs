@@ -11,9 +11,9 @@ use {
         },
     },
     solana_cli_config::Config,
+    solana_cli_output::display::build_balance_message,
     solana_commitment_config::CommitmentConfig,
     solana_message::Message,
-    solana_native_token::lamports_to_sol,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::client_error::Error as ClientError,
@@ -270,7 +270,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             );
             let balances = get_balances(&client, addresses)?;
             let lamports: u64 = balances.into_iter().map(|(_, bal)| bal).sum();
-            let sol = lamports_to_sol(lamports);
+            let sol = build_balance_message(lamports, false, false);
             println!("{sol} SOL");
         }
         Command::Authorize(args) => {

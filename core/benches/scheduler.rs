@@ -15,7 +15,6 @@ use {
                 TransactionViewReceiveAndBuffer,
             },
             scheduler::{PreLockFilterAction, Scheduler},
-            scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics},
             transaction_state::TransactionState,
             transaction_state_container::StateContainer,
         },
@@ -201,15 +200,10 @@ fn timing_scheduler<T: ReceiveAndBuffer, S: Scheduler<T::Transaction>>(
         if sender.send(txs.clone()).is_err() {
             panic!("Unexpectedly dropped receiver!");
         }
-        let mut count_metrics = SchedulerCountMetrics::default();
-        let mut timing_metrics = SchedulerTimingMetrics::default();
-        let res = receive_and_buffer.receive_and_buffer_packets(
-            &mut container,
-            &mut timing_metrics,
-            &mut count_metrics,
-            &decision,
-        );
-        assert_eq!(res.unwrap(), num_txs);
+        let res = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &decision)
+            .unwrap();
+        assert_eq!(res.num_received, num_txs);
         assert!(!container.is_empty());
 
         let elapsed = {
