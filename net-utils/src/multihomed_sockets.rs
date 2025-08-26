@@ -74,8 +74,8 @@ impl SocketProvider for MultihomedSocketProvider {
 #[derive(Debug, Clone)]
 pub struct BindIpAddrs {
     /// The IP addresses this node may bind to
-    /// Index 0 is the primary address
-    /// Index 1+ are secondary addresses
+    /// Index 0 is the public internet address
+    /// Index 1+ are secondary addresses (i.e. multihoming)
     addrs: Vec<IpAddr>,
     active_index: Arc<AtomicUsize>,
 }
@@ -115,7 +115,7 @@ impl BindIpAddrs {
         self.addrs[self.active_index.load(Ordering::Acquire)]
     }
 
-    /// Change active to index (0 = primary)
+    /// Change active to index (0 = public internet IP, 1+ = secondary IPs)
     pub fn set_active(&self, index: usize) -> Result<IpAddr, String> {
         if index >= self.addrs.len() {
             return Err(format!(
