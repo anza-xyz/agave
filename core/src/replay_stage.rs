@@ -1166,7 +1166,7 @@ impl ReplayStage {
                 drop(ancestors);
                 drop(descendants);
                 if !tpu_has_bank && !poh_controller.has_pending_message() {
-                    Self::maybe_start_leader(
+                    if let Some(poh_slot) = Self::maybe_start_leader(
                         &my_pubkey,
                         &bank_forks,
                         &poh_recorder,
@@ -1179,13 +1179,10 @@ impl ReplayStage {
                         &mut skipped_slots_info,
                         &banking_tracer,
                         has_new_vote_been_rooted,
-                    );
-
-                    let poh_bank = poh_recorder.read().unwrap().bank();
-                    if let Some(bank) = poh_bank {
+                    ) {
                         Self::log_leader_change(
                             &my_pubkey,
-                            bank.slot(),
+                            poh_slot,
                             &mut current_leader,
                             &my_pubkey,
                         );
@@ -2084,7 +2081,7 @@ impl ReplayStage {
     /// - We have not landed a vote yet and the `wait_for_vote_to_start_leader` flag is set
     /// - We have failed the propagated check
     ///
-    /// Returns whether a new working bank was created and inserted into bank forks.
+    /// Returns Some new working bank slot if created and inserted into bank forks.
     #[allow(clippy::too_many_arguments)]
     fn maybe_start_leader(
         my_pubkey: &Pubkey,
@@ -2099,7 +2096,7 @@ impl ReplayStage {
         skipped_slots_info: &mut SkippedSlotsInfo,
         banking_tracer: &Arc<BankingTracer>,
         has_new_vote_been_rooted: bool,
-    ) -> bool {
+    ) -> Option<Slot> {
         // all the individual calls to poh_recorder.read() are designed to
         // increase granularity, decrease contention
 
@@ -2111,7 +2108,7 @@ impl ReplayStage {
                 } => (poh_slot, parent_slot),
                 PohLeaderStatus::NotReached => {
                     trace!("{my_pubkey} poh_recorder hasn't reached_leader_slot");
-                    return false;
+                    return None;
                 }
             };
 
@@ -2122,33 +2119,33 @@ impl ReplayStage {
                 "Poh recorder parent slot {parent_slot} is missing from bank_forks. This \
                  indicates that we are in the middle of a dump and repair. Unable to start leader"
             );
-            return false;
+            return None;
         };
 
         assert!(parent.is_frozen());
 
         if !parent.has_initial_accounts_hash_verification_completed() {
             info!("startup verification incomplete, so skipping my leader slot");
-            return false;
+            return None;
         }
 
         if bank_forks.read().unwrap().get(poh_slot).is_some() {
             warn!("{my_pubkey} already have bank in forks at {poh_slot}?");
-            return false;
+            return None;
         }
         trace!("{my_pubkey} poh_slot {poh_slot} parent_slot {parent_slot}");
 
         if let Some(next_leader) = leader_schedule_cache.slot_leader_at(poh_slot, Some(&parent)) {
             if !has_new_vote_been_rooted {
                 info!("Haven't landed a vote, so skipping my leader slot");
-                return false;
+                return None;
             }
 
             trace!("{my_pubkey} leader {next_leader} at poh slot: {poh_slot}");
 
             // I guess I missed my slot
             if next_leader != *my_pubkey {
-                return false;
+                return None;
             }
 
             datapoint_info!(
@@ -2186,7 +2183,7 @@ impl ReplayStage {
                         latest_unconfirmed_leader_slot,
                     );
                 }
-                return false;
+                return None;
             }
 
             let root_slot = bank_forks.read().unwrap().root();
@@ -2219,10 +2216,10 @@ impl ReplayStage {
                 poh_controller,
                 tpu_bank,
             );
-            true
+            Some(poh_slot)
         } else {
             error!("{my_pubkey} No next leader found");
-            false
+            None
         }
     }
 
@@ -8665,7 +8662,7 @@ pub(crate) mod tests {
 
         let rpc_subscriptions = Some(rpc_subscriptions);
 
-        assert!(!ReplayStage::maybe_start_leader(
+        assert!(ReplayStage::maybe_start_leader(
             my_pubkey,
             bank_forks,
             &poh_recorder,
@@ -8678,7 +8675,8 @@ pub(crate) mod tests {
             &mut SkippedSlotsInfo::default(),
             &banking_tracer,
             has_new_vote_been_rooted,
-        ));
+        )
+        .is_none());
     }
 
     #[test]
@@ -9326,7 +9324,7 @@ pub(crate) mod tests {
             poh_recorder.read().unwrap().reached_leader_slot(&my_pubkey),
             PohLeaderStatus::NotReached
         );
-        assert!(!ReplayStage::maybe_start_leader(
+        assert!(ReplayStage::maybe_start_leader(
             &my_pubkey,
             &bank_forks,
             &poh_recorder,
@@ -9339,7 +9337,8 @@ pub(crate) mod tests {
             &mut SkippedSlotsInfo::default(),
             &banking_tracer,
             has_new_vote_been_rooted,
-        ));
+        )
+        .is_none());
 
         // Register another slots worth of ticks  with PoH recorder
         poh_recorder
@@ -9366,7 +9365,8 @@ pub(crate) mod tests {
             &mut SkippedSlotsInfo::default(),
             &banking_tracer,
             has_new_vote_been_rooted,
-        ));
+        )
+        .is_some());
         // Get the new working bank, which is also the new leader bank/slot
         let working_bank = bank_forks.read().unwrap().working_bank();
         // The new bank's slot must NOT be dummy_slot as the blockstore already
