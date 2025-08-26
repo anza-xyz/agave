@@ -10123,6 +10123,7 @@ dependencies = [
  "solana-version",
  "solana-vote-interface",
  "static_assertions",
+ "test-case",
  "tokio",
 ]
 
