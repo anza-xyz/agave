@@ -713,6 +713,7 @@ impl ReplayStage {
                 .build()
                 .expect("new rayon threadpool");
 
+            let shared_poh_bank = poh_recorder.read().unwrap().shared_working_bank();
             Self::reset_poh_recorder(
                 &my_pubkey,
                 &blockstore,
@@ -745,7 +746,7 @@ impl ReplayStage {
                 // We either have a bank currently, OR there is a pending message to either reset or set
                 // the bank.
                 let tpu_has_bank =
-                    poh_recorder.read().unwrap().has_bank() || poh_controller.has_pending_message();
+                    shared_poh_bank.load().is_some() || poh_controller.has_pending_message();
 
                 let mut replay_active_banks_time = Measure::start("replay_active_banks_time");
                 let (mut ancestors, mut descendants) = {
@@ -1131,7 +1132,7 @@ impl ReplayStage {
                 let mut dump_then_repair_correct_slots_time =
                     Measure::start("dump_then_repair_correct_slots_time");
                 // Used for correctness check
-                let poh_bank = poh_recorder.read().unwrap().bank();
+                let poh_bank = shared_poh_bank.load();
                 // Dump any duplicate slots that have been confirmed by the network in
                 // anticipation of repairing the confirmed version of the slot.
                 //
