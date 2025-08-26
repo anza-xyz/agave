@@ -368,10 +368,10 @@ impl<'a> AccountStoragesOrderer<'a> {
 }
 
 impl Index<usize> for AccountStoragesOrderer<'_> {
-    type Output = AccountStorageEntry;
+    type Output = Arc<AccountStorageEntry>;
 
     fn index(&self, index: usize) -> &Self::Output {
-        self.storages[self.indices[index]].as_ref()
+        &self.storages[self.indices[index]]
     }
 }
 
@@ -397,7 +397,7 @@ impl<'a> AccountStoragesConcurrentConsumer<'a> {
 
     /// Takes the next `AccountStorageEntry` moving shared consume position
     /// until the end of the entries source is reached.
-    pub fn next(&'a self) -> Option<&'a AccountStorageEntry> {
+    pub fn next(&'a self) -> Option<&'a Arc<AccountStorageEntry>> {
         let index = self.current_index.fetch_add(1, Ordering::Relaxed);
         if index < self.orderer.entries_len() {
             Some(&self.orderer[index])
