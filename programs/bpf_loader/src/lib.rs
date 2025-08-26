@@ -1510,13 +1510,13 @@ fn execute<'a, 'b: 'a>(
         };
         create_vm_time.stop();
 
+        vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
+        vm.registers[1] = ebpf::MM_INPUT_START;
+
         // SIMD-0321: Provide offset to instruction data in VM register 2.
         if provide_instruction_data_offset_in_vm_r2 {
             vm.registers[2] = instruction_data_offset as u64;
         }
-
-        vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
-        vm.registers[1] = ebpf::MM_INPUT_START;
         let (compute_units_consumed, result) = vm.execute_program(executable, !use_jit);
         MEMORY_POOL.with_borrow_mut(|memory_pool| {
             memory_pool.put_stack(stack);
