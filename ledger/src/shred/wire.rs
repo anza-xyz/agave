@@ -2,9 +2,12 @@
 // deserializing the entire payload.
 #![deny(clippy::indexing_slicing)]
 use {
-    crate::shred::{
-        self, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags, ShredId,
-        ShredType, ShredVariant, SIZE_OF_COMMON_SHRED_HEADER,
+    crate::{
+        blockstore_meta::ErasureConfig,
+        shred::{
+            self, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags,
+            ShredId, ShredType, ShredVariant, SIZE_OF_COMMON_SHRED_HEADER,
+        },
     },
     solana_clock::Slot,
     solana_hash::Hash,
@@ -102,6 +105,12 @@ pub(super) fn get_version(shred: &[u8]) -> Option<u16> {
     Some(u16::from_le_bytes(bytes))
 }
 
+#[inline]
+pub fn get_fec_set_index(shred: &[u8]) -> Option<u32> {
+    let bytes = <[u8; 4]>::try_from(shred.get(79..79 + 4)?).unwrap();
+    Some(u32::from_le_bytes(bytes))
+}
+
 // The caller should verify first that the shred is data and not code!
 #[inline]
 pub(super) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
@@ -161,6 +170,32 @@ pub(crate) fn get_data(shred: &[u8]) -> Result<&[u8], Error> {
             get_data_size(shred)?,
         ),
     }
+}
+
+/// Returns the ErasureConfig specified by the coding shred
+/// Caller must verify that the shred is a coding shred
+#[inline]
+pub(crate) fn get_erasure_config(shred: &[u8]) -> Result<ErasureConfig, Error> {
+    debug_assert_eq!(get_shred_type(shred).unwrap(), ShredType::Code);
+    let Some(num_data_bytes) = shred.get(83..83 + 2) else {
+        return Err(Error::InvalidPayloadSize(shred.len()));
+    };
+    let Some(num_coding_bytes) = shred.get(85..85 + 2) else {
+        return Err(Error::InvalidPayloadSize(shred.len()));
+    };
+    let num_data = <[u8; 2]>::try_from(num_data_bytes)
+        .map(u16::from_le_bytes)
+        .map(usize::from)
+        .map_err(|_| Error::InvalidErasureConfig)?;
+    let num_coding = <[u8; 2]>::try_from(num_coding_bytes)
+        .map(u16::from_le_bytes)
+        .map(usize::from)
+        .map_err(|_| Error::InvalidErasureConfig)?;
+
+    Ok(ErasureConfig {
+        num_data,
+        num_coding,
+    })
 }
 
 #[inline]

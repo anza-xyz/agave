@@ -58,6 +58,12 @@ pub struct ShredFetchStats {
     pub(super) bad_shred_type: usize,
     pub(super) shred_version_mismatch: usize,
     pub(super) bad_parent_offset: usize,
+    pub(super) fec_set_index_bad_deserialize: usize,
+    pub(super) bad_fec_set_size: usize,
+    pub(super) erasure_config_bad_deserialize: usize,
+    pub(super) bad_erasure_config: usize,
+    pub(super) shred_flags_bad_deserialize: usize,
+    pub(super) bad_last_data_index: usize,
     since: Option<Instant>,
     pub overflow_shreds: usize,
 }
@@ -182,6 +188,24 @@ impl ShredFetchStats {
             ("bad_shred_type", self.bad_shred_type, i64),
             ("shred_version_mismatch", self.shred_version_mismatch, i64),
             ("bad_parent_offset", self.bad_parent_offset, i64),
+            (
+                "fec_set_index_bad_deserialize",
+                self.fec_set_index_bad_deserialize,
+                i64
+            ),
+            ("bad_fec_set_size", self.bad_fec_set_size, i64),
+            (
+                "erasure_config_bad_deserialize",
+                self.erasure_config_bad_deserialize,
+                i64
+            ),
+            ("bad_erasure_config", self.bad_erasure_config, i64),
+            (
+                "shred_flags_bad_deserialize",
+                self.shred_flags_bad_deserialize,
+                i64
+            ),
+            ("bad_last_data_index", self.bad_last_data_index, i64),
             ("overflow_shreds", self.overflow_shreds, i64),
         );
         *self = Self {

@@ -196,9 +196,7 @@ impl ShredData {
         );
         // Shred index in the erasure batch.
         let index = {
-            let fec_set_index = <[u8; 4]>::try_from(shred.get(79..83)?)
-                .map(u32::from_le_bytes)
-                .ok()?;
+            let fec_set_index = shred::layout::get_fec_set_index(shred)?;
             shred::layout::get_index(shred)?
                 .checked_sub(fec_set_index)
                 .map(usize::try_from)?
