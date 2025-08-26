@@ -772,15 +772,11 @@ async fn test_proactive_connection_close_detection() {
             .await
             .expect("Send first batch");
 
-        // Wait for connection establishment
-        sleep(Duration::from_millis(100)).await;
-
-        // Long delay during which connection may be closed
-        sleep(Duration::from_secs(2)).await;
+        // Idle period where connection might be closed
+        sleep(Duration::from_millis(500)).await;
 
         // Attempt another send
-        drop(tx_sender
-            .send(TransactionBatch::new(vec![vec![2u8; tx_size]])));
+        drop(tx_sender.send(TransactionBatch::new(vec![vec![2u8; tx_size]])));
     });
 
     let (scheduler_handle, _update_identity_sender, scheduler_cancel) =
@@ -804,7 +800,7 @@ async fn test_proactive_connection_close_detection() {
     let _pruning_connection = make_client_endpoint(&server_address, None).await;
 
     // Allow time for proactive detection
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(200)).await;
 
     // Clean up
     scheduler_cancel.cancel();
@@ -813,8 +809,7 @@ async fn test_proactive_connection_close_detection() {
 
     // Verify proactive close detection
     assert!(
-        stats.connection_error_application_closed > 0 ||
-        stats.write_error_connection_lost > 0,
+        stats.connection_error_application_closed > 0 || stats.write_error_connection_lost > 0,
         "Should detect connection close proactively. Stats: {:?}",
         stats
     );

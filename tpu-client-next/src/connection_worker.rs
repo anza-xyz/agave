@@ -217,13 +217,19 @@ impl ConnectionWorker {
                 warn!("Connection to {} reset", self.peer);
             }
             ConnectionError::TransportError(e) => {
-                warn!("Connection to {} encountered transport error: {}", self.peer, e);
+                warn!(
+                    "Connection to {} encountered transport error: {}",
+                    self.peer, e
+                );
             }
             ConnectionError::VersionMismatch => {
                 error!("Connection to {} failed: version mismatch", self.peer);
             }
             ConnectionError::CidsExhausted => {
-                warn!("Connection to {} closed: connection IDs exhausted", self.peer);
+                warn!(
+                    "Connection to {} closed: connection IDs exhausted",
+                    self.peer
+                );
             }
         }
 
