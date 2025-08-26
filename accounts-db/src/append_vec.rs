@@ -173,11 +173,11 @@ enum AppendVecFileBacking {
 }
 
 /// Validates and serializes appends (when `append_guard` is called) such that only
-/// writeable AppendVec is updated and only from a single thread at a time.
+/// writable AppendVec is updated and only from a single thread at a time.
 #[derive(Debug)]
 enum ReadWriteState {
     ReadOnly,
-    Writeable {
+    Writable {
         /// A lock used to serialize append operations.
         append_lock: Mutex<()>,
     },
@@ -186,7 +186,7 @@ enum ReadWriteState {
 impl ReadWriteState {
     fn new(allow_writes: bool) -> Self {
         if allow_writes {
-            Self::Writeable {
+            Self::Writable {
                 append_lock: Mutex::new(()),
             }
         } else {
@@ -197,7 +197,7 @@ impl ReadWriteState {
     fn append_guard(&self) -> MutexGuard<()> {
         match self {
             Self::ReadOnly => panic!("append not allowed in read-only state"),
-            Self::Writeable { append_lock } => append_lock.lock().unwrap(),
+            Self::Writable { append_lock } => append_lock.lock().unwrap(),
         }
     }
 }
@@ -336,7 +336,7 @@ impl AppendVec {
         AppendVec {
             path: file,
             backing: AppendVecFileBacking::Mmap(mmap),
-            // writeable state's mutex forces append to be single threaded, but concurrent with
+            // writable state's mutex forces append to be single threaded, but concurrent with
             // reads. See UNSAFE usage in `append_ptr`
             read_write_state: ReadWriteState::new(true),
             current_len: AtomicUsize::new(initial_len),
@@ -389,7 +389,7 @@ impl AppendVec {
     }
 
     pub fn reset(&self) {
-        // Writeable state's mutex forces append to be single threaded, but concurrent
+        // Writable state's mutex forces append to be single threaded, but concurrent
         // with reads. See UNSAFE usage in `append_ptr`
         let _lock = self.read_write_state.append_guard();
         self.current_len.store(0, Ordering::Release);
@@ -510,7 +510,7 @@ impl AppendVec {
         let file_size = std::fs::metadata(&path)?.len();
         Self::sanitize_len_and_size(current_len, file_size as usize)?;
 
-        // AppendVec is in read-only mode, but mmap access requires file to be writeable
+        // AppendVec is in read-only mode, but mmap access requires file to be writable
         let data = OpenOptions::new()
             .read(true)
             .write(storage_access == StorageAccess::Mmap)
