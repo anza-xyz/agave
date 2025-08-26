@@ -46,7 +46,7 @@ use {
         ptr, slice,
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-            Mutex,
+            Mutex, MutexGuard,
         },
     },
     thiserror::Error,
@@ -172,10 +172,40 @@ enum AppendVecFileBacking {
     File(File),
 }
 
+/// Validates and serializes appends (when `append_guard` is called) such that only
+/// write-able AppendVec is updated and only from a single thread at a time.
+#[derive(Debug)]
+enum ReadWriteState {
+    ReadOnly,
+    WriteAble {
+        /// A lock used to serialize append operations.
+        append_lock: Mutex<()>,
+    },
+}
+
+impl ReadWriteState {
+    fn new(allow_writes: bool) -> Self {
+        if allow_writes {
+            Self::WriteAble {
+                append_lock: Mutex::new(()),
+            }
+        } else {
+            Self::ReadOnly
+        }
+    }
+
+    fn append_guard(&self) -> MutexGuard<()> {
+        match self {
+            Self::ReadOnly => panic!("append not allowed in read-only state"),
+            Self::WriteAble { append_lock } => append_lock.lock().unwrap(),
+        }
+    }
+}
+
 /// A thread-safe, file-backed block of memory used to store `Account` instances. Append operations
-/// are serialized such that only one thread updates the internal `append_lock` at a time. No
-/// restrictions are placed on reading. That is, one may read items from one thread while another
-/// is appending new items.
+/// are serialized using `read_write_state`'s internal lock such that only one thread updates the
+/// file at a time. No restrictions are placed on reading. That is, one may read items from one
+/// thread while another is appending new items.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug)]
 pub struct AppendVec {
@@ -185,8 +215,8 @@ pub struct AppendVec {
     /// access the file data
     backing: AppendVecFileBacking,
 
-    /// A lock used to serialize append operations.
-    append_lock: Mutex<()>,
+    /// Guards and serializes writes if allowed
+    read_write_state: ReadWriteState,
 
     /// The number of bytes used to store items, not the number of items.
     current_len: AtomicUsize,
@@ -306,9 +336,9 @@ impl AppendVec {
         AppendVec {
             path: file,
             backing: AppendVecFileBacking::Mmap(mmap),
-            // This mutex forces append to be single threaded, but concurrent with reads
-            // See UNSAFE usage in `append_ptr`
-            append_lock: Mutex::new(()),
+            // Write-able state's mutex forces append to be single threaded, but concurrent with
+            // reads. See UNSAFE usage in `append_ptr`
+            read_write_state: ReadWriteState::new(create),
             current_len: AtomicUsize::new(initial_len),
             file_size: size as u64,
             remove_file_on_drop: AtomicBool::new(true),
@@ -359,9 +389,9 @@ impl AppendVec {
     }
 
     pub fn reset(&self) {
-        // This mutex forces append to be single threaded, but concurrent with reads
-        // See UNSAFE usage in `append_ptr`
-        let _lock = self.append_lock.lock().unwrap();
+        // Write-able state's mutex forces append to be single threaded, but concurrent
+        // with reads. See UNSAFE usage in `append_ptr`
+        let _lock = self.read_write_state.append_guard();
         self.current_len.store(0, Ordering::Release);
     }
 
@@ -480,7 +510,7 @@ impl AppendVec {
 
         let data = OpenOptions::new()
             .read(true)
-            .write(true)
+            .write(storage_access == StorageAccess::Mmap)
             .create(false)
             .open(&path)?;
 
@@ -494,7 +524,7 @@ impl AppendVec {
             return Ok(AppendVec {
                 path,
                 backing: AppendVecFileBacking::File(data),
-                append_lock: Mutex::new(()),
+                read_write_state: ReadWriteState::ReadOnly,
                 current_len: AtomicUsize::new(current_len),
                 file_size,
                 remove_file_on_drop: AtomicBool::new(true),
@@ -523,7 +553,7 @@ impl AppendVec {
         Ok(AppendVec {
             path,
             backing: AppendVecFileBacking::Mmap(mmap),
-            append_lock: Mutex::new(()),
+            read_write_state: ReadWriteState::ReadOnly,
             current_len: AtomicUsize::new(current_len),
             file_size,
             remove_file_on_drop: AtomicBool::new(true),
@@ -1229,7 +1259,7 @@ impl AppendVec {
         accounts: &impl StorableAccounts<'a>,
         skip: usize,
     ) -> Option<StoredAccountsInfo> {
-        let _lock = self.append_lock.lock().unwrap();
+        let _lock = self.read_write_state.append_guard();
         let mut offset = self.len();
         let len = accounts.len();
         // Here we have `len - skip` number of accounts.  The +1 extra capacity
