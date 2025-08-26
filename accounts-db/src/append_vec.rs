@@ -498,7 +498,9 @@ impl AppendVec {
         }
     }
 
-    /// Creates an appendvec from file without performing sanitize checks or counting the number of accounts
+    /// Creates an appendvec from existing file in read-only mode and without full data checks
+    ///
+    /// Validation of account data and counting the number of accounts is skipped.
     pub fn new_from_file_unchecked(
         path: impl Into<PathBuf>,
         current_len: usize,
@@ -508,6 +510,7 @@ impl AppendVec {
         let file_size = std::fs::metadata(&path)?.len();
         Self::sanitize_len_and_size(current_len, file_size as usize)?;
 
+        // AppendVec is in read-only mode, but mmap access requires file to be write-able
         let data = OpenOptions::new()
             .read(true)
             .write(storage_access == StorageAccess::Mmap)
