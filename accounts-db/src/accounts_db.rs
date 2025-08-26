@@ -710,7 +710,7 @@ pub type AccountsFileId = u32;
 type AccountSlots = HashMap<Pubkey, IntSet<Slot>, PubkeyHasherBuilder>;
 type SlotOffsets = IntMap<Slot, IntSet<Offset>>;
 type ReclaimResult = (AccountSlots, SlotOffsets);
-type PubkeysRemovedFromAccountsIndex = HashSet<Pubkey>;
+type PubkeysRemovedFromAccountsIndex = HashSet<Pubkey, PubkeyHasherBuilder>;
 type ShrinkCandidates = IntSet<Slot>;
 
 // Some hints for applicability of additional sanity checks for the do_load fast-path;
