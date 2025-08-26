@@ -350,7 +350,7 @@ impl AppendVec {
 
         AppendVec {
             path: file,
-            backing: AppendVecFileBacking::Mmap(mmap),
+            backing,
             // writable state's mutex forces append to be single threaded, but concurrent with
             // reads. See UNSAFE usage in `append_ptr`
             read_write_state: ReadWriteState::new(true),
@@ -412,7 +412,7 @@ impl AppendVec {
 
     /// Return AppendVec opened in read-only file-io mode or `None` if it already is such
     pub(crate) fn reopen_as_readonly_file_io(&self) -> Option<Self> {
-        if self.append_lock.as_ref().is_none()
+        if matches!(self.read_write_state, ReadWriteState::ReadOnly)
             && matches!(self.backing, AppendVecFileBacking::File(_))
         {
             // Early return if already in read-only mode *and* already a file-io

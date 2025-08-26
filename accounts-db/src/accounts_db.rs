@@ -3000,11 +3000,6 @@ impl AccountsDb {
         self.storage_access = storage_access;
     }
 
-    #[cfg(test)]
-    pub fn storage_access(&self) -> StorageAccess {
-        self.storage_access
-    }
-
     /// Sort `accounts` by pubkey and removes all but the *last* of consecutive
     /// accounts in the vector with the same pubkey.
     ///
@@ -7393,6 +7388,11 @@ impl AccountsDb {
     /// This is useful for testing clean algorithms.
     pub fn get_len_of_slots_with_uncleaned_pubkeys(&self) -> usize {
         self.uncleaned_pubkeys.len()
+    }
+
+    #[cfg(test)]
+    pub fn storage_access(&self) -> StorageAccess {
+        self.storage_access
     }
 
     /// useful to adapt tests written prior to introduction of the write cache
