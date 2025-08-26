@@ -9792,7 +9792,7 @@ pub(crate) mod tests {
         assert_eq!(working_bank.slot(), poh_slot);
         assert_eq!(working_bank.parent_slot(), initial_slot);
 
-        // Register another slots worth of ticks  with PoH recorder
+        // Register another slots worth of ticks with PoH recorder
         poh_recorder
             .write()
             .map(|mut poh_recorder| {
