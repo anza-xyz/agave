@@ -24,7 +24,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_sbpf::{
-        assembler::assemble, elf::Executable, static_analysis::Analysis,
+        assembler::assemble, ebpf::MM_INPUT_START, elf::Executable, static_analysis::Analysis,
         verifier::RequisiteVerifier,
     },
     solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
@@ -553,6 +553,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     if matches.value_of("mode").unwrap() == "debugger" {
         vm.debug_port = Some(matches.value_of("port").unwrap().parse::<u16>().unwrap());
     }
+    vm.registers[1] = MM_INPUT_START;
     let (instruction_count, result) = vm.execute_program(&verified_executable, interpreted);
     let duration = Instant::now() - start_time;
     if matches.occurrences_of("trace") > 0 {
