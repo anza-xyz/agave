@@ -1,4 +1,10 @@
 #![allow(clippy::arithmetic_side_effects)]
+//! Standalone streamer server instantiation.
+//! This is handy to isolate the QUIC server component for testing and tuning
+//! This is set up to log the content of "transactions" sent to it into a binary file.
+//! The logged info includes the bytes 0..32, wherein you can store metadata such
+//! as sender's pubkey.
+
 use {
     clap::Parser,
     crossbeam_channel::bounded,
@@ -16,10 +22,13 @@ use {
         net::SocketAddr,
         path::Path,
         str::FromStr as _,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, RwLock,
+        },
         time::Duration,
     },
-    tokio::time::Instant,
+    tokio::time::{sleep, Instant},
 };
 
 fn parse_duration(arg: &str) -> Result<std::time::Duration, std::num::ParseFloatError> {
@@ -59,8 +68,12 @@ pub fn load_staked_nodes_overrides(path: &String) -> anyhow::Result<HashMap<Pubk
 struct Cli {
     #[arg(short, long, default_value_t = 1)]
     max_connections_per_peer: usize,
+
     #[arg(short, long, default_value = "0.0.0.0:8008")]
     bind_to: SocketAddr,
+
+    #[arg(short, long, default_value = "./results/serverlog.bin")]
+    log_file: String,
 
     #[arg(short, long, value_parser = parse_duration)]
     test_duration: Duration,
@@ -69,8 +82,9 @@ struct Cli {
     stake_amounts: String,
 }
 
+// number of threads as in fn default_num_tpu_transaction_forward_receive_threads
 #[tokio::main(flavor = "multi_thread", worker_threads = 16)]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     solana_logger::setup();
     let cli = Cli::parse();
     let socket = bind_to_with_config(
@@ -87,7 +101,7 @@ async fn main() {
     let staked_nodes = {
         let nodes = StakedNodes::new(
             Arc::new(HashMap::new()),
-            load_staked_nodes_overrides(&cli.stake_amounts).unwrap(),
+            load_staked_nodes_overrides(&cli.stake_amounts)?,
         );
         Arc::new(RwLock::new(nodes))
     };
@@ -99,7 +113,7 @@ async fn main() {
         max_concurrent_connections: _,
     } = solana_streamer::nonblocking::quic::spawn_server(
         "quic_streamer_test",
-        [socket.try_clone().unwrap()],
+        [socket.try_clone()?],
         &keypair,
         sender,
         exit.clone(),
@@ -108,40 +122,44 @@ async fn main() {
             max_connections_per_peer: cli.max_connections_per_peer,
             ..QuicServerParams::default()
         },
-    )
-    .unwrap();
-    info!("Server listening on {}", socket.local_addr().unwrap());
+    )?;
+    info!("Server listening on {}", socket.local_addr()?);
 
-    let logger_thread = tokio::task::spawn_blocking(|| {
+    let path = cli.log_file.clone();
+    let logger_thread = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let start = Instant::now();
-        let path = "./results/serverlog.bin";
-        let logfile = std::fs::File::create(path).unwrap();
-        info!("Logfile in {}", path);
+        let logfile = std::fs::File::create(&path)?;
+        info!("Logfile in {}", &path);
         let mut logfile = std::io::BufWriter::new(logfile);
         let mut sum = 0;
         for batch in receiver {
             let delta_time = start.elapsed().as_micros() as u32;
             for pkt in batch.iter() {
                 let pkt = pkt.to_bytes_packet();
-                let pubkey: [u8; 32] = pkt.buffer()[16..16 + 32].try_into().unwrap();
-                logfile.write_all(&pubkey).unwrap();
+                if pkt.buffer().len() < 32 {
+                    continue;
+                }
+                let pubkey: [u8; 32] = pkt.buffer()[0..32].try_into()?;
+                logfile.write_all(&pubkey)?;
                 let pkt_len = pkt.buffer().len();
-                logfile.write_all(&pkt_len.to_ne_bytes()).unwrap();
-                logfile.write_all(&delta_time.to_ne_bytes()).unwrap();
+                logfile.write_all(&pkt_len.to_ne_bytes())?;
+                logfile.write_all(&delta_time.to_ne_bytes())?;
                 let pubkey = Pubkey::new_from_array(pubkey);
                 debug!("{pubkey}: {pkt_len} bytes");
                 sum += 1;
             }
         }
         info!("Server captured {sum} TXs");
-        logfile.flush().unwrap();
+        logfile.flush()?;
+        Ok(())
     });
 
-    tokio::time::sleep(cli.test_duration).await;
+    sleep(cli.test_duration).await;
     info!("Server terminating");
-    exit.store(true, std::sync::atomic::Ordering::Relaxed);
+    exit.store(true, Ordering::Relaxed);
     drop(endpoints);
-    run_thread.await.unwrap();
-    logger_thread.await.unwrap();
+    run_thread.await?;
+    logger_thread.await??;
     stats.report("final_stats");
+    Ok(())
 }
