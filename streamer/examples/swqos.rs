@@ -1,7 +1,9 @@
 #![allow(clippy::arithmetic_side_effects)]
-//! Standalone streamer server instantiation.
-//! This is handy to isolate the QUIC server component for testing and tuning
-//! This is set up to log the content of "transactions" sent to it into a binary file.
+//! Standalone QUIC streamer server.
+//!
+//! This utility isolates the QUIC server component, making it convenient for
+//! testing and performance tuning. It logs all received "transactions" to a
+//! binary file.
 //! The logged info includes the bytes 0..32, wherein you can store metadata such
 //! as sender's pubkey.
 
