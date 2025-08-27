@@ -23,10 +23,6 @@ use {
     solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch, PACKETS_PER_BATCH},
     solana_pubkey::Pubkey,
-    solana_quic_definitions::{
-        QUIC_MAX_STAKED_CONCURRENT_STREAMS, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
-        QUIC_MIN_STAKED_CONCURRENT_STREAMS, QUIC_TOTAL_STAKED_CONCURRENT_STREAMS,
-    },
     solana_signature::Signature,
     solana_time_utils as timing,
     solana_tls_utils::get_pubkey_from_tls_certificate,
@@ -61,6 +57,8 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
+const MEAN_TRANSACTION_SIZE: usize = 600;
+
 pub const DEFAULT_WAIT_FOR_CHUNK_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub const ALPN_TPU_PROTOCOL_ID: &[u8] = b"solana-tpu";
@@ -70,9 +68,6 @@ const CONNECTION_CLOSE_REASON_DROPPED_ENTRY: &[u8] = b"dropped";
 
 const CONNECTION_CLOSE_CODE_DISALLOWED: u32 = 2;
 const CONNECTION_CLOSE_REASON_DISALLOWED: &[u8] = b"disallowed";
-
-const CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT: u32 = 3;
-const CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT: &[u8] = b"exceed_max_stream_count";
 
 const CONNECTION_CLOSE_CODE_TOO_MANY: u32 = 4;
 const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
@@ -466,36 +461,8 @@ fn get_connection_stake(
     ))
 }
 
-fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stake: u64) -> usize {
-    match peer_type {
-        ConnectionPeerType::Staked(peer_stake) => {
-            // No checked math for f64 type. So let's explicitly check for 0 here
-            if total_stake == 0 || peer_stake > total_stake {
-                warn!(
-                    "Invalid stake values: peer_stake: {peer_stake:?}, total_stake: \
-                      {total_stake:?}"
-                );
-
-                QUIC_MIN_STAKED_CONCURRENT_STREAMS
-            } else {
-                let delta = (QUIC_TOTAL_STAKED_CONCURRENT_STREAMS
-                    - QUIC_MIN_STAKED_CONCURRENT_STREAMS) as f64;
-
-                (((peer_stake as f64 / total_stake as f64) * delta) as usize
-                    + QUIC_MIN_STAKED_CONCURRENT_STREAMS)
-                    .clamp(
-                        QUIC_MIN_STAKED_CONCURRENT_STREAMS,
-                        QUIC_MAX_STAKED_CONCURRENT_STREAMS,
-                    )
-            }
-        }
-        ConnectionPeerType::Unstaked => QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
-    }
-}
-
 enum ConnectionHandlerError {
     ConnectionAddError,
-    MaxStreamError,
 }
 
 #[derive(Clone)]
@@ -536,65 +503,44 @@ fn handle_and_cache_new_connection(
     wait_for_chunk_timeout: Duration,
     stream_load_ema: Arc<StakedStreamLoadEMA>,
 ) -> Result<(), ConnectionHandlerError> {
-    if let Ok(max_uni_streams) = VarInt::from_u64(compute_max_allowed_uni_streams(
-        params.peer_type,
-        params.total_stake,
-    ) as u64)
-    {
-        let remote_addr = connection.remote_address();
+    let remote_addr = connection.remote_address();
 
-        debug!(
-            "Peer type {:?}, total stake {}, max streams {} from peer {}",
+    debug!(
+        "Peer type {:?}, total stake {}, from peer {}",
+        params.peer_type, params.total_stake, remote_addr,
+    );
+
+    if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
+        .try_add_connection(
+            ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey),
+            remote_addr.port(),
+            client_connection_tracker,
+            Some(connection.clone()),
             params.peer_type,
-            params.total_stake,
-            max_uni_streams.into_inner(),
+            timing::timestamp(),
+            params.max_connections_per_peer,
+        )
+    {
+        drop(connection_table_l);
+
+        tokio::spawn(handle_connection(
+            connection,
             remote_addr,
-        );
-
-        if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
-            .try_add_connection(
-                ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey),
-                remote_addr.port(),
-                client_connection_tracker,
-                Some(connection.clone()),
-                params.peer_type,
-                timing::timestamp(),
-                params.max_connections_per_peer,
-            )
-        {
-            drop(connection_table_l);
-
-            connection.set_max_concurrent_uni_streams(max_uni_streams);
-
-            tokio::spawn(handle_connection(
-                connection,
-                remote_addr,
-                last_update,
-                connection_table,
-                cancel_connection,
-                params.clone(),
-                wait_for_chunk_timeout,
-                stream_load_ema,
-                stream_counter,
-            ));
-            Ok(())
-        } else {
-            params
-                .stats
-                .connection_add_failed
-                .fetch_add(1, Ordering::Relaxed);
-            Err(ConnectionHandlerError::ConnectionAddError)
-        }
+            last_update,
+            connection_table,
+            cancel_connection,
+            params.clone(),
+            wait_for_chunk_timeout,
+            stream_load_ema,
+            stream_counter,
+        ));
+        Ok(())
     } else {
-        connection.close(
-            CONNECTION_CLOSE_CODE_EXCEED_MAX_STREAM_COUNT.into(),
-            CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT,
-        );
         params
             .stats
-            .connection_add_failed_invalid_stream_count
+            .connection_add_failed
             .fetch_add(1, Ordering::Relaxed);
-        Err(ConnectionHandlerError::MaxStreamError)
+        Err(ConnectionHandlerError::ConnectionAddError)
     }
 }
 
@@ -1040,6 +986,10 @@ async fn handle_connection(
     let max_receive_rate_kbps = compute_max_receive_rate_kbps(params.max_stake, params.peer_type);
     let initial_rx_window = compute_receive_window_bdp(max_receive_rate_kbps, connection.rtt());
     connection.set_receive_window(initial_rx_window);
+    connection.set_max_concurrent_uni_streams(
+        VarInt::from_u64(initial_rx_window.into_inner() / MEAN_TRANSACTION_SIZE as u64)
+            .expect("dividing VarInt by positive integer will never overflow"),
+    );
     debug!(
         "quic new connection {remote_addr}, max_receive_rate {max_receive_rate_kbps} Kbps (receive_window= {initial_rx_window} RTT={rtt}ms), streams: {streams} connections: {connections}",
         rtt = connection.rtt().as_millis(),
@@ -1187,6 +1137,10 @@ async fn handle_connection(
             trace!("Updating receive window for {remote_addr:?} to {new_window:?} based on rtt {:?} and target bitrate {} kbps",
             connection.rtt(), max_receive_rate_kbps);
             connection.set_receive_window(new_window);
+            connection.set_max_concurrent_uni_streams(
+                VarInt::from_u64(new_window.into_inner() / MEAN_TRANSACTION_SIZE as u64)
+                    .expect("dividing VarInt by positive integer will never overflow"),
+            );
         }
     }
 
@@ -1549,12 +1503,9 @@ pub mod test {
     use {
         super::*,
         crate::{
-            nonblocking::{
-                quic::compute_max_allowed_uni_streams,
-                testing_utilities::{
-                    check_multiple_streams, get_client_config, make_client_endpoint,
-                    setup_quic_server, SpawnTestServerResult,
-                },
+            nonblocking::testing_utilities::{
+                check_multiple_streams, get_client_config, make_client_endpoint, setup_quic_server,
+                SpawnTestServerResult,
             },
             quic::DEFAULT_TPU_COALESCE,
         },
@@ -2311,34 +2262,6 @@ pub mod test {
         }
         assert_eq!(table.total_size, 0);
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-
-    fn test_max_allowed_uni_streams() {
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Unstaked, 0),
-            QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS
-        );
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Staked(10), 0),
-            QUIC_MIN_STAKED_CONCURRENT_STREAMS
-        );
-        let delta =
-            (QUIC_TOTAL_STAKED_CONCURRENT_STREAMS - QUIC_MIN_STAKED_CONCURRENT_STREAMS) as f64;
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Staked(1000), 10000),
-            QUIC_MAX_STAKED_CONCURRENT_STREAMS,
-        );
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Staked(100), 10000),
-            ((delta / (100_f64)) as usize + QUIC_MIN_STAKED_CONCURRENT_STREAMS)
-                .min(QUIC_MAX_STAKED_CONCURRENT_STREAMS)
-        );
-        assert_eq!(
-            compute_max_allowed_uni_streams(ConnectionPeerType::Unstaked, 10000),
-            QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS
-        );
     }
 
     #[test]
