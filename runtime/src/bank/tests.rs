@@ -9,7 +9,7 @@ use {
         bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{
-            self, activate_all_features, activate_feature, bootstrap_validator_stake_lamports,
+            self, activate_feature, add_all_feature_accounts, bootstrap_validator_stake_lamports,
             create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
             genesis_sysvar_and_builtin_program_lamports, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
@@ -5608,7 +5608,7 @@ fn test_add_builtin_loader_no_overwrite() {
 fn test_add_builtin_account() {
     for pass in 0..5 {
         let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
-        activate_all_features(&mut genesis_config);
+        add_all_feature_accounts(&mut genesis_config);
 
         let slot = 123;
         // The account at program_id will be created initially with just 1 lamport.
@@ -5783,7 +5783,7 @@ fn test_add_builtin_account_after_frozen() {
 fn test_add_precompiled_account() {
     for pass in 0..2 {
         let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
-        activate_all_features(&mut genesis_config);
+        add_all_feature_accounts(&mut genesis_config);
 
         let slot = 123;
         let program_id = solana_pubkey::new_rand();
@@ -6917,8 +6917,8 @@ fn test_block_limits() {
         &feature_set::raise_block_limits_to_100m::id(),
         &feature::create_account(&Feature::default(), 42),
     );
-    // apply_feature_activations for `FinishInit` will not cause the block limit to be updated
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::FinishInit, true);
+    // apply_feature_activations for `NewFromFields` will not cause the block limit to be updated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromFields, true);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_block_limit(),
         MAX_BLOCK_UNITS,
@@ -6952,8 +6952,8 @@ fn test_block_limits() {
         &feature::create_account(&Feature::default(), 42),
     );
 
-    // apply_feature_activations for `FinishInit` will not cause the block limit to be updated
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::FinishInit, true);
+    // apply_feature_activations for `NewFromFields` will not cause the block limit to be updated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromFields, true);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_account_limit(),
         MAX_WRITABLE_ACCOUNT_UNITS,
@@ -6977,8 +6977,8 @@ fn test_block_limits() {
         &feature_set::raise_account_cu_limit::id(),
         &feature::create_account(&Feature::default(), 42),
     );
-    // apply_feature_activations for `FinishInit` will not cause the block limit to be updated
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::FinishInit, true);
+    // apply_feature_activations for `NewFromFields` will not cause the block limit to be updated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromFields, true);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_account_limit(),
         MAX_WRITABLE_ACCOUNT_UNITS,
@@ -7003,8 +7003,8 @@ fn test_block_limits() {
         &feature_set::raise_block_limits_to_100m::id(),
         &feature::create_account(&Feature::default(), 42),
     );
-    // apply_feature_activations for `FinishInit` will not cause the block limit to be updated
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::FinishInit, true);
+    // apply_feature_activations for `NewFromFields` will not cause the block limit to be updated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromFields, true);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_block_limit(),
         MAX_BLOCK_UNITS,
@@ -7403,7 +7403,12 @@ fn test_invoke_non_program_account_owned_by_a_builtin(
 fn test_debug_bank() {
     let (genesis_config, _mint_keypair) = create_genesis_config(50000);
     let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.finish_init(&genesis_config, None, false);
+    bank.finish_init(
+        &genesis_config,
+        ApplyFeatureActivationsCaller::NewWithPaths,
+        None,
+        false,
+    );
     let debug = format!("{bank:#?}");
     assert!(!debug.is_empty());
 }
@@ -8182,6 +8187,20 @@ fn test_get_inflation_num_slots_with_activations() {
         bank = new_from_parent(Arc::new(bank));
     }
     assert_eq!(bank.get_inflation_num_slots(), 2 * slots_per_epoch);
+}
+
+#[test]
+fn new_development_cluster_bank_applies_new_feature_activations() {
+    let GenesisConfigInfo { genesis_config, .. } = genesis_utils::create_genesis_config(42);
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert_eq!(bank.inflation(), Inflation::full());
+}
+
+#[test]
+fn new_test_cluster_bank_doesnt_apply_new_feature_activations() {
+    let (genesis_config, ..) = create_genesis_config(42);
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert_eq!(bank.inflation(), Inflation::default());
 }
 
 #[test]
@@ -9038,7 +9057,7 @@ fn test_verify_and_hash_transaction_sig_len() {
     } = create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
 
     // activate all features
-    activate_all_features(&mut genesis_config);
+    add_all_feature_accounts(&mut genesis_config);
     let bank = Bank::new_for_tests(&genesis_config);
 
     let recent_blockhash = Hash::new_unique();
@@ -9168,7 +9187,7 @@ fn test_call_precomiled_program() {
         mint_keypair,
         ..
     } = create_genesis_config_with_leader(42, &Pubkey::new_unique(), 42);
-    activate_all_features(&mut genesis_config);
+    add_all_feature_accounts(&mut genesis_config);
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     // libsecp256k1
@@ -9795,7 +9814,7 @@ fn test_drained_created_account() {
         ..
     } = create_genesis_config_with_leader(100 * LAMPORTS_PER_SOL, &Pubkey::new_unique(), 42);
     genesis_config.rent = Rent::default();
-    activate_all_features(&mut genesis_config);
+    add_all_feature_accounts(&mut genesis_config);
 
     let mock_program_id = Pubkey::new_unique();
     // small enough to not pay rent, thus bypassing the data clearing rent
@@ -10319,7 +10338,7 @@ fn test_resize_and_rent() {
         ..
     } = create_genesis_config_with_leader(1_000_000_000, &Pubkey::new_unique(), 42);
     genesis_config.rent = Rent::default();
-    activate_all_features(&mut genesis_config);
+    add_all_feature_accounts(&mut genesis_config);
 
     let mock_program_id = Pubkey::new_unique();
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
@@ -12378,7 +12397,12 @@ fn test_apply_builtin_program_feature_transitions_for_new_epoch() {
 
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.feature_set = Arc::new(FeatureSet::all_enabled());
-    bank.finish_init(&genesis_config, None, false);
+    bank.finish_init(
+        &genesis_config,
+        ApplyFeatureActivationsCaller::NewWithPaths,
+        None,
+        false,
+    );
 
     // Overwrite precompile accounts to simulate a cluster which already added precompiles.
     for precompile in get_precompiles() {
@@ -12408,21 +12432,24 @@ fn test_apply_builtin_program_feature_transitions_for_new_epoch() {
 }
 
 #[test]
-fn test_startup_from_snapshot_after_precompile_transition() {
-    let (genesis_config, _mint_keypair) = create_genesis_config(100_000);
+fn test_startup_from_snapshot_doesnt_apply_new_builtins() {
+    let GenesisConfigInfo { genesis_config, .. } = genesis_utils::create_genesis_config(100_000);
 
     let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.feature_set = Arc::new(FeatureSet::all_enabled());
-    bank.finish_init(&genesis_config, None, false);
-
-    // Overwrite precompile accounts to simulate a cluster which already added precompiles.
-    for precompile in get_precompiles() {
-        bank.store_account(&precompile.program_id, &AccountSharedData::default());
-        bank.add_precompiled_account(&precompile.program_id);
-    }
+    bank.finish_init(
+        &genesis_config,
+        ApplyFeatureActivationsCaller::NewWithPaths,
+        None,
+        false,
+    );
 
     bank.freeze();
 
     // Simulate starting up from snapshot finishing the initialization for a frozen bank
-    bank.finish_init(&genesis_config, None, false);
+    bank.finish_init(
+        &genesis_config,
+        ApplyFeatureActivationsCaller::NewFromFields,
+        None,
+        false,
+    );
 }

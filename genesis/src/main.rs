@@ -749,7 +749,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     }
 
     solana_stake_program::add_genesis_accounts(&mut genesis_config);
-    solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
+    solana_runtime::genesis_utils::add_all_feature_accounts(&mut genesis_config);
     if !features_to_deactivate.is_empty() {
         solana_runtime::genesis_utils::deactivate_features(
             &mut genesis_config,

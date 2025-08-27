@@ -638,7 +638,7 @@ mod tests {
             bank_forks::BankForks,
             commitment::{BlockCommitmentCache, CommitmentSlots},
             genesis_utils::{
-                activate_all_features, create_genesis_config,
+                add_all_feature_accounts, create_genesis_config,
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
         },
@@ -871,7 +871,7 @@ mod tests {
             ..
         } = create_genesis_config(10_000_000_000);
         genesis_config.rent = Rent::default();
-        activate_all_features(&mut genesis_config);
+        add_all_feature_accounts(&mut genesis_config);
 
         let validator = Keypair::new();
         let voter = Keypair::new();

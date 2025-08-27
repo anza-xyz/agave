@@ -4,7 +4,7 @@ mod tests {
         crate::{
             bank::{test_utils as bank_test_utils, Bank},
             epoch_stakes::{EpochAuthorizedVoters, NodeIdToVoteAccounts, VersionedEpochStakes},
-            genesis_utils::activate_all_features,
+            genesis_utils::add_all_feature_accounts,
             runtime_config::RuntimeConfig,
             serde_snapshot::{self, ExtraFieldsToSerialize, SnapshotStreams},
             snapshot_bank_utils,
@@ -266,7 +266,7 @@ mod tests {
         solana_logger::setup();
 
         let (mut genesis_config, _) = create_genesis_config(500);
-        activate_all_features(&mut genesis_config);
+        add_all_feature_accounts(&mut genesis_config);
 
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);

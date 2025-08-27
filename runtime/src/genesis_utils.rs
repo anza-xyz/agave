@@ -220,19 +220,19 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
     }
 }
 
-pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
-    do_activate_all_features::<true>(genesis_config);
+pub fn add_all_feature_accounts_alpenglow(genesis_config: &mut GenesisConfig) {
+    mark_all_features_pending::<true>(genesis_config);
 }
 
-pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
-    do_activate_all_features::<false>(genesis_config);
+pub fn add_all_feature_accounts(genesis_config: &mut GenesisConfig) {
+    mark_all_features_pending::<false>(genesis_config);
 }
 
-fn do_activate_all_features<const IS_ALPENGLOW: bool>(genesis_config: &mut GenesisConfig) {
+fn mark_all_features_pending<const IS_ALPENGLOW: bool>(genesis_config: &mut GenesisConfig) {
     // Activate all features at genesis in development mode
     for feature_id in FeatureSet::default().inactive() {
         if IS_ALPENGLOW || *feature_id != agave_feature_set::alpenglow::id() {
-            activate_feature(genesis_config, *feature_id);
+            mark_feature_pending(genesis_config, *feature_id);
         }
     }
 }
@@ -252,6 +252,18 @@ pub fn deactivate_features(
             );
         }
     }
+}
+
+// By marking a feature as pending, it will be handled as a newly
+// activated feature when processing feature activations.
+pub fn mark_feature_pending(genesis_config: &mut GenesisConfig, feature_id: Pubkey) {
+    genesis_config.accounts.insert(
+        feature_id,
+        Account::from(feature::create_account(
+            &Feature { activated_at: None },
+            std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1),
+        )),
+    );
 }
 
 pub fn activate_feature(genesis_config: &mut GenesisConfig, feature_id: Pubkey) {
@@ -364,7 +376,7 @@ pub fn create_genesis_config_with_leader_ex(
     );
 
     if genesis_config.cluster_type == ClusterType::Development {
-        activate_all_features(&mut genesis_config);
+        add_all_feature_accounts(&mut genesis_config);
     }
 
     genesis_config

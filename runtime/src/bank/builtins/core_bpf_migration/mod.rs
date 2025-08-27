@@ -404,7 +404,7 @@ pub(crate) mod tests {
                 create_genesis_config, create_simple_test_bank,
                 new_bank_from_parent_with_bank_forks,
             },
-            Bank,
+            ApplyFeatureActivationsCaller, Bank,
         },
         agave_feature_set::FeatureSet,
         assert_matches::assert_matches,
@@ -1452,7 +1452,12 @@ pub(crate) mod tests {
             .write()
             .unwrap()
             .clear();
-        bank.finish_init(&genesis_config, None, false);
+        bank.finish_init(
+            &genesis_config,
+            ApplyFeatureActivationsCaller::NewFromFields,
+            None,
+            false,
+        );
 
         // Assert the feature is active and the bank still added the builtin.
         assert!(bank.feature_set.is_active(feature_id));
@@ -1621,7 +1626,12 @@ pub(crate) mod tests {
             .write()
             .unwrap()
             .clear();
-        bank.finish_init(&genesis_config, None, false);
+        bank.finish_init(
+            &genesis_config,
+            crate::bank::ApplyFeatureActivationsCaller::NewFromFields,
+            None,
+            false,
+        );
 
         check_builtin_is_bpf(&bank);
     }
