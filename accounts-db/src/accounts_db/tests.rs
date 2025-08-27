@@ -18,7 +18,6 @@ use {
     },
     solana_lattice_hash::lt_hash::Checksum as LtHashChecksum,
     solana_pubkey::PUBKEY_BYTES,
-    solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
         iter::{self, FromIterator},
         ops::Range,
@@ -6018,53 +6017,6 @@ pub(crate) fn remove_account_for_tests(storage: &AccountStorageEntry, num_bytes:
     storage.remove_accounts(num_bytes, 1);
 }
 
-pub(crate) fn create_storages_and_update_index_with_customized_account_size_per_slot(
-    db: &AccountsDb,
-    tf: Option<&TempFile>,
-    starting_slot: Slot,
-    num_slots: usize,
-    alive: bool,
-    account_data_sizes: Vec<u64>,
-) {
-    if num_slots == 0 {
-        return;
-    }
-    assert!(account_data_sizes.len() == num_slots);
-    let local_tf = (tf.is_none()).then(|| {
-        crate::append_vec::test_utils::get_append_vec_path("create_storages_and_update_index")
-    });
-    let tf = tf.unwrap_or_else(|| local_tf.as_ref().unwrap());
-
-    let starting_id = db
-        .storage
-        .iter()
-        .map(|storage| storage.1.id())
-        .max()
-        .unwrap_or(999);
-    for (i, account_data_size) in account_data_sizes.iter().enumerate().take(num_slots) {
-        let id = starting_id + (i as AccountsFileId);
-        let pubkey1 = solana_pubkey::new_rand();
-        let storage = sample_storage_with_entries_id_fill_percentage(
-            tf,
-            starting_slot + (i as Slot),
-            &pubkey1,
-            id,
-            alive,
-            Some(*account_data_size),
-            50,
-        );
-        insert_store(db, Arc::clone(&storage));
-    }
-
-    let storage = db.get_storage_for_slot(starting_slot).unwrap();
-    let created_accounts = db.get_unique_accounts_from_storage(&storage);
-    assert_eq!(created_accounts.stored_accounts.len(), 1);
-
-    if alive {
-        populate_index(db, starting_slot..(starting_slot + (num_slots as Slot) + 1));
-    }
-}
-
 pub(crate) fn create_storages_and_update_index(
     db: &AccountsDb,
     tf: Option<&TempFile>,
@@ -6127,34 +6079,6 @@ pub(crate) fn create_db_with_storages_and_index(
 
     let slot1 = 1;
     create_storages_and_update_index(&db, None, slot1, num_slots, alive, account_data_size);
-
-    let slot1 = slot1 as Slot;
-    (db, slot1)
-}
-
-pub(crate) fn create_db_with_storages_and_index_with_customized_account_size_per_slot(
-    alive: bool,
-    num_slots: usize,
-    account_data_size: Vec<u64>,
-) -> (AccountsDb, Slot) {
-    solana_logger::setup();
-
-    let db = AccountsDb::new_single_for_tests();
-
-    // create a single append vec with a single account in a slot
-    // add the pubkey to index if alive
-    // call combine_ancient_slots with the slot
-    // verify we create an ancient appendvec that has alive accounts and does not have dead accounts
-
-    let slot1 = 1;
-    create_storages_and_update_index_with_customized_account_size_per_slot(
-        &db,
-        None,
-        slot1,
-        num_slots,
-        alive,
-        account_data_size,
-    );
 
     let slot1 = slot1 as Slot;
     (db, slot1)
