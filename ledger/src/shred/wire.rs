@@ -172,11 +172,13 @@ pub(crate) fn get_data(shred: &[u8]) -> Result<&[u8], Error> {
     }
 }
 
-/// Returns the ErasureConfig specified by the coding shred
-/// Caller must verify that the shred is a coding shred
+/// Returns the ErasureConfig specified by the coding shred, or an Error if
+/// the shred is a data shred
 #[inline]
 pub(crate) fn get_erasure_config(shred: &[u8]) -> Result<ErasureConfig, Error> {
-    debug_assert_eq!(get_shred_type(shred).unwrap(), ShredType::Code);
+    if !matches!(get_shred_type(shred).unwrap(), ShredType::Code) {
+        return Err(Error::InvalidShredType);
+    }
     let Some(num_data_bytes) = shred.get(83..83 + 2) else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
