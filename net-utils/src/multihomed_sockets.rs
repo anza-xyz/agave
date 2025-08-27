@@ -163,10 +163,10 @@ pub struct EgressSocketSelect {
 
 #[cfg(feature = "agave-unstable-api")]
 impl EgressSocketSelect {
-    pub fn new(num_sockets: usize) -> Self {
+    pub fn new(num_retransmit_sockets: usize) -> Self {
         Self {
             tvu_retransmit_active_offset: AtomicUsize::new(0),
-            num_tvu_retransmit_sockets: num_sockets,
+            num_tvu_retransmit_sockets: num_retransmit_sockets,
         }
     }
 
@@ -177,11 +177,7 @@ impl EgressSocketSelect {
         );
     }
 
-    pub fn active_offset(&self) -> usize {
+    pub fn active_retransmit_offset(&self) -> usize {
         self.tvu_retransmit_active_offset.load(Ordering::Acquire)
-    }
-
-    pub fn num_retransmit_sockets_per_interface(&self) -> usize {
-        self.num_tvu_retransmit_sockets
     }
 }
