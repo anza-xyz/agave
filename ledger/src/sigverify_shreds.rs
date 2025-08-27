@@ -1,6 +1,6 @@
 #![allow(clippy::implicit_hasher)]
 use {
-    crate::shred::{self, SignedData, SIZE_OF_MERKLE_ROOT},
+    crate::shred::{self, SIZE_OF_MERKLE_ROOT},
     itertools::{izip, Itertools},
     rayon::{prelude::*, ThreadPool},
     solana_clock::Slot,
@@ -67,18 +67,15 @@ pub fn verify_shred_cpu(
     let Some(data) = shred::layout::get_signed_data(shred) else {
         return false;
     };
-    match data {
-        SignedData::MerkleRoot(root) => {
-            let key = (signature, *pubkey, root);
-            if cache.read().unwrap().get(&key).is_some() {
-                true
-            } else if key.0.verify(key.1.as_ref(), key.2.as_ref()) {
-                cache.write().unwrap().put(key, ());
-                true
-            } else {
-                false
-            }
-        }
+
+    let key = (signature, *pubkey, data);
+    if cache.read().unwrap().get(&key).is_some() {
+        true
+    } else if key.0.verify(key.1.as_ref(), key.2.as_ref()) {
+        cache.write().unwrap().put(key, ());
+        true
+    } else {
+        false
     }
 }
 

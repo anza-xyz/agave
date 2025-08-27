@@ -18,7 +18,8 @@ mod serde_snapshot_tests {
             account_storage_reader::AccountStorageReader,
             accounts::Accounts,
             accounts_db::{
-                get_temp_accounts_paths, AccountStorageEntry, AccountsDb, AtomicAccountsFileId,
+                get_temp_accounts_paths, AccountStorageEntry, AccountsDb, AccountsDbConfig,
+                AtomicAccountsFileId, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             ancestors::Ancestors,
@@ -38,7 +39,7 @@ mod serde_snapshot_tests {
             },
         },
         tempfile::TempDir,
-        test_case::test_case,
+        test_case::{test_case, test_matrix},
     };
 
     fn linear_ancestors(end_slot: u64) -> Ancestors {
@@ -287,12 +288,25 @@ mod serde_snapshot_tests {
             .is_none());
     }
 
-    #[test_case(StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_accounts_db_serialize1(storage_access: StorageAccess) {
+    #[test_matrix(
+        [StorageAccess::File, StorageAccess::Mmap],
+        [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled]
+    )]
+    fn test_accounts_db_serialize1(
+        storage_access: StorageAccess,
+        mark_obsolete_accounts: MarkObsoleteAccounts,
+    ) {
         for pass in 0..2 {
             solana_logger::setup();
-            let accounts = AccountsDb::new_single_for_tests();
+            let accounts = AccountsDb::new_with_config(
+                Vec::new(),
+                Some(AccountsDbConfig {
+                    mark_obsolete_accounts,
+                    ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+                }),
+                None,
+                Arc::default(),
+            );
             let mut pubkeys: Vec<Pubkey> = vec![];
 
             // Create 100 accounts in slot 0
@@ -375,8 +389,16 @@ mod serde_snapshot_tests {
             // Don't check the first 35 accounts which have not been modified on slot 0
             daccounts.check_accounts(&pubkeys[35..], 0, 65, 37);
             daccounts.check_accounts(&pubkeys1, 1, 10, 1);
-            daccounts.check_storage(0, 100, 100);
-            daccounts.check_storage(1, 21, 21);
+
+            // With accounts marked obsolete in the storages, storages are shrunk when saved
+            if mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
+                daccounts.check_storage(0, 78, 78);
+                daccounts.check_storage(1, 11, 11);
+            } else {
+                daccounts.check_storage(0, 100, 100);
+                daccounts.check_storage(1, 21, 21);
+            }
+
             daccounts.check_storage(2, 31, 31);
 
             assert_eq!(

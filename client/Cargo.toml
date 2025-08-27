@@ -51,6 +51,7 @@ solana-transaction-status-client-types = { workspace = true }
 solana-udp-client = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true }
 
 [dev-dependencies]
 crossbeam-channel = { workspace = true }
