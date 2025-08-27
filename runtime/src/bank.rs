@@ -4130,7 +4130,7 @@ impl Bank {
             }
         }
 
-        let simd_0296_active = self
+        let simd_0268_active = self
             .feature_set
             .is_active(&raise_cpi_nesting_limit_to_8::id());
 
@@ -4141,7 +4141,7 @@ impl Bank {
                         &self.feature_set.runtime_features(),
                         &self
                             .compute_budget()
-                            .unwrap_or(ComputeBudget::new_with_defaults(simd_0296_active))
+                            .unwrap_or(ComputeBudget::new_with_defaults(simd_0268_active))
                             .to_budget(),
                         false, /* deployment */
                         false, /* debugging_features */
@@ -4151,7 +4151,7 @@ impl Bank {
                 Some(Arc::new(create_program_runtime_environment_v2(
                     &self
                         .compute_budget()
-                        .unwrap_or(ComputeBudget::new_with_defaults(simd_0296_active))
+                        .unwrap_or(ComputeBudget::new_with_defaults(simd_0268_active))
                         .to_budget(),
                     false, /* debugging_features */
                 ))),
