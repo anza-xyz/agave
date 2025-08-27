@@ -97,7 +97,7 @@ solana-signer = "=3.0.0"
 solana-streamer = { workspace = true }
 solana-time-utils = "=3.0.0"
 solana-tpu-client = { workspace = true }
-solana-transaction = "=3.0.0"
+solana-transaction = "=3.0.1"
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
