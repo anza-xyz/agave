@@ -514,6 +514,7 @@ mod serde_snapshot_tests {
             let accounts =
                 reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access);
             accounts.print_accounts_stats("after_reconstruct");
+            accounts.set_latest_full_snapshot_slot(0);
             accounts.clean_accounts_for_tests();
             reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access)
         });
@@ -579,6 +580,7 @@ mod serde_snapshot_tests {
         accounts.print_count_and_status("before reconstruct");
         let accounts =
             reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access);
+        accounts.set_latest_full_snapshot_slot(0);
         accounts.print_count_and_status("before purge zero");
         accounts.clean_accounts_for_tests();
         accounts.print_count_and_status("after purge zero");
@@ -610,6 +612,8 @@ mod serde_snapshot_tests {
 
         let mut current_slot = 0;
         let accounts = AccountsDb::new_single_for_tests();
+
+        accounts.set_latest_full_snapshot_slot(0);
 
         // A: Initialize AccountsDb with pubkey1 and pubkey2
         current_slot += 1;
@@ -682,6 +686,9 @@ mod serde_snapshot_tests {
         accounts.clean_accounts_for_tests();
         let accounts =
             reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access);
+
+        // Set snapshot to zero to avoid cleaning zero-lamport pubkey1
+        accounts.set_latest_full_snapshot_slot(0);
         accounts.clean_accounts_for_tests();
 
         info!("pubkey: {pubkey1}");
@@ -697,6 +704,9 @@ mod serde_snapshot_tests {
 
         // Do clean
         accounts.flush_root_write_cache(current_slot);
+
+        // Make zero-lamport pubkey1 cleanable by setting the latest snapshot slot
+        accounts.set_latest_full_snapshot_slot(current_slot);
         accounts.clean_accounts_for_tests();
 
         // 2nd clean needed to clean-up pubkey1

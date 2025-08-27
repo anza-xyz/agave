@@ -40,7 +40,6 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::remove_dir_contents,
     },
-    solana_builtins::prototype::BuiltinPrototype,
     solana_clock::{Epoch, Slot},
     solana_genesis_config::GenesisConfig,
     solana_measure::{measure::Measure, measure_time},
@@ -135,7 +134,6 @@ pub fn bank_from_snapshot_archives(
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
@@ -199,7 +197,6 @@ pub fn bank_from_snapshot_archives(
         account_paths,
         storage_and_next_append_vec_id,
         debug_keys,
-        additional_builtins,
         limit_load_slot_count_from_snapshot,
         verify_index,
         accounts_db_config,
@@ -245,7 +242,7 @@ pub fn bank_from_snapshot_archives(
         accounts_db_skip_shrink || !full_snapshot_archive_info.is_remote(),
         accounts_db_force_initial_clean,
         full_snapshot_archive_info.slot(),
-        info.duplicates_lt_hash,
+        Some(&info.calculated_accounts_lt_hash),
     ) && limit_load_slot_count_from_snapshot.is_none()
     {
         panic!("Snapshot bank for slot {} failed to verify", bank.slot());
@@ -283,7 +280,6 @@ pub fn bank_from_latest_snapshot_archives(
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
@@ -314,7 +310,6 @@ pub fn bank_from_latest_snapshot_archives(
         genesis_config,
         runtime_config,
         debug_keys,
-        additional_builtins,
         limit_load_slot_count_from_snapshot,
         accounts_db_skip_shrink,
         accounts_db_force_initial_clean,
@@ -339,7 +334,6 @@ pub fn bank_from_snapshot_dir(
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: Option<AccountsDbConfig>,
@@ -382,7 +376,7 @@ pub fn bank_from_snapshot_dir(
     };
     let snapshot_bank_fields = SnapshotBankFields::new(bank_fields, None);
     let snapshot_accounts_db_fields = SnapshotAccountsDbFields::new(accounts_db_fields, None);
-    let ((bank, _info), measure_rebuild_bank) = measure_time!(
+    let ((bank, info), measure_rebuild_bank) = measure_time!(
         reconstruct_bank_from_fields(
             snapshot_bank_fields,
             snapshot_accounts_db_fields,
@@ -391,7 +385,6 @@ pub fn bank_from_snapshot_dir(
             account_paths,
             storage_and_next_append_vec_id,
             debug_keys,
-            additional_builtins,
             limit_load_slot_count_from_snapshot,
             verify_index,
             accounts_db_config,
@@ -417,8 +410,15 @@ pub fn bank_from_snapshot_dir(
 
     bank.status_cache.write().unwrap().append(&slot_deltas);
 
-    // We trust our local state, so skip the startup accounts verification.
-    bank.set_initial_accounts_hash_verification_completed();
+    if !bank.verify_snapshot_bank(
+        true,
+        false,
+        0, // since force_clean is false, this value is unused
+        Some(&info.calculated_accounts_lt_hash),
+    ) && limit_load_slot_count_from_snapshot.is_none()
+    {
+        panic!("Snapshot bank for slot {} failed to verify", bank.slot());
+    }
 
     datapoint_info!(
         "bank_from_snapshot_dir",
@@ -436,7 +436,6 @@ pub fn bank_from_latest_snapshot_dir(
     runtime_config: &RuntimeConfig,
     account_paths: &[PathBuf],
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: Option<AccountsDbConfig>,
@@ -452,7 +451,6 @@ pub fn bank_from_latest_snapshot_dir(
         genesis_config,
         runtime_config,
         debug_keys,
-        additional_builtins,
         limit_load_slot_count_from_snapshot,
         verify_index,
         accounts_db_config,
@@ -938,7 +936,6 @@ mod tests {
             &RuntimeConfig::default(),
             None,
             None,
-            None,
             false,
             false,
             false,
@@ -1036,7 +1033,6 @@ mod tests {
             None,
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -1137,7 +1133,6 @@ mod tests {
             None,
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -1258,7 +1253,6 @@ mod tests {
             &RuntimeConfig::default(),
             None,
             None,
-            None,
             false,
             false,
             false,
@@ -1365,7 +1359,6 @@ mod tests {
             &[accounts_dir],
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -1497,7 +1490,6 @@ mod tests {
             &RuntimeConfig::default(),
             None,
             None,
-            None,
             false,
             false,
             false,
@@ -1554,7 +1546,6 @@ mod tests {
             Some(&incremental_snapshot_archive_info),
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -1931,7 +1922,6 @@ mod tests {
             &RuntimeConfig::default(),
             None,
             None,
-            None,
             false,
             false,
             false,
@@ -1968,7 +1958,6 @@ mod tests {
             &bank_snapshot,
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -2012,7 +2001,6 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             account_paths,
-            None,
             None,
             None,
             false,

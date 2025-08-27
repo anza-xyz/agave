@@ -484,12 +484,12 @@ pub enum ScanStorageResult<R, B> {
     Stored(B),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct IndexGenerationInfo {
     pub accounts_data_len: u64,
-    /// The lt hash of the old/duplicate accounts identified during index generation.
-    /// Will be used when verifying the accounts lt hash, after rebuilding a Bank.
-    pub duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+    /// The accounts lt hash calculated during index generation.
+    /// Will be used when verifying accounts, after rebuilding a Bank.
+    pub calculated_accounts_lt_hash: AccountsLtHash,
 }
 
 #[derive(Debug, Default)]
@@ -505,6 +505,8 @@ struct SlotIndexGenerationInfo {
     num_existed_in_mem: u64,
     /// Number of accounts in this slot that already existed, and were on-disk
     num_existed_on_disk: u64,
+    /// The accounts lt hash *of only this slot*
+    slot_lt_hash: SlotLtHash,
 }
 
 /// The lt hash of old/duplicate accounts
@@ -517,6 +519,16 @@ struct SlotIndexGenerationInfo {
 pub struct DuplicatesLtHash(pub LtHash);
 
 impl Default for DuplicatesLtHash {
+    fn default() -> Self {
+        Self(LtHash::identity())
+    }
+}
+
+/// The lt hash of accounts in a single slot
+#[derive(Debug)]
+struct SlotLtHash(pub LtHash);
+
+impl Default for SlotLtHash {
     fn default() -> Self {
         Self(LtHash::identity())
     }
@@ -6617,12 +6629,12 @@ impl AccountsDb {
         if storage.accounts.get_account_data_lens(&[0]).is_empty() {
             return SlotIndexGenerationInfo::default();
         }
-        let secondary = !self.account_indexes.is_empty();
 
         let mut accounts_data_len = 0;
         let mut stored_size_alive = 0;
         let mut zero_lamport_pubkeys = vec![];
         let mut all_accounts_are_zero_lamports = true;
+        let mut slot_lt_hash = SlotLtHash::default();
 
         let (insert_time_us, generate_index_results) = {
             let mut keyed_account_infos = vec![];
@@ -6645,9 +6657,9 @@ impl AccountsDb {
                 ));
             };
 
-            if secondary {
-                // WITH secondary indexes -- scan accounts WITH account data
-                storage.accounts.scan_accounts(reader, |offset, account| {
+            storage
+                .accounts
+                .scan_accounts(reader, |offset, account| {
                     let data_len = account.data.len() as u64;
                     let stored_size_aligned =
                         storage.accounts.calculate_stored_size(data_len as usize);
@@ -6661,33 +6673,18 @@ impl AccountsDb {
                         },
                     };
                     itemizer(info);
-                    self.accounts_index.update_secondary_indexes(
-                        account.pubkey,
-                        &account,
-                        &self.account_indexes,
-                    );
+                    if !self.account_indexes.is_empty() {
+                        self.accounts_index.update_secondary_indexes(
+                            account.pubkey,
+                            &account,
+                            &self.account_indexes,
+                        );
+                    }
+
+                    let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
+                    slot_lt_hash.0.mix_in(&account_lt_hash.0);
                 })
-            } else {
-                // withOUT secondary indexes -- scan accounts withOUT account data
-                storage
-                    .accounts
-                    .scan_accounts_without_data(|offset, account| {
-                        let data_len = account.data_len as u64;
-                        let stored_size_aligned =
-                            storage.accounts.calculate_stored_size(data_len as usize);
-                        let info = IndexInfo {
-                            stored_size_aligned,
-                            index_info: IndexInfoInner {
-                                offset,
-                                pubkey: *account.pubkey,
-                                lamports: account.lamports,
-                                data_len,
-                            },
-                        };
-                        itemizer(info);
-                    })
-            }
-            .expect("must scan accounts storage");
+                .expect("must scan accounts storage");
             self.accounts_index
                 .insert_new_if_missing_into_primary_index(slot, keyed_account_infos)
         };
@@ -6727,6 +6724,7 @@ impl AccountsDb {
             num_did_not_exist: generate_index_results.num_did_not_exist,
             num_existed_in_mem: generate_index_results.num_existed_in_mem,
             num_existed_on_disk: generate_index_results.num_existed_on_disk,
+            slot_lt_hash,
         }
     }
 
@@ -6745,7 +6743,7 @@ impl AccountsDb {
         let accounts_data_len = AtomicU64::new(0);
 
         let zero_lamport_pubkeys = Mutex::new(HashSet::new());
-        let mut outer_duplicates_lt_hash = None;
+        let total_lt_hash = Mutex::new(LtHash::identity());
 
         // pass == 0 always runs and generates the index
         // pass == 1 only runs if verify == true.
@@ -6785,6 +6783,7 @@ impl AccountsDb {
                     let mut local_num_did_not_exist = 0;
                     let mut local_num_existed_in_mem = 0;
                     let mut local_num_existed_on_disk = 0;
+                    let mut local_lt_hash = LtHash::identity();
                     for (index, storage) in storages.iter().enumerate() {
                         let mut scan_time = Measure::start("scan");
                         log_status.report(index as u64);
@@ -6806,6 +6805,7 @@ impl AccountsDb {
                                 num_did_not_exist,
                                 num_existed_in_mem,
                                 num_existed_on_disk,
+                                slot_lt_hash,
                             } = self.generate_index_for_slot(
                                 &mut reader,
                                 storage,
@@ -6824,6 +6824,7 @@ impl AccountsDb {
                                 all_zeros_slots_inner.push((slot, Arc::clone(storage)));
                             }
                             local_zero_lamport_pubkeys.append(&mut zero_lamport_pubkeys_this_slot);
+                            local_lt_hash.mix_in(&slot_lt_hash.0);
 
                             insert_us
                         } else {
@@ -6861,6 +6862,8 @@ impl AccountsDb {
                         zero_lamport_pubkeys_lock.reserve(local_zero_lamport_pubkeys.len());
                         zero_lamport_pubkeys_lock.extend(local_zero_lamport_pubkeys.into_iter());
                         drop(zero_lamport_pubkeys_lock);
+
+                        total_lt_hash.lock().unwrap().mix_in(&local_lt_hash);
 
                         // This thread has finished processing its chunk of slots.
                         // Update the index stats now.
@@ -6970,37 +6973,16 @@ impl AccountsDb {
                 struct DuplicatePubkeysVisitedInfo {
                     accounts_data_len_from_duplicates: u64,
                     num_duplicate_accounts: u64,
-                    duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+                    duplicates_lt_hash: Box<DuplicatesLtHash>,
                 }
                 impl DuplicatePubkeysVisitedInfo {
                     fn reduce(mut self, other: Self) -> Self {
                         self.accounts_data_len_from_duplicates +=
                             other.accounts_data_len_from_duplicates;
                         self.num_duplicate_accounts += other.num_duplicate_accounts;
-
-                        match (
-                            self.duplicates_lt_hash.is_some(),
-                            other.duplicates_lt_hash.is_some(),
-                        ) {
-                            (true, true) => {
-                                // SAFETY: We just checked that both values are Some
-                                self.duplicates_lt_hash
-                                    .as_mut()
-                                    .unwrap()
-                                    .0
-                                    .mix_in(&other.duplicates_lt_hash.as_ref().unwrap().0);
-                            }
-                            (true, false) => {
-                                // nothing to do; `other` doesn't have a duplicates lt hash
-                            }
-                            (false, true) => {
-                                // `self` doesn't have a duplicates lt hash, so pilfer from `other`
-                                self.duplicates_lt_hash = other.duplicates_lt_hash;
-                            }
-                            (false, false) => {
-                                // nothing to do; no duplicates lt hash at all
-                            }
-                        }
+                        self.duplicates_lt_hash
+                            .0
+                            .mix_in(&other.duplicates_lt_hash.0);
                         self
                     }
                 }
@@ -7056,11 +7038,8 @@ impl AccountsDb {
                 timings.accounts_data_len_dedup_time_us = accounts_data_len_dedup_timer.as_us();
                 timings.num_duplicate_accounts = num_duplicate_accounts;
 
+                total_lt_hash.lock().unwrap().mix_out(&duplicates_lt_hash.0);
                 accounts_data_len.fetch_sub(accounts_data_len_from_duplicates, Ordering::Relaxed);
-                if let Some(duplicates_lt_hash) = duplicates_lt_hash {
-                    let old_val = outer_duplicates_lt_hash.replace(duplicates_lt_hash);
-                    assert!(old_val.is_none());
-                }
                 info!(
                     "accounts data len: {}",
                     accounts_data_len.load(Ordering::Relaxed)
@@ -7113,18 +7092,9 @@ impl AccountsDb {
 
         self.accounts_index.log_secondary_indexes();
 
-        // The duplicates lt hash must be Some if populate_duplicates_lt_hash is true.
-        // But, if there were no duplicates or obsolete accounts marking removed all
-        // duplicates, then we'd never set outer_duplicates_lt_hash to Some! So do one
-        // last check here to ensure outer_duplicates_lt_hash is Some if we're supposed
-        // to calculate the duplicates lt hash.
-        if outer_duplicates_lt_hash.is_none() {
-            outer_duplicates_lt_hash = Some(Box::new(DuplicatesLtHash::default()));
-        }
-
         IndexGenerationInfo {
             accounts_data_len: accounts_data_len.load(Ordering::Relaxed),
-            duplicates_lt_hash: outer_duplicates_lt_hash,
+            calculated_accounts_lt_hash: AccountsLtHash(total_lt_hash.into_inner().unwrap()),
         }
     }
 
@@ -7236,15 +7206,10 @@ impl AccountsDb {
         &self,
         pubkeys: &[Pubkey],
         timings: &GenerateIndexTimings,
-    ) -> (u64, u64, Option<Box<DuplicatesLtHash>>) {
+    ) -> (u64, u64, Box<DuplicatesLtHash>) {
         let mut accounts_data_len_from_duplicates = 0;
         let mut num_duplicate_accounts = 0_u64;
-        // With obsolete accounts, the duplicates_lt_hash should NOT be created.
-        // And skip calculating the lt_hash from accounts too.
-        let mut duplicates_lt_hash = match self.mark_obsolete_accounts {
-            MarkObsoleteAccounts::Disabled => Some(Box::new(DuplicatesLtHash::default())),
-            MarkObsoleteAccounts::Enabled => None,
-        };
+        let mut duplicates_lt_hash = Box::new(DuplicatesLtHash::default());
         let mut lt_hash_time = Duration::default();
         self.accounts_index.scan(
             pubkeys.iter(),
@@ -7274,14 +7239,12 @@ impl AccountsDb {
                                     accounts_data_len_from_duplicates += data_len;
                                 }
                                 num_duplicate_accounts += 1;
-                                if let Some(duplicates_lt_hash) = duplicates_lt_hash.as_mut() {
-                                    let (_, duration) = meas_dur!({
-                                        let account_lt_hash =
-                                            Self::lt_hash_account(&loaded_account, pubkey);
-                                        duplicates_lt_hash.0.mix_in(&account_lt_hash.0);
-                                    });
-                                    lt_hash_time += duration;
-                                }
+                                let (_, duration) = meas_dur!({
+                                    let account_lt_hash =
+                                        Self::lt_hash_account(&loaded_account, pubkey);
+                                    duplicates_lt_hash.0.mix_in(&account_lt_hash.0);
+                                });
+                                lt_hash_time += duration;
                             });
                         });
                     }
