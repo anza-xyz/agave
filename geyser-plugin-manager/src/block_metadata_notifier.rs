@@ -103,6 +103,7 @@ impl BlockMetadataNotifierImpl {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_replica_block_info<'a>(
         parent_slot: u64,
         parent_blockhash: &'a str,
