@@ -1108,7 +1108,7 @@ async fn handle_connection(
                 max_streams_per_second,
             } => {
                 let interval_ms = STREAM_THROTTLING_INTERVAL.as_millis() as u64;
-                max_streams_per_second * interval_ms / 1000
+                (max_streams_per_second * interval_ms / 1000).max(1)
             }
         };
 
