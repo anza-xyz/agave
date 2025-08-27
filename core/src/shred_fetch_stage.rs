@@ -79,18 +79,33 @@ impl ShredFetchStage {
         const STATS_SUBMIT_CADENCE: Duration = Duration::from_secs(1);
         let mut last_updated = Instant::now();
         let mut keypair = repair_context.as_ref().copied().map(RepairContext::keypair);
+        let (
+            mut last_root,
+            mut slots_per_epoch,
+            mut feature_set,
+            mut epoch_schedule,
+            mut last_slot,
+        ) = {
+            let root_bank = sharable_banks.root();
+            (
+                root_bank.slot(),
+                root_bank.get_slots_in_epoch(root_bank.epoch()),
+                root_bank.feature_set.clone(),
+                root_bank.epoch_schedule().clone(),
+                sharable_banks.working().slot(),
+            )
+        };
         let mut stats = ShredFetchStats::default();
 
         for mut packet_batch in recvr {
-            let root_bank = sharable_banks.root();
-            let feature_set = root_bank.feature_set.clone();
-            let epoch_schedule = root_bank.epoch_schedule().clone();
-            let last_root = root_bank.slot();
-            let slots_per_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
-            let last_slot = sharable_banks.working().slot();
-
             if last_updated.elapsed().as_millis() as u64 > DEFAULT_MS_PER_SLOT {
                 last_updated = Instant::now();
+                last_slot = sharable_banks.working().slot();
+                let root_bank = sharable_banks.root();
+                feature_set = root_bank.feature_set.clone();
+                epoch_schedule = root_bank.epoch_schedule().clone();
+                last_root = root_bank.slot();
+                slots_per_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
                 keypair = repair_context.as_ref().copied().map(RepairContext::keypair);
             }
             stats.shred_count += packet_batch.len();
