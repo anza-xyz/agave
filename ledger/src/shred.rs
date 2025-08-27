@@ -66,7 +66,6 @@ use {
     self::{shred_code::ShredCode, traits::Shred as _},
     crate::{
         blockstore::{self},
-        blockstore_meta::ErasureMeta,
     },
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
@@ -843,7 +842,7 @@ where
                 return true;
             };
             if shred_flags.contains(ShredFlags::LAST_SHRED_IN_SLOT)
-                && !ErasureMeta::check_last_data_shred_index(index)
+                && !check_last_data_shred_index(index)
             {
                 stats.bad_last_data_index += 1;
                 if enforce_fixed_fec_set(slot) {
@@ -853,7 +852,7 @@ where
         }
     }
 
-    if !ErasureMeta::check_fixed_fec_set(index, fec_set_index) {
+    if !check_fixed_fec_set(index, fec_set_index) {
         stats.bad_fec_set_size += 1;
         if enforce_fixed_fec_set(slot) {
             return true;
@@ -875,6 +874,27 @@ where
         }
     }
     false
+}
+
+/// Returns true if `index` and `fec_set_index` are valid under the assumption that
+/// all erasure sets contain exactly `DATA_SHREDS_PER_FEC_BLOCK` data and coding shreds:
+/// - `index` is between `fec_set_index` and `fec_set_index + DATA_SHREDS_PER_FEC_BLOCK`
+/// - `fec_set_index` is a multiple of `DATA_SHREDS_PER_FEC_BLOCK`
+fn check_fixed_fec_set(index: u32, fec_set_index: u32) -> bool {
+    index >= fec_set_index
+        && index < fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32
+        && fec_set_index % DATA_SHREDS_PER_FEC_BLOCK as u32 == 0
+}
+
+/// Returns true if `index` of the last data shred is valid under the assumption that
+/// all erasure sets contain exactly `DATA_SHREDS_PER_FEC_BLOCK` data and coding shreds:
+/// - `index + 1` must be a multiple of `DATA_SHREDS_PER_FEC_BLOCK`
+///
+/// Note: this check is critical to verify that the last fec set is sufficiently sized.
+/// This currently is checked post insert in `Blockstore::check_last_fec_set`, but in the
+/// future it can be solely checked during ingest
+fn check_last_data_shred_index(index: u32) -> bool {
+    (index + 1) % (DATA_SHREDS_PER_FEC_BLOCK as u32) == 0
 }
 
 pub fn max_ticks_per_n_shreds(num_shreds: u64, shred_data_size: Option<usize>) -> u64 {

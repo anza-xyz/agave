@@ -716,27 +716,6 @@ impl ErasureMeta {
         coding_shred.check_coding_shred(shred2)
     }
 
-    /// Returns true if `index` and `fec_set_index` are valid under the assumption that
-    /// all erasure sets contain exactly `DATA_SHREDS_PER_FEC_BLOCK` data and coding shreds:
-    /// - `index` is between `fec_set_index` and `fec_set_index + DATA_SHREDS_PER_FEC_BLOCK`
-    /// - `fec_set_index` is a multiple of `DATA_SHREDS_PER_FEC_BLOCK`
-    pub fn check_fixed_fec_set(index: u32, fec_set_index: u32) -> bool {
-        index >= fec_set_index
-            && index < fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32
-            && fec_set_index % DATA_SHREDS_PER_FEC_BLOCK as u32 == 0
-    }
-
-    /// Returns true if `index` of the last data shred is valid under the assumption that
-    /// all erasure sets contain exactly `DATA_SHREDS_PER_FEC_BLOCK` data and coding shreds:
-    /// - `index + 1` must be a multiple of `DATA_SHREDS_PER_FEC_BLOCK`
-    ///
-    /// Note: this check is critical to verify that the last fec set is sufficiently sized.
-    /// This currently is checked post insert in `Blockstore::check_last_fec_set`, but in the
-    /// future it can be solely checked during ingest
-    pub fn check_last_data_shred_index(index: u32) -> bool {
-        (index + 1) % (DATA_SHREDS_PER_FEC_BLOCK as u32) == 0
-    }
-
     pub(crate) fn config(&self) -> ErasureConfig {
         self.config
     }
