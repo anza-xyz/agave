@@ -1,5 +1,5 @@
 use {
-    solana_lattice_hash::lt_hash::LtHash, solana_clock::UnixTimestamp,
+    solana_clock::UnixTimestamp, solana_lattice_hash::lt_hash::LtHash,
     solana_runtime::bank::KeyedRewardsAndNumPartitions, std::sync::Arc,
 };
 
