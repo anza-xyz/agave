@@ -813,7 +813,7 @@ where
             };
 
             if !erasure_config.is_fixed() {
-                stats.bad_erasure_config += 1;
+                stats.misaligned_erasure_config += 1;
                 if enforce_fixed_fec_set(slot) {
                     return true;
                 }
@@ -844,7 +844,7 @@ where
             if shred_flags.contains(ShredFlags::LAST_SHRED_IN_SLOT)
                 && !check_last_data_shred_index(index)
             {
-                stats.bad_last_data_index += 1;
+                stats.misaligned_last_data_index += 1;
                 if enforce_fixed_fec_set(slot) {
                     return true;
                 }
@@ -853,7 +853,7 @@ where
     }
 
     if !check_fixed_fec_set(index, fec_set_index) {
-        stats.bad_fec_set_size += 1;
+        stats.misaligned_fec_set += 1;
         if enforce_fixed_fec_set(slot) {
             return true;
         }
@@ -1419,7 +1419,7 @@ mod tests {
                 &mut stats,
             );
             assert_eq!(should_discard, enforce_fixed_fec_set);
-            assert_eq!(stats.bad_fec_set_size, 1);
+            assert_eq!(stats.misaligned_fec_set, 1);
         }
 
         // index not in range [fec_set_index, fec_set_index + 32)
@@ -1449,7 +1449,7 @@ mod tests {
                 &mut stats,
             );
             assert_eq!(should_discard, enforce_fixed_fec_set);
-            assert_eq!(stats.bad_fec_set_size, 1);
+            assert_eq!(stats.misaligned_fec_set, 1);
         }
 
         // bad erasure config 16:32
@@ -1478,7 +1478,7 @@ mod tests {
                 &mut stats,
             );
             assert_eq!(should_discard, enforce_fixed_fec_set);
-            assert_eq!(stats.bad_erasure_config, 1);
+            assert_eq!(stats.misaligned_erasure_config, 1);
         }
 
         // data shred with LAST_SHRED_IN_SLOT flag on shred 30
@@ -1523,7 +1523,7 @@ mod tests {
             &mut stats,
         );
         assert_eq!(should_discard, enforce_fixed_fec_set);
-        assert_eq!(stats.bad_last_data_index, 1);
+        assert_eq!(stats.misaligned_last_data_index, 1);
     }
 
     // Asserts that ShredType is backward compatible with u8.
