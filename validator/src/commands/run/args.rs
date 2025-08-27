@@ -23,7 +23,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_pubkey::Pubkey,
-    solana_rpc::rpc::JsonRpcConfig,
+    solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
     solana_send_transaction_service::send_transaction_service::{
         MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
@@ -37,9 +37,29 @@ use {
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
 
+// Declared out of line to allow use of #[rustfmt::skip]
+#[rustfmt::skip]
+const WEN_RESTART_HELP: &str =
+    "Only used during coordinated cluster restarts.\n\n\
+     Need to also specify the leader's pubkey in --wen-restart-leader.\n\n\
+     When specified, the validator will enter Wen Restart mode which pauses normal activity. \
+     Validators in this mode will gossip their last vote to reach consensus on a safe restart \
+     slot and repair all blocks on the selected fork. The safe slot will be a descendant of the \
+     latest optimistically confirmed slot to ensure we do not roll back any optimistically \
+     confirmed slots.\n\n\
+     The progress in this mode will be saved in the file location provided. If consensus is \
+     reached, the validator will automatically exit with 200 status code. Then the operators are \
+     expected to restart the validator with --wait_for_supermajority and other arguments \
+     (including new shred_version, supermajority slot, and bankhash) given in the error log \
+     before the exit so the cluster will resume execution. The progress file will be kept around \
+     for future debugging.\n\n\
+     If wen_restart fails, refer to the progress file (in proto3 format) for further debugging and \
+     watch the discord channel for instructions.";
+
 pub mod account_secondary_indexes;
 pub mod blockstore_options;
 pub mod json_rpc_config;
+pub mod pub_sub_config;
 pub mod rpc_bigtable_config;
 pub mod rpc_bootstrap_config;
 
@@ -53,6 +73,7 @@ pub struct RunArgs {
     pub rpc_bootstrap_config: RpcBootstrapConfig,
     pub blockstore_options: BlockstoreOptions,
     pub json_rpc_config: JsonRpcConfig,
+    pub pub_sub_config: PubSubConfig,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -101,13 +122,13 @@ impl FromClapArgMatches for RunArgs {
             rpc_bootstrap_config: RpcBootstrapConfig::from_clap_arg_match(matches)?,
             blockstore_options: BlockstoreOptions::from_clap_arg_match(matches)?,
             json_rpc_config: JsonRpcConfig::from_clap_arg_match(matches)?,
+            pub_sub_config: PubSubConfig::from_clap_arg_match(matches)?,
         })
     }
 }
 
 pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 'a> {
-    app
-    .arg(
+    app.arg(
         Arg::with_name(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
             .long(SKIP_SEED_PHRASE_VALIDATION_ARG.long)
             .help(SKIP_SEED_PHRASE_VALIDATION_ARG.help),
@@ -130,8 +151,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .requires("vote_account")
             .multiple(true)
             .help(
-                "Include an additional authorized voter keypair. May be specified multiple \
-                 times. [default: the --identity keypair]",
+                "Include an additional authorized voter keypair. May be specified multiple times. \
+                 [default: the --identity keypair]",
             ),
     )
     .arg(
@@ -142,9 +163,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_pubkey_or_keypair)
             .requires("identity")
             .help(
-                "Validator vote account public key. If unspecified, voting will be disabled. \
-                 The authorized voter for the account must either be the --identity keypair \
-                 or set by the --authorized-voter argument",
+                "Validator vote account public key. If unspecified, voting will be disabled. The \
+                 authorized voter for the account must either be the --identity keypair or set by \
+                 the --authorized-voter argument",
             ),
     )
     .arg(
@@ -153,8 +174,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("FILE")
             .takes_value(true)
             .help(
-                "Create this file if it doesn't already exist once validator initialization \
-                 is complete",
+                "Create this file if it doesn't already exist once validator initialization is \
+                 complete",
             ),
     )
     .arg(
@@ -182,8 +203,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("no-snapshot-fetch")
             .takes_value(false)
             .help(
-                "Do not attempt to fetch a snapshot from the cluster, start from a local \
-                 snapshot if present",
+                "Do not attempt to fetch a snapshot from the cluster, start from a local snapshot \
+                 if present",
             ),
     )
     .arg(
@@ -215,10 +236,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("restricted-repair-only-mode")
             .takes_value(false)
             .help(
-                "Do not publish the Gossip, TPU, TVU or Repair Service ports. Doing so causes \
-                 the node to operate in a limited capacity that reduces its exposure to the \
-                 rest of the cluster. The --no-voting flag is implicit when this flag is \
-                 enabled",
+                "Do not publish the Gossip, TPU, TVU or Repair Service ports. Doing so causes the \
+                 node to operate in a limited capacity that reduces its exposure to the rest of \
+                 the cluster. The --no-voting flag is implicit when this flag is enabled",
             ),
     )
     .arg(
@@ -299,8 +319,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .default_value(&default_args.rpc_max_multiple_accounts)
             .help(
-                "Override the default maximum accounts accepted by the getMultipleAccounts \
-                 JSON RPC method",
+                "Override the default maximum accounts accepted by the getMultipleAccounts JSON \
+                 RPC method",
             ),
     )
     .arg(
@@ -310,18 +330,16 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .default_value(&default_args.health_check_slot_distance)
             .help(
-                "Report this validator as healthy if its latest replayed optimistically \
-                 confirmed slot is within the specified number of slots from the cluster's \
-                 latest optimistically confirmed slot",
+                "Report this validator as healthy if its latest replayed optimistically confirmed \
+                 slot is within the specified number of slots from the cluster's latest \
+                 optimistically confirmed slot",
             ),
     )
     .arg(
         Arg::with_name("skip_preflight_health_check")
             .long("skip-preflight-health-check")
             .takes_value(false)
-            .help(
-                "Skip health check when running a preflight check",
-            ),
+            .help("Skip health check when running a preflight check"),
     )
     .arg(
         Arg::with_name("rpc_faucet_addr")
@@ -338,9 +356,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .multiple(true)
             .help(
-                "Comma separated persistent accounts location. \
-                May be specified multiple times. \
-                [default: <LEDGER>/accounts]",
+                "Comma separated persistent accounts location. May be specified multiple times. \
+                 [default: <LEDGER>/accounts]",
             ),
     )
     .arg(
@@ -358,14 +375,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .help("Use DIR as the base location for snapshots.")
             .long_help(
-                "Use DIR as the base location for snapshots. \
-                 Snapshot archives will use DIR unless --full-snapshot-archive-path or \
-                 --incremental-snapshot-archive-path is specified. \
-                 Additionally, a subdirectory named \"snapshots\" will be created in DIR. \
-                 This subdirectory holds internal files/data that are used when generating \
-                 snapshot archives. \
-                 [default: --ledger value]",
-             ),
+                "Use DIR as the base location for snapshots. Snapshot archives will use DIR \
+                 unless --full-snapshot-archive-path or --incremental-snapshot-archive-path is \
+                 specified. Additionally, a subdirectory named \"snapshots\" will be created in \
+                 DIR. This subdirectory holds internal files/data that are used when generating \
+                 snapshot archives. [default: --ledger value]",
+            ),
     )
     .arg(
         Arg::with_name(use_snapshot_archives_at_startup::cli::NAME)
@@ -381,10 +396,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("full-snapshot-archive-path")
             .value_name("DIR")
             .takes_value(true)
-            .help(
-                "Use DIR as full snapshot archives location \
-                 [default: --snapshots value]",
-             ),
+            .help("Use DIR as full snapshot archives location [default: --snapshots value]"),
     )
     .arg(
         Arg::with_name("incremental_snapshot_archive_path")
@@ -392,10 +404,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .conflicts_with("no-incremental-snapshots")
             .value_name("DIR")
             .takes_value(true)
-            .help(
-                "Use DIR as incremental snapshot archives location \
-                 [default: --snapshots value]",
-            ),
+            .help("Use DIR as incremental snapshot archives location [default: --snapshots value]"),
     )
     .arg(
         Arg::with_name("tower")
@@ -419,8 +428,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(solana_net_utils::is_host_port)
             .help(
-                "Specify TPU address to advertise in gossip \
-                 [default: ask --entrypoint or localhost when --entrypoint is not provided]",
+                "Specify TPU address to advertise in gossip [default: ask --entrypoint or \
+                 localhost when --entrypoint is not provided]",
             ),
     )
     .arg(
@@ -430,8 +439,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(solana_net_utils::is_host_port)
             .help(
-                "Specify TPU Forwards address to advertise in gossip [default: ask \
-                 --entrypoint or localhostwhen --entrypoint is not provided]",
+                "Specify TPU Forwards address to advertise in gossip [default: ask --entrypoint \
+                 or localhostwhen --entrypoint is not provided]",
             ),
     )
     .arg(
@@ -441,7 +450,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .hidden(hidden_unless_forced())
             .validator(solana_net_utils::is_host_port)
-            .help("TPU Vortexor Receiver address to which verified transaction packet will be forwarded."),
+            .help(
+                "TPU Vortexor Receiver address to which verified transaction packet will be \
+                 forwarded.",
+            ),
     )
     .arg(
         Arg::with_name("public_rpc_addr")
@@ -480,14 +492,18 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("no_snapshots")
             .long("no-snapshots")
             .takes_value(false)
-            .conflicts_with_all(&["no_incremental_snapshots", "snapshot_interval_slots", "full_snapshot_interval_slots"])
-            .help("Disable all snapshot generation")
+            .conflicts_with_all(&[
+                "no_incremental_snapshots",
+                "snapshot_interval_slots",
+                "full_snapshot_interval_slots",
+            ])
+            .help("Disable all snapshot generation"),
     )
     .arg(
         Arg::with_name("no_incremental_snapshots")
             .long("no-incremental-snapshots")
             .takes_value(false)
-            .help("Disable incremental snapshots")
+            .help("Disable incremental snapshots"),
     )
     .arg(
         Arg::with_name("snapshot_interval_slots")
@@ -499,10 +515,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_non_zero)
             .help("Number of slots between generating snapshots")
             .long_help(
-                "Number of slots between generating snapshots. \
-                 If incremental snapshots are enabled, this sets the incremental snapshot interval. \
-                 If incremental snapshots are disabled, this sets the full snapshot interval. \
-                 Must be greater than zero.",
+                "Number of slots between generating snapshots. If incremental snapshots are \
+                 enabled, this sets the incremental snapshot interval. If incremental snapshots \
+                 are disabled, this sets the full snapshot interval. Must be greater than zero.",
             ),
     )
     .arg(
@@ -514,9 +529,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_non_zero)
             .help("Number of slots between generating full snapshots")
             .long_help(
-                "Number of slots between generating full snapshots. \
-                 Only used when incremental snapshots are enabled. \
-                 Must be greater than the incremental snapshot interval. \
+                "Number of slots between generating full snapshots. Only used when incremental \
+                 snapshots are enabled. Must be greater than the incremental snapshot interval. \
                  Must be greater than zero.",
             ),
     )
@@ -529,8 +543,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .default_value(&default_args.maximum_full_snapshot_archives_to_retain)
             .validator(validate_maximum_full_snapshot_archives_to_retain)
             .help(
-                "The maximum number of full snapshot archives to hold on to when purging \
-                 older snapshots.",
+                "The maximum number of full snapshot archives to hold on to when purging older \
+                 snapshots.",
             ),
     )
     .arg(
@@ -541,8 +555,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .default_value(&default_args.maximum_incremental_snapshot_archives_to_retain)
             .validator(validate_maximum_incremental_snapshot_archives_to_retain)
             .help(
-                "The maximum number of incremental snapshot archives to hold on to when \
-                 purging older snapshots.",
+                "The maximum number of incremental snapshot archives to hold on to when purging \
+                 older snapshots.",
             ),
     )
     .arg(
@@ -553,8 +567,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(solana_perf::thread::is_niceness_adjustment_valid)
             .default_value(&default_args.snapshot_packager_niceness_adjustment)
             .help(
-                "Add this value to niceness of snapshot packager thread. Negative value \
-                 increases priority, positive value decreases priority.",
+                "Add this value to niceness of snapshot packager thread. Negative value increases \
+                 priority, positive value decreases priority.",
             ),
     )
     .arg(
@@ -564,9 +578,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .default_value(&default_args.min_snapshot_download_speed)
             .help(
-                "The minimal speed of snapshot downloads measured in bytes/second. If the \
-                 initial download speed falls below this threshold, the system will retry the \
-                 download against a different rpc node.",
+                "The minimal speed of snapshot downloads measured in bytes/second. If the initial \
+                 download speed falls below this threshold, the system will retry the download \
+                 against a different rpc node.",
             ),
     )
     .arg(
@@ -576,8 +590,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .default_value(&default_args.max_snapshot_download_abort)
             .help(
-                "The maximum number of times to abort and retry when encountering a slow \
-                 snapshot download.",
+                "The maximum number of times to abort and retry when encountering a slow snapshot \
+                 download.",
             ),
     )
     .arg(
@@ -651,9 +665,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .possible_values(&["level"])
             .default_value(&default_args.rocksdb_shred_compaction)
             .help(
-                "Controls how RocksDB compacts shreds. *WARNING*: You will lose your \
-                 Blockstore data when you switch between options. Possible values are: \
-                 'level': stores shreds using RocksDB's default (level) compaction.",
+                "Controls how RocksDB compacts shreds. *WARNING*: You will lose your Blockstore \
+                 data when you switch between options.",
             ),
     )
     .arg(
@@ -678,8 +691,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_parsable::<usize>)
             .default_value(&default_args.rocksdb_perf_sample_interval)
             .help(
-                "Controls how often RocksDB read/write performance samples are collected. \
-                 Perf samples are collected in 1 / ROCKS_PERF_SAMPLE_INTERVAL sampling rate.",
+                "Controls how often RocksDB read/write performance samples are collected. Perf \
+                 samples are collected in 1 / ROCKS_PERF_SAMPLE_INTERVAL sampling rate.",
             ),
     )
     .arg(
@@ -753,8 +766,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("no-wait-for-vote-to-start-leader")
             .help(
                 "If the validator starts up with no ledger, it will wait to start block \
-                 production until it sees a vote land in a rooted slot. This prevents \
-                 double signing. Turn off to risk double signing a block.",
+                 production until it sees a vote land in a rooted slot. This prevents double \
+                 signing. Turn off to risk double signing a block.",
             ),
     )
     .arg(
@@ -775,9 +788,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .multiple(true)
             .takes_value(true)
             .help(
-                "A snapshot hash must be published in gossip by this validator to be \
-                 accepted. May be specified multiple times. If unspecified any snapshot hash \
-                 will be accepted",
+                "A snapshot hash must be published in gossip by this validator to be accepted. \
+                 May be specified multiple times. If unspecified any snapshot hash will be \
+                 accepted",
             ),
     )
     .arg(
@@ -818,9 +831,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .multiple(true)
             .takes_value(true)
             .help(
-                "A list of validators to prioritize repairs from. If specified, repair \
-                 requests from validators in the list will be prioritized over requests from \
-                 other validators. [default: all validators]",
+                "A list of validators to prioritize repairs from. If specified, repair requests \
+                 from validators in the list will be prioritized over requests from other \
+                 validators. [default: all validators]",
             ),
     )
     .arg(
@@ -831,8 +844,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .multiple(true)
             .takes_value(true)
             .help(
-                "A list of validators to gossip with. If specified, gossip will not \
-                 push/pull from from validators outside this set. [default: all validators]",
+                "A list of validators to gossip with. If specified, gossip will not push/pull \
+                 from from validators outside this set. [default: all validators]",
             ),
     )
     .arg(
@@ -929,9 +942,11 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .default_value(&default_args.num_quic_endpoints)
             .validator(is_parsable::<usize>)
             .hidden(hidden_unless_forced())
-            .help("The number of QUIC endpoints used for TPU and TPU-Forward. It can be increased to \
-                   increase network ingest throughput, at the expense of higher CPU and general \
-                   validator load."),
+            .help(
+                "The number of QUIC endpoints used for TPU and TPU-Forward. It can be increased \
+                 to increase network ingest throughput, at the expense of higher CPU and general \
+                 validator load.",
+            ),
     )
     .arg(
         Arg::with_name("staked_nodes_overrides")
@@ -940,10 +955,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .help(
                 "Provide path to a yaml file with custom overrides for stakes of specific \
-                 identities. Overriding the amount of stake this validator considers as valid \
-                 for other peers in network. The stake amount is used for calculating the \
-                 number of QUIC streams permitted from the peer and vote packet sender stage. \
-                 Format of the file: `staked_map_id: {<pubkey>: <SOL stake amount>}",
+                 identities. Overriding the amount of stake this validator considers as valid for \
+                 other peers in network. The stake amount is used for calculating the number of \
+                 QUIC streams permitted from the peer and vote packet sender stage. Format of the \
+                 file: `staked_map_id: {<pubkey>: <SOL stake amount>}",
             ),
     )
     .arg(
@@ -954,8 +969,11 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(solana_net_utils::is_host)
             .default_value(&default_args.bind_address)
             .multiple(true)
-            .help("Repeatable. IP addresses to bind the validator ports on. First is primary (used on startup), the rest may be switched to during operation."),
-        )
+            .help(
+                "Repeatable. IP addresses to bind the validator ports on. First is primary (used \
+                 on startup), the rest may be switched to during operation.",
+            ),
+    )
     .arg(
         Arg::with_name("rpc_bind_address")
             .long("rpc-bind-address")
@@ -963,8 +981,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(solana_net_utils::is_host)
             .help(
-                "IP address to bind the RPC port [default: 127.0.0.1 if --private-rpc is \
-                 present, otherwise use --bind-address]",
+                "IP address to bind the RPC port [default: 127.0.0.1 if --private-rpc is present, \
+                 otherwise use --bind-address]",
             ),
     )
     .arg(
@@ -995,7 +1013,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             })
             .takes_value(true)
             .default_value(&default_args.rpc_blocking_threads)
-            .help("Number of blocking threads to use for servicing CPU bound RPC requests (eg getMultipleAccounts)"),
+            .help(
+                "Number of blocking threads to use for servicing CPU bound RPC requests (eg \
+                 getMultipleAccounts)",
+            ),
     )
     .arg(
         Arg::with_name("rpc_niceness_adj")
@@ -1005,8 +1026,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(solana_perf::thread::is_niceness_adjustment_valid)
             .default_value(&default_args.rpc_niceness_adjustment)
             .help(
-                "Add this value to niceness of RPC threads. Negative value increases \
-                 priority, positive value decreases priority.",
+                "Add this value to niceness of RPC threads. Negative value increases priority, \
+                 positive value decreases priority.",
             ),
     )
     .arg(
@@ -1073,8 +1094,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_parsable::<usize>)
             .default_value(&default_args.rpc_pubsub_max_active_subscriptions)
             .help(
-                "The maximum number of active subscriptions that RPC PubSub will accept \
-                 across all connections.",
+                "The maximum number of active subscriptions that RPC PubSub will accept across \
+                 all connections.",
             ),
     )
     .arg(
@@ -1097,8 +1118,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_parsable::<usize>)
             .default_value(&default_args.rpc_pubsub_queue_capacity_bytes)
             .help(
-                "The maximum total size of notifications that RPC PubSub will store across \
-                 all connections.",
+                "The maximum total size of notifications that RPC PubSub will store across all \
+                 connections.",
             ),
     )
     .arg(
@@ -1199,13 +1220,15 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .multiple(true)
             .value_name("HOST:PORT")
             .validator(solana_net_utils::is_host_port)
-            .help("Peer(s) to broadcast transactions to instead of the current leader")
+            .help("Peer(s) to broadcast transactions to instead of the current leader"),
     )
     .arg(
         Arg::with_name("rpc_send_transaction_also_leader")
             .long("rpc-send-transaction-also-leader")
             .requires("rpc_send_transaction_tpu_peer")
-            .help("With `--rpc-send-transaction-tpu-peer HOST:PORT`, also send to the current leader")
+            .help(
+                "With `--rpc-send-transaction-tpu-peer HOST:PORT`, also send to the current leader",
+            ),
     )
     .arg(
         Arg::with_name("rpc_scan_and_fix_roots")
@@ -1257,10 +1280,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .help("The compression level to use when archiving with zstd")
             .long_help(
-                "The compression level to use when archiving with zstd. \
-                 Higher compression levels generally produce higher \
-                 compression ratio at the expense of speed and memory. \
-                 See the zstd manpage for more information."
+                "The compression level to use when archiving with zstd. Higher compression levels \
+                 generally produce higher compression ratio at the expense of speed and memory. \
+                 See the zstd manpage for more information.",
             ),
     )
     .arg(
@@ -1343,16 +1365,16 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .multiple(true)
             .value_name("KEY")
             .help(
-                "When account indexes are enabled, only include specific keys in the index. \
-                 This overrides --account-index-exclude-key.",
+                "When account indexes are enabled, only include specific keys in the index. This \
+                 overrides --account-index-exclude-key.",
             ),
     )
     .arg(
         Arg::with_name("accounts_db_verify_refcounts")
             .long("accounts-db-verify-refcounts")
             .help(
-                "Debug option to scan all append vecs and verify account index refcounts \
-                 prior to clean",
+                "Debug option to scan all append vecs and verify account index refcounts prior to \
+                 clean",
             )
             .hidden(hidden_unless_forced()),
     )
@@ -1363,12 +1385,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .possible_values(&["all", "only-abnormal", "only-abnormal-with-verify"])
             .help(
                 "Debug option to use different type of filtering for accounts index scan in \
-                shrinking. \"all\" will scan both in-memory and on-disk accounts index, which is the default. \
-                \"only-abnormal\" will scan in-memory accounts index only for abnormal entries and \
-                skip scanning on-disk accounts index by assuming that on-disk accounts index contains \
-                only normal accounts index entry. \"only-abnormal-with-verify\" is similar to \
-                \"only-abnormal\", which will scan in-memory index for abnormal entries, but will also \
-                verify that on-disk account entries are indeed normal.",
+                 shrinking. \"all\" will scan both in-memory and on-disk accounts index, which is \
+                 the default. \"only-abnormal\" will scan in-memory accounts index only for \
+                 abnormal entries and skip scanning on-disk accounts index by assuming that \
+                 on-disk accounts index contains only normal accounts index entry. \
+                 \"only-abnormal-with-verify\" is similar to \"only-abnormal\", which will scan \
+                 in-memory index for abnormal entries, but will also verify that on-disk account \
+                 entries are indeed normal.",
             )
             .hidden(hidden_unless_forced()),
     )
@@ -1384,7 +1407,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("METHOD")
             .takes_value(true)
             .possible_values(&["mmap", "file"])
-            .help("Access account storages using this method")
+            .help("Access account storages using this method"),
     )
     .arg(
         Arg::with_name("accounts_db_ancient_append_vecs")
@@ -1423,8 +1446,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_parsable::<u64>)
             .takes_value(true)
             .help(
-                "How large the write cache for account data can become. If this is exceeded, \
-                 the cache is flushed more aggressively.",
+                "How large the write cache for account data can become. If this is exceeded, the \
+                 cache is flushed more aggressively.",
             ),
     )
     .arg(
@@ -1438,10 +1461,22 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .require_delimiter(true)
             .help("How large the read cache for account data can become, in bytes")
             .long_help(
-                "How large the read cache for account data can become, in bytes. \
-                 The values will be the low and high watermarks for the cache. \
-                 When the cache exceeds the high watermark, entries will \
-                 be evicted until the size reaches the low watermark."
+                "How large the read cache for account data can become, in bytes. The values will \
+                 be the low and high watermarks for the cache. When the cache exceeds the high \
+                 watermark, entries will be evicted until the size reaches the low watermark.",
+            )
+            .hidden(hidden_unless_forced()),
+    )
+    .arg(
+        Arg::with_name("accounts_db_mark_obsolete_accounts")
+            .long("accounts-db-mark-obsolete-accounts")
+            .help("Enables experimental obsolete account tracking")
+            .long_help(
+                "Enables experimental obsolete account tracking. \
+                 This feature tracks obsolete accounts in the account storage entry allowing \
+                 for earlier cleaning of obsolete accounts in the storages and index. \
+                 At this time this feature is not compatible with booting from local \
+                 snapshot state and must unpack from archives.",
             )
             .hidden(hidden_unless_forced()),
     )
@@ -1452,8 +1487,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_parsable::<usize>)
             .takes_value(true)
             .help(
-                "How large accumulated results from an accounts index scan can become. If \
-                 this is exceeded, the scan aborts.",
+                "How large accumulated results from an accounts index scan can become. If this is \
+                 exceeded, the scan aborts.",
             ),
     )
     .arg(
@@ -1471,9 +1506,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .multiple(true)
             .help(
-                "Persistent accounts-index location. \
-                May be specified multiple times. \
-                [default: <LEDGER>/accounts_index]",
+                "Persistent accounts-index location. May be specified multiple times. [default: \
+                 <LEDGER>/accounts_index]",
             ),
     )
     .arg(
@@ -1483,10 +1517,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("BOOLEAN")
             .default_value(&default_args.accounts_shrink_optimize_total_space)
             .help(
-                "When this is set to true, the system will shrink the most sparse accounts \
-                 and when the overall shrink ratio is above the specified \
-                 accounts-shrink-ratio, the shrink will stop and it will skip all other less \
-                 sparse accounts.",
+                "When this is set to true, the system will shrink the most sparse accounts and \
+                 when the overall shrink ratio is above the specified accounts-shrink-ratio, the \
+                 shrink will stop and it will skip all other less sparse accounts.",
             ),
     )
     .arg(
@@ -1496,10 +1529,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("RATIO")
             .default_value(&default_args.accounts_shrink_ratio)
             .help(
-                "Specifies the shrink ratio for the accounts to be shrunk. The shrink ratio \
-                 is defined as the ratio of the bytes alive over the  total bytes used. If \
-                 the account's shrink ratio is less than this ratio it becomes a candidate \
-                 for shrinking. The value must between 0. and 1.0 inclusive.",
+                "Specifies the shrink ratio for the accounts to be shrunk. The shrink ratio is \
+                 defined as the ratio of the bytes alive over the  total bytes used. If the \
+                 account's shrink ratio is less than this ratio it becomes a candidate for \
+                 shrinking. The value must between 0. and 1.0 inclusive.",
             ),
     )
     .arg(
@@ -1533,9 +1566,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .default_value(&default_args.banking_trace_dir_byte_limit)
             .help(
                 "Enables the banking trace explicitly, which is enabled by default and writes \
-                 trace files for simulate-leader-blocks, retaining up to the default or \
-                 specified total bytes in the ledger. This flag can be used to override its \
-                 byte limit.",
+                 trace files for simulate-leader-blocks, retaining up to the default or specified \
+                 total bytes in the ledger. This flag can be used to override its byte limit.",
             ),
     )
     .arg(
@@ -1552,11 +1584,11 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(false)
             .help(
                 "Delay leader block creation while replaying a block which descends from the \
-                current fork and has a lower slot than our next leader slot. If we don't \
-                delay here, our new leader block will be on a different fork from the \
-                block we are replaying and there is a high chance that the cluster will \
-                confirm that block's fork rather than our leader block's fork because it \
-                was created before we started creating ours.",
+                 current fork and has a lower slot than our next leader slot. If we don't delay \
+                 here, our new leader block will be on a different fork from the block we are \
+                 replaying and there is a high chance that the cluster will confirm that block's \
+                 fork rather than our leader block's fork because it was created before we \
+                 started creating ours.",
             ),
     )
     .arg(
@@ -1603,29 +1635,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .required(false)
             .conflicts_with("wait_for_supermajority")
             .requires("wen_restart_coordinator")
-            .help(
-                "Only used during coordinated cluster restarts.\
-                \n\n\
-                Need to also specify the leader's pubkey in --wen-restart-leader.\
-                \n\n\
-                When specified, the validator will enter Wen Restart mode which \
-                pauses normal activity. Validators in this mode will gossip their last \
-                vote to reach consensus on a safe restart slot and repair all blocks \
-                on the selected fork. The safe slot will be a descendant of the latest \
-                optimistically confirmed slot to ensure we do not roll back any \
-                optimistically confirmed slots. \
-                \n\n\
-                The progress in this mode will be saved in the file location provided. \
-                If consensus is reached, the validator will automatically exit with 200 \
-                status code. Then the operators are expected to restart the validator \
-                with --wait_for_supermajority and other arguments (including new shred_version, \
-                supermajority slot, and bankhash) given in the error log before the exit so \
-                the cluster will resume execution. The progress file will be kept around \
-                for future debugging. \
-                \n\n\
-                If wen_restart fails, refer to the progress file (in proto3 format) for \
-                further debugging and watch the discord channel for instructions.",
-            ),
+            .help(WEN_RESTART_HELP),
     )
     .arg(
         Arg::with_name("wen_restart_coordinator")
@@ -1636,8 +1646,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .required(false)
             .requires("wen_restart")
             .help(
-                "Specifies the pubkey of the leader used in wen restart. \
-                May get stuck if the leader used is different from others.",
+                "Specifies the pubkey of the leader used in wen restart. May get stuck if the \
+                 leader used is different from others.",
             ),
     )
     .arg(
@@ -1673,8 +1683,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("use-connection-cache")
             .takes_value(false)
             .help(
-                "Use connection-cache crate to send transactions over TPU ports. If not set,\
-                tpu-client-next is used by default.",
+                "Use connection-cache crate to send transactions over TPU ports. If not \
+                 set,tpu-client-next is used by default.",
             ),
     )
 }
@@ -1693,8 +1703,7 @@ fn validators_set(
             if validators_set.contains(identity_pubkey) {
                 return Err(crate::commands::Error::Dynamic(
                     Box::<dyn std::error::Error>::from(format!(
-                        "the validator's identity pubkey cannot be a {arg_name}: {}",
-                        identity_pubkey
+                        "the validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}"
                     )),
                 ));
             }
@@ -1737,6 +1746,13 @@ mod tests {
                     max_request_body_size: Some(MAX_REQUEST_BODY_SIZE),
                     ..JsonRpcConfig::default()
                 },
+                pub_sub_config: PubSubConfig {
+                    worker_threads: 4,
+                    notification_threads: None,
+                    queue_capacity_items:
+                        solana_rpc::rpc_pubsub_service::DEFAULT_QUEUE_CAPACITY_ITEMS,
+                    ..PubSubConfig::default_for_tests()
+                },
             }
         }
     }
@@ -1752,6 +1768,7 @@ mod tests {
                 rpc_bootstrap_config: self.rpc_bootstrap_config.clone(),
                 blockstore_options: self.blockstore_options.clone(),
                 json_rpc_config: self.json_rpc_config.clone(),
+                pub_sub_config: self.pub_sub_config.clone(),
             }
         }
     }

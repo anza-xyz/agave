@@ -242,7 +242,7 @@ fn test_scheduler_producing_blocks() {
         &channels,
         &poh_recorder,
         transaction_recorder,
-        BankingStage::default_or_env_num_workers(),
+        BankingStage::default_num_workers(),
     );
     bank_forks.write().unwrap().install_scheduler_pool(pool);
 

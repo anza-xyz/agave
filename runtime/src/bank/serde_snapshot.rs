@@ -160,7 +160,6 @@ mod tests {
             &RuntimeConfig::default(),
             None,
             None,
-            None,
             false,
             Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
@@ -246,7 +245,6 @@ mod tests {
             &RuntimeConfig::default(),
             None,
             None,
-            None,
             false,
             Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
@@ -294,14 +292,13 @@ mod tests {
         .unwrap();
 
         // Deserialize
-        let (dbank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+        let dbank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &snapshot_archive_info,
             None,
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -352,7 +349,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "A1MwPVjhDGFcajPV44UFRrkuJ7mR4rw4DykCcEqKk1hy")
+            frozen_abi(digest = "4zSePLuo5DnagjcFySpN2xSmQ1JqYmbQm59vfjS7qKpc")
         )]
         #[derive(Serialize)]
         pub struct BankAbiTestWrapper {

@@ -658,14 +658,13 @@ mod tests {
             skip_initial_hash_calc: !should_recalculate_accounts_lt_hash,
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
-        let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+        let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
             &bank_snapshots_dir,
             &snapshot,
             None,
             &genesis_config_info.genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,

@@ -62,7 +62,7 @@ npm run start
 
 ## CI Build Flow
 
-The docs are built and published in Github Actions with the `docs.yml` workflow. On each PR, the docs are built, but not published.
+The docs are built and published in GitHub Actions with the `docs.yml` workflow. On each PR, the docs are built but not published.
 
 In each post-commit build, docs are built and published using `vercel` to their respective domain depending on the build branch.
 

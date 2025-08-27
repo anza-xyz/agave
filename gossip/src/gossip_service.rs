@@ -18,7 +18,6 @@ use {
     solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
     solana_streamer::{
-        atomic_udp_socket::AtomicUdpSocket,
         evicting_sender::EvictingSender,
         socket::SocketAddrSpace,
         streamer::{self, StreamerReceiveStats},
@@ -26,7 +25,7 @@ use {
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
     std::{
         collections::HashSet,
-        net::{SocketAddr, TcpListener},
+        net::{SocketAddr, TcpListener, UdpSocket},
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
@@ -46,7 +45,7 @@ impl GossipService {
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
         bank_forks: Option<Arc<RwLock<BankForks>>>,
-        gossip_socket: AtomicUdpSocket,
+        gossip_sockets: Arc<[UdpSocket]>,
         gossip_validators: Option<HashSet<Pubkey>>,
         should_check_duplicate_instance: bool,
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
@@ -54,17 +53,18 @@ impl GossipService {
     ) -> Self {
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
-        let gossip_socket = Arc::new(gossip_socket);
         trace!(
-            "GossipService: id: {}, listening on: {:?}",
+            "GossipService: id: {}, listening on primary interface: {:?}, all available interfaces: {:?}",
             &cluster_info.id(),
-            gossip_socket.local_addr().unwrap()
+            gossip_sockets[0].local_addr().unwrap(),
+            gossip_sockets,
         );
         let socket_addr_space = *cluster_info.socket_addr_space();
         let gossip_receiver_stats = Arc::new(StreamerReceiveStats::new("gossip_receiver"));
         let t_receiver = streamer::receiver_atomic(
             "solRcvrGossip".to_string(),
-            gossip_socket.clone(),
+            gossip_sockets.clone(),
+            cluster_info.bind_ip_addrs(),
             exit.clone(),
             request_sender,
             Recycler::default(),
@@ -99,7 +99,8 @@ impl GossipService {
         );
         let t_responder = streamer::responder_atomic(
             "Gossip",
-            gossip_socket.clone(),
+            gossip_sockets.clone(),
+            cluster_info.bind_ip_addrs(),
             response_receiver,
             socket_addr_space,
             stats_reporter_sender,
@@ -141,16 +142,6 @@ impl GossipService {
         }
         Ok(())
     }
-}
-
-/// Discover Validators in a cluster
-#[deprecated(since = "3.0.0", note = "use `discover_validators` instead")]
-pub fn discover_cluster(
-    entrypoint: &SocketAddr,
-    num_nodes: usize,
-    socket_addr_space: SocketAddrSpace,
-) -> std::io::Result<Vec<ContactInfo>> {
-    discover_validators(entrypoint, num_nodes, 0, socket_addr_space)
 }
 
 pub fn discover_validators(
@@ -372,12 +363,12 @@ pub fn make_gossip_node(
     if let Some(entrypoint) = entrypoint {
         cluster_info.set_entrypoint(ContactInfo::new_gossip_entry_point(entrypoint));
     }
-    let gossip_socket = AtomicUdpSocket::new(gossip_socket);
+    let gossip_sockets = Arc::new([gossip_socket]);
     let cluster_info = Arc::new(cluster_info);
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        gossip_socket,
+        gossip_sockets,
         None,
         should_check_duplicate_instance,
         None,
@@ -395,16 +386,13 @@ mod tests {
     };
 
     #[test]
-    #[ignore]
     // test that stage will exit when flag is set
     fn test_exit() {
         let exit = Arc::new(AtomicBool::new(false));
-        let tn = Node::new_localhost();
-        let cluster_info = ClusterInfo::new(
-            tn.info.clone(),
-            Arc::new(Keypair::new()),
-            SocketAddrSpace::Unspecified,
-        );
+        let kp = Keypair::new();
+        let tn = Node::new_localhost_with_pubkey(&kp.pubkey());
+        let cluster_info =
+            ClusterInfo::new(tn.info.clone(), Arc::new(kp), SocketAddrSpace::Unspecified);
         let c = Arc::new(cluster_info);
         let d = GossipService::new(
             &c,

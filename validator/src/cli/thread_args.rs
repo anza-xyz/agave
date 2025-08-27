@@ -4,6 +4,7 @@ use {
     clap::{value_t_or_exit, Arg, ArgMatches},
     solana_accounts_db::{accounts_db, accounts_index},
     solana_clap_utils::{hidden_unless_forced, input_validators::is_within_range},
+    solana_core::banking_stage::BankingStage,
     solana_rayon_threadlimit::get_thread_count,
     std::{num::NonZeroUsize, ops::RangeInclusive},
 };
@@ -14,6 +15,7 @@ pub struct DefaultThreadArgs {
     pub accounts_db_foreground_threads: String,
     pub accounts_db_hash_threads: String,
     pub accounts_index_flush_threads: String,
+    pub block_production_num_workers: String,
     pub ip_echo_server_threads: String,
     pub rayon_global_threads: String,
     pub replay_forks_threads: String,
@@ -38,6 +40,7 @@ impl Default for DefaultThreadArgs {
             accounts_db_hash_threads: AccountsDbHashThreadsArg::bounded_default().to_string(),
             accounts_index_flush_threads: AccountsIndexFlushThreadsArg::bounded_default()
                 .to_string(),
+            block_production_num_workers: BankingStage::default_num_workers().to_string(),
             ip_echo_server_threads: IpEchoServerThreadsArg::bounded_default().to_string(),
             rayon_global_threads: RayonGlobalThreadsArg::bounded_default().to_string(),
             replay_forks_threads: ReplayForksThreadsArg::bounded_default().to_string(),
@@ -64,6 +67,7 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
         new_thread_arg::<AccountsDbForegroundThreadsArg>(&defaults.accounts_db_foreground_threads),
         new_thread_arg::<AccountsDbHashThreadsArg>(&defaults.accounts_db_hash_threads),
         new_thread_arg::<AccountsIndexFlushThreadsArg>(&defaults.accounts_index_flush_threads),
+        new_thread_arg::<BlockProductionNumWorkersArg>(&defaults.block_production_num_workers),
         new_thread_arg::<IpEchoServerThreadsArg>(&defaults.ip_echo_server_threads),
         new_thread_arg::<RayonGlobalThreadsArg>(&defaults.rayon_global_threads),
         new_thread_arg::<ReplayForksThreadsArg>(&defaults.replay_forks_threads),
@@ -99,6 +103,7 @@ pub struct NumThreadConfig {
     pub accounts_db_foreground_threads: NonZeroUsize,
     pub accounts_db_hash_threads: NonZeroUsize,
     pub accounts_index_flush_threads: NonZeroUsize,
+    pub block_production_num_workers: NonZeroUsize,
     pub ip_echo_server_threads: NonZeroUsize,
     pub rayon_global_threads: NonZeroUsize,
     pub replay_forks_threads: NonZeroUsize,
@@ -134,6 +139,11 @@ pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
         accounts_index_flush_threads: value_t_or_exit!(
             matches,
             AccountsIndexFlushThreadsArg::NAME,
+            NonZeroUsize
+        ),
+        block_production_num_workers: value_t_or_exit!(
+            matches,
+            BlockProductionNumWorkersArg::NAME,
             NonZeroUsize
         ),
         ip_echo_server_threads: value_t_or_exit!(
@@ -251,6 +261,25 @@ impl ThreadArg for AccountsIndexFlushThreadsArg {
 
     fn default() -> usize {
         accounts_index::default_num_flush_threads().get()
+    }
+}
+
+struct BlockProductionNumWorkersArg;
+impl ThreadArg for BlockProductionNumWorkersArg {
+    const NAME: &'static str = "block_production_num_workers";
+    const LONG_NAME: &'static str = "block-production-num-workers";
+    const HELP: &'static str = "Number of worker threads to use for block production";
+
+    fn default() -> usize {
+        BankingStage::default_num_workers().get()
+    }
+
+    fn min() -> usize {
+        1
+    }
+
+    fn max() -> usize {
+        BankingStage::max_num_workers().get()
     }
 }
 

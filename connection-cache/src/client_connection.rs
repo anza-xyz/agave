@@ -1,7 +1,10 @@
 use {
     solana_metrics::MovingStat,
     solana_transaction_error::TransportResult,
-    std::{net::SocketAddr, sync::atomic::AtomicU64},
+    std::{
+        net::SocketAddr,
+        sync::{atomic::AtomicU64, Arc},
+    },
 };
 
 #[derive(Default)]
@@ -35,7 +38,7 @@ pub trait ClientConnection: Sync + Send {
 
     fn send_data(&self, buffer: &[u8]) -> TransportResult<()>;
 
-    fn send_data_async(&self, buffer: Vec<u8>) -> TransportResult<()>;
+    fn send_data_async(&self, buffer: Arc<Vec<u8>>) -> TransportResult<()>;
 
     fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()>;
 

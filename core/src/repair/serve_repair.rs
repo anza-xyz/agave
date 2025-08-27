@@ -25,7 +25,7 @@ use {
         Rng,
     },
     solana_clock::Slot,
-    solana_genesis_config::ClusterType,
+    solana_cluster_type::ClusterType,
     solana_gossip::{
         cluster_info::{ClusterInfo, ClusterInfoError},
         contact_info::{ContactInfo, Protocol},
@@ -41,7 +41,7 @@ use {
         packet::{Packet, PacketBatch, PacketBatchRecycler, PinnedPacketBatch},
     },
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
-    solana_runtime::bank_forks::SharableBank,
+    solana_runtime::bank_forks::SharableBanks,
     solana_signature::{Signature, SIGNATURE_BYTES},
     solana_signer::Signer,
     solana_streamer::{
@@ -229,7 +229,7 @@ type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "9KN64WUT7XDYj9zZopS1hztGyAP9y4N4QznsyC4mqsGs")
+    frozen_abi(digest = "FGw38CCo7vg24qxe7TfGP11WdX2poe6T55BGN1r3XMFA")
 )]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum RepairProtocol {
@@ -338,7 +338,7 @@ impl RepairProtocol {
 
 pub struct ServeRepair {
     cluster_info: Arc<ClusterInfo>,
-    root_bank: SharableBank,
+    sharable_banks: SharableBanks,
     repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
     repair_handler: Box<dyn RepairHandler + Send + Sync>,
 }
@@ -401,13 +401,13 @@ struct RepairRequestWithMeta {
 impl ServeRepair {
     pub fn new(
         cluster_info: Arc<ClusterInfo>,
-        sharable_root_bank: SharableBank,
+        sharable_banks: SharableBanks,
         repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
         repair_handler: Box<dyn RepairHandler + Send + Sync>,
     ) -> Self {
         Self {
             cluster_info,
-            root_bank: sharable_root_bank,
+            sharable_banks,
             repair_whitelist,
             repair_handler,
         }
@@ -424,7 +424,7 @@ impl ServeRepair {
         let repair_handler = Box::new(StandardRepairHandler::new(blockstore));
         Self::new(
             cluster_info,
-            bank_forks.read().unwrap().sharable_root_bank(),
+            bank_forks.read().unwrap().sharable_banks(),
             repair_whitelist,
             repair_handler,
         )
@@ -662,7 +662,7 @@ impl ServeRepair {
         let mut total_requests = requests.len();
 
         let socket_addr_space = *self.cluster_info.socket_addr_space();
-        let root_bank = self.root_bank.load();
+        let root_bank = self.sharable_banks.root();
         let epoch_staked_nodes = root_bank.epoch_staked_nodes(root_bank.epoch());
         let identity_keypair = self.cluster_info.keypair().clone();
         let my_id = identity_keypair.pubkey();

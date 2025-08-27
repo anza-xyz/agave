@@ -52,9 +52,13 @@ mod tests {
     use {
         super::*,
         crate::commands::run::args::{
-            tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
+            tests::verify_args_struct_by_command_run_with_identity_setup, DefaultArgs, RunArgs,
         },
-        std::net::{Ipv4Addr, SocketAddr},
+        solana_rpc::rpc_pubsub_service::PubSubConfig,
+        std::{
+            net::{Ipv4Addr, SocketAddr},
+            num::NonZeroUsize,
+        },
     };
 
     #[test]
@@ -245,11 +249,24 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_run_with_full_api() {
         {
+            let default_args = DefaultArgs::new();
             let default_run_args = crate::commands::run::args::RunArgs::default();
             let expected_args = RunArgs {
                 json_rpc_config: JsonRpcConfig {
                     full_api: true,
                     ..default_run_args.json_rpc_config.clone()
+                },
+                pub_sub_config: PubSubConfig {
+                    notification_threads: Some(
+                        NonZeroUsize::new(
+                            default_args
+                                .rpc_pubsub_notification_threads
+                                .parse::<usize>()
+                                .unwrap(),
+                        )
+                        .unwrap(),
+                    ),
+                    ..default_run_args.pub_sub_config.clone()
                 },
                 ..default_run_args.clone()
             };

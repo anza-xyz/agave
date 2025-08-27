@@ -129,7 +129,6 @@ impl Shred {
         Payload: From<T>,
     {
         match shred::layout::get_shred_variant(shred.as_ref())? {
-            ShredVariant::LegacyCode | ShredVariant::LegacyData => Err(Error::InvalidShredVariant),
             ShredVariant::MerkleCode { .. } => Ok(Self::ShredCode(ShredCode::from_payload(shred)?)),
             ShredVariant::MerkleData { .. } => Ok(Self::ShredData(ShredData::from_payload(shred)?)),
         }
@@ -712,7 +711,7 @@ pub(super) fn recover(
             chained,
             resigned,
         } => (proof_size, chained, resigned),
-        ShredVariant::MerkleData { .. } | ShredVariant::LegacyCode | ShredVariant::LegacyData => {
+        ShredVariant::MerkleData { .. } => {
             return Err(Error::InvalidShredVariant);
         }
     };
@@ -1314,7 +1313,7 @@ fn finish_erasure_batch(
 mod test {
     use {
         super::*,
-        crate::shred::{merkle_tree::get_proof_size, ShredFlags, ShredId, SignedData},
+        crate::shred::{merkle_tree::get_proof_size, ShredFlags, ShredId},
         assert_matches::assert_matches,
         itertools::Itertools,
         rand::{seq::SliceRandom, CryptoRng, Rng},
@@ -1590,14 +1589,14 @@ mod test {
             }) {
                 assert_matches!(
                     recover(shreds, reed_solomon_cache).err(),
-                    Some(Error::ErasureError(TooFewParityShards))
+                    Some(Error::Erasure(TooFewParityShards))
                 );
                 continue;
             }
             if shreds.len() < num_data_shreds {
                 assert_matches!(
                     recover(shreds, reed_solomon_cache).err(),
-                    Some(Error::ErasureError(TooFewShardsPresent))
+                    Some(Error::Erasure(TooFewShardsPresent))
                 );
                 continue;
             }
@@ -1770,7 +1769,7 @@ mod test {
                 chained_merkle_root
             );
             let data = shred::layout::get_signed_data(shred).unwrap();
-            assert_eq!(data, SignedData::MerkleRoot(merkle_root));
+            assert_eq!(data, merkle_root);
             assert!(signature.verify(pubkey.as_ref(), data.as_ref()));
         }
         // Verify common, data and coding headers.

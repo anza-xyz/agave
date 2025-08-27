@@ -1098,8 +1098,6 @@ pub mod formalize_loaded_transaction_data_size {
     solana_pubkey::declare_id!("DeS7sR48ZcFTUmt5FFEVDr1v1bh73aAbZiZq3SYr8Eh8");
 }
 
-// Until alpenglow is fully upstreamed, this is intentionally left out of
-// `FEATURE_NAMES`
 pub mod alpenglow {
     solana_pubkey::declare_id!("mustRekeyVm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
 }
@@ -1109,7 +1107,7 @@ pub mod disable_zk_elgamal_proof_program {
 }
 
 pub mod reenable_zk_elgamal_proof_program {
-    solana_pubkey::declare_id!("zkemPXcuM3G4wpMDZ36Cpw34EjUpvm1nuioiSGbGZPR");
+    solana_pubkey::declare_id!("zkeygbBwEGgThKda6nVFVUjJHSYXbwydbmaPUeNQbmK");
 }
 
 pub mod raise_block_limits_to_100m {
@@ -1359,7 +1357,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (enshrine_slashing_program::id(), "SIMD-0204: Slashable event verification"),
         (enable_extend_program_checked::id(), "Enable ExtendProgramChecked instruction"),
         (formalize_loaded_transaction_data_size::id(), "SIMD-0186: Loaded transaction data size specification"),
-        // Intentionally left out until upstreaming is complete (alpenglow::id(), "Enable Alpenglow"),
+        (alpenglow::id(), "SIMD-0326: Alpenglow: new consensus algorithm"),
         (disable_zk_elgamal_proof_program::id(), "Disables zk-elgamal-proof program"),
         (reenable_zk_elgamal_proof_program::id(), "Re-enables zk-elgamal-proof program"),
         (raise_block_limits_to_100m::id(), "SIMD-0286: Raise block limit to 100M"),

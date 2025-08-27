@@ -38,7 +38,7 @@ fn collected_token_infos_to_token_balances(
         .collect()
 }
 
-fn svm_token_info_to_token_balance(svm_info: SvmTokenInfo) -> TransactionTokenBalance {
+pub fn svm_token_info_to_token_balance(svm_info: SvmTokenInfo) -> TransactionTokenBalance {
     let SvmTokenInfo {
         account_index,
         mint,

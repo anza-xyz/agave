@@ -6,7 +6,10 @@ use {
         commands::{monitor, wait_for_restart_window, Error, FromClapArgMatches, Result},
     },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
-    solana_clap_utils::input_validators::{is_parsable, is_valid_percentage},
+    solana_clap_utils::{
+        hidden_unless_forced,
+        input_validators::{is_parsable, is_valid_percentage},
+    },
     std::path::Path,
 };
 
@@ -37,11 +40,26 @@ impl FromClapArgMatches for ExitArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         let post_exit_action = if matches.is_present("monitor") {
             Some(PostExitAction::Monitor)
-        } else if matches.is_present("wait_for_exit") {
-            Some(PostExitAction::Wait)
-        } else {
+        } else if matches.is_present("no_wait_for_exit") {
             None
+        } else {
+            Some(PostExitAction::Wait)
         };
+
+        // Deprecated in v3.0.0
+        if matches.is_present("wait_for_exit") {
+            eprintln!(
+                "WARN: The --wait-for-exit flag has been deprecated, waiting for exit is now the \
+                 default behavior"
+            );
+        }
+        // Deprecated in v3.1.0
+        if matches.is_present("monitor") {
+            eprintln!(
+                "WARN: The --monitor flag has been deprecated, use \"agave-validator monitor\" \
+                 instead"
+            );
+        }
 
         Ok(ExitArgs {
             force: matches.is_present("force"),
@@ -63,7 +81,8 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .long("force")
                 .takes_value(false)
                 .help(
-                    "Request the validator exit immediately instead of waiting for a restart window",
+                    "Request the validator exit immediately instead of waiting for a restart \
+                     window",
                 ),
         )
         .arg(
@@ -71,13 +90,23 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .short("m")
                 .long("monitor")
                 .takes_value(false)
+                .requires("no_wait_for_exit")
+                .hidden(hidden_unless_forced())
                 .help("Monitor the validator after sending the exit request"),
         )
         .arg(
             Arg::with_name("wait_for_exit")
                 .long("wait-for-exit")
                 .conflicts_with("monitor")
+                .hidden(hidden_unless_forced())
                 .help("Wait for the validator to terminate after sending the exit request"),
+        )
+        .arg(
+            Arg::with_name("no_wait_for_exit")
+                .long("no-wait-for-exit")
+                .takes_value(false)
+                .conflicts_with("wait_for_exit")
+                .help("Do not wait for the validator to terminate after sending the exit request"),
         )
         .arg(
             Arg::with_name("min_idle_time")
@@ -86,9 +115,7 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .validator(is_parsable::<usize>)
                 .value_name("MINUTES")
                 .default_value(DEFAULT_MIN_IDLE_TIME)
-                .help(
-                    "Minimum time that the validator should not be leader before restarting",
-                ),
+                .help("Minimum time that the validator should not be leader before restarting"),
         )
         .arg(
             Arg::with_name("max_delinquent_stake")
@@ -131,11 +158,9 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     // Additionally, only check the pid() RPC call result if it will be used.
     // In an upgrade scenario, it is possible that a binary that calls pid()
     // will be initating exit against a process that doesn't support pid().
-    // Since PostExitAction::Wait case is opt-in (via --wait-for-exit), the
-    // result is checked ONLY in that case to provide a friendlier upgrade
-    // path for users who are NOT using --wait-for-exit
-    const WAIT_FOR_EXIT_UNSUPPORTED_ERROR: &str =
-        "remote process exit cannot be waited on. `--wait-for-exit` is not supported by the remote process";
+    const WAIT_FOR_EXIT_UNSUPPORTED_ERROR: &str = "remote process exit cannot be waited on. \
+                                                   `--wait-for-exit` is not supported by the \
+                                                   remote process";
     let post_exit_action = exit_args.post_exit_action.clone();
     let validator_pid = admin_rpc_service::runtime().block_on(async move {
         let admin_client = admin_rpc_service::connect(ledger_path).await?;
@@ -232,7 +257,7 @@ mod tests {
                     .parse()
                     .expect("invalid DEFAULT_MAX_DELINQUENT_STAKE"),
                 force: false,
-                post_exit_action: None,
+                post_exit_action: Some(PostExitAction::Wait),
                 skip_new_snapshot_check: false,
                 skip_health_check: false,
             }
@@ -260,9 +285,18 @@ mod tests {
     fn verify_args_struct_by_command_exit_with_post_exit_action() {
         verify_args_struct_by_command(
             command(),
-            vec![COMMAND, "--monitor"],
+            vec![COMMAND, "--monitor", "--no-wait-for-exit"],
             ExitArgs {
                 post_exit_action: Some(PostExitAction::Monitor),
+                ..ExitArgs::default()
+            },
+        );
+
+        verify_args_struct_by_command(
+            command(),
+            vec![COMMAND, "--no-wait-for-exit"],
+            ExitArgs {
+                post_exit_action: None,
                 ..ExitArgs::default()
             },
         );

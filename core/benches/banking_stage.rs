@@ -140,11 +140,11 @@ fn bench_banking(
     transaction_struct: TransactionStructure,
 ) {
     solana_logger::setup();
-    let num_threads = BankingStage::default_or_env_num_workers() as usize;
+    let num_threads = BankingStage::default_num_workers();
     //   a multiple of packet chunk duplicates to avoid races
     const CHUNKS: usize = 8;
     const PACKETS_PER_BATCH: usize = 192;
-    let txes = PACKETS_PER_BATCH * num_threads * CHUNKS;
+    let txes = PACKETS_PER_BATCH * num_threads.get() * CHUNKS;
     let mint_total = 1_000_000_000_000;
     let GenesisConfigInfo {
         mut genesis_config,
@@ -235,19 +235,20 @@ fn bench_banking(
     let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
         create_test_recorder(bank.clone(), blockstore, None, None);
     let (s, _r) = unbounded();
-    let _banking_stage = BankingStage::new(
+    let _banking_stage = BankingStage::new_num_threads(
         block_production_method,
         transaction_struct,
-        &poh_recorder,
+        poh_recorder.clone(),
         transaction_recorder,
         non_vote_receiver,
         tpu_vote_receiver,
         gossip_vote_receiver,
+        num_threads,
         None,
         s,
         None,
         bank_forks,
-        &Arc::new(PrioritizationFeeCache::new(0u64)),
+        Arc::new(PrioritizationFeeCache::new(0u64)),
     );
 
     let chunk_len = verified.len() / CHUNKS;

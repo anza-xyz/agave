@@ -3875,6 +3875,15 @@ pub mod tests {
     impl<T: IndexValue> AccountsIndex<T, T> {
         fn upsert_simple_test(&self, key: &Pubkey, slot: Slot, value: T) {
             let mut gc = Vec::new();
+
+            // It is invalid to reclaim older slots if the slot being upserted
+            // is unrooted
+            let reclaim_method = if self.is_alive_root(slot) {
+                UPSERT_RECLAIM_TEST_DEFAULT
+            } else {
+                UpsertReclaim::IgnoreReclaims
+            };
+
             self.upsert(
                 slot,
                 slot,
@@ -3883,7 +3892,7 @@ pub mod tests {
                 &AccountSecondaryIndexes::default(),
                 value,
                 &mut gc,
-                UPSERT_RECLAIM_TEST_DEFAULT,
+                reclaim_method,
             );
             assert!(gc.is_empty());
         }

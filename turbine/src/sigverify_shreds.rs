@@ -17,7 +17,7 @@ use {
             layout::{get_shred, resign_packet},
             wire::is_retransmitter_signed_variant,
         },
-        sigverify_shreds::{verify_shreds_gpu, LruCache},
+        sigverify_shreds::{verify_shreds_gpu, LruCache, SlotPubkeys},
     },
     solana_perf::{
         self,
@@ -30,7 +30,6 @@ use {
     solana_signer::Signer,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{
-        collections::HashMap,
         num::NonZeroUsize,
         sync::{
             atomic::{AtomicUsize, Ordering},
@@ -400,9 +399,8 @@ fn verify_packets(
     packets: &mut [PacketBatch],
     cache: &RwLock<LruCache>,
 ) {
-    let leader_slots: HashMap<Slot, Pubkey> =
+    let leader_slots: SlotPubkeys =
         get_slot_leaders(self_pubkey, packets, leader_schedule_cache, working_bank)
-            .into_iter()
             .filter_map(|(slot, pubkey)| Some((slot, pubkey?)))
             .chain(std::iter::once((Slot::MAX, Pubkey::default())))
             .collect();
@@ -415,34 +413,27 @@ fn verify_packets(
 //   - fails to deserialize the shred slot.
 //   - slot leader is unknown.
 //   - slot leader is the node itself (circular transmission).
-fn get_slot_leaders(
-    self_pubkey: &Pubkey,
-    batches: &mut [PacketBatch],
-    leader_schedule_cache: &LeaderScheduleCache,
-    bank: &Bank,
-) -> HashMap<Slot, Option<Pubkey>> {
-    let mut leaders = HashMap::<Slot, Option<Pubkey>>::new();
+fn get_slot_leaders<'a>(
+    self_pubkey: &'a Pubkey,
+    batches: &'a mut [PacketBatch],
+    leader_schedule_cache: &'a LeaderScheduleCache,
+    bank: &'a Bank,
+) -> impl Iterator<Item = (Slot, Option<Pubkey>)> + 'a {
     batches
         .iter_mut()
         .flat_map(|batch| batch.iter_mut())
         .filter(|packet| !packet.meta().discard())
-        .filter(|packet| {
+        .filter_map(move |mut packet| {
             let shred = shred::layout::get_shred(packet.as_ref());
-            let Some(slot) = shred.and_then(shred::layout::get_slot) else {
-                return true;
-            };
-            leaders
-                .entry(slot)
-                .or_insert_with(|| {
-                    // Discard the shred if the slot leader is the node itself.
-                    leader_schedule_cache
-                        .slot_leader_at(slot, Some(bank))
-                        .filter(|leader| leader != self_pubkey)
-                })
-                .is_none()
+            let slot = shred.and_then(shred::layout::get_slot)?;
+            let leader = leader_schedule_cache
+                .slot_leader_at(slot, Some(bank))
+                .filter(|leader| leader != self_pubkey);
+            if leader.is_none() {
+                packet.meta_mut().set_discard(true);
+            }
+            Some((slot, leader))
         })
-        .for_each(|mut packet| packet.meta_mut().set_discard(true));
-    leaders
 }
 
 fn count_discards(packets: &[PacketBatch]) -> usize {

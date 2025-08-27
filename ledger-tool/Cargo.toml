@@ -44,6 +44,7 @@ solana-bpf-loader-program = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-clock = { workspace = true }
+solana-cluster-type = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-cost-model = { workspace = true }
@@ -68,7 +69,7 @@ solana-rent = { workspace = true }
 solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true }
-solana-sbpf = { workspace = true, features = ["debugger"] }
+solana-sbpf = { workspace = true, features = ["debugger", "jit"] }
 solana-sdk-ids = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-signature = { workspace = true }

@@ -13,8 +13,7 @@ use {
     solana_signature::Signature,
     solana_signer::{signers::Signers, Signer},
     solana_system_interface::instruction as system_instruction,
-    solana_sysvar::Sysvar,
-    solana_sysvar_id::SysvarId,
+    solana_sysvar::SysvarSerialize,
     solana_transaction::{versioned::VersionedTransaction, Transaction},
     solana_transaction_error::{TransportError, TransportResult as Result},
     std::{
@@ -272,7 +271,7 @@ impl BankClient {
         Self::new_shared(Arc::new(bank))
     }
 
-    pub fn set_sysvar_for_tests<T: Sysvar + SysvarId>(&self, sysvar: &T) {
+    pub fn set_sysvar_for_tests<T: SysvarSerialize>(&self, sysvar: &T) {
         self.bank.set_sysvar_for_tests(sysvar);
     }
 
@@ -306,12 +305,12 @@ impl BankClient {
 mod tests {
     use {
         super::*, solana_genesis_config::create_genesis_config, solana_instruction::AccountMeta,
-        solana_native_token::sol_to_lamports,
+        solana_native_token::LAMPORTS_PER_SOL,
     };
 
     #[test]
     fn test_bank_client_new_with_keypairs() {
-        let (genesis_config, john_doe_keypair) = create_genesis_config(sol_to_lamports(1.0));
+        let (genesis_config, john_doe_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
         let john_pubkey = john_doe_keypair.pubkey();
         let jane_doe_keypair = Keypair::new();
         let jane_pubkey = jane_doe_keypair.pubkey();

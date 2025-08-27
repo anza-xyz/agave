@@ -99,6 +99,15 @@ impl RollbackAccounts {
         }
     }
 
+    /// Return a reference to the fee payer account.
+    pub fn fee_payer(&self) -> &TransactionAccount {
+        match self {
+            Self::FeePayerOnly { fee_payer } => fee_payer,
+            Self::SameNonceAndFeePayer { nonce } => nonce,
+            Self::SeparateNonceAndFeePayer { fee_payer, .. } => fee_payer,
+        }
+    }
+
     /// Number of accounts tracked for rollback
     pub fn count(&self) -> usize {
         match self {

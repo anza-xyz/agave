@@ -17,7 +17,7 @@ use {
         accounts::Accounts,
         accounts_db::{
             AccountStorageEntry, AccountsDb, AccountsDbConfig, AccountsFileId,
-            AtomicAccountsFileId, DuplicatesLtHash, IndexGenerationInfo,
+            AtomicAccountsFileId, IndexGenerationInfo,
         },
         accounts_file::{AccountsFile, StorageAccess},
         accounts_hash::AccountsLtHash,
@@ -25,7 +25,6 @@ use {
         ancestors::AncestorsForSerialization,
         blockhash_queue::BlockhashQueue,
     },
-    solana_builtins::prototype::BuiltinPrototype,
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_epoch_schedule::EpochSchedule,
     solana_fee_calculator::{FeeCalculator, FeeRateGovernor},
@@ -55,12 +54,16 @@ use {
     types::SerdeAccountsLtHash,
 };
 
+mod status_cache;
 mod storage;
 mod tests;
 mod types;
 mod utils;
 
-pub(crate) use storage::{SerializableAccountStorageEntry, SerializedAccountsFileId};
+pub(crate) use {
+    status_cache::{deserialize_status_cache, serialize_status_cache},
+    storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
+};
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 
@@ -551,7 +554,9 @@ pub(crate) fn fields_from_streams(
 /// This struct contains side-info while reconstructing the bank from streams
 #[derive(Debug)]
 pub struct BankFromStreamsInfo {
-    pub duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+    /// The accounts lt hash calculated during index generation.
+    /// Will be used when verifying accounts, after rebuilding a Bank.
+    pub calculated_accounts_lt_hash: AccountsLtHash,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -563,7 +568,6 @@ pub(crate) fn bank_from_streams<R>(
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: Option<AccountsDbConfig>,
@@ -582,7 +586,6 @@ where
         account_paths,
         storage_and_next_append_vec_id,
         debug_keys,
-        additional_builtins,
         limit_load_slot_count_from_snapshot,
         verify_index,
         accounts_db_config,
@@ -592,7 +595,7 @@ where
     Ok((
         bank,
         BankFromStreamsInfo {
-            duplicates_lt_hash: info.duplicates_lt_hash,
+            calculated_accounts_lt_hash: info.calculated_accounts_lt_hash,
         },
     ))
 }
@@ -807,7 +810,9 @@ impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccount
 /// This struct contains side-info while reconstructing the bank from fields
 #[derive(Debug)]
 pub(crate) struct ReconstructedBankInfo {
-    pub(crate) duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+    /// The accounts lt hash calculated during index generation.
+    /// Will be used when verifying accounts, after rebuilding a Bank.
+    pub(crate) calculated_accounts_lt_hash: AccountsLtHash,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -819,7 +824,6 @@ pub(crate) fn reconstruct_bank_from_fields<E>(
     account_paths: &[PathBuf],
     storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: Option<AccountsDbConfig>,
@@ -853,7 +857,6 @@ where
         runtime_config,
         bank_fields,
         debug_keys,
-        additional_builtins,
         debug_do_not_add_builtins,
         reconstructed_accounts_db_info.accounts_data_len,
     );
@@ -862,7 +865,7 @@ where
     Ok((
         bank,
         ReconstructedBankInfo {
-            duplicates_lt_hash: reconstructed_accounts_db_info.duplicates_lt_hash,
+            calculated_accounts_lt_hash: reconstructed_accounts_db_info.calculated_accounts_lt_hash,
         },
     ))
 }
@@ -983,10 +986,12 @@ pub(crate) fn remap_and_reconstruct_single_storage(
 }
 
 /// This struct contains side-info while reconstructing the accounts DB from fields.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug)]
 pub struct ReconstructedAccountsDbInfo {
     pub accounts_data_len: u64,
-    pub duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+    /// The accounts lt hash calculated during index generation.
+    /// Will be used when verifying accounts, after rebuilding a Bank.
+    pub calculated_accounts_lt_hash: AccountsLtHash,
     pub bank_hash_stats: BankHashStats,
 }
 
@@ -1067,7 +1072,7 @@ where
     let start = Instant::now();
     let IndexGenerationInfo {
         accounts_data_len,
-        duplicates_lt_hash,
+        calculated_accounts_lt_hash,
     } = accounts_db.generate_index(limit_load_slot_count_from_snapshot, verify_index);
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
@@ -1083,7 +1088,7 @@ where
         Arc::try_unwrap(accounts_db).unwrap(),
         ReconstructedAccountsDbInfo {
             accounts_data_len,
-            duplicates_lt_hash,
+            calculated_accounts_lt_hash,
             bank_hash_stats: snapshot_bank_hash_info.stats,
         },
     ))

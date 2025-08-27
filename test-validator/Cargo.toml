@@ -42,6 +42,7 @@ solana-logger = "=3.0.0"
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
+solana-program-binaries = { workspace = true }
 solana-program-test = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }

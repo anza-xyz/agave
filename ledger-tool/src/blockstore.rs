@@ -466,8 +466,8 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                     .help("Start slot to purge from (inclusive)"),
             )
             .arg(Arg::with_name("end_slot").index(2).value_name("SLOT").help(
-                "Ending slot to stop purging (inclusive). \
-                 [default: the highest slot in the ledger]",
+                "Ending slot to stop purging (inclusive). [default: the highest slot in the \
+                 ledger]",
             ))
             .arg(
                 Arg::with_name("batch_size")

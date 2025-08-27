@@ -147,16 +147,16 @@ mod tests {
                     MockSystemInstruction::Correct => Ok(()),
                     MockSystemInstruction::TransferLamports { lamports } => {
                         instruction_context
-                            .try_borrow_instruction_account(transaction_context, 0)?
+                            .try_borrow_instruction_account(0)?
                             .checked_sub_lamports(lamports)?;
                         instruction_context
-                            .try_borrow_instruction_account(transaction_context, 1)?
+                            .try_borrow_instruction_account(1)?
                             .checked_add_lamports(lamports)?;
                         Ok(())
                     }
                     MockSystemInstruction::ChangeData { data } => {
                         instruction_context
-                            .try_borrow_instruction_account(transaction_context, 1)?
+                            .try_borrow_instruction_account(1)?
                             .set_data_from_slice(&[data])?;
                         Ok(())
                     }
@@ -361,15 +361,12 @@ mod tests {
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
             let instruction_data = instruction_context.get_instruction_data();
-            let mut to_account =
-                instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
+            let mut to_account = instruction_context.try_borrow_instruction_account(1)?;
             if let Ok(instruction) = bincode::deserialize(instruction_data) {
                 match instruction {
                     MockSystemInstruction::BorrowFail => {
-                        let from_account = instruction_context
-                            .try_borrow_instruction_account(transaction_context, 0)?;
-                        let dup_account = instruction_context
-                            .try_borrow_instruction_account(transaction_context, 2)?;
+                        let from_account = instruction_context.try_borrow_instruction_account(0)?;
+                        let dup_account = instruction_context.try_borrow_instruction_account(2)?;
                         if from_account.get_lamports() != dup_account.get_lamports() {
                             return Err(InstructionError::InvalidArgument);
                         }
@@ -377,10 +374,10 @@ mod tests {
                     }
                     MockSystemInstruction::MultiBorrowMut => {
                         let lamports_a = instruction_context
-                            .try_borrow_instruction_account(transaction_context, 0)?
+                            .try_borrow_instruction_account(0)?
                             .get_lamports();
                         let lamports_b = instruction_context
-                            .try_borrow_instruction_account(transaction_context, 2)?
+                            .try_borrow_instruction_account(2)?
                             .get_lamports();
                         if lamports_a != lamports_b {
                             return Err(InstructionError::InvalidArgument);
@@ -388,14 +385,14 @@ mod tests {
                         Ok(())
                     }
                     MockSystemInstruction::DoWork { lamports, data } => {
-                        let mut dup_account = instruction_context
-                            .try_borrow_instruction_account(transaction_context, 2)?;
+                        let mut dup_account =
+                            instruction_context.try_borrow_instruction_account(2)?;
                         dup_account.checked_sub_lamports(lamports)?;
                         to_account.checked_add_lamports(lamports)?;
                         dup_account.set_data_from_slice(&[data])?;
                         drop(dup_account);
-                        let mut from_account = instruction_context
-                            .try_borrow_instruction_account(transaction_context, 0)?;
+                        let mut from_account =
+                            instruction_context.try_borrow_instruction_account(0)?;
                         from_account.checked_sub_lamports(lamports)?;
                         to_account.checked_add_lamports(lamports)?;
                         Ok(())

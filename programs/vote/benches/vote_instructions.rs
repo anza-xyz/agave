@@ -20,8 +20,8 @@ use {
         vote_processor::Entrypoint,
         vote_state::{
             create_account, create_account_with_authorized, TowerSync, Vote, VoteAuthorize,
-            VoteAuthorizeCheckedWithSeedArgs, VoteAuthorizeWithSeedArgs, VoteInit, VoteState,
-            VoteStateUpdate, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            VoteAuthorizeCheckedWithSeedArgs, VoteAuthorizeWithSeedArgs, VoteInit, VoteStateUpdate,
+            VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
 };
@@ -48,7 +48,7 @@ fn create_accounts() -> (Slot, SlotHashes, Vec<TransactionAccount>, Vec<AccountM
     let vote_pubkey = Pubkey::new_unique();
     let authority_pubkey = Pubkey::new_unique();
     let vote_account = {
-        let mut vote_state = VoteState::new(
+        let mut vote_state = VoteStateV3::new(
             &VoteInit {
                 node_pubkey: authority_pubkey,
                 authorized_voter: authority_pubkey,
@@ -61,9 +61,9 @@ fn create_accounts() -> (Slot, SlotHashes, Vec<TransactionAccount>, Vec<AccountM
         for next_vote_slot in 0..num_initial_votes {
             vote_state.process_next_vote_slot(next_vote_slot, 0, 0);
         }
-        let mut vote_account_data: Vec<u8> = vec![0; VoteState::size_of()];
-        let versioned = VoteStateVersions::new_current(vote_state);
-        VoteState::serialize(&versioned, &mut vote_account_data).unwrap();
+        let mut vote_account_data: Vec<u8> = vec![0; VoteStateV3::size_of()];
+        let versioned = VoteStateVersions::new_v3(vote_state);
+        VoteStateV3::serialize(&versioned, &mut vote_account_data).unwrap();
 
         Account {
             lamports: 1,
@@ -124,7 +124,7 @@ fn create_accounts() -> (Slot, SlotHashes, Vec<TransactionAccount>, Vec<AccountM
 
 fn create_test_account() -> (Pubkey, AccountSharedData) {
     let rent = Rent::default();
-    let balance = VoteState::get_rent_exempt_reserve(&rent);
+    let balance = VoteStateV3::get_rent_exempt_reserve(&rent);
     let vote_pubkey = solana_pubkey::new_rand();
     (
         vote_pubkey,
@@ -256,7 +256,7 @@ struct BenchInitializeAccount {
 impl BenchInitializeAccount {
     fn new() -> Self {
         let vote_pubkey = solana_pubkey::new_rand();
-        let vote_account = AccountSharedData::new(100, VoteState::size_of(), &id());
+        let vote_account = AccountSharedData::new(100, VoteStateV3::size_of(), &id());
         let node_pubkey = solana_pubkey::new_rand();
         let node_account = AccountSharedData::default();
         let instruction_data = serialize(&VoteInstruction::InitializeAccount(VoteInit {
@@ -574,7 +574,7 @@ impl BenchAuthorizeChecked {
     fn new() -> Self {
         let vote_pubkey = Pubkey::new_unique();
         let new_authorized_pubkey = Pubkey::new_unique();
-        let vote_account = AccountSharedData::new(100, VoteState::size_of(), &id());
+        let vote_account = AccountSharedData::new(100, VoteStateV3::size_of(), &id());
         let clock_address = sysvar::clock::id();
         let clock_account = account::create_account_shared_data_for_test(&Clock::default());
         let default_authorized_pubkey = Pubkey::default();

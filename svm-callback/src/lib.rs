@@ -39,15 +39,6 @@ pub trait TransactionProcessingCallback: InvokeContextCallback {
 
     fn inspect_account(&self, _address: &Pubkey, _account_state: AccountState, _is_writable: bool) {
     }
-
-    #[deprecated(
-        since = "2.3.0",
-        note = "Use `get_epoch_stake_for_vote_account` on the `InvokeContextCallback` trait \
-                instead"
-    )]
-    fn get_current_epoch_vote_account_stake(&self, vote_address: &Pubkey) -> u64 {
-        Self::get_epoch_stake_for_vote_account(self, vote_address)
-    }
 }
 
 /// The state the account is in initially, before transaction processing

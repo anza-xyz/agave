@@ -8,12 +8,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v3.0](#edge-channel)
-* [beta - v2.3](https://github.com/anza-xyz/agave/blob/v2.3/CHANGELOG.md)
-* [stable - v2.2](https://github.com/anza-xyz/agave/blob/v2.2/CHANGELOG.md)
+* [edge - v3.1](#edge-channel)
+* [beta - v3.0](https://github.com/anza-xyz/agave/blob/v3.0/CHANGELOG.md)
+* [stable - v2.3](https://github.com/anza-xyz/agave/blob/v2.3/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## 3.0.0 - Unreleased
+## 3.1.0—Unreleased
+### RPC
+#### Breaking
+#### Changes
+### Validator
+#### Breaking
+#### Deprecations
+* The `--monitor` flag with `agave-validator exit` is now deprecated. Operators can use the `monitor` command after `exit` instead.
+
+## 3.0.0
 
 ### RPC
 
@@ -41,10 +50,13 @@ Release channels have their own copy of this changelog:
 * Deprecated snapshot archive formats have been removed and are no longer loadable.
 * Using `--snapshot-interval-slots 0` to disable generating snapshots has been removed. Use `--no-snapshots` instead.
 * Validator will now bind all ports within provided `--dynamic-port-range`, including the client ports. A range of at least 25 ports is recommended to avoid failures to bind during startup.
+* Agave and agave-ledger-tool can no longer operate with legacy shreds. Legacy shreds have not been in circulation since the activation of https://explorer.solana.com/address/GV49KKQdBNaiv2pgqhS2Dy3GWYJGXMTVYbYkdk91orRy. This change may break operations with old ledgers that may still contain legacy shreds.
 
 #### Changes
 * `--transaction-structure view` is now the default.
 * The default full snapshot interval is now 100,000 slots.
+* `SOLANA_BANKING_THREADS` environment variable is no longer supported. Use `--block-prouduction-num-workers` instead.
+* By default, `agave-validator exit` will now wait for the validator process to terminate before returning. The `--wait-for-exit` flag has been deprecated, but operators can still opt out with the new `--no-wait-for-exit` flag.
 
 ## 2.3.0
 

@@ -17,10 +17,9 @@ use {
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
     solana_bn254::prelude::{
-        alt_bn128_addition, alt_bn128_multiplication, alt_bn128_multiplication_128,
-        alt_bn128_pairing, AltBn128Error, ALT_BN128_ADDITION_OUTPUT_LEN,
-        ALT_BN128_MULTIPLICATION_OUTPUT_LEN, ALT_BN128_PAIRING_ELEMENT_LEN,
-        ALT_BN128_PAIRING_OUTPUT_LEN,
+        alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing,
+        ALT_BN128_ADDITION_OUTPUT_LEN, ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
+        ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
     },
     solana_cpi::MAX_RETURN_DATA,
     solana_hash::Hash,
@@ -48,8 +47,7 @@ use {
     solana_svm_log_collector::{ic_logger_msg, ic_msg},
     solana_svm_timings::ExecuteTimings,
     solana_svm_type_overrides::sync::Arc,
-    solana_sysvar::Sysvar,
-    solana_sysvar_id::SysvarId,
+    solana_sysvar::SysvarSerialize,
     solana_transaction_context::IndexOfAccount,
     std::{
         alloc::Layout,
@@ -1461,7 +1459,7 @@ declare_builtin_function!(
         let program_id = *transaction_context
             .get_current_instruction_context()
             .and_then(|instruction_context| {
-                instruction_context.get_program_key(transaction_context)
+                instruction_context.get_program_key()
             })?;
 
         transaction_context.set_return_data(program_id, return_data)?;
@@ -1581,19 +1579,12 @@ declare_builtin_function!(
                 let _ = result_header;
 
                 *program_id = *instruction_context
-                    .get_program_key(invoke_context.transaction_context)?;
+                    .get_program_key()?;
                 data.clone_from_slice(instruction_context.get_instruction_data());
                 let account_metas = (0..instruction_context.get_number_of_instruction_accounts())
                     .map(|instruction_account_index| {
                         Ok(AccountMeta {
-                            pubkey: *invoke_context
-                                .transaction_context
-                                .get_key_of_account_at_index(
-                                    instruction_context
-                                        .get_index_of_instruction_account_in_transaction(
-                                            instruction_account_index,
-                                        )?,
-                                )?,
+                            pubkey: *instruction_context.get_key_of_instruction_account(instruction_account_index)?,
                             is_signer: instruction_context
                                 .is_instruction_account_signer(instruction_account_index)?,
                             is_writable: instruction_context
@@ -1693,42 +1684,14 @@ declare_builtin_function!(
 
         let calculation = match group_op {
             ALT_BN128_ADD => alt_bn128_addition,
-            ALT_BN128_MUL => {
-                let fix_alt_bn128_multiplication_input_length = invoke_context
-                    .get_feature_set()
-                    .fix_alt_bn128_multiplication_input_length;
-                if fix_alt_bn128_multiplication_input_length {
-                    alt_bn128_multiplication
-                } else {
-                    alt_bn128_multiplication_128
-                }
-            }
+            ALT_BN128_MUL => alt_bn128_multiplication,
             ALT_BN128_PAIRING => alt_bn128_pairing,
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
             }
         };
 
-        let simplify_alt_bn128_syscall_error_codes = invoke_context
-            .get_feature_set()
-            .simplify_alt_bn128_syscall_error_codes;
-
-        let result_point = match calculation(input) {
-            Ok(result_point) => result_point,
-            Err(e) => {
-                return if simplify_alt_bn128_syscall_error_codes {
-                    Ok(1)
-                } else {
-                    Ok(e.into())
-                };
-            }
-        };
-
-        // This can never happen and should be removed when the
-        // simplify_alt_bn128_syscall_error_codes feature gets activated
-        if result_point.len() != output && !simplify_alt_bn128_syscall_error_codes {
-            return Ok(AltBn128Error::SliceOutOfBounds.into());
-        }
+        let Ok(result_point) = calculation(input) else { return Ok(1) };
 
         call_result.copy_from_slice(&result_point);
         Ok(SUCCESS)
@@ -2185,7 +2148,8 @@ mod tests {
         solana_sha256_hasher::hashv,
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,
-        solana_sysvar::stake_history::{self, StakeHistory, StakeHistoryEntry},
+        solana_stake_interface::stake_history::{self, StakeHistory, StakeHistoryEntry},
+        solana_sysvar_id::SysvarId,
         solana_transaction_context::InstructionAccount,
         std::{
             hash::{DefaultHasher, Hash, Hasher},
@@ -4435,14 +4399,14 @@ mod tests {
             while stack_height
                 <= invoke_context
                     .transaction_context
-                    .get_instruction_context_stack_height()
+                    .get_instruction_stack_height()
             {
                 invoke_context.transaction_context.pop().unwrap();
             }
             if stack_height
                 > invoke_context
                     .transaction_context
-                    .get_instruction_context_stack_height()
+                    .get_instruction_stack_height()
             {
                 let instruction_accounts = vec![InstructionAccount::new(
                     index_in_trace.saturating_add(1) as IndexOfAccount,

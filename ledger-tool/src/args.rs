@@ -35,8 +35,8 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .value_name("PATHS")
             .takes_value(true)
             .help(
-                "Persistent accounts location. May be specified multiple times. \
-                [default: <LEDGER>/accounts]",
+                "Persistent accounts location. May be specified multiple times. [default: \
+                 <LEDGER>/accounts]",
             ),
         Arg::with_name("accounts_index_path")
             .long("accounts-index-path")
@@ -44,8 +44,8 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .takes_value(true)
             .multiple(true)
             .help(
-                "Persistent accounts-index location. May be specified multiple times. \
-                [default: <LEDGER>/accounts_index]",
+                "Persistent accounts-index location. May be specified multiple times. [default: \
+                 <LEDGER>/accounts_index]",
             ),
         Arg::with_name("accounts_index_bins")
             .long("accounts-index-bins")

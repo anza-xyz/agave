@@ -11,7 +11,7 @@ use {
     log::*,
     rand::{seq::SliceRandom, thread_rng},
     solana_accounts_db::{
-        accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
+        accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
         accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimitMb, ScanFilter},
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -52,7 +52,6 @@ use {
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
-    solana_rpc::rpc_pubsub_service::PubSubConfig,
     solana_runtime::{
         runtime_config::RuntimeConfig,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
@@ -103,6 +102,7 @@ pub fn execute(
         accounts_db_foreground_threads,
         accounts_db_hash_threads,
         accounts_index_flush_threads,
+        block_production_num_workers,
         ip_echo_server_threads,
         rayon_global_threads,
         replay_forks_threads,
@@ -150,7 +150,7 @@ pub fn execute(
         match &staked_nodes_overrides_path {
             None => StakedNodesOverrides::default(),
             Some(p) => load_staked_nodes_overrides(p).unwrap_or_else(|err| {
-                error!("Failed to load stake-nodes-overrides from {}: {}", p, err);
+                error!("Failed to load stake-nodes-overrides from {p}: {err}");
                 clap::Error::with_description(
                     "Failed to load configuration of stake-nodes-overrides argument",
                     clap::ErrorKind::InvalidValue,
@@ -232,6 +232,12 @@ pub fn execute(
         BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
     };
 
+    if bind_addresses.len() > 1 && matches.is_present("use_connection_cache") {
+        Err(String::from(
+            "Connection cache can not be used in a multihoming context",
+        ))?;
+    }
+
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
             .expect("invalid rpc_bind_address")
@@ -250,7 +256,10 @@ pub fn execute(
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let tpu_use_quic = !matches.is_present("tpu_disable_quic");
     if !tpu_use_quic {
-        warn!("TPU QUIC was disabled via --tpu_disable_quic, this will prevent validator from receiving transactions!");
+        warn!(
+            "TPU QUIC was disabled via --tpu_disable_quic, this will prevent validator from \
+             receiving transactions!"
+        );
     }
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
@@ -405,6 +414,12 @@ pub fn execute(
         })
         .unwrap_or_default();
 
+    let mark_obsolete_accounts = if matches.is_present("accounts_db_mark_obsolete_accounts") {
+        MarkObsoleteAccounts::Enabled
+    } else {
+        MarkObsoleteAccounts::Disabled
+    };
+
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes.clone()),
@@ -429,6 +444,7 @@ pub fn execute(
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         num_hash_threads: Some(accounts_db_hash_threads),
+        mark_obsolete_accounts,
         ..AccountsDbConfig::default()
     };
 
@@ -535,6 +551,24 @@ pub fn execute(
         run_args.rpc_bootstrap_config.incremental_snapshot_fetch,
     )?;
 
+    let use_snapshot_archives_at_startup = value_t_or_exit!(
+        matches,
+        use_snapshot_archives_at_startup::cli::NAME,
+        UseSnapshotArchivesAtStartup
+    );
+
+    if mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
+        && use_snapshot_archives_at_startup != UseSnapshotArchivesAtStartup::Always
+    {
+        Err(format!(
+            "The --accounts-db-mark-obsolete-accounts option requires \
+             the --use-snapshot-archives-at-startup option to be set to {}. \
+             Current value: {}",
+            UseSnapshotArchivesAtStartup::Always,
+            use_snapshot_archives_at_startup
+        ))?;
+    }
+
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
         tower_storage,
@@ -561,29 +595,7 @@ pub fn execute(
                 // https://github.com/solana-labs/solana/issues/12250
             )
         }),
-        pubsub_config: PubSubConfig {
-            enable_block_subscription: matches.is_present("rpc_pubsub_enable_block_subscription"),
-            enable_vote_subscription: matches.is_present("rpc_pubsub_enable_vote_subscription"),
-            max_active_subscriptions: value_t_or_exit!(
-                matches,
-                "rpc_pubsub_max_active_subscriptions",
-                usize
-            ),
-            queue_capacity_items: value_t_or_exit!(
-                matches,
-                "rpc_pubsub_queue_capacity_items",
-                usize
-            ),
-            queue_capacity_bytes: value_t_or_exit!(
-                matches,
-                "rpc_pubsub_queue_capacity_bytes",
-                usize
-            ),
-            worker_threads: value_t_or_exit!(matches, "rpc_pubsub_worker_threads", usize),
-            notification_threads: value_t!(matches, "rpc_pubsub_notification_threads", usize)
-                .ok()
-                .and_then(NonZeroUsize::new),
-        },
+        pubsub_config: run_args.pub_sub_config,
         voting_disabled: matches.is_present("no_voting") || restricted_repair_only_mode,
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),
         known_validators: run_args.known_validators,
@@ -646,11 +658,7 @@ pub fn execute(
             ..RuntimeConfig::default()
         },
         staked_nodes_overrides: staked_nodes_overrides.clone(),
-        use_snapshot_archives_at_startup: value_t_or_exit!(
-            matches,
-            use_snapshot_archives_at_startup::cli::NAME,
-            UseSnapshotArchivesAtStartup
-        ),
+        use_snapshot_archives_at_startup,
         ip_echo_server_threads,
         rayon_global_threads,
         replay_forks_threads,
@@ -680,6 +688,7 @@ pub fn execute(
             "block_production_method",
             BlockProductionMethod
         ),
+        block_production_num_workers,
         transaction_struct: value_t_or_exit!(matches, "transaction_struct", TransactionStructure),
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         banking_trace_dir_byte_limit: parse_banking_trace_dir_byte_limit(matches),
@@ -731,9 +740,9 @@ pub fn execute(
         BlockVerificationMethod::BlockstoreProcessor => {
             warn!(
                 "The value \"blockstore-processor\" for --block-verification-method has been \
-                deprecated. The value \"blockstore-processor\" is still allowed for now, but \
-                is planned for removal in the near future. To update, either set the value \
-                \"unified-scheduler\" or remove the --block-verification-method argument"
+                 deprecated. The value \"blockstore-processor\" is still allowed for now, but is \
+                 planned for removal in the near future. To update, either set the value \
+                 \"unified-scheduler\" or remove the --block-verification-method argument"
             );
         }
         BlockVerificationMethod::UnifiedScheduler => {}
@@ -788,7 +797,10 @@ pub fn execute(
     let gossip_host = matches
         .value_of("gossip_host")
         .map(|gossip_host| {
-            warn!("--gossip-host is deprecated. Use --bind-address or rely on automatic public IP discovery instead.");
+            warn!(
+                "--gossip-host is deprecated. Use --bind-address or rely on automatic public IP \
+                 discovery instead."
+            );
             solana_net_utils::parse_host(gossip_host)
                 .map_err(|err| format!("failed to parse --gossip-host: {err}"))
         })
@@ -807,8 +819,7 @@ pub fn execute(
             .find_map(|i| {
                 let entrypoint_addr = &entrypoint_addrs[i];
                 info!(
-                    "Contacting {} to determine the validator's public IP address",
-                    entrypoint_addr
+                    "Contacting {entrypoint_addr} to determine the validator's public IP address"
                 );
                 solana_net_utils::get_public_ip_addr_with_binding(
                     entrypoint_addr,
@@ -1044,7 +1055,10 @@ pub fn execute(
             ) {
                 // 200 is a special error code, see
                 // https://github.com/solana-foundation/solana-improvement-documents/pull/46
-                error!("Please remove --wen_restart and use --wait_for_supermajority as instructed above");
+                error!(
+                    "Please remove --wen_restart and use --wait_for_supermajority as instructed \
+                     above"
+                );
                 exit(200);
             }
             Err(format!("{err:?}"))
@@ -1102,10 +1116,7 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
             Err(err) => eprintln!("get_cluster_shred_version failed: {entrypoint}, {err}"),
             Ok(0) => eprintln!("entrypoint {entrypoint} returned shred-version zero"),
             Ok(shred_version) => {
-                info!(
-                    "obtained shred-version {} from {}",
-                    shred_version, entrypoint
-                );
+                info!("obtained shred-version {shred_version} from {entrypoint}");
                 return Some(shred_version);
             }
         }
@@ -1158,10 +1169,9 @@ fn new_snapshot_config(
                     if matches.occurrences_of("full_snapshot_interval_slots") > 0 {
                         warn!(
                             "Incremental snapshots are disabled, yet \
-                             --full-snapshot-interval-slots was specified! \
-                             Note that --full-snapshot-interval-slots is *ignored* \
-                             when incremental snapshots are disabled. \
-                             Use --snapshot-interval-slots instead.",
+                             --full-snapshot-interval-slots was specified! Note that \
+                             --full-snapshot-interval-slots is *ignored* when incremental \
+                             snapshots are disabled. Use --snapshot-interval-slots instead.",
                         );
                     }
                     (
@@ -1189,9 +1199,9 @@ fn new_snapshot_config(
         let full_snapshot_interval_slots = full_snapshot_interval_slots.get();
         if full_snapshot_interval_slots > DEFAULT_SLOTS_PER_EPOCH {
             warn!(
-                "The full snapshot interval is excessively large: {}! This will negatively \
-                impact the background cleanup tasks in accounts-db. Consider a smaller value.",
-                full_snapshot_interval_slots,
+                "The full snapshot interval is excessively large: {full_snapshot_interval_slots}! \
+                 This will negatively impact the background cleanup tasks in accounts-db. \
+                 Consider a smaller value.",
             );
         }
     }
@@ -1212,8 +1222,8 @@ fn new_snapshot_config(
         .any(|account_path| account_path == &snapshots_dir)
     {
         Err(
-            "the --accounts and --snapshots paths must be unique since they \
-             both create 'snapshots' subdirectories, otherwise there may be collisions"
+            "the --accounts and --snapshots paths must be unique since they both create \
+             'snapshots' subdirectories, otherwise there may be collisions"
                 .to_string(),
         )?;
     }
@@ -1305,9 +1315,8 @@ fn new_snapshot_config(
 
     if !is_snapshot_config_valid(&snapshot_config) {
         Err(
-            "invalid snapshot configuration provided: snapshot intervals are incompatible. \
-             \n\t- full snapshot interval MUST be larger than incremental snapshot interval \
-             (if enabled)"
+            "invalid snapshot configuration provided: snapshot intervals are incompatible. full \
+             snapshot interval MUST be larger than incremental snapshot interval (if enabled)"
                 .to_string(),
         )?;
     }

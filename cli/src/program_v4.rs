@@ -169,9 +169,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .value_name("PROGRAM_SIGNER")
                                 .takes_value(true)
                                 .validator(is_valid_signer)
-                                .help(
-                                    "Program account signer for deploying a new program",
-                                ),
+                                .help("Program account signer for deploying a new program"),
                         )
                         .arg(
                             Arg::with_name("program-id")
@@ -186,9 +184,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .value_name("BUFFER_SIGNER")
                                 .takes_value(true)
                                 .validator(is_valid_signer)
-                                .help(
-                                    "Optional intermediate buffer account to write data to",
-                                ),
+                                .help("Optional intermediate buffer account to write data to"),
                         )
                         .arg(
                             Arg::with_name("authority")
@@ -253,7 +249,8 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .validator(is_valid_signer)
                                 .help(
-                                    "Current program authority [default: the default configured keypair]",
+                                    "Current program authority [default: the default configured \
+                                     keypair]",
                                 ),
                         )
                         .arg(
@@ -263,9 +260,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .required(true)
                                 .validator(is_valid_signer)
-                                .help(
-                                    "New program authority",
-                                ),
+                                .help("New program authority"),
                         )
                         .offline_args()
                         .arg(compute_unit_price_arg()),
@@ -298,7 +293,9 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .validator(is_valid_signer)
                                 .help(
-                                    "Reserves the address and links it as the programs next-version, which is a hint that frontends can show to users",
+                                    "Reserves the address and links it as the programs \
+                                     next-version, which is a hint that frontends can show to \
+                                     users",
                                 ),
                         )
                         .offline_args()
@@ -672,12 +669,20 @@ pub fn process_deploy_program(
     {
         // Deploy new program
         if program_account_exists {
-            return Err("Program account does exist already. Did you perhaps intent to redeploy an existing program instead? Then use --program-id instead of --program-keypair.".into());
+            return Err(
+                "Program account does exist already. Did you perhaps intent to redeploy an \
+                 existing program instead? Then use --program-id instead of --program-keypair."
+                    .into(),
+            );
         }
     } else {
         // Redeploy an existing program
         if !program_account_exists {
-            return Err("Program account does not exist. Did you perhaps intent to deploy a new program instead? Then use --program-keypair instead of --program-id.".into());
+            return Err(
+                "Program account does not exist. Did you perhaps intent to deploy a new program \
+                 instead? Then use --program-keypair instead of --program-id."
+                    .into(),
+            );
         }
     }
     if let Some(program_account) = program_account.as_ref() {
@@ -815,14 +820,13 @@ pub fn process_deploy_program(
     if upload_signer_index.is_none() {
         if upload_account.is_none() {
             return Err(format!(
-                "No ELF was provided or uploaded to the account {:?}",
-                upload_address,
+                "No ELF was provided or uploaded to the account {upload_address:?}",
             )
             .into());
         }
     } else {
         if upload_range.is_empty() {
-            return Err(format!("Attempting to upload empty range {:?}", upload_range).into());
+            return Err(format!("Attempting to upload empty range {upload_range:?}").into());
         }
         let first_write_message = Message::new(
             &[instruction::write(
@@ -1258,7 +1262,7 @@ fn send_messages(
 
         if !transaction_errors.is_empty() {
             for transaction_error in &transaction_errors {
-                error!("{:?}", transaction_error);
+                error!("{transaction_error:?}");
             }
             return Err(format!("{} write transactions failed", transaction_errors.len()).into());
         }

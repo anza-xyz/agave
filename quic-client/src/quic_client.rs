@@ -80,7 +80,7 @@ pub fn get_runtime() -> &'static Runtime {
 
 async fn send_data_async(
     connection: Arc<NonblockingQuicConnection>,
-    buffer: Vec<u8>,
+    buffer: Arc<Vec<u8>>,
 ) -> TransportResult<()> {
     let result = timeout(SEND_DATA_TIMEOUT, connection.send_data(&buffer)).await;
     ASYNC_TASK_SEMAPHORE.release();
@@ -160,7 +160,7 @@ impl ClientConnection for QuicClientConnection {
         Ok(())
     }
 
-    fn send_data_async(&self, data: Vec<u8>) -> TransportResult<()> {
+    fn send_data_async(&self, data: Arc<Vec<u8>>) -> TransportResult<()> {
         let _lock = ASYNC_TASK_SEMAPHORE.acquire();
         let inner = self.inner.clone();
 

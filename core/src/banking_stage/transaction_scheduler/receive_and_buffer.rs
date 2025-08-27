@@ -2,7 +2,6 @@
 use qualifier_attr::qualifiers;
 use {
     super::{
-        scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics},
         transaction_priority_id::TransactionPriorityId,
         transaction_state::TransactionState,
         transaction_state_container::{
@@ -38,8 +37,8 @@ use {
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::sanitized::{MessageHash, SanitizedTransaction},
+    solana_transaction_error::TransactionError,
     std::{
-        num::Saturating,
         sync::{Arc, RwLock},
         time::Instant,
     },
@@ -48,6 +47,48 @@ use {
 #[derive(Debug)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DisconnectedError;
+
+/// Stats/metrics returned by `receive_and_buffer_packets`.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) struct ReceivingStats {
+    pub num_received: usize,
+    /// Count of packets that passed sigverify but were dropped
+    /// without further checks because we were outside the holding
+    /// window.
+    pub num_dropped_without_parsing: usize,
+
+    pub num_dropped_on_parsing_and_sanitization: usize,
+    pub num_dropped_on_lock_validation: usize,
+    pub num_dropped_on_compute_budget: usize,
+    pub num_dropped_on_age: usize,
+    pub num_dropped_on_already_processed: usize,
+    pub num_dropped_on_fee_payer: usize,
+    pub num_dropped_on_capacity: usize,
+
+    pub num_buffered: usize,
+
+    pub receive_time_us: u64,
+    pub buffer_time_us: u64,
+}
+
+impl ReceivingStats {
+    fn accumulate(&mut self, other: ReceivingStats) {
+        self.num_received += other.num_received;
+        self.num_dropped_without_parsing += other.num_dropped_without_parsing;
+        self.num_dropped_on_parsing_and_sanitization +=
+            other.num_dropped_on_parsing_and_sanitization;
+        self.num_dropped_on_lock_validation += other.num_dropped_on_lock_validation;
+        self.num_dropped_on_compute_budget += other.num_dropped_on_compute_budget;
+        self.num_dropped_on_age += other.num_dropped_on_age;
+        self.num_dropped_on_already_processed += other.num_dropped_on_already_processed;
+        self.num_dropped_on_fee_payer += other.num_dropped_on_fee_payer;
+        self.num_dropped_on_capacity += other.num_dropped_on_capacity;
+        self.num_buffered += other.num_buffered;
+
+        self.receive_time_us += other.receive_time_us;
+        self.buffer_time_us += other.buffer_time_us;
+    }
+}
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) trait ReceiveAndBuffer {
@@ -59,10 +100,8 @@ pub(crate) trait ReceiveAndBuffer {
     fn receive_and_buffer_packets(
         &mut self,
         container: &mut Self::Container,
-        timing_metrics: &mut SchedulerTimingMetrics,
-        count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
-    ) -> Result<usize, DisconnectedError>;
+    ) -> Result<ReceivingStats, DisconnectedError>;
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -80,10 +119,8 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
     fn receive_and_buffer_packets(
         &mut self,
         container: &mut Self::Container,
-        timing_metrics: &mut SchedulerTimingMetrics,
-        count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
-    ) -> Result<usize, DisconnectedError> {
+    ) -> Result<ReceivingStats, DisconnectedError> {
         const MAX_RECEIVE_PACKETS: usize = 5_000;
         const MAX_PACKET_RECEIVE_TIME: Duration = Duration::from_millis(10);
         let (recv_timeout, should_buffer) = match decision {
@@ -103,41 +140,78 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
             .packet_receiver
             .receive_packets(recv_timeout, MAX_RECEIVE_PACKETS));
 
-        timing_metrics.update(|timing_metrics| {
-            timing_metrics.receive_time_us += receive_time_us;
-        });
-
-        let num_received = match received_packet_results {
+        match received_packet_results {
             Ok(receive_packet_results) => {
-                let num_received_packets = receive_packet_results.deserialized_packets.len();
-
-                count_metrics.update(|count_metrics| {
-                    count_metrics.num_received += num_received_packets;
-                });
-
+                let num_received =
+                    receive_packet_results.packet_stats.passed_sigverify_count.0 as usize;
                 if should_buffer {
-                    let (_, buffer_time_us) = measure_us!(self.buffer_packets(
-                        container,
-                        timing_metrics,
-                        count_metrics,
-                        receive_packet_results.deserialized_packets
-                    ));
-                    timing_metrics.update(|timing_metrics| {
-                        timing_metrics.buffer_time_us += buffer_time_us;
-                    });
-                } else {
-                    count_metrics.update(|count_metrics| {
-                        count_metrics.num_dropped_on_receive += num_received_packets;
-                    });
-                }
-                num_received_packets
-            }
-            Err(RecvTimeoutError::Timeout) => 0,
-            Err(RecvTimeoutError::Disconnected) => return Err(DisconnectedError),
-        };
+                    let num_dropped_on_initial_parsing =
+                        num_received - receive_packet_results.deserialized_packets.len();
 
-        Ok(num_received)
+                    let (buffer_stats, buffer_time_us) = measure_us!(
+                        self.buffer_packets(container, receive_packet_results.deserialized_packets)
+                    );
+                    Ok(ReceivingStats {
+                        num_received,
+                        num_dropped_without_parsing: 0,
+                        num_dropped_on_parsing_and_sanitization: num_dropped_on_initial_parsing
+                            + buffer_stats.num_dropped_on_sanitization,
+                        num_dropped_on_lock_validation: buffer_stats.num_dropped_on_lock_validation,
+                        num_dropped_on_compute_budget: buffer_stats.num_dropped_on_compute_budget,
+                        num_dropped_on_age: buffer_stats.num_dropped_on_age,
+                        num_dropped_on_already_processed: buffer_stats
+                            .num_dropped_on_already_processed,
+                        num_dropped_on_fee_payer: buffer_stats.num_dropped_on_fee_payer,
+                        num_dropped_on_capacity: buffer_stats.num_dropped_on_capacity,
+                        num_buffered: buffer_stats.num_buffered,
+                        receive_time_us,
+                        buffer_time_us,
+                    })
+                } else {
+                    Ok(ReceivingStats {
+                        num_received,
+                        num_dropped_without_parsing: num_received,
+                        num_dropped_on_parsing_and_sanitization: 0,
+                        num_dropped_on_lock_validation: 0,
+                        num_dropped_on_compute_budget: 0,
+                        num_dropped_on_age: 0,
+                        num_dropped_on_already_processed: 0,
+                        num_dropped_on_fee_payer: 0,
+                        num_dropped_on_capacity: 0,
+                        num_buffered: 0,
+                        receive_time_us,
+                        buffer_time_us: 0,
+                    })
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => Ok(ReceivingStats {
+                num_received: 0,
+                num_dropped_without_parsing: 0,
+                num_dropped_on_parsing_and_sanitization: 0,
+                num_dropped_on_lock_validation: 0,
+                num_dropped_on_compute_budget: 0,
+                num_dropped_on_age: 0,
+                num_dropped_on_already_processed: 0,
+                num_dropped_on_fee_payer: 0,
+                num_dropped_on_capacity: 0,
+                num_buffered: 0,
+                receive_time_us,
+                buffer_time_us: 0,
+            }),
+            Err(RecvTimeoutError::Disconnected) => Err(DisconnectedError),
+        }
     }
+}
+
+struct BufferStats {
+    num_dropped_on_sanitization: usize,
+    num_dropped_on_lock_validation: usize,
+    num_dropped_on_compute_budget: usize,
+    num_dropped_on_age: usize,
+    num_dropped_on_already_processed: usize,
+    num_dropped_on_fee_payer: usize,
+    num_dropped_on_capacity: usize,
+    num_buffered: usize,
 }
 
 impl SanitizedTransactionReceiveAndBuffer {
@@ -151,10 +225,8 @@ impl SanitizedTransactionReceiveAndBuffer {
     fn buffer_packets(
         &mut self,
         container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
-        _timing_metrics: &mut SchedulerTimingMetrics,
-        count_metrics: &mut SchedulerCountMetrics,
         packets: Vec<ImmutableDeserializedPacket>,
-    ) {
+    ) -> BufferStats {
         // Convert to Arcs
         let packets: Vec<_> = packets.into_iter().map(Arc::new).collect();
         // Sanitize packets, generate IDs, and insert into the container.
@@ -176,41 +248,54 @@ impl SanitizedTransactionReceiveAndBuffer {
         let mut max_ages = ArrayVec::<_, CHUNK_SIZE>::new();
         let mut fee_budget_limits_vec = ArrayVec::<_, CHUNK_SIZE>::new();
 
+        let mut num_dropped_on_sanitization = 0;
+        let mut num_dropped_on_lock_validation = 0;
+        let mut num_dropped_on_compute_budget = 0;
+        let mut num_dropped_on_age = 0;
+        let mut num_dropped_on_already_processed = 0;
+        let mut num_dropped_on_fee_payer = 0;
+        let mut num_dropped_on_capacity = 0;
+        let mut num_buffered = 0;
+
         let mut error_counts = TransactionErrorMetrics::default();
         for chunk in packets.chunks(CHUNK_SIZE) {
-            let mut post_sanitization_count = Saturating::<usize>(0);
-            chunk
-                .iter()
-                .filter_map(|packet| {
-                    packet.build_sanitized_transaction(
-                        vote_only,
-                        root_bank.as_ref(),
-                        root_bank.get_reserved_account_keys(),
-                    )
-                })
-                .inspect(|_| post_sanitization_count += 1)
-                .filter(|(tx, _deactivation_slot)| {
-                    validate_account_locks(
-                        tx.message().account_keys(),
-                        transaction_account_lock_limit,
-                    )
-                    .is_ok()
-                })
-                .filter_map(|(tx, deactivation_slot)| {
-                    tx.compute_budget_instruction_details()
-                        .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
-                        .map(|compute_budget| (tx, deactivation_slot, compute_budget.into()))
-                        .ok()
-                })
-                .for_each(|(tx, deactivation_slot, fee_budget_limits)| {
-                    transactions.push(tx);
-                    max_ages.push(calculate_max_age(
-                        sanitized_epoch,
-                        deactivation_slot,
-                        alt_resolved_slot,
-                    ));
-                    fee_budget_limits_vec.push(fee_budget_limits);
-                });
+            for packet in chunk {
+                let Some((tx, deactivation_slot)) = packet.build_sanitized_transaction(
+                    vote_only,
+                    root_bank.as_ref(),
+                    root_bank.get_reserved_account_keys(),
+                ) else {
+                    num_dropped_on_sanitization += 1;
+                    continue;
+                };
+
+                if validate_account_locks(
+                    tx.message().account_keys(),
+                    transaction_account_lock_limit,
+                )
+                .is_err()
+                {
+                    num_dropped_on_lock_validation += 1;
+                    continue;
+                }
+
+                let Ok(fee_budget_limits) = tx
+                    .compute_budget_instruction_details()
+                    .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
+                    .map(|compute_budget| compute_budget.into())
+                else {
+                    num_dropped_on_compute_budget += 1;
+                    continue;
+                };
+
+                transactions.push(tx);
+                max_ages.push(calculate_max_age(
+                    sanitized_epoch,
+                    deactivation_slot,
+                    alt_resolved_slot,
+                ));
+                fee_budget_limits_vec.push(fee_budget_limits);
+            }
 
             let check_results = working_bank.check_transactions(
                 &transactions,
@@ -218,52 +303,58 @@ impl SanitizedTransactionReceiveAndBuffer {
                 MAX_PROCESSING_AGE,
                 &mut error_counts,
             );
-            let post_lock_validation_count = transactions.len();
 
-            let mut post_transaction_check_count = Saturating::<usize>(0);
-            let mut num_dropped_on_capacity = Saturating::<usize>(0);
-            let mut num_buffered = Saturating::<usize>(0);
-            for (((transaction, max_age), fee_budget_limits), _check_result) in transactions
+            for (((transaction, max_age), fee_budget_limits), check_result) in transactions
                 .drain(..)
                 .zip(max_ages.drain(..))
                 .zip(fee_budget_limits_vec.drain(..))
                 .zip(check_results)
-                .filter(|(_, check_result)| check_result.is_ok())
-                .filter(|(((tx, _), _), _)| {
-                    Consumer::check_fee_payer_unlocked(&working_bank, tx, &mut error_counts).is_ok()
-                })
             {
-                post_transaction_check_count += 1;
+                match check_result {
+                    Ok(_) => {}
+                    Err(err) => {
+                        match err {
+                            TransactionError::BlockhashNotFound => {
+                                num_dropped_on_age += 1;
+                            }
+                            TransactionError::AlreadyProcessed => {
+                                num_dropped_on_already_processed += 1;
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+                }
+
+                if Consumer::check_fee_payer_unlocked(
+                    &working_bank,
+                    &transaction,
+                    &mut error_counts,
+                )
+                .is_err()
+                {
+                    num_dropped_on_fee_payer += 1;
+                    continue;
+                }
 
                 let (priority, cost) =
                     calculate_priority_and_cost(&transaction, &fee_budget_limits, &working_bank);
-
+                num_buffered += 1;
                 if container.insert_new_transaction(transaction, max_age, priority, cost) {
                     num_dropped_on_capacity += 1;
                 }
-                num_buffered += 1;
             }
+        }
 
-            let Saturating(post_sanitization_count) = post_sanitization_count;
-            let Saturating(post_transaction_check_count) = post_transaction_check_count;
-            let Saturating(num_dropped_on_capacity) = num_dropped_on_capacity;
-            let Saturating(num_buffered) = num_buffered;
-
-            // Update metrics for transactions that were dropped.
-            let num_dropped_on_sanitization = chunk.len().saturating_sub(post_sanitization_count);
-            let num_dropped_on_lock_validation =
-                post_sanitization_count.saturating_sub(post_lock_validation_count);
-            let num_dropped_on_transaction_checks =
-                post_lock_validation_count.saturating_sub(post_transaction_check_count);
-
-            count_metrics.update(|count_metrics| {
-                count_metrics.num_dropped_on_capacity += num_dropped_on_capacity;
-                count_metrics.num_buffered += num_buffered;
-                count_metrics.num_dropped_on_sanitization += num_dropped_on_sanitization;
-                count_metrics.num_dropped_on_validate_locks += num_dropped_on_lock_validation;
-                count_metrics.num_dropped_on_receive_transaction_checks +=
-                    num_dropped_on_transaction_checks;
-            });
+        BufferStats {
+            num_dropped_on_sanitization,
+            num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
+            num_dropped_on_capacity,
+            num_buffered,
         }
     }
 }
@@ -281,10 +372,8 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
     fn receive_and_buffer_packets(
         &mut self,
         container: &mut Self::Container,
-        timing_metrics: &mut SchedulerTimingMetrics,
-        count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
-    ) -> Result<usize, DisconnectedError> {
+    ) -> Result<ReceivingStats, DisconnectedError> {
         let (root_bank, working_bank) = {
             let bank_forks = self.bank_forks.read().unwrap();
             let root_bank = bank_forks.root_bank();
@@ -296,12 +385,27 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         const TIMEOUT: Duration = Duration::from_millis(10);
         const PACKET_BURST_LIMIT: usize = 1000;
         let start = Instant::now();
-        let mut num_received = 0;
+
         let mut received_message = false;
+        let mut stats = ReceivingStats {
+            num_received: 0,
+            num_dropped_without_parsing: 0,
+            num_dropped_on_parsing_and_sanitization: 0,
+            num_dropped_on_lock_validation: 0,
+            num_dropped_on_compute_budget: 0,
+            num_dropped_on_age: 0,
+            num_dropped_on_already_processed: 0,
+            num_dropped_on_fee_payer: 0,
+            num_dropped_on_capacity: 0,
+            num_buffered: 0,
+            receive_time_us: 0,
+            buffer_time_us: 0,
+        };
 
         // If not leader/unknown, do a blocking-receive initially. This lets
         // the thread sleep until a message is received, or until the timeout.
         // Additionally, only sleep if the container is empty.
+        let mut timed_out = false;
         if container.is_empty()
             && matches!(
                 decision,
@@ -315,50 +419,71 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             match self.receiver.recv_timeout(TIMEOUT) {
                 Ok(packet_batch_message) => {
                     received_message = true;
-                    num_received += self.handle_packet_batch_message(
+                    stats.accumulate(self.handle_packet_batch_message(
                         container,
-                        timing_metrics,
-                        count_metrics,
                         decision,
                         &root_bank,
                         &working_bank,
                         packet_batch_message,
-                    );
+                    ));
                 }
-                Err(RecvTimeoutError::Timeout) => return Ok(num_received),
+                Err(RecvTimeoutError::Timeout) => timed_out = true,
                 Err(RecvTimeoutError::Disconnected) => {
-                    return received_message
-                        .then_some(num_received)
-                        .ok_or(DisconnectedError);
+                    if !received_message {
+                        return Err(DisconnectedError);
+                    }
                 }
             }
         }
 
-        while start.elapsed() < TIMEOUT && num_received < PACKET_BURST_LIMIT {
-            match self.receiver.try_recv() {
-                Ok(packet_batch_message) => {
-                    received_message = true;
-                    num_received += self.handle_packet_batch_message(
-                        container,
-                        timing_metrics,
-                        count_metrics,
-                        decision,
-                        &root_bank,
-                        &working_bank,
-                        packet_batch_message,
-                    );
-                }
-                Err(TryRecvError::Empty) => return Ok(num_received),
-                Err(TryRecvError::Disconnected) => {
-                    return received_message
-                        .then_some(num_received)
-                        .ok_or(DisconnectedError);
+        if !timed_out {
+            while start.elapsed() < TIMEOUT && stats.num_received < PACKET_BURST_LIMIT {
+                match self.receiver.try_recv() {
+                    Ok(packet_batch_message) => {
+                        stats.receive_time_us += start.elapsed().as_micros() as u64;
+                        received_message = true;
+                        let batch_stats = self.handle_packet_batch_message(
+                            container,
+                            decision,
+                            &root_bank,
+                            &working_bank,
+                            packet_batch_message,
+                        );
+                        stats.accumulate(batch_stats);
+                    }
+                    Err(TryRecvError::Empty) => {
+                        break;
+                    }
+                    Err(TryRecvError::Disconnected) => {
+                        if !received_message {
+                            return Err(DisconnectedError);
+                        }
+                    }
                 }
             }
         }
 
-        Ok(num_received)
+        Ok(ReceivingStats {
+            num_received: stats.num_received,
+            num_dropped_without_parsing: stats.num_dropped_without_parsing,
+            num_dropped_on_parsing_and_sanitization: stats.num_dropped_on_parsing_and_sanitization,
+            num_dropped_on_lock_validation: stats.num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget: stats.num_dropped_on_compute_budget,
+            num_dropped_on_age: stats.num_dropped_on_age,
+            num_dropped_on_already_processed: stats.num_dropped_on_already_processed,
+            num_dropped_on_fee_payer: stats.num_dropped_on_fee_payer,
+            num_dropped_on_capacity: stats.num_dropped_on_capacity,
+            num_buffered: stats.num_buffered,
+            receive_time_us: stats.receive_time_us,
+            buffer_time_us: stats.buffer_time_us,
+        })
     }
+}
+
+enum PacketHandlingError {
+    Sanitization,
+    LockValidation,
+    ComputeBudget,
 }
 
 impl TransactionViewReceiveAndBuffer {
@@ -366,34 +491,29 @@ impl TransactionViewReceiveAndBuffer {
     fn handle_packet_batch_message(
         &mut self,
         container: &mut TransactionViewStateContainer,
-        timing_metrics: &mut SchedulerTimingMetrics,
-        count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
         root_bank: &Bank,
         working_bank: &Bank,
         packet_batch_message: BankingPacketBatch,
-    ) -> usize {
-        // If not holding packets, just drop them immediately without parsing.
-        if matches!(decision, BufferedPacketsDecision::Forward) {
-            return 0;
-        }
-
+    ) -> ReceivingStats {
         let start = Instant::now();
+        // If outside holding window, do not parse.
+        let should_parse = !matches!(decision, BufferedPacketsDecision::Forward);
+
         // Sanitize packets, generate IDs, and insert into the container.
         let alt_resolved_slot = root_bank.slot();
         let sanitized_epoch = root_bank.epoch();
         let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
 
-        let mut num_received = 0usize;
-        let mut num_buffered = 0usize;
-        let mut num_dropped_on_transaction_checks = 0usize;
-        let mut num_dropped_on_capacity = 0usize;
-        let mut num_dropped_on_receive = 0usize;
-
         // Create temporary batches of transactions to be age-checked.
         let mut transaction_priority_ids = ArrayVec::<_, EXTRA_CAPACITY>::new();
         let lock_results: [_; EXTRA_CAPACITY] = core::array::from_fn(|_| Ok(()));
         let mut error_counters = TransactionErrorMetrics::default();
+        let mut num_dropped_on_age = 0;
+        let mut num_dropped_on_already_processed = 0;
+        let mut num_dropped_on_fee_payer = 0;
+        let mut num_dropped_on_capacity = 0;
+        let mut num_buffered = 0;
 
         let mut check_and_push_to_queue =
             |container: &mut TransactionViewStateContainer,
@@ -420,8 +540,16 @@ impl TransactionViewReceiveAndBuffer {
                     .iter_mut()
                     .zip(transaction_priority_ids.iter())
                 {
-                    if result.is_err() {
-                        num_dropped_on_transaction_checks += 1;
+                    if let Err(err) = result {
+                        match err {
+                            TransactionError::BlockhashNotFound => {
+                                num_dropped_on_age += 1;
+                            }
+                            TransactionError::AlreadyProcessed => {
+                                num_dropped_on_already_processed += 1;
+                            }
+                            _ => {}
+                        }
                         container.remove_by_id(priority_id.id);
                         continue;
                     }
@@ -434,10 +562,12 @@ impl TransactionViewReceiveAndBuffer {
                         &mut error_counters,
                     ) {
                         *result = Err(err);
-                        num_dropped_on_transaction_checks += 1;
+                        num_dropped_on_fee_payer += 1;
                         container.remove_by_id(priority_id.id);
                         continue;
                     }
+
+                    num_buffered += 1;
                 }
                 // Push non-errored transaction into queue.
                 num_dropped_on_capacity += container.push_ids_into_queue(
@@ -449,6 +579,12 @@ impl TransactionViewReceiveAndBuffer {
                 );
             };
 
+        let mut num_received = 0;
+        let mut num_dropped_without_parsing = 0;
+        let mut num_dropped_on_parsing_and_sanitization = 0;
+        let mut num_dropped_on_lock_validation = 0;
+        let mut num_dropped_on_compute_budget = 0;
+
         for packet_batch in packet_batch_message.iter() {
             for packet in packet_batch.iter() {
                 let Some(packet_data) = packet.data(..) else {
@@ -456,6 +592,10 @@ impl TransactionViewReceiveAndBuffer {
                 };
 
                 num_received += 1;
+                if !should_parse {
+                    num_dropped_without_parsing += 1;
+                    continue;
+                }
 
                 // Reserve free-space to copy packet into, run sanitization checks, and insert.
                 if let Some(transaction_id) =
@@ -468,12 +608,17 @@ impl TransactionViewReceiveAndBuffer {
                             sanitized_epoch,
                             transaction_account_lock_limit,
                         ) {
-                            Ok(state) => {
-                                num_buffered += 1;
-                                Ok(state)
+                            Ok(state) => Ok(state),
+                            Err(PacketHandlingError::Sanitization) => {
+                                num_dropped_on_parsing_and_sanitization += 1;
+                                Err(())
                             }
-                            Err(()) => {
-                                num_dropped_on_receive += 1;
+                            Err(PacketHandlingError::LockValidation) => {
+                                num_dropped_on_lock_validation += 1;
+                                Err(())
+                            }
+                            Err(PacketHandlingError::ComputeBudget) => {
+                                num_dropped_on_compute_budget += 1;
                                 Err(())
                             }
                         }
@@ -497,20 +642,20 @@ impl TransactionViewReceiveAndBuffer {
         // Any remaining packets undergo status/age checks
         check_and_push_to_queue(container, &mut transaction_priority_ids);
 
-        let buffer_time_us = start.elapsed().as_micros() as u64;
-        timing_metrics.update(|timing_metrics| {
-            timing_metrics.buffer_time_us += buffer_time_us;
-        });
-        count_metrics.update(|count_metrics| {
-            count_metrics.num_received += num_received;
-            count_metrics.num_buffered += num_buffered;
-            count_metrics.num_dropped_on_capacity += num_dropped_on_capacity;
-            count_metrics.num_dropped_on_receive += num_dropped_on_receive;
-            count_metrics.num_dropped_on_receive_transaction_checks +=
-                num_dropped_on_transaction_checks;
-        });
-
-        num_received
+        ReceivingStats {
+            num_received,
+            num_dropped_without_parsing,
+            num_dropped_on_parsing_and_sanitization,
+            num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
+            num_dropped_on_capacity,
+            num_buffered,
+            receive_time_us: 0, // receive is outside this function
+            buffer_time_us: start.elapsed().as_micros() as u64,
+        }
     }
 
     fn try_handle_packet(
@@ -520,10 +665,10 @@ impl TransactionViewReceiveAndBuffer {
         alt_resolved_slot: Slot,
         sanitized_epoch: Epoch,
         transaction_account_lock_limit: usize,
-    ) -> Result<TransactionViewState, ()> {
+    ) -> Result<TransactionViewState, PacketHandlingError> {
         // Parsing and basic sanitization checks
         let Ok(view) = SanitizedTransactionView::try_new_sanitized(bytes) else {
-            return Err(());
+            return Err(PacketHandlingError::Sanitization);
         };
 
         let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
@@ -531,12 +676,12 @@ impl TransactionViewReceiveAndBuffer {
             MessageHash::Compute,
             None,
         ) else {
-            return Err(());
+            return Err(PacketHandlingError::Sanitization);
         };
 
         // Discard non-vote packets if in vote-only mode.
         if root_bank.vote_only_bank() && !view.is_simple_vote_transaction() {
-            return Err(());
+            return Err(PacketHandlingError::Sanitization);
         }
 
         // Load addresses for transaction.
@@ -549,7 +694,7 @@ impl TransactionViewReceiveAndBuffer {
                 }),
         };
         let Ok((loaded_addresses, deactivation_slot)) = load_addresses_result else {
-            return Err(());
+            return Err(PacketHandlingError::Sanitization);
         };
 
         let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
@@ -557,18 +702,18 @@ impl TransactionViewReceiveAndBuffer {
             loaded_addresses,
             root_bank.get_reserved_account_keys(),
         ) else {
-            return Err(());
+            return Err(PacketHandlingError::Sanitization);
         };
 
         if validate_account_locks(view.account_keys(), transaction_account_lock_limit).is_err() {
-            return Err(());
+            return Err(PacketHandlingError::LockValidation);
         }
 
         let Ok(compute_budget_limits) = view
             .compute_budget_instruction_details()
             .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
         else {
-            return Err(());
+            return Err(PacketHandlingError::ComputeBudget);
         };
 
         let max_age = calculate_max_age(sanitized_epoch, deactivation_slot, alt_resolved_slot);
@@ -766,34 +911,25 @@ mod tests {
         let (bank_forks, _mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_receive_and_buffer(receiver, bank_forks);
-        let mut timing_metrics = SchedulerTimingMetrics::default();
-        let mut count_metrics = SchedulerCountMetrics::default();
 
         drop(sender); // disconnect channel
-        let r = receive_and_buffer.receive_and_buffer_packets(
-            &mut container,
-            &mut timing_metrics,
-            &mut count_metrics,
-            &BufferedPacketsDecision::Hold,
-        );
+        let r = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold);
         assert!(r.is_err());
     }
 
-    #[test_case(setup_sanitized_transaction_receive_and_buffer, 1; "testcase-sdk")]
-    #[test_case(setup_transaction_view_receive_and_buffer, 0; "testcase-view")]
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
     fn test_receive_and_buffer_no_hold<R: ReceiveAndBuffer>(
         setup_receive_and_buffer: impl FnOnce(
             Receiver<BankingPacketBatch>,
             Arc<RwLock<BankForks>>,
         ) -> (R, R::Container),
-        expected_num_received: usize,
     ) {
         let (sender, receiver) = unbounded();
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_receive_and_buffer(receiver, bank_forks.clone());
-        let mut timing_metrics = SchedulerTimingMetrics::default();
-        let mut count_metrics = SchedulerCountMetrics::default();
 
         let transaction = transfer(
             &mint_keypair,
@@ -804,19 +940,36 @@ mod tests {
         let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
         sender.send(packet_batches).unwrap();
 
-        let num_received = receive_and_buffer
+        let ReceivingStats {
+            num_received,
+            num_dropped_without_parsing,
+            num_dropped_on_parsing_and_sanitization,
+            num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
+            num_dropped_on_capacity,
+            num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
+        } = receive_and_buffer
             .receive_and_buffer_packets(
                 &mut container,
-                &mut timing_metrics,
-                &mut count_metrics,
                 &BufferedPacketsDecision::Forward, // no packets should be held
             )
             .unwrap();
 
-        // Currently the different approaches have slightly different accounting.
-        // - sdk: all valid deserializable packets count as received
-        // - view: immediately drops all packets without counting due to decision
-        assert_eq!(num_received, expected_num_received);
+        assert_eq!(num_received, 1);
+        assert_eq!(num_dropped_without_parsing, 1);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
+        assert_eq!(num_dropped_on_lock_validation, 0);
+        assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
+        assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
         verify_container(&mut container, 0);
     }
 
@@ -832,8 +985,6 @@ mod tests {
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_receive_and_buffer(receiver, bank_forks.clone());
-        let mut timing_metrics = SchedulerTimingMetrics::default();
-        let mut count_metrics = SchedulerCountMetrics::default();
 
         let transaction = transfer(
             &mint_keypair,
@@ -849,53 +1000,83 @@ mod tests {
             .set_discard(true);
         sender.send(packet_batches).unwrap();
 
-        let num_received = receive_and_buffer
-            .receive_and_buffer_packets(
-                &mut container,
-                &mut timing_metrics,
-                &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
-            )
+        let ReceivingStats {
+            num_received,
+            num_dropped_without_parsing,
+            num_dropped_on_parsing_and_sanitization,
+            num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
+            num_dropped_on_capacity,
+            num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
+        } = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
         assert_eq!(num_received, 0);
+        assert_eq!(num_dropped_without_parsing, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
+        assert_eq!(num_dropped_on_lock_validation, 0);
+        assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
+        assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
+
         verify_container(&mut container, 0);
     }
 
-    #[test_case(setup_sanitized_transaction_receive_and_buffer, 0; "testcase-sdk")]
-    #[test_case(setup_transaction_view_receive_and_buffer, 1; "testcase-view")]
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
     fn test_receive_and_buffer_invalid_transaction_format<R: ReceiveAndBuffer>(
         setup_receive_and_buffer: impl FnOnce(
             Receiver<BankingPacketBatch>,
             Arc<RwLock<BankForks>>,
         ) -> (R, R::Container),
-        expected_num_received: usize,
     ) {
         let (sender, receiver) = unbounded();
         let (bank_forks, _mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_receive_and_buffer(receiver, bank_forks.clone());
-        let mut timing_metrics = SchedulerTimingMetrics::default();
-        let mut count_metrics = SchedulerCountMetrics::default();
 
         let packet_batches = Arc::new(vec![PacketBatch::from(PinnedPacketBatch::new(vec![
             Packet::new([1u8; PACKET_DATA_SIZE], Meta::default()),
         ]))]);
         sender.send(packet_batches).unwrap();
 
-        let num_received = receive_and_buffer
-            .receive_and_buffer_packets(
-                &mut container,
-                &mut timing_metrics,
-                &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
-            )
+        let ReceivingStats {
+            num_received,
+            num_dropped_without_parsing,
+            num_dropped_on_parsing_and_sanitization,
+            num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
+            num_dropped_on_capacity,
+            num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
+        } = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
-        // Currently the different approaches have slightly different accounting.
-        // - sdk: only valid deserializable packets count as received
-        // - view: all valid packets count as received, even if invalid tx format
-        assert_eq!(num_received, expected_num_received);
+        assert_eq!(num_received, 1);
+        assert_eq!(num_dropped_without_parsing, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 1);
+        assert_eq!(num_dropped_on_lock_validation, 0);
+        assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
+        assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
+
         verify_container(&mut container, 0);
     }
 
@@ -911,23 +1092,39 @@ mod tests {
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_receive_and_buffer(receiver, bank_forks.clone());
-        let mut timing_metrics = SchedulerTimingMetrics::default();
-        let mut count_metrics = SchedulerCountMetrics::default();
 
         let transaction = transfer(&mint_keypair, &Pubkey::new_unique(), 1, Hash::new_unique());
         let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
         sender.send(packet_batches).unwrap();
 
-        let num_received = receive_and_buffer
-            .receive_and_buffer_packets(
-                &mut container,
-                &mut timing_metrics,
-                &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
-            )
+        let ReceivingStats {
+            num_received,
+            num_dropped_without_parsing,
+            num_dropped_on_parsing_and_sanitization,
+            num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
+            num_dropped_on_capacity,
+            num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
+        } = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
         assert_eq!(num_received, 1);
+        assert_eq!(num_dropped_without_parsing, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
+        assert_eq!(num_dropped_on_lock_validation, 0);
+        assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 1);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
+        assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
+
         verify_container(&mut container, 0);
     }
 
@@ -943,8 +1140,6 @@ mod tests {
         let (bank_forks, _mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_receive_and_buffer(receiver, bank_forks.clone());
-        let mut timing_metrics = SchedulerTimingMetrics::default();
-        let mut count_metrics = SchedulerCountMetrics::default();
 
         let transaction = transfer(
             &Keypair::new(),
@@ -955,16 +1150,34 @@ mod tests {
         let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
         sender.send(packet_batches).unwrap();
 
-        let num_received = receive_and_buffer
-            .receive_and_buffer_packets(
-                &mut container,
-                &mut timing_metrics,
-                &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
-            )
+        let ReceivingStats {
+            num_received,
+            num_dropped_without_parsing,
+            num_dropped_on_parsing_and_sanitization,
+            num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
+            num_dropped_on_capacity,
+            num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
+        } = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
         assert_eq!(num_received, 1);
+        assert_eq!(num_dropped_without_parsing, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
+        assert_eq!(num_dropped_on_lock_validation, 0);
+        assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 1);
+        assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
+
         verify_container(&mut container, 0);
     }
 
@@ -980,8 +1193,6 @@ mod tests {
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_receive_and_buffer(receiver, bank_forks.clone());
-        let mut timing_metrics = SchedulerTimingMetrics::default();
-        let mut count_metrics = SchedulerCountMetrics::default();
 
         let to_pubkey = Pubkey::new_unique();
         let transaction = VersionedTransaction::try_new(
@@ -1007,16 +1218,34 @@ mod tests {
         let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
         sender.send(packet_batches).unwrap();
 
-        let num_received = receive_and_buffer
-            .receive_and_buffer_packets(
-                &mut container,
-                &mut timing_metrics,
-                &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
-            )
+        let ReceivingStats {
+            num_received,
+            num_dropped_without_parsing,
+            num_dropped_on_parsing_and_sanitization,
+            num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
+            num_dropped_on_capacity,
+            num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
+        } = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
         assert_eq!(num_received, 1);
+        assert_eq!(num_dropped_without_parsing, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 1);
+        assert_eq!(num_dropped_on_lock_validation, 0);
+        assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
+        assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
+
         verify_container(&mut container, 0);
     }
 
@@ -1032,8 +1261,6 @@ mod tests {
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_receive_and_buffer(receiver, bank_forks.clone());
-        let mut timing_metrics = SchedulerTimingMetrics::default();
-        let mut count_metrics = SchedulerCountMetrics::default();
 
         let transaction = transfer(
             &mint_keypair,
@@ -1044,16 +1271,34 @@ mod tests {
         let packet_batches = Arc::new(to_packet_batches(&[transaction], 1));
         sender.send(packet_batches).unwrap();
 
-        let num_received = receive_and_buffer
-            .receive_and_buffer_packets(
-                &mut container,
-                &mut timing_metrics,
-                &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
-            )
+        let ReceivingStats {
+            num_received,
+            num_dropped_without_parsing,
+            num_dropped_on_parsing_and_sanitization,
+            num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
+            num_dropped_on_capacity,
+            num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
+        } = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
         assert_eq!(num_received, 1);
+        assert_eq!(num_dropped_without_parsing, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
+        assert_eq!(num_dropped_on_lock_validation, 0);
+        assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
+        assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 1);
+
         verify_container(&mut container, 1);
     }
 
@@ -1069,8 +1314,6 @@ mod tests {
         let (bank_forks, mint_keypair) = test_bank_forks();
         let (mut receive_and_buffer, mut container) =
             setup_receive_and_buffer(receiver, bank_forks.clone());
-        let mut timing_metrics = SchedulerTimingMetrics::default();
-        let mut count_metrics = SchedulerCountMetrics::default();
 
         let num_transactions = 3 * TEST_CONTAINER_CAPACITY;
         let transactions = Vec::from_iter((0..num_transactions).map(|_| {
@@ -1085,16 +1328,34 @@ mod tests {
         let packet_batches = Arc::new(to_packet_batches(&transactions, 17));
         sender.send(packet_batches).unwrap();
 
-        let num_received = receive_and_buffer
-            .receive_and_buffer_packets(
-                &mut container,
-                &mut timing_metrics,
-                &mut count_metrics,
-                &BufferedPacketsDecision::Hold,
-            )
+        let ReceivingStats {
+            num_received,
+            num_dropped_without_parsing,
+            num_dropped_on_parsing_and_sanitization,
+            num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
+            num_dropped_on_capacity,
+            num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
+        } = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
             .unwrap();
 
         assert_eq!(num_received, num_transactions);
+        assert_eq!(num_dropped_without_parsing, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
+        assert_eq!(num_dropped_on_lock_validation, 0);
+        assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
+        assert!(num_dropped_on_capacity > 0);
+        assert_eq!(num_buffered, num_transactions);
+
         verify_container(&mut container, TEST_CONTAINER_CAPACITY);
     }
 }

@@ -10,9 +10,7 @@ use {
     solana_svm_log_collector::ic_msg,
     solana_system_interface::error::SystemError,
     solana_sysvar::rent::Rent,
-    solana_transaction_context::{
-        BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
-    },
+    solana_transaction_context::{BorrowedAccount, IndexOfAccount, InstructionContext},
     std::collections::HashSet,
 };
 
@@ -83,11 +81,9 @@ pub(crate) fn withdraw_nonce_account(
     rent: &Rent,
     signers: &HashSet<Pubkey>,
     invoke_context: &InvokeContext,
-    transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
 ) -> Result<(), InstructionError> {
-    let mut from = instruction_context
-        .try_borrow_instruction_account(transaction_context, from_account_index)?;
+    let mut from = instruction_context.try_borrow_instruction_account(from_account_index)?;
     if !from.is_writable() {
         ic_msg!(
             invoke_context,
@@ -151,8 +147,7 @@ pub(crate) fn withdraw_nonce_account(
 
     from.checked_sub_lamports(lamports)?;
     drop(from);
-    let mut to = instruction_context
-        .try_borrow_instruction_account(transaction_context, to_account_index)?;
+    let mut to = instruction_context.try_borrow_instruction_account(to_account_index)?;
     to.checked_add_lamports(lamports)?;
 
     Ok(())
@@ -325,7 +320,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let data = nonce::state::Data {
             authority: *nonce_account.get_key(),
@@ -376,7 +371,7 @@ mod test {
 
         set_invoke_context_blockhash!(invoke_context, 0);
         let to_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, WITHDRAW_TO_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(WITHDRAW_TO_ACCOUNT_INDEX)
             .unwrap();
         let withdraw_lamports = nonce_account.get_lamports();
         let expect_nonce_lamports = nonce_account.get_lamports() - withdraw_lamports;
@@ -390,15 +385,14 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
-            instruction_context,
+            &instruction_context,
         )
         .unwrap();
         let nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let to_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, WITHDRAW_TO_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(WITHDRAW_TO_ACCOUNT_INDEX)
             .unwrap();
         // Empties Account balance
         assert_eq!(nonce_account.get_lamports(), expect_nonce_lamports);
@@ -419,7 +413,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         set_invoke_context_blockhash!(invoke_context, 31);
         let authority = *nonce_account.get_key();
@@ -450,7 +444,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let mut signers = HashSet::new();
         signers.insert(*nonce_account.get_key());
@@ -471,7 +465,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let mut signers = HashSet::new();
         signers.insert(*nonce_account.get_key());
@@ -490,10 +484,10 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let nonce_authority = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX + 1)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX + 1)
             .unwrap();
         let mut signers = HashSet::new();
         signers.insert(*nonce_account.get_key());
@@ -517,10 +511,10 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let nonce_authority = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX + 1)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX + 1)
             .unwrap();
         let mut signers = HashSet::new();
         signers.insert(*nonce_account.get_key());
@@ -541,10 +535,10 @@ mod test {
             instruction_accounts
         );
         let nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let to_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, WITHDRAW_TO_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(WITHDRAW_TO_ACCOUNT_INDEX)
             .unwrap();
         let versions = nonce_account.get_state::<Versions>().unwrap();
         assert_eq!(versions.state(), &State::Uninitialized);
@@ -563,15 +557,14 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
-            instruction_context,
+            &instruction_context,
         )
         .unwrap();
         let nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let to_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, WITHDRAW_TO_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(WITHDRAW_TO_ACCOUNT_INDEX)
             .unwrap();
         let versions = nonce_account.get_state::<Versions>().unwrap();
         assert_eq!(versions.state(), &State::Uninitialized);
@@ -589,10 +582,10 @@ mod test {
             instruction_accounts
         );
         let nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let to_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, WITHDRAW_TO_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(WITHDRAW_TO_ACCOUNT_INDEX)
             .unwrap();
         let versions = nonce_account.get_state::<Versions>().unwrap();
         assert_eq!(versions.state(), &State::Uninitialized);
@@ -608,8 +601,7 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
-            instruction_context,
+            &instruction_context,
         );
         assert_eq!(result, Err(InstructionError::MissingRequiredSignature));
     }
@@ -624,7 +616,7 @@ mod test {
             instruction_accounts
         );
         let nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let versions = nonce_account.get_state::<Versions>().unwrap();
         assert_eq!(versions.state(), &State::Uninitialized);
@@ -640,8 +632,7 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
-            instruction_context,
+            &instruction_context,
         );
         assert_eq!(result, Err(InstructionError::InsufficientFunds));
     }
@@ -656,10 +647,10 @@ mod test {
             instruction_accounts
         );
         let nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let to_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, WITHDRAW_TO_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(WITHDRAW_TO_ACCOUNT_INDEX)
             .unwrap();
         let mut signers = HashSet::new();
         signers.insert(*nonce_account.get_key());
@@ -676,15 +667,14 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
-            instruction_context,
+            &instruction_context,
         )
         .unwrap();
         let nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let to_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, WITHDRAW_TO_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(WITHDRAW_TO_ACCOUNT_INDEX)
             .unwrap();
         let versions = nonce_account.get_state::<Versions>().unwrap();
         assert_eq!(versions.state(), &State::Uninitialized);
@@ -702,15 +692,14 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
-            instruction_context,
+            &instruction_context,
         )
         .unwrap();
         let nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let to_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, WITHDRAW_TO_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(WITHDRAW_TO_ACCOUNT_INDEX)
             .unwrap();
         let versions = nonce_account.get_state::<Versions>().unwrap();
         assert_eq!(versions.state(), &State::Uninitialized);
@@ -728,10 +717,10 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let to_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, WITHDRAW_TO_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(WITHDRAW_TO_ACCOUNT_INDEX)
             .unwrap();
         let mut signers = HashSet::new();
         signers.insert(*nonce_account.get_key());
@@ -759,15 +748,14 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
-            instruction_context,
+            &instruction_context,
         )
         .unwrap();
         let nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let to_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, WITHDRAW_TO_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(WITHDRAW_TO_ACCOUNT_INDEX)
             .unwrap();
         let versions = nonce_account.get_state::<Versions>().unwrap();
         let data = nonce::state::Data::new(
@@ -793,15 +781,14 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
-            instruction_context,
+            &instruction_context,
         )
         .unwrap();
         let nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let to_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, WITHDRAW_TO_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(WITHDRAW_TO_ACCOUNT_INDEX)
             .unwrap();
         let versions = nonce_account.get_state::<Versions>().unwrap();
         assert_eq!(versions.state(), &State::Uninitialized);
@@ -819,10 +806,10 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let to_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, WITHDRAW_TO_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(WITHDRAW_TO_ACCOUNT_INDEX)
             .unwrap();
         set_invoke_context_blockhash!(invoke_context, 0);
         let authorized = *nonce_account.get_key();
@@ -839,8 +826,7 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
-            instruction_context,
+            &instruction_context,
         );
         assert_eq!(result, Err(SystemError::NonceBlockhashNotExpired.into()));
     }
@@ -855,7 +841,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         set_invoke_context_blockhash!(invoke_context, 95);
         let authorized = *nonce_account.get_key();
@@ -872,8 +858,7 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
-            instruction_context,
+            &instruction_context,
         );
         assert_eq!(result, Err(InstructionError::InsufficientFunds));
     }
@@ -888,7 +873,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         set_invoke_context_blockhash!(invoke_context, 95);
         let authorized = *nonce_account.get_key();
@@ -905,8 +890,7 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
-            instruction_context,
+            &instruction_context,
         );
         assert_eq!(result, Err(InstructionError::InsufficientFunds));
     }
@@ -921,7 +905,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         set_invoke_context_blockhash!(invoke_context, 95);
         let authorized = *nonce_account.get_key();
@@ -938,8 +922,7 @@ mod test {
             &rent,
             &signers,
             &invoke_context,
-            transaction_context,
-            instruction_context,
+            &instruction_context,
         );
         assert_eq!(result, Err(InstructionError::InsufficientFunds));
     }
@@ -954,7 +937,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let versions = nonce_account.get_state::<Versions>().unwrap();
         assert_eq!(versions.state(), &State::Uninitialized);
@@ -986,7 +969,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         set_invoke_context_blockhash!(invoke_context, 31);
         let authorized = *nonce_account.get_key();
@@ -1007,7 +990,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         nonce_account.checked_sub_lamports(42 * 2).unwrap();
         set_invoke_context_blockhash!(invoke_context, 63);
@@ -1027,7 +1010,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let mut signers = HashSet::new();
         signers.insert(*nonce_account.get_key());
@@ -1057,7 +1040,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let mut signers = HashSet::new();
         signers.insert(*nonce_account.get_key());
@@ -1080,7 +1063,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let mut signers = HashSet::new();
         signers.insert(*nonce_account.get_key());
@@ -1102,7 +1085,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let mut signers = HashSet::new();
         signers.insert(nonce_account.get_key());
@@ -1157,7 +1140,7 @@ mod test {
             instruction_accounts
         );
         let mut nonce_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, NONCE_ACCOUNT_INDEX)
+            .try_borrow_instruction_account(NONCE_ACCOUNT_INDEX)
             .unwrap();
         let mut signers = HashSet::new();
         signers.insert(nonce_account.get_key());

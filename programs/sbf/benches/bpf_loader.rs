@@ -243,8 +243,7 @@ fn bench_create_vm(bencher: &mut Bencher) {
 
     // Serialize account data
     let (_serialized, regions, account_lengths) = serialize_parameters(
-        invoke_context.transaction_context,
-        invoke_context
+        &invoke_context
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
@@ -279,8 +278,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
 
     // Serialize account data
     let (_serialized, regions, account_lengths) = serialize_parameters(
-        invoke_context.transaction_context,
-        invoke_context
+        &invoke_context
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
