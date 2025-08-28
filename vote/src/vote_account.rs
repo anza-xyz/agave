@@ -6,7 +6,6 @@ use {
         ser::{Serialize, Serializer},
     },
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
     std::{
@@ -19,6 +18,8 @@ use {
     },
     thiserror::Error,
 };
+#[cfg(not(all(miri, target_endian = "big")))]
+use solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed};
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq)]
@@ -126,6 +127,7 @@ impl VoteAccount {
         VoteAccount::try_from(account).unwrap()
     }
 
+    #[cfg(not(all(miri, target_endian = "big")))]
     pub fn bls_pubkey(&self) -> Option<BLSPubkey> {
         let bls_pubkey_compressed = self.0.vote_state_view.bls_pubkey_compressed()?;
         let bls_pubkey_compressed = BLSPubkeyCompressed(bls_pubkey_compressed);
