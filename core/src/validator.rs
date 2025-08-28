@@ -1,5 +1,6 @@
 //! The `validator` module hosts all the validator microservices.
 
+use solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_BYTES;
 pub use solana_perf::report_target_features;
 use {
     crate::{
@@ -700,6 +701,13 @@ impl Validator {
         }
         sigverify::init();
         info!("Initializing sigverify done.");
+
+        let accounts_db_config = config.accounts_db_config.as_ref();
+        solana_accounts_db::validate_memlock_limit_for_disk_io(
+            accounts_db_config
+                .map(|config| config.memlock_budget_bytes)
+                .unwrap_or(DEFAULT_MEMLOCK_BUDGET_BYTES),
+        )?;
 
         if !ledger_path.is_dir() {
             return Err(anyhow!(

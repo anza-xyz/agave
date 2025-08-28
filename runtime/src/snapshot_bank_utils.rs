@@ -8,7 +8,6 @@ use {
             SnapshotRootPaths, UnpackedSnapshotsDirAndVersion,
         },
     },
-    solana_accounts_db::accounts_file::StorageAccess,
     tempfile::TempDir,
 };
 use {
@@ -59,7 +58,7 @@ use {
 pub fn bank_fields_from_snapshot_archives(
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
-    storage_access: StorageAccess,
+    accounts_db_config: Option<&AccountsDbConfig>,
 ) -> snapshot_utils::Result<BankFieldsToDeserialize> {
     let full_snapshot_archive_info =
         get_highest_full_snapshot_archive_info(&full_snapshot_archives_dir).ok_or_else(|| {
@@ -88,7 +87,7 @@ pub fn bank_fields_from_snapshot_archives(
         &full_snapshot_archive_info,
         incremental_snapshot_archive_info.as_ref(),
         &account_paths,
-        storage_access,
+        accounts_db_config,
     )?;
 
     bank_fields_from_snapshots(
@@ -173,7 +172,7 @@ pub fn bank_from_snapshot_archives(
         full_snapshot_archive_info,
         incremental_snapshot_archive_info,
         account_paths,
-        accounts_db_config.storage_access,
+        &accounts_db_config,
     )?;
 
     if let Some(incremental_storage) = incremental_storage {
@@ -825,7 +824,10 @@ mod tests {
             },
             status_cache::Status,
         },
-        solana_accounts_db::accounts_db::{MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+        solana_accounts_db::{
+            accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING, accounts_file::StorageAccess,
+            MarkObsoleteAccounts,
+        },
         solana_genesis_config::create_genesis_config,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -1590,7 +1592,7 @@ mod tests {
         let bank_fields = bank_fields_from_snapshot_archives(
             &all_snapshots_dir,
             &all_snapshots_dir,
-            storage_access,
+            Some(&ACCOUNTS_DB_CONFIG_FOR_TESTING),
         )
         .unwrap();
         assert_eq!(bank_fields.slot, bank2.slot());
