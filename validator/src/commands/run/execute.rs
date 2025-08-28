@@ -4,6 +4,7 @@ use {
         bootstrap,
         cli::{self},
         commands::{run::args::RunArgs, FromClapArgMatches},
+        config_file::Config,
         ledger_lockfile, lock_ledger,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
@@ -94,6 +95,7 @@ pub fn execute(
     solana_version: &str,
     ledger_path: &Path,
     operation: Operation,
+    config: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let run_args = RunArgs::from_clap_arg_match(matches)?;
 
@@ -505,15 +507,24 @@ pub fn execute(
             value_t_or_exit!(matches, "rpc_send_transaction_leader_forward_count", u64)
         };
 
-    let xdp_interface = matches.value_of("retransmit_xdp_interface");
-    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
-    let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
-        XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(cpus).unwrap(),
-            xdp_zero_copy,
-        )
-    });
+    let xdp_interface = matches
+        .value_of("retransmit_xdp_interface")
+        .or_else(|| {
+            config
+                .net
+                .xdp
+                .interface
+                .as_ref()
+                .and_then(|s| s.first().map(|s| s.interface.as_str()))
+        })
+        .map(|s| s.to_string());
+    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy")
+        || config.net.xdp.zero_copy.unwrap_or_default();
+    let xdp_cpus = matches
+        .value_of("retransmit_xdp_cpu_cores")
+        .map(|cpus| parse_cpu_ranges(cpus).unwrap())
+        .or_else(|| config.net.xdp.cpus.as_ref().map(|cpus| cpus.0.clone()));
+    let retransmit_xdp = xdp_cpus.map(|cpus| XdpConfig::new(xdp_interface, cpus, xdp_zero_copy));
 
     let account_paths: Vec<PathBuf> =
         if let Ok(account_paths) = values_t!(matches, "account_paths", String) {

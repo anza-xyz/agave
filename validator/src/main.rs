@@ -5,6 +5,7 @@ use {
     agave_validator::{
         cli::{app, warn_for_deprecated_arguments, DefaultArgs},
         commands,
+        config_file::Config,
     },
     log::error,
     std::{path::PathBuf, process::exit},
@@ -21,6 +22,14 @@ pub fn main() {
     let matches = cli_app.get_matches();
     warn_for_deprecated_arguments(&matches);
 
+    let config = matches
+        .value_of("config_path")
+        .map(|path| {
+            Config::from_path(path)
+                .inspect_err(|e| log::warn!("Config error loading {path:?}: {e}"))
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
     match matches.subcommand() {
@@ -29,6 +38,7 @@ pub fn main() {
             solana_version,
             &ledger_path,
             commands::run::execute::Operation::Initialize,
+            &config,
         )
         .inspect_err(|err| error!("Failed to initialize validator: {err}"))
         .map_err(commands::Error::Dynamic),
@@ -37,6 +47,7 @@ pub fn main() {
             solana_version,
             &ledger_path,
             commands::run::execute::Operation::Run,
+            &config,
         )
         .inspect_err(|err| error!("Failed to start validator: {err}"))
         .map_err(commands::Error::Dynamic),
