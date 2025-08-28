@@ -1,6 +1,7 @@
 use {
     crate::{
         admin_rpc_service::{self, load_staked_nodes_overrides, StakedNodesOverrides},
+        args::LayeredArg,
         bootstrap,
         cli::{self},
         commands::{run::args::RunArgs, FromClapArgMatches},
@@ -20,9 +21,7 @@ use {
             create_and_canonicalize_directory,
         },
     },
-    solana_clap_utils::input_parsers::{
-        keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of, values_of,
-    },
+    solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of, values_of},
     solana_clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
     solana_core::{
         banking_trace::DISABLED_BAKING_TRACE_DIR,
@@ -495,15 +494,8 @@ pub fn execute(
             value_t_or_exit!(matches, "rpc_send_transaction_leader_forward_count", u64)
         };
 
-    let xdp_interface = matches.value_of("retransmit_xdp_interface");
-    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
-    let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
-        XdpConfig::new(
-            xdp_interface,
-            parse_cpu_ranges(cpus).unwrap(),
-            xdp_zero_copy,
-        )
-    });
+    let validator_config = crate::config_file::ValidatorConfig::load_from_default_path();
+    let retransmit_xdp = XdpConfig::parse(matches, &validator_config).transpose()?;
 
     let account_paths: Vec<PathBuf> =
         if let Ok(account_paths) = values_t!(matches, "account_paths", String) {
