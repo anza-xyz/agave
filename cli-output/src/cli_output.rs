@@ -236,11 +236,6 @@ impl fmt::Display for CliAccount {
             "Executable:",
             &self.keyed_account.account.executable.to_string(),
         )?;
-        writeln_name_value(
-            f,
-            "Rent Epoch:",
-            &self.keyed_account.account.rent_epoch.to_string(),
-        )?;
         Ok(())
     }
 }

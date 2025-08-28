@@ -96,7 +96,6 @@ pub fn encode_ui_account<T: ReadableAccount>(
         data,
         owner: account.owner().to_string(),
         executable: account.executable(),
-        rent_epoch: account.rent_epoch(),
         space: Some(space as u64),
     }
 }

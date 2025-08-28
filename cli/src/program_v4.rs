@@ -1509,7 +1509,6 @@ mod tests {
                 "lamports": 42,
                 "owner": owner,
                 "executable": true,
-                "rentEpoch": 1,
             }),
         });
         let mut mocks = HashMap::new();

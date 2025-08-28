@@ -5568,7 +5568,6 @@ pub mod tests {
                 "lamports": TEST_MINT_LAMPORTS,
                 "data": "",
                 "executable": false,
-                "rentEpoch": 0,
                 "space": 0,
             },
         });
@@ -5728,7 +5727,6 @@ pub mod tests {
                 "lamports": TEST_MINT_LAMPORTS,
                 "data": ["", "base64"],
                 "executable": false,
-                "rentEpoch": 0,
                 "space": 0,
             },
             null,
@@ -5737,7 +5735,6 @@ pub mod tests {
                 "lamports": 42,
                 "data": [BASE64_STANDARD.encode(&data), "base64"],
                 "executable": false,
-                "rentEpoch": 0,
                 "space": 5,
             }
         ]);
@@ -5762,7 +5759,6 @@ pub mod tests {
                 "lamports": TEST_MINT_LAMPORTS,
                 "data": ["", "base58"],
                 "executable": false,
-                "rentEpoch": 0,
                 "space": 0,
             },
             null,
@@ -5771,7 +5767,6 @@ pub mod tests {
                 "lamports": 42,
                 "data": [bs58::encode(&data).into_string(), "base58"],
                 "executable": false,
-                "rentEpoch": 0,
                 "space": 5,
             }
         ]);
@@ -5795,7 +5790,6 @@ pub mod tests {
                 "lamports": TEST_MINT_LAMPORTS,
                 "data": ["", "base64"],
                 "executable": false,
-                "rentEpoch": 0,
                 "space": 0,
             },
             null,
@@ -5804,7 +5798,6 @@ pub mod tests {
                 "lamports": 42,
                 "data": [BASE64_STANDARD.encode(&data[1..3]), "base64"],
                 "executable": false,
-                "rentEpoch": 0,
                 "space": 5,
             }
         ]);
@@ -6029,7 +6022,6 @@ pub mod tests {
                             "executable": false,
                             "owner": "11111111111111111111111111111111",
                             "lamports": rent_exempt_amount,
-                            "rentEpoch": u64::MAX,
                             "space": 0,
                         }
                     ],
@@ -6417,7 +6409,6 @@ pub mod tests {
                               "executable": false,
                               "lamports": (token_account_rent_exempt_amount + 1),
                               "owner": bs58::encode(spl_token_interface::id()).into_string(),
-                              "rentEpoch": u64::MAX,
                               "space": spl_token_interface::state::Account::LEN
                         },
                     ],

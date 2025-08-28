@@ -20,7 +20,6 @@ pub struct UiAccount {
     pub data: UiAccountData,
     pub owner: String,
     pub executable: bool,
-    pub rent_epoch: u64,
     pub space: Option<u64>,
 }
 
@@ -78,7 +77,7 @@ impl UiAccount {
             data,
             Pubkey::from_str(&self.owner).ok()?,
             self.executable,
-            self.rent_epoch,
+            u64::MAX,
         ))
     }
 }
