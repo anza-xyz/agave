@@ -5,9 +5,12 @@ use {
     agave_validator::{
         cli::{app, warn_for_deprecated_arguments, DefaultArgs},
         commands,
+        config_file::ConfigFile,
     },
+    clap::{ArgMatches, Error},
+    config::Config,
     log::error,
-    std::{path::PathBuf, process::exit},
+    std::{fs, path::PathBuf, process::exit},
 };
 
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
@@ -21,6 +24,13 @@ pub fn main() {
     let matches = cli_app.get_matches();
     warn_for_deprecated_arguments(&matches);
 
+    let config = match load_config(&matches) {
+        Ok(config) => config,
+        Err(e) => {
+            e.exit();
+        }
+    };
+
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
     match matches.subcommand() {
@@ -28,6 +38,7 @@ pub fn main() {
             &matches,
             solana_version,
             commands::run::execute::Operation::Initialize,
+            &config,
         )
         .inspect_err(|err| error!("Failed to initialize validator: {err}"))
         .map_err(commands::Error::Dynamic),
@@ -35,6 +46,7 @@ pub fn main() {
             &matches,
             solana_version,
             commands::run::execute::Operation::Run,
+            &config,
         )
         .inspect_err(|err| error!("Failed to start validator: {err}"))
         .map_err(commands::Error::Dynamic),
@@ -81,4 +93,49 @@ pub fn main() {
         println!("Validator command failed: {err}");
         exit(1);
     })
+}
+
+fn load_config(arg_matches: &ArgMatches) -> Result<ConfigFile, Error> {
+    let Some(config_path) = arg_matches.values_of("config") else {
+        return Ok(ConfigFile::default());
+    };
+
+    let mut config_builder = Config::builder();
+
+    for config_path in config_path {
+        let io_err = |e| {
+            Error::value_validation_auto(format!(
+                "Failed to read config file at {config_path}: {e}"
+            ))
+        };
+
+        let metadata = fs::metadata(config_path).map_err(io_err)?;
+
+        match metadata {
+            metadata if metadata.is_dir() => {
+                for entry in fs::read_dir(config_path).map_err(io_err)? {
+                    let entry = entry.map_err(io_err)?;
+                    let path = entry.path();
+                    if path.is_file() {
+                        let path = entry.path().into_os_string();
+                        let path = path.to_string_lossy();
+                        config_builder = config_builder.add_source(config::File::with_name(&path));
+                    }
+                }
+            }
+            metadata if metadata.is_file() => {
+                config_builder = config_builder.add_source(config::File::with_name(config_path));
+            }
+            _ => {
+                return Err(Error::value_validation_auto(format!(
+                    "Config file is not a directory or file: {config_path}"
+                )));
+            }
+        }
+    }
+
+    config_builder
+        .build()
+        .and_then(|c| c.try_deserialize())
+        .map_err(|e| Error::value_validation_auto(format!("Failed to deserialize config: {e}")))
 }

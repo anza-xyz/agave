@@ -1,5 +1,5 @@
 use {
-    crate::{commands, commands::run::args::pub_sub_config},
+    crate::{commands, commands::run::args::pub_sub_config, config_file::ConfigFile},
     agave_snapshots::{
         snapshot_config::{
             DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
@@ -76,12 +76,28 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::staked_nodes_overrides::command())
         .subcommand(commands::wait_for_restart_window::command())
         .subcommand(commands::set_public_address::command())
-        .subcommand(commands::manage_block_production::command(default_args));
+        .subcommand(commands::manage_block_production::command(default_args))
+        .arg(config_arg(default_args));
 
     commands::run::add_args(app, default_args)
         .args(&thread_args(&default_args.thread_args))
         .args(&get_deprecated_arguments())
         .after_help("The default subcommand is run")
+}
+
+fn config_arg<'b>(default_args: &DefaultArgs) -> Arg<'_, 'b> {
+    let mut arg = Arg::with_name("config")
+        .long("config")
+        .value_name("PATH")
+        .takes_value(true)
+        .multiple(true)
+        .help("Path to the agave.toml config file(s)");
+
+    if let Some(config_path) = default_args.config_path.as_ref() {
+        arg = arg.default_value(config_path);
+    }
+
+    arg
 }
 
 /// Deprecated argument description should be moved into the [`deprecated_arguments()`] function,
@@ -201,6 +217,7 @@ pub struct DefaultArgs {
     pub bind_address: String,
     pub dynamic_port_range: String,
     pub ledger_path: String,
+    pub config_path: Option<String>,
 
     pub tower_storage: String,
     pub send_transaction_service_config: send_transaction_service::Config,
@@ -246,9 +263,19 @@ pub struct DefaultArgs {
 
 impl DefaultArgs {
     pub fn new() -> Self {
+        let default_send_transaction_service_config = send_transaction_service::Config::default();
+        let config_path = ConfigFile::default_path().and_then(|path| {
+            if std::fs::exists(&path).ok()? {
+                Some(path.to_str().map(|s| s.to_string())?)
+            } else {
+                None
+            }
+        });
+
         DefaultArgs {
             bind_address: "0.0.0.0".to_string(),
             ledger_path: "ledger".to_string(),
+            config_path,
             dynamic_port_range: format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1),
             maximum_local_snapshot_age: "2500".to_string(),
             tower_storage: "file".to_string(),
