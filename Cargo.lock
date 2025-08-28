@@ -7474,6 +7474,8 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
  "solana-signature",
  "solana-signer",
  "subtle",
