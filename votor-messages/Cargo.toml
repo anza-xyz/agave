@@ -16,6 +16,7 @@ frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 [dependencies]
 bitvec = { workspace = true }
 bytemuck = { workspace = true }
+bytemuck_derive = { workspace = true }
 num_enum = { workspace = true }
 serde = { workspace = true }
 solana-account = { workspace = true }

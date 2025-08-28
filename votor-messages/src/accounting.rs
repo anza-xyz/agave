@@ -1,7 +1,8 @@
 //! Accounting related operations on the Vote Account
 use {
     crate::state::PodEpoch,
-    bytemuck::{Pod, PodInOption, Zeroable, ZeroableInOption},
+    bytemuck::{PodInOption, ZeroableInOption},
+    bytemuck_derive::{Pod, Zeroable},
     solana_program::{clock::Epoch, pubkey::Pubkey},
     spl_pod::primitives::PodU64,
 };

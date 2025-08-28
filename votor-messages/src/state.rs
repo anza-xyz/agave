@@ -2,7 +2,7 @@
 use {
     // crate::alpenglow::accounting::{AuthorizedVoter, EpochCredit},
     crate::accounting::{AuthorizedVoter, EpochCredit},
-    bytemuck::{Pod, Zeroable},
+    bytemuck_derive::{Pod, Zeroable},
     solana_account::{AccountSharedData, WritableAccount},
     solana_bls_signatures::Pubkey as BlsPubkey,
     solana_program::{
