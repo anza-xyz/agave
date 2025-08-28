@@ -98,7 +98,7 @@ impl FromStr for KeystoneError {
             "previous request is not finished" | "previous request not finished" => {
                 Ok(KeystoneError::PreviousRequestNotFinished)
             }
-            "solana app not open on ledger device" | "no app response" => {
+            "solana app not open on keystone device" | "no app response" => {
                 Ok(KeystoneError::NoAppResponse)
             }
             "invalid json response" | "invalid json" => Ok(KeystoneError::InvalidJson),
