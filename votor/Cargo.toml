@@ -18,6 +18,7 @@ frozen-abi = [
     "dep:solana-frozen-abi-macro",
     "solana-accounts-db/frozen-abi",
     "solana-bloom/frozen-abi",
+    "solana-bls-signatures/frozen-abi",
     "solana-ledger/frozen-abi",
     "solana-runtime/frozen-abi",
     "solana-vote/frozen-abi",
