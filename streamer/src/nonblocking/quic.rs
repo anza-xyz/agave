@@ -57,8 +57,6 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-const MEAN_TRANSACTION_SIZE: usize = 600;
-
 pub const DEFAULT_WAIT_FOR_CHUNK_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub const ALPN_TPU_PROTOCOL_ID: &[u8] = b"solana-tpu";
@@ -76,14 +74,21 @@ const CONNECTION_CLOSE_CODE_INVALID_STREAM: u32 = 5;
 const CONNECTION_CLOSE_REASON_INVALID_STREAM: &[u8] = b"invalid_stream";
 
 /// Target bitrate for an unstaked connection
-const TARGET_UNSTAKED_KBPS: u64 = 5000;
+const TARGET_UNSTAKED_KBPS: u64 = 5000; // about 200 TPS
 
-/// Target bitrate for a staked connection with maximal possible
-/// stake amount
-const TARGET_MAX_STAKED_KBPS: u64 = TARGET_UNSTAKED_KBPS * 4;
+/// Target bitrate for a staked connection with maximum
+/// stake amount through the cluster
+const TARGET_MAX_STAKED_KBPS: u64 = TARGET_UNSTAKED_KBPS * 10; // about 2000 TPS
 
 /// Maximal allowed RTT for SWQOS calculations (to limit abuse)
 const MAX_ALLOWED_RTT: Duration = Duration::from_millis(300);
+
+/// Maximal possible amount of streams to allocate per connection
+const MAX_ALLOWED_UNI_STREAMS: u64 = 1024;
+
+/// Expected mean size of a transaction for the purpose of
+/// receive window => streams conversion
+const MEAN_TRANSACTION_SIZE: usize = 400;
 
 /// Total new connection counts per second. Heuristically taken from
 /// the default staked and unstaked connection limits. Might be adjusted
@@ -983,12 +988,16 @@ async fn handle_connection(
         ..
     } = params;
 
+    connection.set_max_concurrent_bi_streams(VarInt::from_u32(0));
     let max_receive_rate_kbps = compute_max_receive_rate_kbps(params.max_stake, params.peer_type);
     let initial_rx_window = compute_receive_window_bdp(max_receive_rate_kbps, connection.rtt());
     connection.set_receive_window(initial_rx_window);
     connection.set_max_concurrent_uni_streams(
-        VarInt::from_u64(initial_rx_window.into_inner() / MEAN_TRANSACTION_SIZE as u64)
-            .expect("dividing VarInt by positive integer will never overflow"),
+        VarInt::from_u64(
+            (initial_rx_window.into_inner() / MEAN_TRANSACTION_SIZE as u64)
+                .min(MAX_ALLOWED_UNI_STREAMS),
+        )
+        .expect("dividing VarInt by positive integer will never overflow VarInt"),
     );
     debug!(
         "quic new connection {remote_addr}, max_receive_rate {max_receive_rate_kbps} Kbps (receive_window= {initial_rx_window} RTT={rtt}ms), streams: {streams} connections: {connections}",
@@ -998,7 +1007,7 @@ async fn handle_connection(
     );
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
 
-    'conn: for stream_number in 0.. {
+    'conn: for stream_number in 0u64.. {
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
         // the connection task.
         let mut stream = select! {
@@ -1132,15 +1141,13 @@ async fn handle_connection(
 
         stats.total_streams.fetch_sub(1, Ordering::Relaxed);
         stream_load_ema.update_ema_if_needed();
-        if (stream_number % 64) == 0 {
+        if (stream_number % 128) == 0 {
             let new_window = compute_receive_window_bdp(max_receive_rate_kbps, connection.rtt());
             trace!("Updating receive window for {remote_addr:?} to {new_window:?} based on rtt {:?} and target bitrate {} kbps",
             connection.rtt(), max_receive_rate_kbps);
             connection.set_receive_window(new_window);
-            connection.set_max_concurrent_uni_streams(
-                VarInt::from_u64(new_window.into_inner() / MEAN_TRANSACTION_SIZE as u64)
-                    .expect("dividing VarInt by positive integer will never overflow"),
-            );
+            // we do not update number of allowed streams here since
+            // it may cause extra allocations.
         }
     }
 
