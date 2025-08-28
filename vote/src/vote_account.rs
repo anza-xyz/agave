@@ -1,3 +1,5 @@
+#[cfg(not(all(miri, target_endian = "big")))]
+use solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed};
 use {
     crate::vote_state_view::VoteStateView,
     itertools::Itertools,
@@ -18,8 +20,6 @@ use {
     },
     thiserror::Error,
 };
-#[cfg(not(all(miri, target_endian = "big")))]
-use solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed};
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, PartialEq)]
