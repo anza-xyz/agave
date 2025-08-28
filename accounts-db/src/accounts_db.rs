@@ -7217,6 +7217,8 @@ impl AccountsDb {
     /// Visit zero lamport pubkeys and populate zero_lamport_single_ref info on
     /// storage.
     /// Returns the number of zero lamport single ref accounts found.
+    #[allow(unreachable_code)]
+    #[allow(unused_variables)]
     fn visit_zero_lamport_pubkeys_during_startup(
         &self,
         zero_lamport_accounts: HashMap<Pubkey, ZeroLamportAccountRef, PubkeyHasherBuilder>,
@@ -7225,6 +7227,7 @@ impl AccountsDb {
         let mut slot_offsets = HashMap::<Slot, Vec<usize>>::default();
         for (_pubkey, account_ref) in zero_lamport_accounts {
             if let ZeroLamportAccountRef::SingleRef(slot, offset) = account_ref {
+                println!("haha {}", _pubkey);
                 slot_offsets.entry(slot).or_default().push(offset);
             }
         }

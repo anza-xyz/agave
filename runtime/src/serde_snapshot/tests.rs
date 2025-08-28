@@ -615,7 +615,8 @@ mod serde_snapshot_tests {
     #[test_case(StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_clean_after_snapshot_restore_then_old_revives(storage_access: StorageAccess) {
-        solana_logger::setup();
+        //solana_logger::setup();
+        solana_logger::setup_with_default_filter();
         let old_lamport = 223;
         let zero_lamport = 0;
         let no_data = 0;
