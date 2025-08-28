@@ -1717,7 +1717,7 @@ fn decompressed_tar_reader(
     archive_format: ArchiveFormat,
     archive_path: impl AsRef<Path>,
     buf_size: u64,
-) -> Result<ArchiveFormatDecompressor<Box<dyn BufRead + 'static>>> {
+) -> Result<ArchiveFormatDecompressor<impl BufRead>> {
     let buf_reader =
         solana_accounts_db::large_file_buf_reader(archive_path.as_ref(), buf_size as usize)
             .map_err(|err| {

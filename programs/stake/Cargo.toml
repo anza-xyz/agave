@@ -1,6 +1,6 @@
 [package]
 name = "solana-stake-program"
-description = "Solana Stake program"
+description = "Solana Stake program helpers"
 documentation = "https://docs.rs/solana-stake-program"
 version = { workspace = true }
 authors = { workspace = true }
@@ -21,42 +21,17 @@ agave-feature-set = { workspace = true }
 bincode = { workspace = true }
 log = { workspace = true }
 solana-account = { workspace = true }
-solana-bincode = { workspace = true }
 solana-clock = { workspace = true }
 solana-config-interface = { workspace = true, features = ["bincode"] }
 solana-genesis-config = { workspace = true }
-solana-instruction = { workspace = true }
 solana-native-token = { workspace = true }
-solana-packet = { workspace = true }
-solana-program-runtime = { workspace = true }
-solana-pubkey = { workspace = true, features = ["sha2"] }
+solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-stake-interface = { workspace = true }
-solana-svm-log-collector = { workspace = true }
-solana-svm-type-overrides = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["bincode"] }
 solana-sysvar = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
-
-[dev-dependencies]
-assert_matches = { workspace = true }
-criterion = { workspace = true }
-proptest = { workspace = true }
-solana-compute-budget = { workspace = true }
-solana-epoch-rewards = { workspace = true }
-solana-epoch-schedule = { workspace = true }
-solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-pubkey = { workspace = true, features = ["rand"] }
-solana-svm-callback = { workspace = true }
-solana-svm-feature-set = { workspace = true }
-solana-sysvar-id = { workspace = true }
-solana-vote-program = { workspace = true, default-features = false }
-test-case = { workspace = true }
-
-[[bench]]
-name = "stake"
-harness = false
 
 [lints]
 workspace = true

@@ -34,9 +34,11 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-stake-program = { workspace = true }
+solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true }
 solana-version = { workspace = true }
 
 [dev-dependencies]
 solana-client-traits = { workspace = true }
+solana-program-binaries = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }

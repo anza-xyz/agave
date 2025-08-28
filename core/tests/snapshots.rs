@@ -128,14 +128,13 @@ fn restore_from_snapshot(
     let full_snapshot_archive_info =
         FullSnapshotArchiveInfo::new_from_path(full_snapshot_archive_path).unwrap();
 
-    let (deserialized_bank, _timing) = snapshot_bank_utils::bank_from_snapshot_archives(
+    let deserialized_bank = snapshot_bank_utils::bank_from_snapshot_archives(
         account_paths,
         &snapshot_config.bank_snapshots_dir,
         &full_snapshot_archive_info,
         None,
         old_genesis_config,
         &RuntimeConfig::default(),
-        None,
         None,
         None,
         false,
@@ -542,7 +541,6 @@ fn restore_from_snapshots_and_check_banks_are_equal(
         &RuntimeConfig::default(),
         None,
         None,
-        None,
         false,
         false,
         false,
@@ -735,7 +733,6 @@ fn test_snapshots_with_background_services() {
         &[temporary_accounts_dir],
         &snapshot_test_config.genesis_config_info.genesis_config,
         &RuntimeConfig::default(),
-        None,
         None,
         None,
         false,

@@ -40,7 +40,10 @@ use {
         },
         utils::move_and_async_delete_path_contents,
     },
-    solana_client::connection_cache::{ConnectionCache, Protocol},
+    solana_client::{
+        client_option::ClientOption,
+        connection_cache::{ConnectionCache, Protocol},
+    },
     solana_clock::Slot,
     solana_cluster_type::ClusterType,
     solana_entry::poh::compute_hash_time,
@@ -79,6 +82,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::{datapoint_info, metrics::metrics_config_sanity_check},
+    solana_net_utils::multihomed_sockets::EgressSocketSelect,
     solana_poh::{
         poh_recorder::PohRecorder,
         poh_service::{self, PohService},
@@ -95,7 +99,7 @@ use {
         rpc::JsonRpcConfig,
         rpc_completed_slots_service::RpcCompletedSlotsService,
         rpc_pubsub_service::{PubSubConfig, PubSubService},
-        rpc_service::{ClientOption, JsonRpcService, JsonRpcServiceConfig},
+        rpc_service::{JsonRpcService, JsonRpcServiceConfig},
         rpc_subscriptions::RpcSubscriptions,
         transaction_notifier_interface::TransactionNotifierArc,
         transaction_status_service::TransactionStatusService,
@@ -183,8 +187,21 @@ impl BlockVerificationMethod {
     }
 }
 
-#[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
+#[derive(
+    Clone,
+    Debug,
+    EnumString,
+    EnumVariantNames,
+    Default,
+    IntoStaticStr,
+    Display,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+)]
 #[strum(serialize_all = "kebab-case")]
+#[serde(rename_all = "kebab-case")]
 pub enum BlockProductionMethod {
     CentralScheduler,
     #[default]
@@ -201,8 +218,21 @@ impl BlockProductionMethod {
     }
 }
 
-#[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
+#[derive(
+    Clone,
+    Debug,
+    EnumString,
+    EnumVariantNames,
+    Default,
+    IntoStaticStr,
+    Display,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+)]
 #[strum(serialize_all = "kebab-case")]
+#[serde(rename_all = "kebab-case")]
 pub enum TransactionStructure {
     Sdk,
     #[default]
@@ -839,8 +869,13 @@ impl Validator {
         cluster_info.set_entrypoints(cluster_entrypoints);
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
         cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
+        let tvu_sockets_per_interface =
+            node.sockets.retransmit_sockets.len() / node.bind_ip_addrs.len();
+        cluster_info.init_egress_socket_select(Arc::new(EgressSocketSelect::new(
+            tvu_sockets_per_interface,
+        )));
         let cluster_info = Arc::new(cluster_info);
-        let node_multihoming = NodeMultihoming::from(&node);
+        let node_multihoming = Arc::new(NodeMultihoming::from(&node));
 
         assert!(is_snapshot_config_valid(&config.snapshot_config));
 
@@ -1036,18 +1071,23 @@ impl Validator {
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
-        let mut tpu_transactions_forwards_client =
-            Some(node.sockets.tpu_transaction_forwarding_client);
-
+        let mut tpu_transactions_forwards_client_sockets =
+            Some(node.sockets.tpu_transaction_forwarding_clients);
         let connection_cache = match (config.use_tpu_client_next, use_quic) {
             (false, true) => Some(Arc::new(ConnectionCache::new_with_client_options(
                 "connection_cache_tpu_quic",
                 tpu_connection_pool_size,
-                Some(
-                    tpu_transactions_forwards_client
+                Some({
+                    // this conversion is not beautiful but rust does not allow popping single
+                    // elements from a boxed slice
+                    let socketbox: Box<[_; 1]> = tpu_transactions_forwards_client_sockets
                         .take()
-                        .expect("Socket should exist."),
-                ),
+                        .unwrap()
+                        .try_into()
+                        .expect("Multihoming support for connection cache is not available");
+                    let [sock] = *socketbox;
+                    sock
+                }),
                 Some((
                     &identity_keypair,
                     node.info
@@ -1307,7 +1347,7 @@ impl Validator {
         let serve_repair = config.repair_handler_type.create_serve_repair(
             blockstore.clone(),
             cluster_info.clone(),
-            bank_forks.read().unwrap().sharable_root_bank(),
+            bank_forks.read().unwrap().sharable_banks(),
             config.repair_whitelist.clone(),
         );
         let (repair_request_quic_sender, repair_request_quic_receiver) = unbounded();
@@ -1587,11 +1627,10 @@ impl Validator {
                 .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
             ForwardingClientOption::TpuClientNext((
                 Arc::as_ref(&identity_keypair),
-                tpu_transactions_forwards_client
-                    .take()
-                    .expect("Socket should exist."),
+                tpu_transactions_forwards_client_sockets.take().unwrap(),
                 runtime_handle.clone(),
                 cancel_tpu_client_next,
+                node_multihoming.clone(),
             ))
         };
         let tpu = Tpu::new_with_client(
@@ -1680,7 +1719,8 @@ impl Validator {
             repair_socket: Arc::new(node.sockets.repair),
             outstanding_repair_requests,
             cluster_slots,
-            node: Some(Arc::new(node_multihoming)),
+            node: Some(node_multihoming),
+            banking_stage: tpu.banking_stage(),
         });
 
         Ok(Self {

@@ -1468,6 +1468,19 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced()),
     )
     .arg(
+        Arg::with_name("accounts_db_mark_obsolete_accounts")
+            .long("accounts-db-mark-obsolete-accounts")
+            .help("Enables experimental obsolete account tracking")
+            .long_help(
+                "Enables experimental obsolete account tracking. \
+                 This feature tracks obsolete accounts in the account storage entry allowing \
+                 for earlier cleaning of obsolete accounts in the storages and index. \
+                 At this time this feature is not compatible with booting from local \
+                 snapshot state and must unpack from archives.",
+            )
+            .hidden(hidden_unless_forced()),
+    )
+    .arg(
         Arg::with_name("accounts_index_scan_results_limit_mb")
             .long("accounts-index-scan-results-limit-mb")
             .value_name("MEGABYTES")

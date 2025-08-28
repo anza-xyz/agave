@@ -11,7 +11,6 @@ pub mod config;
 pub mod epoch_rewards;
 #[deprecated(since = "2.2.0")]
 pub mod points;
-pub mod stake_instruction;
 pub mod stake_state;
 
 pub fn add_genesis_accounts(genesis_config: &mut GenesisConfig) -> u64 {

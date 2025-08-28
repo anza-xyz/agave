@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 
+pub mod client_option;
 pub mod connection_cache;
 pub mod nonblocking;
 pub mod send_and_confirm_transactions_in_parallel;

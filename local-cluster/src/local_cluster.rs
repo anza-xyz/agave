@@ -30,7 +30,9 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::sockets::bind_to_localhost_unique,
     solana_poh_config::PohConfig,
+    solana_program_binaries::core_bpf_programs,
     solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::{
         genesis_utils::{
@@ -251,6 +253,12 @@ impl LocalCluster {
                     .collect()
             }
         };
+
+        for core_program_account in &core_bpf_programs(&Rent::default(), |_| true) {
+            config
+                .additional_accounts
+                .push(core_program_account.clone());
+        }
 
         // Mint used to fund validator identities for non-genesis accounts.
         // Verify we have enough lamports in the mint address to do those transfers.

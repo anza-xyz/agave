@@ -884,11 +884,11 @@ impl TestValidator {
         }
 
         let mut accounts = config.accounts.clone();
-        for (address, account) in solana_program_test::programs::spl_programs(&config.rent) {
+        for (address, account) in solana_program_binaries::spl_programs(&config.rent) {
             accounts.entry(address).or_insert(account);
         }
         for (address, account) in
-            solana_program_test::programs::core_bpf_programs(&config.rent, |feature_id| {
+            solana_program_binaries::core_bpf_programs(&config.rent, |feature_id| {
                 feature_set.contains(feature_id)
             })
         {
@@ -1516,13 +1516,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_core_bpf_programs() {
-        let (test_validator, _payer) = TestValidatorGenesis::default()
-            .deactivate_features(&[
-                // Don't migrate the stake program.
-                agave_feature_set::migrate_stake_program_to_core_bpf::id(),
-            ])
-            .start_async()
-            .await;
+        let (test_validator, _payer) = TestValidatorGenesis::default().start_async().await;
 
         let rpc_client = test_validator.get_async_rpc_client();
 
@@ -1551,9 +1545,9 @@ mod test {
         assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
         assert!(account.executable);
 
-        // Stake is a builtin.
+        // Stake is a BPF program.
         let account = fetched_programs[3].as_ref().unwrap();
-        assert_eq!(account.owner, solana_sdk_ids::native_loader::id());
+        assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
         assert!(account.executable);
     }
 }

@@ -600,3 +600,19 @@ Make sure your ledger is on drive with at least `2TB` of space.
 
 This could be a networking/hardware issue, or you may need to get the latest
 snapshot from another validator node.
+
+### PoH hashes/second rate is slower than the cluster target
+
+If you are using `agave-validator` built from source, ensure that you are using a `release` build and not a `debug` build
+
+Ensure that your machine's CPU base clock speed is 2.8GHz or faster. Use `lscpu` to check your clock speed. `CPU(s) scaling MHz` can cause your clock speed to be underclocked. Some additional tuning:
+
+Set performance governor
+```bash
+echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+```
+
+Force minimum frequency to maximum
+```bash
+# Example if your maximum GHz is 2.8
+echo 2850000 | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_min_freq

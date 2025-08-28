@@ -19,7 +19,7 @@ use {
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
         crds::{Crds, Cursor, GossipRoute},
         crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, SnapshotHashes, Vote, MAX_VOTES},
-        crds_filter::{should_retain_crds_value, GossipFilterDirection, MIN_STAKE_TO_SKIP_PING},
+        crds_filter::{should_retain_crds_value, GossipFilterDirection},
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
@@ -53,7 +53,7 @@ use {
     solana_ledger::shred::Shred,
     solana_net_utils::{
         bind_in_range,
-        multihomed_sockets::BindIpAddrs,
+        multihomed_sockets::{BindIpAddrs, EgressSocketSelect},
         sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
         PortRange, VALIDATOR_PORT_RANGE,
     },
@@ -170,6 +170,8 @@ pub struct ClusterInfo {
     contact_info_path: PathBuf,
     socket_addr_space: SocketAddrSpace,
     bind_ip_addrs: Arc<BindIpAddrs>,
+    // Egress Multihoming
+    egress_socket_select: Arc<EgressSocketSelect>,
 }
 
 impl ClusterInfo {
@@ -199,6 +201,7 @@ impl ClusterInfo {
             contact_save_interval: 0, // disabled
             socket_addr_space,
             bind_ip_addrs: Arc::new(BindIpAddrs::default()),
+            egress_socket_select: Arc::new(EgressSocketSelect::default()),
         };
         me.refresh_my_gossip_contact_info();
         me
@@ -218,6 +221,14 @@ impl ClusterInfo {
 
     pub fn bind_ip_addrs(&self) -> Arc<BindIpAddrs> {
         self.bind_ip_addrs.clone()
+    }
+
+    pub fn init_egress_socket_select(&mut self, egress_socket_select: Arc<EgressSocketSelect>) {
+        self.egress_socket_select = egress_socket_select;
+    }
+
+    pub fn egress_socket_select(&self) -> &EgressSocketSelect {
+        &self.egress_socket_select
     }
 
     fn refresh_push_active_set(
@@ -405,6 +416,15 @@ impl ClusterInfo {
             .write()
             .unwrap()
             .set_gossip(gossip_addr)?;
+        self.refresh_my_gossip_contact_info();
+        Ok(())
+    }
+
+    pub fn set_tvu_socket(&self, tvu_addr: SocketAddr) -> Result<(), ContactInfoError> {
+        self.my_contact_info
+            .write()
+            .unwrap()
+            .set_tvu(contact_info::Protocol::UDP, tvu_addr)?;
         self.refresh_my_gossip_contact_info();
         Ok(())
     }
@@ -1033,15 +1053,6 @@ impl ClusterInfo {
         addr.as_ref()
             .map(|addr| self.socket_addr_space.check(addr))
             .unwrap_or_default()
-    }
-
-    /// all validators that have a valid rpc port regardless of `shred_version`.
-    #[deprecated(
-        since = "3.0.0",
-        note = "use `rpc_peers` instead to ensure shred version is the same"
-    )]
-    pub fn all_rpc_peers(&self) -> Vec<ContactInfo> {
-        self.rpc_peers()
     }
 
     /// all validators that have a valid rpc port and are on the same `shred_version`.
@@ -2012,7 +2023,6 @@ impl ClusterInfo {
                 &mut rng,
                 &keypair,
                 value,
-                stakes,
                 &self.socket_addr_space,
                 &self.ping_cache,
                 &mut pings,
@@ -2384,7 +2394,7 @@ pub struct Sockets {
     /// Client-side socket for ForwardingStage vote transactions
     pub tpu_vote_forwarding_client: UdpSocket,
     /// Client-side socket for ForwardingStage non-vote transactions
-    pub tpu_transaction_forwarding_client: UdpSocket,
+    pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>,
     /// Socket for alpenglow consensus logic
     pub alpenglow: Option<UdpSocket>,
     /// Connection cache endpoint for QUIC-based Vote
@@ -2496,7 +2506,6 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     rng: &mut R,
     keypair: &Keypair,
     value: &CrdsValue,
-    stakes: &HashMap<Pubkey, u64>,
     socket_addr_space: &SocketAddrSpace,
     ping_cache: &Mutex<PingCache>,
     pings: &mut Vec<(SocketAddr, Ping)>,
@@ -2506,10 +2515,6 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
         CrdsData::LegacyContactInfo(node) => (node.pubkey(), node.gossip()),
         _ => return true, // If not a contact-info, nothing to verify.
     };
-    // For (sufficiently) staked nodes, don't bother with ping/pong.
-    if stakes.get(pubkey).copied() >= Some(MIN_STAKE_TO_SKIP_PING) {
-        return true;
-    }
     // Invalid addresses are not verifiable.
     let Some(addr) = addr.filter(|addr| socket_addr_space.check(addr)) else {
         return false;

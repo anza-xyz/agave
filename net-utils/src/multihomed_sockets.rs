@@ -74,8 +74,8 @@ impl SocketProvider for MultihomedSocketProvider {
 #[derive(Debug, Clone)]
 pub struct BindIpAddrs {
     /// The IP addresses this node may bind to
-    /// Index 0 is the primary address
-    /// Index 1+ are secondary addresses
+    /// Index 0 is the public internet address
+    /// Index 1+ are secondary addresses (i.e. multihoming)
     addrs: Vec<IpAddr>,
     active_index: Arc<AtomicUsize>,
 }
@@ -115,7 +115,7 @@ impl BindIpAddrs {
         self.addrs[self.active_index.load(Ordering::Acquire)]
     }
 
-    /// Change active to index (0 = primary)
+    /// Change active to index (0 = public internet IP, 1+ = secondary IPs)
     pub fn set_active(&self, index: usize) -> Result<IpAddr, String> {
         if index >= self.addrs.len() {
             return Err(format!(
@@ -130,6 +130,11 @@ impl BindIpAddrs {
     #[inline]
     pub fn active_index(&self) -> usize {
         self.active_index.load(Ordering::Acquire)
+    }
+
+    #[inline]
+    pub fn multihoming_enabled(&self) -> bool {
+        self.addrs.len() > 1
     }
 }
 
@@ -146,5 +151,37 @@ impl Deref for BindIpAddrs {
 impl AsRef<[IpAddr]> for BindIpAddrs {
     fn as_ref(&self) -> &[IpAddr] {
         &self.addrs
+    }
+}
+
+#[cfg(feature = "agave-unstable-api")]
+#[derive(Default)]
+pub struct EgressSocketSelect {
+    tvu_retransmit_active_offset: AtomicUsize,
+    num_tvu_retransmit_sockets: usize,
+}
+
+#[cfg(feature = "agave-unstable-api")]
+impl EgressSocketSelect {
+    pub fn new(num_sockets: usize) -> Self {
+        Self {
+            tvu_retransmit_active_offset: AtomicUsize::new(0),
+            num_tvu_retransmit_sockets: num_sockets,
+        }
+    }
+
+    pub fn select_interface(&self, interface_index: usize) {
+        self.tvu_retransmit_active_offset.store(
+            interface_index.saturating_mul(self.num_tvu_retransmit_sockets),
+            Ordering::Release,
+        );
+    }
+
+    pub fn active_offset(&self) -> usize {
+        self.tvu_retransmit_active_offset.load(Ordering::Acquire)
+    }
+
+    pub fn num_retransmit_sockets_per_interface(&self) -> usize {
+        self.num_tvu_retransmit_sockets
     }
 }

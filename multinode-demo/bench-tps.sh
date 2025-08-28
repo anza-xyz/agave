@@ -21,7 +21,6 @@ usage() {
 
 args=("$@")
 default_arg --url "http://127.0.0.1:8899"
-default_arg --entrypoint "127.0.0.1:8001"
 default_arg --faucet "127.0.0.1:9900"
 default_arg --duration 90
 default_arg --tx-count 50000

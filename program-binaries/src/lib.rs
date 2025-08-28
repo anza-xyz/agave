@@ -1,5 +1,7 @@
+#![allow(clippy::arithmetic_side_effects)]
+
 use {
-    solana_account::{Account, AccountSharedData},
+    solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_loader_v3_interface::{get_program_data_address, state::UpgradeableLoaderState},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -61,6 +63,11 @@ static CORE_BPF_PROGRAMS: &[(Pubkey, Option<Pubkey>, &[u8])] = &[
         None,
         include_bytes!("programs/core_bpf_feature_gate-0.0.1.so"),
     ),
+    (
+        solana_sdk_ids::stake::ID,
+        None,
+        include_bytes!("programs/core_bpf_stake-1.0.0.so"),
+    ),
     // Add more programs here post-migration...
 ];
 
@@ -75,7 +82,7 @@ fn bpf_loader_program_account(program_id: &Pubkey, elf: &[u8], rent: &Rent) -> (
             data: elf.to_vec(),
             owner: bpf_loader::id(),
             executable: true,
-            rent_epoch: 0,
+            rent_epoch: u64::MAX,
         },
     )
 }
@@ -86,7 +93,7 @@ fn bpf_loader_program_account(program_id: &Pubkey, elf: &[u8], rent: &Rent) -> (
 /// The second tuple is the program data account. It contains the program data
 /// address and an account with the program data - a valid BPF Loader Upgradeable
 /// program data account containing the ELF.
-pub(crate) fn bpf_loader_upgradeable_program_accounts(
+pub fn bpf_loader_upgradeable_program_accounts(
     program_id: &Pubkey,
     elf: &[u8],
     rent: &Rent,
@@ -104,7 +111,7 @@ pub(crate) fn bpf_loader_upgradeable_program_accounts(
             data,
             owner: bpf_loader_upgradeable::id(),
             executable: true,
-            rent_epoch: 0,
+            rent_epoch: u64::MAX,
         }
     };
     let programdata_account = {
@@ -121,7 +128,7 @@ pub(crate) fn bpf_loader_upgradeable_program_accounts(
             data,
             owner: bpf_loader_upgradeable::id(),
             executable: false,
-            rent_epoch: 0,
+            rent_epoch: u64::MAX,
         }
     };
     [
@@ -166,4 +173,28 @@ where
             accounts
         })
         .collect()
+}
+
+pub fn by_id(program_id: &Pubkey, rent: &Rent) -> Option<Vec<(Pubkey, AccountSharedData)>> {
+    let programs = spl_programs(rent);
+    if let Some(i) = programs.iter().position(|(key, _)| key == program_id) {
+        let n = num_accounts(programs[i].1.owner());
+        return Some(programs.into_iter().skip(i).take(n).collect());
+    }
+
+    let programs = core_bpf_programs(rent, |_| true);
+    if let Some(i) = programs.iter().position(|(key, _)| key == program_id) {
+        let n = num_accounts(programs[i].1.owner());
+        return Some(programs.into_iter().skip(i).take(n).collect());
+    }
+
+    None
+}
+
+fn num_accounts(owner_id: &Pubkey) -> usize {
+    if *owner_id == bpf_loader_upgradeable::id() {
+        2
+    } else {
+        1
+    }
 }

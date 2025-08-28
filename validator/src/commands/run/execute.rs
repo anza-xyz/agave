@@ -11,7 +11,7 @@ use {
     log::*,
     rand::{seq::SliceRandom, thread_rng},
     solana_accounts_db::{
-        accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
+        accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
         accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimitMb, ScanFilter},
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -232,6 +232,12 @@ pub fn execute(
         BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
     };
 
+    if bind_addresses.len() > 1 && matches.is_present("use_connection_cache") {
+        Err(String::from(
+            "Connection cache can not be used in a multihoming context",
+        ))?;
+    }
+
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
             .expect("invalid rpc_bind_address")
@@ -408,6 +414,12 @@ pub fn execute(
         })
         .unwrap_or_default();
 
+    let mark_obsolete_accounts = if matches.is_present("accounts_db_mark_obsolete_accounts") {
+        MarkObsoleteAccounts::Enabled
+    } else {
+        MarkObsoleteAccounts::Disabled
+    };
+
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes.clone()),
@@ -432,6 +444,7 @@ pub fn execute(
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         num_hash_threads: Some(accounts_db_hash_threads),
+        mark_obsolete_accounts,
         ..AccountsDbConfig::default()
     };
 
@@ -538,6 +551,24 @@ pub fn execute(
         run_args.rpc_bootstrap_config.incremental_snapshot_fetch,
     )?;
 
+    let use_snapshot_archives_at_startup = value_t_or_exit!(
+        matches,
+        use_snapshot_archives_at_startup::cli::NAME,
+        UseSnapshotArchivesAtStartup
+    );
+
+    if mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
+        && use_snapshot_archives_at_startup != UseSnapshotArchivesAtStartup::Always
+    {
+        Err(format!(
+            "The --accounts-db-mark-obsolete-accounts option requires \
+             the --use-snapshot-archives-at-startup option to be set to {}. \
+             Current value: {}",
+            UseSnapshotArchivesAtStartup::Always,
+            use_snapshot_archives_at_startup
+        ))?;
+    }
+
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
         tower_storage,
@@ -627,11 +658,7 @@ pub fn execute(
             ..RuntimeConfig::default()
         },
         staked_nodes_overrides: staked_nodes_overrides.clone(),
-        use_snapshot_archives_at_startup: value_t_or_exit!(
-            matches,
-            use_snapshot_archives_at_startup::cli::NAME,
-            UseSnapshotArchivesAtStartup
-        ),
+        use_snapshot_archives_at_startup,
         ip_echo_server_threads,
         rayon_global_threads,
         replay_forks_threads,

@@ -40,7 +40,6 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::remove_dir_contents,
     },
-    solana_builtins::prototype::BuiltinPrototype,
     solana_clock::{Epoch, Slot},
     solana_genesis_config::GenesisConfig,
     solana_measure::{measure::Measure, measure_time},
@@ -53,20 +52,6 @@ use {
         sync::{atomic::AtomicBool, Arc},
     },
 };
-
-#[derive(Debug)]
-pub struct BankFromArchivesTimings {
-    pub untar_full_snapshot_archive_us: u64,
-    pub untar_incremental_snapshot_archive_us: Option<u64>,
-    pub rebuild_bank_us: u64,
-    pub verify_bank_us: u64,
-}
-
-#[derive(Debug)]
-pub struct BankFromDirTimings {
-    pub rebuild_storages_us: u64,
-    pub rebuild_bank_us: u64,
-}
 
 /// Parses out bank specific information from a snapshot archive including the leader schedule.
 /// epoch schedule, etc.
@@ -149,7 +134,6 @@ pub fn bank_from_snapshot_archives(
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
@@ -157,7 +141,7 @@ pub fn bank_from_snapshot_archives(
     accounts_db_config: Option<AccountsDbConfig>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<(Bank, BankFromArchivesTimings)> {
+) -> snapshot_utils::Result<Bank> {
     info!(
         "Loading bank from full snapshot archive: {}, and incremental snapshot archive: {:?}",
         full_snapshot_archive_info.path().display(),
@@ -213,7 +197,6 @@ pub fn bank_from_snapshot_archives(
         account_paths,
         storage_and_next_append_vec_id,
         debug_keys,
-        additional_builtins,
         limit_load_slot_count_from_snapshot,
         verify_index,
         accounts_db_config,
@@ -259,37 +242,29 @@ pub fn bank_from_snapshot_archives(
         accounts_db_skip_shrink || !full_snapshot_archive_info.is_remote(),
         accounts_db_force_initial_clean,
         full_snapshot_archive_info.slot(),
-        info.duplicates_lt_hash,
+        Some(&info.calculated_accounts_lt_hash),
     ) && limit_load_slot_count_from_snapshot.is_none()
     {
         panic!("Snapshot bank for slot {} failed to verify", bank.slot());
     }
     measure_verify.stop();
 
-    let timings = BankFromArchivesTimings {
-        untar_full_snapshot_archive_us: full_measure_untar.as_us(),
-        untar_incremental_snapshot_archive_us: incremental_measure_untar
-            .as_ref()
-            .map(Measure::as_us),
-        rebuild_bank_us: measure_rebuild.as_us(),
-        verify_bank_us: measure_verify.as_us(),
-    };
     datapoint_info!(
         "bank_from_snapshot_archives",
         (
             "untar_full_snapshot_archive_us",
-            timings.untar_full_snapshot_archive_us,
+            full_measure_untar.as_us(),
             i64
         ),
         (
             "untar_incremental_snapshot_archive_us",
-            timings.untar_incremental_snapshot_archive_us,
+            incremental_measure_untar.as_ref().map(Measure::as_us),
             Option<i64>
         ),
-        ("rebuild_bank_us", timings.rebuild_bank_us, i64),
-        ("verify_bank_us", timings.verify_bank_us, i64),
+        ("rebuild_bank_us", measure_rebuild.as_us(), i64),
+        ("verify_bank_us", measure_verify.as_us(), i64),
     );
-    Ok((bank, timings))
+    Ok(bank)
 }
 
 /// Rebuild bank from snapshot archives
@@ -305,7 +280,6 @@ pub fn bank_from_latest_snapshot_archives(
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
@@ -328,7 +302,7 @@ pub fn bank_from_latest_snapshot_archives(
         full_snapshot_archive_info.slot(),
     );
 
-    let (bank, _) = bank_from_snapshot_archives(
+    let bank = bank_from_snapshot_archives(
         account_paths,
         bank_snapshots_dir.as_ref(),
         &full_snapshot_archive_info,
@@ -336,7 +310,6 @@ pub fn bank_from_latest_snapshot_archives(
         genesis_config,
         runtime_config,
         debug_keys,
-        additional_builtins,
         limit_load_slot_count_from_snapshot,
         accounts_db_skip_shrink,
         accounts_db_force_initial_clean,
@@ -361,13 +334,12 @@ pub fn bank_from_snapshot_dir(
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: Option<AccountsDbConfig>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<(Bank, BankFromDirTimings)> {
+) -> snapshot_utils::Result<Bank> {
     info!(
         "Loading bank from snapshot dir: {}",
         bank_snapshot.snapshot_dir.display()
@@ -404,7 +376,7 @@ pub fn bank_from_snapshot_dir(
     };
     let snapshot_bank_fields = SnapshotBankFields::new(bank_fields, None);
     let snapshot_accounts_db_fields = SnapshotAccountsDbFields::new(accounts_db_fields, None);
-    let ((bank, _info), measure_rebuild_bank) = measure_time!(
+    let ((bank, info), measure_rebuild_bank) = measure_time!(
         reconstruct_bank_from_fields(
             snapshot_bank_fields,
             snapshot_accounts_db_fields,
@@ -413,7 +385,6 @@ pub fn bank_from_snapshot_dir(
             account_paths,
             storage_and_next_append_vec_id,
             debug_keys,
-            additional_builtins,
             limit_load_slot_count_from_snapshot,
             verify_index,
             accounts_db_config,
@@ -439,19 +410,22 @@ pub fn bank_from_snapshot_dir(
 
     bank.status_cache.write().unwrap().append(&slot_deltas);
 
-    // We trust our local state, so skip the startup accounts verification.
-    bank.set_initial_accounts_hash_verification_completed();
+    if !bank.verify_snapshot_bank(
+        true,
+        false,
+        0, // since force_clean is false, this value is unused
+        Some(&info.calculated_accounts_lt_hash),
+    ) && limit_load_slot_count_from_snapshot.is_none()
+    {
+        panic!("Snapshot bank for slot {} failed to verify", bank.slot());
+    }
 
-    let timings = BankFromDirTimings {
-        rebuild_storages_us: measure_rebuild_storages.as_us(),
-        rebuild_bank_us: measure_rebuild_bank.as_us(),
-    };
     datapoint_info!(
         "bank_from_snapshot_dir",
-        ("rebuild_storages_us", timings.rebuild_storages_us, i64),
-        ("rebuild_bank_us", timings.rebuild_bank_us, i64),
+        ("rebuild_storages_us", measure_rebuild_storages.as_us(), i64),
+        ("rebuild_bank_us", measure_rebuild_bank.as_us(), i64),
     );
-    Ok((bank, timings))
+    Ok(bank)
 }
 
 /// follow the prototype of fn bank_from_latest_snapshot_archives, implement the from_dir case
@@ -462,7 +436,6 @@ pub fn bank_from_latest_snapshot_dir(
     runtime_config: &RuntimeConfig,
     account_paths: &[PathBuf],
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: Option<AccountsDbConfig>,
@@ -472,13 +445,12 @@ pub fn bank_from_latest_snapshot_dir(
     let bank_snapshot = get_highest_bank_snapshot_post(&bank_snapshots_dir).ok_or_else(|| {
         SnapshotError::NoSnapshotSlotDir(bank_snapshots_dir.as_ref().to_path_buf())
     })?;
-    let (bank, _) = bank_from_snapshot_dir(
+    let bank = bank_from_snapshot_dir(
         account_paths,
         &bank_snapshot,
         genesis_config,
         runtime_config,
         debug_keys,
-        additional_builtins,
         limit_load_slot_count_from_snapshot,
         verify_index,
         accounts_db_config,
@@ -955,14 +927,13 @@ mod tests {
         )
         .unwrap();
 
-        let (roundtrip_bank, _) = bank_from_snapshot_archives(
+        let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &snapshot_archive_info,
             None,
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -1055,14 +1026,13 @@ mod tests {
         )
         .unwrap();
 
-        let (roundtrip_bank, _) = bank_from_snapshot_archives(
+        let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             None,
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -1156,14 +1126,13 @@ mod tests {
         )
         .unwrap();
 
-        let (roundtrip_bank, _) = bank_from_snapshot_archives(
+        let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             None,
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -1275,14 +1244,13 @@ mod tests {
         )
         .unwrap();
 
-        let (roundtrip_bank, _) = bank_from_snapshot_archives(
+        let roundtrip_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             Some(&incremental_snapshot_archive_info),
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -1391,7 +1359,6 @@ mod tests {
             &[accounts_dir],
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -1514,14 +1481,13 @@ mod tests {
             snapshot_archive_format,
         )
         .unwrap();
-        let (deserialized_bank, _) = bank_from_snapshot_archives(
+        let deserialized_bank = bank_from_snapshot_archives(
             &[accounts_dir.clone()],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             Some(&incremental_snapshot_archive_info),
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -1573,14 +1539,13 @@ mod tests {
         )
         .unwrap();
 
-        let (deserialized_bank, _) = bank_from_snapshot_archives(
+        let deserialized_bank = bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             Some(&incremental_snapshot_archive_info),
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -1948,14 +1913,13 @@ mod tests {
 
         let accounts_dir = tempfile::TempDir::new().unwrap();
         let other_bank_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let (deserialized_bank, _) = bank_from_snapshot_archives(
+        let deserialized_bank = bank_from_snapshot_archives(
             &[accounts_dir.path().to_path_buf()],
             other_bank_snapshots_dir.path(),
             &full_snapshot_archive_info,
             None,
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -1989,12 +1953,11 @@ mod tests {
         let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
         let account_paths = &bank.rc.accounts.accounts_db.paths;
 
-        let (bank_constructed, ..) = bank_from_snapshot_dir(
+        let bank_constructed = bank_from_snapshot_dir(
             account_paths,
             &bank_snapshot,
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -2038,7 +2001,6 @@ mod tests {
             &genesis_config,
             &RuntimeConfig::default(),
             account_paths,
-            None,
             None,
             None,
             false,

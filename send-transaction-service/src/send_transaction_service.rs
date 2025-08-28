@@ -11,7 +11,10 @@ use {
     solana_hash::Hash,
     solana_nonce_account as nonce_account,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime::{
+        bank::Bank,
+        bank_forks::{BankForks, BankPair},
+    },
     solana_signature::Signature,
     std::{
         collections::hash_map::{Entry, HashMap},
@@ -311,7 +314,7 @@ impl SendTransactionService {
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         debug!("Starting send-transaction-service::retry_thread.");
-        let root_bank = bank_forks.read().unwrap().sharable_root_bank();
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let retry_interval_ms_default = MAX_RETRY_SLEEP_MS.min(config.retry_rate_ms);
         let mut retry_interval_ms = retry_interval_ms_default;
         Builder::new()
@@ -329,11 +332,11 @@ impl SendTransactionService {
                     stats
                         .retry_queue_size
                         .store(transactions.len() as u64, Ordering::Relaxed);
-                    let (root_bank, working_bank) = {
-                        let bank_forks = bank_forks.read().unwrap();
-                        (root_bank.load(), bank_forks.working_bank())
-                    };
 
+                    let BankPair {
+                        root_bank,
+                        working_bank,
+                    } = sharable_banks.load();
                     let result = Self::process_transactions(
                         &working_bank,
                         &root_bank,
