@@ -88,7 +88,7 @@ solana-quic-definitions = "=3.0.0"
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sanitize = "=3.0.0"
+solana-sanitize = "=3.0.1"
 solana-serde-varint = "=3.0.0"
 solana-sha256-hasher = "=3.0.0"
 solana-short-vec = "=3.0.0"
