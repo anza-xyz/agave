@@ -454,7 +454,7 @@ solana-local-cluster = { path = "local-cluster", version = "=3.1.0" }
 solana-logger = "3.0.0"
 solana-measure = { path = "measure", version = "=3.1.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=3.1.0" }
-solana-message = "3.0.0"
+solana-message = "3.0.1"
 solana-metrics = { path = "metrics", version = "=3.1.0" }
 solana-msg = "3.0.0"
 solana-native-token = "3.0.0"
