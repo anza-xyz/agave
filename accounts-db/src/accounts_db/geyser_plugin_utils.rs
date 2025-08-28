@@ -139,8 +139,11 @@ impl AccountsDb {
 pub mod tests {
     use {
         super::*,
-        crate::accounts_update_notifier_interface::{
-            AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
+        crate::{
+            accounts_db::{AccountsDbConfig, MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+            accounts_update_notifier_interface::{
+                AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
+            },
         },
         dashmap::DashMap,
         solana_account::ReadableAccount as _,
@@ -148,6 +151,7 @@ pub mod tests {
             atomic::{AtomicBool, Ordering},
             Arc,
         },
+        test_case::test_case,
     };
 
     impl AccountsDb {
@@ -202,9 +206,18 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_notify_account_restore_from_snapshot() {
-        let mut accounts = AccountsDb::new_single_for_tests();
+    #[test_case(MarkObsoleteAccounts::Enabled)]
+    #[test_case(MarkObsoleteAccounts::Disabled)]
+    fn test_notify_account_restore_from_snapshot(mark_obsolete_accounts: MarkObsoleteAccounts) {
+        let mut accounts = AccountsDb::new_with_config(
+            Vec::new(),
+            Some(AccountsDbConfig {
+                mark_obsolete_accounts,
+                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+            }),
+            None,
+            Arc::default(),
+        );
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
         let account = AccountSharedData::new(1, 0, &Pubkey::default());
@@ -214,13 +227,16 @@ pub mod tests {
         // to correct slots. Cache flush can skip writes if accounts have already been written to
         // a newer slot
         accounts.store_for_tests((0, [(&key1, &account)].as_slice()));
-        accounts.add_root_and_flush_write_cache(0);
+        accounts.add_root(0);
+        accounts.flush_slot_cache(0);
         accounts.store_for_tests((1, [(&key1, &account)].as_slice()));
-        accounts.add_root_and_flush_write_cache(1);
+        accounts.add_root(1);
+        accounts.flush_slot_cache(1);
 
         // Account with key2 is updated in a single slot, should get notified once
         accounts.store_for_tests((2, [(&key2, &account)].as_slice()));
-        accounts.add_root_and_flush_write_cache(2);
+        accounts.add_root(2);
+        accounts.flush_slot_cache(2);
 
         // Do the notification
         let notifier = GeyserTestPlugin::default();

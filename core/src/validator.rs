@@ -40,7 +40,10 @@ use {
         },
         utils::move_and_async_delete_path_contents,
     },
-    solana_client::connection_cache::{ConnectionCache, Protocol},
+    solana_client::{
+        client_option::ClientOption,
+        connection_cache::{ConnectionCache, Protocol},
+    },
     solana_clock::Slot,
     solana_cluster_type::ClusterType,
     solana_entry::poh::compute_hash_time,
@@ -96,7 +99,7 @@ use {
         rpc::JsonRpcConfig,
         rpc_completed_slots_service::RpcCompletedSlotsService,
         rpc_pubsub_service::{PubSubConfig, PubSubService},
-        rpc_service::{ClientOption, JsonRpcService, JsonRpcServiceConfig},
+        rpc_service::{JsonRpcService, JsonRpcServiceConfig},
         rpc_subscriptions::RpcSubscriptions,
         transaction_notifier_interface::TransactionNotifierArc,
         transaction_status_service::TransactionStatusService,
@@ -1344,7 +1347,7 @@ impl Validator {
         let serve_repair = config.repair_handler_type.create_serve_repair(
             blockstore.clone(),
             cluster_info.clone(),
-            bank_forks.read().unwrap().sharable_root_bank(),
+            bank_forks.read().unwrap().sharable_banks(),
             config.repair_whitelist.clone(),
         );
         let (repair_request_quic_sender, repair_request_quic_receiver) = unbounded();

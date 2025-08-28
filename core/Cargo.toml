@@ -215,9 +215,6 @@ spl-memo-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
-[badges]
-codecov = { repository = "solana-labs/solana", branch = "master", service = "github" }
-
 [[bench]]
 name = "banking_stage"
 

@@ -139,7 +139,7 @@ impl TransactionStatusService {
                     costs,
                     transaction_indexes,
                 },
-                work_sequence,
+                work_id,
             )) => {
                 let mut status_and_memos_batch = blockstore.get_write_batch()?;
 
@@ -256,8 +256,8 @@ impl TransactionStatusService {
                 }
 
                 if let Some(dependency_tracker) = dependency_tracker.as_ref() {
-                    if let Some(work_sequence) = work_sequence {
-                        dependency_tracker.mark_this_and_all_previous_work_processed(work_sequence);
+                    if let Some(work_id) = work_id {
+                        dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
                     }
                 }
             }
@@ -530,7 +530,7 @@ pub(crate) mod tests {
         transaction_status_sender
             .send(TransactionStatusMessage::Batch((
                 transaction_status_batch,
-                None, /* No work sequence */
+                None, /* No work id */
             )))
             .unwrap();
 
@@ -635,11 +635,11 @@ pub(crate) mod tests {
             Some(dependency_tracker.clone()),
             exit.clone(),
         );
-        let work_sequence = 345;
+        let work_id = 345;
         transaction_status_sender
             .send(TransactionStatusMessage::Batch((
                 transaction_status_batch,
-                Some(work_sequence),
+                Some(work_id),
             )))
             .unwrap();
         transaction_status_service.quiesce_and_join_for_tests(exit);

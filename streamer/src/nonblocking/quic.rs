@@ -1174,9 +1174,7 @@ async fn handle_connection(
                 &packet_sender,
                 &stats,
                 peer_type,
-            )
-            .await
-            {
+            ) {
                 // The stream is finished, break out of the loop and close the stream.
                 Ok(StreamState::Finished) => {
                     last_update.store(timing::timestamp(), Ordering::Relaxed);
@@ -1230,7 +1228,7 @@ enum StreamState {
 // packet sender.
 //
 // Returns Err(()) if the stream is invalid.
-async fn handle_chunks(
+fn handle_chunks(
     chunks: impl ExactSizeIterator<Item = Bytes>,
     accum: &mut PacketAccumulator,
     packet_sender: &Sender<PacketAccumulator>,

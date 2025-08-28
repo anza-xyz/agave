@@ -17,7 +17,7 @@ use {
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
     solana_bn254::prelude::{
-        alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing, AltBn128Error,
+        alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing,
         ALT_BN128_ADDITION_OUTPUT_LEN, ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
         ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
     },
@@ -1691,26 +1691,7 @@ declare_builtin_function!(
             }
         };
 
-        let simplify_alt_bn128_syscall_error_codes = invoke_context
-            .get_feature_set()
-            .simplify_alt_bn128_syscall_error_codes;
-
-        let result_point = match calculation(input) {
-            Ok(result_point) => result_point,
-            Err(e) => {
-                return if simplify_alt_bn128_syscall_error_codes {
-                    Ok(1)
-                } else {
-                    Ok(e.into())
-                };
-            }
-        };
-
-        // This can never happen and should be removed when the
-        // simplify_alt_bn128_syscall_error_codes feature gets activated
-        if result_point.len() != output && !simplify_alt_bn128_syscall_error_codes {
-            return Ok(AltBn128Error::SliceOutOfBounds.into());
-        }
+        let Ok(result_point) = calculation(input) else { return Ok(1) };
 
         call_result.copy_from_slice(&result_point);
         Ok(SUCCESS)

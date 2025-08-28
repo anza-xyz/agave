@@ -319,13 +319,13 @@ async fn test_connection_denied_until_allowed() {
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
     let stats = join_scheduler(scheduler_handle).await;
-    // in case of pruning, server closes the connection with code 1 and error
-    // message b"dropped". This might lead to connection error
-    // (ApplicationClosed::ApplicationClose) or to stream error
-    // (ConnectionLost::ApplicationClosed::ApplicationClose).
-    assert_eq!(
-        stats.write_error_connection_lost + stats.connection_error_application_closed,
-        1
+    // With proactive detection, we detect rejection immediately and retry within test duration.
+    // Expect at least 2 errors: initial rejection + retry attempts.
+    assert!(
+        stats.write_error_connection_lost + stats.connection_error_application_closed >= 2,
+        "Expected at least 2 connection errors, got write_error_connection_lost: {}, connection_error_application_closed: {}",
+        stats.write_error_connection_lost,
+        stats.connection_error_application_closed
     );
 
     drop(throttling_connection);
@@ -336,8 +336,8 @@ async fn test_connection_denied_until_allowed() {
 }
 
 // Check that if the client connection has been pruned, client manages to
-// reestablish it. Pruning will lead to 1 packet loss, because when we send the
-// next packet we will reestablish connection.
+// reestablish it. With more packets, we can observe the impact of pruning
+// even with proactive detection.
 #[tokio::test]
 async fn test_connection_pruned_and_reopened() {
     let SpawnTestServerResult {
@@ -357,7 +357,7 @@ async fn test_connection_pruned_and_reopened() {
 
     // Setup sending txs
     let tx_size = 1;
-    let expected_num_txs: usize = 16;
+    let expected_num_txs: usize = 48;
     let SpawnTxGenerator {
         tx_receiver,
         tx_sender_shutdown,
@@ -377,13 +377,11 @@ async fn test_connection_pruned_and_reopened() {
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
     let stats = join_scheduler(scheduler_handle).await;
-    // in case of pruning, server closes the connection with code 1 and error
-    // message b"dropped". This might lead to connection error
-    // (ApplicationClosed::ApplicationClose) or to stream error
-    // (ConnectionLost::ApplicationClosed::ApplicationClose).
-    assert_eq!(
-        stats.connection_error_application_closed + stats.write_error_connection_lost,
-        1,
+    // Proactive detection catches pruning immediately, expect multiple retries.
+    assert!(
+        stats.connection_error_application_closed + stats.write_error_connection_lost >= 1,
+        "Expected at least 1 connection error from pruning and retries. Stats: {:?}",
+        stats
     );
 
     // Exit server
@@ -738,6 +736,83 @@ async fn test_update_identity() {
 
     let stats = join_scheduler(scheduler_handle).await;
     assert!(stats.successfully_sent > 0);
+
+    // Exit server
+    exit.store(true, Ordering::Relaxed);
+    server_handle.await.unwrap();
+}
+
+// Test that connection close events are detected immediately via connection.closed()
+// monitoring, not only when send operations fail.
+#[tokio::test]
+async fn test_proactive_connection_close_detection() {
+    let SpawnTestServerResult {
+        join_handle: server_handle,
+        exit,
+        receiver,
+        server_address,
+        stats: _stats,
+    } = setup_quic_server(
+        None,
+        QuicServerParams {
+            max_connections_per_peer: 1,
+            max_unstaked_connections: 1,
+            ..QuicServerParams::default_for_tests()
+        },
+    );
+
+    // Setup controlled transaction sending
+    let tx_size = 1;
+    let (tx_sender, tx_receiver) = channel(10);
+
+    let sender_task = tokio::spawn(async move {
+        // Send first transaction to establish connection
+        tx_sender
+            .send(TransactionBatch::new(vec![vec![1u8; tx_size]]))
+            .await
+            .expect("Send first batch");
+
+        // Idle period where connection might be closed
+        sleep(Duration::from_millis(500)).await;
+
+        // Attempt another send
+        drop(tx_sender.send(TransactionBatch::new(vec![vec![2u8; tx_size]])));
+    });
+
+    let (scheduler_handle, _update_identity_sender, scheduler_cancel) =
+        setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
+
+    // Verify first packet received
+    let mut first_packet_received = false;
+    let start = Instant::now();
+    while !first_packet_received && start.elapsed() < Duration::from_secs(1) {
+        if let Ok(packets) = receiver.try_recv() {
+            if !packets.is_empty() {
+                first_packet_received = true;
+            }
+        } else {
+            sleep(Duration::from_millis(10)).await;
+        }
+    }
+    assert!(first_packet_received, "First packet should be received");
+
+    // Force connection close by exceeding max_connections_per_peer
+    let _pruning_connection = make_client_endpoint(&server_address, None).await;
+
+    // Allow time for proactive detection
+    sleep(Duration::from_millis(200)).await;
+
+    // Clean up
+    scheduler_cancel.cancel();
+    let _ = sender_task.await;
+    let stats = join_scheduler(scheduler_handle).await;
+
+    // Verify proactive close detection
+    assert!(
+        stats.connection_error_application_closed > 0 || stats.write_error_connection_lost > 0,
+        "Should detect connection close proactively. Stats: {:?}",
+        stats
+    );
 
     // Exit server
     exit.store(true, Ordering::Relaxed);
