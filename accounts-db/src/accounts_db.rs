@@ -1110,6 +1110,20 @@ impl AccountStorageEntry {
         zero_lamport_single_ref_offsets.insert(offset)
     }
 
+    /// Insert offsets into the zero lamport single ref account offset set.
+    /// Return the number of new offsets that were inserted.
+    fn insert_zero_lamport_single_ref_account_offset_batch(&self, offsets: &[usize]) -> u64 {
+        let mut zero_lamport_single_ref_offsets =
+            self.zero_lamport_single_ref_offsets.write().unwrap();
+        let mut count = 0;
+        for offset in offsets {
+            if zero_lamport_single_ref_offsets.insert(*offset) {
+                count += 1;
+            }
+        }
+        count
+    }
+
     /// Return the number of zero_lamport_single_ref accounts in the storage.
     fn num_zero_lamport_single_ref_accounts(&self) -> usize {
         self.zero_lamport_single_ref_offsets.read().unwrap().len()
@@ -7145,7 +7159,7 @@ impl AccountsDb {
     /// storage.
     /// Returns the number of zero lamport single ref accounts found.
     fn visit_zero_lamport_pubkeys_during_startup(&self, pubkeys: &HashSet<Pubkey>) -> u64 {
-        let mut count = 0;
+        let mut slot_offsets = HashMap::<Slot, Vec<usize>>::default();
         self.accounts_index.scan(
             pubkeys.iter(),
             |_pubkey, slots_refs, _entry| {
@@ -7155,8 +7169,10 @@ impl AccountsDb {
                     let (slot_alive, account_info) = slot_list.first().unwrap();
                     assert!(!account_info.is_cached());
                     if account_info.is_zero_lamport() {
-                        count += 1;
-                        self.zero_lamport_single_ref_found(*slot_alive, account_info.offset());
+                        slot_offsets
+                            .entry(*slot_alive)
+                            .or_default()
+                            .push(account_info.offset());
                     }
                 }
                 AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
@@ -7165,6 +7181,29 @@ impl AccountsDb {
             false,
             ScanFilter::All,
         );
+
+        let mut count = 0;
+        for (slot, offsets) in slot_offsets {
+            if let Some(store) = self.storage.get_slot_storage_entry(slot) {
+                count += store.insert_zero_lamport_single_ref_account_offset_batch(&offsets);
+                if store.num_zero_lamport_single_ref_accounts() == store.count() {
+                    // all accounts in this storage can be dead
+                    self.dirty_stores.entry(slot).or_insert(store);
+                    self.shrink_stats
+                        .num_dead_slots_added_to_clean
+                        .fetch_add(1, Ordering::Relaxed);
+                } else if Self::is_shrinking_productive(&store)
+                    && self.is_candidate_for_shrink(&store)
+                {
+                    // this store might be eligible for shrinking now
+                    if self.shrink_candidate_slots.lock().unwrap().insert(slot) {
+                        self.shrink_stats
+                            .num_slots_with_zero_lamport_accounts_added_to_shrink
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
         count
     }
 
