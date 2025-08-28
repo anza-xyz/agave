@@ -1437,6 +1437,7 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
 /// A enum to indicate whether the zero lamport account during scan in index
 /// generation is single-ref or multi-ref.
 /// This type is used for visiting zero ref accounts later after index generation.
+#[derive(Debug)]
 enum ZeroLamportAccountRef {
     SingleRef(Slot, usize /* offset */),
     MultiRef,
@@ -7223,14 +7224,39 @@ impl AccountsDb {
         &self,
         zero_lamport_accounts: HashMap<Pubkey, ZeroLamportAccountRef, PubkeyHasherBuilder>,
     ) -> u64 {
+        println!("haha0 {:?}", zero_lamport_accounts);
         let mut count = 0;
         let mut slot_offsets = HashMap::<Slot, Vec<usize>>::default();
+        let mut pubkeys = vec![];
         for (_pubkey, account_ref) in zero_lamport_accounts {
             if let ZeroLamportAccountRef::SingleRef(slot, offset) = account_ref {
-                println!("haha {}", _pubkey);
+                println!("map {}", _pubkey);
                 slot_offsets.entry(slot).or_default().push(offset);
             }
+            pubkeys.push(_pubkey);
         }
+
+        self.accounts_index.scan(
+            pubkeys.iter(),
+            |pubkey, slots_refs, _entry| {
+                let (slot_list, ref_count) = slots_refs.unwrap();
+                println!("index {:?} {:?} {:?}", pubkey, slot_list, ref_count);
+                // if ref_count == 1 {
+                //     assert_eq!(slot_list.len(), 1);
+                //     let (slot_alive, account_info) = slot_list.first().unwrap();
+                //     assert!(!account_info.is_cached());
+                //     if account_info.is_zero_lamport() {
+                //         count += 1;
+                //         self.zero_lamport_single_ref_found(*slot_alive, account_info.offset());
+                //     }
+                // }
+                AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
+            },
+            None,
+            false,
+            ScanFilter::All,
+        );
+
         for (slot, offsets) in slot_offsets {
             if let Some(store) = self.storage.get_slot_storage_entry(slot) {
                 count += store.insert_zero_lamport_single_ref_account_offset_batch(&offsets);
