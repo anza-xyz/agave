@@ -1099,13 +1099,16 @@ pub(crate) fn make_shreds_from_data(
     let (mut unsigned_data, signed_data) = if sign_last_fec_set {
         // Reserve at least one signed batch (may be empty) at the end.
         if data.len() > data_buffer_total_size_signed {
-            let split_at = data.len() - data_buffer_total_size_signed; // sign everything except the last batch
+            // sign everything except the last batch
+            let split_at = data.len() - data_buffer_total_size_signed;
             data.split_at(split_at)
         } else {
-            (&[][..], data) // only enough data for one fec set, sign the whole thing
+            // only enough data for one fec set, sign the whole thing
+            (&[][..], data)
         }
     } else {
-        (data, &[][..]) // not last fec set, so don't sign
+        // not last fec set, so don't sign
+        (data, &[][..])
     };
     stats.data_bytes += unsigned_data.len() + signed_data.len();
 
