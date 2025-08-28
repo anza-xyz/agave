@@ -128,7 +128,9 @@ pub struct TestValidatorGenesis {
     pub rent: Rent,
     rpc_config: JsonRpcConfig,
     pubsub_config: PubSubConfig,
-    rpc_ports: Option<(u16, u16)>, // (JsonRpc, JsonRpcPubSub), None == random ports
+    // (JsonRpc, JsonRpcPubSub), None == solana_net_utils::VALIDATOR_PORT_RANGE in case of !debug_assertions
+    // and random, but non-overlapping ports for tests in case of debug_assertions
+    rpc_ports: Option<(u16, u16)>,
     warp_slot: Option<Slot>,
     accounts: HashMap<Pubkey, AccountSharedData>,
     upgradeable_programs: Vec<UpgradeableProgramInfo>,
