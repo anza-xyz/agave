@@ -546,20 +546,59 @@ struct UsageQueueInner {
 
 type UsageFromTask = (RequestedUsage, Task);
 
-impl Default for UsageQueueInner {
+/// Configuration for UsageQueue memory pre-allocation strategy
+#[derive(Debug, Clone, Copy)]
+pub struct UsageQueueConfig {
+    /// Base capacity for blocked tasks queue
+    pub base_capacity: usize,
+    /// Whether to use adaptive sizing based on load patterns
+    pub adaptive_sizing: bool,
+    /// Maximum capacity to prevent unbounded growth
+    pub max_capacity: usize,
+}
+
+impl Default for UsageQueueConfig {
     fn default() -> Self {
         Self {
+            base_capacity: 128,
+            adaptive_sizing: true,
+            max_capacity: 2048,
+        }
+    }
+}
+
+impl UsageQueueConfig {
+    /// Create a high-performance configuration for validators under heavy load
+    pub fn high_throughput() -> Self {
+        Self {
+            base_capacity: 1024,
+            adaptive_sizing: true,
+            max_capacity: 8192,
+        }
+    }
+
+    /// Create a memory-conservative configuration for development/testing
+    pub fn low_memory() -> Self {
+        Self {
+            base_capacity: 64,
+            adaptive_sizing: false,
+            max_capacity: 512,
+        }
+    }
+}
+
+impl Default for UsageQueueInner {
+    fn default() -> Self {
+        Self::with_config(UsageQueueConfig::default())
+    }
+}
+
+impl UsageQueueInner {
+    /// Create a new UsageQueueInner with the specified configuration
+    pub fn with_config(config: UsageQueueConfig) -> Self {
+        Self {
             current_usage: None,
-            // Capacity should be configurable to create with large capacity like 1024 inside the
-            // (multi-threaded) closures passed to create_task(). In this way, reallocs can be
-            // avoided happening in the scheduler thread. Also, this configurability is desired for
-            // unified-scheduler-logic's motto: separation of concerns (the pure logic should be
-            // sufficiently distanced from any some random knob's constants needed for messy
-            // reality for author's personal preference...).
-            //
-            // Note that large cap should be accompanied with proper scheduler cleaning after use,
-            // which should be handled by higher layers (i.e. scheduler pool).
-            blocked_usages_from_tasks: VecDeque::with_capacity(128),
+            blocked_usages_from_tasks: VecDeque::with_capacity(config.base_capacity),
         }
     }
 }
@@ -643,8 +682,23 @@ const_assert_eq!(mem::size_of::<TokenCell<UsageQueueInner>>(), 40);
 ///
 /// It's the higher layer's responsibility to ensure to associate the same instance of UsageQueue
 /// for given Pubkey at the time of [task](Task) creation.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct UsageQueue(Arc<TokenCell<UsageQueueInner>>);
+
+impl Default for UsageQueue {
+    fn default() -> Self {
+        Self::with_config(UsageQueueConfig::default())
+    }
+}
+
+impl UsageQueue {
+    /// Create a new UsageQueue with the specified configuration
+    pub fn with_config(config: UsageQueueConfig) -> Self {
+        Self(Arc::new(TokenCell::new(UsageQueueInner::with_config(
+            config,
+        ))))
+    }
+}
 const_assert_eq!(mem::size_of::<UsageQueue>(), 8);
 
 /// A high-level `struct`, managing the overall scheduling of [tasks](Task), to be used by
@@ -1064,6 +1118,9 @@ impl SchedulingStateMachine {
         Self::exclusively_initialize_current_thread_for_scheduling(None)
     }
 }
+
+#[cfg(test)]
+mod usage_queue_config_tests;
 
 #[cfg(test)]
 mod tests {
