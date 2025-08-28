@@ -208,6 +208,16 @@ pub mod columns {
     /// * index type: `crate::shred::ErasureSetId` `(Slot, fec_set_index: u32)`
     /// * value type: [`blockstore_meta::MerkleRootMeta`]`
     pub struct MerkleRootMeta;
+
+    #[derive(Debug)]
+    /// The vote certificate column
+    ///
+    /// Stores the `NotarizeFallback` and `Skip` certificates for each column
+    /// for use during catch up and to serve repair
+    ///
+    /// * index type: `u64` (see [`SlotColumn`])
+    /// * value type: [`blockstore_meta::SlotCertificates`]
+    pub struct SlotCertificates;
 }
 
 macro_rules! convert_column_index_to_key_bytes {
@@ -836,4 +846,12 @@ impl ColumnName for columns::MerkleRootMeta {
 }
 impl TypedColumn for columns::MerkleRootMeta {
     type Type = blockstore_meta::MerkleRootMeta;
+}
+
+impl SlotColumn for columns::SlotCertificates {}
+impl ColumnName for columns::SlotCertificates {
+    const NAME: &'static str = "slot_certificates";
+}
+impl TypedColumn for columns::SlotCertificates {
+    type Type = blockstore_meta::SlotCertificates;
 }

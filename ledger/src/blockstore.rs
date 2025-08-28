@@ -60,6 +60,7 @@ use {
         VersionedConfirmedBlock, VersionedConfirmedBlockWithEntries,
         VersionedTransactionWithStatusMeta,
     },
+    solana_votor_messages::consensus_message::CertificateMessage,
     std::{
         borrow::Cow,
         cell::RefCell,
@@ -262,6 +263,7 @@ pub struct Blockstore {
     perf_samples_cf: LedgerColumn<cf::PerfSamples>,
     rewards_cf: LedgerColumn<cf::Rewards>,
     roots_cf: LedgerColumn<cf::Root>,
+    slot_certificates_cf: LedgerColumn<cf::SlotCertificates>,
     transaction_memos_cf: LedgerColumn<cf::TransactionMemos>,
     transaction_status_cf: LedgerColumn<cf::TransactionStatus>,
     transaction_status_index_cf: LedgerColumn<cf::TransactionStatusIndex>,
@@ -409,6 +411,7 @@ impl Blockstore {
         let perf_samples_cf = db.column();
         let rewards_cf = db.column();
         let roots_cf = db.column();
+        let slot_certificates_cf = db.column();
         let transaction_memos_cf = db.column();
         let transaction_status_cf = db.column();
         let transaction_status_index_cf = db.column();
@@ -443,6 +446,7 @@ impl Blockstore {
             perf_samples_cf,
             rewards_cf,
             roots_cf,
+            slot_certificates_cf,
             transaction_memos_cf,
             transaction_status_cf,
             transaction_status_index_cf,
@@ -3959,6 +3963,54 @@ impl Blockstore {
     ) -> Result<Vec<(Slot, Hash, UnixTimestamp)>> {
         let iter = self.reversed_optimistic_slots_iterator()?;
         Ok(iter.take(num).collect())
+    }
+
+    /// Insert newly completed notarization fallback certificate for `slot`
+    /// If already present, this will overwrite the old certificate
+    pub fn insert_new_notarization_fallback_certificate(
+        &self,
+        slot: Slot,
+        block_id: Hash,
+        certificate: CertificateMessage,
+    ) -> Result<()> {
+        let mut certificates = self
+            .slot_certificates(slot)?
+            .unwrap_or(SlotCertificates::default());
+        certificates.add_notarization_fallback_certificate(block_id, certificate);
+        self.slot_certificates_cf.put(slot, &certificates)
+    }
+
+    /// Insert newly completed skip certificate for `slot`
+    /// If already present, this will overwrite the old certificate
+    pub fn insert_new_skip_certificate(
+        &self,
+        slot: Slot,
+        certificate: CertificateMessage,
+    ) -> Result<()> {
+        let mut certificates = self
+            .slot_certificates(slot)?
+            .unwrap_or(SlotCertificates::default());
+        certificates.set_skip_certificate(certificate);
+        self.slot_certificates_cf.put(slot, &certificates)
+    }
+
+    /// Returns all completed certificates for `slot`
+    pub fn slot_certificates(&self, slot: Slot) -> Result<Option<SlotCertificates>> {
+        self.slot_certificates_cf.get(slot)
+    }
+
+    /// Returns all certificates from `slot` onwards
+    pub fn slot_certificates_iterator(
+        &self,
+        slot: Slot,
+    ) -> Result<impl Iterator<Item = (Slot, SlotCertificates)> + '_> {
+        let iter = self
+            .slot_certificates_cf
+            .iter(IteratorMode::From(slot, IteratorDirection::Forward))?;
+        Ok(iter.map(|(slot, bytes)| {
+            let certs: SlotCertificates = deserialize(&bytes).unwrap();
+            (slot, certs)
+        }))
     }
 
     pub fn set_duplicate_confirmed_slots_and_hashes(
