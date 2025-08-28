@@ -471,24 +471,6 @@ where
     Ok((bank_fields, accounts_db_fields))
 }
 
-/// used by tests to compare contents of serialized bank fields
-/// serialized format is not deterministic - likely due to randomness in structs like hashmaps
-#[cfg(feature = "dev-context-only-utils")]
-pub(crate) fn compare_two_serialized_banks(
-    path1: impl AsRef<Path>,
-    path2: impl AsRef<Path>,
-) -> std::result::Result<bool, Error> {
-    use std::fs::File;
-    let file1 = File::open(path1)?;
-    let mut stream1 = BufReader::new(file1);
-    let file2 = File::open(path2)?;
-    let mut stream2 = BufReader::new(file2);
-
-    let fields1 = deserialize_bank_fields(&mut stream1)?;
-    let fields2 = deserialize_bank_fields(&mut stream2)?;
-    Ok(fields1 == fields2)
-}
-
 /// Get snapshot storage lengths from accounts_db_fields
 pub(crate) fn snapshot_storage_lengths_from_fields(
     accounts_db_fields: &AccountsDbFields<SerializableAccountStorageEntry>,
