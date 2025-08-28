@@ -45,7 +45,7 @@ const HID_TAG: u8 = 0xAA;
 const KEYSTONE_VID: u16 = 0x1209;
 /// Keystone product IDs
 const KEYSTONE_PID: u16 = 0x3001;
-const LEDGER_TRANSPORT_HEADER_LEN: usize = 5;
+const KEYSTONE_TRANSPORT_HEADER_LEN: usize = 5;
 
 const HID_PACKET_SIZE: usize = 64 + HID_PREFIX_ZERO;
 
@@ -106,7 +106,7 @@ impl CommandType {
     }
 }
 
-/// Ledger Wallet device
+/// Keystone Wallet device
 pub struct KeystoneWallet {
     pub transport: Box<dyn Transport>,
     pub pretty_path: String,
@@ -200,7 +200,7 @@ impl KeystoneWallet {
 
                 chunk[header..header + size].copy_from_slice(&data[offset..offset + size]);
             }
-            trace!("Ledger write {:?}", &hid_chunk[..]);
+            trace!("Keystone write {:?}", &hid_chunk[..]);
             let n = self.transport.write(&hid_chunk[..])?;
             if n < size + header {
                 return Err(RemoteWalletError::Protocol("Write data size mismatch"));
@@ -234,7 +234,7 @@ impl KeystoneWallet {
         loop {
             // Read HID packet
             let chunk = self.transport.read()?;
-            if chunk.len() < LEDGER_TRANSPORT_HEADER_LEN {
+            if chunk.len() < KEYSTONE_TRANSPORT_HEADER_LEN {
                 return Err(RemoteWalletError::Protocol("Invalid HID packet size"));
             }
 
@@ -651,7 +651,7 @@ fn extend_and_serialize_multiple(derivation_paths: &[&DerivationPath]) -> Vec<u8
     concat_derivation
 }
 
-/// Choose a Ledger wallet based on matching info fields
+/// Choose a Keystone wallet based on matching info fields
 pub fn get_keystone_from_info(
     info: RemoteWalletInfo,
     keypair_name: &str,
