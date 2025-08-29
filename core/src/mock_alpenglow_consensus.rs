@@ -50,7 +50,6 @@ pub(crate) struct MockAlpenglowConsensus {
     runner_thread: JoinHandle<()>,   // thread that signals others to perform voting tasks
     state: Arc<StateArray>,          // internal state of the test for each round
     highest_slot: Slot,              // highest slot we have observed so far
-    last_slot_instant: Instant,      // time when we have observed the last slot
     should_exit: Arc<AtomicBool>,
     // external state
     epoch_specs: EpochSpecs,
@@ -225,7 +224,6 @@ impl MockAlpenglowConsensus {
             should_exit,
             epoch_specs,
             cluster_info,
-            last_slot_instant: Instant::now(),
             highest_slot: 0,
             slot_sender: Some(slot_sender),
         }
@@ -499,13 +497,6 @@ impl MockAlpenglowConsensus {
     }
 
     fn check_conditions_to_vote(&mut self, slot: Slot, root_bank: &Bank) -> bool {
-        let dt = self.last_slot_instant.elapsed();
-        self.last_slot_instant = Instant::now();
-        if dt < ONE_SLOT / 2 {
-            trace!("Skipping AG logic for slot {slot} since we are catching up, slot length was {dt:?}");
-            return false;
-        }
-
         // ensure we do not start process for a slot which is "in the past"
         if slot <= self.highest_slot {
             trace!(
