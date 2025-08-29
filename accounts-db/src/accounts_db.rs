@@ -6756,7 +6756,7 @@ impl AccountsDb {
         }
         let accounts_data_len = AtomicU64::new(0);
 
-        let zero_lamport_pubkeys = Mutex::new(HashSet::new());
+        let zero_lamport_pubkeys = Mutex::new(Vec::new());
         let total_lt_hash = Mutex::new(LtHash::identity());
 
         // pass == 0 always runs and generates the index
@@ -7181,9 +7181,8 @@ impl AccountsDb {
     /// Visit zero lamport pubkeys and populate zero_lamport_single_ref info on
     /// storage.
     /// Returns the number of zero lamport single ref accounts found.
-    fn visit_zero_lamport_pubkeys_during_startup(&self, pubkeys: HashSet<Pubkey>) -> u64 {
+    fn visit_zero_lamport_pubkeys_during_startup(&self, mut pubkeys: Vec<Pubkey>) -> u64 {
         let mut slot_offsets = HashMap::<Slot, Vec<usize>>::default();
-        let mut pubkeys: Vec<Pubkey> = pubkeys.into_iter().collect();
         pubkeys.sort_unstable();
 
         self.accounts_index.scan(
