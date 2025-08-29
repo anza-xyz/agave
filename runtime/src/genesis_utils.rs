@@ -211,7 +211,6 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
             (vote_pubkey, vote_account),
             (stake_pubkey, stake_account),
         ]);
-        println!("put vote account {vote_pubkey:?} into genesis accounts");
     }
 
     genesis_config_info
