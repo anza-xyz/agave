@@ -524,15 +524,9 @@ pub fn unpack_genesis_archive(
 
     fs::create_dir_all(destination_dir)?;
     let tar_bz2 = File::open(archive_filename)?;
-    let archive_size = tar_bz2.metadata()?.len();
     let tar = BzDecoder::new(BufReader::new(tar_bz2));
     let archive = Archive::new(tar);
-    unpack_genesis(
-        archive,
-        archive_size as usize, // TODO: adjust with budget
-        destination_dir,
-        max_genesis_archive_unpacked_size,
-    )?;
+    unpack_genesis(archive, destination_dir, max_genesis_archive_unpacked_size)?;
     info!(
         "Extracted {:?} in {:?}",
         archive_filename,
@@ -543,13 +537,12 @@ pub fn unpack_genesis_archive(
 
 fn unpack_genesis<A: Read>(
     archive: Archive<A>,
-    memlock_budget_size: usize,
     unpack_dir: &Path,
     max_genesis_archive_unpacked_size: u64,
 ) -> Result<()> {
     unpack_archive(
         archive,
-        memlock_budget_size,
+        0,
         max_genesis_archive_unpacked_size,
         max_genesis_archive_unpacked_size,
         MAX_GENESIS_ARCHIVE_UNPACKED_COUNT,
@@ -835,7 +828,7 @@ mod tests {
 
     fn finalize_and_unpack_genesis(archive: tar::Builder<Vec<u8>>) -> Result<()> {
         with_finalize_and_unpack(archive, |a, b| {
-            unpack_genesis(a, 256, b, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE)
+            unpack_genesis(a, b, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE)
         })
     }
 

@@ -1,6 +1,5 @@
 //! The `validator` module hosts all the validator microservices.
 
-use solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_BYTES;
 pub use solana_perf::report_target_features;
 use {
     crate::{
@@ -34,7 +33,9 @@ use {
     crossbeam_channel::{bounded, unbounded, Receiver},
     quinn::Endpoint,
     solana_accounts_db::{
-        accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+        accounts_db::{
+            AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING, DEFAULT_MEMLOCK_BUDGET_BYTES,
+        },
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         hardened_unpack::{
             open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,

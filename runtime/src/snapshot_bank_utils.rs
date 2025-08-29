@@ -1592,7 +1592,10 @@ mod tests {
         let bank_fields = bank_fields_from_snapshot_archives(
             &all_snapshots_dir,
             &all_snapshots_dir,
-            Some(&ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            Some(&AccountsDbConfig {
+                storage_access,
+                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+            }),
         )
         .unwrap();
         assert_eq!(bank_fields.slot, bank2.slot());
