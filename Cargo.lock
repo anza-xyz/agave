@@ -11831,6 +11831,7 @@ dependencies = [
  "solana-svm-transaction",
  "solana-transaction",
  "solana-vote-interface",
+ "solana-vote-program",
  "static_assertions",
  "thiserror 2.0.16",
 ]

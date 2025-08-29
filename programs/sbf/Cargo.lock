@@ -10019,6 +10019,7 @@ dependencies = [
  "solana-svm-transaction",
  "solana-transaction",
  "solana-vote-interface",
+ "solana-vote-program",
  "thiserror 2.0.16",
 ]
 

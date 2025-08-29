@@ -5,13 +5,16 @@ use {
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccountsHashMap,
-    std::{collections::HashMap, sync::Arc},
+    std::{
+        collections::HashMap,
+        sync::{Arc, OnceLock},
+    },
 };
 
 pub type NodeIdToVoteAccounts = HashMap<Pubkey, NodeVoteAccounts>;
 pub type EpochAuthorizedVoters = HashMap<Pubkey, Pubkey>;
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct BLSPubkeyToRankMap {
@@ -83,7 +86,8 @@ pub enum VersionedEpochStakes {
         total_stake: u64,
         node_id_to_vote_accounts: Arc<NodeIdToVoteAccounts>,
         epoch_authorized_voters: Arc<EpochAuthorizedVoters>,
-        bls_pubkey_to_rank_map: Arc<BLSPubkeyToRankMap>,
+        #[serde(skip)]
+        bls_pubkey_to_rank_map: OnceLock<Arc<BLSPubkeyToRankMap>>,
     },
 }
 
@@ -92,13 +96,12 @@ impl VersionedEpochStakes {
         let epoch_vote_accounts = stakes.vote_accounts();
         let (total_stake, node_id_to_vote_accounts, epoch_authorized_voters) =
             Self::parse_epoch_vote_accounts(epoch_vote_accounts.as_ref(), leader_schedule_epoch);
-        let bls_pubkey_to_rank_map = BLSPubkeyToRankMap::new(epoch_vote_accounts.as_ref());
         Self::Current {
             stakes,
             total_stake,
             node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
             epoch_authorized_voters: Arc::new(epoch_authorized_voters),
-            bls_pubkey_to_rank_map: Arc::new(bls_pubkey_to_rank_map),
+            bls_pubkey_to_rank_map: OnceLock::new(),
         }
     }
 
@@ -170,7 +173,11 @@ impl VersionedEpochStakes {
             Self::Current {
                 bls_pubkey_to_rank_map,
                 ..
-            } => bls_pubkey_to_rank_map,
+            } => bls_pubkey_to_rank_map.get_or_init(|| {
+                Arc::new(BLSPubkeyToRankMap::new(
+                    self.stakes().vote_accounts().as_ref(),
+                ))
+            }),
         }
     }
 

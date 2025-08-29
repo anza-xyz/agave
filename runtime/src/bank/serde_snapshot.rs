@@ -3,10 +3,7 @@ mod tests {
     use {
         crate::{
             bank::{test_utils as bank_test_utils, Bank},
-            epoch_stakes::{
-                BLSPubkeyToRankMap, EpochAuthorizedVoters, NodeIdToVoteAccounts,
-                VersionedEpochStakes,
-            },
+            epoch_stakes::VersionedEpochStakes,
             genesis_utils::activate_all_features,
             runtime_config::RuntimeConfig,
             serde_snapshot::{self, ExtraFieldsToSerialize, SnapshotStreams},
@@ -16,7 +13,6 @@ mod tests {
                 create_tmp_accounts_dir_for_tests, get_storages_to_serialize,
                 StorageAndNextAccountsFileId,
             },
-            stakes::{SerdeStakesToStakeFormat, Stakes},
         },
         solana_accounts_db::{
             account_storage::AccountStorageMap,
@@ -30,8 +26,10 @@ mod tests {
         solana_genesis_config::create_genesis_config,
         solana_nohash_hasher::BuildNoHashHasher,
         solana_pubkey::Pubkey,
-        solana_stake_interface::state::Stake,
+        solana_signer::Signer,
+        solana_vote::vote_account::VoteAccount,
         std::{
+            collections::HashMap,
             io::{BufReader, BufWriter, Cursor},
             mem,
             ops::RangeFull,
@@ -185,11 +183,13 @@ mod tests {
         bank.flush_accounts_cache_slot_for_tests()
     }
 
-    #[test_case(StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_extra_fields_eof(storage_access: StorageAccess) {
+    #[test_case(StorageAccess::Mmap, false)]
+    #[test_case(StorageAccess::File, false)]
+    #[test_case(StorageAccess::Mmap, true)]
+    #[test_case(StorageAccess::File, true)]
+    fn test_extra_fields_eof(storage_access: StorageAccess, is_alpenglow: bool) {
         solana_logger::setup();
-        let (genesis_config, _) = create_genesis_config(500);
+        let (genesis_config, keypair) = create_genesis_config(500);
 
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         bank0.squash();
@@ -197,21 +197,24 @@ mod tests {
         bank.freeze();
         add_root_and_flush_write_cache(&bank0);
 
+        let epoch_with_real_stake = 42;
+
         // Set extra fields
         bank.fee_rate_governor.lamports_per_signature = 7000;
         // Note that epoch_stakes already has two epoch stakes entries for epochs 0 and 1
         // which will also be serialized to the versioned epoch stakes extra field. Those
         // entries are of type Stakes<StakeAccount> so add a new entry for Stakes<Stake>.
-        bank.epoch_stakes.insert(
-            42,
-            VersionedEpochStakes::Current {
-                stakes: SerdeStakesToStakeFormat::Stake(Stakes::<Stake>::default()),
-                total_stake: 42,
-                node_id_to_vote_accounts: Arc::<NodeIdToVoteAccounts>::default(),
-                epoch_authorized_voters: Arc::<EpochAuthorizedVoters>::default(),
-                bls_pubkey_to_rank_map: Arc::<BLSPubkeyToRankMap>::default(),
-            },
-        );
+        // Give some real stake distribution and generate real VersionedEpochStakes, to
+        // make sure bls_pubkey_to_rank_map is populated correctly after deserialize.
+        let vote_account = if is_alpenglow {
+            VoteAccount::new_random_vote_state_v4()
+        } else {
+            VoteAccount::new_random()
+        };
+        let vote_accounts_hash_map = HashMap::from([(keypair.pubkey(), (100, vote_account))]);
+        let stakes =
+            VersionedEpochStakes::new_for_tests(vote_accounts_hash_map, epoch_with_real_stake);
+        bank.epoch_stakes.insert(epoch_with_real_stake, stakes);
         assert_eq!(bank.epoch_stakes.len(), 3);
 
         // Serialize
@@ -255,6 +258,24 @@ mod tests {
             Arc::default(),
         )
         .unwrap();
+
+        // Specifically check that bls_pubkey_rank_map is equal, you do need to call this
+        // before checking epoch_stakes because this needs to be populated.
+        for (epoch, epoch_stakes) in dbank.epoch_stakes.iter() {
+            let bls_pubkey_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
+            if is_alpenglow && *epoch == epoch_with_real_stake {
+                assert!(!bls_pubkey_to_rank_map.is_empty());
+            } else {
+                assert!(bls_pubkey_to_rank_map.is_empty());
+            }
+            assert_eq!(
+                bls_pubkey_to_rank_map,
+                bank.epoch_stakes
+                    .get(epoch)
+                    .expect("Expecting epoch stakes for {epoch}")
+                    .bls_pubkey_to_rank_map()
+            );
+        }
 
         assert_eq!(bank.epoch_stakes, dbank.epoch_stakes);
         assert_eq!(
@@ -353,7 +374,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "DDFYjSvRswgrMu7pcPzjvThUviKV8ELyAmxkQuhT9hGc")
+            frozen_abi(digest = "4zSePLuo5DnagjcFySpN2xSmQ1JqYmbQm59vfjS7qKpc")
         )]
         #[derive(Serialize)]
         pub struct BankAbiTestWrapper {

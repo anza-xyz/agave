@@ -18,7 +18,7 @@ name = "solana_vote"
 
 [features]
 default = ["bls"]
-dev-context-only-utils = ["dep:rand", "dep:bincode"]
+dev-context-only-utils = ["dep:bincode", "dep:rand", "dep:solana-vote-program"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
@@ -56,6 +56,7 @@ solana-signer = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
+solana-vote-program = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
