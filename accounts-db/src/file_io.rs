@@ -219,7 +219,7 @@ pub fn validate_memlock_limit_for_disk_io(required_size: usize) -> io::Result<()
     }
     #[cfg(not(target_os = "linux"))]
     {
-        assert!(required_size >= 0);
+        let _ = required_size;
         Ok(())
     }
 }
