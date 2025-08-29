@@ -151,7 +151,7 @@ impl Bank {
             let compute_budget = self
                 .compute_budget()
                 .unwrap_or(ComputeBudget::new_with_defaults(
-                    /* simd_0296_active */ false,
+                    /* simd_0268_active */ false,
                 ));
             let mut sysvar_cache = SysvarCache::default();
             sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {

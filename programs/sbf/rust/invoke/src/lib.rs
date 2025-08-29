@@ -652,12 +652,12 @@ fn process_instruction<'a>(
         TEST_NESTED_INVOKE_TOO_DEEP => {
             let _ = do_nested_invokes(5, accounts);
         }
-        TEST_NESTED_INVOKE_SIMD_0296_OK => {
-            // Test that 8 nested invokes succeed with SIMD-0296 enabled
+        TEST_NESTED_INVOKE_SIMD_0268_OK => {
+            // Test that 8 nested invokes succeed with SIMD-0268 enabled
             let _ = do_nested_invokes(8, accounts);
         }
-        TEST_NESTED_INVOKE_SIMD_0296_TOO_DEEP => {
-            // Test that 9 nested invokes fail even with SIMD-0296 enabled
+        TEST_NESTED_INVOKE_SIMD_0268_TOO_DEEP => {
+            // Test that 9 nested invokes fail even with SIMD-0268 enabled
             let _ = do_nested_invokes(9, accounts);
         }
         TEST_CALL_PRECOMPILE => {

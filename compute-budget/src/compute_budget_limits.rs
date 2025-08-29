@@ -40,13 +40,13 @@ impl ComputeBudgetLimits {
         &self,
         loaded_accounts_data_size_limit: NonZeroU32,
         fee_details: FeeDetails,
-        simd_0296_active: bool,
+        simd_0268_active: bool,
     ) -> SVMTransactionExecutionAndFeeBudgetLimits {
         SVMTransactionExecutionAndFeeBudgetLimits {
             budget: SVMTransactionExecutionBudget {
                 compute_unit_limit: u64::from(self.compute_unit_limit),
                 heap_size: self.updated_heap_bytes,
-                ..SVMTransactionExecutionBudget::new_with_defaults(simd_0296_active)
+                ..SVMTransactionExecutionBudget::new_with_defaults(simd_0268_active)
             },
             loaded_accounts_data_size_limit,
             fee_details,

@@ -1057,11 +1057,11 @@ mod tests {
         }
     );
 
-    #[test_case(false; "SIMD-0296 disabled")]
-    #[test_case(true; "SIMD-0296 enabled")]
-    fn test_instruction_stack_height(simd_0296_active: bool) {
+    #[test_case(false; "SIMD-0268 disabled")]
+    #[test_case(true; "SIMD-0268 enabled")]
+    fn test_instruction_stack_height(simd_0268_active: bool) {
         let one_more_than_max_depth =
-            SVMTransactionExecutionBudget::new_with_defaults(simd_0296_active)
+            SVMTransactionExecutionBudget::new_with_defaults(simd_0268_active)
                 .max_instruction_stack_depth
                 .saturating_add(1);
         let mut invoke_stack = vec![];
