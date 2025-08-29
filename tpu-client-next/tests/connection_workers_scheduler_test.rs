@@ -4,6 +4,7 @@ use {
     solana_cli_config::ConfigInput,
     solana_commitment_config::CommitmentConfig,
     solana_keypair::Keypair,
+    solana_net_utils::sockets::unique_port_range_for_tests,
     solana_pubkey::Pubkey,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
@@ -43,7 +44,10 @@ use {
 };
 
 fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
-    let address = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0);
+    let address = SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        unique_port_range_for_tests(1).start,
+    );
     ConnectionWorkersSchedulerConfig {
         bind: BindTarget::Address(address),
         stake_identity: stake_identity.map(|identity| StakeIdentity::new(&identity)),
