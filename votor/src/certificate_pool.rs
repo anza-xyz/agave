@@ -19,7 +19,6 @@ use {
     solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_ledger::blockstore::Blockstore,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, epoch_stakes::VersionedEpochStakes},
     solana_votor_messages::{
@@ -713,37 +712,6 @@ impl CertificatePool {
             })
             .collect()
     }
-}
-
-pub fn load_from_blockstore(
-    my_pubkey: &Pubkey,
-    root_bank: &Bank,
-    blockstore: &Blockstore,
-    certificate_sender: Option<Sender<(Certificate, CertificateMessage)>>,
-    events: &mut Vec<VotorEvent>,
-) -> CertificatePool {
-    let root_slot = root_bank.slot();
-    let mut cert_pool =
-        CertificatePool::new_from_root_bank(*my_pubkey, root_bank, certificate_sender);
-    for (slot, slot_cert) in blockstore.slot_certificates_iterator(root_slot).unwrap() {
-        let certs = slot_cert
-            .notarize_fallback_certificates
-            .into_iter()
-            .map(|(block_id, cert)| {
-                let cert_id = Certificate::NotarizeFallback(slot, block_id);
-                (cert_id, cert)
-            })
-            .chain(slot_cert.skip_certificate.map(|cert| {
-                let cert_id = Certificate::Skip(slot);
-                (cert_id, cert)
-            }));
-
-        for (cert_id, cert) in certs {
-            trace!("{my_pubkey}: loading certificate {cert_id:?} from blockstore into certificate pool");
-            cert_pool.insert_certificate(cert_id, cert.into(), events);
-        }
-    }
-    cert_pool
 }
 
 #[cfg(test)]

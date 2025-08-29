@@ -6,7 +6,7 @@ mod stats;
 use {
     crate::{
         certificate_pool::{
-            self, parent_ready_tracker::BlockProductionParent, AddVoteError, CertificatePool,
+            parent_ready_tracker::BlockProductionParent, AddVoteError, CertificatePool,
         },
         commitment::{
             alpenglow_update_commitment_cache, AlpenglowCommitmentAggregationData,
@@ -186,12 +186,10 @@ impl CertificatePoolService {
         let mut events = vec![];
         let mut my_pubkey = ctx.cluster_info.id();
         let root_bank = ctx.sharable_banks.root();
-        let mut cert_pool = certificate_pool::load_from_blockstore(
-            &my_pubkey,
+        let mut cert_pool = CertificatePool::new_from_root_bank(
+            my_pubkey,
             &root_bank,
-            ctx.blockstore.as_ref(),
             Some(ctx.certificate_sender.clone()),
-            &mut events,
         );
 
         // Wait until migration has completed
