@@ -32,7 +32,7 @@ The cluster telemetry dashboard shows the current state of the cluster:
 
 1. Cluster Stability
 2. Validator Streamer
-3. Tomer Consensus
+3. Tower Consensus
 4. IP Network
 5. Snapshots
 6. RPC Send Transaction Service
