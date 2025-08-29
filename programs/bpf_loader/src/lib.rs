@@ -1466,14 +1466,18 @@ fn execute<'a, 'b: 'a>(
     let mask_out_rent_epoch_in_vm_serialization = invoke_context
         .get_feature_set()
         .mask_out_rent_epoch_in_vm_serialization;
+    let provide_instruction_data_offset_in_vm_r2 = invoke_context
+        .get_feature_set()
+        .provide_instruction_data_offset_in_vm_r2;
 
     let mut serialize_time = Measure::start("serialize");
-    let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(
-        &instruction_context,
-        stricter_abi_and_runtime_constraints,
-        invoke_context.account_data_direct_mapping,
-        mask_out_rent_epoch_in_vm_serialization,
-    )?;
+    let (parameter_bytes, regions, accounts_metadata, instruction_data_offset) =
+        serialization::serialize_parameters(
+            &instruction_context,
+            stricter_abi_and_runtime_constraints,
+            invoke_context.account_data_direct_mapping,
+            mask_out_rent_epoch_in_vm_serialization,
+        )?;
     serialize_time.stop();
 
     // save the account addresses so in case we hit an AccessViolation error we
@@ -1508,6 +1512,11 @@ fn execute<'a, 'b: 'a>(
 
         vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
         vm.registers[1] = ebpf::MM_INPUT_START;
+
+        // SIMD-0321: Provide offset to instruction data in VM register 2.
+        if provide_instruction_data_offset_in_vm_r2 {
+            vm.registers[2] = instruction_data_offset as u64;
+        }
         let (compute_units_consumed, result) = vm.execute_program(executable, !use_jit);
         MEMORY_POOL.with_borrow_mut(|memory_pool| {
             memory_pool.put_stack(stack);
