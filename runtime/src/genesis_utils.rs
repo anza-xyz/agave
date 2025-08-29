@@ -169,16 +169,16 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         let node_pubkey = validator_voting_keypairs.borrow().node_keypair.pubkey();
         let vote_pubkey = validator_voting_keypairs.borrow().vote_keypair.pubkey();
         let stake_pubkey = validator_voting_keypairs.borrow().stake_keypair.pubkey();
-        let bls_pubkey = validator_voting_keypairs
-            .borrow()
-            .bls_keypair
-            .clone()
-            .unwrap()
-            .public;
 
         // Create accounts
         let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
         let vote_account = if alpenglow {
+            let bls_pubkey = validator_voting_keypairs
+                .borrow()
+                .bls_keypair
+                .clone()
+                .unwrap()
+                .public;
             vote_state::create_account_with_authorized_v4(
                 &node_pubkey,
                 &vote_pubkey,
