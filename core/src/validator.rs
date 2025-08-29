@@ -34,7 +34,7 @@ use {
     quinn::Endpoint,
     solana_accounts_db::{
         accounts_db::{
-            AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING, DEFAULT_MEMLOCK_BUDGET_BYTES,
+            AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING, DEFAULT_MEMLOCK_BUDGET_SIZE,
         },
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         hardened_unpack::{
@@ -706,8 +706,8 @@ impl Validator {
         let accounts_db_config = config.accounts_db_config.as_ref();
         solana_accounts_db::validate_memlock_limit_for_disk_io(
             accounts_db_config
-                .map(|config| config.memlock_budget_bytes)
-                .unwrap_or(DEFAULT_MEMLOCK_BUDGET_BYTES),
+                .map(|config| config.memlock_budget_size)
+                .unwrap_or(DEFAULT_MEMLOCK_BUDGET_SIZE),
         )?;
 
         if !ledger_path.is_dir() {

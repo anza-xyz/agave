@@ -26,7 +26,7 @@ use {
         account_storage_reader::AccountStorageReader,
         accounts_db::{
             AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId,
-            DEFAULT_MEMLOCK_BUDGET_BYTES,
+            DEFAULT_MEMLOCK_BUDGET_SIZE,
         },
         accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
         hardened_unpack::{self, UnpackError},
@@ -1890,8 +1890,8 @@ fn unarchive_snapshot(
 
     let (memlock_budget_size, storage_access) = accounts_db_config
         .as_ref()
-        .map(|config| (config.memlock_budget_bytes, config.storage_access))
-        .unwrap_or((DEFAULT_MEMLOCK_BUDGET_BYTES, StorageAccess::default()));
+        .map(|config| (config.memlock_budget_size, config.storage_access))
+        .unwrap_or((DEFAULT_MEMLOCK_BUDGET_SIZE, StorageAccess::default()));
 
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
     let unarchive_handle = streaming_unarchive_snapshot(

@@ -107,7 +107,9 @@ const DEFAULT_NUM_DIRS: u32 = 4;
 // This value reflects recommended memory lock limit documented in the validator's
 // setup instructions at docs/src/operations/guides/validator-start.md allowing use of
 // several io_uring instances with fixed buffers for large disk IO operations.
-pub const DEFAULT_MEMLOCK_BUDGET_BYTES: usize = 2_000_000_000;
+pub const DEFAULT_MEMLOCK_BUDGET_SIZE: usize = 2_000_000_000;
+// Linux distributions often have some small memory lock limit (e.g. 8MB) that we can tap into.
+const TESTS_MEMLOCK_BUDGET_SIZE: usize = 4_000_000;
 
 // When getting accounts for shrinking from the index, this is the # of accounts to lookup per thread.
 // This allows us to split up accounts index accesses across multiple threads.
@@ -305,7 +307,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     num_background_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
-    memlock_budget_bytes: 4 * 1024 * 1024,
+    memlock_budget_size: TESTS_MEMLOCK_BUDGET_SIZE,
 };
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
@@ -328,7 +330,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     num_background_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
-    memlock_budget_bytes: 4 * 1024 * 1024,
+    memlock_budget_size: TESTS_MEMLOCK_BUDGET_SIZE,
 };
 
 struct LoadAccountsIndexForShrink<'a, T: ShrinkCollectRefs<'a>> {
@@ -455,10 +457,10 @@ pub struct AccountsDbConfig {
     pub num_foreground_threads: Option<NonZeroUsize>,
     /// Number of threads for background accounts hashing
     pub num_hash_threads: Option<NonZeroUsize>,
-    /// Amount of memory that is allowed to be locked during operations.
+    /// Amount of memory (in bytes) that is allowed to be locked during db operations.
     /// On linux it's verified on start-up with the kernel limits, such that during runtime
     /// parts of it can be utilized without panicking.
-    pub memlock_budget_bytes: usize,
+    pub memlock_budget_size: usize,
 }
 
 #[cfg(not(test))]
