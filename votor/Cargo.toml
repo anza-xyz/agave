@@ -1,7 +1,7 @@
 [package]
-name = "agave-votor"
+name = "solana-votor"
 description = "Blockchain, Rebuilt for Scale"
-documentation = "https://docs.rs/agave-votor"
+documentation = "https://docs.rs/solana-votor"
 readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
@@ -20,11 +20,14 @@ frozen-abi = [
     "solana-bloom/frozen-abi",
     "solana-ledger/frozen-abi",
     "solana-runtime/frozen-abi",
+    "solana-vote/frozen-abi",
+    "solana-vote-program/frozen-abi",
 ]
 
 [dependencies]
 anyhow = { workspace = true }
 bincode = { workspace = true }
+bitvec = { workspace = true }
 bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
@@ -39,6 +42,7 @@ serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-bloom = { workspace = true }
+solana-bls-signatures = { workspace = true, features = ["solana-signer-derive"] }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
@@ -60,8 +64,12 @@ solana-rpc = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
+solana-signer-store = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true }
+solana-vote = { workspace = true }
+solana-vote-program = { workspace = true }
+solana-votor-messages = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
