@@ -29,6 +29,7 @@ serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-bincode = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",

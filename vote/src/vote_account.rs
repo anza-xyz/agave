@@ -6,6 +6,7 @@ use {
         ser::{Serialize, Serializer},
     },
     solana_account::{AccountSharedData, ReadableAccount},
+    solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
     std::{
@@ -123,6 +124,13 @@ impl VoteAccount {
         .unwrap();
 
         VoteAccount::try_from(account).unwrap()
+    }
+
+    pub fn bls_pubkey(&self) -> Option<BLSPubkey> {
+        let bls_pubkey_compressed = self.0.vote_state_view.bls_pubkey_compressed()?;
+        let bls_pubkey_compressed = BLSPubkeyCompressed(bls_pubkey_compressed);
+        let bls_pubkey = BLSPubkey::try_from(bls_pubkey_compressed).unwrap();
+        Some(bls_pubkey)
     }
 }
 

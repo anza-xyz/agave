@@ -3,7 +3,10 @@ mod tests {
     use {
         crate::{
             bank::{test_utils as bank_test_utils, Bank},
-            epoch_stakes::{EpochAuthorizedVoters, NodeIdToVoteAccounts, VersionedEpochStakes},
+            epoch_stakes::{
+                BLSPubkeyToRankMap, EpochAuthorizedVoters, NodeIdToVoteAccounts,
+                VersionedEpochStakes,
+            },
             genesis_utils::activate_all_features,
             runtime_config::RuntimeConfig,
             serde_snapshot::{self, ExtraFieldsToSerialize, SnapshotStreams},
@@ -206,6 +209,7 @@ mod tests {
                 total_stake: 42,
                 node_id_to_vote_accounts: Arc::<NodeIdToVoteAccounts>::default(),
                 epoch_authorized_voters: Arc::<EpochAuthorizedVoters>::default(),
+                bls_pubkey_to_rank_map: Arc::<BLSPubkeyToRankMap>::default(),
             },
         );
         assert_eq!(bank.epoch_stakes.len(), 3);
