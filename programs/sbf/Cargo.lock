@@ -10084,6 +10084,7 @@ version = "3.1.0"
 dependencies = [
  "bitvec",
  "bytemuck",
+ "bytemuck_derive",
  "num_enum",
  "serde",
  "solana-account",

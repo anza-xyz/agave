@@ -1,6 +1,7 @@
 //! Program instructions
 use {
-    bytemuck::{Pod, Zeroable},
+    bytemuck::Pod as PodTrait,
+    bytemuck_derive::{Pod, Zeroable},
     num_enum::{IntoPrimitive, TryFromPrimitive},
     solana_bls_signatures::Pubkey as BlsPubkey,
     solana_program::{
@@ -62,7 +63,7 @@ pub fn initialize_account(
 }
 
 /// Utility function for encoding instruction data
-pub(crate) fn encode_instruction<D: Pod>(
+pub(crate) fn encode_instruction<D: PodTrait>(
     accounts: Vec<AccountMeta>,
     instruction: VoteInstruction,
     instruction_data: &D,
@@ -76,7 +77,7 @@ pub(crate) fn encode_instruction<D: Pod>(
 /// Some accounting instructions have a variable length
 /// `seed`, we serialize this as a pod slice at the end
 /// of the instruction data
-pub(crate) fn encode_instruction_with_seed<D: Pod>(
+pub(crate) fn encode_instruction_with_seed<D: PodTrait>(
     accounts: Vec<AccountMeta>,
     instruction: VoteInstruction,
     instruction_data: &D,
