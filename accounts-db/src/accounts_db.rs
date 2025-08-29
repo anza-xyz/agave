@@ -73,7 +73,7 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
     solana_transaction::sanitized::SanitizedTransaction,
     std::{
@@ -6574,7 +6574,7 @@ impl AccountsDb {
             insert_us: u64,
             num_accounts: u64,
             accounts_data_len: u64,
-            zero_lamport_pubkeys: HashSet<Pubkey, PubkeyHasherBuilder>,
+            zero_lamport_pubkeys: Vec<Pubkey>,
             all_accounts_are_zero_lamports_slots: u64,
             all_zeros_slots: Vec<(Slot, Arc<AccountStorageEntry>)>,
             num_did_not_exist: u64,
@@ -6588,7 +6588,7 @@ impl AccountsDb {
                     insert_us: 0,
                     num_accounts: 0,
                     accounts_data_len: 0,
-                    zero_lamport_pubkeys: HashSet::default(),
+                    zero_lamport_pubkeys: Vec::default(),
                     all_accounts_are_zero_lamports_slots: 0,
                     all_zeros_slots: Vec::new(),
                     num_did_not_exist: 0,
@@ -6990,17 +6990,14 @@ impl AccountsDb {
     /// Visit zero lamport pubkeys and populate zero_lamport_single_ref info on
     /// storage.
     /// Returns the number of zero lamport single ref accounts found.
-    fn visit_zero_lamport_pubkeys_during_startup(
-        &self,
-        pubkeys: HashSet<Pubkey, PubkeyHasherBuilder>,
-    ) -> u64 {
-        let mut slot_offsets = HashMap::<_, Vec<_>>::default();
-        let mut pubkeys: Vec<_> = pubkeys.into_iter().collect();
-
+    fn visit_zero_lamport_pubkeys_during_startup(&self, mut pubkeys: Vec<Pubkey>) -> u64 {
+        let mut slot_offsets = HashMap::<Slot, Vec<usize>>::default();
         // sort the pubkeys first so that in scan, the pubkeys are visited in
         // index bucket in order. This helps to reduce the page faults and speed
         // up the scan compared to visiting the pubkeys in random order.
         pubkeys.sort_unstable();
+        pubkeys.dedup();
+
         self.accounts_index.scan(
             pubkeys.iter(),
             |_pubkey, slots_refs, _entry| {
