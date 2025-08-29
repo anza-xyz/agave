@@ -1,3 +1,4 @@
+//! ```text
 //! The entrypoint into votor the module responsible for voting, rooting, and notifying
 //! the core to create a new block.
 //!
@@ -39,7 +40,7 @@
 //!   │                          │                    │     │                    │ │
 //!   │                          └────────────────────┘     └────────────────────┘ │
 //!   └────────────────────────────────────────────────────────────────────────────┘
-//!
+//! ```
 use {
     crate::{
         certificate_pool_service::{CertificatePoolContext, CertificatePoolService},
