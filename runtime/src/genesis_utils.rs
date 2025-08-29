@@ -138,6 +138,11 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     let voting_keypair = voting_keypairs[0].borrow().vote_keypair.insecure_clone();
 
     let validator_pubkey = voting_keypairs[0].borrow().node_keypair.pubkey();
+    let bls_keypair = if alpenglow {
+        voting_keypairs[0].borrow().bls_keypair.clone()
+    } else {
+        None
+    };
     let genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
@@ -150,7 +155,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         Rent::free(),               // most tests don't expect rent
         cluster_type,
         vec![],
-        voting_keypairs[0].borrow().bls_keypair.clone(),
+        bls_keypair,
     );
 
     let mut genesis_config_info = GenesisConfigInfo {
