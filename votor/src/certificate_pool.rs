@@ -756,7 +756,9 @@ mod tests {
         solana_runtime::{
             bank::{Bank, NewBankOptions},
             bank_forks::BankForks,
-            genesis_utils::{create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs},
+            genesis_utils::{
+                create_genesis_config_with_vote_accounts_alpenglow, ValidatorVoteKeypairs,
+            },
         },
         solana_signer::Signer,
         solana_votor_messages::consensus_message::{
@@ -785,7 +787,7 @@ mod tests {
     }
 
     fn create_bank_forks(validator_keypairs: &[ValidatorVoteKeypairs]) -> Arc<RwLock<BankForks>> {
-        let genesis = create_genesis_config_with_vote_accounts(
+        let genesis = create_genesis_config_with_vote_accounts_alpenglow(
             1_000_000_000,
             validator_keypairs,
             vec![100; validator_keypairs.len()],
@@ -859,16 +861,18 @@ mod tests {
     ) {
         for slot in start..=end {
             let vote = Vote::new_skip_vote(slot);
-            assert!(pool
-                .add_message(
-                    root_bank.epoch_schedule(),
-                    root_bank.epoch_stakes_map(),
-                    root_bank.slot(),
-                    &Pubkey::new_unique(),
-                    &dummy_transaction(keypairs, &vote, rank),
-                    &mut vec![]
-                )
-                .is_ok());
+            let result = pool.add_message(
+                root_bank.epoch_schedule(),
+                root_bank.epoch_stakes_map(),
+                root_bank.slot(),
+                &Pubkey::new_unique(),
+                &dummy_transaction(keypairs, &vote, rank),
+                &mut vec![],
+            );
+            assert!(
+                result.is_ok(),
+                "Failed to add skip vote for slot {slot}: {result:?}"
+            );
         }
     }
 
