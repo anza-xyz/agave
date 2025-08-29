@@ -375,6 +375,7 @@ solana-account-decoder = { path = "account-decoder", version = "=3.1.0" }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=3.1.0" }
 solana-account-info = "3.0.0"
 solana-accounts-db = { path = "accounts-db", version = "=3.1.0" }
+solana-address = "1.0.0"
 solana-address-lookup-table-interface = "3.0.0"
 solana-atomic-u64 = "3.0.0"
 solana-banks-client = { path = "banks-client", version = "=3.1.0" }
@@ -494,7 +495,7 @@ solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=3
 solana-rpc-client-types = { path = "rpc-client-types", version = "=3.1.0" }
 solana-runtime = { path = "runtime", version = "=3.1.0" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=3.1.0" }
-solana-sanitize = "3.0.0"
+solana-sanitize = "3.0.1"
 solana-sbpf = { version = "=0.12.2", default-features = false }
 solana-sdk-ids = "3.0.0"
 solana-secp256k1-program = "3.0.0"
@@ -539,7 +540,7 @@ solana-tls-utils = { path = "tls-utils", version = "=3.1.0" }
 solana-tps-client = { path = "tps-client", version = "=3.1.0" }
 solana-tpu-client = { path = "tpu-client", version = "=3.1.0", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=3.1.0" }
-solana-transaction = "3.0.0"
+solana-transaction = "3.0.1"
 solana-transaction-context = { path = "transaction-context", version = "=3.1.0", features = ["bincode"] }
 solana-transaction-error = "3.0.0"
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=3.1.0" }

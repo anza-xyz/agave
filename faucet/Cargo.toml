@@ -41,7 +41,7 @@ solana-pubkey = { version = "=3.0.0", features = ["rand"] }
 solana-signer = "=3.0.0"
 solana-system-interface = "=2.0"
 solana-system-transaction = "=3.0.0"
-solana-transaction = "=3.0.0"
+solana-transaction = "=3.0.1"
 solana-version = { workspace = true }
 spl-memo-interface = { version = "=2.0.0" }
 thiserror = { workspace = true }
