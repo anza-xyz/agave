@@ -383,7 +383,7 @@ where
 async fn send_wire_transaction_batch_to_addr<P, M, C>(
     connection_cache: &ConnectionCache<P, M, C>,
     addr: &SocketAddr,
-    wire_transactions: &[Vec<u8>],
+    wire_transactions: &[Arc<Vec<u8>>],
 ) -> TransportResult<()>
 where
     P: ConnectionPool<NewConnectionConfig = C>,
@@ -470,7 +470,7 @@ where
     /// Returns the last error if all sends fail
     pub async fn try_send_wire_transaction_batch(
         &self,
-        wire_transactions: Vec<Vec<u8>>,
+        wire_transactions: Vec<Arc<Vec<u8>>>,
     ) -> TransportResult<()> {
         let leaders = self
             .leader_tpu_service

@@ -100,7 +100,9 @@ mod tests {
         // Send a full size packet with single byte writes.
         let num_bytes = PACKET_DATA_SIZE;
         let num_expected_packets: usize = 3000;
-        let packets = vec![vec![0u8; PACKET_DATA_SIZE]; num_expected_packets];
+        let packets: Vec<Arc<Vec<u8>>> = (0..num_expected_packets)
+            .map(|_| Arc::new(vec![0u8; PACKET_DATA_SIZE]))
+            .collect();
 
         assert!(client.send_data_batch_async(packets).is_ok());
 
@@ -272,7 +274,9 @@ mod tests {
         // Send a full size packet with single byte writes as a request.
         let num_bytes = PACKET_DATA_SIZE;
         let num_expected_packets: usize = 3000;
-        let packets = vec![vec![0u8; PACKET_DATA_SIZE]; num_expected_packets];
+        let packets: Vec<Arc<Vec<u8>>> = (0..num_expected_packets)
+            .map(|_| Arc::new(vec![0u8; PACKET_DATA_SIZE]))
+            .collect();
 
         assert!(request_sender.send_data_batch_async(packets).is_ok());
         check_packets(receiver, num_bytes, num_expected_packets);
@@ -294,7 +298,9 @@ mod tests {
         // Send a full size packet with single byte writes.
         let num_bytes = PACKET_DATA_SIZE;
         let num_expected_packets: usize = 3000;
-        let packets = vec![vec![0u8; PACKET_DATA_SIZE]; num_expected_packets];
+        let packets: Vec<Arc<Vec<u8>>> = (0..num_expected_packets)
+            .map(|_| Arc::new(vec![0u8; PACKET_DATA_SIZE]))
+            .collect();
 
         assert!(response_sender.send_data_batch_async(packets).is_ok());
         check_packets(receiver2, num_bytes, num_expected_packets);

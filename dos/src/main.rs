@@ -295,7 +295,9 @@ fn create_sender_thread(
                         Ok(tx_batch) => {
                             let len = tx_batch.batch.len();
                             let mut measure_send_txs = Measure::start("measure_send_txs");
-                            let res = connection.send_data_batch_async(tx_batch.batch);
+                            let res = connection.send_data_batch_async(
+                                tx_batch.batch.into_iter().map(Arc::new).collect()
+                            );
 
                             measure_send_txs.stop();
                             time_send_ns += measure_send_txs.as_ns();

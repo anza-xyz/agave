@@ -531,12 +531,13 @@ impl ClientConnection for QuicClientConnection {
         self.client.server_addr()
     }
 
-    async fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()> {
+    async fn send_data_batch(&self, buffers: &[Arc<Vec<u8>>]) -> TransportResult<()> {
         let stats = ClientStats::default();
         let len = buffers.len();
+        let buffer_slices: Vec<&[u8]> = buffers.iter().map(|b| b.as_ref().as_slice()).collect();
         let res = self
             .client
-            .send_batch(buffers, &stats, self.connection_stats.clone())
+            .send_batch(&buffer_slices, &stats, self.connection_stats.clone())
             .await;
         self.connection_stats
             .add_client_stats(&stats, len, res.is_ok());
