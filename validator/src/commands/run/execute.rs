@@ -445,6 +445,7 @@ pub fn execute(
         num_foreground_threads: Some(accounts_db_foreground_threads),
         num_hash_threads: Some(accounts_db_hash_threads),
         mark_obsolete_accounts,
+        memlock_budget_size: solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
         ..AccountsDbConfig::default()
     };
 
