@@ -20,7 +20,12 @@ use {
     solana_reward_info::RewardInfo,
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
-    std::sync::Arc,
+    std::{
+        mem::MaybeUninit,
+        ops::Index,
+        slice::{Iter, SliceIndex},
+        sync::Arc,
+    },
 };
 
 /// Number of blocks for reward calculation and storing vote accounts.
@@ -39,14 +44,98 @@ pub(crate) struct PartitionedStakeReward {
     pub commission: u8,
 }
 
-type PartitionedStakeRewards = Vec<PartitionedStakeReward>;
+/// A vector of stake rewards.
+#[derive(Debug, Default)]
+pub(crate) struct PartitionedStakeRewards {
+    /// Inner vector.
+    rewards: Vec<Option<PartitionedStakeReward>>,
+    /// Number of `Some` elements.
+    len_some: usize,
+}
+
+impl PartitionedStakeRewards {
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
+        let rewards = Vec::with_capacity(capacity);
+        Self {
+            rewards,
+            len_some: 0,
+        }
+    }
+
+    pub(crate) fn capacity(&self) -> usize {
+        self.rewards.capacity()
+    }
+
+    /// Number of `Some` elements.
+    pub(crate) fn len_some(&self) -> usize {
+        self.len_some
+    }
+
+    pub(crate) fn get(&self, index: usize) -> Option<&Option<PartitionedStakeReward>> {
+        self.rewards.get(index)
+    }
+
+    pub(crate) fn iter(&self) -> Iter<'_, Option<PartitionedStakeReward>> {
+        self.into_iter()
+    }
+
+    fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<Option<PartitionedStakeReward>>] {
+        self.rewards.spare_capacity_mut()
+    }
+
+    unsafe fn set_len(&mut self, new_len: usize) {
+        self.rewards.set_len(new_len)
+    }
+
+    fn set_len_some(&mut self, len_some: usize) {
+        self.len_some = len_some
+    }
+}
+
+impl FromIterator<Option<PartitionedStakeReward>> for PartitionedStakeRewards {
+    fn from_iter<T: IntoIterator<Item = Option<PartitionedStakeReward>>>(iter: T) -> Self {
+        let mut len_some: usize = 0;
+        let rewards = Vec::from_iter(iter.into_iter().inspect(|reward| {
+            if reward.is_some() {
+                len_some = len_some.saturating_add(1);
+            }
+        }));
+        Self { rewards, len_some }
+    }
+}
+
+impl<I> Index<I> for PartitionedStakeRewards
+where
+    I: SliceIndex<[Option<PartitionedStakeReward>]>,
+{
+    type Output = I::Output;
+
+    fn index(&self, index: I) -> &Self::Output {
+        self.rewards.index(index)
+    }
+}
+
+impl<'a> IntoIterator for &'a PartitionedStakeRewards {
+    type Item = <Self::IntoIter as IntoIterator>::Item;
+    type IntoIter = Iter<'a, Option<PartitionedStakeReward>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.rewards.iter()
+    }
+}
+
+impl PartialEq for PartitionedStakeRewards {
+    fn eq(&self, other: &Self) -> bool {
+        self.rewards.eq(&other.rewards)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct StartBlockHeightAndRewards {
     /// the block height of the slot at which rewards distribution began
     pub(crate) distribution_starting_block_height: u64,
     /// calculated epoch rewards before partitioning
-    pub(crate) all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+    pub(crate) all_stake_rewards: Arc<PartitionedStakeRewards>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,7 +144,7 @@ pub(crate) struct StartBlockHeightAndPartitionedRewards {
     pub(crate) distribution_starting_block_height: u64,
 
     /// calculated epoch rewards pending distribution
-    pub(crate) all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+    pub(crate) all_stake_rewards: Arc<PartitionedStakeRewards>,
 
     /// indices of calculated epoch rewards per partition, outer Vec is by
     /// partition (one partition per block), inner Vec is the indices for one
@@ -196,7 +285,7 @@ pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
     /// vote accounts
     pub(super) point_value: PointValue,
     /// stake rewards that still need to be distributed
-    pub(super) stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+    pub(super) stake_rewards: Arc<PartitionedStakeRewards>,
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
@@ -234,7 +323,7 @@ impl Bank {
     pub(crate) fn set_epoch_reward_status_calculation(
         &mut self,
         distribution_starting_block_height: u64,
-        stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+        stake_rewards: Arc<PartitionedStakeRewards>,
     ) {
         self.epoch_reward_status =
             EpochRewardStatus::Active(EpochRewardPhase::Calculation(StartBlockHeightAndRewards {
@@ -246,7 +335,7 @@ impl Bank {
     pub(crate) fn set_epoch_reward_status_distribution(
         &mut self,
         distribution_starting_block_height: u64,
-        all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+        all_stake_rewards: Arc<PartitionedStakeRewards>,
         partition_indices: Vec<Vec<usize>>,
     ) {
         self.epoch_reward_status = EpochRewardStatus::Active(EpochRewardPhase::Distribution(
@@ -277,7 +366,7 @@ impl Bank {
         &self,
         rewards: &PartitionedStakeRewards,
     ) -> u64 {
-        let total_stake_accounts = rewards.len();
+        let total_stake_accounts = rewards.len_some();
         if self.epoch_schedule.warmup && self.epoch < self.first_normal_epoch() {
             1
         } else {
@@ -351,9 +440,9 @@ mod tests {
     }
 
     pub fn build_partitioned_stake_rewards(
-        stake_rewards: &[PartitionedStakeReward],
+        stake_rewards: &PartitionedStakeRewards,
         partition_indices: &[Vec<usize>],
-    ) -> Vec<Vec<PartitionedStakeReward>> {
+    ) -> Vec<PartitionedStakeRewards> {
         partition_indices
             .iter()
             .map(|partition_index| {
@@ -362,7 +451,7 @@ mod tests {
                 partition_index
                     .iter()
                     .map(|&index| stake_rewards[index].clone())
-                    .collect::<Vec<_>>()
+                    .collect::<PartitionedStakeRewards>()
             })
             .collect::<Vec<_>>()
     }
@@ -372,7 +461,7 @@ mod tests {
     ) -> PartitionedStakeRewards {
         stake_rewards
             .into_iter()
-            .map(|stake_reward| PartitionedStakeReward::maybe_from(&stake_reward).unwrap())
+            .map(|stake_reward| Some(PartitionedStakeReward::maybe_from(&stake_reward).unwrap()))
             .collect()
     }
 
@@ -545,8 +634,8 @@ mod tests {
         let expected_num = 100;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| PartitionedStakeReward::new_random())
-            .collect::<Vec<_>>();
+            .map(|_| Some(PartitionedStakeReward::new_random()))
+            .collect::<PartitionedStakeRewards>();
 
         let partition_indices = vec![(0..expected_num).collect()];
 
@@ -596,8 +685,8 @@ mod tests {
             |num_stakes: u64, expected_num_reward_distribution_blocks: u64| {
                 // Given the short epoch, i.e. 32 slots, we should cap the number of reward distribution blocks to 32/10 = 3.
                 let stake_rewards = (0..num_stakes)
-                    .map(|_| PartitionedStakeReward::new_random())
-                    .collect::<Vec<_>>();
+                    .map(|_| Some(PartitionedStakeReward::new_random()))
+                    .collect::<PartitionedStakeRewards>();
 
                 assert_eq!(
                     bank.get_reward_distribution_num_blocks(&stake_rewards),
@@ -634,8 +723,8 @@ mod tests {
         // Given 8k rewards, it will take 2 blocks to credit all the rewards
         let expected_num = 8192;
         let stake_rewards = (0..expected_num)
-            .map(|_| PartitionedStakeReward::new_random())
-            .collect::<Vec<_>>();
+            .map(|_| Some(PartitionedStakeReward::new_random()))
+            .collect::<PartitionedStakeRewards>();
 
         assert_eq!(bank.get_reward_distribution_num_blocks(&stake_rewards), 2);
     }
@@ -647,7 +736,33 @@ mod tests {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
 
         let bank = Bank::new_for_tests(&genesis_config);
-        let rewards = vec![];
+        let rewards = PartitionedStakeRewards::default();
+        assert_eq!(bank.get_reward_distribution_num_blocks(&rewards), 1);
+    }
+
+    /// Test get_reward_distribution_num_blocks with `None` elements in the
+    /// partitioned stake rewards. `None` elements can occur if for any stake
+    /// delegation:
+    /// * there is no payout or if any deserved payout is < 1 lamport
+    /// * corresponding vote account was not found in cache and accounts-db
+    #[test]
+    fn test_get_reward_distribution_num_blocks_none() {
+        let rewards_all = 8192;
+        let expected_rewards_some = 6144;
+        let rewards = (0..rewards_all)
+            .map(|i| {
+                if i % 4 == 0 {
+                    None
+                } else {
+                    Some(PartitionedStakeReward::new_random())
+                }
+            })
+            .collect::<PartitionedStakeRewards>();
+        assert_eq!(rewards.rewards.len(), rewards_all);
+        assert_eq!(rewards.len_some(), expected_rewards_some);
+
+        let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+        let bank = Bank::new_for_tests(&genesis_config);
         assert_eq!(bank.get_reward_distribution_num_blocks(&rewards), 1);
     }
 
