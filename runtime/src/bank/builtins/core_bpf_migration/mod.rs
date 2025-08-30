@@ -1303,8 +1303,8 @@ pub(crate) mod tests {
             root_bank,
             &test_context,
             builtin_id,
-            &feature_id,
-            &source_buffer_address,
+            feature_id,
+            source_buffer_address,
             &mint_keypair,
             slots_per_epoch,
             &cpi_program_id,
@@ -1794,12 +1794,12 @@ pub(crate) mod tests {
 
         // Assert the feature was not activated and the program was not
         // migrated.
-        assert!(!bank.feature_set.is_active(&feature_id));
-        assert!(bank.get_account(&source_buffer_address).is_some());
+        assert!(!bank.feature_set.is_active(feature_id));
+        assert!(bank.get_account(source_buffer_address).is_some());
 
         // Store the account to activate the feature.
         bank.store_account_and_update_capitalization(
-            &feature_id,
+            feature_id,
             &feature::create_account(&Feature::default(), 42),
         );
 
@@ -1816,7 +1816,7 @@ pub(crate) mod tests {
         );
 
         // Run the post-migration program checks.
-        assert!(bank.feature_set.is_active(&feature_id));
+        assert!(bank.feature_set.is_active(feature_id));
         test_context.run_program_checks(&bank, migration_slot);
 
         // Advance one slot so that the new BPF loader v3 program becomes
@@ -1863,7 +1863,7 @@ pub(crate) mod tests {
         );
 
         // Run the post-migration program checks again.
-        assert!(bank.feature_set.is_active(&feature_id));
+        assert!(bank.feature_set.is_active(feature_id));
         test_context.run_program_checks(&bank, migration_slot);
 
         // Again, successfully invoke the new BPF loader v3 program.
