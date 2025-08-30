@@ -1,5 +1,5 @@
 use {
-    crate::commands,
+    crate::{commands, config_file::Config},
     clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_accounts_db::{
         accounts_db::{
@@ -74,12 +74,27 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::staked_nodes_overrides::command())
         .subcommand(commands::wait_for_restart_window::command())
         .subcommand(commands::set_public_address::command())
-        .subcommand(commands::manage_block_production::command());
+        .subcommand(commands::manage_block_production::command())
+        .arg(config_arg(default_args));
 
     commands::run::add_args(app, default_args)
         .args(&thread_args(&default_args.thread_args))
         .args(&get_deprecated_arguments())
         .after_help("The default subcommand is run")
+}
+
+fn config_arg<'b>(default_args: &DefaultArgs) -> Arg<'_, 'b> {
+    let mut arg = Arg::with_name("config_path")
+        .long("config-path")
+        .value_name("PATH")
+        .takes_value(true)
+        .help("Path to the validator.toml config file");
+
+    if let Some(config_path) = default_args.config_path.as_ref() {
+        arg = arg.default_value(config_path);
+    }
+
+    arg
 }
 
 /// Deprecated argument description should be moved into the [`deprecated_arguments()`] function,
@@ -244,6 +259,7 @@ pub struct DefaultArgs {
     pub bind_address: String,
     pub dynamic_port_range: String,
     pub ledger_path: String,
+    pub config_path: Option<String>,
 
     pub genesis_archive_unpacked_size: String,
     pub health_check_slot_distance: String,
@@ -320,6 +336,8 @@ impl DefaultArgs {
         DefaultArgs {
             bind_address: "0.0.0.0".to_string(),
             ledger_path: "ledger".to_string(),
+            config_path: Config::default_path()
+                .and_then(|path| path.to_str().map(|s| s.to_string())),
             dynamic_port_range: format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1),
             maximum_local_snapshot_age: "2500".to_string(),
             genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE.to_string(),

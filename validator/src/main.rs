@@ -4,7 +4,7 @@ use jemallocator::Jemalloc;
 use {
     agave_validator::{
         cli::{app, warn_for_deprecated_arguments, DefaultArgs},
-        commands,
+        commands, config_file,
     },
     log::error,
     std::{path::PathBuf, process::exit},
@@ -21,6 +21,16 @@ pub fn main() {
     let matches = cli_app.get_matches();
     warn_for_deprecated_arguments(&matches);
 
+    let mut config_builder = config::Config::builder();
+    if let Some(config_path) = matches.value_of("config_path") {
+        config_builder = config_builder.add_source(config::File::with_name(config_path));
+    }
+    let config = config_builder
+        .build()
+        .and_then(|c| c.try_deserialize::<config_file::Config>())
+        .inspect_err(|e| log::warn!("Config error: {e}"))
+        .unwrap_or_default();
+
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
     match matches.subcommand() {
@@ -29,6 +39,7 @@ pub fn main() {
             solana_version,
             &ledger_path,
             commands::run::execute::Operation::Initialize,
+            &config,
         )
         .inspect_err(|err| error!("Failed to initialize validator: {err}"))
         .map_err(commands::Error::Dynamic),
@@ -37,6 +48,7 @@ pub fn main() {
             solana_version,
             &ledger_path,
             commands::run::execute::Operation::Run,
+            &config,
         )
         .inspect_err(|err| error!("Failed to start validator: {err}"))
         .map_err(commands::Error::Dynamic),
