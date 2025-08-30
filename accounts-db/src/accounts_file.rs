@@ -96,22 +96,10 @@ impl AccountsFile {
         Ok(Self::AppendVec(av))
     }
 
-    /// true if this storage can possibly be appended to (independent of capacity check)
-    //
-    // NOTE: Only used by ancient append vecs "append" method, which is test-only now.
-    #[cfg(test)]
-    pub(crate) fn can_append(&self) -> bool {
-        match self {
-            Self::AppendVec(av) => av.can_append(),
-            // once created, tiered storages cannot be appended to
-            Self::TieredStorage(_) => false,
-        }
-    }
-
     /// if storage is not readonly, reopen another instance that is read only
     pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
         match self {
-            Self::AppendVec(av) => av.reopen_as_readonly().map(Self::AppendVec),
+            Self::AppendVec(av) => av.reopen_as_readonly_file_io().map(Self::AppendVec),
             Self::TieredStorage(_) => None,
         }
     }
@@ -434,11 +422,19 @@ pub enum AccountsFileProvider {
 }
 
 impl AccountsFileProvider {
-    pub fn new_writable(&self, path: impl Into<PathBuf>, file_size: u64) -> AccountsFile {
+    pub fn new_writable(
+        &self,
+        path: impl Into<PathBuf>,
+        file_size: u64,
+        storage_access: StorageAccess,
+    ) -> AccountsFile {
         match self {
-            Self::AppendVec => {
-                AccountsFile::AppendVec(AppendVec::new(path, true, file_size as usize))
-            }
+            Self::AppendVec => AccountsFile::AppendVec(AppendVec::new(
+                path,
+                true,
+                file_size as usize,
+                storage_access,
+            )),
             Self::HotStorage => AccountsFile::TieredStorage(TieredStorage::new_writable(path)),
         }
     }

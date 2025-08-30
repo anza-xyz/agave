@@ -975,10 +975,11 @@ impl AccountStorageEntry {
         id: AccountsFileId,
         file_size: u64,
         provider: AccountsFileProvider,
+        storage_access: StorageAccess,
     ) -> Self {
         let tail = AccountsFile::file_name(slot, id);
         let path = Path::new(path).join(tail);
-        let accounts = provider.new_writable(path, file_size);
+        let accounts = provider.new_writable(path, file_size, storage_access);
 
         Self {
             id,
@@ -1631,6 +1632,7 @@ impl AccountsDb {
             self.next_id(),
             size,
             self.accounts_file_provider,
+            self.storage_access,
         )
     }
 
@@ -7386,6 +7388,11 @@ impl AccountsDb {
     /// This is useful for testing clean algorithms.
     pub fn get_len_of_slots_with_uncleaned_pubkeys(&self) -> usize {
         self.uncleaned_pubkeys.len()
+    }
+
+    #[cfg(test)]
+    pub fn storage_access(&self) -> StorageAccess {
+        self.storage_access
     }
 
     /// useful to adapt tests written prior to introduction of the write cache
