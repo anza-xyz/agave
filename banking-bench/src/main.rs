@@ -433,13 +433,19 @@ fn main() {
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
     );
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-    let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
-        create_test_recorder(
-            bank.clone(),
-            blockstore.clone(),
-            None,
-            Some(leader_schedule_cache),
-        );
+    let (
+        exit,
+        poh_recorder,
+        mut poh_controller,
+        transaction_recorder,
+        poh_service,
+        signal_receiver,
+    ) = create_test_recorder(
+        bank.clone(),
+        blockstore.clone(),
+        None,
+        Some(leader_schedule_cache),
+    );
     let (banking_tracer, tracer_thread) =
         BankingTracer::new(matches.is_present("trace_banking").then_some((
             &blockstore.banking_trace_path(),
@@ -532,10 +538,9 @@ fn main() {
             tx_total_us += now.elapsed().as_micros() as u64;
 
             let mut poh_time = Measure::start("poh_time");
-            poh_recorder
-                .write()
-                .unwrap()
-                .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
+            poh_controller
+                .reset_sync(bank.clone(), Some((bank.slot(), bank.slot() + 1)))
+                .unwrap();
             poh_time.stop();
 
             let mut new_bank_time = Measure::start("new_bank");
@@ -550,7 +555,7 @@ fn main() {
             assert_matches!(poh_recorder.read().unwrap().bank(), None);
             update_bank_forks_and_poh_recorder_for_new_tpu_bank(
                 &bank_forks,
-                &poh_recorder,
+                &mut poh_controller,
                 new_bank,
             );
             bank = bank_forks.read().unwrap().working_bank_with_scheduler();
