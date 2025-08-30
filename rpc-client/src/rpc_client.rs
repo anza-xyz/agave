@@ -4036,7 +4036,7 @@ mod tests {
             data: vec![],
             owner: program_id,
             executable: false,
-            rent_epoch: 0,
+            rent_epoch: u64::MAX,
         };
         let keyed_account = RpcKeyedAccount {
             pubkey: pubkey.to_string(),
