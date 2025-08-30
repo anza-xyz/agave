@@ -1648,11 +1648,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     /// Cleans and unrefs all older rooted entries for each pubkey in the accounts index.
     /// Calls passed in callback on the remaining slot entry
     /// All pubkeys must be from a single bin
-    pub fn clean_and_unref_rooted_entries_by_bin(
-        &self,
-        pubkeys_by_bin: &[Pubkey],
-        callback: impl Fn(Slot, T),
-    ) -> SlotList<T> {
+    pub fn clean_and_unref_rooted_entries_by_bin(&self, pubkeys_by_bin: &[Pubkey]) -> SlotList<T> {
         let mut reclaims = Vec::new();
 
         let map = match pubkeys_by_bin.first() {
@@ -1663,9 +1659,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         for pubkey in pubkeys_by_bin {
             map.get_internal_inner(pubkey, |entry| {
                 let entry = entry.expect("Expected entry to exist in accounts index");
-                let (slot, account_info) =
-                    self.clean_and_unref_slot_list_on_startup(entry, &mut reclaims);
-                callback(slot, account_info);
+                self.clean_and_unref_slot_list_on_startup(entry, &mut reclaims);
                 (false, ())
             });
         }
@@ -2095,8 +2089,7 @@ pub mod tests {
         let index: AccountsIndex<bool, bool> = AccountsIndex::<bool, bool>::default_for_tests();
         let pubkeys_by_bin: Vec<Pubkey> = vec![];
 
-        let reclaims =
-            index.clean_and_unref_rooted_entries_by_bin(&pubkeys_by_bin, |_slot, _info| {});
+        let reclaims = index.clean_and_unref_rooted_entries_by_bin(&pubkeys_by_bin);
 
         assert!(reclaims.is_empty());
     }
@@ -2122,10 +2115,7 @@ pub mod tests {
 
         assert!(gc.is_empty());
 
-        let reclaims = index.clean_and_unref_rooted_entries_by_bin(&[pubkey], |slot, info| {
-            assert_eq!(slot, 0);
-            assert!(info);
-        });
+        let reclaims = index.clean_and_unref_rooted_entries_by_bin(&[pubkey]);
 
         assert_eq!(reclaims.len(), 0);
     }
@@ -2155,10 +2145,7 @@ pub mod tests {
 
         assert!(gc.is_empty());
 
-        let reclaims = index.clean_and_unref_rooted_entries_by_bin(&[pubkey], |slot, info| {
-            assert_eq!(slot, slot2);
-            assert_eq!(info, account_info2);
-        });
+        let reclaims = index.clean_and_unref_rooted_entries_by_bin(&[pubkey]);
 
         assert_eq!(reclaims, vec![(slot1, account_info1)]);
     }
@@ -2202,7 +2189,7 @@ pub mod tests {
 
         assert!(gc.is_empty());
 
-        let mut reclaims = index.clean_and_unref_rooted_entries_by_bin(&pubkeys, |_slot, _info| {});
+        let mut reclaims = index.clean_and_unref_rooted_entries_by_bin(&pubkeys);
         reclaims.sort_unstable();
         expected_reclaims.sort_unstable();
 

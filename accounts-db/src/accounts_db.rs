@@ -6646,6 +6646,9 @@ impl AccountsDb {
                     all_accounts_are_zero_lamports = false;
                 } else {
                     // zero lamport accounts
+                    if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
+                        self.zero_lamport_single_ref_found(slot, info.index_info.offset);
+                    }
                     zero_lamport_pubkeys.push(info.index_info.pubkey);
                 }
                 keyed_account_infos.push((
@@ -6858,10 +6861,14 @@ impl AccountsDb {
                     }
 
                     if pass == 0 {
-                        let mut zero_lamport_pubkeys_lock = zero_lamport_pubkeys.lock().unwrap();
-                        zero_lamport_pubkeys_lock.reserve(local_zero_lamport_pubkeys.len());
-                        zero_lamport_pubkeys_lock.extend(local_zero_lamport_pubkeys.into_iter());
-                        drop(zero_lamport_pubkeys_lock);
+                        if self.mark_obsolete_accounts == MarkObsoleteAccounts::Disabled {
+                            let mut zero_lamport_pubkeys_lock =
+                                zero_lamport_pubkeys.lock().unwrap();
+                            zero_lamport_pubkeys_lock.reserve(local_zero_lamport_pubkeys.len());
+                            zero_lamport_pubkeys_lock
+                                .extend(local_zero_lamport_pubkeys.into_iter());
+                            drop(zero_lamport_pubkeys_lock);
+                        }
 
                         total_lt_hash.lock().unwrap().mix_in(&local_lt_hash);
 
@@ -7108,16 +7115,9 @@ impl AccountsDb {
         let stats: ObsoleteAccountsStats = pubkeys_with_duplicates_by_bin
             .par_iter()
             .map(|pubkeys_by_bin| {
-                let reclaims = self.accounts_index.clean_and_unref_rooted_entries_by_bin(
-                    pubkeys_by_bin,
-                    |slot, account_info| {
-                        // Since the unref makes every account a single ref account, all
-                        // zero lamport accounts should be tracked as zero_lamport_single_ref
-                        if account_info.is_zero_lamport() {
-                            self.zero_lamport_single_ref_found(slot, account_info.offset());
-                        }
-                    },
-                );
+                let reclaims = self
+                    .accounts_index
+                    .clean_and_unref_rooted_entries_by_bin(pubkeys_by_bin);
                 let stats = PurgeStats::default();
 
                 // Mark all the entries as obsolete, and remove any empty storages
