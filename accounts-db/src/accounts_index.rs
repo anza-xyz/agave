@@ -5,6 +5,7 @@ mod roots_tracker;
 mod secondary;
 use {
     crate::{
+        accounts_db::PubkeysRemovedFromAccountsIndex,
         accounts_index_storage::{AccountsIndexStorage, Startup},
         ancestors::Ancestors,
         bucket_map_holder::Age,
@@ -874,8 +875,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         &self,
         dead_keys: &[&Pubkey],
         account_indexes: &AccountSecondaryIndexes,
-    ) -> HashSet<Pubkey> {
-        let mut pubkeys_removed_from_accounts_index = HashSet::default();
+    ) -> PubkeysRemovedFromAccountsIndex {
+        let mut pubkeys_removed_from_accounts_index = PubkeysRemovedFromAccountsIndex::default();
         if !dead_keys.is_empty() {
             for key in dead_keys.iter() {
                 let w_index = self.get_bin(key);
@@ -4046,7 +4047,9 @@ pub mod tests {
 
         assert_eq!(
             index.handle_dead_keys(&[&key], &AccountSecondaryIndexes::default()),
-            vec![key].into_iter().collect::<HashSet<_>>()
+            [key]
+                .into_iter()
+                .collect::<PubkeysRemovedFromAccountsIndex>()
         );
     }
 
