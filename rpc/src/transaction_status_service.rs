@@ -4,9 +4,18 @@
 //! frozen banks it receives.
 
 use {
-    crate::transaction_notifier_interface::TransactionNotifierArc,
-    crossbeam_channel::{Receiver, RecvTimeoutError},
+    crate::{
+        slot_completion_tracker::{
+            SlotCompletionCallback, SlotCompletionCallbackImpl, SlotCompletionTracker,
+        },
+        transaction_notifier_interface::TransactionNotifierArc,
+    },
+    crossbeam_channel::{Receiver, TryRecvError},
     itertools::izip,
+    rayon::{
+        iter::{ParallelDrainRange, ParallelIterator},
+        ThreadPoolBuilder,
+    },
     solana_clock::Slot,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError},
@@ -26,7 +35,7 @@ use {
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc,
         },
-        thread::{self, Builder, JoinHandle},
+        thread::{self, sleep, Builder, JoinHandle},
         time::Duration,
     },
     thiserror::Error,
@@ -47,6 +56,11 @@ type Result<T> = std::result::Result<T, Error>;
 const TSS_TEST_QUIESCE_NUM_RETRIES: usize = 100;
 #[cfg(feature = "dev-context-only-utils")]
 const TSS_TEST_QUIESCE_SLEEP_TIME_MS: u64 = 50;
+
+const NUM_TSS_WORKER_THREADS: usize = 8;
+
+const TSS_MESSAGES_DEFAULT_BATCH_SIZE: usize = 1024;
+const TSS_MESSAGES_MAX_BATCH_SIZE: usize = TSS_MESSAGES_DEFAULT_BATCH_SIZE;
 
 pub struct TransactionStatusService {
     thread_hdl: JoinHandle<()>,
@@ -73,40 +87,86 @@ impl TransactionStatusService {
                 let transaction_status_receiver = transaction_status_receiver.clone();
                 move || {
                     info!("{} has started", Self::SERVICE_NAME);
+
+                    let worker_thread_pool = ThreadPoolBuilder::new()
+                        .num_threads(NUM_TSS_WORKER_THREADS)
+                        .build()
+                        .unwrap();
+
+                    let slot_tracker = Arc::new(SlotCompletionTracker::new(Arc::clone(
+                        &max_complete_transaction_status_slot,
+                    )));
+
+                    let slot_completion_callback =
+                        Arc::new(SlotCompletionCallbackImpl::new(Arc::clone(&slot_tracker)));
+
+                    let mut messages = Vec::with_capacity(TSS_MESSAGES_MAX_BATCH_SIZE);
+
                     loop {
                         if exit.load(Ordering::Relaxed) {
                             break;
                         }
 
-                        let message = match transaction_status_receiver
-                            .recv_timeout(Duration::from_secs(1))
-                        {
-                            Ok(message) => message,
-                            Err(err @ RecvTimeoutError::Disconnected) => {
-                                info!("{} is stopping because: {err}", Self::SERVICE_NAME);
-                                break;
-                            }
-                            Err(RecvTimeoutError::Timeout) => {
-                                continue;
-                            }
-                        };
+                        // let queue_len = transaction_status_receiver.len();
+                        // let batch_size = if queue_len > 20_000 {
+                        //     TSS_MESSAGES_MAX_BATCH_SIZE
+                        // } else {
+                        //     TSS_MESSAGES_DEFAULT_BATCH_SIZE
+                        // };
 
-                        match Self::write_transaction_status_batch(
-                            message,
-                            &max_complete_transaction_status_slot,
-                            enable_rpc_transaction_history,
-                            transaction_notifier.clone(),
-                            &blockstore,
-                            enable_extended_tx_metadata_storage,
-                            depenency_tracker.clone(),
-                        ) {
-                            Ok(_) => {}
-                            Err(err) => {
-                                error!("{} is stopping because: {err}", Self::SERVICE_NAME);
-                                exit.store(true, Ordering::Relaxed);
-                                break;
+                        for _ in 0..TSS_MESSAGES_DEFAULT_BATCH_SIZE {
+                            match transaction_status_receiver.try_recv() {
+                                Ok(message) => {
+                                    messages.push(message);
+                                }
+                                Err(TryRecvError::Empty) => {
+                                    if messages.is_empty() {
+                                        sleep(Duration::from_millis(20));
+                                        continue;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                Err(err @ TryRecvError::Disconnected) => {
+                                    info!("{} is stopping because: {err}", Self::SERVICE_NAME);
+                                    break;
+                                }
                             }
                         }
+
+                        worker_thread_pool.install(|| {
+                            let blockstore = Arc::clone(&blockstore);
+                            let transaction_notifier = transaction_notifier.clone();
+                            let exit_clone = Arc::clone(&exit);
+                            let depenency_tracker = depenency_tracker.clone();
+                            let slot_completion_callback = slot_completion_callback.clone();
+                            let slot_tracker = slot_tracker.clone();
+
+                            messages.par_drain(..).for_each(|message| {
+                                // Track batch start before processing
+                                let slot = match &message {
+                                    TransactionStatusMessage::Batch((batch, _)) => batch.slot,
+                                    TransactionStatusMessage::Freeze(bank) => bank.slot(),
+                                };
+                                slot_tracker.start_batch(slot);
+
+                                match Self::write_transaction_status_batch(
+                                    message,
+                                    enable_rpc_transaction_history,
+                                    transaction_notifier.clone(),
+                                    &blockstore,
+                                    enable_extended_tx_metadata_storage,
+                                    depenency_tracker.clone(),
+                                    slot_completion_callback.clone(),
+                                ) {
+                                    Ok(_) => {}
+                                    Err(err) => {
+                                        error!("{} is stopping because: {err}", Self::SERVICE_NAME);
+                                        exit_clone.store(true, Ordering::Relaxed);
+                                    }
+                                }
+                            });
+                        });
                     }
                     info!("{} has stopped", Self::SERVICE_NAME);
                 }
@@ -121,12 +181,12 @@ impl TransactionStatusService {
 
     fn write_transaction_status_batch(
         transaction_status_message: TransactionStatusMessage,
-        max_complete_transaction_status_slot: &Arc<AtomicU64>,
         enable_rpc_transaction_history: bool,
         transaction_notifier: Option<TransactionNotifierArc>,
         blockstore: &Blockstore,
         enable_extended_tx_metadata_storage: bool,
         dependency_tracker: Option<Arc<DependencyTracker>>,
+        slot_completion_callback: Arc<dyn SlotCompletionCallback>,
     ) -> Result<()> {
         match transaction_status_message {
             TransactionStatusMessage::Batch((
@@ -260,13 +320,18 @@ impl TransactionStatusService {
                         dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
                     }
                 }
+
+                slot_completion_callback.on_slot_complete(slot);
             }
             TransactionStatusMessage::Freeze(bank) => {
+                let slot = bank.slot();
+
                 if !bank.is_frozen() {
-                    return Err(Error::NonFrozenBank(bank.slot()));
+                    return Err(Error::NonFrozenBank(slot));
                 }
                 Self::write_block_meta(&bank, blockstore)?;
-                max_complete_transaction_status_slot.fetch_max(bank.slot(), Ordering::SeqCst);
+
+                slot_completion_callback.on_slot_complete(slot);
             }
         }
         Ok(())
