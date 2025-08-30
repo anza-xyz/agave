@@ -4,7 +4,6 @@ use {
     crate::{
         accounts_file::AccountsFileProvider,
         accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
-        ancient_append_vecs,
         append_vec::{
             aligned_stored_size, test_utils::TempFile, AccountMeta, AppendVec, StoredAccountMeta,
             StoredMeta,
@@ -5973,147 +5972,6 @@ pub(crate) fn compare_all_accounts(
     );
 }
 
-#[test]
-fn test_shrink_ancient_overflow_with_min_size() {
-    solana_logger::setup();
-
-    let ideal_av_size = ancient_append_vecs::get_ancient_append_vec_capacity();
-    let num_normal_slots = 2;
-
-    // build an ancient append vec at slot 'ancient_slot' with one `fat`
-    // account that's larger than the ideal size of ancient append vec to
-    // simulate the *oversized* append vec for shrinking.
-    let account_size = (1.5 * ideal_av_size as f64) as u64;
-    let (db, ancient_slot) = get_one_ancient_append_vec_and_others_with_account_size(
-        num_normal_slots,
-        Some(account_size),
-    );
-
-    let max_slot_inclusive = ancient_slot + (num_normal_slots as Slot);
-    let initial_accounts = get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1));
-
-    let ancient = db.storage.get_slot_storage_entry(ancient_slot).unwrap();
-
-    // assert that the min_size, which about 1.5 * ideal_av_size, kicked in
-    // and result that the ancient append vec capacity exceeds the ideal_av_size
-    assert!(ancient.capacity() > ideal_av_size);
-
-    // combine 1 normal append vec into existing oversize ancient append vec.
-    db.combine_ancient_slots_packed(
-        (ancient_slot..max_slot_inclusive).collect(),
-        CAN_RANDOMLY_SHRINK_FALSE,
-    );
-
-    compare_all_accounts(
-        &initial_accounts,
-        &get_all_accounts(&db, ancient_slot..max_slot_inclusive),
-    );
-
-    // the append vec at max_slot_inclusive-1 should NOT have been removed
-    // since the append vec is already oversized and we created an ancient
-    // append vec there.
-    let ancient2 = db
-        .storage
-        .get_slot_storage_entry(max_slot_inclusive - 1)
-        .unwrap();
-    assert!(ancient2.capacity() > ideal_av_size); // min_size kicked in, which cause the appendvec to be larger than the ideal_av_size
-
-    // Combine normal append vec(s) into existing ancient append vec this
-    // will overflow the original ancient append vec because of the oversized
-    // ancient append vec is full.
-    db.combine_ancient_slots_packed(
-        (ancient_slot..=max_slot_inclusive).collect(),
-        CAN_RANDOMLY_SHRINK_FALSE,
-    );
-
-    compare_all_accounts(
-        &initial_accounts,
-        &get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1)),
-    );
-
-    // Nothing should be combined because the append vec are oversized.
-    // min_size kicked in, which cause the appendvecs to be larger than the ideal_av_size.
-    let ancient = db.storage.get_slot_storage_entry(ancient_slot).unwrap();
-    assert!(ancient.capacity() > ideal_av_size);
-
-    let ancient2 = db
-        .storage
-        .get_slot_storage_entry(max_slot_inclusive - 1)
-        .unwrap();
-    assert!(ancient2.capacity() > ideal_av_size);
-
-    let ancient3 = db
-        .storage
-        .get_slot_storage_entry(max_slot_inclusive)
-        .unwrap();
-    assert!(ancient3.capacity() > ideal_av_size);
-}
-
-#[test]
-fn test_shrink_overflow_too_much() {
-    let num_normal_slots = 2;
-    let ideal_av_size = ancient_append_vecs::get_ancient_append_vec_capacity();
-    let fat_account_size = (1.5 * ideal_av_size as f64) as u64;
-
-    // Prepare 3 append vecs to combine [small, big, small]
-    let account_data_sizes = vec![100, fat_account_size, 100];
-    let (db, slot1) = create_db_with_storages_and_index_with_customized_account_size_per_slot(
-        true,
-        num_normal_slots + 1,
-        account_data_sizes,
-    );
-    let storage = db.get_storage_for_slot(slot1).unwrap();
-    let created_accounts = db.get_unique_accounts_from_storage(&storage);
-
-    // Adjust alive_ratio for slot2 to test it is shrinkable and is a
-    // candidate for squashing into the previous ancient append vec.
-    // However, due to the fact that this append vec is `oversized`, it can't
-    // be squashed into the ancient append vec at previous slot (exceeds the
-    // size limit). Therefore, a new "oversized" ancient append vec is
-    // created at slot2 as the overflow. This is where the "min_bytes" in
-    // `fn create_ancient_append_vec` is used.
-    let slot2 = slot1 + 1;
-    let storage2 = db.storage.get_slot_storage_entry(slot2).unwrap();
-    let original_cap_slot2 = storage2.accounts.capacity();
-    storage2
-        .accounts
-        .set_current_len_for_tests(original_cap_slot2 as usize);
-
-    // Combine append vec into ancient append vec.
-    let slots_to_combine: Vec<Slot> = (slot1..slot1 + (num_normal_slots + 1) as Slot).collect();
-    db.combine_ancient_slots_packed(slots_to_combine, CAN_RANDOMLY_SHRINK_FALSE);
-
-    // slot2 is too big to fit into ideal ancient append vec at slot1. So slot2 won't be merged into slot1.
-    // slot1 will have its own ancient append vec.
-    assert!(db.storage.get_slot_storage_entry(slot1).is_some());
-    let ancient = db.get_storage_for_slot(slot1).unwrap();
-    assert!(ancient.capacity() <= ideal_av_size);
-
-    let after_store = db.get_storage_for_slot(slot1).unwrap();
-    let GetUniqueAccountsResult {
-        stored_accounts: after_stored_accounts,
-        capacity: after_capacity,
-        ..
-    } = db.get_unique_accounts_from_storage(&after_store);
-    assert!(created_accounts.capacity <= after_capacity);
-    assert_eq!(created_accounts.stored_accounts.len(), 1);
-    assert_eq!(after_stored_accounts.len(), 1);
-
-    // slot2, even after shrinking, is still oversized. Therefore, slot 2
-    // exists as an ancient append vec.
-    let storage2_after = db.storage.get_slot_storage_entry(slot2).unwrap();
-    assert!(storage2_after.capacity() > ideal_av_size);
-    let after_store = db.get_storage_for_slot(slot2).unwrap();
-    let GetUniqueAccountsResult {
-        stored_accounts: after_stored_accounts,
-        capacity: after_capacity,
-        ..
-    } = db.get_unique_accounts_from_storage(&after_store);
-    assert!(created_accounts.capacity <= after_capacity);
-    assert_eq!(created_accounts.stored_accounts.len(), 1);
-    assert_eq!(after_stored_accounts.len(), 1);
-}
-
 pub fn get_account_from_account_from_storage(
     account: &AccountFromStorage,
     db: &AccountsDb,
@@ -6157,53 +6015,6 @@ fn populate_index(db: &AccountsDb, slots: Range<Slot>) {
 
 pub(crate) fn remove_account_for_tests(storage: &AccountStorageEntry, num_bytes: usize) {
     storage.remove_accounts(num_bytes, 1);
-}
-
-pub(crate) fn create_storages_and_update_index_with_customized_account_size_per_slot(
-    db: &AccountsDb,
-    tf: Option<&TempFile>,
-    starting_slot: Slot,
-    num_slots: usize,
-    alive: bool,
-    account_data_sizes: Vec<u64>,
-) {
-    if num_slots == 0 {
-        return;
-    }
-    assert!(account_data_sizes.len() == num_slots);
-    let local_tf = (tf.is_none()).then(|| {
-        crate::append_vec::test_utils::get_append_vec_path("create_storages_and_update_index")
-    });
-    let tf = tf.unwrap_or_else(|| local_tf.as_ref().unwrap());
-
-    let starting_id = db
-        .storage
-        .iter()
-        .map(|storage| storage.1.id())
-        .max()
-        .unwrap_or(999);
-    for (i, account_data_size) in account_data_sizes.iter().enumerate().take(num_slots) {
-        let id = starting_id + (i as AccountsFileId);
-        let pubkey1 = solana_pubkey::new_rand();
-        let storage = sample_storage_with_entries_id_fill_percentage(
-            tf,
-            starting_slot + (i as Slot),
-            &pubkey1,
-            id,
-            alive,
-            Some(*account_data_size),
-            50,
-        );
-        insert_store(db, Arc::clone(&storage));
-    }
-
-    let storage = db.get_storage_for_slot(starting_slot).unwrap();
-    let created_accounts = db.get_unique_accounts_from_storage(&storage);
-    assert_eq!(created_accounts.stored_accounts.len(), 1);
-
-    if alive {
-        populate_index(db, starting_slot..(starting_slot + (num_slots as Slot) + 1));
-    }
 }
 
 pub(crate) fn create_storages_and_update_index(
@@ -6268,34 +6079,6 @@ pub(crate) fn create_db_with_storages_and_index(
 
     let slot1 = 1;
     create_storages_and_update_index(&db, None, slot1, num_slots, alive, account_data_size);
-
-    let slot1 = slot1 as Slot;
-    (db, slot1)
-}
-
-pub(crate) fn create_db_with_storages_and_index_with_customized_account_size_per_slot(
-    alive: bool,
-    num_slots: usize,
-    account_data_size: Vec<u64>,
-) -> (AccountsDb, Slot) {
-    solana_logger::setup();
-
-    let db = AccountsDb::new_single_for_tests();
-
-    // create a single append vec with a single account in a slot
-    // add the pubkey to index if alive
-    // call combine_ancient_slots with the slot
-    // verify we create an ancient appendvec that has alive accounts and does not have dead accounts
-
-    let slot1 = 1;
-    create_storages_and_update_index_with_customized_account_size_per_slot(
-        &db,
-        None,
-        slot1,
-        num_slots,
-        alive,
-        account_data_size,
-    );
 
     let slot1 = slot1 as Slot;
     (db, slot1)
