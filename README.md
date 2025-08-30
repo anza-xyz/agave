@@ -25,7 +25,7 @@ When building the master branch, please make sure you are using the latest stabl
 $ rustup update
 ```
 
-When building a specific release branch, you should check the rust version in `ci/rust-version.sh` and if necessary, install that version by running:
+When building a specific release branch, you should check the rust version in `rust-toolchain.toml` and if necessary, install that version by running:
 ```bash
 $ rustup install VERSION
 ```
