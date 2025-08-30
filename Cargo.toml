@@ -114,6 +114,8 @@ members = [
     "test-validator",
     "thread-manager",
     "tls-utils",
+    "tlv",
+    "tlv/tlv-mac",
     "tokens",
     "tps-client",
     "tpu-client",
@@ -537,6 +539,7 @@ solana-sysvar-id = "3.0.0"
 solana-test-validator = { path = "test-validator", version = "=3.1.0" }
 solana-time-utils = "3.0.0"
 solana-tls-utils = { path = "tls-utils", version = "=3.1.0" }
+solana-tlv = { path = "tlv", version = "=3.1.0" }
 solana-tps-client = { path = "tps-client", version = "=3.1.0" }
 solana-tpu-client = { path = "tpu-client", version = "=3.1.0", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=3.1.0" }
