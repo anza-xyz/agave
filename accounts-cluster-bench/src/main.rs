@@ -96,7 +96,7 @@ pub fn poll_get_latest_blockhash(client: &RpcClient) -> Option<Hash> {
 pub fn poll_get_fee_for_message(client: &RpcClient, message: &mut Message) -> (Option<u64>, Hash) {
     let mut num_retries = MAX_RPC_CALL_RETRIES;
     loop {
-        let response = client.get_fee_for_message(message);
+        let response = client.get_fee_for_message_with_legacy(message);
 
         if let Ok(fee) = response {
             return (Some(fee), message.recent_blockhash);

@@ -1201,7 +1201,7 @@ impl TestValidator {
             match rpc_client.get_latest_blockhash().await {
                 Ok(blockhash) => {
                     message.recent_blockhash = blockhash;
-                    match rpc_client.get_fee_for_message(&message).await {
+                    match rpc_client.get_fee_for_message_with_legacy(&message).await {
                         Ok(fee) => {
                             if fee != 0 {
                                 break;

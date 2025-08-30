@@ -202,7 +202,7 @@ fn run_transactions_dos(
 
     if just_calculate_fees {
         let fee = client
-            .get_fee_for_message(&message)
+            .get_fee_for_message_with_legacy(&message)
             .expect("get_fee_for_message");
 
         let account_space_fees = min_balance * account_keypairs.len() as u64;
@@ -286,7 +286,7 @@ fn run_transactions_dos(
         }
 
         let fee = client
-            .get_fee_for_message(&message)
+            .get_fee_for_message_with_legacy(&message)
             .expect("get_fee_for_message");
         let lamports = min_balance + fee;
 

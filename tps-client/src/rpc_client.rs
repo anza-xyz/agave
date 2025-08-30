@@ -5,7 +5,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_epoch_info::EpochInfo,
     solana_hash::Hash,
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcBlockConfig,
@@ -85,7 +85,8 @@ impl TpsClient for RpcClient {
     }
 
     fn get_fee_for_message(&self, message: &Message) -> TpsClientResult<u64> {
-        RpcClient::get_fee_for_message(self, message).map_err(|err| err.into())
+        let versioned_message = VersionedMessage::Legacy(message.clone());
+        RpcClient::get_fee_for_message(self, &versioned_message).map_err(|err| err.into())
     }
 
     fn get_minimum_balance_for_rent_exemption(&self, data_len: usize) -> TpsClientResult<u64> {

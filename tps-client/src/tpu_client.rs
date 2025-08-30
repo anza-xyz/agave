@@ -7,7 +7,7 @@ use {
     },
     solana_epoch_info::EpochInfo,
     solana_hash::Hash,
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_pubkey::Pubkey,
     solana_rpc_client_api::config::RpcBlockConfig,
     solana_signature::Signature,
@@ -96,8 +96,9 @@ where
     }
 
     fn get_fee_for_message(&self, message: &Message) -> TpsClientResult<u64> {
+        let versioned_message = VersionedMessage::Legacy(message.clone());
         self.rpc_client()
-            .get_fee_for_message(message)
+            .get_fee_for_message(&versioned_message)
             .map_err(|err| err.into())
     }
 

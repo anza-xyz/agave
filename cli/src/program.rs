@@ -1657,7 +1657,7 @@ fn process_program_upgrade(
             feature_set,
         )?;
 
-        let fee = rpc_client.get_fee_for_message(&message)?;
+        let fee = rpc_client.get_fee_for_message_with_legacy(&message)?;
         check_account_for_spend_and_fee_with_commitment(
             &rpc_client,
             &fee_payer_signer.pubkey(),
@@ -3105,16 +3105,16 @@ fn check_payer(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut fee = Saturating(0);
     if let Some(message) = initial_message {
-        fee += rpc_client.get_fee_for_message(message)?;
+        fee += rpc_client.get_fee_for_message_with_legacy(message)?;
     }
     // Assume all write messages cost the same
     if let Some(message) = write_messages.first() {
         fee += rpc_client
-            .get_fee_for_message(message)?
+            .get_fee_for_message_with_legacy(message)?
             .saturating_mul(write_messages.len() as u64);
     }
     if let Some(message) = final_message {
-        fee += rpc_client.get_fee_for_message(message)?;
+        fee += rpc_client.get_fee_for_message_with_legacy(message)?;
     }
     check_account_for_spend_and_fee_with_commitment(
         rpc_client,

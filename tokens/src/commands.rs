@@ -814,7 +814,7 @@ pub fn get_fee_estimate_for_messages(
     let mut message = messages.first().ok_or(Error::MissingMessages)?.clone();
     let latest_blockhash = client.get_latest_blockhash()?;
     message.recent_blockhash = latest_blockhash;
-    let fee = client.get_fee_for_message(&message)?;
+    let fee = client.get_fee_for_message_with_legacy(&message)?;
     let fee_estimate = fee
         .checked_mul(messages.len() as u64)
         .ok_or(Error::FeeEstimationError)?;
@@ -1875,7 +1875,7 @@ mod tests {
         write_keypair_file(&alice, &sender_keypair_file).unwrap();
 
         let fees = client
-            .get_fee_for_message(&one_signer_message(&client))
+            .get_fee_for_message_with_legacy(&one_signer_message(&client))
             .unwrap();
         let fees_in_sol = fees as f64 / LAMPORTS_PER_SOL as f64;
 
@@ -1957,7 +1957,7 @@ mod tests {
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
 
         let fees = client
-            .get_fee_for_message(&one_signer_message(&client))
+            .get_fee_for_message_with_legacy(&one_signer_message(&client))
             .unwrap();
         let fees_in_sol = fees as f64 / LAMPORTS_PER_SOL as f64;
 
@@ -2082,7 +2082,7 @@ mod tests {
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
 
         let fees = client
-            .get_fee_for_message(&one_signer_message(&client))
+            .get_fee_for_message_with_legacy(&one_signer_message(&client))
             .unwrap();
         let fees_in_sol = fees as f64 / LAMPORTS_PER_SOL as f64;
 
@@ -2198,7 +2198,7 @@ mod tests {
         let client = RpcClient::new_with_commitment(url, CommitmentConfig::processed());
 
         let fees = client
-            .get_fee_for_message(&one_signer_message(&client))
+            .get_fee_for_message_with_legacy(&one_signer_message(&client))
             .unwrap();
         let fees_in_sol = fees as f64 / LAMPORTS_PER_SOL as f64;
 
