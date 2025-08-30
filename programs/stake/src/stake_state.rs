@@ -12,7 +12,8 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::stake::id,
     solana_stake_interface::stake_flags::StakeFlags,
-    solana_vote_interface::state::VoteStateV3,
+    solana_vote_interface::state::{VoteStateV3, VoteStateV4},
+    solana_vote_program::vote_state::VoteStateVersionsMock,
 };
 
 // utility function, used by Stakes, tests
@@ -49,6 +50,23 @@ fn new_stake(
     Stake {
         delegation: Delegation::new(voter_pubkey, stake, activation_epoch),
         credits_observed: vote_state.credits(),
+    }
+}
+
+fn new_stake_v4(
+    stake: u64,
+    voter_pubkey: &Pubkey,
+    vote_state: &VoteStateV4,
+    activation_epoch: Epoch,
+) -> Stake {
+    let credits_observed = if vote_state.epoch_credits.is_empty() {
+        0
+    } else {
+        vote_state.epoch_credits.last().unwrap().1
+    };
+    Stake {
+        delegation: Delegation::new(voter_pubkey, stake, activation_epoch),
+        credits_observed,
     }
 }
 
@@ -96,6 +114,23 @@ pub fn create_account(
     )
 }
 
+pub fn create_account_v4(
+    authorized: &Pubkey,
+    voter_pubkey: &Pubkey,
+    vote_account: &AccountSharedData,
+    rent: &Rent,
+    lamports: u64,
+) -> AccountSharedData {
+    do_create_account_v4(
+        authorized,
+        voter_pubkey,
+        vote_account,
+        rent,
+        lamports,
+        Epoch::MAX,
+    )
+}
+
 fn do_create_account(
     authorized: &Pubkey,
     voter_pubkey: &Pubkey,
@@ -118,6 +153,46 @@ fn do_create_account(
                 ..Meta::default()
             },
             new_stake(
+                lamports - rent_exempt_reserve, // underflow is an error, is basically: assert!(lamports > rent_exempt_reserve);
+                voter_pubkey,
+                &vote_state,
+                activation_epoch,
+            ),
+            StakeFlags::empty(),
+        ))
+        .expect("set_state");
+
+    stake_account
+}
+
+fn do_create_account_v4(
+    authorized: &Pubkey,
+    voter_pubkey: &Pubkey,
+    vote_account: &AccountSharedData,
+    rent: &Rent,
+    lamports: u64,
+    activation_epoch: Epoch,
+) -> AccountSharedData {
+    let mut stake_account = AccountSharedData::new(lamports, StakeStateV2::size_of(), &id());
+
+    // Custom deserialize here since VoteStateV4 does not provide it yet.
+    let vote_state_version: VoteStateVersionsMock =
+        bincode::deserialize_from(vote_account.data()).expect("vote_state");
+    let vote_state: VoteStateV4 = match vote_state_version {
+        VoteStateVersionsMock::V4(vote_state) => *vote_state,
+        _ => panic!("Unexpected vote state version"),
+    };
+
+    let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
+
+    stake_account
+        .set_state(&StakeStateV2::Stake(
+            Meta {
+                authorized: Authorized::auto(authorized),
+                rent_exempt_reserve,
+                ..Meta::default()
+            },
+            new_stake_v4(
                 lamports - rent_exempt_reserve, // underflow is an error, is basically: assert!(lamports > rent_exempt_reserve);
                 voter_pubkey,
                 &vote_state,

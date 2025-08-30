@@ -5548,6 +5548,10 @@ impl Bank {
         &self.fee_structure
     }
 
+    pub fn parent_block_id(&self) -> Option<Hash> {
+        self.parent().and_then(|p| p.block_id())
+    }
+
     pub fn block_id(&self) -> Option<Hash> {
         *self.block_id.read().unwrap()
     }

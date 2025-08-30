@@ -945,6 +945,7 @@ impl TestValidator {
             config.rent.clone(),
             solana_cluster_type::ClusterType::Development,
             accounts.into_iter().collect(),
+            None,
         );
         genesis_config.epoch_schedule = config
             .epoch_schedule

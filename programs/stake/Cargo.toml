@@ -32,6 +32,7 @@ solana-stake-interface = { workspace = true, features = ["bincode"] }
 solana-sysvar = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
+solana-vote-program = { workspace = true }
 
 [lints]
 workspace = true

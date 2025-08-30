@@ -1,9 +1,13 @@
 //! Vote state, vote program
 //! Receive and processes votes from validators
-pub use solana_vote_interface::state::{vote_state_versions::*, *};
+pub use solana_vote_interface::{
+    authorized_voters::AuthorizedVoters,
+    state::{vote_state_v4::VoteStateV4, vote_state_versions::*, *},
+};
 use {
     log::*,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed},
     solana_clock::{Clock, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
@@ -18,6 +22,17 @@ use {
         collections::{HashSet, VecDeque},
     },
 };
+
+// This is a hack because VoteStateVersions does not currently include
+// VoteStateV4, so we fake/duplicate it here to line up with how we will try and
+// deserialize into VoteStateFrame later.
+#[derive(Debug, PartialEq, Eq, Clone, serde_derive::Deserialize, serde_derive::Serialize)]
+pub enum VoteStateVersionsMock {
+    V0_23_5(Box<VoteState1_14_11>),
+    V1_14_11(Box<VoteState1_14_11>),
+    V3(Box<VoteStateV3>),
+    V4(Box<VoteStateV4>),
+}
 
 // utility function, used by Stakes, tests
 pub fn from<T: ReadableAccount>(account: &T) -> Option<VoteStateV3> {
@@ -1045,6 +1060,39 @@ pub fn create_account_with_authorized(
         vote_account.data_as_mut_slice(),
     )
     .unwrap();
+
+    vote_account
+}
+
+pub fn create_account_with_authorized_v4(
+    node_pubkey: &Pubkey,
+    authorized_voter: &Pubkey,
+    authorized_withdrawer: &Pubkey,
+    commission: u16,
+    lamports: u64,
+    bls_pubkey: &BLSPubkey,
+) -> AccountSharedData {
+    // This size seemed in the ballpark??? <(^_^)>
+    let size = 4096;
+    let mut vote_account = AccountSharedData::new(lamports, size, &id());
+
+    let authorized_voters = AuthorizedVoters::new(0, *authorized_voter);
+    let bls_pubkey_compressed: PubkeyCompressed = bls_pubkey.try_into().unwrap();
+    let vote_state = VoteStateV4 {
+        node_pubkey: *node_pubkey,
+        authorized_withdrawer: *authorized_withdrawer,
+        inflation_rewards_commission_bps: commission,
+        authorized_voters,
+        bls_pubkey_compressed: Some(bls_pubkey_compressed.0),
+        ..VoteStateV4::default()
+    };
+
+    // Custom serialize because VoteStateV4 does not provide it yet.
+    assert!(bincode::serialize_into(
+        vote_account.data_as_mut_slice(),
+        &VoteStateVersionsMock::V4(Box::new(vote_state))
+    )
+    .is_ok());
 
     vote_account
 }

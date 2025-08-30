@@ -91,7 +91,12 @@ impl StakesCache {
         }
         debug_assert_ne!(account.lamports(), 0u64);
         if solana_vote_program::check_id(owner) {
-            if VoteStateVersions::is_correct_size_and_initialized(account.data()) {
+            // is_correct_size_and_initialized doesn't understand VoteStateV4
+            // yet, so we add the data len check as a proxy for "this must be a
+            // VoteStateV4 account"
+            if VoteStateVersions::is_correct_size_and_initialized(account.data())
+                || account.data().len() == 4096
+            {
                 match VoteAccount::try_from(account.to_account_shared_data()) {
                     Ok(vote_account) => {
                         // drop the old account after releasing the lock

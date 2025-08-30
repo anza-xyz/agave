@@ -284,6 +284,7 @@ impl LocalCluster {
                                 node_keypair: node_keypair.insecure_clone(),
                                 vote_keypair: vote_keypair.insecure_clone(),
                                 stake_keypair: Keypair::new(),
+                                bls_keypair: None,
                             },
                             stake,
                         ))
@@ -314,6 +315,7 @@ impl LocalCluster {
             &keys_in_genesis,
             stakes_in_genesis,
             config.cluster_type,
+            false,
         );
         genesis_config.accounts.extend(
             config
