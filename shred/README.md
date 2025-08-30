@@ -52,12 +52,10 @@ The **Shred Common Header** is present in all shreds.
 
 
 Solana uses multiple types of shreds identified by the ShredVariant bits as follows:
-   - **Code** (`0x40`): Coding shred with Merkle verification.
-   - **Code (Chained)** (`0x60`): Linked coding shreds.
-   - **Code (Chained Resigned)** (`0x70`): Chained with retransmitter signature.
-   - **Data** (`0x80`): Holds transaction data with Merkle verification.
-   - **Data (Chained)** (`0x90`): Linked Merkle data shreds.
-   - **Data (Chained Resigned)** (`0xB0`): Chained with retransmitter signature.
+   - Code (`0x60`): Reed-Solomon FEC shreds with Merkle verification.
+   - Code (Resigned) (`0x70`): Code with retransmitter signature.
+   - Data (`0x90`): Transaction data shreds with Merkle verification.
+   - Data (Resigned) (`0xB0`): Data shreds with retransmitter signature.
 ---
 
 ## **4. Data Shred Header (5 bytes, Little Endian)**
