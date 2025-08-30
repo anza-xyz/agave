@@ -552,17 +552,15 @@ fn handle_and_cache_new_connection(
             remote_addr,
         );
 
-        if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
-            .try_add_connection(
-                ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey),
-                remote_addr.port(),
-                client_connection_tracker,
-                Some(connection.clone()),
-                params.peer_type,
-                timing::timestamp(),
-                params.max_connections_per_peer,
-            )
-        {
+        if let Some((last_update, cancel_connection)) = connection_table_l.try_add_connection(
+            ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey),
+            remote_addr.port(),
+            client_connection_tracker,
+            Some(connection.clone()),
+            params.peer_type,
+            timing::timestamp(),
+            params.max_connections_per_peer,
+        ) {
             drop(connection_table_l);
 
             if let Ok(receive_window) = receive_window {
@@ -579,7 +577,6 @@ fn handle_and_cache_new_connection(
                 params.clone(),
                 wait_for_chunk_timeout,
                 stream_load_ema,
-                stream_counter,
             ));
             Ok(())
         } else {
@@ -1048,7 +1045,6 @@ async fn handle_connection(
     params: NewConnectionHandlerParams,
     wait_for_chunk_timeout: Duration,
     stream_load_ema: Arc<StakedStreamLoadEMA>,
-    stream_counter: Arc<ConnectionStreamCounter>,
 ) {
     let NewConnectionHandlerParams {
         packet_sender,
@@ -1066,6 +1062,7 @@ async fn handle_connection(
         stats.total_connections.load(Ordering::Relaxed),
     );
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
+    let mut stream_counter = ConnectionStreamCounter::new();
 
     'conn: loop {
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
@@ -1085,7 +1082,7 @@ async fn handle_connection(
             stream_load_ema.available_load_capacity_in_throttling_duration(peer_type, total_stake);
 
         let throttle_interval_start = stream_counter.reset_throttling_params_if_needed();
-        let streams_read_in_throttle_interval = stream_counter.stream_count.load(Ordering::Relaxed);
+        let streams_read_in_throttle_interval = stream_counter.stream_count;
         if streams_read_in_throttle_interval >= max_streams_per_throttling_interval {
             // The peer is sending faster than we're willing to read. Sleep for what's
             // left of this read interval so the peer backs off.
@@ -1116,7 +1113,7 @@ async fn handle_connection(
             }
         }
         stream_load_ema.increment_load(peer_type);
-        stream_counter.stream_count.fetch_add(1, Ordering::Relaxed);
+        stream_counter.stream_count += 1;
         stats.total_streams.fetch_add(1, Ordering::Relaxed);
         stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
 
@@ -1331,7 +1328,6 @@ struct ConnectionEntry {
     // We do not explicitly use it, but its drop is triggered when ConnectionEntry is dropped.
     _client_connection_tracker: ClientConnectionTracker,
     connection: Option<Connection>,
-    stream_counter: Arc<ConnectionStreamCounter>,
 }
 
 impl ConnectionEntry {
@@ -1342,7 +1338,6 @@ impl ConnectionEntry {
         port: u16,
         client_connection_tracker: ClientConnectionTracker,
         connection: Option<Connection>,
-        stream_counter: Arc<ConnectionStreamCounter>,
     ) -> Self {
         Self {
             cancel,
@@ -1351,7 +1346,6 @@ impl ConnectionEntry {
             port,
             _client_connection_tracker: client_connection_tracker,
             connection,
-            stream_counter,
         }
     }
 
@@ -1462,11 +1456,7 @@ impl ConnectionTable {
         peer_type: ConnectionPeerType,
         last_update: u64,
         max_connections_per_peer: usize,
-    ) -> Option<(
-        Arc<AtomicU64>,
-        CancellationToken,
-        Arc<ConnectionStreamCounter>,
-    )> {
+    ) -> Option<(Arc<AtomicU64>, CancellationToken)> {
         let connection_entry = self.table.entry(key).or_default();
         let has_connection_capacity = connection_entry
             .len()
@@ -1476,10 +1466,6 @@ impl ConnectionTable {
         if has_connection_capacity {
             let cancel = CancellationToken::new();
             let last_update = Arc::new(AtomicU64::new(last_update));
-            let stream_counter = connection_entry
-                .first()
-                .map(|entry| entry.stream_counter.clone())
-                .unwrap_or(Arc::new(ConnectionStreamCounter::new()));
             connection_entry.push(ConnectionEntry::new(
                 cancel.clone(),
                 peer_type,
@@ -1487,10 +1473,9 @@ impl ConnectionTable {
                 port,
                 client_connection_tracker,
                 connection,
-                stream_counter.clone(),
             ));
             self.total_size += 1;
-            Some((last_update, cancel, stream_counter))
+            Some((last_update, cancel))
         } else {
             if let Some(connection) = connection {
                 connection.close(
