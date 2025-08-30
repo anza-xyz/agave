@@ -4,8 +4,7 @@ use jemallocator::Jemalloc;
 use {
     agave_validator::{
         cli::{app, warn_for_deprecated_arguments, DefaultArgs},
-        commands,
-        config_file::Config,
+        commands, config_file,
     },
     log::error,
     std::{path::PathBuf, process::exit},
@@ -22,14 +21,16 @@ pub fn main() {
     let matches = cli_app.get_matches();
     warn_for_deprecated_arguments(&matches);
 
-    let config = matches
-        .value_of("config_path")
-        .map(|path| {
-            Config::from_path(path)
-                .inspect_err(|e| log::warn!("Config error loading {path:?}: {e}"))
-                .unwrap_or_default()
-        })
+    let mut config_builder = config::Config::builder();
+    if let Some(config_path) = matches.value_of("config_path") {
+        config_builder = config_builder.add_source(config::File::with_name(config_path));
+    }
+    let config = config_builder
+        .build()
+        .and_then(|c| c.try_deserialize::<config_file::Config>())
+        .inspect_err(|e| log::warn!("Config error: {e}"))
         .unwrap_or_default();
+
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
 
     match matches.subcommand() {

@@ -5,10 +5,7 @@
 use {
     serde::{de::Deserializer, Deserialize},
     solana_clap_utils::input_parsers::parse_cpu_ranges,
-    std::{
-        fs::{self},
-        path::{Path, PathBuf},
-    },
+    std::path::PathBuf,
     thiserror::Error,
 };
 
@@ -66,11 +63,5 @@ impl Config {
             path.extend(["agave", "validator.toml"]);
             path
         })
-    }
-
-    pub fn from_path(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
-        let file = fs::read_to_string(path)?;
-        let config = toml::from_str(&file)?;
-        Ok(config)
     }
 }
