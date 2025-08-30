@@ -137,6 +137,10 @@ impl From<StakeIdentity> for QuicClientCertificate {
 /// addresses. Implementations of this trait are used by the
 /// [`ConnectionWorkersScheduler`] to distribute transactions to workers
 /// accordingly.
+///
+/// This trait supports both stateless and stateful implementations.
+/// For stateless implementations (like the original design), use static methods.
+/// For stateful implementations, create an instance and use instance methods.
 #[async_trait]
 pub trait WorkersBroadcaster {
     /// Sends a `transaction_batch` to workers associated with the given
@@ -145,7 +149,10 @@ pub trait WorkersBroadcaster {
     /// Returns error if a critical issue occurs, e.g. the implementation
     /// encounters an unrecoverable error. In this case, it will trigger
     /// stopping the scheduler and cleaning all the data.
+    ///
+    /// For stateful broadcasters, this method can access and modify internal state.
     async fn send_to_workers(
+        &mut self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
@@ -189,8 +196,8 @@ impl ConnectionWorkersScheduler {
         self,
         config: ConnectionWorkersSchedulerConfig,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
-        self.run_with_broadcaster::<NonblockingBroadcaster>(config)
-            .await
+        let broadcaster = NonblockingBroadcaster::new();
+        self.run_with_broadcaster(config, broadcaster).await
     }
 
     /// Starts the scheduler, which manages the distribution of transactions to
@@ -213,6 +220,7 @@ impl ConnectionWorkersScheduler {
             max_reconnect_attempts,
             leaders_fanout,
         }: ConnectionWorkersSchedulerConfig,
+        mut broadcaster: Broadcaster,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
         let ConnectionWorkersScheduler {
             mut leader_updater,
@@ -285,8 +293,9 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
-            if let Err(error) =
-                Broadcaster::send_to_workers(&mut workers, &send_leaders, transaction_batch).await
+            if let Err(error) = broadcaster
+                .send_to_workers(&mut workers, &send_leaders, transaction_batch)
+                .await
             {
                 last_error = Some(error);
                 break;
@@ -325,16 +334,128 @@ fn build_client_config(stake_identity: Option<&StakeIdentity>) -> ClientConfig {
 /// [`NonblockingBroadcaster`] attempts to immediately send transactions to all
 /// the workers. If worker cannot accept transactions because it's channel is
 /// full, the transactions will not be sent to this worker.
-struct NonblockingBroadcaster;
+///
+/// This is a stateless broadcaster that maintains no internal state.
+#[derive(Default)]
+pub struct NonblockingBroadcaster;
+
+impl NonblockingBroadcaster {
+    /// Creates a new instance of NonblockingBroadcaster
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 #[async_trait]
 impl WorkersBroadcaster for NonblockingBroadcaster {
     async fn send_to_workers(
+        &mut self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
         for new_leader in leaders {
+            if !workers.contains(new_leader) {
+                warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
+                continue;
+            }
+
+            let send_res =
+                workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
+            match send_res {
+                Ok(()) => (),
+                Err(WorkersCacheError::ShutdownError) => {
+                    debug!("Connection to {new_leader} was closed, worker cache shutdown");
+                }
+                Err(WorkersCacheError::ReceiverDropped) => {
+                    // Remove the worker from the cache, if the peer has disconnected.
+                    if let Some(pop_worker) = workers.pop(*new_leader) {
+                        shutdown_worker(pop_worker)
+                    }
+                }
+                Err(err) => {
+                    warn!("Connection to {new_leader} was closed, worker error: {err}");
+                    // If we have failed to send batch, it will be dropped.
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// [`StatefulBroadcaster`] is a broadcaster that maintains internal state,
+/// specifically a blacklist of validator addresses that should be avoided.
+///
+/// This broadcaster allows users to maintain a persistent blacklist of validators
+/// they don't want to send transactions to, addressing the use case mentioned in
+/// the tpu-client-next stateful broadcaster issue.
+#[derive(Default)]
+pub struct StatefulBroadcaster {
+    /// Set of SocketAddr that should be excluded from transaction sending
+    blacklisted_validators: std::collections::HashSet<SocketAddr>,
+}
+
+impl StatefulBroadcaster {
+    /// Creates a new StatefulBroadcaster with an empty blacklist
+    pub fn new() -> Self {
+        Self {
+            blacklisted_validators: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Creates a new StatefulBroadcaster with a predefined blacklist
+    pub fn with_blacklist(blacklisted_validators: std::collections::HashSet<SocketAddr>) -> Self {
+        Self {
+            blacklisted_validators,
+        }
+    }
+
+    /// Adds a validator to the blacklist
+    pub fn add_to_blacklist(&mut self, validator: SocketAddr) {
+        self.blacklisted_validators.insert(validator);
+    }
+
+    /// Removes a validator from the blacklist
+    pub fn remove_from_blacklist(&mut self, validator: &SocketAddr) -> bool {
+        self.blacklisted_validators.remove(validator)
+    }
+
+    /// Checks if a validator is blacklisted
+    pub fn is_blacklisted(&self, validator: &SocketAddr) -> bool {
+        self.blacklisted_validators.contains(validator)
+    }
+
+    /// Returns a reference to the current blacklist
+    pub fn blacklist(&self) -> &std::collections::HashSet<SocketAddr> {
+        &self.blacklisted_validators
+    }
+
+    /// Clears the blacklist
+    pub fn clear_blacklist(&mut self) {
+        self.blacklisted_validators.clear();
+    }
+
+    /// Returns the number of blacklisted validators
+    pub fn blacklist_size(&self) -> usize {
+        self.blacklisted_validators.len()
+    }
+}
+
+#[async_trait]
+impl WorkersBroadcaster for StatefulBroadcaster {
+    async fn send_to_workers(
+        &mut self,
+        workers: &mut WorkersCache,
+        leaders: &[SocketAddr],
+        transaction_batch: TransactionBatch,
+    ) -> Result<(), ConnectionWorkersSchedulerError> {
+        for new_leader in leaders {
+            // Skip blacklisted validators
+            if self.is_blacklisted(new_leader) {
+                debug!("Skipping blacklisted validator: {new_leader:?}");
+                continue;
+            }
+
             if !workers.contains(new_leader) {
                 warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
                 continue;

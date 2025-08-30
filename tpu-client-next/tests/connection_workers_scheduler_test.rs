@@ -23,9 +23,10 @@ use {
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
+        StatefulBroadcaster,
     },
     std::{
-        collections::HashMap,
+        collections::{HashMap, HashSet},
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         num::Saturating,
         sync::{atomic::Ordering, Arc},
@@ -95,6 +96,43 @@ async fn setup_connection_worker_scheduler(
     );
     let config = test_config(stake_identity);
     let scheduler = tokio::spawn(scheduler.run(config));
+
+    (scheduler, update_identity_sender, cancel)
+}
+
+async fn setup_connection_worker_scheduler_with_stateful_broadcaster(
+    tpu_address: SocketAddr,
+    transaction_receiver: Receiver<TransactionBatch>,
+    stake_identity: Option<Keypair>,
+    broadcaster: StatefulBroadcaster,
+) -> (
+    JoinHandle<Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError>>,
+    watch::Sender<Option<StakeIdentity>>,
+    CancellationToken,
+) {
+    let json_rpc_url = "http://127.0.0.1:8899";
+    let (_, websocket_url) = ConfigInput::compute_websocket_url_setting("", "", json_rpc_url, "");
+
+    let rpc_client = Arc::new(RpcClient::new_with_commitment(
+        json_rpc_url.to_string(),
+        CommitmentConfig::confirmed(),
+    ));
+
+    // Setup sending txs
+    let leader_updater = create_leader_updater(rpc_client, websocket_url, Some(tpu_address))
+        .await
+        .expect("Leader updates was successfully created");
+
+    let cancel = CancellationToken::new();
+    let (update_identity_sender, update_identity_receiver) = watch::channel(None);
+    let scheduler = ConnectionWorkersScheduler::new(
+        leader_updater,
+        transaction_receiver,
+        update_identity_receiver,
+        cancel.clone(),
+    );
+    let config = test_config(stake_identity);
+    let scheduler = tokio::spawn(scheduler.run_with_broadcaster(config, broadcaster));
 
     (scheduler, update_identity_sender, cancel)
 }
@@ -815,6 +853,151 @@ async fn test_proactive_connection_close_detection() {
     );
 
     // Exit server
+    exit.store(true, Ordering::Relaxed);
+    server_handle.await.unwrap();
+}
+
+// Test the StatefulBroadcaster functionality with blacklisting
+#[tokio::test]
+async fn test_stateful_broadcaster_with_blacklist() {
+    let SpawnTestServerResult {
+        join_handle: server_handle,
+        exit,
+        receiver,
+        server_address,
+        stats: _stats,
+    } = setup_quic_server(None, QuicServerParams::default_for_tests());
+
+    // Setup sending txs
+    let tx_size = 1;
+    let expected_num_txs: usize = 50;
+    let SpawnTxGenerator {
+        tx_receiver,
+        tx_sender_shutdown,
+        ..
+    } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(10));
+
+    // Create a StatefulBroadcaster with server_address blacklisted
+    let mut blacklist = HashSet::new();
+    blacklist.insert(server_address);
+    let broadcaster = StatefulBroadcaster::with_blacklist(blacklist);
+
+    let (scheduler_handle, _update_identity_sender, _scheduler_cancel) =
+        setup_connection_worker_scheduler_with_stateful_broadcaster(
+            server_address,
+            tx_receiver,
+            None,
+            broadcaster,
+        )
+        .await;
+
+    // Since the server is blacklisted, we should receive no packets
+    let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
+    assert_eq!(
+        actual_num_packets, 0,
+        "Expected no packets since server is blacklisted, but received {actual_num_packets}"
+    );
+
+    // Stop sending
+    tx_sender_shutdown.await;
+    let stats = join_scheduler(scheduler_handle).await;
+    // No transactions should be successfully sent due to blacklisting
+    assert_eq!(stats.successfully_sent, 0);
+
+    // Stop server
+    exit.store(true, Ordering::Relaxed);
+    server_handle.await.unwrap();
+}
+
+// Test StatefulBroadcaster blacklist management
+#[tokio::test]
+async fn test_stateful_broadcaster_blacklist_management() {
+    let mut broadcaster = StatefulBroadcaster::new();
+
+    let addr1 = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 8001);
+    let addr2 = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 8002);
+    let addr3 = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 8003);
+
+    // Test initial state
+    assert_eq!(broadcaster.blacklist_size(), 0);
+    assert!(!broadcaster.is_blacklisted(&addr1));
+
+    // Test adding to blacklist
+    broadcaster.add_to_blacklist(addr1);
+    broadcaster.add_to_blacklist(addr2);
+    assert_eq!(broadcaster.blacklist_size(), 2);
+    assert!(broadcaster.is_blacklisted(&addr1));
+    assert!(broadcaster.is_blacklisted(&addr2));
+    assert!(!broadcaster.is_blacklisted(&addr3));
+
+    // Test removing from blacklist
+    assert!(broadcaster.remove_from_blacklist(&addr1));
+    assert!(!broadcaster.remove_from_blacklist(&addr3)); // Not in blacklist
+    assert_eq!(broadcaster.blacklist_size(), 1);
+    assert!(!broadcaster.is_blacklisted(&addr1));
+    assert!(broadcaster.is_blacklisted(&addr2));
+
+    // Test blacklist reference
+    let blacklist_ref = broadcaster.blacklist();
+    assert!(blacklist_ref.contains(&addr2));
+    assert!(!blacklist_ref.contains(&addr1));
+
+    // Test clearing blacklist
+    broadcaster.clear_blacklist();
+    assert_eq!(broadcaster.blacklist_size(), 0);
+    assert!(!broadcaster.is_blacklisted(&addr2));
+}
+
+// Test StatefulBroadcaster with partial blacklisting (allowing some validators)
+#[tokio::test]
+async fn test_stateful_broadcaster_partial_blacklist() {
+    let SpawnTestServerResult {
+        join_handle: server_handle,
+        exit,
+        receiver,
+        server_address,
+        stats: _stats,
+    } = setup_quic_server(None, QuicServerParams::default_for_tests());
+
+    // Setup sending txs
+    let tx_size = 1;
+    let expected_num_txs: usize = 20;
+    let SpawnTxGenerator {
+        tx_receiver,
+        tx_sender_shutdown,
+        ..
+    } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(50));
+
+    // Create a StatefulBroadcaster with a different address blacklisted
+    // (not the server we're connecting to)
+    let mut blacklist = HashSet::new();
+    let blacklisted_addr = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 9999);
+    blacklist.insert(blacklisted_addr);
+    let broadcaster = StatefulBroadcaster::with_blacklist(blacklist);
+
+    let (scheduler_handle, _update_identity_sender, _scheduler_cancel) =
+        setup_connection_worker_scheduler_with_stateful_broadcaster(
+            server_address,
+            tx_receiver,
+            None,
+            broadcaster,
+        )
+        .await;
+
+    // Since the server is NOT blacklisted, we should receive packets
+    let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
+    assert!(
+        actual_num_packets > 0,
+        "Expected some packets since server is not blacklisted, but received {actual_num_packets}"
+    );
+
+    // Stop sending
+    tx_sender_shutdown.await;
+    let stats = join_scheduler(scheduler_handle).await;
+    // Some transactions should be successfully sent
+    assert!(stats.successfully_sent > 0);
+
+    // Stop server
     exit.store(true, Ordering::Relaxed);
     server_handle.await.unwrap();
 }
