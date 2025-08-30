@@ -260,6 +260,7 @@ fn main() -> Result<()> {
                 max_connections_per_peer,
                 max_staked_connections: max_connections,
                 max_unstaked_connections: 0,
+                qos_mode: solana_streamer::quic::QosMode::SimpleStreamsPerSecond { max_streams_per_second: (50) },
                 ..Default::default()
             };
             let (s_reader, r_reader) = unbounded();
