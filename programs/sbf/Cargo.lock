@@ -7570,7 +7570,6 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-last-restart-slot",
- "solana-metrics",
  "solana-program-entrypoint",
  "solana-pubkey",
  "solana-rent",

@@ -9689,7 +9689,6 @@ dependencies = [
  "solana-instruction-error",
  "solana-keypair",
  "solana-last-restart-slot",
- "solana-metrics",
  "solana-program-entrypoint",
  "solana-program-runtime",
  "solana-pubkey",
