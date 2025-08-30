@@ -543,7 +543,6 @@ impl MockAlpenglowConsensus {
                 if self.prepare_to_receive(s, slot_start).is_err() {
                     error!("Can not initiate mock voting, slot {s} was not released");
                     datapoint_info!("mock_alpenglow", ("runner_stuck", 2, i64), ("slot", s, i64));
-                    return;
                 }
                 slot_start += ONE_SLOT;
             }
@@ -551,7 +550,7 @@ impl MockAlpenglowConsensus {
 
         if let Some(slot_sender) = self.slot_sender.as_ref() {
             if slot_sender.try_send(slot).is_err() {
-                error!("Can not initiate mock voting, workers is busy");
+                error!("Can not initiate mock voting, worker is busy");
                 datapoint_info!(
                     "mock_alpenglow",
                     ("runner_stuck", 1, i64),
@@ -586,7 +585,7 @@ impl MockAlpenglowConsensus {
                         let mut lockguard = get_state_for_slot(&state, slot).lock().unwrap();
                         // check if tasks have been aborted and do not report garbage
                         if lockguard.current_slot == 0 {
-                            return;
+                            continue;
                         }
                         let total_staked = lockguard.total_staked;
                         let peers = lockguard.reset();
