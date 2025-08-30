@@ -48,6 +48,7 @@ use {
     },
     solana_message::{AddressLoader, SanitizedMessage},
     solana_metrics::inc_new_counter_info,
+    solana_net_utils::sockets::unique_port_range_for_tests,
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_program_pack::Pack,
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
@@ -110,7 +111,7 @@ use {
         cmp::{max, min, Reverse},
         collections::{BinaryHeap, HashMap, HashSet},
         convert::TryFrom,
-        net::SocketAddr,
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         str::FromStr,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -205,6 +206,10 @@ impl Default for JsonRpcConfig {
 impl JsonRpcConfig {
     pub fn default_for_test() -> Self {
         Self {
+            faucet_addr: Some(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                unique_port_range_for_tests(1).start,
+            )),
             full_api: true,
             disable_health_check: true,
             ..Self::default()

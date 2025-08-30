@@ -7824,6 +7824,7 @@ dependencies = [
  "solana-message",
  "solana-metrics",
  "solana-native-token",
+ "solana-net-utils",
  "solana-perf",
  "solana-poh",
  "solana-poh-config",

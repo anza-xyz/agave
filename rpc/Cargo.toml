@@ -64,6 +64,7 @@ solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
 solana-poh-config = { workspace = true }
@@ -112,7 +113,6 @@ solana-compute-budget-interface = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-instruction = { workspace = true }
-solana-net-utils = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-program-option = { workspace = true }
