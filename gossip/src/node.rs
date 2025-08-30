@@ -36,7 +36,6 @@ pub struct Node {
     pub bind_ip_addrs: Arc<BindIpAddrs>,
     // Store TVU addresses for each interface
     pub tvu_addresses: Vec<SocketAddr>,
-    pub tvu_retransmit_addresses: Vec<SocketAddr>,
 }
 
 impl Node {
@@ -215,10 +214,6 @@ impl Node {
             )
             .expect("Secondary bind TVU retransmit"),
         );
-        let tvu_retransmit_addresses: Vec<SocketAddr> = bind_ip_addrs
-            .iter()
-            .map(|&ip| SocketAddr::new(ip, tvu_retransmit_port))
-            .collect();
 
         let (_, repair) = bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
             .expect("repair bind");
@@ -232,9 +227,14 @@ impl Node {
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
                 .expect("serve_repair_quic");
 
-        let (_, broadcast) =
+        let (broadcast_port, mut broadcast) =
             multi_bind_in_range_with_config(bind_ip_addr, port_range, socket_config, 4)
                 .expect("broadcast multi_bind");
+        // Multihoming TX for broadcast
+        broadcast.append(
+            &mut Self::bind_to_extra_ip(&bind_ip_addrs, broadcast_port, 4, socket_config)
+                .expect("Secondary bind broadcast"),
+        );
 
         let (_, ancestor_hashes_requests) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
@@ -351,7 +351,6 @@ impl Node {
             sockets,
             bind_ip_addrs,
             tvu_addresses,
-            tvu_retransmit_addresses,
         }
     }
 
@@ -391,7 +390,6 @@ mod multihoming {
     pub struct SocketsMultihomed {
         pub gossip: Arc<[UdpSocket]>,
         pub tvu_ingress: Vec<SocketAddr>,
-        pub tvu_retransmit_sockets: Vec<SocketAddr>,
     }
 
     #[derive(Debug, Clone)]
@@ -442,7 +440,7 @@ mod multihoming {
                 .set_active(interface_index)
                 .expect("Interface index out of range");
 
-            // Send from correct tvu retransmit sockets
+            // Send from correct tvu retransmit/broadcast sockets
             cluster_info
                 .egress_socket_select()
                 .select_interface(interface_index);
@@ -457,7 +455,6 @@ mod multihoming {
                 sockets: SocketsMultihomed {
                     gossip: node.sockets.gossip.clone(),
                     tvu_ingress: node.tvu_addresses.clone(),
-                    tvu_retransmit_sockets: node.tvu_retransmit_addresses.clone(),
                 },
                 bind_ip_addrs: node.bind_ip_addrs.clone(),
             }

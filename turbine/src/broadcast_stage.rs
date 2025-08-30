@@ -317,7 +317,34 @@ impl BroadcastStage {
                 .unwrap()
         };
         let mut thread_hdls = vec![thread_hdl];
-        thread_hdls.extend(socks.into_iter().map(|sock| {
+        let num_broadcast_sockets_per_interface = socks.len() / cluster_info.bind_ip_addrs().len();
+        let num_interfaces: usize = cluster_info.bind_ip_addrs().len();
+
+        // Partition by interface
+        // With 2 interfaces and the default of 4 sockets per interface, `sockets_by_interface` is:
+        // sockets_by_interface = [[s0, s1, s2, s3], [s4, s5, s6, s7]]
+        let mut it = socks.into_iter();
+        let sockets_by_interface: Vec<Vec<UdpSocket>> = (0..num_interfaces)
+            .map(|_| {
+                it.by_ref()
+                    .take(num_broadcast_sockets_per_interface)
+                    .collect()
+            })
+            .collect();
+
+        let mut iters: Vec<_> = sockets_by_interface
+            .into_iter()
+            .map(|sockets| sockets.into_iter())
+            .collect();
+
+        // Spawn `num_broadcast_sockets_per_interface` threads
+        // Each thread gets a socket from each interface (i.e. 2 sockets per thread if multihomed w/ 2 interfaces)
+        thread_hdls.extend((0..num_broadcast_sockets_per_interface).map(|_| {
+            let mut group = Vec::with_capacity(num_interfaces);
+            for it in &mut iters {
+                group.push(it.next().expect("aligned lengths"));
+            }
+
             let socket_receiver = socket_receiver.clone();
             let mut bs_transmit = broadcast_stage_run.clone();
             let cluster_info = cluster_info.clone();
@@ -325,19 +352,22 @@ impl BroadcastStage {
             let quic_endpoint_sender = quic_endpoint_sender.clone();
             let xdp_sender = xdp_sender.clone();
             let run_transmit = move || loop {
-                let sock = match xdp_sender.as_ref() {
-                    Some(xdp_sender) => BroadcastSocket::Xdp(xdp_sender),
-                    None => BroadcastSocket::Udp(&sock),
+                let sock_variant = match xdp_sender.as_ref() {
+                    Some(xdp) => BroadcastSocket::Xdp(xdp),
+                    None => {
+                        let active_index = cluster_info.bind_ip_addrs().active_index();
+                        let active_socket = &group[active_index];
+                        BroadcastSocket::Udp(active_socket)
+                    }
                 };
                 let res = bs_transmit.transmit(
                     &socket_receiver,
                     &cluster_info,
-                    sock,
+                    sock_variant,
                     &bank_forks,
                     &quic_endpoint_sender,
                 );
-                let res = Self::handle_error(res, "solana-broadcaster-transmit");
-                if let Some(res) = res {
+                if let Some(res) = Self::handle_error(res, "solana-broadcaster-transmit") {
                     return res;
                 }
             };
@@ -451,7 +481,7 @@ pub enum BroadcastSocket<'a> {
 /// Broadcasts shreds from the leader (i.e. this node) to the root of the
 /// turbine retransmit tree for each shred.
 pub fn broadcast_shreds(
-    s: BroadcastSocket,
+    socket: BroadcastSocket,
     shreds: &[Shred],
     cluster_nodes_cache: &ClusterNodesCache<BroadcastStage>,
     last_datapoint_submit: &AtomicInterval,
@@ -495,7 +525,7 @@ pub fn broadcast_shreds(
     shred_select.stop();
     transmit_stats.shred_select += shred_select.as_us();
     let num_udp_packets = packets.len();
-    match s {
+    match socket {
         BroadcastSocket::Udp(s) => {
             let mut send_mmsg_time = Measure::start("send_mmsg");
             match batch_send(s, packets) {
