@@ -9,6 +9,8 @@ use {
         inflation_rewards::points::PointValue, stake_account::StakeAccount,
         stake_history::StakeHistory,
     },
+    itertools::Either,
+    rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         partitioned_rewards::PartitionedEpochRewardsConfig,
@@ -16,11 +18,12 @@ use {
         storable_accounts::{AccountForStorage, StorableAccounts},
     },
     solana_clock::Slot,
+    solana_measure::measure_us,
     solana_pubkey::Pubkey,
     solana_reward_info::RewardInfo,
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
-    std::sync::Arc,
+    std::{borrow::Borrow, marker::PhantomData, sync::Arc},
 };
 
 /// Number of blocks for reward calculation and storing vote accounts.
@@ -167,10 +170,58 @@ impl Default for CalculateValidatorRewardsResult {
 }
 
 /// hold reward calc info to avoid recalculation across functions
-pub(super) struct EpochRewardCalculateParamInfo<'a> {
-    pub(super) stake_history: StakeHistory,
-    pub(super) stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
-    pub(super) cached_vote_accounts: &'a VoteAccounts,
+pub(super) struct EpochRewardCalculateParamInfo<'a, D, P, S>
+where
+    D: Borrow<(P, S)>,
+    P: Borrow<Pubkey>,
+    S: Borrow<StakeAccount<Delegation>>,
+{
+    min_stake_delegation: Option<u64>,
+    stake_history: StakeHistory,
+    stake_delegations: &'a [D],
+    cached_vote_accounts: &'a VoteAccounts,
+    _marker: PhantomData<(&'a P, &'a S)>,
+}
+
+impl<'a, D, P, S> EpochRewardCalculateParamInfo<'a, D, P, S>
+where
+    D: Borrow<(P, S)> + Sync,
+    P: Borrow<Pubkey> + Sync,
+    S: Borrow<StakeAccount<Delegation>> + Sync,
+{
+    pub(super) fn stake_history(&self) -> &StakeHistory {
+        &self.stake_history
+    }
+
+    pub(super) fn stake_delegations_par_iter(&'a self) -> impl ParallelIterator<Item = &'a D> + 'a {
+        if self.min_stake_delegation.is_some() {
+            let num_stake_delegations = self.stake_delegations.len();
+
+            let (stake_delegations, filter_time_us) = measure_us!(self
+                .stake_delegations
+                .par_iter()
+                .filter(|stake_delegation| {
+                    let (_stake_pubkey, cached_stake_account) = (*stake_delegation).borrow();
+                    cached_stake_account.borrow().delegation().stake
+                        >= self.min_stake_delegation.expect(
+                            "`min_stake_delegation` should be defined when filtering is enabled",
+                        )
+                }));
+
+            datapoint_info!(
+                "stake_account_filter_time",
+                ("filter_time_us", filter_time_us, i64),
+                ("num_stake_delegations_before", num_stake_delegations, i64),
+            );
+            Either::Left(stake_delegations)
+        } else {
+            Either::Right(self.stake_delegations.par_iter())
+        }
+    }
+
+    pub(super) fn cached_vote_accounts(&self) -> &VoteAccounts {
+        self.cached_vote_accounts
+    }
 }
 
 /// Hold all results from calculating the rewards for partitioned distribution.

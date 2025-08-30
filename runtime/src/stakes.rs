@@ -142,7 +142,7 @@ impl StakesCache {
         next_epoch: Epoch,
         thread_pool: &ThreadPool,
         new_rate_activation_epoch: Option<Epoch>,
-    ) {
+    ) -> Vec<(Pubkey, StakeAccount)> {
         let mut stakes = self.0.write().unwrap();
         stakes.activate_epoch(next_epoch, thread_pool, new_rate_activation_epoch)
     }
@@ -282,14 +282,22 @@ impl Stakes<StakeAccount> {
         next_epoch: Epoch,
         thread_pool: &ThreadPool,
         new_rate_activation_epoch: Option<Epoch>,
-    ) {
-        let stake_delegations: Vec<_> = self.stake_delegations.values().collect();
+    ) -> Vec<(Pubkey, StakeAccount)> {
+        // This vector is reused through the whole epoch boundary until stake
+        // reward recalculation. It's a big copy, but doing that is still
+        // better than collecting the `im::HashMap` again (it takes 200ms).
+        // It's also better than holding the stake cache RWLock for longer.
+        let stake_delegations: Vec<_> = self
+            .stake_delegations
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
         // Wrap up the prev epoch by adding new stake history entry for the
         // prev epoch.
         let stake_history_entry = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
-                .fold(StakeActivationStatus::default, |acc, stake_account| {
+                .fold(StakeActivationStatus::default, |acc, (_, stake_account)| {
                     let delegation = stake_account.delegation();
                     acc + delegation.stake_activating_and_deactivating(
                         self.epoch,
@@ -311,6 +319,7 @@ impl Stakes<StakeAccount> {
             &self.stake_history,
             new_rate_activation_epoch,
         );
+        stake_delegations
     }
 
     /// Sum the stakes that point to the given voter_pubkey
@@ -472,7 +481,7 @@ fn refresh_vote_accounts(
     thread_pool: &ThreadPool,
     epoch: Epoch,
     vote_accounts: &VoteAccounts,
-    stake_delegations: &[&StakeAccount],
+    stake_delegations: &[(Pubkey, StakeAccount)],
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
 ) -> VoteAccounts {
@@ -489,12 +498,15 @@ fn refresh_vote_accounts(
     let delegated_stakes = thread_pool.install(|| {
         stake_delegations
             .par_iter()
-            .fold(HashMap::default, |mut delegated_stakes, stake_account| {
-                let delegation = stake_account.delegation();
-                let entry = delegated_stakes.entry(delegation.voter_pubkey).or_default();
-                *entry += delegation.stake(epoch, stake_history, new_rate_activation_epoch);
-                delegated_stakes
-            })
+            .fold(
+                HashMap::default,
+                |mut delegated_stakes, (_, stake_account)| {
+                    let delegation = stake_account.delegation();
+                    let entry = delegated_stakes.entry(delegation.voter_pubkey).or_default();
+                    *entry += delegation.stake(epoch, stake_history, new_rate_activation_epoch);
+                    delegated_stakes
+                },
+            )
             .reduce(HashMap::default, merge)
     });
     vote_accounts
