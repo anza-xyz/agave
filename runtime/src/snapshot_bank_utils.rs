@@ -959,7 +959,17 @@ mod tests {
 
         // Create a few accounts
         let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-        let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        let bank_test_config = BankTestConfig {
+            accounts_db_config: AccountsDbConfig {
+                mark_obsolete_accounts: true,
+                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+            },
+        };
+
+        let bank = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
+
+        let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank);
         bank0
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -975,29 +985,6 @@ mod tests {
         bank0.squash();
         bank0.force_flush_accounts_cache();
 
-        // Find the account storage entry for slot 0
-        let target_slot = 0;
-        let account_storage_entry = bank0
-            .accounts()
-            .accounts_db
-            .storage
-            .get_slot_storage_entry(target_slot)
-            .unwrap();
-
-        // Find all the accounts in slot 0
-        let accounts = bank0
-            .accounts()
-            .accounts_db
-            .get_unique_accounts_from_storage(&account_storage_entry);
-
-        // Find the offset of pubkey `key1` in the accounts db slot0 and save the offset.
-        let offset = accounts
-            .stored_accounts
-            .iter()
-            .find(|account| key1.pubkey() == *account.pubkey())
-            .map(|account| account.index_info.offset())
-            .expect("Pubkey1 is present in Slot0");
-
         // Create a new slot, and invalidate the account for key1 in slot0
         let slot = 1;
         let bank1 =
@@ -1007,9 +994,6 @@ mod tests {
             .unwrap();
 
         bank1.fill_bank_with_ticks_for_tests();
-
-        // Mark the entry for pubkey1 as obsolete in slot0
-        account_storage_entry.mark_accounts_obsolete(vec![(offset, 0)].into_iter(), slot);
 
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
