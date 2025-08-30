@@ -187,6 +187,9 @@ pub struct PohRecorder {
     // Allocation to hold PohEntrys recorded into PoHStream.
     entries: Vec<PohEntry>,
     track_transaction_indexes: bool,
+
+    // Alpenglow related migration things
+    pub is_alpenglow_enabled: bool,
 }
 
 impl PohRecorder {
@@ -275,6 +278,7 @@ impl PohRecorder {
                 is_exited,
                 entries: Vec::with_capacity(64),
                 track_transaction_indexes: false,
+                is_alpenglow_enabled: false,
             },
             working_bank_receiver,
         )
