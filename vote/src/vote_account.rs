@@ -131,8 +131,7 @@ impl VoteAccount {
     pub fn bls_pubkey(&self) -> Option<BLSPubkey> {
         let bls_pubkey_compressed = self.0.vote_state_view.bls_pubkey_compressed()?;
         let bls_pubkey_compressed_bytes = BLSPubkeyCompressed(bls_pubkey_compressed);
-        let bls_pubkey = BLSPubkey::try_from(bls_pubkey_compressed_bytes).unwrap();
-        Some(bls_pubkey)
+        BLSPubkey::try_from(bls_pubkey_compressed_bytes).ok()
     }
 }
 
