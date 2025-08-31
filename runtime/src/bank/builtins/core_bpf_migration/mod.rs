@@ -1251,6 +1251,129 @@ pub(crate) mod tests {
         }
     }
 
+    /// Activate a feature and run checks on the test context.
+    fn activate_feature_and_run_checks(
+        root_bank: Bank,
+        test_context: &TestContext,
+        program_id: &Pubkey,
+        feature_id: &Pubkey,
+        source_buffer_address: &Pubkey,
+        mint_keypair: &Keypair,
+        slots_per_epoch: u64,
+        cpi_program_id: &Pubkey,
+    ) {
+        let (bank, bank_forks) = root_bank.wrap_with_bank_forks_for_tests();
+
+        // Advance to the next epoch without activating the feature.
+        let mut first_slot_in_next_epoch = slots_per_epoch + 1;
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            &Pubkey::default(),
+            first_slot_in_next_epoch,
+        );
+
+        // Assert the feature was not activated and the program was not
+        // migrated.
+        assert!(!bank.feature_set.is_active(feature_id));
+        assert!(bank.get_account(source_buffer_address).is_some());
+
+        // Store the account to activate the feature.
+        bank.store_account_and_update_capitalization(
+            feature_id,
+            &feature::create_account(&Feature::default(), 42),
+        );
+
+        // Advance the bank to cross the epoch boundary and activate the
+        // feature.
+        goto_end_of_slot(bank.clone());
+        first_slot_in_next_epoch += slots_per_epoch;
+        let migration_slot = first_slot_in_next_epoch;
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            &Pubkey::default(),
+            first_slot_in_next_epoch,
+        );
+
+        // Run the post-migration program checks.
+        assert!(bank.feature_set.is_active(feature_id));
+        test_context.run_program_checks(&bank, migration_slot);
+
+        // Advance one slot so that the new BPF loader v3 program becomes
+        // effective in the program cache.
+        goto_end_of_slot(bank.clone());
+        let next_slot = bank.slot() + 1;
+        let bank =
+            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), next_slot);
+
+        // Successfully invoke the new BPF loader v3 program.
+        bank.process_transaction(&Transaction::new(
+            &vec![&mint_keypair],
+            Message::new(
+                &[Instruction::new_with_bytes(*program_id, &[], Vec::new())],
+                Some(&mint_keypair.pubkey()),
+            ),
+            bank.last_blockhash(),
+        ))
+        .unwrap();
+
+        // Successfully invoke the new BPF loader v3 program via CPI.
+        bank.process_transaction(&Transaction::new(
+            &vec![&mint_keypair],
+            Message::new(
+                &[Instruction::new_with_bytes(
+                    *cpi_program_id,
+                    &[],
+                    vec![AccountMeta::new_readonly(*program_id, false)],
+                )],
+                Some(&mint_keypair.pubkey()),
+            ),
+            bank.last_blockhash(),
+        ))
+        .unwrap();
+
+        // Simulate crossing another epoch boundary for a new bank.
+        goto_end_of_slot(bank.clone());
+        first_slot_in_next_epoch += slots_per_epoch;
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            &Pubkey::default(),
+            first_slot_in_next_epoch,
+        );
+
+        // Run the post-migration program checks again.
+        assert!(bank.feature_set.is_active(feature_id));
+        test_context.run_program_checks(&bank, migration_slot);
+
+        // Again, successfully invoke the new BPF loader v3 program.
+        bank.process_transaction(&Transaction::new(
+            &vec![&mint_keypair],
+            Message::new(
+                &[Instruction::new_with_bytes(*program_id, &[], Vec::new())],
+                Some(&mint_keypair.pubkey()),
+            ),
+            bank.last_blockhash(),
+        ))
+        .unwrap();
+
+        // Again, successfully invoke the new BPF loader v3 program via CPI.
+        bank.process_transaction(&Transaction::new(
+            &vec![&mint_keypair],
+            Message::new(
+                &[Instruction::new_with_bytes(
+                    *cpi_program_id,
+                    &[],
+                    vec![AccountMeta::new_readonly(*program_id, false)],
+                )],
+                Some(&mint_keypair.pubkey()),
+            ),
+            bank.last_blockhash(),
+        ))
+        .unwrap();
+    }
+
     // This test can't be used to the `compute_budget` program, unless a valid
     // `compute_budget` program is provided as the replacement (source).
     // See program_runtime::compute_budget_processor::process_compute_budget_instructions`.`
@@ -1768,129 +1891,6 @@ pub(crate) mod tests {
         account.data_as_mut_slice().copy_from_slice(&elf);
 
         account
-    }
-
-    /// Activate a feature and run checks on the test context.
-    fn activate_feature_and_run_checks(
-        root_bank: Bank,
-        test_context: &TestContext,
-        program_id: &Pubkey,
-        feature_id: &Pubkey,
-        source_buffer_address: &Pubkey,
-        mint_keypair: &Keypair,
-        slots_per_epoch: u64,
-        cpi_program_id: &Pubkey,
-    ) {
-        let (bank, bank_forks) = root_bank.wrap_with_bank_forks_for_tests();
-
-        // Advance to the next epoch without activating the feature.
-        let mut first_slot_in_next_epoch = slots_per_epoch + 1;
-        let bank = Bank::new_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            &Pubkey::default(),
-            first_slot_in_next_epoch,
-        );
-
-        // Assert the feature was not activated and the program was not
-        // migrated.
-        assert!(!bank.feature_set.is_active(feature_id));
-        assert!(bank.get_account(source_buffer_address).is_some());
-
-        // Store the account to activate the feature.
-        bank.store_account_and_update_capitalization(
-            feature_id,
-            &feature::create_account(&Feature::default(), 42),
-        );
-
-        // Advance the bank to cross the epoch boundary and activate the
-        // feature.
-        goto_end_of_slot(bank.clone());
-        first_slot_in_next_epoch += slots_per_epoch;
-        let migration_slot = first_slot_in_next_epoch;
-        let bank = Bank::new_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            &Pubkey::default(),
-            first_slot_in_next_epoch,
-        );
-
-        // Run the post-migration program checks.
-        assert!(bank.feature_set.is_active(feature_id));
-        test_context.run_program_checks(&bank, migration_slot);
-
-        // Advance one slot so that the new BPF loader v3 program becomes
-        // effective in the program cache.
-        goto_end_of_slot(bank.clone());
-        let next_slot = bank.slot() + 1;
-        let bank =
-            Bank::new_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), next_slot);
-
-        // Successfully invoke the new BPF loader v3 program.
-        bank.process_transaction(&Transaction::new(
-            &vec![&mint_keypair],
-            Message::new(
-                &[Instruction::new_with_bytes(*program_id, &[], Vec::new())],
-                Some(&mint_keypair.pubkey()),
-            ),
-            bank.last_blockhash(),
-        ))
-        .unwrap();
-
-        // Successfully invoke the new BPF loader v3 program via CPI.
-        bank.process_transaction(&Transaction::new(
-            &vec![&mint_keypair],
-            Message::new(
-                &[Instruction::new_with_bytes(
-                    *cpi_program_id,
-                    &[],
-                    vec![AccountMeta::new_readonly(*program_id, false)],
-                )],
-                Some(&mint_keypair.pubkey()),
-            ),
-            bank.last_blockhash(),
-        ))
-        .unwrap();
-
-        // Simulate crossing another epoch boundary for a new bank.
-        goto_end_of_slot(bank.clone());
-        first_slot_in_next_epoch += slots_per_epoch;
-        let bank = Bank::new_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            &Pubkey::default(),
-            first_slot_in_next_epoch,
-        );
-
-        // Run the post-migration program checks again.
-        assert!(bank.feature_set.is_active(feature_id));
-        test_context.run_program_checks(&bank, migration_slot);
-
-        // Again, successfully invoke the new BPF loader v3 program.
-        bank.process_transaction(&Transaction::new(
-            &vec![&mint_keypair],
-            Message::new(
-                &[Instruction::new_with_bytes(*program_id, &[], Vec::new())],
-                Some(&mint_keypair.pubkey()),
-            ),
-            bank.last_blockhash(),
-        ))
-        .unwrap();
-
-        // Again, successfully invoke the new BPF loader v3 program via CPI.
-        bank.process_transaction(&Transaction::new(
-            &vec![&mint_keypair],
-            Message::new(
-                &[Instruction::new_with_bytes(
-                    *cpi_program_id,
-                    &[],
-                    vec![AccountMeta::new_readonly(*program_id, false)],
-                )],
-                Some(&mint_keypair.pubkey()),
-            ),
-            bank.last_blockhash(),
-        ))
-        .unwrap();
     }
 
     #[test]
