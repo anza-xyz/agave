@@ -1,3 +1,5 @@
+#[cfg(not(all(miri, target_endian = "big")))]
+use solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed};
 use {
     crate::vote_state_view::VoteStateView,
     itertools::Itertools,
@@ -123,6 +125,14 @@ impl VoteAccount {
         .unwrap();
 
         VoteAccount::try_from(account).unwrap()
+    }
+
+    #[cfg(not(all(miri, target_endian = "big")))]
+    pub fn bls_pubkey(&self) -> Option<BLSPubkey> {
+        let bls_pubkey_compressed = self.0.vote_state_view.bls_pubkey_compressed()?;
+        let bls_pubkey_compressed_bytes = BLSPubkeyCompressed(bls_pubkey_compressed);
+        let bls_pubkey = BLSPubkey::try_from(bls_pubkey_compressed_bytes).unwrap();
+        Some(bls_pubkey)
     }
 }
 

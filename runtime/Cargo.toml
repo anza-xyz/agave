@@ -28,6 +28,7 @@ frozen-abi = [
     "dep:solana-frozen-abi-macro",
     "solana-account/frozen-abi",
     "solana-accounts-db/frozen-abi",
+    "solana-bls-signatures/frozen-abi",
     "solana-compute-budget/frozen-abi",
     "solana-cost-model/frozen-abi",
     "solana-epoch-schedule/frozen-abi",
@@ -90,6 +91,7 @@ solana-account = { workspace = true }
 solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-bucket-map = { workspace = true }
 solana-builtins = { workspace = true }

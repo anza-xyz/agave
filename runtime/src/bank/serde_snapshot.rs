@@ -33,7 +33,7 @@ mod tests {
             mem,
             ops::RangeFull,
             path::Path,
-            sync::{atomic::Ordering, Arc},
+            sync::{atomic::Ordering, Arc, OnceLock},
         },
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
@@ -206,6 +206,7 @@ mod tests {
                 total_stake: 42,
                 node_id_to_vote_accounts: Arc::<NodeIdToVoteAccounts>::default(),
                 epoch_authorized_voters: Arc::<EpochAuthorizedVoters>::default(),
+                bls_pubkey_to_rank_map: OnceLock::new(),
             },
         );
         assert_eq!(bank.epoch_stakes.len(), 3);
