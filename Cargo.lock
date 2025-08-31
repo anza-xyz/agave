@@ -9689,6 +9689,7 @@ dependencies = [
  "solana-instruction-error",
  "solana-keypair",
  "solana-last-restart-slot",
+ "solana-metrics",
  "solana-program-entrypoint",
  "solana-program-runtime",
  "solana-pubkey",
@@ -9702,7 +9703,6 @@ dependencies = [
  "solana-svm-feature-set",
  "solana-svm-log-collector",
  "solana-svm-measure",
- "solana-svm-metrics",
  "solana-svm-timings",
  "solana-svm-transaction",
  "solana-svm-type-overrides",
@@ -10961,6 +10961,7 @@ name = "solana-svm-measure"
 version = "3.0.1"
 
 [[package]]
+<<<<<<< HEAD
 name = "solana-svm-metrics"
 version = "3.0.1"
 dependencies = [
@@ -10979,6 +10980,8 @@ dependencies = [
 ]
 
 [[package]]
+=======
+>>>>>>> d7fdc8bf6 (Revert "svm repo split: fork metrics (#7442)" (#7806))
 name = "solana-svm-timings"
 version = "3.0.1"
 dependencies = [
