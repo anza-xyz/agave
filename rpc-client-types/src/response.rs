@@ -317,6 +317,8 @@ pub struct RpcContactInfo {
     pub pubsub: Option<SocketAddr>,
     /// Software version
     pub version: Option<String>,
+    /// Client ID
+    pub client_id: Option<u16>,
     /// First 4 bytes of the FeatureSet identifier
     pub feature_set: Option<u32>,
     /// Shred version
