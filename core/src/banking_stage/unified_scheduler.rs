@@ -40,7 +40,6 @@ use {
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::bank_forks::BankForks,
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_unified_scheduler_logic::OrderedTaskId,
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},
     std::{
         num::NonZeroUsize,
@@ -110,12 +109,7 @@ pub(crate) fn ensure_banking_stage_setup(
                         &compute_budget_limits.into(),
                         &bank,
                     );
-
-                    let task_id = {
-                        let reversed_priority = (u64::MAX - priority) as OrderedTaskId;
-                        let task_id = (task_id_base + packet_index) as OrderedTaskId;
-                        reversed_priority << const { OrderedTaskId::BITS / 2 } | task_id
-                    };
+                    let task_id = BankingStageHelper::new_task_id(task_id_base + packet_index, priority);
 
                     let task = helper.create_new_task(transaction, task_id, packet_size);
                     helper.send_new_task(task);
