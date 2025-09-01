@@ -1387,7 +1387,7 @@ mod tests {
         solana_logger::setup();
         let mut rng = rand::thread_rng();
 
-        // tansfer tx is not
+        // transfer tx is not
         {
             let mut tx = test_tx();
             tx.message.instructions[0].data = vec![1, 2, 3];
