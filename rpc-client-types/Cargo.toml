@@ -21,11 +21,11 @@ serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
+solana-address = { workspace = true }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true, features = ["serde"] }
 solana-fee-calculator = { workspace = true, features = ["serde"] }
 solana-inflation = { workspace = true }
-solana-pubkey = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
 solana-version = { workspace = true }

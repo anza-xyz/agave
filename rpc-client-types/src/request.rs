@@ -1,8 +1,8 @@
+pub use solana_address::Address;
 use {
     crate::response::RpcSimulateTransactionResult,
     serde_json::{json, Value},
     solana_clock::Slot,
-    solana_pubkey::Pubkey,
     std::fmt,
     thiserror::Error,
 };
@@ -220,8 +220,8 @@ pub enum RpcError {
 
 #[derive(Serialize, Deserialize)]
 pub enum TokenAccountsFilter {
-    Mint(Pubkey),
-    ProgramId(Pubkey),
+    Mint(Address),
+    ProgramId(Address),
 }
 
 #[cfg(test)]

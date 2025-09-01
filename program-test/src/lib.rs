@@ -850,7 +850,6 @@ impl ProgramTest {
             }),
             Vec::default(),
             None,
-            None,
             false,
             None,
             None,

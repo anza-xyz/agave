@@ -650,7 +650,7 @@ mod tests {
         fn send_data(&self, _buffer: &[u8]) -> TransportResult<()> {
             unimplemented!()
         }
-        fn send_data_async(&self, _data: Vec<u8>) -> TransportResult<()> {
+        fn send_data_async(&self, _data: Arc<Vec<u8>>) -> TransportResult<()> {
             unimplemented!()
         }
         fn send_data_batch(&self, _buffers: &[Vec<u8>]) -> TransportResult<()> {

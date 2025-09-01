@@ -30,7 +30,7 @@ impl ClientConnection for UdpClientConnection {
         &self.addr
     }
 
-    fn send_data_async(&self, data: Vec<u8>) -> TransportResult<()> {
+    fn send_data_async(&self, data: Arc<Vec<u8>>) -> TransportResult<()> {
         self.socket.send_to(data.as_ref(), self.addr)?;
         Ok(())
     }

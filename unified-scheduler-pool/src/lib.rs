@@ -4578,7 +4578,7 @@ mod tests {
                     receiver.try_recv(),
                     Ok(TransactionStatusMessage::Batch((
                         TransactionStatusBatch { .. },
-                        None, // no work sequence
+                        None, // no work id
                     )))
                 );
                 assert_matches!(

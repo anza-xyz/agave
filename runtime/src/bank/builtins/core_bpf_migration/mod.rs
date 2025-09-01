@@ -1452,7 +1452,7 @@ pub(crate) mod tests {
             .write()
             .unwrap()
             .clear();
-        bank.finish_init(&genesis_config, None, false);
+        bank.finish_init(&genesis_config, false);
 
         // Assert the feature is active and the bank still added the builtin.
         assert!(bank.feature_set.is_active(feature_id));
@@ -1621,7 +1621,7 @@ pub(crate) mod tests {
             .write()
             .unwrap()
             .clear();
-        bank.finish_init(&genesis_config, None, false);
+        bank.finish_init(&genesis_config, false);
 
         check_builtin_is_bpf(&bank);
     }

@@ -390,12 +390,18 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::tests::new_bank_from_parent_with_bank_forks, runtime_config::RuntimeConfig,
-            snapshot_bank_utils, snapshot_config::SnapshotConfig, snapshot_utils,
+            bank::{tests::new_bank_from_parent_with_bank_forks, BankTestConfig},
+            runtime_config::RuntimeConfig,
+            snapshot_bank_utils,
+            snapshot_config::SnapshotConfig,
+            snapshot_utils,
         },
         solana_account::{ReadableAccount as _, WritableAccount as _},
         solana_accounts_db::{
-            accounts_db::{AccountsDbConfig, DuplicatesLtHash, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+            accounts_db::{
+                AccountsDbConfig, DuplicatesLtHash, MarkObsoleteAccounts,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            },
             accounts_index::{
                 AccountsIndexConfig, IndexLimitMb, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
             },
@@ -780,12 +786,26 @@ mod tests {
             .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors, bank.slot());
         assert_eq!(expected_accounts_lt_hash, calculated_accounts_lt_hash);
     }
-
-    #[test_case(Features::None; "no features")]
-    #[test_case(Features::All; "all features")]
-    fn test_calculate_accounts_lt_hash_at_startup_from_storages(features: Features) {
+    #[test_matrix(
+        [Features::None, Features::All],
+        [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled]
+    )]
+    fn test_calculate_accounts_lt_hash_at_startup_from_storages(
+        features: Features,
+        mark_obsolete_accounts: MarkObsoleteAccounts,
+    ) {
         let (genesis_config, mint_keypair) = genesis_config_with(features);
-        let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        let bank_test_config = BankTestConfig {
+            accounts_db_config: AccountsDbConfig {
+                mark_obsolete_accounts,
+                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+            },
+        };
+
+        let bank0 = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
+
+        let (mut bank, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank0);
 
         let amount = cmp::max(
             bank.get_minimum_balance_for_rent_exemption(0),
@@ -840,19 +860,25 @@ mod tests {
 
         // calculate the duplicates lt hash by skipping the first version (latest) of each account,
         // and then mixing together all the rest
-        let duplicates_lt_hash = stored_accounts_map
-            .values()
-            .map(|lt_hashes| {
-                // the first element in the vec is the latest; all the rest are duplicates
-                &lt_hashes[1..]
-            })
-            .fold(LtHash::identity(), |mut accum, duplicate_lt_hashes| {
-                for duplicate_lt_hash in duplicate_lt_hashes {
-                    accum.mix_in(&duplicate_lt_hash.0);
-                }
-                accum
-            });
-        let duplicates_lt_hash = DuplicatesLtHash(duplicates_lt_hash);
+        let duplicates_lt_hash = match mark_obsolete_accounts {
+            MarkObsoleteAccounts::Disabled => {
+                let duplicates_lt_hash = stored_accounts_map
+                    .values()
+                    .map(|lt_hashes| {
+                        // the first element in the vec is the latest; all the rest are duplicates
+                        &lt_hashes[1..]
+                    })
+                    .fold(LtHash::identity(), |mut accum, duplicate_lt_hashes| {
+                        for duplicate_lt_hash in duplicate_lt_hashes {
+                            accum.mix_in(&duplicate_lt_hash.0);
+                        }
+                        accum
+                    });
+                DuplicatesLtHash(duplicates_lt_hash)
+            }
+            // if mark_obsolete_accounts is enabled, then the duplicates lt hash is empty
+            MarkObsoleteAccounts::Enabled => DuplicatesLtHash::default(),
+        };
 
         // ensure that calculating the accounts lt hash from storages is correct
         let calculated_accounts_lt_hash_from_storages = bank
@@ -873,11 +899,13 @@ mod tests {
 
     #[test_matrix(
         [Features::None, Features::All],
-        [IndexLimitMb::Minimal, IndexLimitMb::InMemOnly]
+        [IndexLimitMb::Minimal, IndexLimitMb::InMemOnly],
+        [MarkObsoleteAccounts::Disabled, MarkObsoleteAccounts::Enabled]
     )]
     fn test_verify_accounts_lt_hash_at_startup(
         features: Features,
         accounts_index_limit: IndexLimitMb,
+        mark_obsolete_accounts: MarkObsoleteAccounts,
     ) {
         let (mut genesis_config, mint_keypair) = genesis_config_with(features);
         // This test requires zero fees so that we can easily transfer an account's entire balance.
@@ -968,6 +996,7 @@ mod tests {
         };
         let accounts_db_config = AccountsDbConfig {
             index: Some(accounts_index_config),
+            mark_obsolete_accounts,
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
         let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(
@@ -977,7 +1006,6 @@ mod tests {
             None,
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,
@@ -1077,7 +1105,6 @@ mod tests {
             None,
             &genesis_config,
             &RuntimeConfig::default(),
-            None,
             None,
             None,
             false,

@@ -1,7 +1,7 @@
 use {
     crate::{
         bit_vec::BitVec,
-        shred::{self, Shred, ShredType, MAX_DATA_SHREDS_PER_SLOT},
+        shred::{self, Shred, ShredType, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT},
     },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
@@ -341,8 +341,14 @@ mod serde_compat_cast {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ErasureConfig {
-    num_data: usize,
-    num_coding: usize,
+    pub(crate) num_data: usize,
+    pub(crate) num_coding: usize,
+}
+
+impl ErasureConfig {
+    pub(crate) fn is_fixed(&self) -> bool {
+        self.num_data == DATA_SHREDS_PER_FEC_BLOCK && self.num_coding == DATA_SHREDS_PER_FEC_BLOCK
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -11,7 +11,7 @@ use {
     log::*,
     rand::{seq::SliceRandom, thread_rng},
     solana_accounts_db::{
-        accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
+        accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
         accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimitMb, ScanFilter},
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -232,6 +232,12 @@ pub fn execute(
         BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
     };
 
+    if bind_addresses.len() > 1 && matches.is_present("use_connection_cache") {
+        Err(String::from(
+            "Connection cache can not be used in a multihoming context",
+        ))?;
+    }
+
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
             .expect("invalid rpc_bind_address")
@@ -408,7 +414,11 @@ pub fn execute(
         })
         .unwrap_or_default();
 
-    let mark_obsolete_accounts = matches.is_present("accounts_db_mark_obsolete_accounts");
+    let mark_obsolete_accounts = if matches.is_present("accounts_db_mark_obsolete_accounts") {
+        MarkObsoleteAccounts::Enabled
+    } else {
+        MarkObsoleteAccounts::Disabled
+    };
 
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
@@ -547,7 +557,7 @@ pub fn execute(
         UseSnapshotArchivesAtStartup
     );
 
-    if mark_obsolete_accounts
+    if mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
         && use_snapshot_archives_at_startup != UseSnapshotArchivesAtStartup::Always
     {
         Err(format!(

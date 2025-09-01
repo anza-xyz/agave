@@ -605,7 +605,7 @@ impl AncestorHashesService {
         let serve_repair = {
             ServeRepair::new(
                 repair_info.cluster_info.clone(),
-                repair_info.bank_forks.read().unwrap().sharable_root_bank(),
+                repair_info.bank_forks.read().unwrap().sharable_banks(),
                 repair_info.repair_whitelist.clone(),
                 Box::new(StandardRepairHandler::new(blockstore)),
             )
@@ -1271,11 +1271,7 @@ mod test {
             let responder_serve_repair = {
                 ServeRepair::new(
                     Arc::new(cluster_info),
-                    vote_simulator
-                        .bank_forks
-                        .read()
-                        .unwrap()
-                        .sharable_root_bank(),
+                    vote_simulator.bank_forks.read().unwrap().sharable_banks(),
                     Arc::<RwLock<HashSet<_>>>::default(), // repair whitelist
                     Box::new(StandardRepairHandler::new(blockstore.clone())),
                 )
@@ -1382,7 +1378,7 @@ mod test {
             let requester_serve_repair = {
                 ServeRepair::new(
                     requester_cluster_info.clone(),
-                    bank_forks.read().unwrap().sharable_root_bank(),
+                    bank_forks.read().unwrap().sharable_banks(),
                     repair_whitelist.clone(),
                     Box::new(StandardRepairHandler::new(blockstore)),
                 )

@@ -3,7 +3,6 @@ macro_rules! dispatch {
         #[inline]
         $vis fn $name(&self $(, $arg:$ty)?) $(-> $out)? {
             match self {
-                Self::Legacy(shred) => shred.$name($($arg, )?),
                 Self::Merkle(shred) => shred.$name($($arg, )?),
             }
         }
@@ -12,7 +11,6 @@ macro_rules! dispatch {
         #[inline]
         $vis fn $name(self $(, $arg:$ty)?) $(-> $out)? {
             match self {
-                Self::Legacy(shred) => shred.$name($($arg, )?),
                 Self::Merkle(shred) => shred.$name($($arg, )?),
             }
         }
@@ -21,7 +19,6 @@ macro_rules! dispatch {
         #[inline]
         $vis fn $name(&mut self $(, $arg:$ty)?) $(-> $out)? {
             match self {
-                Self::Legacy(shred) => shred.$name($($arg, )?),
                 Self::Merkle(shred) => shred.$name($($arg, )?),
             }
         }
