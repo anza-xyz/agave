@@ -49,7 +49,7 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
-        BlockSize, Capability, Index,
+        BlockSize, Capability, OrderedTaskId,
         SchedulingMode::{self, BlockProduction, BlockVerification},
         SchedulingStateMachine, Task, UsageQueue,
     },
@@ -82,11 +82,11 @@ use crate::sleepless_testing::BuilderTracked;
 #[allow(dead_code)]
 #[derive(Debug)]
 enum CheckPoint<'a> {
-    NewTask(Index),
-    NewBufferedTask(Index),
-    BufferedTask(Index),
-    TaskHandled(Index),
-    TaskAccumulated(Index, &'a Result<()>),
+    NewTask(OrderedTaskId),
+    NewBufferedTask(OrderedTaskId),
+    BufferedTask(OrderedTaskId),
+    TaskHandled(OrderedTaskId),
+    TaskAccumulated(OrderedTaskId, &'a Result<()>),
     SessionEnding,
     SessionFinished(Option<Slot>),
     SchedulerThreadAborted,
@@ -376,26 +376,26 @@ impl BankingStageHelper {
     pub fn create_new_task(
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: Index,
+        task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
     ) -> Task {
         SchedulingStateMachine::create_block_production_task(
             transaction,
-            index,
+            task_id,
             consumed_block_size,
             &mut |pubkey| self.usage_queue_loader.load(pubkey),
         )
     }
 
     fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
-        let new_index = {
-            let original = executed_task.task.task_index();
+        let new_task_id = {
+            let original = executed_task.task.task_id();
             (original & 0xffff_ffff_ffff_ffff_0000_0000_0000_0000)
-                | (self.generate_task_ids(1) as Index)
+                | (self.generate_task_ids(1) as OrderedTaskId)
         };
         let consumed_block_size = executed_task.consumed_block_size();
         let transaction = executed_task.into_transaction();
-        self.create_new_task(transaction, new_index, consumed_block_size)
+        self.create_new_task(transaction, new_task_id, consumed_block_size)
     }
 
     pub fn send_new_task(&self, task: Task) {
@@ -1019,7 +1019,7 @@ impl TaskHandler for DefaultTaskHandler {
     ) {
         let bank = scheduling_context.bank().unwrap();
         let transaction = task.transaction();
-        let index = task.task_index();
+        let task_id = task.task_id();
 
         let batch = match scheduling_context.mode() {
             BlockVerification => {
@@ -1066,8 +1066,8 @@ impl TaskHandler for DefaultTaskHandler {
         };
         let transaction_indexes = match scheduling_context.mode() {
             BlockVerification => {
-                // Blcok verification's index should always be within usize.
-                vec![index.try_into().unwrap()]
+                // Blcok verification's task_id should always be within usize.
+                vec![task_id.try_into().unwrap()]
             }
             BlockProduction => {
                 // Create a placeholder vec, which will be populated later if
@@ -1148,7 +1148,7 @@ impl TaskHandler for DefaultTaskHandler {
             &handler_context.prioritization_fee_cache,
             pre_commit_callback,
         );
-        sleepless_testing::at(CheckPoint::TaskHandled(index));
+        sleepless_testing::at(CheckPoint::TaskHandled(task_id));
     }
 }
 
@@ -1746,7 +1746,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         handler_context: &HandlerContext,
     ) -> bool {
         sleepless_testing::at(CheckPoint::TaskAccumulated(
-            executed_task.task.task_index(),
+            executed_task.task.task_id(),
             &executed_task.result_with_timings.0,
         ));
         timings.accumulate(&executed_task.result_with_timings.1);
@@ -2101,13 +2101,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                                 match message {
                                     Ok(NewTaskPayload::Payload(task)) => {
-                                        let task_index = task.task_index();
-                                        sleepless_testing::at(CheckPoint::NewTask(task_index));
+                                        let task_id = task.task_id();
+                                        sleepless_testing::at(CheckPoint::NewTask(task_id));
 
                                         if let Some(task) = state_machine.schedule_or_buffer_task(task, session_ending) {
                                             runnable_task_sender.send_aux_payload(task).unwrap();
                                         } else {
-                                            sleepless_testing::at(CheckPoint::BufferedTask(task_index));
+                                            sleepless_testing::at(CheckPoint::BufferedTask(task_id));
                                         }
                                     }
                                     Ok(NewTaskPayload::CloseSubchannel) => {
@@ -2200,9 +2200,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
                             Ok(NewTaskPayload::Payload(task)) => {
-                                sleepless_testing::at(CheckPoint::NewBufferedTask(
-                                    task.task_index(),
-                                ));
+                                sleepless_testing::at(CheckPoint::NewBufferedTask(task.task_id()));
                                 assert_matches!(scheduling_mode, BlockProduction);
                                 state_machine.buffer_task(task);
                             }
@@ -2652,9 +2650,9 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
     fn schedule_execution(
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: Index,
+        task_id: OrderedTaskId,
     ) -> ScheduleResult {
-        let task = SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
+        let task = SchedulingStateMachine::create_task(transaction, task_id, &mut |pubkey| {
             self.inner.usage_queue_loader.load(pubkey)
         });
         self.inner.thread_manager.send_task(task)
@@ -3329,7 +3327,7 @@ mod tests {
             &TestCheckPoint::AfterSchedulerThreadAborted,
         ]);
 
-        static TASK_COUNT: Mutex<Index> = Mutex::new(0);
+        static TASK_COUNT: Mutex<OrderedTaskId> = Mutex::new(0);
 
         #[derive(Debug)]
         struct CountingHandler;
@@ -3369,7 +3367,7 @@ mod tests {
         // That's because the scheduler needs to be aborted quickly as an expected behavior,
         // leaving some readily-available work untouched. So, schedule rather large number of tasks
         // to make the short-cutting abort code-path win the race easily.
-        const MAX_TASK_COUNT: Index = 100;
+        const MAX_TASK_COUNT: OrderedTaskId = 100;
 
         for i in 0..MAX_TASK_COUNT {
             let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -3677,10 +3675,10 @@ mod tests {
                 task: &Task,
                 _handler_context: &HandlerContext,
             ) {
-                let index = task.task_index();
-                if index == 0 {
+                let task_id = task.task_id();
+                if task_id == 0 {
                     sleepless_testing::at(PanickingHanlderCheckPoint::BeforeNotifiedPanic);
-                } else if index == 1 {
+                } else if task_id == 1 {
                     sleepless_testing::at(PanickingHanlderCheckPoint::BeforeIgnoredPanic);
                 } else {
                     unreachable!();
@@ -3697,7 +3695,7 @@ mod tests {
         // Use 2 transactions with different timings to deliberately cover the two code paths of
         // notifying panics in the handler threads, taken conditionally depending on whether the
         // scheduler thread has been aborted already or not.
-        const TX_COUNT: Index = 2;
+        const TX_COUNT: OrderedTaskId = 2;
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool = SchedulerPool::<PooledScheduler<PanickingHandler>, _>::new_dyn(
@@ -3711,7 +3709,7 @@ mod tests {
 
         let scheduler = pool.take_scheduler(context);
 
-        for index in 0..TX_COUNT {
+        for task_id in 0..TX_COUNT {
             // Use 2 non-conflicting txes to exercise the channel disconnected case as well.
             let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &Keypair::new(),
@@ -3719,7 +3717,7 @@ mod tests {
                 1,
                 genesis_config.hash(),
             ));
-            scheduler.schedule_execution(tx, index).unwrap();
+            scheduler.schedule_execution(tx, task_id).unwrap();
         }
         // finally unblock the scheduler thread; otherwise the above schedule_execution could
         // return SchedulerAborted...
@@ -3757,12 +3755,12 @@ mod tests {
                 task: &Task,
                 _handler_context: &HandlerContext,
             ) {
-                let index = task.task_index();
+                let task_id = task.task_id();
                 *TASK_COUNT.lock().unwrap() += 1;
-                if index == 1 {
+                if task_id == 1 {
                     *result = Err(TransactionError::AccountNotFound);
                 }
-                sleepless_testing::at(CheckPoint::TaskHandled(index));
+                sleepless_testing::at(CheckPoint::TaskHandled(task_id));
             }
         }
 
@@ -3826,8 +3824,8 @@ mod tests {
     ) {
         solana_logger::setup();
 
-        const STALLED_TRANSACTION_INDEX: Index = 0;
-        const BLOCKED_TRANSACTION_INDEX: Index = 1;
+        const STALLED_TRANSACTION_INDEX: OrderedTaskId = 0;
+        const BLOCKED_TRANSACTION_INDEX: OrderedTaskId = 1;
 
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::BufferedTask(BLOCKED_TRANSACTION_INDEX),
@@ -3846,8 +3844,8 @@ mod tests {
                 task: &Task,
                 handler_context: &HandlerContext,
             ) {
-                let index = task.task_index();
-                match index {
+                let task_id = task.task_id();
+                match task_id {
                     STALLED_TRANSACTION_INDEX => {
                         sleepless_testing::at(TestCheckPoint::AfterSessionEnding);
                     }
@@ -3999,9 +3997,9 @@ mod tests {
     fn test_block_production_scheduler_schedule_execution_retry() {
         solana_logger::setup();
 
-        const ORIGINAL_TRANSACTION_INDEX: Index = 999;
+        const ORIGINAL_TRANSACTION_INDEX: OrderedTaskId = 999;
         // This is 0 because it's the first task id assigned internally by BankingStageHelper
-        const RETRIED_TRANSACTION_INDEX: Index = 0;
+        const RETRIED_TRANSACTION_INDEX: OrderedTaskId = 0;
         const FULL_BLOCK_SLOT: Slot = 1;
 
         let _progress = sleepless_testing::setup(&[
@@ -4142,11 +4140,8 @@ mod tests {
                 task: &Task,
                 _handler_context: &HandlerContext,
             ) {
-                // The task index must always be matched to the slot.
-                assert_eq!(
-                    task.task_index() as Slot,
-                    scheduling_context.slot().unwrap()
-                );
+                // The task task_id must always be matched to the slot.
+                assert_eq!(task.task_id() as Slot, scheduling_context.slot().unwrap());
             }
         }
 
@@ -4186,14 +4181,14 @@ mod tests {
         let context1 = &SchedulingContext::for_verification(bank1.clone());
 
         // Exercise the scheduler by busy-looping to expose the race condition
-        for (context, index) in [(context0, 0), (context1, 1)]
+        for (context, task_id) in [(context0, 0), (context1, 1)]
             .into_iter()
             .cycle()
             .take(10000)
         {
             let scheduler = pool.take_scheduler(context.clone());
             scheduler
-                .schedule_execution(dummy_tx.clone(), index)
+                .schedule_execution(dummy_tx.clone(), task_id)
                 .unwrap();
             scheduler.wait_for_termination(false).1.return_to_pool();
         }
@@ -4237,7 +4232,7 @@ mod tests {
         fn schedule_execution(
             &self,
             transaction: RuntimeTransaction<SanitizedTransaction>,
-            index: Index,
+            task_id: OrderedTaskId,
         ) -> ScheduleResult {
             let context = self.context().clone();
             let pool = self.3.clone();
@@ -4250,7 +4245,7 @@ mod tests {
                 let mut result = Ok(());
                 let mut timings = ExecuteTimings::default();
 
-                let task = SchedulingStateMachine::create_task(transaction, index, &mut |_| {
+                let task = SchedulingStateMachine::create_task(transaction, task_id, &mut |_| {
                     UsageQueue::new(&Capability::FifoQueueing)
                 });
 
@@ -4722,9 +4717,9 @@ mod tests {
         fn create_new_unconstrained_task(
             &self,
             transaction: RuntimeTransaction<SanitizedTransaction>,
-            index: Index,
+            task_id: OrderedTaskId,
         ) -> Task {
-            self.create_new_task(transaction, index, NO_CONSUMED_BLOCK_SIZE)
+            self.create_new_task(transaction, task_id, NO_CONSUMED_BLOCK_SIZE)
         }
     }
 
@@ -5204,7 +5199,7 @@ mod tests {
             ..
         } = create_genesis_config_for_block_production(10_000);
 
-        const DISCARDED_TASK_COUNT: Index = 3;
+        const DISCARDED_TASK_COUNT: OrderedTaskId = 3;
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::NewBufferedTask(DISCARDED_TASK_COUNT - 1),
             &CheckPoint::DiscardRequested,
@@ -5236,8 +5231,8 @@ mod tests {
         ));
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
-                for index in 0..DISCARDED_TASK_COUNT {
-                    helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), index))
+                for task_id in 0..DISCARDED_TASK_COUNT {
+                    helper.send_new_task(helper.create_new_unconstrained_task(tx0.clone(), task_id))
                 }
             });
 
