@@ -20,6 +20,7 @@ use {
         offline::{blockhash_arg, BLOCKHASH_ARG},
     },
     solana_cli_output::{
+        cli_clientid::CliClientId,
         cli_version::CliVersion,
         display::{
             build_balance_message, format_labeled_address, new_spinner_progress_bar,
@@ -399,6 +400,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                             "skip-rate",
                             "stake",
                             "version",
+                            "client-id",
                             "vote-account",
                         ])
                         .default_value("stake")
@@ -675,6 +677,7 @@ pub fn parse_show_validators(matches: &ArgMatches<'_>) -> Result<CliCommandInfo,
         "stake" => CliValidatorsSortOrder::Stake,
         "vote-account" => CliValidatorsSortOrder::VoteAccount,
         "version" => CliValidatorsSortOrder::Version,
+        "client-id" => CliValidatorsSortOrder::ClientId,
         _ => unreachable!(),
     };
 
@@ -1998,13 +2001,18 @@ pub fn process_show_validators(
 
     progress_bar.set_message("Fetching version information...");
     let mut node_version = HashMap::new();
+    let mut client_id: HashMap<String, CliClientId> = HashMap::new();
     for contact_info in rpc_client.get_cluster_nodes()? {
         node_version.insert(
-            contact_info.pubkey,
+            contact_info.pubkey.clone(),
             contact_info
                 .version
                 .and_then(|version| CliVersion::from_str(&version).ok())
                 .unwrap_or_else(CliVersion::unknown_version),
+        );
+        client_id.insert(
+            contact_info.pubkey,
+            CliClientId::from(contact_info.client_id),
         );
     }
 
@@ -2035,6 +2043,10 @@ pub fn process_show_validators(
                     .get(&vote_account.node_pubkey)
                     .cloned()
                     .unwrap_or_else(CliVersion::unknown_version),
+                client_id
+                    .get(&vote_account.node_pubkey)
+                    .cloned()
+                    .unwrap_or_else(CliClientId::unknown),
                 skip_rate.get(&vote_account.node_pubkey).cloned(),
                 &config.address_labels,
             )
@@ -2051,6 +2063,10 @@ pub fn process_show_validators(
                     .get(&vote_account.node_pubkey)
                     .cloned()
                     .unwrap_or_else(CliVersion::unknown_version),
+                client_id
+                    .get(&vote_account.node_pubkey)
+                    .cloned()
+                    .unwrap_or_else(CliClientId::unknown),
                 skip_rate.get(&vote_account.node_pubkey).cloned(),
                 &config.address_labels,
             )
@@ -2058,6 +2074,8 @@ pub fn process_show_validators(
         .collect();
 
     let mut stake_by_version: BTreeMap<CliVersion, CliValidatorsStakeByVersion> = BTreeMap::new();
+    let mut stake_by_client_id: BTreeMap<CliClientId, CliValidatorsStakeByClientId> =
+        BTreeMap::new();
     for validator in current_validators.iter() {
         let CliValidatorsStakeByVersion {
             current_validators,
@@ -2065,6 +2083,16 @@ pub fn process_show_validators(
             ..
         } = stake_by_version
             .entry(validator.version.clone())
+            .or_default();
+        *current_validators = current_validators.saturating_add(1);
+        *current_active_stake = current_active_stake.saturating_add(validator.activated_stake);
+
+        let CliValidatorsStakeByClientId {
+            current_validators,
+            current_active_stake,
+            ..
+        } = stake_by_client_id
+            .entry(validator.client_id.clone())
             .or_default();
         *current_validators = current_validators.saturating_add(1);
         *current_active_stake = current_active_stake.saturating_add(validator.activated_stake);
@@ -2076,6 +2104,17 @@ pub fn process_show_validators(
             ..
         } = stake_by_version
             .entry(validator.version.clone())
+            .or_default();
+        *delinquent_validators = delinquent_validators.saturating_add(1);
+        *delinquent_active_stake =
+            delinquent_active_stake.saturating_add(validator.activated_stake);
+
+        let CliValidatorsStakeByClientId {
+            delinquent_validators,
+            delinquent_active_stake,
+            ..
+        } = stake_by_client_id
+            .entry(validator.client_id.clone())
             .or_default();
         *delinquent_validators = delinquent_validators.saturating_add(1);
         *delinquent_active_stake =
@@ -2120,6 +2159,7 @@ pub fn process_show_validators(
         validators_reverse_sort,
         number_validators,
         stake_by_version,
+        stake_by_client_id,
         use_lamports_unit,
     };
     Ok(config.output_format.formatted_string(&cli_validators))
