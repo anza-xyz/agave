@@ -1,5 +1,5 @@
-//! This module provides [`NodeAddressService`] structure that solves the following
-//! problems:
+//! This module provides [`NodeAddressService`] structure that solves the
+//! following problems:
 //! 1. client needs to know the current slot in the blockchain
 //!
 //! 2. client is notified when slot starts / ends. This notification arrives
@@ -72,9 +72,10 @@ pub enum NodeAddressServiceError {
     ChannelClosed,
 }
 
-/// Convinience wrapper for WebsocketSlotUpdateService and LeaderTpuCacheService
-/// to track upcoming leaders and maintains an up-to-date mapping of leader id
-/// to TPU socket address.
+/// [`NodeAddressService`] is a convenience wrapper for
+/// [`WebsocketSlotUpdateService`] and [`LeaderTpuCacheService`] to track
+/// upcoming leaders and maintains an up-to-date mapping of leader id to TPU
+/// socket address.
 pub struct NodeAddressService {
     leaders_receiver: watch::Receiver<(Slot, Vec<SocketAddr>)>,
     slot_watcher_service_handle: JoinHandle<Result<(), NodeAddressServiceError>>,
@@ -86,9 +87,7 @@ impl NodeAddressService {
     pub async fn run(
         rpc_client: Arc<RpcClient>,
         websocket_url: &str,
-        lookahead_leaders: u64,
-        refresh_every: Duration,
-        max_consequent_failures: usize,
+        config: LeaderTpuCacheServiceConfig,
         cancel: CancellationToken,
     ) -> Result<Self, NodeAddressServiceError> {
         let start_slot = rpc_client
@@ -108,14 +107,10 @@ impl NodeAddressService {
             cancel.clone(),
         ));
         let leader_cache_service = LeaderTpuCacheService::new(
-            rpc_client.clone(),
-            slot_receiver.clone(),
+            rpc_client,
+            slot_receiver,
             leaders_sender,
-            LeaderTpuCacheServiceConfig {
-                lookahead_leaders,
-                refresh_every,
-                max_consecutive_failures: max_consequent_failures,
-            },
+            config,
             cancel.clone(),
         )
         .await?;
@@ -151,6 +146,8 @@ impl LeaderUpdater for NodeAddressService {
     }
 }
 
+/// [`WebsocketSlotUpdateService`] updates the current slot by subscribing to
+/// the slot updates using websockets.
 pub struct WebsocketSlotUpdateService;
 
 impl WebsocketSlotUpdateService {
@@ -167,7 +164,9 @@ impl WebsocketSlotUpdateService {
 
         let (mut notifications, unsubscribe) = pubsub_client.slot_updates_subscribe().await?;
 
-        // Track the last time a slot update was received. In case of current leader is not sending relevant shreds for some reason, the current slot will not update.
+        // Track the last time a slot update was received. In case of current
+        // leader is not sending relevant shreds for some reason, the slot will
+        // not update.
         let mut last_slot_time = Instant::now();
         const FALLBACK_SLOT_TIMEOUT: Duration = Duration::from_millis(DEFAULT_MS_PER_SLOT);
 
@@ -181,12 +180,16 @@ impl WebsocketSlotUpdateService {
                     match maybe_update {
                         Some(update) => {
                             let current_slot = match update {
-                                // This update indicates that we have just received the first shred from
-                                // the leader for this slot and they are probably still accepting transactions.
+                                // This update indicates that we have just
+                                // received the first shred from the leader for
+                                // this slot and they are probably still
+                                // accepting transactions.
                                 SlotUpdate::FirstShredReceived { slot, .. } => slot,
-                                //TODO(klykov): fall back on bank created to use with solana test validator
-                                // This update indicates that a full slot was received by the connected
-                                // node so we can stop sending transactions to the leader for that slot
+                                //TODO(klykov): fall back on bank created to use
+                                // with solana test validator This update
+                                // indicates that a full slot was received by
+                                // the connected node so we can stop sending
+                                // transactions to the leader for that slot
                                 SlotUpdate::Completed { slot, .. } => slot.saturating_add(1),
                                 _ => continue,
                             };
@@ -217,8 +220,9 @@ impl WebsocketSlotUpdateService {
             }
         }
 
-        // `notifications` requires a valid reference to `pubsub_client`, so `notifications` must be
-        // dropped before moving `pubsub_client` via `shutdown()`.
+        // `notifications` requires a valid reference to `pubsub_client`, so
+        // `notifications` must be dropped before moving `pubsub_client` via
+        // `shutdown()`.
         drop(notifications);
         unsubscribe().await;
         pubsub_client.shutdown().await?;
@@ -227,6 +231,7 @@ impl WebsocketSlotUpdateService {
     }
 }
 
+/// Configuration for the [`LeaderTpuCacheService`].
 #[derive(Debug, Clone)]
 pub struct LeaderTpuCacheServiceConfig {
     lookahead_leaders: u64,
@@ -234,6 +239,9 @@ pub struct LeaderTpuCacheServiceConfig {
     max_consecutive_failures: usize,
 }
 
+/// [`LeaderTpuCacheService`] is a background task that tracks the current and
+/// upcoming Solana leader nodes and updates their TPU socket addresses in a
+/// watch channel for downstream consumers.
 pub struct LeaderTpuCacheService {
     rpc_client: Arc<RpcClient>,
     config: LeaderTpuCacheServiceConfig,
@@ -432,7 +440,8 @@ impl LeaderTpuCacheServiceState {
             .collect()
     }
 
-    /// Update the leader cache with the latest slot leaders and cluster TPU ports.
+    /// Update the leader cache with the latest slot leaders and cluster TPU
+    /// ports.
     async fn update(
         &mut self,
         last_cluster_refresh: &mut Instant,
