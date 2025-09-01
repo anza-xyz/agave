@@ -388,11 +388,7 @@ impl BankingStageHelper {
     }
 
     fn recreate_task(&self, executed_task: Box<ExecutedTask>) -> Task {
-        let new_task_id = {
-            let original = executed_task.task.task_id();
-            (original & 0xffff_ffff_ffff_ffff_0000_0000_0000_0000)
-                | (self.generate_task_ids(1) as OrderedTaskId)
-        };
+        let new_task_id = self.regenerated_task_id(executed_task.task.task_id());
         let consumed_block_size = executed_task.consumed_block_size();
         let transaction = executed_task.into_transaction();
         self.create_new_task(transaction, new_task_id, consumed_block_size)
@@ -402,6 +398,18 @@ impl BankingStageHelper {
         self.new_task_sender
             .send(NewTaskPayload::Payload(task))
             .unwrap();
+    }
+
+    pub fn new_task_id(task_id: usize, priority: u64) -> OrderedTaskId {
+        // Use wrapping_sub to avoid a clippy::arithmetic_side_effects false positive...
+        // Actually won't ever wrap, thanks to MAX.
+        let reversed_priority = u64::MAX.wrapping_sub(priority) as OrderedTaskId;
+        (reversed_priority << const { OrderedTaskId::BITS / 2 }) | (task_id as OrderedTaskId)
+    }
+
+    fn regenerated_task_id(&self, executed_task_id: OrderedTaskId) -> OrderedTaskId {
+        const REVERSED_PRIORITY_MASK: OrderedTaskId = 0xffff_ffff_ffff_ffff_0000_0000_0000_0000;
+        (executed_task_id & REVERSED_PRIORITY_MASK) | (self.generate_task_ids(1) as OrderedTaskId)
     }
 }
 
