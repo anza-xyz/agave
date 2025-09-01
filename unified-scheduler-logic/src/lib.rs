@@ -121,7 +121,7 @@ pub enum SchedulingMode {
 pub enum Capability {
     /// Basic capability of simple fifo queueing. This is intended for block verification.
     FifoQueueing,
-    /// Strictly superset capability of priority queueing with reordering of tasks by task_index.
+    /// Strictly superset capability of priority queueing with reordering of tasks by task_id.
     /// This is intended for block production
     /// In other words, any use of FifoQueueing can safely replaced with PriorityQueueing, just
     /// being slower due to use of more expensive collections.
@@ -136,7 +136,7 @@ pub enum Capability {
 /// 8) consecutive slots for block production.
 type CounterInner = u32;
 
-pub type Index = u128;
+pub type OrderedTaskId = u128;
 
 /// Internal utilities. Namely this contains [`ShortCounter`] and [`TokenCell`].
 mod utils {
@@ -460,7 +460,7 @@ pub struct TaskInner {
     /// For block production, the priority of a transaction for reordering with
     /// Capability::PriorityQueueing. Note that the index of a transaction in ledger entries is
     /// dynamically generated from the poh in the case of block production.
-    index: Index,
+    task_id: OrderedTaskId,
     lock_contexts: Vec<LockContext>,
     /// The number of remaining usages which are currently occupied by other tasks. In other words,
     /// the task is said to be _blocked_ and needs to be _unblocked_ exactly this number of times
@@ -470,12 +470,12 @@ pub struct TaskInner {
 }
 
 impl TaskInner {
-    pub fn task_index(&self) -> Index {
-        self.index
+    pub fn task_id(&self) -> OrderedTaskId {
+        self.task_id
     }
 
     pub fn is_higher_priority(&self, other: &Self) -> bool {
-        match self.task_index().cmp(&other.task_index()) {
+        match self.task_id().cmp(&other.task_id()) {
             Ordering::Less => true,
             Ordering::Greater => false,
             Ordering::Equal => panic!("self-compariton"),
@@ -591,7 +591,7 @@ type FifoUsage = Usage<ShortCounter, ()>;
 const_assert_eq!(mem::size_of::<FifoUsage>(), 8);
 
 // BTreeMap is needed for now for efficient manipulation...
-type PriorityUsage = Usage<BTreeMap<Index, Task>, Task>;
+type PriorityUsage = Usage<BTreeMap<OrderedTaskId, Task>, Task>;
 const_assert_eq!(mem::size_of::<PriorityUsage>(), 32);
 
 impl From<RequestedUsage> for FifoUsage {
@@ -606,7 +606,7 @@ impl From<RequestedUsage> for FifoUsage {
 impl PriorityUsage {
     fn from(task: Task, requested_usage: RequestedUsage) -> Self {
         match requested_usage {
-            RequestedUsage::Readonly => Self::Readonly(BTreeMap::from([(task.task_index(), task)])),
+            RequestedUsage::Readonly => Self::Readonly(BTreeMap::from([(task.task_id(), task)])),
             RequestedUsage::Writable => Self::Writable(task),
         }
     }
@@ -634,7 +634,7 @@ enum RequestedUsage {
 }
 
 // BTreeMap is needed for now for efficient manipulation...
-type PriorityUsageQueue = BTreeMap<Index, UsageFromTask>;
+type PriorityUsageQueue = BTreeMap<OrderedTaskId, UsageFromTask>;
 
 trait PriorityUsageQueueExt: Sized {
     fn insert_usage_from_task(&mut self, usage_from_task: UsageFromTask);
@@ -644,7 +644,7 @@ trait PriorityUsageQueueExt: Sized {
 
 impl PriorityUsageQueueExt for PriorityUsageQueue {
     fn insert_usage_from_task(&mut self, usage_from_task: UsageFromTask) {
-        self.insert(usage_from_task.1.task_index(), usage_from_task)
+        self.insert(usage_from_task.1.task_id(), usage_from_task)
             .unwrap_none();
     }
 
@@ -731,7 +731,7 @@ impl UsageQueueInner {
                 Some(PriorityUsage::Readonly(tasks)) => match requested_usage {
                     RequestedUsage::Readonly => {
                         tasks
-                            .insert(new_task.task_index(), new_task.clone())
+                            .insert(new_task.task_id(), new_task.clone())
                             .unwrap_none();
                         Ok(())
                     }
@@ -778,7 +778,7 @@ impl UsageQueueInner {
                     Some(PriorityUsage::Readonly(tasks)) => match requested_usage {
                         RequestedUsage::Readonly => {
                             // Don't skip remove()-ing to assert the existence of task
-                            tasks.remove(&task.task_index()).unwrap();
+                            tasks.remove(&task.task_id()).unwrap();
                             if tasks.is_empty() {
                                 is_newly_lockable = true;
                             }
@@ -955,11 +955,13 @@ impl UsageQueueInner {
                         // Use extract_if once stablized to remove Vec creation and the repeating
                         // remove()s...
                         let task_indexes = current_tasks
-                            .range(new_task.task_index()..)
-                            .filter_map(|(&index, task)| task.try_reblock(token).then_some(index))
-                            .collect::<Vec<Index>>();
-                        for task_index in task_indexes.into_iter() {
-                            let reblocked_task = current_tasks.remove(&task_index).unwrap();
+                            .range(new_task.task_id()..)
+                            .filter_map(|(&task_id, task)| {
+                                task.try_reblock(token).then_some(task_id)
+                            })
+                            .collect::<Vec<OrderedTaskId>>();
+                        for task_id in task_indexes.into_iter() {
+                            let reblocked_task = current_tasks.remove(&task_id).unwrap();
                             blocked_usages_from_tasks
                                 .insert_usage_from_task((RequestedUsage::Readonly, reblocked_task));
                         }
@@ -1221,12 +1223,12 @@ impl SchedulingStateMachine {
     /// separation of concern.
     pub fn create_task(
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: Index,
+        task_id: OrderedTaskId,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
         Self::do_create_task(
             transaction,
-            index,
+            task_id,
             NO_CONSUMED_BLOCK_SIZE,
             usage_queue_loader,
         )
@@ -1234,16 +1236,21 @@ impl SchedulingStateMachine {
 
     pub fn create_block_production_task(
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: Index,
+        task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
-        Self::do_create_task(transaction, index, consumed_block_size, usage_queue_loader)
+        Self::do_create_task(
+            transaction,
+            task_id,
+            consumed_block_size,
+            usage_queue_loader,
+        )
     }
 
     fn do_create_task(
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        index: Index,
+        task_id: OrderedTaskId,
         consumed_block_size: BlockSize,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
@@ -1283,10 +1290,10 @@ impl SchedulingStateMachine {
             .account_keys()
             .iter()
             .enumerate()
-            .map(|(index, address)| {
+            .map(|(task_id, address)| {
                 LockContext::new(
                     usage_queue_loader(*address),
-                    if transaction.message().is_writable(index) {
+                    if transaction.message().is_writable(task_id) {
                         RequestedUsage::Writable
                     } else {
                         RequestedUsage::Readonly
@@ -1297,7 +1304,7 @@ impl SchedulingStateMachine {
 
         Task::new(TaskInner {
             transaction,
-            index,
+            task_id,
             lock_contexts,
             blocked_usage_count: TokenCell::new(ShortCounter::zero()),
             consumed_block_size,
@@ -1537,7 +1544,7 @@ mod tests {
         let task = SchedulingStateMachine::create_task(sanitized, 3, &mut |_| {
             UsageQueue::new(&capability)
         });
-        assert_eq!(task.task_index(), 3);
+        assert_eq!(task.task_id(), 3);
         assert_eq!(task.transaction().signature(), &signature);
     }
 
@@ -1573,7 +1580,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
@@ -1587,7 +1594,7 @@ mod tests {
         assert_eq!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         assert_eq!(state_machine.unblocked_task_count(), 1);
@@ -1604,7 +1611,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task3.clone())
-                .map(|task| task.task_index()),
+                .map(|task| task.task_id()),
             Some(103)
         );
         state_machine.deschedule_task(&task3);
@@ -1625,7 +1632,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
@@ -1641,7 +1648,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         assert_eq!(state_machine.unblocked_task_count(), 1);
@@ -1651,7 +1658,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(103)
         );
         assert_eq!(state_machine.unblocked_task_count(), 2);
@@ -1676,13 +1683,13 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(
             state_machine
                 .schedule_task(task2.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
 
@@ -1716,13 +1723,13 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(
             state_machine
                 .schedule_task(task2.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         assert_matches!(state_machine.schedule_task(task3.clone()), None);
@@ -1743,7 +1750,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(103)
         );
         state_machine.deschedule_task(&task3);
@@ -1767,7 +1774,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
@@ -1778,7 +1785,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         assert_matches!(state_machine.schedule_next_unblocked_task(), None);
@@ -1786,7 +1793,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(103)
         );
         assert_matches!(state_machine.schedule_next_unblocked_task(), None);
@@ -1809,7 +1816,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
@@ -1819,7 +1826,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         state_machine.deschedule_task(&task2);
@@ -1845,7 +1852,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
@@ -1856,13 +1863,13 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(103)
         );
         // the above deschedule_task(task1) call should only unblock task2 and task3 because these
@@ -1878,7 +1885,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(104)
         );
         state_machine.deschedule_task(&task4);
@@ -1901,7 +1908,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_task(task1.clone())
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(101)
         );
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
@@ -1925,7 +1932,7 @@ mod tests {
         assert_matches!(
             state_machine
                 .schedule_next_unblocked_task()
-                .map(|t| t.task_index()),
+                .map(|t| t.task_id()),
             Some(102)
         );
         state_machine.deschedule_task(&task2);
@@ -1994,8 +2001,8 @@ mod tests {
         use super::{RequestedUsage::*, *};
 
         #[track_caller]
-        fn assert_task_index(actual: Option<Task>, expected: Option<Index>) {
-            assert_eq!(actual.map(|task| task.task_index()), expected);
+        fn assert_task_index(actual: Option<Task>, expected: Option<OrderedTaskId>) {
+            assert_eq!(actual.map(|task| task.task_id()), expected);
         }
 
         macro_rules! assert_task_index {
@@ -2006,7 +2013,7 @@ mod tests {
 
         fn setup() -> (
             SchedulingStateMachine,
-            impl FnMut((RequestedUsage, Pubkey), Index) -> Task,
+            impl FnMut((RequestedUsage, Pubkey), OrderedTaskId) -> Task,
             Task,
         ) {
             let mut state_machine = unsafe {
@@ -2016,15 +2023,15 @@ mod tests {
             let payer = Pubkey::new_unique();
             let mut address_loader = create_address_loader(None, &Capability::PriorityQueueing);
 
-            let mut create_task = move |(requested_usage, address), index| match requested_usage {
+            let mut create_task = move |(requested_usage, address), task_id| match requested_usage {
                 RequestedUsage::Readonly => SchedulingStateMachine::create_task(
                     transaction_with_readonly_address_with_payer(address, &payer),
-                    index,
+                    task_id,
                     &mut address_loader,
                 ),
                 RequestedUsage::Writable => SchedulingStateMachine::create_task(
                     transaction_with_writable_address_with_payer(address, &payer),
-                    index,
+                    task_id,
                     &mut address_loader,
                 ),
             };
