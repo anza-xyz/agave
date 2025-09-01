@@ -1,3 +1,4 @@
+#![allow(clippy::arithmetic_side_effects)]
 use {
     crate::node_address_service::NodeAddressServiceError,
     log::*,
@@ -21,9 +22,12 @@ const MAX_FANOUT_SLOTS: u64 = 100;
 /// Configuration for the [`LeaderTpuCacheService`].
 #[derive(Debug, Clone)]
 pub struct LeaderTpuCacheServiceConfig {
-    lookahead_leaders: u64,
-    refresh_every: Duration,
-    max_consecutive_failures: usize,
+    // max number of leaders to look ahead for
+    pub lookahead_leaders: usize,
+    // how often to refresh cluster nodes info
+    pub refresh_every: Duration,
+    // maximum number of consecutive failures to tolerate before
+    pub max_consecutive_failures: usize,
 }
 
 /// [`LeaderTpuCacheService`] is a background task that tracks the current and
@@ -62,9 +66,8 @@ impl LeaderTpuCacheService {
             leaders_sender,
             cancel,
         } = self;
-        let lookahead_slots = config
-            .lookahead_leaders
-            .saturating_mul(NUM_CONSECUTIVE_LEADER_SLOTS);
+        let lookahead_slots =
+            (config.lookahead_leaders as u64).saturating_mul(NUM_CONSECUTIVE_LEADER_SLOTS);
 
         let mut leader_tpu_cache = LeaderTpuCacheServiceState::new(0, 0, 0, vec![], vec![]);
 
@@ -805,9 +808,9 @@ mod tests {
     fn get_expected_sockets(
         nodes: &HashMap<Pubkey, SocketAddr>,
         start_index: usize,
-        lookahead_leaders: u64,
+        lookahead_leaders: usize,
     ) -> Vec<SocketAddr> {
-        let lookahead_slots = lookahead_leaders * NUM_CONSECUTIVE_LEADER_SLOTS;
+        let lookahead_slots = lookahead_leaders * (NUM_CONSECUTIVE_LEADER_SLOTS as usize);
         let expected_leaders = generate_slot_leaders(nodes);
         debug!("Expected leaders: {:?}", expected_leaders);
 
@@ -815,7 +818,7 @@ mod tests {
             .iter()
             .cycle()
             .skip(start_index % expected_leaders.len())
-            .take(lookahead_slots as usize)
+            .take(lookahead_slots)
             .step_by(NUM_CONSECUTIVE_LEADER_SLOTS as usize)
             .cloned()
             .collect();
@@ -842,7 +845,7 @@ mod tests {
             slots_in_epoch: u64,
             current_slot: u64,
             num_nodes: usize,
-            lookahead_leaders: u64,
+            lookahead_leaders: usize,
             refresh_every: Duration,
             max_consecutive_failures: usize,
         ) -> Self {
@@ -868,7 +871,7 @@ mod tests {
             slots_in_epoch: u64,
             current_slot: u64,
             num_nodes: usize,
-            lookahead_leaders: u64,
+            lookahead_leaders: usize,
             refresh_every: Duration,
             max_consecutive_failures: usize,
             plans: HashMap<&'static str, Plan>,

@@ -28,6 +28,7 @@ pub use {
 /// socket address.
 pub struct NodeAddressService {
     leaders_receiver: watch::Receiver<(Slot, Vec<SocketAddr>)>,
+    // TODO(klykov): not sure if there is much value in preserving these handles.
     slot_watcher_service_handle: JoinHandle<Result<(), NodeAddressServiceError>>,
     leader_tpu_service_handle: JoinHandle<Result<(), NodeAddressServiceError>>,
     cancel: CancellationToken,

@@ -121,6 +121,7 @@ impl RecentLeaderSlots {
     }
 
     // Estimate the current slot from recent slot notifications.
+    #[allow(clippy::arithmetic_side_effects)]
     pub(crate) fn estimate_current_slot(&self) -> Slot {
         let mut recent_slots: Vec<Slot> = self.0.iter().cloned().collect();
         assert!(!recent_slots.is_empty());
