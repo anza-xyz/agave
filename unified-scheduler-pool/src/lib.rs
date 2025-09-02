@@ -609,7 +609,9 @@ where
                 };
 
                 info!(
-                    "Scheduler pool cleaner: dropped {idle_inner_count} idle inners, {trashed_inner_count} trashed inners, triggered {triggered_timeout_listener_count} timeout listeners",
+                    "Scheduler pool cleaner: dropped {idle_inner_count} idle inners, \
+                     {trashed_inner_count} trashed inners, triggered \
+                     {triggered_timeout_listener_count} timeout listeners",
                 );
                 sleepless_testing::at(CheckPoint::IdleSchedulerCleaned(idle_inner_count));
                 sleepless_testing::at(CheckPoint::TrashedSchedulerCleaned(trashed_inner_count));

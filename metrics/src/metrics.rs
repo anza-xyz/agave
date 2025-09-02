@@ -230,8 +230,8 @@ impl MetricsAgent {
 
         if num_points > max_points {
             warn!(
-                "Max submission rate of {max_points_per_sec} datapoints per second exceeded.  Only the \
-                 first {max_points} of {num_points} points will be submitted."
+                "Max submission rate of {max_points_per_sec} datapoints per second exceeded.  \
+                 Only the first {max_points} of {num_points} points will be submitted."
             );
         }
 
@@ -350,11 +350,9 @@ impl MetricsAgent {
 
         debug_assert!(
             points.is_empty() && counters.is_empty(),
-            "Controlling `MetricsAgent` is expected to call `flush()` from the `Drop` \n\
-             implementation, before exiting.  So both `points` and `counters` must be empty at \n\
-             this point.\n\
-             `points`: {points:?}\n\
-             `counters`: {counters:?}",
+            "Controlling `MetricsAgent` is expected to call `flush()` from the `Drop` \
+             \nimplementation, before exiting.  So both `points` and `counters` must be empty at \
+             \nthis point.\n`points`: {points:?}\n`counters`: {counters:?}",
         );
 
         trace!("run: exit");

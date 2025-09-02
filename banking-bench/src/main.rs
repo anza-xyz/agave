@@ -377,9 +377,7 @@ fn main() {
         .iter()
         .map(|packets_for_single_iteration| packets_for_single_iteration.transactions.len() as u64)
         .sum();
-    info!(
-        "worker threads: {block_production_num_workers} txs: {total_num_transactions}"
-    );
+    info!("worker threads: {block_production_num_workers} txs: {total_num_transactions}");
 
     // fund all the accounts
     all_packets.iter().for_each(|packets_for_single_iteration| {
@@ -593,8 +591,16 @@ fn main() {
         .transaction_count();
     debug!("processed: {txs_processed} base: {base_tx_count}");
 
-    eprintln!("[total_sent: {}, base_tx_count: {}, txs_processed: {}, txs_landed: {}, total_us: {}, tx_total_us: {}]",
-            total_sent, base_tx_count, txs_processed, (txs_processed - base_tx_count), total_us, tx_total_us);
+    eprintln!(
+        "[total_sent: {}, base_tx_count: {}, txs_processed: {}, txs_landed: {}, total_us: {}, \
+         tx_total_us: {}]",
+        total_sent,
+        base_tx_count,
+        txs_processed,
+        (txs_processed - base_tx_count),
+        total_us,
+        tx_total_us
+    );
 
     eprintln!(
         "{{'name': 'banking_bench_total', 'median': '{:.2}'}}",

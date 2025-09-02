@@ -143,9 +143,9 @@ impl Notifier {
         if let Ok(log_level) = env::var(format!("{env_prefix}LOG_NOTIFIER_LEVEL")) {
             match Level::from_str(&log_level) {
                 Ok(level) => notifiers.push(NotificationChannel::Log(level)),
-                Err(e) => warn!(
-                    "could not parse specified log notifier level string ({log_level}): {e}"
-                ),
+                Err(e) => {
+                    warn!("could not parse specified log notifier level string ({log_level}): {e}")
+                }
             }
         }
 

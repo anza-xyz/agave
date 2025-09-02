@@ -304,7 +304,11 @@ impl MockAlpenglowConsensus {
                             0 // no packets received
                         }
                         _ => {
-                            error!("Got error {:?} in mock alpenglow RX socket operation, exiting thread", e.raw_os_error());
+                            error!(
+                                "Got error {:?} in mock alpenglow RX socket operation, exiting \
+                                 thread",
+                                e.raw_os_error()
+                            );
                             return;
                         }
                     }

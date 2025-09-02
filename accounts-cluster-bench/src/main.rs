@@ -61,9 +61,7 @@ pub fn poll_slot_height(client: &RpcClient) -> Slot {
             return slot;
         } else {
             num_retries -= 1;
-            warn!(
-                "get_slot_height failure: {response:?}. remaining retries {num_retries}"
-            );
+            warn!("get_slot_height failure: {response:?}. remaining retries {num_retries}");
         }
         if num_retries == 0 {
             panic!("failed to get_slot_height(), rpc node down?")
@@ -80,9 +78,7 @@ pub fn poll_get_latest_blockhash(client: &RpcClient) -> Option<Hash> {
             return Some(blockhash);
         } else {
             num_retries -= 1;
-            warn!(
-                "get_latest_blockhash failure: {response:?}. remaining retries {num_retries}"
-            );
+            warn!("get_latest_blockhash failure: {response:?}. remaining retries {num_retries}");
         }
         if num_retries == 0 {
             panic!("failed to get_latest_blockhash(), rpc node down?")
@@ -100,9 +96,7 @@ pub fn poll_get_fee_for_message(client: &RpcClient, message: &mut Message) -> (O
             return (Some(fee), message.recent_blockhash);
         } else {
             num_retries -= 1;
-            warn!(
-                "get_fee_for_message failure: {response:?}. remaining retries {num_retries}"
-            );
+            warn!("get_fee_for_message failure: {response:?}. remaining retries {num_retries}");
 
             let blockhash = poll_get_latest_blockhash(client).expect("blockhash");
             message.recent_blockhash = blockhash;
@@ -914,9 +908,7 @@ fn run_accounts_bench(
                 }
                 last_balance = Instant::now();
                 if *balance < lamports * 2 {
-                    info!(
-                        "Balance {balance} is less than needed: {lamports}, doing airdrop..."
-                    );
+                    info!("Balance {balance} is less than needed: {lamports}, doing airdrop...");
                     if !airdrop_lamports(&client, payer_keypairs[i], lamports * 100_000) {
                         warn!("failed airdrop, exiting");
                         return;
@@ -1014,7 +1006,9 @@ fn run_accounts_bench(
             || max_accounts_met
         {
             info!(
-                "total_accounts_created: {total_accounts_created} total_accounts_closed: {total_accounts_closed} tx_sent_count: {tx_sent_count} loop_count: {count} balance(s): {balances:?}"
+                "total_accounts_created: {total_accounts_created} total_accounts_closed: \
+                 {total_accounts_closed} tx_sent_count: {tx_sent_count} loop_count: {count} \
+                 balance(s): {balances:?}"
             );
             last_log = Instant::now();
         }
@@ -1096,7 +1090,8 @@ fn run_accounts_bench(
             count += 1;
             if last_log.elapsed().as_millis() > 3000 || max_closed_seed >= max_created_seed {
                 info!(
-                    "total_accounts_closed: {total_accounts_closed} tx_sent_count: {tx_sent_count} loop_count: {count} balance(s): {balances:?}"
+                    "total_accounts_closed: {total_accounts_closed} tx_sent_count: \
+                     {tx_sent_count} loop_count: {count} balance(s): {balances:?}"
                 );
                 last_log = Instant::now();
             }
@@ -1144,8 +1139,8 @@ fn main() {
                 .validator(is_url_or_moniker)
                 .conflicts_with("entrypoint")
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): \
-                       [mainnet-beta, testnet, devnet, localhost]",
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                     testnet, devnet, localhost]",
                 ),
         )
         .arg(
@@ -1200,10 +1195,9 @@ fn main() {
                 .takes_value(true)
                 .value_name("BYTES")
                 .help(
-                    "Every `n` batches, create a batch of close transactions for \
-                     the earliest remaining batch of accounts created. \
-                     Note: Should be > 1 to avoid situations where the close \
-                     transactions will be submitted before the corresponding \
+                    "Every `n` batches, create a batch of close transactions for the earliest \
+                     remaining batch of accounts created. Note: Should be > 1 to avoid situations \
+                     where the close transactions will be submitted before the corresponding \
                      create transactions have been confirmed",
                 ),
         )
@@ -1226,7 +1220,10 @@ fn main() {
                 .long("max-accounts")
                 .takes_value(true)
                 .value_name("NUM_ACCOUNTS")
-                .help("Halt after client has created this number of accounts. Does not count closed accounts."),
+                .help(
+                    "Halt after client has created this number of accounts. Does not count closed \
+                     accounts.",
+                ),
         )
         .arg(
             Arg::with_name("check_gossip")
@@ -1267,10 +1264,7 @@ fn main() {
                 .takes_value(true)
                 .value_name("RPC_BENCH_TYPE(S)")
                 .multiple(true)
-                .requires_ifs(&[
-                    ("supply", "mint"),
-                    ("token-accounts-by-owner", "mint"),
-                ])
+                .requires_ifs(&[("supply", "mint"), ("token-accounts-by-owner", "mint")])
                 .help("Spawn a thread which calls a specific RPC method in a loop to benchmark it"),
         )
         .get_matches();

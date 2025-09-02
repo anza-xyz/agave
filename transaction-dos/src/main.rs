@@ -67,14 +67,16 @@ pub fn airdrop_lamports(
                     }
                     if tries >= 5 {
                         panic!(
-                            "Error requesting airdrop: to addr: {faucet_addr:?} amount: {airdrop_amount} {result:?}"
+                            "Error requesting airdrop: to addr: {faucet_addr:?} amount: \
+                             {airdrop_amount} {result:?}"
                         )
                     }
                 }
             }
             Err(err) => {
                 panic!(
-                    "Error requesting airdrop: {err:?} to addr: {faucet_addr:?} amount: {airdrop_amount}"
+                    "Error requesting airdrop: {err:?} to addr: {faucet_addr:?} amount: \
+                     {airdrop_amount}"
                 );
             }
         };
@@ -297,9 +299,7 @@ fn run_transactions_dos(
                 }
                 last_balance = Instant::now();
                 if *balance < lamports * 2 {
-                    info!(
-                        "Balance {balance} is less than needed: {lamports}, doing aidrop..."
-                    );
+                    info!("Balance {balance} is less than needed: {lamports}, doing aidrop...");
                     if !airdrop_lamports(
                         &client,
                         &faucet_addr,
@@ -411,7 +411,8 @@ fn run_transactions_dos(
         count += 1;
         if last_log.elapsed().as_secs() > 3 {
             info!(
-                "total_dos_messages_sent: {total_dos_messages_sent} tx_sent_count: {tx_sent_count} loop_count: {count} balance(s): {balances:?}"
+                "total_dos_messages_sent: {total_dos_messages_sent} tx_sent_count: \
+                 {tx_sent_count} loop_count: {count} balance(s): {balances:?}"
             );
             last_log = Instant::now();
         }
@@ -472,14 +473,17 @@ fn main() {
                 .takes_value(true)
                 .multiple(true)
                 .value_name("FILE")
-                .help("One or more keypairs to create accounts owned by the program and which the program will write to."),
+                .help(
+                    "One or more keypairs to create accounts owned by the program and which the \
+                     program will write to.",
+                ),
         )
         .arg(
             Arg::with_name("account_groups")
-            .long("account_groups")
-            .takes_value(true)
-            .value_name("NUM")
-            .help("Number of groups of accounts to split the accounts into")
+                .long("account_groups")
+                .takes_value(true)
+                .value_name("NUM")
+                .help("Number of groups of accounts to split the accounts into"),
         )
         .arg(
             Arg::with_name("batch_size")
@@ -514,7 +518,10 @@ fn main() {
                 .long("batch-sleep-ms")
                 .takes_value(true)
                 .value_name("NUM")
-                .help("Sleep for this long the num outstanding transactions is greater than the batch size."),
+                .help(
+                    "Sleep for this long the num outstanding transactions is greater than the \
+                     batch size.",
+                ),
         )
         .arg(
             Arg::with_name("check_gossip")

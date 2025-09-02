@@ -124,8 +124,8 @@ impl Faucet {
         if let Some((per_request_cap, per_time_cap)) = per_request_cap.zip(per_time_cap) {
             if per_time_cap < per_request_cap {
                 warn!(
-                    "per_time_cap {} SOL < per_request_cap {} SOL; \
-                    maximum single requests will fail",
+                    "per_time_cap {} SOL < per_request_cap {} SOL; maximum single requests will \
+                     fail",
                     build_balance_message(per_time_cap, false, false),
                     build_balance_message(per_request_cap, false, false),
                 );
@@ -278,7 +278,8 @@ pub fn request_airdrop_transaction(
     blockhash: Hash,
 ) -> Result<Transaction, FaucetError> {
     info!(
-        "request_airdrop_transaction: faucet_addr={faucet_addr} id={id} lamports={lamports} blockhash={blockhash}"
+        "request_airdrop_transaction: faucet_addr={faucet_addr} id={id} lamports={lamports} \
+         blockhash={blockhash}"
     );
 
     let mut stream = TcpStream::connect_timeout(faucet_addr, Duration::new(3, 0))?;
@@ -294,9 +295,7 @@ pub fn request_airdrop_transaction(
     // Read length of transaction
     let mut buffer = [0; 2];
     stream.read_exact(&mut buffer).map_err(|err| {
-        info!(
-            "request_airdrop_transaction: buffer length read_exact error: {err:?}"
-        );
+        info!("request_airdrop_transaction: buffer length read_exact error: {err:?}");
         err
     })?;
     let transaction_length = u16::from_le_bytes(buffer) as usize;
@@ -309,9 +308,7 @@ pub fn request_airdrop_transaction(
     // Read the transaction
     let mut buffer = vec![0; transaction_length];
     stream.read_exact(&mut buffer).map_err(|err| {
-        info!(
-            "request_airdrop_transaction: buffer read_exact error: {err:?}"
-        );
+        info!("request_airdrop_transaction: buffer read_exact error: {err:?}");
         err
     })?;
 
@@ -357,13 +354,17 @@ pub async fn run_faucet(
 ) {
     let listener = TcpListener::bind(&faucet_addr).await;
     if let Some(sender) = sender {
-        sender.send(
-            listener.as_ref().map(|listener| listener.local_addr().unwrap())
-                .map_err(|err| {
-                    format!(
-                        "Unable to bind faucet to {faucet_addr:?}, check the address is not already in use: {err}"
-                    )
-                })
+        sender
+            .send(
+                listener
+                    .as_ref()
+                    .map(|listener| listener.local_addr().unwrap())
+                    .map_err(|err| {
+                        format!(
+                            "Unable to bind faucet to {faucet_addr:?}, check the address is not \
+                             already in use: {err}"
+                        )
+                    }),
             )
             .unwrap();
     }

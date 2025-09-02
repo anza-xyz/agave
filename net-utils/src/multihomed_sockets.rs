@@ -97,7 +97,8 @@ impl BindIpAddrs {
             for ip in &addrs {
                 if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
                     return Err(format!(
-                        "Invalid configuration: {ip:?} is not allowed with multiple --bind-address values (loopback, unspecified, or multicast)"
+                        "Invalid configuration: {ip:?} is not allowed with multiple \
+                         --bind-address values (loopback, unspecified, or multicast)"
                     ));
                 }
             }

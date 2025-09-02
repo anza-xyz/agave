@@ -327,7 +327,8 @@ async fn test_connection_denied_until_allowed() {
     // Expect at least 2 errors: initial rejection + retry attempts.
     assert!(
         stats.write_error_connection_lost + stats.connection_error_application_closed >= 2,
-        "Expected at least 2 connection errors, got write_error_connection_lost: {}, connection_error_application_closed: {}",
+        "Expected at least 2 connection errors, got write_error_connection_lost: {}, \
+         connection_error_application_closed: {}",
         stats.write_error_connection_lost,
         stats.connection_error_application_closed
     );
