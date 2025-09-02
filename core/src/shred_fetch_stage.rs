@@ -98,6 +98,7 @@ impl ShredFetchStage {
         let mut stats = ShredFetchStats::default();
 
         for mut packet_batch in recvr {
+            info!("[SHRED_FETCH] modify_packets received {} packets from {}", packet_batch.len(), name);
             if last_updated.elapsed().as_millis() as u64 > DEFAULT_MS_PER_SLOT {
                 last_updated = Instant::now();
                 last_slot = sharable_banks.working().slot();
@@ -175,6 +176,7 @@ impl ShredFetchStage {
                     stats.report();
                 }
             }
+            info!("[SHRED_FETCH] Sending {} packets to next stage", packet_batch.len());
             if let Err(send_err) = sendr.try_send(packet_batch) {
                 match send_err {
                     crossbeam_channel::TrySendError::Full(v) => {
