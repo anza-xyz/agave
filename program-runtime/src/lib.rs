@@ -2,10 +2,6 @@
 #![deny(clippy::arithmetic_side_effects)]
 #![deny(clippy::indexing_slicing)]
 
-#[cfg(feature = "metrics")]
-#[macro_use]
-extern crate solana_metrics;
-
 pub use solana_sbpf;
 pub mod execution_budget;
 pub mod invoke_context;
