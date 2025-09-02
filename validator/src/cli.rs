@@ -84,11 +84,11 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
 }
 
 fn config_arg<'b>(default_args: &DefaultArgs) -> Arg<'_, 'b> {
-    let mut arg = Arg::with_name("config_path")
-        .long("config-path")
+    let mut arg = Arg::with_name("config")
+        .long("config")
         .value_name("PATH")
         .takes_value(true)
-        .help("Path to the validator.toml config file");
+        .help("Path to the validator.toml config file(s)");
 
     if let Some(config_path) = default_args.config_path.as_ref() {
         arg = arg.default_value(config_path);

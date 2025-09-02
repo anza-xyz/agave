@@ -22,7 +22,7 @@ pub fn main() {
     warn_for_deprecated_arguments(&matches);
 
     let mut config_builder = config::Config::builder();
-    if let Some(config_path) = matches.value_of("config_path") {
+    if let Some(config_path) = matches.value_of("config") {
         config_builder = config_builder.add_source(config::File::with_name(config_path));
     }
     let config = config_builder
