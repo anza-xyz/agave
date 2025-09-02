@@ -1,7 +1,3 @@
-//! Validator configuration file.
-//!
-//! The validator configuration file is a TOML file that can be used to configure CLI argument defaults.
-//! The default path is `~/.config/agave/validator.toml`.
 use {
     serde::{de::Deserializer, Deserialize},
     solana_clap_utils::input_parsers::parse_cpu_ranges,
@@ -51,7 +47,7 @@ pub struct XdpInterface {
 impl Config {
     pub fn default_path() -> Option<PathBuf> {
         dirs_next::config_dir().map(|mut path| {
-            path.extend(["agave", "validator.toml"]);
+            path.extend(["agave", "agave.toml"]);
             path
         })
     }
