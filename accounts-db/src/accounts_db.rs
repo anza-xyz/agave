@@ -7163,7 +7163,7 @@ impl AccountsDb {
     /// storage.
     /// Returns the number of zero lamport single ref accounts found.
     fn visit_zero_lamport_pubkeys_during_startup(&self, pubkeys: &HashSet<Pubkey>) -> u64 {
-        let mut slot_offsets = HashMap::<Slot, Vec<usize>>::default();
+        let mut slot_offsets = HashMap::<_, Vec<_>>::default();
         self.accounts_index.scan(
             pubkeys.iter(),
             |_pubkey, slots_refs, _entry| {
