@@ -291,14 +291,6 @@ impl LoadProgramMetrics {
         timings.create_executor_load_elf_us += self.load_elf_us;
         timings.create_executor_verify_code_us += self.verify_code_us;
         timings.create_executor_jit_compile_us += self.jit_compile_us;
-        datapoint_trace!(
-            "create_executor_trace",
-            ("program_id", self.program_id, String),
-            ("register_syscalls_us", self.register_syscalls_us, i64),
-            ("load_elf_us", self.load_elf_us, i64),
-            ("verify_code_us", self.verify_code_us, i64),
-            ("jit_compile_us", self.jit_compile_us, i64),
-        );
     }
 }
 

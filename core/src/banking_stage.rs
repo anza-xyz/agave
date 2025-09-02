@@ -435,9 +435,9 @@ impl BankingStage {
             }
 
             info!(
-                "Spawning new banking stage non-vote threads with block-production-method: {:?} \
-                transaction-structure: {:?} num-workers: {}",
-                block_production_method, transaction_struct, num_workers
+                "Spawning new banking stage non-vote threads with block-production-method: \
+                 {block_production_method:?} transaction-structure: {transaction_struct:?} \
+                 num-workers: {num_workers}"
             );
             context.non_vote_exit_signal.store(false, Ordering::Relaxed);
             Self::new_central_scheduler(

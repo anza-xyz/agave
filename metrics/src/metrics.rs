@@ -81,7 +81,7 @@ impl InfluxDbMetricsWriter {
 
     fn build_write_url() -> Result<String, MetricsError> {
         let config = get_metrics_config().map_err(|err| {
-            info!("metrics disabled: {}", err);
+            info!("metrics disabled: {err}");
             err
         })?;
 
@@ -149,7 +149,7 @@ impl MetricsWriter for InfluxDbMetricsWriter {
             let client = match client {
                 Ok(client) => client,
                 Err(err) => {
-                    warn!("client instantiation failed: {}", err);
+                    warn!("client instantiation failed: {err}");
                     return;
                 }
             };
@@ -161,7 +161,7 @@ impl MetricsWriter for InfluxDbMetricsWriter {
                     let text = resp
                         .text()
                         .unwrap_or_else(|_| "[text body empty]".to_string());
-                    warn!("submit response unsuccessful: {} {}", status, text,);
+                    warn!("submit response unsuccessful: {status} {text}",);
                 }
             } else {
                 warn!("submit error: {}", response.unwrap_err());
@@ -226,13 +226,12 @@ impl MetricsAgent {
         let fit_counters = max_points.saturating_sub(points.len());
         let points_written = cmp::min(num_points, max_points);
 
-        debug!("run: attempting to write {} points", num_points);
+        debug!("run: attempting to write {num_points} points");
 
         if num_points > max_points {
             warn!(
-                "Max submission rate of {} datapoints per second exceeded.  Only the \
-                 first {} of {} points will be submitted.",
-                max_points_per_sec, max_points, num_points
+                "Max submission rate of {max_points_per_sec} datapoints per second exceeded. \
+                 Only the first {max_points} of {num_points} points will be submitted."
             );
         }
 
@@ -321,11 +320,11 @@ impl MetricsAgent {
                         barrier.wait();
                     }
                     MetricsCommand::Submit(point, level) => {
-                        log!(level, "{}", point);
+                        log!(level, "{point}");
                         points.push(point);
                     }
                     MetricsCommand::SubmitCounter(counter, _level, bucket) => {
-                        debug!("{:?}", counter);
+                        debug!("{counter:?}");
                         let key = (counter.name, bucket);
                         if let Some(value) = counters.get_mut(&key) {
                             value.count += counter.count;
@@ -351,11 +350,9 @@ impl MetricsAgent {
 
         debug_assert!(
             points.is_empty() && counters.is_empty(),
-            "Controlling `MetricsAgent` is expected to call `flush()` from the `Drop` \n\
-             implementation, before exiting.  So both `points` and `counters` must be empty at \n\
-             this point.\n\
-             `points`: {points:?}\n\
-             `counters`: {counters:?}",
+            "Controlling `MetricsAgent` is expected to call `flush()` from the `Drop` \
+             implementation, before exiting. So both `points` and `counters` must be empty at \
+             this point. `points`: {points:?}, `counters`: {counters:?}",
         );
 
         trace!("run: exit");
@@ -406,7 +403,7 @@ static HOST_ID: std::sync::LazyLock<RwLock<String>> = std::sync::LazyLock::new(|
 });
 
 pub fn set_host_id(host_id: String) {
-    info!("host id: {}", host_id);
+    info!("host id: {host_id}");
     *HOST_ID.write().unwrap() = host_id;
 }
 

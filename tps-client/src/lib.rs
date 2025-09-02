@@ -63,7 +63,7 @@ pub trait TpsClient {
                     return Ok(new_blockhash);
                 }
             }
-            debug!("Got same blockhash ({:?}), will retry...", blockhash);
+            debug!("Got same blockhash ({blockhash:?}), will retry...");
 
             // Retry ~twice during a slot
             sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT / 2));

@@ -17,7 +17,8 @@ fn check_genesis_hash(
     if let Some(expected_genesis_hash) = expected_genesis_hash {
         if expected_genesis_hash != genesis_hash {
             return Err(format!(
-                "Genesis hash mismatch: expected {expected_genesis_hash} but downloaded genesis hash is {genesis_hash}",
+                "Genesis hash mismatch: expected {expected_genesis_hash} but downloaded genesis \
+                 hash is {genesis_hash}",
             ));
         }
     }
@@ -79,7 +80,7 @@ fn set_and_verify_expected_genesis_hash(
 ) -> Result<(), String> {
     let genesis_hash = genesis_config.hash();
     if expected_genesis_hash.is_none() {
-        info!("Expected genesis hash set to {}", genesis_hash);
+        info!("Expected genesis hash set to {genesis_hash}");
         *expected_genesis_hash = Some(genesis_hash);
     }
     let expected_genesis_hash = expected_genesis_hash.unwrap();
@@ -92,7 +93,8 @@ fn set_and_verify_expected_genesis_hash(
 
     if expected_genesis_hash != rpc_genesis_hash {
         return Err(format!(
-            "Genesis hash mismatch: expected {expected_genesis_hash} but RPC node genesis hash is {rpc_genesis_hash}"
+            "Genesis hash mismatch: expected {expected_genesis_hash} but RPC node genesis hash is \
+             {rpc_genesis_hash}"
         ));
     }
 

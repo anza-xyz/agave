@@ -172,7 +172,7 @@ impl Default for TestValidatorGenesis {
             log_messages_bytes_limit: Option::<usize>::default(),
             transaction_account_lock_limit: Option::<usize>::default(),
             tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
-            geyser_plugin_manager: Arc::new(RwLock::new(GeyserPluginManager::new())),
+            geyser_plugin_manager: Arc::new(RwLock::new(GeyserPluginManager::default())),
             admin_rpc_service_post_init:
                 Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
         }
@@ -347,7 +347,7 @@ impl TestValidatorGenesis {
     {
         let addresses: Vec<Pubkey> = addresses.into_iter().collect();
         for chunk in addresses.chunks(MAX_MULTIPLE_ACCOUNTS) {
-            info!("Fetching {:?} over RPC...", chunk);
+            info!("Fetching {chunk:?} over RPC...");
             let responses = rpc_client
                 .get_multiple_accounts(chunk)
                 .map_err(|err| format!("Failed to fetch: {err}"))?;
@@ -355,7 +355,7 @@ impl TestValidatorGenesis {
                 if let Some(account) = res {
                     self.add_account(*address, transform(address, account)?);
                 } else if skip_missing {
-                    warn!("Could not find {}, skipping.", address);
+                    warn!("Could not find {address}, skipping.");
                 } else {
                     return Err(format!("Failed to fetch {address}"));
                 }
@@ -399,7 +399,7 @@ impl TestValidatorGenesis {
         let mut alt_entries: Vec<Pubkey> = Vec::new();
 
         for chunk in addresses.chunks(MAX_MULTIPLE_ACCOUNTS) {
-            info!("Fetching {:?} over RPC...", chunk);
+            info!("Fetching {chunk:?} over RPC...");
             let responses = rpc_client
                 .get_multiple_accounts(chunk)
                 .map_err(|err| format!("Failed to fetch: {err}"))?;
@@ -571,7 +571,7 @@ impl TestValidatorGenesis {
             json_files.extend(matched_files);
         }
 
-        debug!("account files found: {:?}", json_files);
+        debug!("account files found: {json_files:?}");
 
         let accounts: Vec<_> = json_files
             .iter()
@@ -874,12 +874,9 @@ impl TestValidator {
         let mut feature_set = FeatureSet::default().inactive().clone();
         for feature in &config.deactivate_feature_set {
             if feature_set.remove(feature) {
-                info!("Feature for {:?} deactivated", feature)
+                info!("Feature for {feature:?} deactivated")
             } else {
-                warn!(
-                    "Feature {:?} set for deactivation is not a known Feature public key",
-                    feature,
-                )
+                warn!("Feature {feature:?} set for deactivation is not a known Feature public key",)
             }
         }
 
@@ -1208,13 +1205,13 @@ impl TestValidator {
                             }
                         }
                         Err(err) => {
-                            warn!("get_fee_for_message() failed: {:?}", err);
+                            warn!("get_fee_for_message() failed: {err:?}");
                             break;
                         }
                     }
                 }
                 Err(err) => {
-                    warn!("get_latest_blockhash() failed: {:?}", err);
+                    warn!("get_latest_blockhash() failed: {err:?}");
                     break;
                 }
             }
@@ -1257,13 +1254,13 @@ impl TestValidator {
                 match rpc_client.send_transaction(&transaction).await {
                     Ok(_) => *is_deployed = true,
                     Err(e) => {
-                        if format!("{:?}", e).contains("Program is not deployed") {
-                            debug!("{:?} - not deployed", program_id);
+                        if format!("{e:?}").contains("Program is not deployed") {
+                            debug!("{program_id:?} - not deployed");
                         } else {
                             // Assuming all other other errors could only occur *after*
                             // program is deployed for usability.
                             *is_deployed = true;
-                            debug!("{:?} - Unexpected error: {:?}", program_id, e);
+                            debug!("{program_id:?} - Unexpected error: {e:?}");
                         }
                     }
                 }
@@ -1272,7 +1269,7 @@ impl TestValidator {
                 return;
             }
 
-            println!("Waiting for programs to be fully deployed {} ...", attempt);
+            println!("Waiting for programs to be fully deployed {attempt} ...");
             sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT)).await;
         }
         panic!("Timeout waiting for program to become usable");
