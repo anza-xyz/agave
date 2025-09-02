@@ -70,7 +70,7 @@ pub struct PackToWorkerMessage {
     pub slot: u64,
     /// The number of transactions in this message.
     /// MUST be in the range [1, [`MAX_TRANSACTIONS_PER_PACK_MESSAGE`]].
-    pub num_transactions: u16,
+    pub num_transactions: u8,
     /// Transactions in the message. Only the first `num_transactions`
     /// entries are valid to read.
     pub transactions: [SharableTransaction; MAX_TRANSACTIONS_PER_PACK_MESSAGE],
