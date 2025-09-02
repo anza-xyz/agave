@@ -83,7 +83,6 @@ impl SlotsStats {
         stats: &'a mut MutexGuard<LruCache<Slot, SlotStats>>,
         slot: Slot,
     ) -> (&'a mut SlotStats, Option<(Slot, SlotStats)>) {
-        // if slot is already in cache, no eviction is needed
         let evicted = if stats.contains(&slot) {
             None
         } else {
