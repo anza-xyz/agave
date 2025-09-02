@@ -301,7 +301,7 @@ impl Bank {
 
     /// Upgrade a Core BPF program.
     /// To use this function, add a feature-gated callsite to bank's
-    /// `apply_feature_activations` function, similar to below.
+    /// `apply_new_feature_activations` function, similar to below.
     ///
     /// ```ignore
     /// if new_feature_activations.contains(&agave_feature_set::test_upgrade_program::id()) {

@@ -1597,9 +1597,9 @@ impl Bank {
             .build()
             .expect("new rayon threadpool"));
 
-        let (_, apply_feature_activations_time_us) = measure_us!(thread_pool.install(|| {
-            self.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false)
-        }));
+        let (_, apply_feature_activations_time_us) = measure_us!(
+            thread_pool.install(|| { self.compute_and_apply_new_feature_activations() })
+        );
 
         // Add new entry to stakes.stake_history, set appropriate epoch and
         // update vote accounts with warmed up stakes before saving a
@@ -1679,7 +1679,7 @@ impl Bank {
         parent.freeze();
         let parent_timestamp = parent.clock().unix_timestamp;
         let mut new = Bank::new_from_parent(parent, collector_id, slot);
-        new.apply_feature_activations(ApplyFeatureActivationsCaller::WarpFromParent, false);
+        new.update_active_features(false);
         new.update_epoch_stakes(new.epoch_schedule().get_epoch(slot));
         new.tick_height.store(new.max_tick_height(), Relaxed);
 
@@ -4051,10 +4051,7 @@ impl Bank {
                 .set_execution_cost(compute_budget.to_cost());
         }
 
-        self.apply_feature_activations(
-            ApplyFeatureActivationsCaller::FinishInit,
-            debug_do_not_add_builtins,
-        );
+        self.update_active_features(debug_do_not_add_builtins);
 
         // Cost-Tracker is not serialized in snapshot or any configs.
         // We must apply previously activated features related to limits here
@@ -5188,21 +5185,11 @@ impl Bank {
         &self.reserved_account_keys.active
     }
 
-    // This is called from snapshot restore AND for each epoch boundary
-    // The entire code path herein must be idempotent
-    fn apply_feature_activations(
-        &mut self,
-        caller: ApplyFeatureActivationsCaller,
-        debug_do_not_add_builtins: bool,
-    ) {
-        use ApplyFeatureActivationsCaller as Caller;
-        let allow_new_activations = match caller {
-            Caller::FinishInit => false,
-            Caller::NewFromParent => true,
-            Caller::WarpFromParent => false,
-        };
+    /// This is called from each epoch boundary
+    fn compute_and_apply_new_feature_activations(&mut self) {
+        let include_pending = true;
         let (feature_set, new_feature_activations) =
-            self.compute_active_feature_set(allow_new_activations);
+            self.compute_active_feature_set(include_pending);
         self.feature_set = Arc::new(feature_set);
 
         // Update activation slot of features in `new_feature_activations`
@@ -5238,12 +5225,7 @@ impl Bank {
             self.rent_collector.rent.burn_percent = 50; // 50% rent burn
         }
 
-        if !debug_do_not_add_builtins {
-            self.apply_builtin_program_feature_transitions(
-                allow_new_activations,
-                &new_feature_activations,
-            );
-        }
+        self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
 
         if new_feature_activations.contains(&feature_set::raise_block_limits_to_100m::id()) {
             let block_cost_limit = simd_0286_block_limits();
@@ -5263,6 +5245,88 @@ impl Bank {
 
         if new_feature_activations.contains(&feature_set::raise_account_cu_limit::id()) {
             self.apply_simd_0306_cost_tracker_changes();
+        }
+    }
+
+    fn apply_new_builtin_program_feature_transitions(
+        &mut self,
+        new_feature_activations: &AHashSet<Pubkey>,
+    ) {
+        for builtin in BUILTINS.iter() {
+            if let Some(feature_id) = builtin.enable_feature_id {
+                if new_feature_activations.contains(&feature_id) {
+                    self.add_builtin(
+                        builtin.program_id,
+                        builtin.name,
+                        ProgramCacheEntry::new_builtin(
+                            self.feature_set.activated_slot(&feature_id).unwrap_or(0),
+                            builtin.name.len(),
+                            builtin.entrypoint,
+                        ),
+                    );
+                }
+            }
+
+            if let Some(core_bpf_migration_config) = &builtin.core_bpf_migration_config {
+                // If the builtin is set to be migrated to Core BPF on feature
+                // activation, perform the migration which will remove it from
+                // the builtins list and the cache.
+                if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
+                    if let Err(e) = self
+                        .migrate_builtin_to_core_bpf(&builtin.program_id, core_bpf_migration_config)
+                    {
+                        warn!(
+                            "Failed to migrate builtin {} to Core BPF: {}",
+                            builtin.name, e
+                        );
+                    }
+                }
+            };
+        }
+
+        // Migrate any necessary stateless builtins to core BPF.
+        // Stateless builtins do not have an `enable_feature_id` since they
+        // do not exist on-chain.
+        for stateless_builtin in STATELESS_BUILTINS.iter() {
+            if let Some(core_bpf_migration_config) = &stateless_builtin.core_bpf_migration_config {
+                if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
+                    if let Err(e) = self.migrate_builtin_to_core_bpf(
+                        &stateless_builtin.program_id,
+                        core_bpf_migration_config,
+                    ) {
+                        warn!(
+                            "Failed to migrate stateless builtin {} to Core BPF: {}",
+                            stateless_builtin.name, e
+                        );
+                    }
+                }
+            }
+        }
+
+        for precompile in get_precompiles() {
+            if let Some(feature_id) = &precompile.feature {
+                if new_feature_activations.contains(feature_id) {
+                    self.add_precompile(&precompile.program_id);
+                }
+            }
+        }
+    }
+
+    // This is called from snapshot restore (among other callers) so the entire
+    // code path herein must be idempotent
+    fn update_active_features(&mut self, debug_do_not_add_builtins: bool) {
+        let feature_set = self.compute_active_feature_set(false).0;
+        self.feature_set = Arc::new(feature_set);
+
+        // Update active set of reserved account keys which are not allowed to be write locked
+        self.reserved_account_keys = {
+            let mut reserved_keys = ReservedAccountKeys::clone(&self.reserved_account_keys);
+            reserved_keys.update_active_set(&self.feature_set);
+            Arc::new(reserved_keys)
+        };
+
+        if !debug_do_not_add_builtins {
+            self.add_active_builtin_programs();
         }
     }
 
@@ -5323,11 +5387,7 @@ impl Bank {
         Some(self.epoch_schedule.get_first_slot_in_epoch(active_epoch))
     }
 
-    fn apply_builtin_program_feature_transitions(
-        &mut self,
-        only_apply_transitions_for_new_features: bool,
-        new_feature_activations: &AHashSet<Pubkey>,
-    ) {
+    fn add_active_builtin_programs(&mut self) {
         for builtin in BUILTINS.iter() {
             // The `builtin_is_bpf` flag is used to handle the case where a
             // builtin is scheduled to be enabled by one feature gate and
@@ -5345,42 +5405,20 @@ impl Bank {
             //
             // Using the same feature gate for both enabling and migrating a
             // builtin to Core BPF should be strictly avoided.
-            let mut builtin_is_bpf = false;
-            if let Some(core_bpf_migration_config) = &builtin.core_bpf_migration_config {
-                // If the builtin is set to be migrated to Core BPF on feature
-                // activation, perform the migration and do not add the program
-                // to the bank's builtins. The migration will remove it from
-                // the builtins list and the cache.
-                if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
-                    if let Err(e) = self
-                        .migrate_builtin_to_core_bpf(&builtin.program_id, core_bpf_migration_config)
-                    {
-                        warn!(
-                            "Failed to migrate builtin {} to Core BPF: {}",
-                            builtin.name, e
-                        );
-                    } else {
-                        builtin_is_bpf = true;
-                    }
-                } else {
-                    // If the builtin has already been migrated to Core BPF, do not
-                    // add it to the bank's builtins.
-                    builtin_is_bpf = self
-                        .get_account(&builtin.program_id)
-                        .map(|a| a.owner() == &bpf_loader_upgradeable::id())
-                        .unwrap_or(false);
-                }
+            let builtin_is_bpf = builtin.core_bpf_migration_config.is_some() && {
+                self.get_account(&builtin.program_id)
+                    .map(|a| a.owner() == &bpf_loader_upgradeable::id())
+                    .unwrap_or(false)
             };
 
-            if let Some(feature_id) = builtin.enable_feature_id {
-                let should_enable_builtin_on_feature_transition = !builtin_is_bpf
-                    && if only_apply_transitions_for_new_features {
-                        new_feature_activations.contains(&feature_id)
-                    } else {
-                        self.feature_set.is_active(&feature_id)
-                    };
+            // If the builtin has already been migrated to Core BPF, do not
+            // add it to the bank's builtins.
+            if builtin_is_bpf {
+                continue;
+            }
 
-                if should_enable_builtin_on_feature_transition {
+            if let Some(feature_id) = builtin.enable_feature_id {
+                if self.feature_set.is_active(&feature_id) {
                     self.add_builtin(
                         builtin.program_id,
                         builtin.name,
@@ -5390,25 +5428,6 @@ impl Bank {
                             builtin.entrypoint,
                         ),
                     );
-                }
-            }
-        }
-
-        // Migrate any necessary stateless builtins to core BPF.
-        // Stateless builtins do not have an `enable_feature_id` since they
-        // do not exist on-chain.
-        for stateless_builtin in STATELESS_BUILTINS.iter() {
-            if let Some(core_bpf_migration_config) = &stateless_builtin.core_bpf_migration_config {
-                if new_feature_activations.contains(&core_bpf_migration_config.feature_id) {
-                    if let Err(e) = self.migrate_builtin_to_core_bpf(
-                        &stateless_builtin.program_id,
-                        core_bpf_migration_config,
-                    ) {
-                        warn!(
-                            "Failed to migrate stateless builtin {} to Core BPF: {}",
-                            stateless_builtin.name, e
-                        );
-                    }
                 }
             }
         }
@@ -5914,15 +5933,6 @@ fn calculate_data_size_delta(old_data_size: usize, new_data_size: usize) -> i64 
     let new_data_size = new_data_size as i64;
 
     new_data_size.saturating_sub(old_data_size)
-}
-
-/// Since `apply_feature_activations()` has different behavior depending on its caller, enumerate
-/// those callers explicitly.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum ApplyFeatureActivationsCaller {
-    FinishInit,
-    NewFromParent,
-    WarpFromParent,
 }
 
 impl Drop for Bank {

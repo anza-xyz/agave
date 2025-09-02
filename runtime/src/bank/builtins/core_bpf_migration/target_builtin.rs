@@ -71,11 +71,8 @@ impl TargetBuiltin {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        crate::bank::{tests::create_simple_test_bank, ApplyFeatureActivationsCaller},
-        agave_feature_set as feature_set,
-        assert_matches::assert_matches,
-        solana_account::Account,
+        super::*, crate::bank::tests::create_simple_test_bank, agave_feature_set as feature_set,
+        assert_matches::assert_matches, solana_account::Account,
         solana_feature_gate_interface as feature,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_sdk_ids::bpf_loader_upgradeable::ID as BPF_LOADER_UPGRADEABLE_ID,
@@ -133,7 +130,7 @@ mod tests {
                     bank.get_minimum_balance_for_rent_exemption(feature::Feature::size_of()),
                 ),
             );
-            bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
+            bank.compute_and_apply_new_feature_activations();
         }
 
         let program_account = bank.get_account_with_fixed_root(&program_address).unwrap();
