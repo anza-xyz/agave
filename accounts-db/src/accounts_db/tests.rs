@@ -18,7 +18,6 @@ use {
     },
     solana_lattice_hash::lt_hash::Checksum as LtHashChecksum,
     solana_pubkey::PUBKEY_BYTES,
-    solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
         iter::{self, FromIterator},
         ops::Range,
