@@ -6711,17 +6711,38 @@ impl AccountsDb {
             .set_startup(Startup::StartupWithExtraThreads);
         let storage_info = StorageSizeAndCountMap::default();
 
-        let mut total_insert_us = 0;
-        let mut total_num_accounts = 0;
-        let mut total_accounts_data_len = 0;
-        let mut total_zero_lamport_pubkeys = HashSet::with_hasher(PubkeyHasherBuilder::default());
-        let mut total_all_accounts_are_zero_lamports_slots = 0;
-        let mut total_all_zeros_slots = Vec::new();
-        let mut total_num_did_not_exist = 0;
-        let mut total_num_existed_in_mem = 0;
-        let mut total_num_existed_on_disk = 0;
-        let mut total_lt_hash = LtHash::identity();
+        /// Accumulator for the values produced while generating the index
+        #[derive(Debug)]
+        struct IndexGenerationAccumulator {
+            insert_us: u64,
+            num_accounts: u64,
+            accounts_data_len: u64,
+            zero_lamport_pubkeys: HashSet<Pubkey, PubkeyHasherBuilder>,
+            all_accounts_are_zero_lamports_slots: u64,
+            all_zeros_slots: Vec<(Slot, Arc<AccountStorageEntry>)>,
+            num_did_not_exist: u64,
+            num_existed_in_mem: u64,
+            num_existed_on_disk: u64,
+            lt_hash: LtHash,
+        }
+        impl IndexGenerationAccumulator {
+            fn new() -> Self {
+                Self {
+                    insert_us: 0,
+                    num_accounts: 0,
+                    accounts_data_len: 0,
+                    zero_lamport_pubkeys: HashSet::default(),
+                    all_accounts_are_zero_lamports_slots: 0,
+                    all_zeros_slots: Vec::new(),
+                    num_did_not_exist: 0,
+                    num_existed_in_mem: 0,
+                    num_existed_on_disk: 0,
+                    lt_hash: LtHash::identity(),
+                }
+            }
+        }
 
+        let mut total_accum = IndexGenerationAccumulator::new();
         let storages_orderer =
             AccountStoragesOrderer::with_random_order(&storages).into_concurrent_consumer();
         let exit_logger = AtomicBool::new(false);
@@ -6734,68 +6755,40 @@ impl AccountsDb {
                     thread::Builder::new()
                         .name(format!("solGenIndex{i:02}"))
                         .spawn_scoped(s, || {
-                            let mut thread_insert_us = 0;
-                            let mut thread_num_accounts = 0;
-                            let mut thread_accounts_data_len = 0;
-                            let mut thread_zero_lamport_pubkeys = Vec::new();
-                            let mut thread_all_accounts_are_zero_lamports_slots = 0;
-                            let mut thread_all_zeros_slots = Vec::new();
-                            let mut thread_num_did_not_exist = 0;
-                            let mut thread_num_existed_in_mem = 0;
-                            let mut thread_num_existed_on_disk = 0;
-                            let mut thread_lt_hash = LtHash::identity();
+                            let mut thread_accum = IndexGenerationAccumulator::new();
                             let mut reader = append_vec::new_scan_accounts_reader();
                             while let Some(next_item) = storages_orderer.next() {
+                                self.maybe_throttle_index_generation();
                                 let storage = next_item.storage;
                                 let store_id = storage.id();
                                 let slot = storage.slot();
-                                self.maybe_throttle_index_generation();
-                                let SlotIndexGenerationInfo {
-                                    insert_time_us,
-                                    num_accounts,
-                                    accounts_data_len,
-                                    mut zero_lamport_pubkeys,
-                                    all_accounts_are_zero_lamports,
-                                    num_did_not_exist,
-                                    num_existed_in_mem,
-                                    num_existed_on_disk,
-                                    slot_lt_hash,
-                                } = self.generate_index_for_slot(
+                                let slot_info = self.generate_index_for_slot(
                                     &mut reader,
                                     storage,
                                     slot,
                                     store_id,
                                     &storage_info,
                                 );
-                                thread_insert_us += insert_time_us;
-                                thread_num_accounts += num_accounts;
-                                thread_accounts_data_len += accounts_data_len;
-                                thread_zero_lamport_pubkeys.append(&mut zero_lamport_pubkeys);
-                                if all_accounts_are_zero_lamports {
-                                    thread_all_accounts_are_zero_lamports_slots += 1;
-                                    thread_all_zeros_slots.push((
+                                thread_accum.insert_us += slot_info.insert_time_us;
+                                thread_accum.num_accounts += slot_info.num_accounts;
+                                thread_accum.accounts_data_len += slot_info.accounts_data_len;
+                                thread_accum
+                                    .zero_lamport_pubkeys
+                                    .extend(slot_info.zero_lamport_pubkeys);
+                                if slot_info.all_accounts_are_zero_lamports {
+                                    thread_accum.all_accounts_are_zero_lamports_slots += 1;
+                                    thread_accum.all_zeros_slots.push((
                                         slot,
                                         Arc::clone(&storages[next_item.original_index]),
                                     ));
                                 }
-                                thread_num_did_not_exist += num_did_not_exist;
-                                thread_num_existed_in_mem += num_existed_in_mem;
-                                thread_num_existed_on_disk += num_existed_on_disk;
-                                thread_lt_hash.mix_in(&slot_lt_hash.0);
+                                thread_accum.num_did_not_exist += slot_info.num_did_not_exist;
+                                thread_accum.num_existed_in_mem += slot_info.num_existed_in_mem;
+                                thread_accum.num_existed_on_disk += slot_info.num_existed_on_disk;
+                                thread_accum.lt_hash.mix_in(&slot_info.slot_lt_hash.0);
                                 num_processed.fetch_add(1, Ordering::Relaxed);
                             }
-                            (
-                                thread_insert_us,
-                                thread_num_accounts,
-                                thread_accounts_data_len,
-                                thread_zero_lamport_pubkeys,
-                                thread_all_accounts_are_zero_lamports_slots,
-                                thread_all_zeros_slots,
-                                thread_num_did_not_exist,
-                                thread_num_existed_in_mem,
-                                thread_num_existed_on_disk,
-                                thread_lt_hash,
-                            )
+                            thread_accum
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -6823,34 +6816,25 @@ impl AccountsDb {
                 })
                 .expect("spawn thread");
             for thread_handle in thread_handles {
-                let Ok(thread_retvals) = thread_handle.join() else {
+                let Ok(thread_accum) = thread_handle.join() else {
                     exit_logger.store(true, Ordering::Relaxed);
                     panic!("index generation failed");
                 };
-                let (
-                    thread_insert_us,
-                    thread_num_accounts,
-                    thread_accounts_data_len,
-                    thread_zero_lamport_pubkeys,
-                    thread_all_accounts_are_zero_lamports_slots,
-                    mut thread_all_zeros_slots,
-                    thread_num_did_not_exist,
-                    thread_num_existed_in_mem,
-                    thread_num_existed_on_disk,
-                    thread_lt_hash,
-                ) = thread_retvals;
-
-                total_insert_us += thread_insert_us;
-                total_num_accounts += thread_num_accounts;
-                total_accounts_data_len += thread_accounts_data_len;
-                total_zero_lamport_pubkeys.extend(thread_zero_lamport_pubkeys);
-                total_all_accounts_are_zero_lamports_slots +=
-                    thread_all_accounts_are_zero_lamports_slots;
-                total_all_zeros_slots.append(&mut thread_all_zeros_slots);
-                total_num_did_not_exist += thread_num_did_not_exist;
-                total_num_existed_in_mem += thread_num_existed_in_mem;
-                total_num_existed_on_disk += thread_num_existed_on_disk;
-                total_lt_hash.mix_in(&thread_lt_hash);
+                total_accum.insert_us += thread_accum.insert_us;
+                total_accum.num_accounts += thread_accum.num_accounts;
+                total_accum.accounts_data_len += thread_accum.accounts_data_len;
+                total_accum
+                    .zero_lamport_pubkeys
+                    .extend(thread_accum.zero_lamport_pubkeys);
+                total_accum.all_accounts_are_zero_lamports_slots +=
+                    thread_accum.all_accounts_are_zero_lamports_slots;
+                total_accum
+                    .all_zeros_slots
+                    .extend(thread_accum.all_zeros_slots);
+                total_accum.num_did_not_exist += thread_accum.num_did_not_exist;
+                total_accum.num_existed_in_mem += thread_accum.num_existed_in_mem;
+                total_accum.num_existed_on_disk += thread_accum.num_existed_on_disk;
+                total_accum.lt_hash.mix_in(&thread_accum.lt_hash);
             }
             // Make sure to join the logger thread *after* the main threads.
             // This way, if a main thread errors, we won't spin indefinitely
@@ -6864,25 +6848,25 @@ impl AccountsDb {
             let index_stats = self.accounts_index.bucket_map_holder_stats();
 
             // stats for inserted entries that previously did *not* exist
-            index_stats.inc_insert_count(total_num_did_not_exist);
-            index_stats.add_mem_count(total_num_did_not_exist as usize);
+            index_stats.inc_insert_count(total_accum.num_did_not_exist);
+            index_stats.add_mem_count(total_accum.num_did_not_exist as usize);
 
             // stats for inserted entries that previous did exist *in-mem*
             index_stats
                 .entries_from_mem
-                .fetch_add(total_num_existed_in_mem, Ordering::Relaxed);
+                .fetch_add(total_accum.num_existed_in_mem, Ordering::Relaxed);
             index_stats
                 .updates_in_mem
-                .fetch_add(total_num_existed_in_mem, Ordering::Relaxed);
+                .fetch_add(total_accum.num_existed_in_mem, Ordering::Relaxed);
 
             // stats for inserted entries that previously did exist *on-disk*
-            index_stats.add_mem_count(total_num_existed_on_disk as usize);
+            index_stats.add_mem_count(total_accum.num_existed_on_disk as usize);
             index_stats
                 .entries_missing
-                .fetch_add(total_num_existed_on_disk, Ordering::Relaxed);
+                .fetch_add(total_accum.num_existed_on_disk, Ordering::Relaxed);
             index_stats
                 .updates_in_mem
-                .fetch_add(total_num_existed_on_disk, Ordering::Relaxed);
+                .fetch_add(total_accum.num_existed_on_disk, Ordering::Relaxed);
         }
 
         if verify {
@@ -6955,14 +6939,14 @@ impl AccountsDb {
             index_flush_us,
             scan_time: 0,
             index_time: index_time.as_us(),
-            insertion_time_us: total_insert_us,
+            insertion_time_us: total_accum.insert_us,
             total_duplicate_slot_keys: total_duplicate_slot_keys.load(Ordering::Relaxed),
             total_num_unique_duplicate_keys: total_num_unique_duplicate_keys
                 .load(Ordering::Relaxed),
             populate_duplicate_keys_us,
-            total_including_duplicates: total_num_accounts,
+            total_including_duplicates: total_accum.num_accounts,
             total_slots: num_storages as u64,
-            all_accounts_are_zero_lamports_slots: total_all_accounts_are_zero_lamports_slots,
+            all_accounts_are_zero_lamports_slots: total_accum.all_accounts_are_zero_lamports_slots,
             ..GenerateIndexTimings::default()
         };
 
@@ -6984,7 +6968,7 @@ impl AccountsDb {
         }
 
         let (num_zero_lamport_single_refs, visit_zero_lamports_us) = measure_us!(
-            self.visit_zero_lamport_pubkeys_during_startup(&total_zero_lamport_pubkeys)
+            self.visit_zero_lamport_pubkeys_during_startup(&total_accum.zero_lamport_pubkeys)
         );
         timings.visit_zero_lamports_us = visit_zero_lamports_us;
         timings.num_zero_lamport_single_refs = num_zero_lamport_single_refs;
@@ -7031,16 +7015,16 @@ impl AccountsDb {
         timings.accounts_data_len_dedup_time_us = accounts_data_len_dedup_timer.as_us();
         timings.num_duplicate_accounts = num_duplicate_accounts;
 
-        total_lt_hash.mix_out(&duplicates_lt_hash.0);
-        total_accounts_data_len -= accounts_data_len_from_duplicates;
-        info!("accounts data len: {total_accounts_data_len}");
+        total_accum.lt_hash.mix_out(&duplicates_lt_hash.0);
+        total_accum.accounts_data_len -= accounts_data_len_from_duplicates;
+        info!("accounts data len: {}", total_accum.accounts_data_len);
 
         // insert all zero lamport account storage into the dirty stores and add them into the uncleaned roots for clean to pick up
         info!(
             "insert all zero slots to clean at startup {}",
-            total_all_zeros_slots.len()
+            total_accum.all_zeros_slots.len()
         );
-        for (slot, storage) in total_all_zeros_slots {
+        for (slot, storage) in total_accum.all_zeros_slots {
             self.dirty_stores.insert(slot, storage);
         }
 
@@ -7074,8 +7058,8 @@ impl AccountsDb {
         self.accounts_index.log_secondary_indexes();
 
         IndexGenerationInfo {
-            accounts_data_len: total_accounts_data_len,
-            calculated_accounts_lt_hash: AccountsLtHash(total_lt_hash),
+            accounts_data_len: total_accum.accounts_data_len,
+            calculated_accounts_lt_hash: AccountsLtHash(total_accum.lt_hash),
         }
     }
 
