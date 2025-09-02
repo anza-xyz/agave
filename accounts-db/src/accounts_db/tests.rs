@@ -173,7 +173,16 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
     append_vec.accounts.write_accounts(&storable_accounts, 0);
 
     assert!(!db.accounts_index.contains(&pubkey));
-    db.generate_index(None, false);
+    let storage_info = StorageSizeAndCountMap::default();
+    let storage = db.get_storage_for_slot(slot0).unwrap();
+    let mut reader = append_vec::new_scan_accounts_reader();
+    db.generate_index_for_slot(
+        &mut reader,
+        &storage,
+        storage.slot(),
+        storage.id(),
+        &storage_info,
+    );
 }
 
 define_accounts_db_test!(

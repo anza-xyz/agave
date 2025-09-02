@@ -6823,16 +6823,10 @@ impl AccountsDb {
                 })
                 .expect("spawn thread");
             for thread_handle in thread_handles {
-                let thread_retvals = thread_handle.join().unwrap_or_else(|err| {
+                let Ok(thread_retvals) = thread_handle.join() else {
                     exit_logger.store(true, Ordering::Relaxed);
-                    if cfg!(test) {
-                        // test_generate_index_duplicates_within_slot() relies on the panic
-                        // message, so we need to propagate the message from the child thread.
-                        std::panic::resume_unwind(err);
-                    } else {
-                        panic!("index generation failed");
-                    }
-                });
+                    panic!("index generation failed");
+                };
                 let (
                     thread_insert_us,
                     thread_num_accounts,
