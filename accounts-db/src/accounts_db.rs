@@ -74,7 +74,7 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_rayon_threadlimit::get_thread_count,
     solana_transaction::sanitized::SanitizedTransaction,
     std::{
@@ -719,10 +719,10 @@ impl<'a> MultiThreadProgress<'a> {
 pub type AtomicAccountsFileId = AtomicU32;
 pub type AccountsFileId = u32;
 
-type AccountSlots = HashMap<Pubkey, IntSet<Slot>>;
+type AccountSlots = HashMap<Pubkey, IntSet<Slot>, PubkeyHasherBuilder>;
 type SlotOffsets = IntMap<Slot, IntSet<Offset>>;
 type ReclaimResult = (AccountSlots, SlotOffsets);
-type PubkeysRemovedFromAccountsIndex = HashSet<Pubkey>;
+pub(crate) type PubkeysRemovedFromAccountsIndex = HashSet<Pubkey, PubkeyHasherBuilder>;
 type ShrinkCandidates = IntSet<Slot>;
 
 // Some hints for applicability of additional sanity checks for the do_load fast-path;
@@ -1680,7 +1680,7 @@ impl AccountsDb {
     fn clean_accounts_older_than_root(
         &self,
         reclaims: &SlotList<AccountInfo>,
-        pubkeys_removed_from_accounts_index: &HashSet<Pubkey>,
+        pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
     ) -> ReclaimResult {
         let mut measure = Measure::start("clean_old_root_reclaims");
 
@@ -2241,7 +2241,7 @@ impl AccountsDb {
         let useful_accum = AtomicU64::new(0);
         let reclaims: SlotList<AccountInfo> = Vec::with_capacity(num_candidates as usize);
         let reclaims = Mutex::new(reclaims);
-        let pubkeys_removed_from_accounts_index: PubkeysRemovedFromAccountsIndex = HashSet::new();
+        let pubkeys_removed_from_accounts_index = PubkeysRemovedFromAccountsIndex::default();
         let pubkeys_removed_from_accounts_index = Mutex::new(pubkeys_removed_from_accounts_index);
         // parallel scan the index.
         let do_clean_scan = || {
@@ -7102,7 +7102,7 @@ impl AccountsDb {
                 self.handle_reclaims(
                     (!reclaims.is_empty()).then(|| reclaims.iter()),
                     None,
-                    &HashSet::new(),
+                    &PubkeysRemovedFromAccountsIndex::default(),
                     HandleReclaims::ProcessDeadSlots(&stats),
                     MarkAccountsObsolete::Yes(slot_marked_obsolete),
                 );

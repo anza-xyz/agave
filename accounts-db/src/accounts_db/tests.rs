@@ -1094,7 +1094,11 @@ fn test_clean_dead_slot_with_obsolete_accounts() {
     old_storage.mark_accounts_obsolete(vec![(0, 1)].into_iter(), 2);
 
     // Unreference pubkey, which would occur during the normal mark_accounts_obsolete flow
-    accounts.unref_pubkeys([pubkey].iter(), 1, &HashSet::new());
+    accounts.unref_pubkeys(
+        [pubkey].iter(),
+        1,
+        &PubkeysRemovedFromAccountsIndex::default(),
+    );
 
     // Pubkey1 should now have two references: Slot0 and Slot2.
     accounts.assert_ref_count(&pubkey, 2);
