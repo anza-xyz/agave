@@ -379,9 +379,9 @@ impl<'a> AccountStoragesOrderer<'a> {
 impl Index<usize> for AccountStoragesOrderer<'_> {
     type Output = AccountStorageEntry;
 
-    fn index(&self, index: usize) -> &Self::Output {
-        // SAFETY: Caller must ensure `index` is in range.
-        let original_index = self.original_index(index);
+    fn index(&self, position: usize) -> &Self::Output {
+        // SAFETY: Caller must ensure `position` is in range.
+        let original_index = self.original_index(position);
         // SAFETY: `original_index` must be valid here, so it is a valid index into `storages`.
         self.storages[original_index].as_ref()
     }
