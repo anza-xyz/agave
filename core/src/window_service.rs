@@ -242,6 +242,7 @@ where
             if let Ok(entries) = blockstore.get_entries_in_data_block(*slot, indices.clone(), None) {
                 for entry in entries {
                     for tx in entry.transactions {
+                        info!("Transaction: {tx:?}");
                         let has_target = tx.message.static_account_keys().iter()
                             .any(|k| *k == target_a || *k == target_b);
                         if has_target {
