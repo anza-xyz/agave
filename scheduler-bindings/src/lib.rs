@@ -77,6 +77,10 @@ pub struct PackToWorkerMessage {
 }
 
 pub mod pack_message_flags {
+    //! Flags for [`crate::PackToWorkerMessage::flags`].
+    //! These flags can be ORed together so must be unique bits, with
+    //! the exception of [`NONE`].
+
     /// No special handling - execute the transactions normally.
     pub const NONE: u16 = 0;
 
