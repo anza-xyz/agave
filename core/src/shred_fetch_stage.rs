@@ -96,6 +96,7 @@ impl ShredFetchStage {
             )
         };
         let mut stats = ShredFetchStats::default();
+        info!("[SHRED_FETCH] Starting modify_packets loop for {}", name);
 
         for mut packet_batch in recvr {
             info!("[SHRED_FETCH] modify_packets received {} packets from {}", packet_batch.len(), name);
