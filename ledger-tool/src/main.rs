@@ -2156,18 +2156,6 @@ fn main() {
                     // possibility.
                     accounts_background_service.join().unwrap();
 
-                    // Similar to waiting for ABS to stop, we also wait for the initial startup
-                    // verification to complete. The startup verification runs in the background
-                    // and verifies the snapshot's accounts hashes are correct. We only want a
-                    // single accounts hash calculation to run at a time, and since snapshot
-                    // creation below will calculate the accounts hash, we wait for the startup
-                    // verification to complete before proceeding.
-                    bank.rc
-                        .accounts
-                        .accounts_db
-                        .verify_accounts_hash_in_bg
-                        .join_background_thread();
-
                     let child_bank_required = rent_burn_percentage.is_ok()
                         || hashes_per_tick.is_some()
                         || remove_stake_accounts

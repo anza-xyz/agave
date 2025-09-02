@@ -2125,11 +2125,6 @@ impl ReplayStage {
 
         assert!(parent.is_frozen());
 
-        if !parent.has_initial_accounts_hash_verification_completed() {
-            info!("startup verification incomplete, so skipping my leader slot");
-            return None;
-        }
-
         if bank_forks.read().unwrap().get(poh_slot).is_some() {
             warn!("{my_pubkey} already have bank in forks at {poh_slot}?");
             return None;
@@ -2494,11 +2489,6 @@ impl ReplayStage {
         has_new_vote_been_rooted: bool,
         wait_to_vote_slot: Option<Slot>,
     ) -> GenerateVoteTxResult {
-        if !bank.has_initial_accounts_hash_verification_completed() {
-            info!("startup verification incomplete, so unable to vote");
-            return GenerateVoteTxResult::Failed;
-        }
-
         if authorized_voter_keypairs.is_empty() {
             return GenerateVoteTxResult::NonVoting;
         }
@@ -7622,8 +7612,6 @@ pub(crate) mod tests {
             ),
         );
 
-        bank0.set_initial_accounts_hash_verification_completed();
-
         let (voting_sender, voting_receiver) = unbounded();
 
         // Simulate landing a vote for slot 0 landing in slot 1
@@ -8125,8 +8113,6 @@ pub(crate) mod tests {
         )];
         let my_vote_pubkey = my_vote_keypair[0].pubkey();
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-
-        bank0.set_initial_accounts_hash_verification_completed();
 
         // Add a new fork starting from 0 with bigger slot number, we assume it has a bigger
         // weight, but we cannot switch because of lockout.
@@ -9276,8 +9262,6 @@ pub(crate) mod tests {
         let working_bank = bank_forks.read().unwrap().working_bank();
         assert!(working_bank.is_complete());
         assert!(working_bank.is_frozen());
-        // Mark startup verification as complete to avoid skipping leader slots
-        working_bank.set_initial_accounts_hash_verification_completed();
 
         // Insert a block two slots greater than current bank. This slot does
         // not have a corresponding Bank in BankForks; this emulates a scenario

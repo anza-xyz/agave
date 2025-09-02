@@ -944,7 +944,6 @@ mod tests {
             Arc::default(),
         )
         .unwrap();
-        roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
         assert_eq!(original_bank, roundtrip_bank);
     }
 
@@ -1043,7 +1042,6 @@ mod tests {
             Arc::default(),
         )
         .unwrap();
-        roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
         assert_eq!(*bank1, roundtrip_bank);
     }
 
@@ -1143,7 +1141,6 @@ mod tests {
             Arc::default(),
         )
         .unwrap();
-        roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
         assert_eq!(*bank4, roundtrip_bank);
     }
 
@@ -1261,7 +1258,6 @@ mod tests {
             Arc::default(),
         )
         .unwrap();
-        roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
         assert_eq!(*bank4, roundtrip_bank);
     }
 
@@ -1369,7 +1365,6 @@ mod tests {
             Arc::default(),
         )
         .unwrap();
-        deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
         assert_eq!(deserialized_bank, *bank4);
     }
 
@@ -1498,7 +1493,6 @@ mod tests {
             Arc::default(),
         )
         .unwrap();
-        deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
         assert_eq!(
             deserialized_bank, *bank2,
             "Ensure rebuilding from an incremental snapshot works"
@@ -1556,7 +1550,6 @@ mod tests {
             Arc::default(),
         )
         .unwrap();
-        deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
         assert_eq!(
             deserialized_bank, *bank4,
             "Ensure rebuilding from an incremental snapshot works",
@@ -1931,8 +1924,6 @@ mod tests {
         )
         .unwrap();
 
-        deserialized_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
-
         assert!(
             deserialized_bank
                 .get_account_modified_slot(&key1.pubkey())
@@ -1969,8 +1960,6 @@ mod tests {
             Arc::default(),
         )
         .unwrap();
-
-        bank_constructed.wait_for_initial_accounts_hash_verification_completed_for_tests();
         assert_eq!(bank_constructed, bank);
 
         // Verify that the next_append_vec_id tracking is correct

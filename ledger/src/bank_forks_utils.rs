@@ -194,12 +194,6 @@ pub fn load_bank_forks(
                 exit,
             )
             .map_err(BankForksUtilsError::ProcessBlockstoreFromGenesis)?;
-            bank_forks
-                .read()
-                .unwrap()
-                .root_bank()
-                .set_initial_accounts_hash_verification_completed();
-
             (bank_forks, None)
         };
 

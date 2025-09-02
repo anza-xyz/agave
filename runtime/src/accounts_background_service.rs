@@ -234,9 +234,6 @@ impl SnapshotRequestHandler {
             enqueued: _,
         } = snapshot_request;
 
-        // we should not rely on the state of this validator until startup verification is complete
-        assert!(snapshot_root_bank.has_initial_accounts_hash_verification_completed());
-
         if snapshot_kind.is_full_snapshot() {
             // The latest full snapshot slot is what accounts-db uses to properly handle
             // zero lamport accounts.  We are handling a full snapshot request here, and
@@ -491,15 +488,8 @@ impl AccountsBackgroundService {
                         // before setting a root `R > N`, and
                         // snapshot_request_handler.handle_requests() will always look for the
                         // latest available snapshot in the channel.
-                        //
-                        // NOTE: We must wait for startup verification to complete before handling
-                        // snapshot requests.  This is because startup verification and snapshot
-                        // request handling can both kick off accounts hash calculations in
-                        // background threads, and these must not happen concurrently.
-                        let snapshot_handle_result = bank
-                            .has_initial_accounts_hash_verification_completed()
-                            .then(|| request_handlers.handle_snapshot_requests(non_snapshot_time))
-                            .flatten();
+                        let snapshot_handle_result =
+                            request_handlers.handle_snapshot_requests(non_snapshot_time);
 
                         if let Some(snapshot_handle_result) = snapshot_handle_result {
                             // Safe, see proof above
@@ -510,9 +500,7 @@ impl AccountsBackgroundService {
                                     assert!(
                                         last_cleaned_slot <= snapshot_slot,
                                         "last cleaned slot: {last_cleaned_slot}, snapshot request \
-                                         slot: {snapshot_slot}, is startup verification complete: \
-                                         {}, enqueued snapshot requests: {:?}",
-                                        bank.has_initial_accounts_hash_verification_completed(),
+                                         slot: {snapshot_slot}, enqueued snapshot requests: {:?}",
                                         request_handlers
                                             .snapshot_request_handler
                                             .snapshot_request_receiver
@@ -812,7 +800,6 @@ mod test {
         genesis_config_info.genesis_config.epoch_schedule =
             EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
         let mut bank = Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config));
-        bank.set_initial_accounts_hash_verification_completed();
 
         // We need to get and set accounts-db's latest full snapshot slot to test
         // get_next_snapshot_request().  To workaround potential borrowing issues
@@ -908,7 +895,6 @@ mod test {
         };
         let genesis_config_info = create_genesis_config(10);
         let bank = Bank::new_for_tests(&genesis_config_info.genesis_config);
-        bank.set_initial_accounts_hash_verification_completed();
         bank.rc.accounts.accounts_db.enable_bank_drop_callback();
         bank.set_callback(Some(Box::new(SendDroppedBankCallback::new(
             pruned_banks_sender,

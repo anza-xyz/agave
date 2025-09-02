@@ -60,7 +60,6 @@ use {
         read_only_accounts_cache::ReadOnlyAccountsCache,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
         u64_align, utils,
-        verify_accounts_hash_in_background::VerifyAccountsHashInBackground,
     },
     dashmap::{DashMap, DashSet},
     log::*,
@@ -1367,8 +1366,6 @@ pub struct AccountsDb {
 
     pub(crate) active_stats: ActiveStats,
 
-    pub verify_accounts_hash_in_bg: VerifyAccountsHashInBackground,
-
     /// Used to disable logging dead slots during removal.
     /// allow disabling noisy log
     pub log_dead_slots: AtomicBool,
@@ -1579,7 +1576,6 @@ impl AccountsDb {
             thread_pool_foreground,
             thread_pool_background,
             num_hash_threads: accounts_db_config.num_hash_threads,
-            verify_accounts_hash_in_bg: VerifyAccountsHashInBackground::default(),
             active_stats: ActiveStats::default(),
             storage: AccountStorage::default(),
             accounts_cache: AccountsCache::default(),
