@@ -4,9 +4,11 @@ use jemallocator::Jemalloc;
 use {
     agave_validator::{
         cli::{app, warn_for_deprecated_arguments, DefaultArgs},
-        commands, config_file,
+        commands,
+        config_file::ConfigFile,
     },
     clap::{ArgMatches, Error},
+    config::Config,
     log::error,
     std::{fs, path::PathBuf, process::exit},
 };
@@ -95,12 +97,12 @@ pub fn main() {
     })
 }
 
-fn load_config(arg_matches: &ArgMatches) -> Result<config_file::Config, Error> {
+fn load_config(arg_matches: &ArgMatches) -> Result<ConfigFile, Error> {
     let Some(config_path) = arg_matches.values_of("config") else {
-        return Ok(config_file::Config::default());
+        return Ok(ConfigFile::default());
     };
 
-    let mut config_builder = config::Config::builder();
+    let mut config_builder = Config::builder();
 
     for config_path in config_path {
         let io_err = |e| {
@@ -136,6 +138,6 @@ fn load_config(arg_matches: &ArgMatches) -> Result<config_file::Config, Error> {
 
     config_builder
         .build()
-        .and_then(|c| c.try_deserialize::<config_file::Config>())
+        .and_then(|c| c.try_deserialize())
         .map_err(|e| Error::value_validation_auto(format!("Failed to deserialize config: {e}")))
 }

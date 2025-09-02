@@ -4,7 +4,7 @@ use {
         bootstrap,
         cli::{self},
         commands::{run::args::RunArgs, FromClapArgMatches},
-        config_file::Config,
+        config_file::ConfigFile,
         ledger_lockfile, lock_ledger,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
@@ -95,7 +95,7 @@ pub fn execute(
     solana_version: &str,
     ledger_path: &Path,
     operation: Operation,
-    config: &Config,
+    config: &ConfigFile,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let run_args = RunArgs::from_clap_arg_match(matches)?;
 

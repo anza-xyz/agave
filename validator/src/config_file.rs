@@ -5,7 +5,7 @@ use {
 };
 
 #[derive(Debug, Deserialize, Default)]
-pub struct Config {
+pub struct ConfigFile {
     #[serde(default)]
     pub net: Net,
 }
@@ -44,7 +44,7 @@ pub struct XdpInterface {
     pub queue: u64,
 }
 
-impl Config {
+impl ConfigFile {
     pub fn default_path() -> Option<PathBuf> {
         dirs_next::config_dir().map(|mut path| {
             path.extend(["agave", "agave.toml"]);

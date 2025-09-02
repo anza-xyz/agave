@@ -1,5 +1,5 @@
 use {
-    crate::{commands, config_file::Config},
+    crate::{commands, config_file::ConfigFile},
     clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_accounts_db::{
         accounts_db::{
@@ -333,7 +333,7 @@ pub struct DefaultArgs {
 impl DefaultArgs {
     pub fn new() -> Self {
         let default_send_transaction_service_config = send_transaction_service::Config::default();
-        let config_path = Config::default_path().and_then(|path| {
+        let config_path = ConfigFile::default_path().and_then(|path| {
             if std::fs::exists(&path).ok()? {
                 Some(path.to_str().map(|s| s.to_string())?)
             } else {
