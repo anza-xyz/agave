@@ -167,15 +167,15 @@ impl AncientSlotInfos {
                 // not be aligned for the last account. Therefore, we need to
                 // align it.
                 let aligned_capacity = u64_align!(item.capacity as usize) as u64;
-                if aligned_capacity <= item.alive_bytes {
+                if aligned_capacity < item.alive_bytes {
                     // should not happen, but if it does, submit warn log it and continue
                     datapoint_warn!(
-                        "aligned_capacity <= alive_bytes",
+                        "aligned_capacity_less_than_alive_bytes",
                         ("aligned_capacity", aligned_capacity, i64),
                         ("alive_bytes", item.alive_bytes, i64)
                     );
                 }
-                aligned_capacity.saturating_sub(item.alive_bytes)
+                item.capacity.saturating_sub(item.alive_bytes)
             };
             amount_shrunk(r).cmp(&amount_shrunk(l))
         });
