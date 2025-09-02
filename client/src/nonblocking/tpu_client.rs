@@ -69,6 +69,8 @@ where
         &self,
         wire_transactions: Vec<Vec<u8>>,
     ) -> TransportResult<()> {
+        let wire_transactions: Vec<Arc<Vec<u8>>> =
+            wire_transactions.into_iter().map(Arc::new).collect();
         self.tpu_client
             .try_send_wire_transaction_batch(wire_transactions)
             .await

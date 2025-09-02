@@ -565,6 +565,8 @@ impl ForwardingClient for ConnectionCacheClient {
             return Err(ForwardingClientError::LeaderContactMissing);
         };
         let conn = self.connection_cache.get_connection(&current_address);
+        let wire_transactions: Vec<Arc<Vec<u8>>> =
+            wire_transactions.into_iter().map(Arc::new).collect();
         conn.send_data_batch_async(wire_transactions)?;
         Ok(())
     }

@@ -112,6 +112,8 @@ where
     ) {
         let mut measure = Measure::start("send-us");
         let conn = self.connection_cache.get_connection(peer);
+        let wire_transactions: Vec<Arc<Vec<u8>>> =
+            wire_transactions.into_iter().map(Arc::new).collect();
         let result = conn.send_data_batch_async(wire_transactions);
 
         if let Err(err) = result {
