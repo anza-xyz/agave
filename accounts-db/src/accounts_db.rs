@@ -7175,7 +7175,8 @@ impl AccountsDb {
                     if account_info.is_zero_lamport() {
                         slot_offsets
                             .entry(*slot_alive)
-                            .or_insert_with(|| vec![account_info.offset()]);
+                            .or_default()
+                            .push(account_info.offset());
                     }
                 }
                 AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
