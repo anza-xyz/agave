@@ -636,38 +636,3 @@ mod test {
         t_check_duplicate.join().unwrap();
     }
 }
-
-
-
-use chrono::Local;
-use log::info;
-
-fn log_target_transactions(blockstore: &Blockstore, slot: Slot) {
-    let target_a = Pubkey::from_str("metaqbxUerdq28cj1RAbAWkYQm3ybzjB6a8bt518x1s").unwrap();
-    let target_b = Pubkey::from_str("6E8FprecthRSDkzon8NWu78hRvFCkbuJ14MSuBEwF6P").unwrap();
-
-    if let Ok(entries) = blockstore.get_slot_entries(slot, 0) {
-        for entry in entries {
-            for tx in entry.transactions {
-                let has_target = tx
-                    .message
-                    .static_account_keys()
-                    .iter()
-                    .any(|k| *k == target_a || *k == target_b);
-
-                if has_target {
-                    let sig = tx.signatures.get(0).cloned().unwrap_or_default();
-
-                    // Timestamp w lokalnym czasie
-                    let now = Local::now();
-                    let ts_fmt = now.format("%H:%M:%S%.3f").to_string();
-
-                    info!(
-                        "target tx found slot={} time={} signature={}",
-                        slot, ts_fmt, sig
-                    );
-                }
-            }
-        }
-    }
-}
