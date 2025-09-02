@@ -6,16 +6,7 @@ use {
     serde::{de::Deserializer, Deserialize},
     solana_clap_utils::input_parsers::parse_cpu_ranges,
     std::path::PathBuf,
-    thiserror::Error,
 };
-
-#[derive(Error, Debug)]
-pub enum ConfigError {
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error(transparent)]
-    Toml(#[from] toml::de::Error),
-}
 
 #[derive(Debug, Deserialize, Default)]
 pub struct Config {
