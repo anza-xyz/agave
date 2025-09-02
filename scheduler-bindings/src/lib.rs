@@ -147,7 +147,29 @@ pub mod worker_message_types {
     }
 
     pub mod not_included_reasons {
-        // TODO: add reasons...(basically maps out `TransactionError`).
+        /// The transaction could not attempt processing because the
+        /// working bank was unavailable.
+        pub const BANK_NOT_AVAILABLE: u8 = 0;
+        /// The transaction could not be processed because the `slot`
+        /// in the passed message did not match the working bank's slot.
+        pub const SLOT_MISMATCH: u8 = 1;
+
+        // The following reasons are mapped from `TransactionError` in
+        // `solana-sdk` crate. See that crate for details.
+        pub const PARSING_OR_SANITIZATION_FAILURE: u8 = 2;
+        pub const ALT_RESOLUTION_FAILURE: u8 = 3;
+        pub const BLOCKHASH_NOT_FOUND: u8 = 4;
+        pub const ALREADY_PROCESSED: u8 = 5;
+        pub const WOULD_EXCEED_VOTE_MAX_LIMIT: u8 = 6;
+        pub const WOULD_EXCEED_BLOCK_MAX_LIMIT: u8 = 7;
+        pub const WOULD_EXCEED_ACCOUNT_MAX_LIMIT: u8 = 8;
+        pub const WOULD_EXCEED_ACCOUNT_DATA_BLOCK_LIMIT: u8 = 9;
+        pub const TOO_MANY_ACCOUNT_LOCKS: u8 = 10;
+        pub const ACCOUNT_LOADED_TWICE: u8 = 11;
+        pub const ACCOUNT_IN_USE: u8 = 12;
+        pub const INVALID_ACCOUNT_FOR_FEE: u8 = 13;
+        pub const INSUFFICIENT_FUNDS_FOR_FEE: u8 = 14;
+        pub const INSUFFICIENT_FUNDS_FOR_RENT: u8 = 15;
     }
 
     /// Tag indicating [`Included`] inner message.
