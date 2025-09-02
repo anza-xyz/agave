@@ -27,6 +27,7 @@ use {
     solana_keccak_hasher as keccak, solana_poseidon as poseidon,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_runtime::{
+        cpi::CpiError,
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
         memory::MemoryTranslationError,
@@ -124,6 +125,8 @@ pub enum SyscallError {
     ArithmeticOverflow,
     #[error(transparent)]
     MemoryTranslation(#[from] MemoryTranslationError),
+    #[error(transparent)]
+    Cpi(#[from] CpiError),
 }
 
 type Error = Box<dyn std::error::Error>;
