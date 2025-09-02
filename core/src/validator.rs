@@ -1355,6 +1355,7 @@ impl Validator {
         let (ancestor_hashes_response_quic_sender, ancestor_hashes_response_quic_receiver) =
             unbounded();
 
+        info!("[VALIDATOR] About to wait_for_supermajority");
         let waited_for_supermajority = wait_for_supermajority(
             config,
             Some(&mut process_blockstore),
@@ -1405,6 +1406,7 @@ impl Validator {
                     .build()
                     .unwrap()
             });
+        info!("[VALIDATOR] Setting up QUIC endpoints for cluster_type: {:?}", genesis_config.cluster_type);
         let (turbine_quic_endpoint_sender, turbine_quic_endpoint_receiver) = unbounded();
         let (
             turbine_quic_endpoint,
