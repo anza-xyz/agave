@@ -15,6 +15,7 @@ use {
         },
         active_stats::ActiveStatItem,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
+        u64_align,
     },
     rand::{thread_rng, Rng},
     rayon::prelude::{IntoParallelRefIterator, ParallelIterator},
@@ -162,7 +163,19 @@ impl AncientSlotInfos {
         self.shrink_indexes.sort_unstable_by(|l, r| {
             let amount_shrunk = |index: &usize| {
                 let item = &self.all_infos[*index];
-                item.capacity - item.alive_bytes
+                // alive_bytes assumes the accounts are aligned. `capacity` may
+                // not be aligned for the last account. Therefore, we need to
+                // align it.
+                let aligned_capacity = u64_align!(item.capacity as usize) as u64;
+                if aligned_capacity < item.alive_bytes {
+                    // should not happen, but if it does, submit warn log it and continue
+                    datapoint_warn!(
+                        "aligned_capacity_less_than_alive_bytes",
+                        ("aligned_capacity", aligned_capacity, i64),
+                        ("alive_bytes", item.alive_bytes, i64)
+                    );
+                }
+                item.capacity.saturating_sub(item.alive_bytes)
             };
             amount_shrunk(r).cmp(&amount_shrunk(l))
         });
