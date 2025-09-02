@@ -9,8 +9,9 @@ use {
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_streamer::{
-        nonblocking::testing_utilities::{
-            make_client_endpoint, setup_quic_server, SpawnTestServerResult,
+        nonblocking::{
+            quic::UNSTAKED_CONNECTION_LIFETIME,
+            testing_utilities::{make_client_endpoint, setup_quic_server, SpawnTestServerResult},
         },
         packet::PacketBatch,
         quic::QuicServerParams,
@@ -750,6 +751,7 @@ async fn test_update_identity() {
 // monitoring, not only when send operations fail.
 #[tokio::test]
 async fn test_proactive_connection_close_detection() {
+    solana_logger::setup_with_default_filter();
     let SpawnTestServerResult {
         join_handle: server_handle,
         exit,
@@ -761,6 +763,7 @@ async fn test_proactive_connection_close_detection() {
         QuicServerParams {
             max_connections_per_peer: 1,
             max_unstaked_connections: 1,
+            wait_for_chunk_timeout: Duration::from_secs(2),
             ..QuicServerParams::default_for_tests()
         },
     );
@@ -769,18 +772,21 @@ async fn test_proactive_connection_close_detection() {
     let tx_size = 1;
     let (tx_sender, tx_receiver) = channel(10);
 
-    let sender_task = tokio::spawn(async move {
-        // Send first transaction to establish connection
-        tx_sender
-            .send(TransactionBatch::new(vec![vec![1u8; tx_size]]))
-            .await
-            .expect("Send first batch");
+    let sender_task = tokio::spawn({
+        let tx_sender = tx_sender.clone();
+        async move {
+            // Send first transaction to establish connection
+            tx_sender
+                .send(TransactionBatch::new(vec![vec![1u8; tx_size]]))
+                .await
+                .expect("Send first batch");
 
-        // Idle period where connection might be closed
-        sleep(Duration::from_millis(500)).await;
+            // Idle period where connection might be closed
+            sleep(Duration::from_millis(500)).await;
 
-        // Attempt another send
-        drop(tx_sender.send(TransactionBatch::new(vec![vec![2u8; tx_size]])));
+            // Attempt another send
+            drop(tx_sender.send(TransactionBatch::new(vec![vec![2u8; tx_size]])));
+        }
     });
 
     let (scheduler_handle, _update_identity_sender, scheduler_cancel) =
@@ -799,14 +805,17 @@ async fn test_proactive_connection_close_detection() {
         }
     }
     assert!(first_packet_received, "First packet should be received");
-
-    // Force connection close by exceeding max_connections_per_peer
+    // make sure we wait long enough for pruning to activate
+    sleep(UNSTAKED_CONNECTION_LIFETIME).await;
+    // Force connection close through prune by exceeding max_connections_per_peer
     let _pruning_connection = make_client_endpoint(&server_address, None).await;
 
+    exit.store(true, Ordering::Relaxed);
     // Allow time for proactive detection
     sleep(Duration::from_millis(200)).await;
 
     // Clean up
+    drop(tx_sender);
     scheduler_cancel.cancel();
     let _ = sender_task.await;
     let stats = join_scheduler(scheduler_handle).await;
@@ -818,6 +827,5 @@ async fn test_proactive_connection_close_detection() {
     );
 
     // Exit server
-    exit.store(true, Ordering::Relaxed);
     server_handle.await.unwrap();
 }
