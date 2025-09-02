@@ -230,7 +230,7 @@ impl MetricsAgent {
 
         if num_points > max_points {
             warn!(
-                "Max submission rate of {max_points_per_sec} datapoints per second exceeded.  \
+                "Max submission rate of {max_points_per_sec} datapoints per second exceeded. \
                  Only the first {max_points} of {num_points} points will be submitted."
             );
         }
