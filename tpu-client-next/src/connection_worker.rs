@@ -10,7 +10,7 @@ use {
         transaction_batch::TransactionBatch,
         QuicError,
     },
-    quinn::{ConnectError, Connection, Endpoint},
+    quinn::{ConnectError, Connection, ConnectionError, Endpoint},
     solana_clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_measure::measure::Measure,
     solana_time_utils::timestamp,
@@ -70,6 +70,9 @@ impl Drop for ConnectionState {
 
 /// [`ConnectionWorker`] holds connection to the validator with address `peer`.
 ///
+/// The worker proactively monitors connection health while processing
+/// transactions, detecting connection closures immediately rather than waiting
+/// for send failures.
 /// If connection has been closed, [`ConnectionWorker`] tries to reconnect
 /// `max_reconnect_attempts` times. If connection is in `Active` state, it sends
 /// transactions received from `transactions_receiver`. Additionally, it
@@ -126,7 +129,8 @@ impl ConnectionWorker {
     ///
     /// This method manages the connection to the peer and handles state
     /// transitions. It runs indefinitely until the connection is closed or an
-    /// unrecoverable error occurs.
+    /// unrecoverable error occurs. The worker monitors both incoming transactions
+    /// and connection health simultaneously when in the Active state.
     pub async fn run(&mut self) {
         let cancel = self.cancel.clone();
 
@@ -140,16 +144,29 @@ impl ConnectionWorker {
                         self.create_connection(0).await;
                     }
                     ConnectionState::Active(connection) => {
-                        let Some(transactions) = self.transactions_receiver.recv().await else {
-                            debug!(
-                                "Transactions sender has been dropped for peer: {}",
-                                self.peer
-                            );
-                            self.connection = ConnectionState::Closing;
-                            continue;
-                        };
-                        self.send_transactions(connection.clone(), transactions)
-                            .await;
+                        tokio::select! {
+                            // Process incoming transactions
+                            transactions = self.transactions_receiver.recv() => {
+                                match transactions {
+                                    Some(batch) => {
+                                        self.send_transactions(connection.clone(), batch).await;
+                                    }
+                                    None => {
+                                        debug!(
+                                            "Transactions sender has been dropped for peer: {}",
+                                            self.peer
+                                        );
+                                        self.connection = ConnectionState::Closing;
+                                    }
+                                }
+                            }
+
+                            // Monitor connection health proactively
+                            close_reason = connection.closed() => {
+                                self.handle_connection_closed(close_reason).await;
+                                continue;
+                            }
+                        }
                     }
                     ConnectionState::Retry(num_reconnects) => {
                         if *num_reconnects > self.max_reconnect_attempts {
@@ -170,6 +187,67 @@ impl ConnectionWorker {
         }
     }
 
+    /// Handles connection closure events detected by the connection monitor.
+    ///
+    /// This method logs the close reason with appropriate severity based on
+    /// the type of closure, records statistics, and determines whether to
+    /// attempt reconnection based on the error type.
+    async fn handle_connection_closed(&mut self, close_reason: ConnectionError) {
+        match &close_reason {
+            ConnectionError::ConnectionClosed(close) => {
+                debug!(
+                    "Connection to {} closed by peer: code={} reason={:?}",
+                    self.peer,
+                    close.error_code,
+                    String::from_utf8_lossy(&close.reason)
+                );
+            }
+            ConnectionError::ApplicationClosed(close) => {
+                debug!(
+                    "Connection to {} closed by application: code={} reason={:?}",
+                    self.peer,
+                    close.error_code,
+                    String::from_utf8_lossy(&close.reason)
+                );
+            }
+            ConnectionError::LocallyClosed => {
+                debug!("Connection to {} closed locally", self.peer);
+            }
+            ConnectionError::TimedOut => {
+                warn!("Connection to {} timed out", self.peer);
+            }
+            ConnectionError::Reset => {
+                warn!("Connection to {} reset", self.peer);
+            }
+            ConnectionError::TransportError(e) => {
+                warn!(
+                    "Connection to {} encountered transport error: {}",
+                    self.peer, e
+                );
+            }
+            ConnectionError::VersionMismatch => {
+                error!("Connection to {} failed: version mismatch", self.peer);
+            }
+            ConnectionError::CidsExhausted => {
+                warn!(
+                    "Connection to {} closed: connection IDs exhausted",
+                    self.peer
+                );
+            }
+        }
+
+        record_error(close_reason.clone().into(), &self.send_txs_stats);
+
+        // Determine next state based on close reason
+        // Fatal errors transition to Closing, recoverable errors transition to Retry
+        self.connection = match close_reason {
+            ConnectionError::VersionMismatch | ConnectionError::LocallyClosed => {
+                ConnectionState::Closing
+            }
+            _ => ConnectionState::Retry(0),
+        };
+    }
+
     /// Sends a batch of transactions using the provided `connection`.
     ///
     /// Each transaction in the batch is sent over the QUIC streams one at the
@@ -178,7 +256,9 @@ impl ConnectionWorker {
     /// outdated and flag `skip_check_transaction_age` is unset, it will be
     /// dropped without being sent.
     ///
-    /// In case of error, it doesn't retry to send the same transactions again.
+    /// The method checks connection health before sending each transaction to
+    /// avoid operations on a closed connection. In case of error, it doesn't
+    /// retry to send the same transactions again but transitions to retry state.
     async fn send_transactions(&mut self, connection: Connection, transactions: TransactionBatch) {
         let now = timestamp();
         if !self.skip_check_transaction_age
@@ -187,8 +267,16 @@ impl ConnectionWorker {
             debug!("Drop outdated transaction batch for peer: {}", self.peer);
             return;
         }
+
         let mut measure_send = Measure::start("send transaction batch");
         for data in transactions.into_iter() {
+            // Check connection health before each send
+            if connection.close_reason().is_some() {
+                debug!("Connection closed during transaction batch sending");
+                self.connection = ConnectionState::Retry(0);
+                break;
+            }
+
             let result = send_data_over_stream(&connection, &data).await;
 
             if let Err(error) = result {
@@ -198,6 +286,8 @@ impl ConnectionWorker {
                 );
                 record_error(error, &self.send_txs_stats);
                 self.connection = ConnectionState::Retry(0);
+                // Exit early since connection is likely broken
+                break;
             } else {
                 self.send_txs_stats
                     .successfully_sent

@@ -163,7 +163,7 @@ impl RetransmitStats {
                 i64
             ),
         );
-        // slot_stats are submited at a different cadence.
+        // slot_stats are submitted at a different cadence.
         let old = std::mem::replace(self, Self::new(Instant::now()));
         self.slot_stats = old.slot_stats;
     }
@@ -953,7 +953,7 @@ mod tests {
         // first shred passed through
         assert!(
             !shred_deduper.dedup(shred_dup.id(), shred_dup.payload(), MAX_DUPLICATE_COUNT),
-            "First time seeing shred X with differnt parent slot (3 instead of 4) => Not dup \
+            "First time seeing shred X with different parent slot (3 instead of 4) => Not dup \
              because common header is unique & shred ID only seen once"
         );
         // then blocked

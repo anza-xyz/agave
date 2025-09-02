@@ -172,7 +172,7 @@ impl Default for TestValidatorGenesis {
             log_messages_bytes_limit: Option::<usize>::default(),
             transaction_account_lock_limit: Option::<usize>::default(),
             tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
-            geyser_plugin_manager: Arc::new(RwLock::new(GeyserPluginManager::new())),
+            geyser_plugin_manager: Arc::new(RwLock::new(GeyserPluginManager::default())),
             admin_rpc_service_post_init:
                 Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
         }
