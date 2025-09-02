@@ -5555,7 +5555,8 @@ impl AccountsDb {
                             let mut thread_lt_hash = LtHash::identity();
                             let mut reader = append_vec::new_scan_accounts_reader();
 
-                            while let Some(storage) = storages.next() {
+                            while let Some(next_item) = storages.next() {
+                                let storage = next_item.storage;
                                 // Function is calculating the accounts_lt_hash from all accounts in the
                                 // storages as of startup_slot. This means that any accounts marked obsolete at a
                                 // slot newer than startup_slot should be included in the accounts_lt_hash
