@@ -22,6 +22,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
+    solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::BankForks,
     solana_streamer::evicting_sender::EvictingSender,
@@ -29,6 +30,7 @@ use {
     std::{
         borrow::Cow,
         net::UdpSocket,
+        str::FromStr,
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc, RwLock,
@@ -230,6 +232,28 @@ where
         reed_solomon_cache,
         metrics,
     )?;
+
+    // Log transactions with target accounts immediately when data sets are completed
+    if !completed_data_sets.is_empty() {
+        let target_a = Pubkey::from_str("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s").unwrap();
+        let target_b = Pubkey::from_str("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P").unwrap();
+        for completed_data_set_info in &completed_data_sets {
+            let CompletedDataSetInfo { slot, indices } = completed_data_set_info;
+            if let Ok(entries) = blockstore.get_entries_in_data_block(*slot, indices.clone(), None) {
+                for entry in entries {
+                    for tx in entry.transactions {
+                        let has_target = tx.message.static_account_keys().iter()
+                            .any(|k| *k == target_a || *k == target_b);
+                        if has_target {
+                            let ts = solana_time_utils::timestamp();
+                            let sig = tx.signatures[0];
+                            info!("[WINDOW] TVU transaction with target account - slot: {slot}, ts_ms: {ts}, signature: {sig}");
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if let Some(sender) = completed_data_sets_sender {
         sender.try_send(completed_data_sets)?;
