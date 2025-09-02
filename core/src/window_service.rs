@@ -16,7 +16,7 @@ use {
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
-        blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
+        blockstore::{Blockstore, BlockstoreInsertionMetrics, CompletedDataSetInfo, PossibleDuplicateShred},
         leader_schedule_cache::LeaderScheduleCache,
         shred::{self, ReedSolomonCache, Shred},
     },
