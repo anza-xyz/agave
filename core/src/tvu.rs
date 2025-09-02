@@ -174,6 +174,7 @@ impl Tvu {
         slot_status_notifier: Option<SlotStatusNotifier>,
         vote_connection_cache: Arc<ConnectionCache>,
     ) -> Result<Self, String> {
+        info!("[TVU] Tvu::new() starting");
         let in_wen_restart = wen_restart_repair_slots.is_some();
 
         let TvuSockets {
