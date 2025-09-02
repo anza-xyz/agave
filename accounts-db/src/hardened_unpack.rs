@@ -542,7 +542,7 @@ fn unpack_genesis<A: Read>(
 ) -> Result<()> {
     unpack_archive(
         archive,
-        0,
+        0, /* don't provide memlock budget (forces sync IO), since genesis archives are small */
         max_genesis_archive_unpacked_size,
         max_genesis_archive_unpacked_size,
         MAX_GENESIS_ARCHIVE_UNPACKED_COUNT,
