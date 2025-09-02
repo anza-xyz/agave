@@ -384,8 +384,7 @@ async fn test_connection_pruned_and_reopened() {
     // Proactive detection catches pruning immediately, expect multiple retries.
     assert!(
         stats.connection_error_application_closed + stats.write_error_connection_lost >= 1,
-        "Expected at least 1 connection error from pruning and retries. Stats: {:?}",
-        stats
+        "Expected at least 1 connection error from pruning and retries. Stats: {stats:?}"
     );
 
     // Exit server
@@ -814,8 +813,7 @@ async fn test_proactive_connection_close_detection() {
     // Verify proactive close detection
     assert!(
         stats.connection_error_application_closed > 0 || stats.write_error_connection_lost > 0,
-        "Should detect connection close proactively. Stats: {:?}",
-        stats
+        "Should detect connection close proactively. Stats: {stats:?}"
     );
 
     // Exit server

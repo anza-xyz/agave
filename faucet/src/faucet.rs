@@ -176,7 +176,7 @@ impl Faucet {
         req: FaucetRequest,
         ip: IpAddr,
     ) -> Result<FaucetTransaction, FaucetError> {
-        trace!("build_airdrop_transaction: {:?}", req);
+        trace!("build_airdrop_transaction: {req:?}");
         match req {
             FaucetRequest::GetAirdrop {
                 lamports,
@@ -235,7 +235,7 @@ impl Faucet {
     ) -> Result<Vec<u8>, FaucetError> {
         let req: FaucetRequest = deserialize(bytes)?;
 
-        info!("Airdrop transaction requested...{:?}", req);
+        info!("Airdrop transaction requested...{req:?}");
         let res = self.build_airdrop_transaction(req, ip);
         match res {
             Ok(tx) => {
@@ -245,7 +245,7 @@ impl Faucet {
                         tx
                     }
                     FaucetTransaction::Memo((tx, memo)) => {
-                        warn!("Memo transaction returned: {}", memo);
+                        warn!("Memo transaction returned: {memo}");
                         tx
                     }
                 };
@@ -258,7 +258,7 @@ impl Faucet {
                 Ok(response_vec_with_length)
             }
             Err(err) => {
-                warn!("Airdrop transaction failed: {}", err);
+                warn!("Airdrop transaction failed: {err}");
                 Err(err)
             }
         }
@@ -278,8 +278,7 @@ pub fn request_airdrop_transaction(
     blockhash: Hash,
 ) -> Result<Transaction, FaucetError> {
     info!(
-        "request_airdrop_transaction: faucet_addr={} id={} lamports={} blockhash={}",
-        faucet_addr, id, lamports, blockhash
+        "request_airdrop_transaction: faucet_addr={faucet_addr} id={id} lamports={lamports} blockhash={blockhash}"
     );
 
     let mut stream = TcpStream::connect_timeout(faucet_addr, Duration::new(3, 0))?;
@@ -296,8 +295,7 @@ pub fn request_airdrop_transaction(
     let mut buffer = [0; 2];
     stream.read_exact(&mut buffer).map_err(|err| {
         info!(
-            "request_airdrop_transaction: buffer length read_exact error: {:?}",
-            err
+            "request_airdrop_transaction: buffer length read_exact error: {err:?}"
         );
         err
     })?;
@@ -312,8 +310,7 @@ pub fn request_airdrop_transaction(
     let mut buffer = vec![0; transaction_length];
     stream.read_exact(&mut buffer).map_err(|err| {
         info!(
-            "request_airdrop_transaction: buffer read_exact error: {:?}",
-            err
+            "request_airdrop_transaction: buffer read_exact error: {err:?}"
         );
         err
     })?;
@@ -373,12 +370,12 @@ pub async fn run_faucet(
 
     let listener = match listener {
         Err(err) => {
-            error!("Faucet failed to start: {}", err);
+            error!("Faucet failed to start: {err}");
             return;
         }
         Ok(listener) => listener,
     };
-    info!("Faucet started. Listening on: {}", faucet_addr);
+    info!("Faucet started. Listening on: {faucet_addr}");
     info!(
         "Faucet account address: {}",
         faucet.lock().unwrap().faucet_keypair.pubkey()
@@ -390,11 +387,11 @@ pub async fn run_faucet(
             Ok((stream, _)) => {
                 tokio::spawn(async move {
                     if let Err(e) = process(stream, faucet).await {
-                        info!("failed to process request; error = {:?}", e);
+                        info!("failed to process request; error = {e:?}");
                     }
                 });
             }
-            Err(e) => debug!("failed to accept socket; error = {:?}", e),
+            Err(e) => debug!("failed to accept socket; error = {e:?}"),
         }
     }
 }
@@ -413,7 +410,7 @@ async fn process(
         .unwrap() as usize
     ];
     while stream.read_exact(&mut request).await.is_ok() {
-        trace!("{:?}", request);
+        trace!("{request:?}");
 
         let response = {
             match stream.peer_addr() {
@@ -423,15 +420,15 @@ async fn process(
                 }
                 Ok(peer_addr) => {
                     let ip = peer_addr.ip();
-                    info!("Request IP: {:?}", ip);
+                    info!("Request IP: {ip:?}");
 
                     match faucet.lock().unwrap().process_faucet_request(&request, ip) {
                         Ok(response_bytes) => {
-                            trace!("Airdrop response_bytes: {:?}", response_bytes);
+                            trace!("Airdrop response_bytes: {response_bytes:?}");
                             response_bytes
                         }
                         Err(e) => {
-                            info!("Error in request: {}", e);
+                            info!("Error in request: {e}");
                             ERROR_RESPONSE.to_vec()
                         }
                     }

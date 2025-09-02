@@ -630,7 +630,7 @@ fn prep_and_sign_packet(
 const SIGNATURE: [u8; SIGNATURE_BYTES] = [7u8; SIGNATURE_BYTES];
 
 fn report_collected_votes(peers: HashMap<Pubkey, PeerData>, total_staked: Stake, slot: Slot) {
-    trace!("Reporting statistics for slot {}", slot);
+    trace!("Reporting statistics for slot {slot}");
     let (total_voted_nodes, stake_weighted_delay, percent_collected) =
         compute_stake_weighted_means(&peers, total_staked);
     datapoint_info!(
