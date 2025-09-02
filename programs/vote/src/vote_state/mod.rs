@@ -1,7 +1,11 @@
 //! Vote state, vote program
 //! Receive and processes votes from validators
+
+mod handler;
+
 pub use solana_vote_interface::state::{vote_state_versions::*, *};
 use {
+    handler::{VoteStateHandler, VoteStateTargetVersion},
     log::*,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Clock, Epoch, Slot},
@@ -687,14 +691,16 @@ pub fn authorize<S: std::hash::BuildHasher>(
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    let mut vote_state: VoteStateV3 = vote_account
-        .get_state::<VoteStateVersions>()?
-        .convert_to_v3();
+    // V4 target version support would slot in right here.
+    // We'd plumb a parameter here (maybe `bool`) to state whether or not the
+    // v4 feature is active, and then use that to choose a `VoteStateTargetVersion`.
+    let mut vote_state =
+        VoteStateHandler::deserialize_and_convert(&vote_account, VoteStateTargetVersion::V3)?;
 
     match vote_authorize {
         VoteAuthorize::Voter => {
             let authorized_withdrawer_signer =
-                verify_authorized_signer(&vote_state.authorized_withdrawer, signers).is_ok();
+                verify_authorized_signer(vote_state.authorized_withdrawer(), signers).is_ok();
 
             vote_state.set_new_authorized_voter(
                 authorized,
@@ -715,12 +721,12 @@ pub fn authorize<S: std::hash::BuildHasher>(
         }
         VoteAuthorize::Withdrawer => {
             // current authorized withdrawer must say "yay"
-            verify_authorized_signer(&vote_state.authorized_withdrawer, signers)?;
-            vote_state.authorized_withdrawer = *authorized;
+            verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
+            vote_state.set_authorized_withdrawer(*authorized);
         }
     }
 
-    set_vote_account_state(vote_account, vote_state)
+    vote_state.set_vote_account_state(vote_account)
 }
 
 /// Update the node_pubkey, requires signature of the authorized voter
@@ -729,19 +735,18 @@ pub fn update_validator_identity<S: std::hash::BuildHasher>(
     node_pubkey: &Pubkey,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state: VoteStateV3 = vote_account
-        .get_state::<VoteStateVersions>()?
-        .convert_to_v3();
+    let mut vote_state =
+        VoteStateHandler::deserialize_and_convert(&vote_account, VoteStateTargetVersion::V3)?;
 
     // current authorized withdrawer must say "yay"
-    verify_authorized_signer(&vote_state.authorized_withdrawer, signers)?;
+    verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
     // new node must say "yay"
     verify_authorized_signer(node_pubkey, signers)?;
 
-    vote_state.node_pubkey = *node_pubkey;
+    vote_state.set_node_pubkey(*node_pubkey);
 
-    set_vote_account_state(vote_account, vote_state)
+    vote_state.set_vote_account_state(vote_account)
 }
 
 /// Update the vote account's commission
@@ -752,11 +757,10 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     epoch_schedule: &EpochSchedule,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    let vote_state_result = vote_account
-        .get_state::<VoteStateVersions>()
-        .map(|vote_state| vote_state.convert_to_v3());
+    let vote_state_result =
+        VoteStateHandler::deserialize_and_convert(&vote_account, VoteStateTargetVersion::V3);
     let enforce_commission_update_rule = if let Ok(decoded_vote_state) = &vote_state_result {
-        is_commission_increase(decoded_vote_state, commission)
+        commission > decoded_vote_state.commission()
     } else {
         true
     };
@@ -768,11 +772,11 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     let mut vote_state = vote_state_result?;
 
     // current authorized withdrawer must say "yay"
-    verify_authorized_signer(&vote_state.authorized_withdrawer, signers)?;
+    verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
-    vote_state.commission = commission;
+    vote_state.set_commission(commission);
 
-    set_vote_account_state(vote_account, vote_state)
+    vote_state.set_vote_account_state(vote_account)
 }
 
 /// Given a proposed new commission, returns true if this would be a commission increase, false otherwise
@@ -819,11 +823,10 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 ) -> Result<(), InstructionError> {
     let mut vote_account =
         instruction_context.try_borrow_instruction_account(vote_account_index)?;
-    let vote_state: VoteStateV3 = vote_account
-        .get_state::<VoteStateVersions>()?
-        .convert_to_v3();
+    let vote_state =
+        VoteStateHandler::deserialize_and_convert(&vote_account, VoteStateTargetVersion::V3)?;
 
-    verify_authorized_signer(&vote_state.authorized_withdrawer, signers)?;
+    verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
     let remaining_balance = vote_account
         .get_lamports()
@@ -832,8 +835,7 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 
     if remaining_balance == 0 {
         let reject_active_vote_account_close = vote_state
-            .epoch_credits
-            .last()
+            .epoch_credits_last()
             .map(|(last_epoch_with_credits, _, _)| {
                 let current_epoch = clock.epoch;
                 // if current_epoch - last_epoch_with_credits < 2 then the validator has received credits
@@ -847,6 +849,7 @@ pub fn withdraw<S: std::hash::BuildHasher>(
             return Err(VoteError::ActiveVoteAccountClose.into());
         } else {
             // Deinitialize upon zero-balance
+            // TODO: Handle deinitialization for V4
             set_vote_account_state(&mut vote_account, VoteStateV3::default())?;
         }
     } else {
@@ -884,7 +887,12 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
     // node must agree to accept this vote account
     verify_authorized_signer(&vote_init.node_pubkey, signers)?;
 
-    set_vote_account_state(vote_account, VoteStateV3::new(vote_init, clock))
+    VoteStateHandler::init_vote_account_state(
+        vote_account,
+        vote_init,
+        clock,
+        VoteStateTargetVersion::V3,
+    )
 }
 
 fn verify_and_get_vote_state<S: std::hash::BuildHasher>(
@@ -892,6 +900,9 @@ fn verify_and_get_vote_state<S: std::hash::BuildHasher>(
     clock: &Clock,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<VoteStateV3, InstructionError> {
+    // TODO: This function needs to be refactored to use `VoteStateHandler`.
+    // Unfortunately, this is where this becomes a slog, since this function
+    // currently returns `VoteStateV3`.
     let versioned = vote_account.get_state::<VoteStateVersions>()?;
 
     if versioned.is_uninitialized() {
