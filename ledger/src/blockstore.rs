@@ -60,7 +60,6 @@ use {
         VersionedConfirmedBlock, VersionedConfirmedBlockWithEntries,
         VersionedTransactionWithStatusMeta,
     },
-    std::str::FromStr,
     std::{
         borrow::Cow,
         cell::RefCell,
@@ -2794,20 +2793,8 @@ impl Blockstore {
         slot: Slot,
         iterator: impl Iterator<Item = VersionedTransaction>,
     ) -> Result<Vec<VersionedTransactionWithStatusMeta>> {
-        let target_a = Pubkey::from_str("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s").unwrap();
-        let target_b = Pubkey::from_str("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P").unwrap();
         iterator
             .map(|transaction| {
-                let has_target = transaction
-                    .message
-                    .static_account_keys()
-                    .iter()
-                    .any(|k| *k == target_a || *k == target_b);
-                if has_target {
-                    let ts = timestamp();
-                    let sig = transaction.signatures[0];
-                    info!("txn account match slot: {slot} ts_ms: {ts} signature: {sig}");
-                }
                 let signature = transaction.signatures[0];
                 Ok(VersionedTransactionWithStatusMeta {
                     transaction,
@@ -11970,39 +11957,5 @@ pub mod tests {
             tx_status2.status,
             Err(TransactionError::InsufficientFundsForFee)
         );
-    }
-}
-
-use std::str::FromStr;
-use chrono::Local;
-use log::info;
-
-fn log_target_transactions(blockstore: &Blockstore, slot: Slot) {
-    let target_a = Pubkey::from_str("metaqbxUerdq28cj1RAbAWkYQm3ybzjB6a8bt518x1s").unwrap();
-    let target_b = Pubkey::from_str("6E8FprecthRSDkzon8NWu78hRvFCkbuJ14MSuBEwF6P").unwrap();
-
-    if let Ok(entries) = blockstore.get_slot_entries(slot, 0) {
-        for entry in entries {
-            for tx in entry.transactions {
-                let has_target = tx
-                    .message
-                    .static_account_keys()
-                    .iter()
-                    .any(|k| *k == target_a || *k == target_b);
-
-                if has_target {
-                    let sig = tx.signatures.get(0).cloned().unwrap_or_default();
-
-                    // Timestamp w lokalnym czasie
-                    let now = Local::now();
-                    let ts_fmt = now.format("%H:%M:%S%.3f").to_string();
-
-                    info!(
-                        "target tx found slot={} time={} signature={}",
-                        slot, ts_fmt, sig
-                    );
-                }
-            }
-        }
     }
 }
