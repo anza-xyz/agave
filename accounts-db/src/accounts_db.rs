@@ -6987,9 +6987,6 @@ impl AccountsDb {
             }
         }
 
-        info!("START PROFILE");
-        sleep(Duration::from_secs(3));
-
         let zero_lamport_pubkeys_to_visit =
             std::mem::take(&mut *zero_lamport_pubkeys.lock().unwrap());
         let (num_zero_lamport_single_refs, visit_zero_lamports_us) = measure_us!(
@@ -6997,7 +6994,6 @@ impl AccountsDb {
         );
         timings.visit_zero_lamports_us = visit_zero_lamports_us;
         timings.num_zero_lamport_single_refs = num_zero_lamport_single_refs;
-        info!("STOP PROFILE");
 
         // subtract data.len() from accounts_data_len for all old accounts that are in the index twice
         let mut accounts_data_len_dedup_timer =
