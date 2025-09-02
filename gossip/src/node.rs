@@ -434,16 +434,12 @@ mod multihoming {
                 .set_tvu_socket(tvu_ingress_address)
                 .map_err(|e| e.to_string())?;
 
+            // Update active index for tvu broadcast, tvu retransmit, and tpu forwarding client
             // This will never fail since we have checked index validity above
             let _new_ip_addr = self
                 .bind_ip_addrs
                 .set_active(interface_index)
                 .expect("Interface index out of range");
-
-            // Send from correct tvu retransmit/broadcast sockets
-            cluster_info
-                .egress_socket_select()
-                .select_interface(interface_index);
 
             Ok(())
         }

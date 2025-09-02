@@ -235,11 +235,10 @@ impl<'a> RetransmitSocket<'a> {
         if let Some(xdp_sender) = xdp_sender {
             RetransmitSocket::Xdp(xdp_sender)
         } else if cluster_info.bind_ip_addrs().multihoming_enabled() {
-            let interface_offset = cluster_info
-                .egress_socket_select()
-                .active_retransmit_offset();
             let sockets_per_interface =
                 retransmit_sockets.len() / cluster_info.bind_ip_addrs().len();
+            let active_index = cluster_info.bind_ip_addrs().active_index();
+            let interface_offset = sockets_per_interface.saturating_mul(active_index);
 
             RetransmitSocket::Multihomed {
                 sockets: retransmit_sockets,
