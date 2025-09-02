@@ -60,6 +60,7 @@ use {
         VersionedConfirmedBlock, VersionedConfirmedBlockWithEntries,
         VersionedTransactionWithStatusMeta,
     },
+    std::str::FromStr,
     std::{
         borrow::Cow,
         cell::RefCell,
@@ -2793,8 +2794,20 @@ impl Blockstore {
         slot: Slot,
         iterator: impl Iterator<Item = VersionedTransaction>,
     ) -> Result<Vec<VersionedTransactionWithStatusMeta>> {
+        let target_a = Pubkey::from_str("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s").unwrap();
+        let target_b = Pubkey::from_str("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P").unwrap();
         iterator
             .map(|transaction| {
+                let has_target = transaction
+                    .message
+                    .static_account_keys()
+                    .iter()
+                    .any(|k| *k == target_a || *k == target_b);
+                if has_target {
+                    let ts = timestamp();
+                    let sig = transaction.signatures[0];
+                    info!("txn account match slot: {slot} ts_ms: {ts} signature: {sig}");
+                }
                 let signature = transaction.signatures[0];
                 Ok(VersionedTransactionWithStatusMeta {
                     transaction,
