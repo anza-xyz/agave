@@ -88,6 +88,7 @@ fn config_arg<'b>(default_args: &DefaultArgs) -> Arg<'_, 'b> {
         .long("config")
         .value_name("PATH")
         .takes_value(true)
+        .multiple(true)
         .help("Path to the validator.toml config file(s)");
 
     if let Some(config_path) = default_args.config_path.as_ref() {
