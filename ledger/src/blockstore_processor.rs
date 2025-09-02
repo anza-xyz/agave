@@ -28,7 +28,6 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
-    solana_time_utils::timestamp,
     solana_runtime::{
         bank::{Bank, PreCommitResult, TransactionBalancesSet},
         bank_forks::{BankForks, SetRootError},
@@ -68,7 +67,6 @@ use {
         ops::Index,
         path::PathBuf,
         result,
-        str::FromStr,
         sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
         time::{Duration, Instant},
         vec::Drain,
@@ -1584,20 +1582,6 @@ fn confirm_slot_entries(
                     );
                 }
             }
-            
-            // Log transactions with specific accounts
-            let target_a = Pubkey::from_str("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s").unwrap();
-            let target_b = Pubkey::from_str("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P").unwrap();
-            for tx in &entry.transactions {
-                let has_target = tx.message.static_account_keys().iter()
-                    .any(|k| *k == target_a || *k == target_b);
-                if has_target {
-                    let ts = timestamp();
-                    let sig = tx.signatures[0];
-                    info!("TVU transaction with target account - slot: {slot}, ts_ms: {ts}, signature: {sig}");
-                }
-            }
-            
             let num_txs = entry.transactions.len();
             let next_tx_starting_index = entry_tx_starting_index.saturating_add(num_txs);
             entry_tx_starting_indexes.push(entry_tx_starting_index);

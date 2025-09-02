@@ -6,11 +6,15 @@
 
 use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    log::*,
     solana_entry::entry::Entry,
     solana_ledger::blockstore::{Blockstore, CompletedDataSetInfo},
+    solana_pubkey::Pubkey,
     solana_rpc::{max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions},
     solana_signature::Signature,
+    solana_time_utils::timestamp,
     std::{
+        str::FromStr,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc,
@@ -69,6 +73,21 @@ impl CompletedDataSetsService {
             let CompletedDataSetInfo { slot, indices } = completed_data_set_info;
             match blockstore.get_entries_in_data_block(slot, indices, /*slot_meta:*/ None) {
                 Ok(entries) => {
+                    // Log transactions with specific accounts immediately when data set is complete
+                    let target_a = Pubkey::from_str("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s").unwrap();
+                    let target_b = Pubkey::from_str("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P").unwrap();
+                    for entry in &entries {
+                        for tx in &entry.transactions {
+                            let has_target = tx.message.static_account_keys().iter()
+                                .any(|k| *k == target_a || *k == target_b);
+                            if has_target {
+                                let ts = timestamp();
+                                let sig = tx.signatures[0];
+                                info!("[IMMEDIATE] TVU transaction with target account - slot: {slot}, ts_ms: {ts}, signature: {sig}");
+                            }
+                        }
+                    }
+                    
                     let transactions = Self::get_transaction_signatures(entries);
                     if !transactions.is_empty() {
                         rpc_subscriptions.notify_signatures_received((slot, transactions));
