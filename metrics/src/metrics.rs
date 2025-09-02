@@ -351,8 +351,8 @@ impl MetricsAgent {
         debug_assert!(
             points.is_empty() && counters.is_empty(),
             "Controlling `MetricsAgent` is expected to call `flush()` from the `Drop` \
-             \nimplementation, before exiting.  So both `points` and `counters` must be empty at \
-             \nthis point.\n`points`: {points:?}\n`counters`: {counters:?}",
+             implementation, before exiting. So both `points` and `counters` must be empty at \
+             this point. `points`: {points:?}, `counters`: {counters:?}",
         );
 
         trace!("run: exit");
