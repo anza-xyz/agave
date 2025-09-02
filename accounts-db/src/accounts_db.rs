@@ -7183,27 +7183,44 @@ impl AccountsDb {
         );
 
         let mut count = 0;
+        let mut dead_stores = 0;
+        let mut shrink_stores = 0;
+        let mut non_shrink_stores = 0;
         for (slot, offsets) in slot_offsets {
             if let Some(store) = self.storage.get_slot_storage_entry(slot) {
                 count += store.batch_insert_zero_lamport_single_ref_account_offsets(&offsets);
                 if store.num_zero_lamport_single_ref_accounts() == store.count() {
                     // all accounts in this storage can be dead
                     self.dirty_stores.entry(slot).or_insert(store);
-                    self.shrink_stats
-                        .num_dead_slots_added_to_clean
-                        .fetch_add(1, Ordering::Relaxed);
+                    dead_stores += 1;
                 } else if Self::is_shrinking_productive(&store)
                     && self.is_candidate_for_shrink(&store)
                 {
                     // this store might be eligible for shrinking now
                     if self.shrink_candidate_slots.lock().unwrap().insert(slot) {
-                        self.shrink_stats
-                            .num_slots_with_zero_lamport_accounts_added_to_shrink
-                            .fetch_add(1, Ordering::Relaxed);
+                        shrink_stores += 1;
                     }
+                } else {
+                    non_shrink_stores += 1;
                 }
             }
         }
+        self.shrink_stats
+            .num_zero_lamport_single_ref_accounts_found
+            .fetch_add(count, Ordering::Relaxed);
+
+        self.shrink_stats
+            .num_dead_slots_added_to_clean
+            .fetch_add(dead_stores, Ordering::Relaxed);
+
+        self.shrink_stats
+            .num_slots_with_zero_lamport_accounts_added_to_shrink
+            .fetch_add(shrink_stores, Ordering::Relaxed);
+
+        self.shrink_stats
+            .marking_zero_dead_accounts_in_non_shrinkable_store
+            .fetch_add(non_shrink_stores, Ordering::Relaxed);
+
         count
     }
 
