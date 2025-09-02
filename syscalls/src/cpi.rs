@@ -37,29 +37,6 @@ fn check_account_info_pointer(
 }
 
 // This version is missing lifetime 'a of the return type in the parameter &MemoryMapping.
-fn translate_type_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    check_aligned: bool,
-) -> Result<&'a mut T, Error> {
-    translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
-}
-// This version is missing the lifetime 'a of the return type in the parameter &MemoryMapping.
-fn translate_slice_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    len: u64,
-    check_aligned: bool,
-) -> Result<&'a mut [T], Error> {
-    translate_slice_inner!(
-        memory_mapping,
-        AccessType::Store,
-        vm_addr,
-        len,
-        T,
-        check_aligned,
-    )
-}
 
 /// Host side representation of AccountInfo or SolAccountInfo passed to the CPI syscall.
 ///
