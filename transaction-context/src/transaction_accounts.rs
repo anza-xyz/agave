@@ -173,8 +173,12 @@ impl BorrowCounter {
             return Err(InstructionError::AccountBorrowFailed);
         }
 
-        self.counter.set(self.counter.get().saturating_add(1));
-        Ok(())
+        if let Some(counter) = self.counter.get().checked_add(1) {
+            self.counter.set(counter);
+            return Ok(());
+        }
+
+        Err(InstructionError::AccountBorrowFailed)
     }
 
     #[inline]
@@ -333,6 +337,26 @@ mod tests {
         {
             let acc_1 = tx_accounts.try_borrow_mut(0);
             assert!(acc_1.is_ok());
+        }
+    }
+
+    #[test]
+    fn too_many_borrows() {
+        let accounts = vec![
+            AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+            AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+        ];
+
+        let tx_accounts = TransactionAccounts::new(accounts);
+        let mut borrows = Vec::new();
+        for i in 0..129 {
+            let acc = tx_accounts.try_borrow(1);
+            if i < 127 {
+                assert!(acc.is_ok());
+                borrows.push(acc.unwrap());
+            } else {
+                assert_eq!(acc.err(), Some(InstructionError::AccountBorrowFailed));
+            }
         }
     }
 }
