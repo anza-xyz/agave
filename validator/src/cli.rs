@@ -332,12 +332,18 @@ pub struct DefaultArgs {
 impl DefaultArgs {
     pub fn new() -> Self {
         let default_send_transaction_service_config = send_transaction_service::Config::default();
+        let config_path = Config::default_path().and_then(|path| {
+            if std::fs::exists(&path).ok()? {
+                Some(path.to_str().map(|s| s.to_string())?)
+            } else {
+                None
+            }
+        });
 
         DefaultArgs {
             bind_address: "0.0.0.0".to_string(),
             ledger_path: "ledger".to_string(),
-            config_path: Config::default_path()
-                .and_then(|path| path.to_str().map(|s| s.to_string())),
+            config_path,
             dynamic_port_range: format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1),
             maximum_local_snapshot_age: "2500".to_string(),
             genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE.to_string(),
