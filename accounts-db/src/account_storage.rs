@@ -354,13 +354,13 @@ impl<'a> AccountStoragesOrderer<'a> {
         self.indices.len()
     }
 
-    /// Returns the original index the storages slice for `index`
+    /// Returns the original index, into the storages slice, at `position`
     ///
     /// # Panics
     ///
-    /// Caller must ensure `index` is in range, else will panic.
-    pub fn original_index(&'a self, index: usize) -> usize {
-        self.indices[index]
+    /// Caller must ensure `position` is in range, else will panic.
+    pub fn original_index(&'a self, position: usize) -> usize {
+        self.indices[position]
     }
 
     pub fn iter(&'a self) -> impl ExactSizeIterator<Item = &'a AccountStorageEntry> + 'a {
