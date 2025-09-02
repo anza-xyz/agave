@@ -29,6 +29,7 @@ use {
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
+        memory::MemoryTranslationError,
         stable_log,
     },
     solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES},
@@ -121,6 +122,8 @@ pub enum SyscallError {
     InvalidPointer,
     #[error("Arithmetic overflow")]
     ArithmeticOverflow,
+    #[error(transparent)]
+    MemoryTranslation(#[from] MemoryTranslationError),
 }
 
 type Error = Box<dyn std::error::Error>;

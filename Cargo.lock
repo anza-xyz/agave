@@ -9711,6 +9711,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-context",
  "test-case",
+ "thiserror 2.0.16",
 ]
 
 [[package]]

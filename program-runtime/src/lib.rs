@@ -7,6 +7,7 @@ pub mod execution_budget;
 pub mod invoke_context;
 pub mod loaded_programs;
 pub mod mem_pool;
+pub mod memory;
 pub mod serialization;
 pub mod stable_log;
 pub mod sysvar_cache;

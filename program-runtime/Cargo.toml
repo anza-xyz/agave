@@ -63,6 +63,7 @@ solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true, features = ["bincode"] }
 solana-sysvar-id = { workspace = true }
 solana-transaction-context = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
