@@ -10961,27 +10961,6 @@ name = "solana-svm-measure"
 version = "3.0.1"
 
 [[package]]
-<<<<<<< HEAD
-name = "solana-svm-metrics"
-version = "3.0.1"
-dependencies = [
- "bencher",
- "crossbeam-channel",
- "env_logger",
- "gethostname",
- "log",
- "rand 0.8.5",
- "reqwest 0.12.23",
- "serial_test",
- "solana-cluster-type",
- "solana-sha256-hasher",
- "solana-time-utils",
- "thiserror 2.0.16",
-]
-
-[[package]]
-=======
->>>>>>> d7fdc8bf6 (Revert "svm repo split: fork metrics (#7442)" (#7806))
 name = "solana-svm-timings"
 version = "3.0.1"
 dependencies = [
