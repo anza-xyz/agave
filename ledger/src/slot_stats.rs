@@ -74,10 +74,11 @@ impl Default for SlotsStats {
 }
 
 impl SlotsStats {
-    /// Returns a mutable reference to [`SlotStats`] associated with the slot in the stats LruCache.
+    /// Returns a mutable reference to [`SlotStats`] associated with the slot in the stats LruCache
+    /// and a possibly evicted cache entry.
     ///
-    /// If no SlotStats is associated with the slot, adds one.
-    /// If inserting a new SlotStats evicts another entry, returns it.
+    /// A new SlotStats entry will be inserted if there is not one present for `slot`; insertion
+    /// may cause an existing entry to be evicted.
     fn get_or_default_with_eviction_check<'a>(
         stats: &'a mut MutexGuard<LruCache<Slot, SlotStats>>,
         slot: Slot,
