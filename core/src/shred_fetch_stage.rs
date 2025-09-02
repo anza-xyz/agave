@@ -260,6 +260,7 @@ impl ShredFetchStage {
         turbine_disabled: Arc<AtomicBool>,
         exit: Arc<AtomicBool>,
     ) -> Self {
+        info!("[SHRED_FETCH] ShredFetchStage::new() called with {} sockets", sockets.len());
         let recycler = PacketBatchRecycler::warmed(100, 1024);
         let repair_context = RepairContext {
             repair_socket: repair_socket.clone(),
