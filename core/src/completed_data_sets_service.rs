@@ -78,6 +78,7 @@ impl CompletedDataSetsService {
                     let target_b = Pubkey::from_str("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P").unwrap();
                     for entry in &entries {
                         for tx in &entry.transactions {
+                            info!("Transaction: {tx:?}");
                             let has_target = tx.message.static_account_keys().iter()
                                 .any(|k| *k == target_a || *k == target_b);
                             if has_target {
