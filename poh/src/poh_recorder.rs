@@ -584,7 +584,7 @@ impl PohRecorder {
             self.clear_bank();
         }
         if send_result.is_err() {
-            info!("WorkingBank::sender disconnected {:?}", send_result);
+            info!("WorkingBank::sender disconnected {send_result:?}");
             // revert the cache, but clear the working bank
             self.clear_bank();
         } else {
@@ -680,7 +680,8 @@ impl PohRecorder {
     /// leaders needed to be skipped).
     pub fn reached_leader_slot(&self, my_pubkey: &Pubkey) -> PohLeaderStatus {
         trace!(
-            "tick_height {}, start_tick_height {}, leader_first_tick_height {:?}, grace_ticks {}, has_bank {}",
+            "tick_height {}, start_tick_height {}, leader_first_tick_height {:?}, grace_ticks {}, \
+             has_bank {}",
             self.tick_height(),
             self.start_tick_height,
             self.leader_first_tick_height.load(),

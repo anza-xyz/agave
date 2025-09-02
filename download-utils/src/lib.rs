@@ -106,7 +106,7 @@ pub fn download_snapshot_archive(
             progress_notify_callback,
         ) {
             Ok(()) => return Ok(()),
-            Err(err) => info!("{}", err),
+            Err(err) => info!("{err}"),
         }
     }
     Err(format!(

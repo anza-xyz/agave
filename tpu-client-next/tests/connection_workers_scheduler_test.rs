@@ -4,6 +4,7 @@ use {
     solana_cli_config::ConfigInput,
     solana_commitment_config::CommitmentConfig,
     solana_keypair::Keypair,
+    solana_net_utils::sockets::unique_port_range_for_tests,
     solana_pubkey::Pubkey,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
@@ -43,7 +44,10 @@ use {
 };
 
 fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
-    let address = SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0);
+    let address = SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        unique_port_range_for_tests(1).start,
+    );
     ConnectionWorkersSchedulerConfig {
         bind: BindTarget::Address(address),
         stake_identity: stake_identity.map(|identity| StakeIdentity::new(&identity)),
@@ -323,7 +327,8 @@ async fn test_connection_denied_until_allowed() {
     // Expect at least 2 errors: initial rejection + retry attempts.
     assert!(
         stats.write_error_connection_lost + stats.connection_error_application_closed >= 2,
-        "Expected at least 2 connection errors, got write_error_connection_lost: {}, connection_error_application_closed: {}",
+        "Expected at least 2 connection errors, got write_error_connection_lost: {}, \
+         connection_error_application_closed: {}",
         stats.write_error_connection_lost,
         stats.connection_error_application_closed
     );
@@ -380,8 +385,7 @@ async fn test_connection_pruned_and_reopened() {
     // Proactive detection catches pruning immediately, expect multiple retries.
     assert!(
         stats.connection_error_application_closed + stats.write_error_connection_lost >= 1,
-        "Expected at least 1 connection error from pruning and retries. Stats: {:?}",
-        stats
+        "Expected at least 1 connection error from pruning and retries. Stats: {stats:?}"
     );
 
     // Exit server
@@ -810,8 +814,7 @@ async fn test_proactive_connection_close_detection() {
     // Verify proactive close detection
     assert!(
         stats.connection_error_application_closed > 0 || stats.write_error_connection_lost > 0,
-        "Should detect connection close proactively. Stats: {:?}",
-        stats
+        "Should detect connection close proactively. Stats: {stats:?}"
     );
 
     // Exit server

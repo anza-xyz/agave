@@ -5359,7 +5359,7 @@ fn test_same_program_id_uses_unique_executable_accounts() {
         let instruction_context = transaction_context.get_current_instruction_context()?;
         let program_idx = instruction_context.get_index_of_program_account_in_transaction()?;
         let mut acc = transaction_context.accounts().try_borrow_mut(program_idx)?;
-        acc.set_data(vec![1, 2]);
+        acc.set_data_from_slice(&[1, 2]);
         Ok(())
     });
 
@@ -12422,4 +12422,18 @@ fn test_startup_from_snapshot_after_precompile_transition() {
 
     // Simulate starting up from snapshot finishing the initialization for a frozen bank
     bank.finish_init(&genesis_config, false);
+}
+
+#[test]
+fn test_parent_block_id() {
+    // Setup parent bank and populate block ID.
+    let (genesis_config, _mint_keypair) = create_genesis_config(100_000);
+    let parent_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    let parent_block_id = Some(Hash::new_unique());
+    parent_bank.set_block_id(parent_block_id);
+
+    // Create child from parent and ensure parent block ID links back to the
+    // expected value.
+    let child_bank = Bank::new_from_parent(parent_bank, &Pubkey::new_unique(), 1);
+    assert_eq!(parent_block_id, child_bank.parent_block_id());
 }

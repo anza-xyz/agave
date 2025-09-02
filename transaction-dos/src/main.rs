@@ -43,7 +43,7 @@ pub fn airdrop_lamports(
     desired_balance: u64,
 ) -> bool {
     let starting_balance = client.get_balance(&id.pubkey()).unwrap_or(0);
-    info!("starting balance {}", starting_balance);
+    info!("starting balance {starting_balance}");
 
     if starting_balance < desired_balance {
         let airdrop_amount = desired_balance - starting_balance;
@@ -67,14 +67,16 @@ pub fn airdrop_lamports(
                     }
                     if tries >= 5 {
                         panic!(
-                            "Error requesting airdrop: to addr: {faucet_addr:?} amount: {airdrop_amount} {result:?}"
+                            "Error requesting airdrop: to addr: {faucet_addr:?} amount: \
+                             {airdrop_amount} {result:?}"
                         )
                     }
                 }
             }
             Err(err) => {
                 panic!(
-                    "Error requesting airdrop: {err:?} to addr: {faucet_addr:?} amount: {airdrop_amount}"
+                    "Error requesting airdrop: {err:?} to addr: {faucet_addr:?} amount: \
+                     {airdrop_amount}"
                 );
             }
         };
@@ -82,7 +84,7 @@ pub fn airdrop_lamports(
         let current_balance = client.get_balance(&id.pubkey()).unwrap_or_else(|e| {
             panic!("airdrop error {e}");
         });
-        info!("current balance {}...", current_balance);
+        info!("current balance {current_balance}...");
 
         if current_balance - starting_balance != airdrop_amount {
             info!(
@@ -159,7 +161,7 @@ fn run_transactions_dos(
         CommitmentConfig::confirmed(),
     ));
 
-    info!("Targeting {}", entrypoint_addr);
+    info!("Targeting {entrypoint_addr}");
 
     let space = maybe_space.unwrap_or(1000);
 
@@ -266,7 +268,7 @@ fn run_transactions_dos(
         .collect();
     let mut last_balance = Instant::now();
 
-    info!("Starting balance(s): {:?}", balances);
+    info!("Starting balance(s): {balances:?}");
 
     let executor = TransactionExecutor::new(entrypoint_addr);
 
@@ -297,10 +299,7 @@ fn run_transactions_dos(
                 }
                 last_balance = Instant::now();
                 if *balance < lamports * 2 {
-                    info!(
-                        "Balance {} is less than needed: {}, doing aidrop...",
-                        balance, lamports
-                    );
+                    info!("Balance {balance} is less than needed: {lamports}, doing aidrop...");
                     if !airdrop_lamports(
                         &client,
                         &faucet_addr,
@@ -375,7 +374,7 @@ fn run_transactions_dos(
             accounts_created = true;
         } else {
             // Create dos transactions
-            info!("creating new batch of size: {}", batch_size);
+            info!("creating new batch of size: {batch_size}");
             let chunk_size = batch_size / payer_keypairs.len();
             for (i, keypair) in payer_keypairs.iter().enumerate() {
                 let txs: Vec<_> = (0..chunk_size)
@@ -412,8 +411,8 @@ fn run_transactions_dos(
         count += 1;
         if last_log.elapsed().as_secs() > 3 {
             info!(
-                "total_dos_messages_sent: {} tx_sent_count: {} loop_count: {} balance(s): {:?}",
-                total_dos_messages_sent, tx_sent_count, count, balances
+                "total_dos_messages_sent: {total_dos_messages_sent} tx_sent_count: \
+                 {tx_sent_count} loop_count: {count} balance(s): {balances:?}"
             );
             last_log = Instant::now();
         }
@@ -474,14 +473,17 @@ fn main() {
                 .takes_value(true)
                 .multiple(true)
                 .value_name("FILE")
-                .help("One or more keypairs to create accounts owned by the program and which the program will write to."),
+                .help(
+                    "One or more keypairs to create accounts owned by the program and which the \
+                     program will write to.",
+                ),
         )
         .arg(
             Arg::with_name("account_groups")
-            .long("account_groups")
-            .takes_value(true)
-            .value_name("NUM")
-            .help("Number of groups of accounts to split the accounts into")
+                .long("account_groups")
+                .takes_value(true)
+                .value_name("NUM")
+                .help("Number of groups of accounts to split the accounts into"),
         )
         .arg(
             Arg::with_name("batch_size")
@@ -516,7 +518,10 @@ fn main() {
                 .long("batch-sleep-ms")
                 .takes_value(true)
                 .value_name("NUM")
-                .help("Sleep for this long the num outstanding transactions is greater than the batch size."),
+                .help(
+                    "Sleep for this long the num outstanding transactions is greater than the \
+                     batch size.",
+                ),
         )
         .arg(
             Arg::with_name("check_gossip")
@@ -561,7 +566,7 @@ fn main() {
             Some(
                 solana_net_utils::get_cluster_shred_version(&entrypoint_addr).unwrap_or_else(
                     |err| {
-                        eprintln!("Failed to get shred version: {}", err);
+                        eprintln!("Failed to get shred version: {err}");
                         exit(1);
                     },
                 ),
@@ -615,7 +620,7 @@ fn main() {
     let account_keypair_refs: Vec<&Keypair> = account_keypairs.iter().collect();
 
     let rpc_addr = if !skip_gossip {
-        info!("Finding cluster entry: {:?}", entrypoint_addr);
+        info!("Finding cluster entry: {entrypoint_addr:?}");
         let (gossip_nodes, _validators) = discover(
             None, // keypair
             Some(&entrypoint_addr),
@@ -635,7 +640,7 @@ fn main() {
         info!("done found {} nodes", gossip_nodes.len());
         gossip_nodes[0].rpc().unwrap()
     } else {
-        info!("Using {:?} as the RPC address", entrypoint_addr);
+        info!("Using {entrypoint_addr:?} as the RPC address");
         entrypoint_addr
     };
 
@@ -694,7 +699,7 @@ pub mod test {
         let blockhash = solana_hash::Hash::default();
         let tx = Transaction::new(&signers, message, blockhash);
         let size = bincode::serialized_size(&tx).unwrap();
-        info!("size:{}", size);
+        info!("size:{size}");
         assert!(size < PACKET_DATA_SIZE as u64);
     }
 
@@ -758,6 +763,6 @@ pub mod test {
             100,
         );
         start.stop();
-        info!("{}", start);
+        info!("{start}");
     }
 }
