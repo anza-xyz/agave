@@ -31,7 +31,7 @@ fn bench_crds_shards_find(c: &mut Criterion, num_values: usize, mask_bits: u32) 
         assert!(shards.insert(index, value));
     }
     c.bench_function(
-        &format!("bench_crds_shards_find: mask_bits: {:?}", mask_bits),
+        &format!("bench_crds_shards_find: mask_bits: {mask_bits:?}"),
         |b| {
             b.iter(|| {
                 let mask = rng.gen();
