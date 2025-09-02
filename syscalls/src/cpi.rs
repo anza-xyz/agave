@@ -1,6 +1,7 @@
 use {
     super::*,
     crate::{translate_inner, translate_slice_inner, translate_type_inner},
+    solana_clock::Epoch,
     solana_instruction::Instruction,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_program_runtime::{
@@ -62,7 +63,7 @@ fn translate_slice_mut<'a, T>(
     )
 }
 
-/// Host side representation of AccountInfo or SolAccountInfo passed to the CPI syscall.
+/// Host side representation of VmAccountInfo or SolAccountInfo passed to the CPI syscall.
 ///
 /// At the start of a CPI, this can be different from the data stored in the
 /// corresponding BorrowedAccount, and needs to be synched.
@@ -80,7 +81,7 @@ struct CallerAccount<'a> {
     //
     // This is only set when account_data_direct_mapping is off.
     serialized_data: &'a mut [u8],
-    // Given the corresponding input AccountInfo::data, vm_data_addr points to
+    // Given the corresponding input VmAccountInfo::data, vm_data_addr points to
     // the pointer field and ref_to_len_in_vm points to the length field.
     vm_data_addr: u64,
     ref_to_len_in_vm: &'a mut u64,
@@ -122,13 +123,13 @@ impl<'a> CallerAccount<'a> {
         }
     }
 
-    // Create a CallerAccount given an AccountInfo.
-    fn from_account_info(
+    // Create a CallerAccount given a VmAccountInfo.
+    fn from_vm_account_info(
         invoke_context: &InvokeContext,
-        memory_mapping: &MemoryMapping<'_>,
+        memory_mapping: &'a MemoryMapping<'_>,
         check_aligned: bool,
         _vm_addr: u64,
-        account_info: &AccountInfo,
+        account_info: &VmAccountInfo,
         account_metadata: &SerializedAccountMetadata,
     ) -> Result<CallerAccount<'a>, Error> {
         let stricter_abi_and_runtime_constraints = invoke_context
@@ -138,13 +139,13 @@ impl<'a> CallerAccount<'a> {
         if stricter_abi_and_runtime_constraints {
             check_account_info_pointer(
                 invoke_context,
-                account_info.key as *const _ as u64,
+                account_info.key,
                 account_metadata.vm_key_addr,
                 "key",
             )?;
             check_account_info_pointer(
                 invoke_context,
-                account_info.owner as *const _ as u64,
+                account_info.owner,
                 account_metadata.vm_owner_addr,
                 "owner",
             )?;
@@ -153,64 +154,82 @@ impl<'a> CallerAccount<'a> {
         // account_info points to host memory. The addresses used internally are
         // in vm space so they need to be translated.
         let lamports = {
-            // Double translate lamports out of RefCell
-            let ptr = translate_type::<u64>(
+            // Triple translate lamports out of AccountInfo's Rc<RefCell>, which here has
+            // been refactored into a VmNonNull holding a VmBoxOfRefCell to avoid issues
+            // with variable pointer sizes between 32- and 64-bit builds.
+            let ptr_box = translate_type::<VmBoxOfRefCell<u64>>(
                 memory_mapping,
-                account_info.lamports.as_ptr() as u64,
+                account_info.lamports.addr,
                 check_aligned,
             )?;
             if stricter_abi_and_runtime_constraints {
-                if account_info.lamports.as_ptr() as u64 >= ebpf::MM_INPUT_START {
+                if account_info.lamports.addr >= ebpf::MM_INPUT_START {
                     return Err(SyscallError::InvalidPointer.into());
                 }
 
                 check_account_info_pointer(
                     invoke_context,
-                    *ptr,
+                    ptr_box.value,
                     account_metadata.vm_lamports_addr,
                     "lamports",
                 )?;
             }
-            translate_type_mut::<u64>(memory_mapping, *ptr, check_aligned)?
+            translate_type_mut::<u64>(
+                memory_mapping,
+                ptr_box.value,
+                check_aligned
+            )?
         };
 
         let owner = translate_type_mut::<Pubkey>(
             memory_mapping,
-            account_info.owner as *const _ as u64,
+            account_info.owner,
             check_aligned,
         )?;
 
         let (serialized_data, vm_data_addr, ref_to_len_in_vm) = {
             if stricter_abi_and_runtime_constraints
-                && account_info.data.as_ptr() as u64 >= ebpf::MM_INPUT_START
+                && account_info.data.addr >= ebpf::MM_INPUT_START
             {
                 return Err(SyscallError::InvalidPointer.into());
             }
 
-            // Double translate data out of RefCell
-            let data = *translate_type::<&[u8]>(
+            // Double translate data out of its nested structure
+            let ptr_box = translate_type_mut::<VmBoxOfRefCell<VmSlice<u8>>>(
                 memory_mapping,
-                account_info.data.as_ptr() as *const _ as u64,
+                account_info.data.addr,
                 check_aligned,
             )?;
+
+            let vm_data_addr = ptr_box.value.ptr(); // virtual address of VmSlice's contents
+
             if stricter_abi_and_runtime_constraints {
                 check_account_info_pointer(
                     invoke_context,
-                    data.as_ptr() as u64,
+                    vm_data_addr,
                     account_metadata.vm_data_addr,
                     "data",
                 )?;
             }
 
+            // Translate the vmSlice into a physically addressed "true" Rust slice
+            let data_slice = ptr_box
+                .value
+                .translate(memory_mapping, invoke_context.get_check_aligned())?;
+
             consume_compute_meter(
                 invoke_context,
-                (data.len() as u64)
+                (data_slice.len() as u64)
                     .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
                     .unwrap_or(u64::MAX),
             )?;
 
-            let vm_len_addr = (account_info.data.as_ptr() as *const u64 as u64)
-                .saturating_add(size_of::<u64>() as u64);
+            // The offset from the virtual address of the VmBoxOfRefCell<VmSlice<u8>> to the
+            // length field of the VmSlice<u8>, which address is returned by this function in
+            // the CallerAccount struct.
+            let len_offset = size_of::<u64>().saturating_mul(4) as u64;
+
+            let vm_len_addr = account_info.data.addr.saturating_add(len_offset);
             if stricter_abi_and_runtime_constraints {
                 // In the same vein as the other check_account_info_pointer() checks, we don't lock
                 // this pointer to a specific address but we don't want it to be inside accounts, or
@@ -220,14 +239,10 @@ impl<'a> CallerAccount<'a> {
                 }
             }
             let ref_to_len_in_vm = translate_type_mut::<u64>(memory_mapping, vm_len_addr, false)?;
-            let vm_data_addr = data.as_ptr() as u64;
-            let serialized_data = CallerAccount::get_serialized_data(
-                memory_mapping,
-                vm_data_addr,
-                data.len() as u64,
-                stricter_abi_and_runtime_constraints,
-                invoke_context.account_data_direct_mapping,
-            )?;
+            let serialized_data = ptr_box
+                .value
+                .translate_mut(memory_mapping, invoke_context.get_check_aligned())?;
+
             (serialized_data, vm_data_addr, ref_to_len_in_vm)
         };
 
@@ -244,7 +259,7 @@ impl<'a> CallerAccount<'a> {
     // Create a CallerAccount given a SolAccountInfo.
     fn from_sol_account_info(
         invoke_context: &InvokeContext,
-        memory_mapping: &MemoryMapping<'_>,
+        memory_mapping: &'a MemoryMapping<'_>,
         check_aligned: bool,
         vm_addr: u64,
         account_info: &SolAccountInfo,
@@ -445,7 +460,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         let (account_infos, account_info_keys) = translate_account_infos(
             account_infos_addr,
             account_infos_len,
-            |account_info: &AccountInfo| account_info.key as *const _ as u64,
+            |account_info: &VmAccountInfo| account_info.key,
             memory_mapping,
             invoke_context,
             check_aligned,
@@ -458,7 +473,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
             invoke_context,
             memory_mapping,
             check_aligned,
-            CallerAccount::from_account_info,
+            CallerAccount::from_vm_account_info,
         )
     }
 
@@ -536,7 +551,7 @@ struct SolAccountInfo {
     data_len: u64,
     data_addr: u64,
     owner_addr: u64,
-    rent_epoch: u64,
+    rent_epoch: Epoch,
     is_signer: bool,
     is_writable: bool,
     executable: bool,
@@ -1217,7 +1232,7 @@ fn update_caller_account(
 
     if prev_len != post_len {
         // when stricter_abi_and_runtime_constraints is enabled we don't cache the serialized data in
-        // caller_account.serialized_data. See CallerAccount::from_account_info.
+        // caller_account.serialized_data. See CallerAccount::from_vm_account_info.
         if !(stricter_abi_and_runtime_constraints && invoke_context.account_data_direct_mapping) {
             // If the account has been shrunk, we're going to zero the unused memory
             // *that was previously used*.
@@ -1275,6 +1290,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         solana_account::{Account, AccountSharedData, ReadableAccount},
+        solana_clock::Epoch,
         solana_instruction::Instruction,
         solana_program_runtime::{
             invoke_context::{BpfAllocator, SerializedAccountMetadata, SyscallContext},
@@ -1456,9 +1472,9 @@ mod tests {
         };
         let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
 
-        let account_info = translate_type::<AccountInfo>(&memory_mapping, vm_addr, false).unwrap();
+        let account_info = translate_type::<VmAccountInfo>(&memory_mapping, vm_addr, false).unwrap();
 
-        let caller_account = CallerAccount::from_account_info(
+        let caller_account = CallerAccount::from_vm_account_info(
             &invoke_context,
             &memory_mapping,
             true, // check_aligned
@@ -2199,37 +2215,33 @@ mod tests {
         }
 
         fn into_region(self, vm_addr: u64) -> (Vec<u8>, MemoryRegion, SerializedAccountMetadata) {
-            let size = mem::size_of::<AccountInfo>()
+            let size = mem::size_of::<VmAccountInfo>()
                 + mem::size_of::<Pubkey>() * 2
-                + mem::size_of::<RcBox<RefCell<&mut u64>>>()
-                + mem::size_of::<u64>()
-                + mem::size_of::<RcBox<RefCell<&mut [u8]>>>()
+                + mem::size_of::<VmBoxOfRefCell<&mut u64>>()
+                + mem::size_of::<VmBoxOfRefCell<VmSlice<u8>>>()
                 + self.data.len();
             let mut data = vec![0; size];
 
             let vm_addr = vm_addr as usize;
-            let key_addr = vm_addr + mem::size_of::<AccountInfo>();
+            let key_addr = vm_addr + mem::size_of::<VmAccountInfo>();
             let lamports_cell_addr = key_addr + mem::size_of::<Pubkey>();
-            let lamports_addr = lamports_cell_addr + mem::size_of::<RcBox<RefCell<&mut u64>>>();
-            let owner_addr = lamports_addr + mem::size_of::<u64>();
+            let owner_addr = lamports_cell_addr + mem::size_of::<VmBoxOfRefCell<&mut u64>>();
             let data_cell_addr = owner_addr + mem::size_of::<Pubkey>();
-            let data_addr = data_cell_addr + mem::size_of::<RcBox<RefCell<&mut [u8]>>>();
+            let data_addr = data_cell_addr + mem::size_of::<VmBoxOfRefCell<VmSlice<u8>>>();
 
             #[allow(deprecated)]
             #[allow(clippy::used_underscore_binding)]
-            let info = AccountInfo {
-                key: unsafe { (key_addr as *const Pubkey).as_ref() }.unwrap(),
+            let info = VmAccountInfo {
+                key: key_addr as u64,
                 is_signer: self.is_signer,
                 is_writable: self.is_writable,
-                lamports: unsafe {
-                    Rc::from_raw((lamports_cell_addr + RcBox::<&mut u64>::VALUE_OFFSET) as *const _)
-                },
-                data: unsafe {
-                    Rc::from_raw((data_cell_addr + RcBox::<&mut [u8]>::VALUE_OFFSET) as *const _)
-                },
-                owner: unsafe { (owner_addr as *const Pubkey).as_ref() }.unwrap(),
+                lamports: VmNonNull::from_addr(lamports_cell_addr as u64),
+                data: VmNonNull::from_addr(data_cell_addr as u64),
+                owner: owner_addr as u64,
                 executable: self.executable,
+                rent_epoch: self.rent_epoch,
                 _unused: self._unused,
+                phantom: PhantomData,
             };
 
             unsafe {
@@ -2240,11 +2252,7 @@ mod tests {
                 );
                 ptr::write_unaligned(
                     (data.as_mut_ptr() as usize + lamports_cell_addr - vm_addr) as *mut _,
-                    RcBox::new(RefCell::new((lamports_addr as *mut u64).as_mut().unwrap())),
-                );
-                ptr::write_unaligned(
-                    (data.as_mut_ptr() as usize + lamports_addr - vm_addr) as *mut _,
-                    self.lamports,
+                    VmBoxOfRefCell::new(self.lamports),
                 );
                 ptr::write_unaligned(
                     (data.as_mut_ptr() as usize + owner_addr - vm_addr) as *mut _,
@@ -2252,11 +2260,7 @@ mod tests {
                 );
                 ptr::write_unaligned(
                     (data.as_mut_ptr() as usize + data_cell_addr - vm_addr) as *mut _,
-                    RcBox::new(RefCell::new(slice::from_raw_parts_mut(
-                        data_addr as *mut u8,
-                        self.data.len(),
-                    ))),
-                );
+                    VmBoxOfRefCell::new(VmSlice::new(data_addr as u64, self.data.len() as u64)),                );
                 data[data_addr - vm_addr..].copy_from_slice(self.data);
             }
 
