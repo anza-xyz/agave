@@ -10867,7 +10867,6 @@ dependencies = [
  "nix",
  "num_cpus",
  "pem",
- "percentage",
  "quinn",
  "quinn-proto",
  "rand 0.8.5",
