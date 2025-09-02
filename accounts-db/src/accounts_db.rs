@@ -1112,7 +1112,7 @@ impl AccountStorageEntry {
 
     /// Insert offsets into the zero lamport single ref account offset set.
     /// Return the number of new offsets that were inserted.
-    fn insert_zero_lamport_single_ref_account_offset_batch(&self, offsets: &[usize]) -> u64 {
+    fn batch_insert_zero_lamport_single_ref_account_offsets(&self, offsets: &[Offset]) -> u64 {
         let mut zero_lamport_single_ref_offsets =
             self.zero_lamport_single_ref_offsets.write().unwrap();
         let mut count = 0;
@@ -7163,7 +7163,7 @@ impl AccountsDb {
     /// storage.
     /// Returns the number of zero lamport single ref accounts found.
     fn visit_zero_lamport_pubkeys_during_startup(&self, pubkeys: &HashSet<Pubkey>) -> u64 {
-        let mut slot_offsets = HashMap::<Slot, Vec<usize>>::default();
+        let mut slot_offsets = HashMap::default();
         self.accounts_index.scan(
             pubkeys.iter(),
             |_pubkey, slots_refs, _entry| {
@@ -7189,7 +7189,7 @@ impl AccountsDb {
         let mut count = 0;
         for (slot, offsets) in slot_offsets {
             if let Some(store) = self.storage.get_slot_storage_entry(slot) {
-                count += store.insert_zero_lamport_single_ref_account_offset_batch(&offsets);
+                count += store.batch_insert_zero_lamport_single_ref_account_offsets(&offsets);
                 if store.num_zero_lamport_single_ref_accounts() == store.count() {
                     // all accounts in this storage can be dead
                     self.dirty_stores.entry(slot).or_insert(store);
