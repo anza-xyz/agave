@@ -40,7 +40,6 @@ use {
         program::{BuiltinProgram, SBPFVersion},
         vm::Config,
     },
-    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, native_loader},
     solana_secp256k1_recover::{
         Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
     },
@@ -2094,7 +2093,9 @@ mod tests {
             program::SBPFVersion,
             vm::Config,
         },
-        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, sysvar},
+        solana_sdk_ids::{
+            bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader, sysvar,
+        },
         solana_sha256_hasher::hashv,
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,

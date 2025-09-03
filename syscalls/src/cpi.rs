@@ -1,9 +1,12 @@
 use {
     super::*,
     solana_instruction::Instruction,
-    solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_program_runtime::{
-        cpi::{SolAccountInfo, SolAccountMeta, SolInstruction, SolSignerSeedC, SolSignerSeedsC},
+        cpi::{
+            check_account_info_pointer, check_account_infos, check_authorized_program,
+            check_instruction_size, SolAccountInfo, SolAccountMeta, SolInstruction, SolSignerSeedC,
+            SolSignerSeedsC,
+        },
         invoke_context::SerializedAccountMetadata,
         memory::{
             translate_slice, translate_slice_mut_for_cpi, translate_type,
@@ -14,32 +17,9 @@ use {
     solana_sbpf::ebpf,
     solana_stable_layout::stable_instruction::StableInstruction,
     solana_svm_measure::measure::Measure,
-    solana_transaction_context::{
-        BorrowedInstructionAccount, MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
-    },
+    solana_transaction_context::BorrowedInstructionAccount,
     std::mem,
 };
-
-const MAX_CPI_ACCOUNT_INFOS: usize = 128;
-
-fn check_account_info_pointer(
-    invoke_context: &InvokeContext,
-    vm_addr: u64,
-    expected_vm_addr: u64,
-    field: &str,
-) -> Result<(), Error> {
-    if vm_addr != expected_vm_addr {
-        ic_msg!(
-            invoke_context,
-            "Invalid account info pointer `{}': {:#x} != {:#x}",
-            field,
-            vm_addr,
-            expected_vm_addr
-        );
-        return Err(SyscallError::InvalidPointer.into());
-    }
-    Ok(())
-}
 
 /// Host side representation of AccountInfo or SolAccountInfo passed to the CPI syscall.
 ///
@@ -827,76 +807,6 @@ where
     Ok(accounts)
 }
 
-fn check_instruction_size(num_accounts: usize, data_len: usize) -> Result<(), Error> {
-    if num_accounts > MAX_ACCOUNTS_PER_INSTRUCTION {
-        return Err(Box::new(SyscallError::MaxInstructionAccountsExceeded {
-            num_accounts: num_accounts as u64,
-            max_accounts: MAX_ACCOUNTS_PER_INSTRUCTION as u64,
-        }));
-    }
-    if data_len > MAX_INSTRUCTION_DATA_LEN {
-        return Err(Box::new(SyscallError::MaxInstructionDataLenExceeded {
-            data_len: data_len as u64,
-            max_data_len: MAX_INSTRUCTION_DATA_LEN as u64,
-        }));
-    }
-    Ok(())
-}
-
-fn check_account_infos(
-    num_account_infos: usize,
-    invoke_context: &mut InvokeContext,
-) -> Result<(), Error> {
-    let max_cpi_account_infos = if invoke_context
-        .get_feature_set()
-        .increase_tx_account_lock_limit
-    {
-        MAX_CPI_ACCOUNT_INFOS
-    } else {
-        64
-    };
-    let num_account_infos = num_account_infos as u64;
-    let max_account_infos = max_cpi_account_infos as u64;
-    if num_account_infos > max_account_infos {
-        return Err(Box::new(SyscallError::MaxInstructionAccountInfosExceeded {
-            num_account_infos,
-            max_account_infos,
-        }));
-    }
-    Ok(())
-}
-
-fn check_authorized_program(
-    program_id: &Pubkey,
-    instruction_data: &[u8],
-    invoke_context: &InvokeContext,
-) -> Result<(), Error> {
-    if native_loader::check_id(program_id)
-        || bpf_loader::check_id(program_id)
-        || bpf_loader_deprecated::check_id(program_id)
-        || (solana_sdk_ids::bpf_loader_upgradeable::check_id(program_id)
-            && !(bpf_loader_upgradeable::is_upgrade_instruction(instruction_data)
-                || bpf_loader_upgradeable::is_set_authority_instruction(instruction_data)
-                || (invoke_context
-                    .get_feature_set()
-                    .enable_bpf_loader_set_authority_checked_ix
-                    && bpf_loader_upgradeable::is_set_authority_checked_instruction(
-                        instruction_data,
-                    ))
-                || (invoke_context
-                    .get_feature_set()
-                    .enable_extend_program_checked
-                    && bpf_loader_upgradeable::is_extend_program_checked_instruction(
-                        instruction_data,
-                    ))
-                || bpf_loader_upgradeable::is_close_instruction(instruction_data)))
-        || invoke_context.is_precompile(program_id)
-    {
-        return Err(Box::new(SyscallError::ProgramNotSupported(*program_id)));
-    }
-    Ok(())
-}
-
 /// Call process instruction, common to both Rust and C
 fn cpi_common<S: SyscallInvokeSigned>(
     invoke_context: &mut InvokeContext,
@@ -1219,7 +1129,7 @@ mod tests {
         solana_sbpf::{
             ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
-        solana_sdk_ids::system_program,
+        solana_sdk_ids::{bpf_loader, system_program},
         solana_transaction_context::{
             transaction_accounts::TransactionAccount, InstructionAccount,
         },
