@@ -209,11 +209,13 @@ impl PohService {
         if let Ok(record) = record {
             if record
                 .sender
-                .send(poh_recorder.write().unwrap().record(
-                    record.slot,
-                    record.mixins,
-                    record.transaction_batches,
-                ))
+                .send(
+                    poh_recorder
+                        .write()
+                        .unwrap()
+                        .record(record.slot, record.mixins, record.transaction_batches)
+                        .map(|summary| summary.starting_transaction_index),
+                )
                 .is_err()
             {
                 panic!("Error returning mixin hash");
@@ -284,7 +286,9 @@ impl PohService {
                         record.mixins,
                         std::mem::take(&mut record.transaction_batches),
                     );
-                    let (send_res, send_record_result_us) = measure_us!(record.sender.send(res));
+                    let (send_res, send_record_result_us) = measure_us!(record
+                        .sender
+                        .send(res.map(|summary| summary.starting_transaction_index)));
                     debug_assert!(send_res.is_ok(), "Record wasn't sent.");
 
                     timing.total_send_record_result_us += send_record_result_us;

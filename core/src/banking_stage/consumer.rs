@@ -843,7 +843,11 @@ mod tests {
                             record.transaction_batches,
                         );
                         poh_recorder.write().unwrap().tick();
-                        if record.sender.send(record_response).is_err() {
+                        if record
+                            .sender
+                            .send(record_response.map(|r| r.starting_transaction_index))
+                            .is_err()
+                        {
                             panic!("Error returning mixin hash");
                         }
                     }

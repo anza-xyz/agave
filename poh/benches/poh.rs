@@ -125,6 +125,7 @@ fn bench_poh_recorder_record_transaction_index(bencher: &mut Bencher) {
                 vec![test::black_box(txs.clone())],
             )
             .unwrap()
+            .starting_transaction_index
             .unwrap();
     });
     poh_recorder.tick();
