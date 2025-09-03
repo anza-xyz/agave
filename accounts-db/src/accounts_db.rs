@@ -7097,13 +7097,37 @@ impl AccountsDb {
         // Step 8: Insert zero lamport slots for cleaning
         self.insert_zero_lamport_slots(&total_accum);
 
-        // Need to add these last, otherwise older updates will be cleaned
+        // Step 9: Add roots for all storages
         for storage in &storages {
             self.accounts_index.add_root(storage.slot());
         }
 
+        // Step 10: Set storage count and alive bytes
         self.set_storage_count_and_alive_bytes(storage_info, &mut timings);
 
+        // Step 11: Mark obsolete accounts if enabled
+        self.mark_obsolete_accounts_if_enabled(&storages, unique_pubkeys_by_bin, &mut timings);
+
+        total_time.stop();
+        timings.total_time_us = total_time.as_us();
+        timings.report(self.accounts_index.get_startup_stats());
+
+        self.accounts_index.log_secondary_indexes();
+
+        IndexGenerationInfo {
+            accounts_data_len: total_accum.accounts_data_len,
+            calculated_accounts_lt_hash: AccountsLtHash(total_accum.lt_hash),
+        }
+    }
+
+    /// Mark obsolete accounts if the feature is enabled
+    /// Updates timings with the results
+    fn mark_obsolete_accounts_if_enabled(
+        &self,
+        storages: &[Arc<AccountStorageEntry>],
+        unique_pubkeys_by_bin: Vec<Vec<Pubkey>>,
+        timings: &mut GenerateIndexTimings,
+    ) {
         if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
             let mut mark_obsolete_accounts_time = Measure::start("mark_obsolete_accounts_time");
             // Mark all reclaims at max_slot. This is safe because only the snapshot paths care about
@@ -7119,16 +7143,6 @@ impl AccountsDb {
             timings.mark_obsolete_accounts_us = mark_obsolete_accounts_time.as_us();
             timings.num_obsolete_accounts_marked = obsolete_account_stats.accounts_marked_obsolete;
             timings.num_slots_removed_as_obsolete = obsolete_account_stats.slots_removed;
-        }
-        total_time.stop();
-        timings.total_time_us = total_time.as_us();
-        timings.report(self.accounts_index.get_startup_stats());
-
-        self.accounts_index.log_secondary_indexes();
-
-        IndexGenerationInfo {
-            accounts_data_len: total_accum.accounts_data_len,
-            calculated_accounts_lt_hash: AccountsLtHash(total_accum.lt_hash),
         }
     }
 
