@@ -109,7 +109,7 @@ const DEFAULT_NUM_DIRS: u32 = 4;
 // several io_uring instances with fixed buffers for large disk IO operations.
 pub const DEFAULT_MEMLOCK_BUDGET_SIZE: usize = 2_000_000_000;
 // Linux distributions often have some small memory lock limit (e.g. 8MB) that we can tap into.
-const TESTS_MEMLOCK_BUDGET_SIZE: usize = 4_000_000;
+const MEMLOCK_BUDGET_SIZE_FOR_TESTS: usize = 4_000_000;
 
 // When getting accounts for shrinking from the index, this is the # of accounts to lookup per thread.
 // This allows us to split up accounts index accesses across multiple threads.
@@ -307,7 +307,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     num_background_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
-    memlock_budget_size: TESTS_MEMLOCK_BUDGET_SIZE,
+    memlock_budget_size: MEMLOCK_BUDGET_SIZE_FOR_TESTS,
 };
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
@@ -330,7 +330,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     num_background_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
-    memlock_budget_size: TESTS_MEMLOCK_BUDGET_SIZE,
+    memlock_budget_size: MEMLOCK_BUDGET_SIZE_FOR_TESTS,
 };
 
 struct LoadAccountsIndexForShrink<'a, T: ShrinkCollectRefs<'a>> {
