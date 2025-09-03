@@ -9759,8 +9759,6 @@ pub(crate) mod tests {
         let working_bank = bank_forks.read().unwrap().working_bank();
         assert!(working_bank.is_complete());
         assert!(working_bank.is_frozen());
-        // Mark startup verification as complete to avoid skipping leader slots
-        working_bank.set_initial_accounts_hash_verification_completed();
 
         let poh_slot = working_bank.slot() + 2;
         let alpenglow_slot = working_bank.slot() + 3;
@@ -9775,6 +9773,7 @@ pub(crate) mod tests {
             &mut poh_controller,
             &leader_schedule_cache,
         );
+        wait_for_poh_service(&poh_controller);
 
         // Register just over one slot worth of ticks directly with PoH recorder
         let num_poh_ticks =
@@ -9812,6 +9811,7 @@ pub(crate) mod tests {
         )
         .is_some());
         assert!(!is_alpenglow_migration_complete);
+        wait_for_poh_service(&poh_controller);
         let working_bank = bank_forks.read().unwrap().working_bank();
         assert_eq!(working_bank.slot(), poh_slot);
         assert_eq!(working_bank.parent_slot(), initial_slot);
@@ -9846,6 +9846,8 @@ pub(crate) mod tests {
         )
         .is_none());
         assert!(is_alpenglow_migration_complete);
+        wait_for_poh_service(&poh_controller);
+
         // Working bank should not be updated past the poh slot
         let working_bank = bank_forks.read().unwrap().working_bank();
         assert_eq!(working_bank.slot(), poh_slot);
