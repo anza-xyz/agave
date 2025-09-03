@@ -2171,8 +2171,7 @@ impl ReplayStage {
                 // TODO: need to keep the ticks around for parent slots in previous epoch
                 // because reset below will delete those ticks
                 info!(
-                    "initiating alpenglow migration from maybe_start_leader() for slot {}",
-                    poh_slot
+                    "initiating alpenglow migration from maybe_start_leader() for slot {poh_slot}",
                 );
                 Self::maybe_initiate_alpenglow_migration(
                     poh_recorder,
