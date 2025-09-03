@@ -6,15 +6,11 @@
 
 use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
-    log::*,
     solana_entry::entry::Entry,
     solana_ledger::blockstore::{Blockstore, CompletedDataSetInfo},
-    solana_pubkey::Pubkey,
     solana_rpc::{max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions},
     solana_signature::Signature,
-    solana_time_utils::timestamp,
     std::{
-        str::FromStr,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc,
