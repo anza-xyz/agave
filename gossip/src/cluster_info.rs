@@ -533,14 +533,23 @@ impl ClusterInfo {
             })
             .collect();
 
+        // format!(
+        //     "RPC Address       |Age(ms)| Node identifier                              \
+        //      | Version | RPC  |PubSub|ShredVer\n\
+        //      ------------------+-------+----------------------------------------------\
+        //      +---------+------+------+--------\n\
+        //      {}\
+        //      RPC Enabled Nodes: {}",
+        //     nodes.join(""),
+        //     nodes.len(),
+        // )
+
         format!(
             "RPC Address       |Age(ms)| Node identifier                              \
              | Version | RPC  |PubSub|ShredVer\n\
              ------------------+-------+----------------------------------------------\
              +---------+------+------+--------\n\
-             {}\
              RPC Enabled Nodes: {}",
-            nodes.join(""),
             nodes.len(),
         )
     }
