@@ -30,7 +30,7 @@ const ACCOUNTS_COUNTS: [usize; 4] = [
 ];
 
 fn bench_write_accounts_file(c: &mut Criterion, storage_access: StorageAccess) {
-    let mut group = c.benchmark_group(format!("write_accounts_file_{:?}", storage_access));
+    let mut group = c.benchmark_group(format!("write_accounts_file_{storage_access:?}"));
 
     // most accounts on mnb are 165-200 bytes, so use that here too
     let space = 200;

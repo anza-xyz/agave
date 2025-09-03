@@ -1081,10 +1081,10 @@ fn test_clean_dead_slot_with_obsolete_accounts() {
 
     let accounts = AccountsDb::new_with_config(
         Vec::new(),
-        Some(AccountsDbConfig {
+        AccountsDbConfig {
             mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        }),
+        },
         None,
         Arc::default(),
     );
