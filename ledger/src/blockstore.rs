@@ -6878,7 +6878,7 @@ pub mod tests {
                         &keypair,
                         &[],
                         false,
-                        None,
+                        Some(Hash::default()), // merkle_root
                         (i * gap) as u32,
                         (i * gap) as u32,
                         &reed_solomon_cache,
