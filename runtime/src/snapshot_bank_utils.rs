@@ -825,8 +825,8 @@ mod tests {
             status_cache::Status,
         },
         solana_accounts_db::{
-            accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING, accounts_file::StorageAccess,
-            MarkObsoleteAccounts,
+            accounts_db::{MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+            accounts_file::StorageAccess,
         },
         solana_genesis_config::create_genesis_config,
         solana_keypair::Keypair,
