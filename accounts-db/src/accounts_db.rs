@@ -7108,12 +7108,13 @@ impl AccountsDb {
         // Step 11: Mark obsolete accounts if enabled
         self.mark_obsolete_accounts_if_enabled(&storages, unique_pubkeys_by_bin, &mut timings);
 
+        // Step 12: Finalize timings and log
         total_time.stop();
         timings.total_time_us = total_time.as_us();
         timings.report(self.accounts_index.get_startup_stats());
-
         self.accounts_index.log_secondary_indexes();
 
+        // Step 13: Return index generation info
         IndexGenerationInfo {
             accounts_data_len: total_accum.accounts_data_len,
             calculated_accounts_lt_hash: AccountsLtHash(total_accum.lt_hash),
