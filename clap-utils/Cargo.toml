@@ -18,6 +18,7 @@ name = "solana_clap_utils"
 [dependencies]
 chrono = { workspace = true, features = ["default"] }
 clap = "2.33.0"
+dirs-next = { workspace = true }
 rpassword = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }

@@ -175,9 +175,22 @@ impl DefaultSigner {
                     }
                 })
                 .map_err(|_| {
+                    // Use the system default path in the error message instead of the configured path
+                    let default_path = dirs_next::home_dir()
+                        .map(|mut path| {
+                            path.extend([".config", "solana", "id.json"]);
+                            path.to_str().unwrap_or(&self.path).to_string()
+                        })
+                        .unwrap_or_else(|| self.path.clone());
                     std::io::Error::other(format!(
+<<<<<<< HEAD
                         "No default signer found, run \"solana-keygen new -o {}\" to create a new one",
                         self.path
+=======
+                        "No default signer found, run \"solana-keygen new -o {}\" to create a new \
+                         one",
+                        default_path
+>>>>>>> 7c3e9e745 (fix: Show correct default path in signer error messages (#7849))
                     ))
                 })?;
             *self.is_path_checked.borrow_mut() = true;
