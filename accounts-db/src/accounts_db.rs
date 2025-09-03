@@ -533,6 +533,78 @@ impl Default for SlotLtHash {
     }
 }
 
+/// Accumulator for the values produced while generating the index
+struct IndexGenerationAccumulator {
+    insert_us: u64,
+    num_accounts: u64,
+    accounts_data_len: u64,
+    zero_lamport_pubkeys: HashSet<Pubkey, PubkeyHasherBuilder>,
+    all_accounts_are_zero_lamports_slots: u64,
+    all_zeros_slots: Vec<(Slot, Arc<AccountStorageEntry>)>,
+    num_did_not_exist: u64,
+    num_existed_in_mem: u64,
+    num_existed_on_disk: u64,
+    lt_hash: LtHash,
+}
+impl Default for IndexGenerationAccumulator {
+    fn default() -> Self {
+        Self {
+            insert_us: 0,
+            num_accounts: 0,
+            accounts_data_len: 0,
+            zero_lamport_pubkeys: HashSet::with_hasher(PubkeyHasherBuilder::default()),
+            all_accounts_are_zero_lamports_slots: 0,
+            all_zeros_slots: Vec::new(),
+            num_did_not_exist: 0,
+            num_existed_in_mem: 0,
+            num_existed_on_disk: 0,
+            lt_hash: LtHash::identity(),
+        }
+    }
+}
+impl IndexGenerationAccumulator {
+    fn new() -> Self {
+        Self::default()
+    }
+    fn accumulate(&mut self, other: Self) {
+        self.insert_us += other.insert_us;
+        self.num_accounts += other.num_accounts;
+        self.accounts_data_len += other.accounts_data_len;
+        self.zero_lamport_pubkeys.extend(other.zero_lamport_pubkeys);
+        self.all_accounts_are_zero_lamports_slots += other.all_accounts_are_zero_lamports_slots;
+        self.all_zeros_slots.extend(other.all_zeros_slots);
+        self.num_did_not_exist += other.num_did_not_exist;
+        self.num_existed_in_mem += other.num_existed_in_mem;
+        self.num_existed_on_disk += other.num_existed_on_disk;
+        self.lt_hash.mix_in(&other.lt_hash);
+    }
+}
+
+struct DuplicatePubkeysVisitedInfo {
+    accounts_data_len_from_duplicates: u64,
+    num_duplicate_accounts: u64,
+    duplicates_lt_hash: Box<DuplicatesLtHash>,
+}
+impl Default for DuplicatePubkeysVisitedInfo {
+    fn default() -> Self {
+        Self {
+            accounts_data_len_from_duplicates: 0,
+            num_duplicate_accounts: 0,
+            duplicates_lt_hash: Box::new(DuplicatesLtHash::default()),
+        }
+    }
+}
+impl DuplicatePubkeysVisitedInfo {
+    fn reduce(mut self, other: Self) -> Self {
+        self.accounts_data_len_from_duplicates += other.accounts_data_len_from_duplicates;
+        self.num_duplicate_accounts += other.num_duplicate_accounts;
+        self.duplicates_lt_hash
+            .0
+            .mix_in(&other.duplicates_lt_hash.0);
+        self
+    }
+}
+
 #[derive(Default, Debug)]
 struct GenerateIndexTimings {
     pub total_time_us: u64,
@@ -6695,70 +6767,88 @@ impl AccountsDb {
         limit_load_slot_count_from_snapshot: Option<usize>,
         verify: bool,
     ) -> IndexGenerationInfo {
+        // Step 1: Prepare storages and stats
         let mut total_time = Measure::start("generate_index");
-
         let mut storages = self.storage.all_storages();
         storages.sort_unstable_by_key(|storage| storage.slot);
         if let Some(limit) = limit_load_slot_count_from_snapshot {
-            storages.truncate(limit); // get rid of the newer slots and keep just the older
+            storages.truncate(limit);
         }
         let num_storages = storages.len();
-
         self.accounts_index
             .set_startup(Startup::StartupWithExtraThreads);
         let storage_info = StorageSizeAndCountMap::default();
 
-        /// Accumulator for the values produced while generating the index
-        #[derive(Debug)]
-        struct IndexGenerationAccumulator {
-            insert_us: u64,
-            num_accounts: u64,
-            accounts_data_len: u64,
-            zero_lamport_pubkeys: HashSet<Pubkey, PubkeyHasherBuilder>,
-            all_accounts_are_zero_lamports_slots: u64,
-            all_zeros_slots: Vec<(Slot, Arc<AccountStorageEntry>)>,
-            num_did_not_exist: u64,
-            num_existed_in_mem: u64,
-            num_existed_on_disk: u64,
-            lt_hash: LtHash,
-        }
-        impl IndexGenerationAccumulator {
-            fn new() -> Self {
-                Self {
-                    insert_us: 0,
-                    num_accounts: 0,
-                    accounts_data_len: 0,
-                    zero_lamport_pubkeys: HashSet::default(),
-                    all_accounts_are_zero_lamports_slots: 0,
-                    all_zeros_slots: Vec::new(),
-                    num_did_not_exist: 0,
-                    num_existed_in_mem: 0,
-                    num_existed_on_disk: 0,
-                    lt_hash: LtHash::identity(),
-                }
-            }
-            fn accumulate(&mut self, other: Self) {
-                self.insert_us += other.insert_us;
-                self.num_accounts += other.num_accounts;
-                self.accounts_data_len += other.accounts_data_len;
-                self.zero_lamport_pubkeys.extend(other.zero_lamport_pubkeys);
-                self.all_accounts_are_zero_lamports_slots +=
-                    other.all_accounts_are_zero_lamports_slots;
-                self.all_zeros_slots.extend(other.all_zeros_slots);
-                self.num_did_not_exist += other.num_did_not_exist;
-                self.num_existed_in_mem += other.num_existed_in_mem;
-                self.num_existed_on_disk += other.num_existed_on_disk;
-                self.lt_hash.mix_in(&other.lt_hash);
-            }
+        // Step 2: Generate index in parallel
+        let mut total_accum = IndexGenerationAccumulator::new();
+        let mut index_time = Measure::start("index");
+        self.parallel_generate_index(&storages, &storage_info, &mut total_accum);
+        index_time.stop();
+
+        // Step 3: Update index stats
+        self.update_index_stats(&total_accum);
+
+        // Step 4: Optionally verify index
+        if verify {
+            self.verify_index(&storages);
         }
 
-        let mut total_accum = IndexGenerationAccumulator::new();
+        // Step 5: Handle duplicate keys
+        let (unique_pubkeys_by_bin, timings, mut total_accum) =
+            self.handle_duplicates(&storages, num_storages, index_time.as_us(), total_accum);
+
+        // Step 6: Visit zero lamport pubkeys
+        let (num_zero_lamport_single_refs, visit_zero_lamports_us) = measure_us!(
+            self.visit_zero_lamport_pubkeys_during_startup(&total_accum.zero_lamport_pubkeys)
+        );
+        let mut timings = timings;
+        timings.visit_zero_lamports_us = visit_zero_lamports_us;
+        timings.num_zero_lamport_single_refs = num_zero_lamport_single_refs;
+
+        // Step 7: Deduplicate account data length
+        self.deduplicate_accounts_data_len(&unique_pubkeys_by_bin, &mut timings, &mut total_accum);
+
+        // Step 8: Insert zero lamport slots to dirty stores
+        self.insert_zero_lamport_slots(&total_accum.all_zeros_slots);
+
+        // Step 9: Add roots for all storages
+        for storage in &storages {
+            self.accounts_index.add_root(storage.slot());
+        }
+
+        // Step 10: Set storage count and alive bytes
+        self.set_storage_count_and_alive_bytes(storage_info, &mut timings);
+
+        // Step 11: Mark obsolete accounts if enabled
+        if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
+            self.mark_obsolete_accounts_if_enabled(&storages, &unique_pubkeys_by_bin, &mut timings);
+        }
+
+        // Step 12: Finalize timings and log
+        total_time.stop();
+        timings.total_time_us = total_time.as_us();
+        timings.report(self.accounts_index.get_startup_stats());
+        self.accounts_index.log_secondary_indexes();
+
+        // Step 13: Return index generation info
+        IndexGenerationInfo {
+            accounts_data_len: total_accum.accounts_data_len,
+            calculated_accounts_lt_hash: AccountsLtHash(total_accum.lt_hash),
+        }
+    }
+
+    /// Helper: Parallel index generation
+    fn parallel_generate_index(
+        &self,
+        storages: &[Arc<AccountStorageEntry>],
+        storage_info: &StorageSizeAndCountMap,
+        total_accum: &mut IndexGenerationAccumulator,
+    ) {
         let storages_orderer =
-            AccountStoragesOrderer::with_random_order(&storages).into_concurrent_consumer();
+            AccountStoragesOrderer::with_random_order(storages).into_concurrent_consumer();
         let exit_logger = AtomicBool::new(false);
         let num_processed = AtomicU64::new(0);
         let num_threads = num_cpus::get();
-        let mut index_time = Measure::start("index");
         thread::scope(|s| {
             let thread_handles = (0..num_threads)
                 .map(|i| {
@@ -6777,7 +6867,7 @@ impl AccountsDb {
                                     storage,
                                     slot,
                                     store_id,
-                                    &storage_info,
+                                    storage_info,
                                 );
                                 thread_accum.insert_us += slot_info.insert_time_us;
                                 thread_accum.num_accounts += slot_info.num_accounts;
@@ -6812,13 +6902,13 @@ impl AccountsDb {
                             break;
                         }
                         let num_processed = num_processed.load(Ordering::Relaxed);
-                        if num_processed == num_storages as u64 {
+                        if num_processed == storages.len() as u64 {
                             info!("generating index: processed all slots");
                             break;
                         }
                         let now = Instant::now();
                         if now - last_update > Duration::from_secs(2) {
-                            info!("generating index: processed {num_processed}/{num_storages} slots...");
+                            info!("generating index: processed {num_processed}/{storages_len} slots...", storages_len=storages.len());
                             last_update = now;
                         }
                         thread::sleep(Duration::from_millis(500))
@@ -6832,84 +6922,81 @@ impl AccountsDb {
                 };
                 total_accum.accumulate(thread_accum);
             }
-            // Make sure to join the logger thread *after* the main threads.
-            // This way, if a main thread errors, we won't spin indefinitely
-            // waiting for the logger thread to finish (it never will).
             logger_thread_handle.join().expect("join thread");
         });
-        index_time.stop();
+    }
 
-        {
-            // Update the index stats now.
-            let index_stats = self.accounts_index.bucket_map_holder_stats();
+    /// Helper: Update index stats
+    fn update_index_stats(&self, total_accum: &IndexGenerationAccumulator) {
+        let index_stats = self.accounts_index.bucket_map_holder_stats();
+        index_stats.inc_insert_count(total_accum.num_did_not_exist);
+        index_stats.add_mem_count(total_accum.num_did_not_exist as usize);
+        index_stats
+            .entries_from_mem
+            .fetch_add(total_accum.num_existed_in_mem, Ordering::Relaxed);
+        index_stats
+            .updates_in_mem
+            .fetch_add(total_accum.num_existed_in_mem, Ordering::Relaxed);
+        index_stats.add_mem_count(total_accum.num_existed_on_disk as usize);
+        index_stats
+            .entries_missing
+            .fetch_add(total_accum.num_existed_on_disk, Ordering::Relaxed);
+        index_stats
+            .updates_in_mem
+            .fetch_add(total_accum.num_existed_on_disk, Ordering::Relaxed);
+    }
 
-            // stats for inserted entries that previously did *not* exist
-            index_stats.inc_insert_count(total_accum.num_did_not_exist);
-            index_stats.add_mem_count(total_accum.num_did_not_exist as usize);
-
-            // stats for inserted entries that previous did exist *in-mem*
-            index_stats
-                .entries_from_mem
-                .fetch_add(total_accum.num_existed_in_mem, Ordering::Relaxed);
-            index_stats
-                .updates_in_mem
-                .fetch_add(total_accum.num_existed_in_mem, Ordering::Relaxed);
-
-            // stats for inserted entries that previously did exist *on-disk*
-            index_stats.add_mem_count(total_accum.num_existed_on_disk as usize);
-            index_stats
-                .entries_missing
-                .fetch_add(total_accum.num_existed_on_disk, Ordering::Relaxed);
-            index_stats
-                .updates_in_mem
-                .fetch_add(total_accum.num_existed_on_disk, Ordering::Relaxed);
-        }
-
-        if verify {
-            info!("Verifying index...");
-            let start = Instant::now();
-            storages.par_iter().for_each(|storage| {
-                let store_id = storage.id();
-                let slot = storage.slot();
-                storage
-                    .accounts
-                    .scan_accounts_without_data(|offset, account| {
-                        let key = account.pubkey();
-                        let index_entry = self.accounts_index.get_cloned(key).unwrap();
-                        let slot_list = index_entry.slot_list.read().unwrap();
-                        let mut count = 0;
-                        for (slot2, account_info2) in slot_list.iter() {
-                            if *slot2 == slot {
-                                count += 1;
-                                let ai = AccountInfo::new(
-                                    StorageLocation::AppendVec(store_id, offset), // will never be cached
-                                    account.is_zero_lamport(),
-                                );
-                                assert_eq!(&ai, account_info2);
-                            }
+    /// Helper: Verify index
+    fn verify_index(&self, storages: &[Arc<AccountStorageEntry>]) {
+        info!("Verifying index...");
+        let start = Instant::now();
+        storages.par_iter().for_each(|storage| {
+            let store_id = storage.id();
+            let slot = storage.slot();
+            storage
+                .accounts
+                .scan_accounts_without_data(|offset, account| {
+                    let key = account.pubkey();
+                    let index_entry = self.accounts_index.get_cloned(key).unwrap();
+                    let slot_list = index_entry.slot_list.read().unwrap();
+                    let mut count = 0;
+                    for (slot2, account_info2) in slot_list.iter() {
+                        if *slot2 == slot {
+                            count += 1;
+                            let ai = AccountInfo::new(
+                                StorageLocation::AppendVec(store_id, offset),
+                                account.is_zero_lamport(),
+                            );
+                            assert_eq!(&ai, account_info2);
                         }
-                        assert_eq!(1, count);
-                    })
-                    .expect("must scan accounts storage");
-            });
-            info!("Verifying index... Done in {:?}", start.elapsed());
-        }
+                    }
+                    assert_eq!(1, count);
+                })
+                .expect("must scan accounts storage");
+        });
+        info!("Verifying index... Done in {:?}", start.elapsed());
+    }
 
+    /// Helper: Handle duplicate keys
+    fn handle_duplicates(
+        &self,
+        _storages: &[Arc<AccountStorageEntry>],
+        num_storages: usize,
+        index_time_us: u64,
+        total_accum: IndexGenerationAccumulator,
+    ) -> (
+        Vec<Vec<Pubkey>>,
+        GenerateIndexTimings,
+        IndexGenerationAccumulator,
+    ) {
         let total_duplicate_slot_keys = AtomicU64::default();
         let total_num_unique_duplicate_keys = AtomicU64::default();
-
-        // outer vec is accounts index bin (determined by pubkey value)
-        // inner vec is the pubkeys within that bin that are present in > 1 slot
         let unique_pubkeys_by_bin = Mutex::new(Vec::<Vec<Pubkey>>::default());
-        // tell accounts index we are done adding the initial accounts at startup
         let mut m = Measure::start("accounts_index_idle_us");
         self.accounts_index.set_startup(Startup::Normal);
         m.stop();
         let index_flush_us = m.as_us();
-
         let populate_duplicate_keys_us = measure_us!({
-            // this has to happen before visit_duplicate_pubkeys_during_startup below
-            // get duplicate keys from acct idx. We have to wait until we've finished flushing.
             self.accounts_index
                 .populate_and_retrieve_duplicate_keys_from_startup(|slot_keys| {
                     total_duplicate_slot_keys.fetch_add(slot_keys.len() as u64, Ordering::Relaxed);
@@ -6921,7 +7008,6 @@ impl AccountsDb {
                     let unique_pubkeys_by_bin_inner = unique_keys.into_iter().collect::<Vec<_>>();
                     total_num_unique_duplicate_keys
                         .fetch_add(unique_pubkeys_by_bin_inner.len() as u64, Ordering::Relaxed);
-                    // does not matter that this is not ordered by slot
                     unique_pubkeys_by_bin
                         .lock()
                         .unwrap()
@@ -6930,11 +7016,10 @@ impl AccountsDb {
         })
         .1;
         let unique_pubkeys_by_bin = unique_pubkeys_by_bin.into_inner().unwrap();
-
-        let mut timings = GenerateIndexTimings {
+        let timings = GenerateIndexTimings {
             index_flush_us,
             scan_time: 0,
-            index_time: index_time.as_us(),
+            index_time: index_time_us,
             insertion_time_us: total_accum.insert_us,
             total_duplicate_slot_keys: total_duplicate_slot_keys.load(Ordering::Relaxed),
             total_num_unique_duplicate_keys: total_num_unique_duplicate_keys
@@ -6945,31 +7030,16 @@ impl AccountsDb {
             all_accounts_are_zero_lamports_slots: total_accum.all_accounts_are_zero_lamports_slots,
             ..GenerateIndexTimings::default()
         };
+        (unique_pubkeys_by_bin, timings, total_accum)
+    }
 
-        #[derive(Debug, Default)]
-        struct DuplicatePubkeysVisitedInfo {
-            accounts_data_len_from_duplicates: u64,
-            num_duplicate_accounts: u64,
-            duplicates_lt_hash: Box<DuplicatesLtHash>,
-        }
-        impl DuplicatePubkeysVisitedInfo {
-            fn reduce(mut self, other: Self) -> Self {
-                self.accounts_data_len_from_duplicates += other.accounts_data_len_from_duplicates;
-                self.num_duplicate_accounts += other.num_duplicate_accounts;
-                self.duplicates_lt_hash
-                    .0
-                    .mix_in(&other.duplicates_lt_hash.0);
-                self
-            }
-        }
-
-        let (num_zero_lamport_single_refs, visit_zero_lamports_us) = measure_us!(
-            self.visit_zero_lamport_pubkeys_during_startup(&total_accum.zero_lamport_pubkeys)
-        );
-        timings.visit_zero_lamports_us = visit_zero_lamports_us;
-        timings.num_zero_lamport_single_refs = num_zero_lamport_single_refs;
-
-        // subtract data.len() from accounts_data_len for all old accounts that are in the index twice
+    /// Helper: Deduplicate account data length
+    fn deduplicate_accounts_data_len(
+        &self,
+        unique_pubkeys_by_bin: &[Vec<Pubkey>],
+        timings: &mut GenerateIndexTimings,
+        total_accum: &mut IndexGenerationAccumulator,
+    ) {
         let mut accounts_data_len_dedup_timer =
             Measure::start("handle accounts data len duplicates");
         let DuplicatePubkeysVisitedInfo {
@@ -6988,7 +7058,7 @@ impl AccountsDb {
                                 accounts_data_len_from_duplicates,
                                 accounts_duplicates_num,
                                 duplicates_lt_hash,
-                            ) = self.visit_duplicate_pubkeys_during_startup(pubkeys, &timings);
+                            ) = self.visit_duplicate_pubkeys_during_startup(pubkeys, timings);
                             let intermediate = DuplicatePubkeysVisitedInfo {
                                 accounts_data_len_from_duplicates,
                                 num_duplicate_accounts: accounts_duplicates_num,
@@ -7010,53 +7080,39 @@ impl AccountsDb {
         accounts_data_len_dedup_timer.stop();
         timings.accounts_data_len_dedup_time_us = accounts_data_len_dedup_timer.as_us();
         timings.num_duplicate_accounts = num_duplicate_accounts;
-
         total_accum.lt_hash.mix_out(&duplicates_lt_hash.0);
         total_accum.accounts_data_len -= accounts_data_len_from_duplicates;
         info!("accounts data len: {}", total_accum.accounts_data_len);
+    }
 
-        // insert all zero lamport account storage into the dirty stores and add them into the uncleaned roots for clean to pick up
+    /// Helper: Insert zero lamport slots
+    fn insert_zero_lamport_slots(&self, all_zeros_slots: &[(Slot, Arc<AccountStorageEntry>)]) {
         info!(
             "insert all zero slots to clean at startup {}",
-            total_accum.all_zeros_slots.len()
+            all_zeros_slots.len()
         );
-        for (slot, storage) in total_accum.all_zeros_slots {
-            self.dirty_stores.insert(slot, storage);
+        for (slot, storage) in all_zeros_slots {
+            self.dirty_stores.insert(*slot, Arc::clone(storage));
         }
+    }
 
-        // Need to add these last, otherwise older updates will be cleaned
-        for storage in &storages {
-            self.accounts_index.add_root(storage.slot());
-        }
-
-        self.set_storage_count_and_alive_bytes(storage_info, &mut timings);
-
-        if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
-            let mut mark_obsolete_accounts_time = Measure::start("mark_obsolete_accounts_time");
-            // Mark all reclaims at max_slot. This is safe because only the snapshot paths care about
-            // this information. Since this account was just restored from the previous snapshot and
-            // it is known that it was already obsolete at that time, it must hold true that it will
-            // still be obsolete if a newer snapshot is created, since a newer snapshot will always
-            // be performed on a slot greater than the current slot
-            let slot_marked_obsolete = storages.last().unwrap().slot();
-            let obsolete_account_stats =
-                self.mark_obsolete_accounts_at_startup(slot_marked_obsolete, unique_pubkeys_by_bin);
-
-            mark_obsolete_accounts_time.stop();
-            timings.mark_obsolete_accounts_us = mark_obsolete_accounts_time.as_us();
-            timings.num_obsolete_accounts_marked = obsolete_account_stats.accounts_marked_obsolete;
-            timings.num_slots_removed_as_obsolete = obsolete_account_stats.slots_removed;
-        }
-        total_time.stop();
-        timings.total_time_us = total_time.as_us();
-        timings.report(self.accounts_index.get_startup_stats());
-
-        self.accounts_index.log_secondary_indexes();
-
-        IndexGenerationInfo {
-            accounts_data_len: total_accum.accounts_data_len,
-            calculated_accounts_lt_hash: AccountsLtHash(total_accum.lt_hash),
-        }
+    /// Helper: Mark obsolete accounts if enabled
+    fn mark_obsolete_accounts_if_enabled(
+        &self,
+        storages: &[Arc<AccountStorageEntry>],
+        unique_pubkeys_by_bin: &[Vec<Pubkey>],
+        timings: &mut GenerateIndexTimings,
+    ) {
+        let mut mark_obsolete_accounts_time = Measure::start("mark_obsolete_accounts_time");
+        let slot_marked_obsolete = storages.last().unwrap().slot();
+        let obsolete_account_stats = self.mark_obsolete_accounts_at_startup(
+            slot_marked_obsolete,
+            unique_pubkeys_by_bin.to_vec(),
+        );
+        mark_obsolete_accounts_time.stop();
+        timings.mark_obsolete_accounts_us = mark_obsolete_accounts_time.as_us();
+        timings.num_obsolete_accounts_marked = obsolete_account_stats.accounts_marked_obsolete;
+        timings.num_slots_removed_as_obsolete = obsolete_account_stats.slots_removed;
     }
 
     /// Use the duplicated pubkeys to mark all older version of the pubkeys as obsolete
