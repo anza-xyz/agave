@@ -421,7 +421,7 @@ mod tests {
 
         // Verify the contents
         for (i, byte) in all_read_data.iter().enumerate() {
-            assert_eq!(*byte, pattern[i % pattern.len()], "Mismatch - pos {}", i);
+            assert_eq!(*byte, pattern[i % pattern.len()], "Mismatch - pos {i}");
         }
     }
 
