@@ -59,6 +59,16 @@ cargo_audit_ignores=(
   # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0376
   # Solution:  Upgrade to >=0.12.3
   --ignore RUSTSEC-2024-0376
+
+  # === solana-banks-client / solana-banks-interface / solana-banks-server ===
+  # Crate:     tracing-subscriber
+  # Version:   0.3.7
+  # Title:     Logging user input may result in poisoning logs with ANSI escape sequences
+  # Date:      2025-08-29
+  # ID:        RUSTSEC-2025-0055
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2025-0055
+  # Solution:  Upgrade to >=0.3.20
+  --ignore RUSTSEC-2025-0055
 )
 scripts/cargo-for-all-lock-files.sh audit "${cargo_audit_ignores[@]}" | $dep_tree_filter
 # we want the `cargo audit` exit code, not `$dep_tree_filter`'s
