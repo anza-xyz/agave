@@ -7,12 +7,22 @@ use {
     thiserror::Error,
 };
 pub use {
-    solana_account_decoder_client_types::{token::UiTokenAmount, UiAccount},
+    serde_json::Value as JsonValue,
+    solana_account_decoder_client_types::{
+        token::UiTokenAmount, ParsedAccount, UiAccount, UiAccountData, UiAccountEncoding,
+    },
     solana_fee_calculator::{FeeCalculator, FeeRateGovernor},
-    solana_transaction_error::TransactionResult,
+    solana_reward_info::RewardType,
+    solana_transaction::versioned::TransactionVersion,
+    solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status_client_types::{
-        TransactionConfirmationStatus, UiConfirmedBlock, UiInnerInstructions, UiLoadedAddresses,
-        UiTransactionError, UiTransactionReturnData, UiTransactionTokenBalance,
+        option_serializer::OptionSerializer, EncodedTransaction, EncodedTransactionWithStatusMeta,
+        ParsedAccount as TransactionParsedAccount, ParsedInstruction, Reward, Rewards,
+        TransactionBinaryEncoding, TransactionConfirmationStatus, UiAccountsList,
+        UiCompiledInstruction, UiConfirmedBlock, UiInnerInstructions, UiInstruction,
+        UiLoadedAddresses, UiParsedInstruction, UiPartiallyDecodedInstruction,
+        UiReturnDataEncoding, UiTransactionError, UiTransactionReturnData, UiTransactionStatusMeta,
+        UiTransactionTokenBalance,
     },
 };
 
