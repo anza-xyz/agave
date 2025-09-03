@@ -145,6 +145,13 @@ impl Poh {
             hash: self.hash,
         })
     }
+
+    pub fn remaining_hashes_in_slot(&self, ticks_per_slot: u64) -> u64 {
+        ticks_per_slot
+            .saturating_sub(self.tick_number % ticks_per_slot + 1)
+            .wrapping_mul(self.hashes_per_tick)
+            .wrapping_add(self.remaining_hashes_until_tick)
+    }
 }
 
 pub fn compute_hash_time(hashes_sample_size: u64) -> Duration {
@@ -343,14 +350,17 @@ mod tests {
         assert_eq!(poh.remaining_hashes_until_tick, 1);
         assert!(poh.hash(1_000_000)); // Does nothing...
         assert_eq!(poh.remaining_hashes_until_tick, 1);
+        assert_eq!(poh.remaining_hashes_in_slot(2), 3);
         poh.tick();
         assert_eq!(poh.remaining_hashes_until_tick, 2); // Ready for the next tick
+        assert_eq!(poh.remaining_hashes_in_slot(2), 2);
     }
 
     #[test]
     fn test_poh_tick_too_soon() {
         let mut poh = Poh::new(Hash::default(), Some(2));
         assert_eq!(poh.remaining_hashes_until_tick, 2);
+        assert_eq!(poh.remaining_hashes_in_slot(2), 4);
         assert!(poh.tick().is_none());
     }
 
@@ -359,6 +369,7 @@ mod tests {
         let mut poh = Poh::new(Hash::default(), Some(10));
         assert!(poh.hash(9));
         assert_eq!(poh.remaining_hashes_until_tick, 1);
+        assert_eq!(poh.remaining_hashes_in_slot(2), 11);
         assert!(poh.record(Hash::default()).is_none()); // <-- record() rejected to avoid exceeding hashes_per_tick
         assert_matches!(poh.tick(), Some(PohEntry { num_hashes: 10, .. }));
         assert_matches!(
@@ -366,6 +377,7 @@ mod tests {
             Some(PohEntry { num_hashes: 1, .. }) // <-- record() ok
         );
         assert_eq!(poh.remaining_hashes_until_tick, 9);
+        assert_eq!(poh.remaining_hashes_in_slot(2), 9);
     }
 
     #[test]
@@ -380,7 +392,8 @@ mod tests {
         assert_eq!(entries[0].num_hashes, 5);
         assert_eq!(entries[1].num_hashes, 1);
         assert_eq!(entries[2].num_hashes, 1);
-        assert!(poh.remaining_hashes_until_tick == 3);
+        assert_eq!(poh.remaining_hashes_until_tick, 3);
+        assert_eq!(poh.remaining_hashes_in_slot(2), 13);
 
         // Cannot record more than number of remaining hashes
         assert!(!poh.record_batches(&dummy_hashes[..4], &mut entries,));
@@ -393,6 +406,7 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].num_hashes, 1);
         assert_eq!(entries[1].num_hashes, 1);
-        assert!(poh.remaining_hashes_until_tick == 1);
+        assert_eq!(poh.remaining_hashes_until_tick, 1);
+        assert_eq!(poh.remaining_hashes_in_slot(2), 11);
     }
 }
