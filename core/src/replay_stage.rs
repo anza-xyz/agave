@@ -635,7 +635,10 @@ impl ReplayStage {
         if let Some(first_alpenglow_slot) = first_alpenglow_slot {
             assert!(bank_forks.read().unwrap().highest_slot() >= first_alpenglow_slot);
             info!("alpenglow active on startup");
-            Self::initiate_alpenglow_migration(&poh_recorder, &mut is_alpenglow_migration_complete);
+            Self::maybe_initiate_alpenglow_migration(
+                &poh_recorder,
+                &mut is_alpenglow_migration_complete,
+            );
         }
 
         trace!("replay stage");
@@ -2171,7 +2174,10 @@ impl ReplayStage {
                     "initiating alpenglow migration from maybe_start_leader() for slot {}",
                     poh_slot
                 );
-                Self::initiate_alpenglow_migration(poh_recorder, is_alpenglow_migration_complete);
+                Self::maybe_initiate_alpenglow_migration(
+                    poh_recorder,
+                    is_alpenglow_migration_complete,
+                );
                 // Votor will handle leader blocks from now on
                 return None;
             }
@@ -3135,11 +3141,14 @@ impl ReplayStage {
         replay_result
     }
 
-    fn initiate_alpenglow_migration(
+    fn maybe_initiate_alpenglow_migration(
         poh_recorder: &RwLock<PohRecorder>,
         is_alpenglow_migration_complete: &mut bool,
     ) {
-        assert!(!*is_alpenglow_migration_complete);
+        if *is_alpenglow_migration_complete {
+            error!("Attempting to start alpenglow migration but it is already complete");
+            return;
+        }
         info!("initiating alpenglow migration");
         // This by itself does not do anything, a follow up PR will enact action to
         // turn off PoH based on this flag
@@ -3218,7 +3227,7 @@ impl ReplayStage {
                             "initiating alpenglow migration from replaying bank {}",
                             bank.slot()
                         );
-                        Self::initiate_alpenglow_migration(
+                        Self::maybe_initiate_alpenglow_migration(
                             poh_recorder,
                             is_alpenglow_migration_complete,
                         );
