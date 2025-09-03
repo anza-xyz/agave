@@ -1,3 +1,5 @@
+#[cfg(not(all(miri, target_endian = "big")))]
+use solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed};
 use {
     crate::vote_state_view::VoteStateView,
     itertools::Itertools,
@@ -123,6 +125,50 @@ impl VoteAccount {
         .unwrap();
 
         VoteAccount::try_from(account).unwrap()
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_random_vote_state_v4() -> VoteAccount {
+        use {
+            rand::Rng as _,
+            solana_bls_signatures::{Keypair as BLSKeypair, PubkeyCompressed},
+            solana_vote_interface::state::{LandedVote, Lockout, VoteStateV4},
+            solana_vote_program::vote_state::{AuthorizedVoters, VoteStateVersionsMock},
+            std::collections::VecDeque,
+        };
+
+        let mut rng = rand::thread_rng();
+        let bls_pubkey = BLSKeypair::new();
+        let bls_pubkey_compressed: PubkeyCompressed = bls_pubkey.public.try_into().unwrap();
+
+        let target_vote_state = VoteStateV4 {
+            authorized_voters: AuthorizedVoters::new(0, Pubkey::new_unique()),
+            epoch_credits: vec![(1, 2, 3)],
+            bls_pubkey_compressed: Some(bls_pubkey_compressed.0),
+            votes: VecDeque::from([LandedVote {
+                latency: 0,
+                lockout: Lockout::default(),
+            }]),
+            root_slot: Some(42),
+            ..VoteStateV4::default()
+        };
+        let state = VoteStateVersionsMock::V4(Box::new(target_vote_state));
+        let account = AccountSharedData::new_data(
+            rng.gen(), // lamports
+            &state,
+            &solana_sdk_ids::vote::id(), // owner
+        )
+        .unwrap();
+
+        VoteAccount::try_from(account).unwrap()
+    }
+
+    #[cfg(not(all(miri, target_endian = "big")))]
+    pub fn bls_pubkey(&self) -> Option<BLSPubkey> {
+        let bls_pubkey_compressed = self.0.vote_state_view.bls_pubkey_compressed()?;
+        let bls_pubkey_compressed = BLSPubkeyCompressed(bls_pubkey_compressed);
+        let bls_pubkey = BLSPubkey::try_from(bls_pubkey_compressed).unwrap();
+        Some(bls_pubkey)
     }
 }
 

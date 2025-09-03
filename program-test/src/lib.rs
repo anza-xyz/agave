@@ -810,6 +810,7 @@ impl ProgramTest {
             rent.clone(),
             ClusterType::Development,
             std::mem::take(&mut self.genesis_accounts),
+            None,
         );
 
         // Remove features tagged to deactivate
