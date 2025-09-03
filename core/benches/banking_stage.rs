@@ -232,7 +232,7 @@ fn bench_banking(
     let blockstore = Arc::new(
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
     );
-    let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
+    let (exit, poh_recorder, _poh_controller, transaction_recorder, poh_service, signal_receiver) =
         create_test_recorder(bank.clone(), blockstore, None, None);
     let (s, _r) = unbounded();
     let _banking_stage = BankingStage::new_num_threads(

@@ -157,7 +157,7 @@ use {
         versioned::VersionedTransaction,
         Transaction, TransactionVerificationMode,
     },
-    solana_transaction_context::{TransactionAccount, TransactionReturnData},
+    solana_transaction_context::{transaction_accounts::TransactionAccount, TransactionReturnData},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     std::{
@@ -532,7 +532,6 @@ impl PartialEq for Bank {
             // TODO: Confirm if all these fields are intentionally ignored!
             rewards: _,
             cluster_type: _,
-            rewards_pool_pubkeys: _,
             transaction_debug_keys: _,
             transaction_log_collector_config: _,
             transaction_log_collector: _,
@@ -822,9 +821,6 @@ pub struct Bank {
 
     pub cluster_type: Option<ClusterType>,
 
-    // this is temporary field only to remove rewards_pool entirely
-    pub rewards_pool_pubkeys: Arc<HashSet<Pubkey>>,
-
     transaction_debug_keys: Option<Arc<HashSet<Pubkey>>>,
 
     // Global configuration for how transaction logs should be collected across all banks
@@ -1075,7 +1071,6 @@ impl Bank {
             is_delta: AtomicBool::default(),
             rewards: RwLock::<Vec<(Pubkey, RewardInfo)>>::default(),
             cluster_type: Option::<ClusterType>::default(),
-            rewards_pool_pubkeys: Arc::<HashSet<Pubkey>>::default(),
             transaction_debug_keys: Option::<Arc<HashSet<Pubkey>>>::default(),
             transaction_log_collector_config: Arc::<RwLock<TransactionLogCollectorConfig>>::default(
             ),
@@ -1148,7 +1143,7 @@ impl Bank {
         #[cfg(feature = "dev-context-only-utils")]
         bank.process_genesis_config(genesis_config, collector_id_for_tests, genesis_hash);
 
-        bank.finish_init(genesis_config, debug_do_not_add_builtins);
+        bank.finish_init(debug_do_not_add_builtins);
 
         // genesis needs stakes for all epochs up to the epoch implied by
         //  slot = 0 and genesis configuration
@@ -1254,9 +1249,6 @@ impl Bank {
             TransactionBatchProcessor::new_from(&parent.transaction_processor, slot, epoch)
         );
 
-        let (rewards_pool_pubkeys, rewards_pool_pubkeys_time_us) =
-            measure_us!(parent.rewards_pool_pubkeys.clone());
-
         let (transaction_debug_keys, transaction_debug_keys_time_us) =
             measure_us!(parent.transaction_debug_keys.clone());
 
@@ -1317,7 +1309,6 @@ impl Bank {
             hard_forks: parent.hard_forks.clone(),
             rewards: RwLock::new(vec![]),
             cluster_type: parent.cluster_type,
-            rewards_pool_pubkeys,
             transaction_debug_keys,
             transaction_log_collector_config,
             transaction_log_collector: Arc::new(RwLock::new(TransactionLogCollector::default())),
@@ -1430,7 +1421,6 @@ impl Bank {
                 stakes_cache_time_us,
                 epoch_stakes_time_us,
                 builtin_program_ids_time_us,
-                rewards_pool_pubkeys_time_us,
                 executor_cache_time_us: 0,
                 transaction_debug_keys_time_us,
                 transaction_log_collector_config_time_us,
@@ -1781,7 +1771,6 @@ impl Bank {
             is_delta: AtomicBool::new(fields.is_delta),
             rewards: RwLock::new(vec![]),
             cluster_type: Some(genesis_config.cluster_type),
-            rewards_pool_pubkeys: Arc::<HashSet<Pubkey>>::default(),
             transaction_debug_keys: debug_keys,
             transaction_log_collector_config: Arc::<RwLock<TransactionLogCollectorConfig>>::default(
             ),
@@ -1829,7 +1818,7 @@ impl Bank {
             .expect("new rayon threadpool");
         bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
 
-        bank.finish_init(genesis_config, debug_do_not_add_builtins);
+        bank.finish_init(debug_do_not_add_builtins);
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
 
@@ -2741,16 +2730,6 @@ impl Bank {
             )
         })?;
         Some(self.get_fee_for_message_with_lamports_per_signature(message, lamports_per_signature))
-    }
-
-    /// Returns true when startup accounts hash verification has completed or never had to run in background.
-    pub fn get_startup_verification_complete(&self) -> &Arc<AtomicBool> {
-        &self
-            .rc
-            .accounts
-            .accounts_db
-            .verify_accounts_hash_in_bg
-            .verified
     }
 
     pub fn get_fee_for_message_with_lamports_per_signature(
@@ -4066,14 +4045,11 @@ impl Bank {
         cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
     }
 
-    fn finish_init(&mut self, genesis_config: &GenesisConfig, debug_do_not_add_builtins: bool) {
+    fn finish_init(&mut self, debug_do_not_add_builtins: bool) {
         if let Some(compute_budget) = self.compute_budget {
             self.transaction_processor
                 .set_execution_cost(compute_budget.to_cost());
         }
-
-        self.rewards_pool_pubkeys =
-            Arc::new(genesis_config.rewards_pools.keys().cloned().collect());
 
         self.apply_feature_activations(
             ApplyFeatureActivationsCaller::FinishInit,
@@ -4130,7 +4106,7 @@ impl Bank {
             }
         }
 
-        let simd_0296_active = self
+        let simd_0268_active = self
             .feature_set
             .is_active(&raise_cpi_nesting_limit_to_8::id());
 
@@ -4141,7 +4117,7 @@ impl Bank {
                         &self.feature_set.runtime_features(),
                         &self
                             .compute_budget()
-                            .unwrap_or(ComputeBudget::new_with_defaults(simd_0296_active))
+                            .unwrap_or(ComputeBudget::new_with_defaults(simd_0268_active))
                             .to_budget(),
                         false, /* deployment */
                         false, /* debugging_features */
@@ -4151,7 +4127,7 @@ impl Bank {
                 Some(Arc::new(create_program_runtime_environment_v2(
                     &self
                         .compute_budget()
-                        .unwrap_or(ComputeBudget::new_with_defaults(simd_0296_active))
+                        .unwrap_or(ComputeBudget::new_with_defaults(simd_0268_active))
                         .to_budget(),
                     false, /* debugging_features */
                 ))),
@@ -4587,11 +4563,6 @@ impl Bank {
         calculated_accounts_lt_hash: Option<&AccountsLtHash>,
     ) -> bool {
         let accounts_db = &self.rc.accounts.accounts_db;
-        // Wait until initial hash calc is complete before starting a new hash calc.
-        // This should only occur when we halt at a slot in ledger-tool.
-        accounts_db
-            .verify_accounts_hash_in_bg
-            .join_background_thread();
 
         let slot = self.slot();
 
@@ -4637,31 +4608,8 @@ impl Bank {
                 accounts_db.calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot);
             check_lt_hash(&expected_accounts_lt_hash, &calculated_accounts_lt_hash)
         };
-        self.set_initial_accounts_hash_verification_completed();
         info!("Verifying accounts... Done in {:?}", start.elapsed());
         is_ok
-    }
-
-    /// Specify that initial verification has completed.
-    /// Called internally when verification runs in the foreground thread.
-    /// Also has to be called by some tests which don't do verification on startup.
-    pub fn set_initial_accounts_hash_verification_completed(&self) {
-        self.rc
-            .accounts
-            .accounts_db
-            .verify_accounts_hash_in_bg
-            .verification_complete();
-    }
-
-    /// return true if bg hash verification is complete
-    /// return false if bg hash verification has not completed yet
-    /// if hash verification failed, a panic will occur
-    pub fn has_initial_accounts_hash_verification_completed(&self) -> bool {
-        self.rc
-            .accounts
-            .accounts_db
-            .verify_accounts_hash_in_bg
-            .check_complete()
     }
 
     /// Get this bank's storages to use for snapshots.
@@ -4761,11 +4709,6 @@ impl Bank {
         self.rc
             .accounts
             .accounts_db
-            .verify_accounts_hash_in_bg
-            .join_background_thread();
-        self.rc
-            .accounts
-            .accounts_db
             .calculate_capitalization_at_startup_from_index(&self.ancestors, self.slot())
     }
 
@@ -4811,7 +4754,6 @@ impl Bank {
                 )
             } else {
                 info!("Verifying accounts... Skipped.");
-                self.set_initial_accounts_hash_verification_completed();
                 true
             }
         });
@@ -5548,6 +5490,10 @@ impl Bank {
         &self.fee_structure
     }
 
+    pub fn parent_block_id(&self) -> Option<Hash> {
+        self.parent().and_then(|p| p.block_id())
+    }
+
     pub fn block_id(&self) -> Option<Hash> {
         *self.block_id.read().unwrap()
     }
@@ -5844,16 +5790,6 @@ impl Bank {
             .accounts
             .accounts_db
             .flush_accounts_cache_slot_for_tests(self.slot())
-    }
-
-    /// This is only valid to call from tests.
-    /// block until initial accounts hash verification has completed
-    pub fn wait_for_initial_accounts_hash_verification_completed_for_tests(&self) {
-        self.rc
-            .accounts
-            .accounts_db
-            .verify_accounts_hash_in_bg
-            .join_background_thread()
     }
 
     pub fn get_sysvar_cache_for_tests(&self) -> SysvarCache {

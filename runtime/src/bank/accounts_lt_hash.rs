@@ -1022,8 +1022,6 @@ mod tests {
         // same bank!
         assert!(roundtrip_bank.is_frozen());
 
-        // Wait for the startup verification to complete.  If we don't panic, then we're good!
-        roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
         assert_eq!(roundtrip_bank, *bank);
     }
 
@@ -1116,8 +1114,6 @@ mod tests {
         )
         .unwrap();
 
-        // Wait for the startup verification to complete.  If we don't panic, then we're good!
-        roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
         assert_eq!(roundtrip_bank, *bank);
     }
 

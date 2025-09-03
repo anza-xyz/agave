@@ -1,17 +1,20 @@
 use {
     super::*,
-    crate::{translate_inner, translate_slice_inner, translate_type_inner},
     solana_instruction::Instruction,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_program_runtime::{
         invoke_context::SerializedAccountMetadata,
+        memory::{
+            translate_slice, translate_slice_mut_for_cpi, translate_type,
+            translate_type_mut_for_cpi,
+        },
         serialization::{create_memory_region_of_account, modify_memory_region_of_account},
     },
     solana_sbpf::ebpf,
     solana_stable_layout::stable_instruction::StableInstruction,
     solana_svm_measure::measure::Measure,
     solana_transaction_context::{
-        BorrowedAccount, MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
+        BorrowedInstructionAccount, MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
     },
     std::mem,
 };
@@ -35,31 +38,6 @@ fn check_account_info_pointer(
         return Err(SyscallError::InvalidPointer.into());
     }
     Ok(())
-}
-
-// This version is missing lifetime 'a of the return type in the parameter &MemoryMapping.
-fn translate_type_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    check_aligned: bool,
-) -> Result<&'a mut T, Error> {
-    translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
-}
-// This version is missing the lifetime 'a of the return type in the parameter &MemoryMapping.
-fn translate_slice_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    len: u64,
-    check_aligned: bool,
-) -> Result<&'a mut [T], Error> {
-    translate_slice_inner!(
-        memory_mapping,
-        AccessType::Store,
-        vm_addr,
-        len,
-        T,
-        check_aligned,
-    )
 }
 
 /// Host side representation of AccountInfo or SolAccountInfo passed to the CPI syscall.
@@ -98,7 +76,7 @@ impl<'a> CallerAccount<'a> {
             Ok(&mut [])
         } else if stricter_abi_and_runtime_constraints {
             // Workaround the memory permissions (as these are from the PoV of being inside the VM)
-            let serialization_ptr = translate_slice_mut::<u8>(
+            let serialization_ptr = translate_slice_mut_for_cpi::<u8>(
                 memory_mapping,
                 solana_sbpf::ebpf::MM_INPUT_START,
                 1,
@@ -113,7 +91,7 @@ impl<'a> CallerAccount<'a> {
                 ))
             }
         } else {
-            translate_slice_mut::<u8>(
+            translate_slice_mut_for_cpi::<u8>(
                 memory_mapping,
                 vm_addr,
                 len,
@@ -171,10 +149,10 @@ impl<'a> CallerAccount<'a> {
                     "lamports",
                 )?;
             }
-            translate_type_mut::<u64>(memory_mapping, *ptr, check_aligned)?
+            translate_type_mut_for_cpi::<u64>(memory_mapping, *ptr, check_aligned)?
         };
 
-        let owner = translate_type_mut::<Pubkey>(
+        let owner = translate_type_mut_for_cpi::<Pubkey>(
             memory_mapping,
             account_info.owner as *const _ as u64,
             check_aligned,
@@ -219,7 +197,8 @@ impl<'a> CallerAccount<'a> {
                     return Err(SyscallError::InvalidPointer.into());
                 }
             }
-            let ref_to_len_in_vm = translate_type_mut::<u64>(memory_mapping, vm_len_addr, false)?;
+            let ref_to_len_in_vm =
+                translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
             let vm_data_addr = data.as_ptr() as u64;
             let serialized_data = CallerAccount::get_serialized_data(
                 memory_mapping,
@@ -286,10 +265,16 @@ impl<'a> CallerAccount<'a> {
 
         // account_info points to host memory. The addresses used internally are
         // in vm space so they need to be translated.
-        let lamports =
-            translate_type_mut::<u64>(memory_mapping, account_info.lamports_addr, check_aligned)?;
-        let owner =
-            translate_type_mut::<Pubkey>(memory_mapping, account_info.owner_addr, check_aligned)?;
+        let lamports = translate_type_mut_for_cpi::<u64>(
+            memory_mapping,
+            account_info.lamports_addr,
+            check_aligned,
+        )?;
+        let owner = translate_type_mut_for_cpi::<Pubkey>(
+            memory_mapping,
+            account_info.owner_addr,
+            check_aligned,
+        )?;
 
         consume_compute_meter(
             invoke_context,
@@ -314,7 +299,8 @@ impl<'a> CallerAccount<'a> {
         let vm_len_addr = vm_addr
             .saturating_add(&account_info.data_len as *const u64 as u64)
             .saturating_sub(account_info as *const _ as *const u64 as u64);
-        let ref_to_len_in_vm = translate_type_mut::<u64>(memory_mapping, vm_len_addr, false)?;
+        let ref_to_len_in_vm =
+            translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
 
         Ok(CallerAccount {
             lamports,
@@ -1078,7 +1064,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
 fn update_callee_account(
     check_aligned: bool,
     caller_account: &CallerAccount,
-    mut callee_account: BorrowedAccount<'_>,
+    mut callee_account: BorrowedInstructionAccount<'_>,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
 ) -> Result<bool, Error> {
@@ -1135,7 +1121,7 @@ fn update_caller_account_region(
     memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
     caller_account: &CallerAccount,
-    callee_account: &mut BorrowedAccount<'_>,
+    callee_account: &mut BorrowedInstructionAccount<'_>,
     account_data_direct_mapping: bool,
 ) -> Result<(), Error> {
     let is_caller_loader_deprecated = !check_aligned;
@@ -1185,7 +1171,7 @@ fn update_caller_account(
     memory_mapping: &MemoryMapping<'_>,
     check_aligned: bool,
     caller_account: &mut CallerAccount<'_>,
-    callee_account: &mut BorrowedAccount<'_>,
+    callee_account: &mut BorrowedInstructionAccount<'_>,
     stricter_abi_and_runtime_constraints: bool,
 ) -> Result<(), Error> {
     *caller_account.lamports = callee_account.get_lamports();
@@ -1241,7 +1227,7 @@ fn update_caller_account(
         *caller_account.ref_to_len_in_vm = post_len as u64;
 
         // this is the len field in the serialized parameters
-        let serialized_len_ptr = translate_type_mut::<u64>(
+        let serialized_len_ptr = translate_type_mut_for_cpi::<u64>(
             memory_mapping,
             caller_account
                 .vm_data_addr
@@ -1284,7 +1270,9 @@ mod tests {
             ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
         solana_sdk_ids::system_program,
-        solana_transaction_context::{InstructionAccount, TransactionAccount},
+        solana_transaction_context::{
+            transaction_accounts::TransactionAccount, InstructionAccount,
+        },
         std::{
             cell::{Cell, RefCell},
             mem, ptr,

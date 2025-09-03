@@ -71,6 +71,11 @@ impl Default for SlotsStats {
 }
 
 impl SlotsStats {
+    /// Returns a mutable reference to [`SlotStats`] associated with the slot in the stats LruCache
+    /// and a possibly evicted cache entry.
+    ///
+    /// A new SlotStats entry will be inserted if there is not one present for `slot`; insertion
+    /// may cause an existing entry to be evicted.
     fn get_or_default_with_eviction_check(
         stats: &mut LruCache<Slot, SlotStats>,
         slot: Slot,
@@ -83,7 +88,6 @@ impl SlotsStats {
         } else {
             None
         };
-        stats.get_or_insert(slot, SlotStats::default);
         (stats.get_mut(&slot).unwrap(), evicted)
     }
 

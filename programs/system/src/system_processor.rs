@@ -17,7 +17,7 @@ use {
     solana_system_interface::{
         error::SystemError, instruction::SystemInstruction, MAX_PERMITTED_DATA_LENGTH,
     },
-    solana_transaction_context::{BorrowedAccount, IndexOfAccount, InstructionContext},
+    solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
     std::collections::HashSet,
 };
 
@@ -70,7 +70,7 @@ impl Address {
 }
 
 fn allocate(
-    account: &mut BorrowedAccount,
+    account: &mut BorrowedInstructionAccount,
     address: &Address,
     space: u64,
     signers: &HashSet<Pubkey>,
@@ -112,7 +112,7 @@ fn allocate(
 }
 
 fn assign(
-    account: &mut BorrowedAccount,
+    account: &mut BorrowedInstructionAccount,
     address: &Address,
     owner: &Pubkey,
     signers: &HashSet<Pubkey>,
@@ -132,7 +132,7 @@ fn assign(
 }
 
 fn allocate_and_assign(
-    to: &mut BorrowedAccount,
+    to: &mut BorrowedInstructionAccount,
     to_address: &Address,
     space: u64,
     owner: &Pubkey,

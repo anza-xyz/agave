@@ -35,7 +35,7 @@ use {
     solana_svm_callback::{AccountState, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_transaction_context::{IndexOfAccount, TransactionAccount},
+    solana_transaction_context::{transaction_accounts::TransactionAccount, IndexOfAccount},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::num::{NonZeroU32, Saturating},
 };
@@ -843,7 +843,9 @@ mod tests {
         solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
         solana_system_transaction::transfer,
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
-        solana_transaction_context::{TransactionAccount, TransactionContext},
+        solana_transaction_context::{
+            transaction_accounts::TransactionAccount, TransactionContext,
+        },
         solana_transaction_error::{TransactionError, TransactionResult as Result},
         std::{
             borrow::Cow,

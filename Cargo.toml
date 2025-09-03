@@ -105,7 +105,6 @@ members = [
     "svm-feature-set",
     "svm-log-collector",
     "svm-measure",
-    "svm-metrics",
     "svm-timings",
     "svm-transaction",
     "svm-type-overrides",
@@ -210,7 +209,7 @@ backoff = "0.4.0"
 base64 = "0.22.1"
 bencher = "0.1.5"
 bincode = "1.3.3"
-bitflags = { version = "2.9.3" }
+bitflags = { version = "2.9.4" }
 blake3 = "1.8.2"
 borsh = { version = "1.5.7", features = ["derive", "unstable__schema"] }
 bs58 = { version = "0.5.1", default-features = false }
@@ -525,7 +524,6 @@ solana-svm-callback = { path = "svm-callback", version = "=3.1.0" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.1.0" }
 solana-svm-log-collector = { path = "svm-log-collector", version = "=3.1.0" }
 solana-svm-measure = { path = "svm-measure", version = "=3.1.0" }
-solana-svm-metrics = { path = "svm-metrics", version = "=3.1.0" }
 solana-svm-timings = { path = "svm-timings", version = "=3.1.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=3.1.0" }
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=3.1.0" }

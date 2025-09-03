@@ -484,7 +484,6 @@ pub struct JsonRpcServiceConfig<'a> {
     pub validator_exit: Arc<RwLock<Exit>>,
     pub exit: Arc<AtomicBool>,
     pub override_health_check: Arc<AtomicBool>,
-    pub startup_verification_complete: Arc<AtomicBool>,
     pub optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
     pub send_transaction_service_config: send_transaction_service::Config,
     pub max_slots: Arc<MaxSlots>,
@@ -535,7 +534,6 @@ impl JsonRpcService {
                     config.validator_exit,
                     config.exit,
                     config.override_health_check,
-                    config.startup_verification_complete,
                     config.optimistically_confirmed_bank,
                     config.send_transaction_service_config,
                     config.max_slots,
@@ -585,7 +583,6 @@ impl JsonRpcService {
                     config.validator_exit,
                     config.exit,
                     config.override_health_check,
-                    config.startup_verification_complete,
                     config.optimistically_confirmed_bank,
                     config.send_transaction_service_config,
                     config.max_slots,
@@ -615,7 +612,6 @@ impl JsonRpcService {
         validator_exit: Arc<RwLock<Exit>>,
         exit: Arc<AtomicBool>,
         override_health_check: Arc<AtomicBool>,
-        startup_verification_complete: Arc<AtomicBool>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         send_transaction_service_config: send_transaction_service::Config,
         max_slots: Arc<MaxSlots>,
@@ -662,7 +658,6 @@ impl JsonRpcService {
             validator_exit,
             exit,
             override_health_check,
-            startup_verification_complete,
             optimistically_confirmed_bank,
             send_transaction_service_config,
             max_slots,
@@ -696,7 +691,6 @@ impl JsonRpcService {
         validator_exit: Arc<RwLock<Exit>>,
         exit: Arc<AtomicBool>,
         override_health_check: Arc<AtomicBool>,
-        startup_verification_complete: Arc<AtomicBool>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         send_transaction_service_config: send_transaction_service::Config,
         max_slots: Arc<MaxSlots>,
@@ -715,7 +709,6 @@ impl JsonRpcService {
             Arc::clone(&blockstore),
             config.health_check_slot_distance,
             override_health_check,
-            startup_verification_complete,
         ));
 
         let largest_accounts_cache = Arc::new(RwLock::new(LargestAccountsCache::new(
@@ -1000,7 +993,6 @@ mod tests {
             validator_exit,
             exit,
             Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(true)),
             optimistically_confirmed_bank,
             send_transaction_service::Config {
                 retry_rate_ms: 1000,
