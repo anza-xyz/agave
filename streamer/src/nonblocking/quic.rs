@@ -84,6 +84,11 @@ const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
 const CONNECTION_CLOSE_CODE_INVALID_STREAM: u32 = 5;
 const CONNECTION_CLOSE_REASON_INVALID_STREAM: &[u8] = b"invalid_stream";
 
+/// Minimal guaranteed lifetime for an unstaked connection
+const UNSTAKED_CONNECTION_LIFETIME: Duration = Duration::from_millis(400);
+/// Minimal guaranteed lifetime for a staked connection (infinite)
+const STAKED_CONNECTION_LIFETIME: Duration = Duration::from_secs(10000000000);
+
 /// Total new connection counts per second. Heuristically taken from
 /// the default staked and unstaked connection limits. Might be adjusted
 /// later.
@@ -1049,138 +1054,155 @@ async fn handle_connection(
     );
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
 
-    'conn: loop {
-        // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
-        // the connection task.
-        let mut stream = select! {
-            stream = connection.accept_uni() => match stream {
-                Ok(stream) => stream,
-                Err(e) => {
-                    debug!("stream error: {e:?}");
-                    break;
-                }
-            },
-            _ = cancel.cancelled() => break,
-        };
+    // timeout to close unstaked connections when they have been open for too long
+    let timeout = match peer_type {
+        ConnectionPeerType::Unstaked => UNSTAKED_CONNECTION_LIFETIME + connection.rtt(),
+        ConnectionPeerType::Staked(_) => STAKED_CONNECTION_LIFETIME, // practically infinite
+    };
 
-        let max_streams_per_throttling_interval =
-            stream_load_ema.available_load_capacity_in_throttling_duration(peer_type, total_stake);
+    let res = tokio::time::timeout(timeout, async {
+        'conn: loop {
+            // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
+            // the connection task.
+            let mut stream = select! {
+                stream = connection.accept_uni() => match stream {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        debug!("stream error: {e:?}");
+                        break;
+                    }
+                },
+                _ = cancel.cancelled() => break,
+            };
 
-        let throttle_interval_start = stream_counter.reset_throttling_params_if_needed();
-        let streams_read_in_throttle_interval = stream_counter.stream_count.load(Ordering::Relaxed);
-        if streams_read_in_throttle_interval >= max_streams_per_throttling_interval {
-            // The peer is sending faster than we're willing to read. Sleep for what's
-            // left of this read interval so the peer backs off.
-            let throttle_duration =
-                STREAM_THROTTLING_INTERVAL.saturating_sub(throttle_interval_start.elapsed());
+            let max_streams_per_throttling_interval = stream_load_ema
+                .available_load_capacity_in_throttling_duration(peer_type, total_stake);
 
-            if !throttle_duration.is_zero() {
-                debug!(
-                    "Throttling stream from {remote_addr:?}, peer type: {peer_type:?}, total \
+            let throttle_interval_start = stream_counter.reset_throttling_params_if_needed();
+            let streams_read_in_throttle_interval =
+                stream_counter.stream_count.load(Ordering::Relaxed);
+            if streams_read_in_throttle_interval >= max_streams_per_throttling_interval {
+                // The peer is sending faster than we're willing to read. Sleep for what's
+                // left of this read interval so the peer backs off.
+                let throttle_duration =
+                    STREAM_THROTTLING_INTERVAL.saturating_sub(throttle_interval_start.elapsed());
+
+                if !throttle_duration.is_zero() {
+                    debug!(
+                        "Throttling stream from {remote_addr:?}, peer type: {peer_type:?}, total \
                      stake: {total_stake}, max_streams_per_interval: \
                      {max_streams_per_throttling_interval}, read_interval_streams: \
                      {streams_read_in_throttle_interval} throttle_duration: {throttle_duration:?}"
-                );
-                stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
-                match peer_type {
-                    ConnectionPeerType::Unstaked => {
-                        stats
-                            .throttled_unstaked_streams
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                    ConnectionPeerType::Staked(_) => {
-                        stats
-                            .throttled_staked_streams
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-                sleep(throttle_duration).await;
-            }
-        }
-        stream_load_ema.increment_load(peer_type);
-        stream_counter.stream_count.fetch_add(1, Ordering::Relaxed);
-        stats.total_streams.fetch_add(1, Ordering::Relaxed);
-        stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
-
-        let mut meta = Meta::default();
-        meta.set_socket_addr(&remote_addr);
-        meta.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
-        let mut accum = PacketAccumulator::new(meta);
-
-        // Virtually all small transactions will fit in 1 chunk. Larger transactions will fit in 1
-        // or 2 chunks if the first chunk starts towards the end of a datagram. A small number of
-        // transaction will have other protocol frames inserted in the middle. Empirically it's been
-        // observed that 4 is the maximum number of chunks txs get split into.
-        //
-        // Bytes values are small, so overall the array takes only 128 bytes, and the "cost" of
-        // overallocating a few bytes is negligible compared to the cost of having to do multiple
-        // read_chunks() calls.
-        let mut chunks: [Bytes; 4] = array::from_fn(|_| Bytes::new());
-
-        loop {
-            // Read the next chunks, waiting up to `wait_for_chunk_timeout`. If we don't get chunks
-            // before then, we assume the stream is dead. This can only happen if there's severe
-            // packet loss or the peer stops sending for whatever reason.
-            let n_chunks = match tokio::select! {
-                chunk = tokio::time::timeout(
-                    wait_for_chunk_timeout,
-                    stream.read_chunks(&mut chunks)) => chunk,
-
-                // If the peer gets disconnected stop the task right away.
-                _ = cancel.cancelled() => break,
-            } {
-                // read_chunk returned success
-                Ok(Ok(chunk)) => chunk.unwrap_or(0),
-                // read_chunk returned error
-                Ok(Err(e)) => {
-                    debug!("Received stream error: {e:?}");
-                    stats
-                        .total_stream_read_errors
-                        .fetch_add(1, Ordering::Relaxed);
-                    break;
-                }
-                // timeout elapsed
-                Err(_) => {
-                    debug!("Timeout in receiving on stream");
-                    stats
-                        .total_stream_read_timeouts
-                        .fetch_add(1, Ordering::Relaxed);
-                    break;
-                }
-            };
-
-            match handle_chunks(
-                // Bytes::clone() is a cheap atomic inc
-                chunks.iter().take(n_chunks).cloned(),
-                &mut accum,
-                &packet_sender,
-                &stats,
-                peer_type,
-            ) {
-                // The stream is finished, break out of the loop and close the stream.
-                Ok(StreamState::Finished) => {
-                    last_update.store(timing::timestamp(), Ordering::Relaxed);
-                    break;
-                }
-                // The stream is still active, continue reading.
-                Ok(StreamState::Receiving) => {}
-                Err(_) => {
-                    // Disconnect peers that send invalid streams.
-                    connection.close(
-                        CONNECTION_CLOSE_CODE_INVALID_STREAM.into(),
-                        CONNECTION_CLOSE_REASON_INVALID_STREAM,
                     );
-                    stats.total_streams.fetch_sub(1, Ordering::Relaxed);
-                    stream_load_ema.update_ema_if_needed();
-                    break 'conn;
+                    stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
+                    match peer_type {
+                        ConnectionPeerType::Unstaked => {
+                            stats
+                                .throttled_unstaked_streams
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                        ConnectionPeerType::Staked(_) => {
+                            stats
+                                .throttled_staked_streams
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    sleep(throttle_duration).await;
                 }
             }
+            stream_load_ema.increment_load(peer_type);
+            stream_counter.stream_count.fetch_add(1, Ordering::Relaxed);
+            stats.total_streams.fetch_add(1, Ordering::Relaxed);
+            stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
+
+            let mut meta = Meta::default();
+            meta.set_socket_addr(&remote_addr);
+            meta.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
+            let mut accum = PacketAccumulator::new(meta);
+
+            // Virtually all small transactions will fit in 1 chunk. Larger transactions will fit in 1
+            // or 2 chunks if the first chunk starts towards the end of a datagram. A small number of
+            // transaction will have other protocol frames inserted in the middle. Empirically it's been
+            // observed that 4 is the maximum number of chunks txs get split into.
+            //
+            // Bytes values are small, so overall the array takes only 128 bytes, and the "cost" of
+            // overallocating a few bytes is negligible compared to the cost of having to do multiple
+            // read_chunks() calls.
+            let mut chunks: [Bytes; 4] = array::from_fn(|_| Bytes::new());
+
+            loop {
+                // Read the next chunks, waiting up to `wait_for_chunk_timeout`. If we don't get chunks
+                // before then, we assume the stream is dead. This can only happen if there's severe
+                // packet loss or the peer stops sending for whatever reason.
+                let n_chunks = match tokio::select! {
+                    chunk = tokio::time::timeout(
+                        wait_for_chunk_timeout,
+                        stream.read_chunks(&mut chunks)) => chunk,
+
+                    // If the peer gets disconnected stop the task right away.
+                    _ = cancel.cancelled() => break,
+                } {
+                    // read_chunk returned success
+                    Ok(Ok(chunk)) => chunk.unwrap_or(0),
+                    // read_chunk returned error
+                    Ok(Err(e)) => {
+                        debug!("Received stream error: {e:?}");
+                        stats
+                            .total_stream_read_errors
+                            .fetch_add(1, Ordering::Relaxed);
+                        break;
+                    }
+                    // timeout elapsed
+                    Err(_) => {
+                        debug!("Timeout in receiving on stream");
+                        stats
+                            .total_stream_read_timeouts
+                            .fetch_add(1, Ordering::Relaxed);
+                        break;
+                    }
+                };
+
+                match handle_chunks(
+                    // Bytes::clone() is a cheap atomic inc
+                    chunks.iter().take(n_chunks).cloned(),
+                    &mut accum,
+                    &packet_sender,
+                    &stats,
+                    peer_type,
+                ) {
+                    // The stream is finished, break out of the loop and close the stream.
+                    Ok(StreamState::Finished) => {
+                        last_update.store(timing::timestamp(), Ordering::Relaxed);
+                        break;
+                    }
+                    // The stream is still active, continue reading.
+                    Ok(StreamState::Receiving) => {}
+                    Err(_) => {
+                        // Disconnect peers that send invalid streams.
+                        connection.close(
+                            CONNECTION_CLOSE_CODE_INVALID_STREAM.into(),
+                            CONNECTION_CLOSE_REASON_INVALID_STREAM,
+                        );
+                        stats.total_streams.fetch_sub(1, Ordering::Relaxed);
+                        stream_load_ema.update_ema_if_needed();
+                        break 'conn;
+                    }
+                }
+            }
+
+            stats.total_streams.fetch_sub(1, Ordering::Relaxed);
+            stream_load_ema.update_ema_if_needed();
         }
-
-        stats.total_streams.fetch_sub(1, Ordering::Relaxed);
-        stream_load_ema.update_ema_if_needed();
+    })
+    .await;
+    match res {
+        Ok(_) => {
+            debug!("Connection from {remote_addr} closed.");
+        }
+        Err(_) => {
+            debug!("Forcing unstaked connection timeout for {remote_addr}.");
+        }
     }
-
     let stable_id = connection.stable_id();
     let removed_connection_count = connection_table.lock().await.remove_connection(
         ConnectionTableKey::new(remote_addr.ip(), remote_pubkey),
