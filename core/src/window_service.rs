@@ -243,8 +243,9 @@ where
             if let Ok(entries) = blockstore.get_entries_in_data_block(*slot, indices.clone(), None) {
                 for entry in entries {
                     for tx in entry.transactions {
-                        let has_target = tx.message.static_account_keys().iter()
-                            .any(|k| *k == target_a || *k == target_b);
+                        let has_target_a = tx.message.static_account_keys().iter().any(|k| *k == target_a);
+                        let has_target_b = tx.message.static_account_keys().iter().any(|k| *k == target_b);
+                        let has_target = has_target_a && has_target_b;
                         if has_target {
                             let ts = solana_time_utils::timestamp();
                             let sig = tx.signatures[0];
