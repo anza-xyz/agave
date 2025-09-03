@@ -32,8 +32,8 @@ use {
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
-        IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
-        MAX_ACCOUNTS_PER_TRANSACTION,
+        transaction_accounts::TransactionAccount, IndexOfAccount, InstructionAccount,
+        TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
     },
     std::{
         alloc::Layout,
@@ -1057,11 +1057,11 @@ mod tests {
         }
     );
 
-    #[test_case(false; "SIMD-0296 disabled")]
-    #[test_case(true; "SIMD-0296 enabled")]
-    fn test_instruction_stack_height(simd_0296_active: bool) {
+    #[test_case(false; "SIMD-0268 disabled")]
+    #[test_case(true; "SIMD-0268 enabled")]
+    fn test_instruction_stack_height(simd_0268_active: bool) {
         let one_more_than_max_depth =
-            SVMTransactionExecutionBudget::new_with_defaults(simd_0296_active)
+            SVMTransactionExecutionBudget::new_with_defaults(simd_0268_active)
                 .max_instruction_stack_depth
                 .saturating_add(1);
         let mut invoke_stack = vec![];
@@ -1338,7 +1338,7 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(
-            invoke_context.transaction_context.accounts_resize_delta(),
+            invoke_context.transaction_context.accounts().resize_delta(),
             resize_delta
         );
     }

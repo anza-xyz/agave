@@ -847,7 +847,7 @@ fn test_program_sbf_invoke_sanity() {
             &bank,
         );
 
-        // With SIMD-0296 enabled, eight nested invokes should pass.
+        // With SIMD-0268 enabled, eight nested invokes should pass.
         let bank = bank_with_feature_activated(
             &bank_forks,
             bank,
@@ -865,7 +865,7 @@ fn test_program_sbf_invoke_sanity() {
             bank.store_account(&invoked_argument_keypair.pubkey(), &account);
         }
         do_invoke_success(
-            TEST_NESTED_INVOKE_SIMD_0296_OK,
+            TEST_NESTED_INVOKE_SIMD_0268_OK,
             &[],
             &[invoked_program_id.clone(); 16], // 16, 8 for each invoke
             &bank,
@@ -1063,7 +1063,7 @@ fn test_program_sbf_invoke_sanity() {
             &bank,
         );
 
-        // With SIMD-0296 disabled, five nested invokes is too deep.
+        // With SIMD-0268 disabled, five nested invokes is too deep.
         let bank = bank_with_feature_deactivated(
             &bank_forks,
             bank,
@@ -1086,7 +1086,7 @@ fn test_program_sbf_invoke_sanity() {
             &bank,
         );
 
-        // With SIMD-0296 enabled, nine nested invokes is too deep.
+        // With SIMD-0268 enabled, nine nested invokes is too deep.
         let bank = bank_with_feature_activated(
             &bank_forks,
             bank,
@@ -1096,7 +1096,7 @@ fn test_program_sbf_invoke_sanity() {
             .feature_set
             .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id()));
         do_invoke_failure_test_local(
-            TEST_NESTED_INVOKE_SIMD_0296_TOO_DEEP,
+            TEST_NESTED_INVOKE_SIMD_0268_TOO_DEEP,
             TransactionError::InstructionError(0, InstructionError::CallDepth),
             &[
                 invoked_program_id.clone(),

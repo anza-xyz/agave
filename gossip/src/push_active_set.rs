@@ -70,7 +70,7 @@ fn get_weight(bucket: u64, alpha: u64) -> u64 {
 fn gossip_interpolate_weight(base: u64, base_squared: u64, alpha: u64) -> u64 {
     let scale = lpf::SCALE.get();
     let t = alpha.saturating_sub(ALPHA_MIN);
-    debug_assert!(t <= scale, "interpolation t={} > SCALE={}", t, scale);
+    debug_assert!(t <= scale, "interpolation t={t} > SCALE={scale}");
     // ((base * (scale - t) + base_squared * t) + scale / 2) / scale
     ((base.saturating_mul(scale.saturating_sub(t))).saturating_add(base_squared.saturating_mul(t)))
         .saturating_add(scale / 2)
@@ -104,7 +104,7 @@ impl PushActiveSet {
             (WeightingMode::Static, WeightingConfigTyped::Static) => (),
             (current_mode, WeightingConfigTyped::Static) => {
                 // Dynamic -> Static: Switch mode
-                info!("Switching mode: {:?} -> Static", current_mode);
+                info!("Switching mode: {current_mode:?} -> Static");
                 self.mode = WeightingMode::Static;
             }
             (
@@ -125,13 +125,13 @@ impl PushActiveSet {
                 }
             }
             (current_mode, WeightingConfigTyped::Dynamic { .. }) => {
-                info!("Switching mode: {:?} -> Dynamic", current_mode);
+                info!("Switching mode: {current_mode:?} -> Dynamic");
                 self.mode = WeightingMode::from(config_type);
                 if let WeightingMode::Dynamic {
                     filter_k, tc_ms, ..
                 } = self.mode
                 {
-                    info!("Initialized filter K = {} (tc_ms = {})", filter_k, tc_ms);
+                    info!("Initialized filter K = {filter_k} (tc_ms = {tc_ms})");
                 }
             }
         }
@@ -622,9 +622,7 @@ mod tests {
         let actual_alpha = alpha_of(&active_set);
         assert!(
             (actual_alpha as i32 - expected_alpha_milli as i32).abs() <= TOLERANCE_MILLI as i32,
-            "alpha={} did not converge to expected alpha={}",
-            actual_alpha,
-            expected_alpha_milli
+            "alpha={actual_alpha} did not converge to expected alpha={expected_alpha_milli}"
         );
 
         // 93% unstaked → alpha_target = 1,000,000 + 93 * 10000 = 1,930,000
@@ -640,9 +638,7 @@ mod tests {
         let actual_alpha = alpha_of(&active_set);
         assert!(
             (actual_alpha as i32 - expected_alpha_milli as i32).abs() <= TOLERANCE_MILLI as i32,
-            "alpha={} did not reconverge to expected alpha={}",
-            actual_alpha,
-            expected_alpha_milli
+            "alpha={actual_alpha} did not reconverge to expected alpha={expected_alpha_milli}"
         );
     }
 
@@ -669,9 +665,7 @@ mod tests {
         let alpha = alpha_of(&active_set);
         assert!(
             (alpha as i32 - expected_alpha_0).abs() <= TOLERANCE_MILLI as i32,
-            "alpha={} did not converge to alpha_0={}",
-            alpha,
-            expected_alpha_0
+            "alpha={alpha} did not converge to alpha_0={expected_alpha_0}"
         );
 
         // 100% unstaked → alpha_target = 2,000,000
@@ -684,9 +678,7 @@ mod tests {
         let alpha = alpha_of(&active_set);
         assert!(
             (alpha as i32 - expected_alpha_100).abs() <= TOLERANCE_MILLI as i32,
-            "alpha={} did not converge to alpha_100={}",
-            alpha,
-            expected_alpha_100
+            "alpha={alpha} did not converge to alpha_100={expected_alpha_100}"
         );
 
         // back to 0% unstaked → alpha_target = 1,000,000
@@ -698,9 +690,7 @@ mod tests {
         let alpha = alpha_of(&active_set);
         assert!(
             (alpha as i32 - expected_alpha_0).abs() <= TOLERANCE_MILLI as i32,
-            "alpha={} did not reconverge to alpha_0={}",
-            alpha,
-            expected_alpha_0
+            "alpha={alpha} did not reconverge to alpha_0={expected_alpha_0}"
         );
     }
 
@@ -727,8 +717,7 @@ mod tests {
             );
             assert_eq!(
                 alpha, *expected as u64,
-                "step {}: alpha did not match expected during convergence down",
-                i
+                "step {i}: alpha did not match expected during convergence down"
             );
         }
 
@@ -747,8 +736,7 @@ mod tests {
             );
             assert_eq!(
                 alpha, *expected as u64,
-                "step {}: alpha did not match expected during convergence up",
-                i
+                "step {i}: alpha did not match expected during convergence up"
             );
         }
 
@@ -767,8 +755,7 @@ mod tests {
             );
             assert_eq!(
                 alpha, *expected as u64,
-                "step {}: alpha did not match expected during final convergence down",
-                i
+                "step {i}: alpha did not match expected during final convergence down"
             );
         }
     }

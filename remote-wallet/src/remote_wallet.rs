@@ -249,7 +249,7 @@ impl RemoteWalletManager {
                         } else {
                             LOG_DEVICE_PLURAL
                         };
-                        trace!("{} Remote Wallet{} found", current_total, plural);
+                        trace!("{current_total} Remote Wallet{plural} found");
                         return true;
                     }
                     last_device_count = current_total;

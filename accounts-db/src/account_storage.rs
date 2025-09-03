@@ -354,6 +354,15 @@ impl<'a> AccountStoragesOrderer<'a> {
         self.indices.len()
     }
 
+    /// Returns the original index, into the storages slice, at `position`
+    ///
+    /// # Panics
+    ///
+    /// Caller must ensure `position` is in range, else will panic.
+    pub fn original_index(&'a self, position: usize) -> usize {
+        self.indices[position]
+    }
+
     pub fn iter(&'a self) -> impl ExactSizeIterator<Item = &'a AccountStorageEntry> + 'a {
         self.indices.iter().map(|i| self.storages[*i].as_ref())
     }
@@ -370,8 +379,11 @@ impl<'a> AccountStoragesOrderer<'a> {
 impl Index<usize> for AccountStoragesOrderer<'_> {
     type Output = AccountStorageEntry;
 
-    fn index(&self, index: usize) -> &Self::Output {
-        self.storages[self.indices[index]].as_ref()
+    fn index(&self, position: usize) -> &Self::Output {
+        // SAFETY: Caller must ensure `position` is in range.
+        let original_index = self.original_index(position);
+        // SAFETY: `original_index` must be valid here, so it is a valid index into `storages`.
+        self.storages[original_index].as_ref()
     }
 }
 
@@ -384,27 +396,45 @@ impl Index<usize> for AccountStoragesOrderer<'_> {
 /// - Does **not** implement `Iterator` because it must take `&self` instead of `&mut self`.
 pub struct AccountStoragesConcurrentConsumer<'a> {
     orderer: AccountStoragesOrderer<'a>,
-    current_index: AtomicUsize,
+    current_position: AtomicUsize,
 }
 
 impl<'a> AccountStoragesConcurrentConsumer<'a> {
     pub fn new(orderer: AccountStoragesOrderer<'a>) -> Self {
         Self {
             orderer,
-            current_index: AtomicUsize::new(0),
+            current_position: AtomicUsize::new(0),
         }
     }
 
     /// Takes the next `AccountStorageEntry` moving shared consume position
     /// until the end of the entries source is reached.
-    pub fn next(&'a self) -> Option<&'a AccountStorageEntry> {
-        let index = self.current_index.fetch_add(1, Ordering::Relaxed);
-        if index < self.orderer.entries_len() {
-            Some(&self.orderer[index])
+    pub fn next(&'a self) -> Option<NextItem<'a>> {
+        let position = self.current_position.fetch_add(1, Ordering::Relaxed);
+        if position < self.orderer.entries_len() {
+            // SAFETY: We have ensured `position` is in range.
+            let original_index = self.orderer.original_index(position);
+            let storage = &self.orderer[position];
+            Some(NextItem {
+                position,
+                original_index,
+                storage,
+            })
         } else {
             None
         }
     }
+}
+
+/// Value returned from calling `AccountStoragesConcurrentConsumer::next()`
+#[derive(Debug)]
+pub struct NextItem<'a> {
+    /// The position through the orderer for this call to `next()`
+    pub position: usize,
+    /// The index into the original storages slice at this position
+    pub original_index: usize,
+    /// The storage itself
+    pub storage: &'a AccountStorageEntry,
 }
 
 /// Select the `nth` (`0 <= nth < range.len()`) value from a `range`, choosing values alternately

@@ -201,7 +201,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S
     fn take_pooled(&mut self) -> S::Inner {
         let id = {
             let Self::Pooled(inner) = &self else {
-                panic!("cannot take: {:?}", self)
+                panic!("cannot take: {self:?}")
             };
             inner.id()
         };
@@ -609,8 +609,9 @@ where
                 };
 
                 info!(
-                    "Scheduler pool cleaner: dropped {} idle inners, {} trashed inners, triggered {} timeout listeners",
-                    idle_inner_count, trashed_inner_count, triggered_timeout_listener_count,
+                    "Scheduler pool cleaner: dropped {idle_inner_count} idle inners, \
+                     {trashed_inner_count} trashed inners, triggered \
+                     {triggered_timeout_listener_count} timeout listeners",
                 );
                 sleepless_testing::at(CheckPoint::IdleSchedulerCleaned(idle_inner_count));
                 sleepless_testing::at(CheckPoint::TrashedSchedulerCleaned(trashed_inner_count));
@@ -2328,10 +2329,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         let current_thread = thread::current();
                         error!("handler thread is panicking: {:?}", current_thread);
                         if sender.send(Err(HandlerPanicked)).is_ok() {
-                            info!("notified a panic from {:?}", current_thread);
+                            info!("notified a panic from {current_thread:?}");
                         } else {
                             // It seems that the scheduler thread has been aborted already...
-                            warn!("failed to notify a panic from {:?}", current_thread);
+                            warn!("failed to notify a panic from {current_thread:?}");
                         }
                     }
                     let mut task = ExecutedTask::new_boxed(task);
@@ -2364,7 +2365,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .map({
                 |thx| {
                     thread::Builder::new()
-                        .name(format!("solScHandle{mode_char}{:02}", thx))
+                        .name(format!("solScHandle{mode_char}{thx:02}"))
                         .spawn_tracked(handler_main_loop())
                         .unwrap()
                 }
@@ -2395,13 +2396,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     (_, Some(s)) => s,
                     (None, None) => "<No panic info>",
                 };
-                panic!("{} (From: {:?})", panic_message, thread);
+                panic!("{panic_message} (From: {thread:?})");
             })
         }
 
         if let Some(scheduler_thread) = self.scheduler_thread.take() {
             for thread in self.handler_threads.drain(..) {
-                debug!("joining...: {:?}", thread);
+                debug!("joining...: {thread:?}");
                 () = join_with_panic_message(thread).unwrap();
             }
             () = join_with_panic_message(scheduler_thread).unwrap();

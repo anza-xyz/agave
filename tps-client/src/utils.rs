@@ -23,7 +23,7 @@ fn find_node_activated_stake(
 ) -> Result<(u64, u64), ()> {
     let vote_accounts = rpc_client.get_vote_accounts();
     if let Err(error) = vote_accounts {
-        error!("Failed to get vote accounts, error: {}", error);
+        error!("Failed to get vote accounts, error: {error}");
         return Err(());
     }
 

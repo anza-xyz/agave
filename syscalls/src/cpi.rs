@@ -11,7 +11,7 @@ use {
     solana_stable_layout::stable_instruction::StableInstruction,
     solana_svm_measure::measure::Measure,
     solana_transaction_context::{
-        BorrowedAccount, MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
+        BorrowedInstructionAccount, MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
     },
     std::mem,
 };
@@ -1078,7 +1078,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
 fn update_callee_account(
     check_aligned: bool,
     caller_account: &CallerAccount,
-    mut callee_account: BorrowedAccount<'_>,
+    mut callee_account: BorrowedInstructionAccount<'_>,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
 ) -> Result<bool, Error> {
@@ -1135,7 +1135,7 @@ fn update_caller_account_region(
     memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
     caller_account: &CallerAccount,
-    callee_account: &mut BorrowedAccount<'_>,
+    callee_account: &mut BorrowedInstructionAccount<'_>,
     account_data_direct_mapping: bool,
 ) -> Result<(), Error> {
     let is_caller_loader_deprecated = !check_aligned;
@@ -1185,7 +1185,7 @@ fn update_caller_account(
     memory_mapping: &MemoryMapping<'_>,
     check_aligned: bool,
     caller_account: &mut CallerAccount<'_>,
-    callee_account: &mut BorrowedAccount<'_>,
+    callee_account: &mut BorrowedInstructionAccount<'_>,
     stricter_abi_and_runtime_constraints: bool,
 ) -> Result<(), Error> {
     *caller_account.lamports = callee_account.get_lamports();
@@ -1284,7 +1284,9 @@ mod tests {
             ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
         solana_sdk_ids::system_program,
-        solana_transaction_context::{InstructionAccount, TransactionAccount},
+        solana_transaction_context::{
+            transaction_accounts::TransactionAccount, InstructionAccount,
+        },
         std::{
             cell::{Cell, RefCell},
             mem, ptr,
