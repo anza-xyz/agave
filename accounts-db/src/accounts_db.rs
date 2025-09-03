@@ -6916,6 +6916,18 @@ impl AccountsDb {
         info!("accounts data len: {}", total_accum.accounts_data_len);
     }
 
+    /// Insert zero lamport account storage into dirty stores for cleaning
+    fn insert_zero_lamport_slots(&self, total_accum: &IndexGenerationAccumulator) {
+        // insert all zero lamport account storage into the dirty stores and add them into the uncleaned roots for clean to pick up
+        info!(
+            "insert all zero slots to clean at startup {}",
+            total_accum.all_zeros_slots.len()
+        );
+        for (slot, storage) in &total_accum.all_zeros_slots {
+            self.dirty_stores.insert(*slot, storage.clone());
+        }
+    }
+
     /// Handle duplicate keys from the accounts index after initial index generation
     /// Returns (unique_pubkeys_by_bin, timings)
     fn handle_duplicates(
@@ -7082,14 +7094,8 @@ impl AccountsDb {
         // Step 7: Deduplicate accounts data
         self.deduplicate_accounts(&unique_pubkeys_by_bin, &mut timings, &mut total_accum);
 
-        // insert all zero lamport account storage into the dirty stores and add them into the uncleaned roots for clean to pick up
-        info!(
-            "insert all zero slots to clean at startup {}",
-            total_accum.all_zeros_slots.len()
-        );
-        for (slot, storage) in total_accum.all_zeros_slots {
-            self.dirty_stores.insert(slot, storage);
-        }
+        // Step 8: Insert zero lamport slots for cleaning
+        self.insert_zero_lamport_slots(&total_accum);
 
         // Need to add these last, otherwise older updates will be cleaned
         for storage in &storages {
