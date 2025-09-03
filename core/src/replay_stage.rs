@@ -633,7 +633,7 @@ impl ReplayStage {
             .feature_set
             .activated_slot(&agave_feature_set::alpenglow::id());
         if let Some(first_alpenglow_slot) = first_alpenglow_slot {
-            debug_assert!(bank_forks.read().unwrap().highest_slot() >= first_alpenglow_slot);
+            assert!(bank_forks.read().unwrap().highest_slot() >= first_alpenglow_slot);
             info!("alpenglow active on startup");
             Self::initiate_alpenglow_migration(&poh_recorder, &mut is_alpenglow_migration_complete);
         }
