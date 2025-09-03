@@ -174,7 +174,7 @@ impl Tvu {
         slot_status_notifier: Option<SlotStatusNotifier>,
         vote_connection_cache: Arc<ConnectionCache>,
     ) -> Result<Self, String> {
-        info!("[TVU] Tvu::new() starting");
+
         let in_wen_restart = wen_restart_repair_slots.is_some();
 
         let TvuSockets {
@@ -190,7 +190,7 @@ impl Tvu {
         let repair_socket = Arc::new(repair_socket);
         let ancestor_hashes_socket = Arc::new(ancestor_hashes_socket);
         let fetch_sockets: Vec<Arc<UdpSocket>> = fetch_sockets.into_iter().map(Arc::new).collect();
-        info!("[TVU] Creating ShredFetchStage with {} fetch sockets", fetch_sockets.len());
+
         let fetch_stage = ShredFetchStage::new(
             fetch_sockets,
             turbine_quic_endpoint_receiver,

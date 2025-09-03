@@ -199,7 +199,7 @@ where
     const RECV_TIMEOUT: Duration = Duration::from_millis(200);
     let mut shred_receiver_elapsed = Measure::start("shred_receiver_elapsed");
     let mut shreds = verified_receiver.recv_timeout(RECV_TIMEOUT)?;
-    info!("[WINDOW] Received {} shreds for processing", shreds.len());
+
     shreds.extend(verified_receiver.try_iter().flatten());
     shred_receiver_elapsed.stop();
     ws_metrics.shred_receiver_elapsed_us += shred_receiver_elapsed.as_us();
@@ -236,7 +236,6 @@ where
 
     // Log transactions with target accounts immediately when data sets are completed
     if !completed_data_sets.is_empty() {
-        info!("Completed data sets: {completed_data_sets:?}");
         let target_a = Pubkey::from_str("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s").unwrap();
         let target_b = Pubkey::from_str("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P").unwrap();
         for completed_data_set_info in &completed_data_sets {
@@ -244,7 +243,6 @@ where
             if let Ok(entries) = blockstore.get_entries_in_data_block(*slot, indices.clone(), None) {
                 for entry in entries {
                     for tx in entry.transactions {
-                        info!("Transaction: {tx:?}");
                         let has_target = tx.message.static_account_keys().iter()
                             .any(|k| *k == target_a || *k == target_b);
                         if has_target {

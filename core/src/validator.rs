@@ -875,7 +875,7 @@ impl Validator {
             tvu_sockets_per_interface,
         )));
         let cluster_info = Arc::new(cluster_info);
-        info!("[VALIDATOR] Created ClusterInfo");
+
         let node_multihoming = Arc::new(NodeMultihoming::from(&node));
 
         assert!(is_snapshot_config_valid(&config.snapshot_config));
@@ -1345,7 +1345,7 @@ impl Validator {
             Some(stats_reporter_sender.clone()),
             exit.clone(),
         );
-        info!("[VALIDATOR] Created GossipService, creating serve_repair");
+
         let serve_repair = config.repair_handler_type.create_serve_repair(
             blockstore.clone(),
             cluster_info.clone(),
@@ -1357,7 +1357,7 @@ impl Validator {
         let (ancestor_hashes_response_quic_sender, ancestor_hashes_response_quic_receiver) =
             unbounded();
 
-        info!("[VALIDATOR] About to wait_for_supermajority");
+
         let waited_for_supermajority = wait_for_supermajority(
             config,
             Some(&mut process_blockstore),
@@ -1366,7 +1366,7 @@ impl Validator {
             rpc_override_health_check,
             &start_progress,
         )?;
-        info!("[VALIDATOR] wait_for_supermajority completed, waited: {}", waited_for_supermajority);
+
 
         let blockstore_metric_report_service =
             BlockstoreMetricReportService::new(blockstore.clone(), exit.clone());
@@ -1374,7 +1374,7 @@ impl Validator {
         let wait_for_vote_to_start_leader =
             !waited_for_supermajority && !config.no_wait_for_vote_to_start_leader;
 
-        info!("[VALIDATOR] Creating PohService");
+
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &genesis_config.poh_config,
@@ -1410,7 +1410,7 @@ impl Validator {
                     .build()
                     .unwrap()
             });
-        info!("[VALIDATOR] Setting up QUIC endpoints for cluster_type: {:?}", genesis_config.cluster_type);
+
         let (turbine_quic_endpoint_sender, turbine_quic_endpoint_receiver) = unbounded();
         let (
             turbine_quic_endpoint,
@@ -1538,7 +1538,7 @@ impl Validator {
             None
         };
 
-        info!("[VALIDATOR] About to create TVU");
+
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
