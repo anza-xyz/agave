@@ -6861,6 +6861,61 @@ impl AccountsDb {
         (total_accum, index_time)
     }
 
+    /// Deduplicate accounts data by processing duplicate pubkeys in parallel
+    /// Updates the total accumulator and timings as part of the process
+    fn deduplicate_accounts(
+        &self,
+        unique_pubkeys_by_bin: &[Vec<Pubkey>],
+        timings: &mut GenerateIndexTimings,
+        total_accum: &mut IndexGenerationAccumulator,
+    ) {
+        // subtract data.len() from accounts_data_len for all old accounts that are in the index twice
+        let mut accounts_data_len_dedup_timer =
+            Measure::start("handle accounts data len duplicates");
+        let DuplicatePubkeysVisitedInfo {
+            accounts_data_len_from_duplicates,
+            num_duplicate_accounts,
+            duplicates_lt_hash,
+        } = unique_pubkeys_by_bin
+            .par_iter()
+            .fold(
+                DuplicatePubkeysVisitedInfo::default,
+                |accum, pubkeys_by_bin| {
+                    let intermediate = pubkeys_by_bin
+                        .par_chunks(4096)
+                        .fold(DuplicatePubkeysVisitedInfo::default, |accum, pubkeys| {
+                            let (
+                                accounts_data_len_from_duplicates,
+                                accounts_duplicates_num,
+                                duplicates_lt_hash,
+                            ) = self.visit_duplicate_pubkeys_during_startup(pubkeys, timings);
+                            let intermediate = DuplicatePubkeysVisitedInfo {
+                                accounts_data_len_from_duplicates,
+                                num_duplicate_accounts: accounts_duplicates_num,
+                                duplicates_lt_hash,
+                            };
+                            DuplicatePubkeysVisitedInfo::reduce(accum, intermediate)
+                        })
+                        .reduce(
+                            DuplicatePubkeysVisitedInfo::default,
+                            DuplicatePubkeysVisitedInfo::reduce,
+                        );
+                    DuplicatePubkeysVisitedInfo::reduce(accum, intermediate)
+                },
+            )
+            .reduce(
+                DuplicatePubkeysVisitedInfo::default,
+                DuplicatePubkeysVisitedInfo::reduce,
+            );
+        accounts_data_len_dedup_timer.stop();
+        timings.accounts_data_len_dedup_time_us = accounts_data_len_dedup_timer.as_us();
+        timings.num_duplicate_accounts = num_duplicate_accounts;
+
+        total_accum.lt_hash.mix_out(&duplicates_lt_hash.0);
+        total_accum.accounts_data_len -= accounts_data_len_from_duplicates;
+        info!("accounts data len: {}", total_accum.accounts_data_len);
+    }
+
     /// Handle duplicate keys from the accounts index after initial index generation
     /// Returns (unique_pubkeys_by_bin, timings)
     fn handle_duplicates(
@@ -7017,57 +7072,15 @@ impl AccountsDb {
         let (unique_pubkeys_by_bin, mut timings) =
             self.handle_duplicates(&index_time, &total_accum, num_storages);
 
+        // Step 6: Visit zero lamport pubkeys
         let (num_zero_lamport_single_refs, visit_zero_lamports_us) = measure_us!(
             self.visit_zero_lamport_pubkeys_during_startup(&total_accum.zero_lamport_pubkeys)
         );
         timings.visit_zero_lamports_us = visit_zero_lamports_us;
         timings.num_zero_lamport_single_refs = num_zero_lamport_single_refs;
 
-        // subtract data.len() from accounts_data_len for all old accounts that are in the index twice
-        let mut accounts_data_len_dedup_timer =
-            Measure::start("handle accounts data len duplicates");
-        let DuplicatePubkeysVisitedInfo {
-            accounts_data_len_from_duplicates,
-            num_duplicate_accounts,
-            duplicates_lt_hash,
-        } = unique_pubkeys_by_bin
-            .par_iter()
-            .fold(
-                DuplicatePubkeysVisitedInfo::default,
-                |accum, pubkeys_by_bin| {
-                    let intermediate = pubkeys_by_bin
-                        .par_chunks(4096)
-                        .fold(DuplicatePubkeysVisitedInfo::default, |accum, pubkeys| {
-                            let (
-                                accounts_data_len_from_duplicates,
-                                accounts_duplicates_num,
-                                duplicates_lt_hash,
-                            ) = self.visit_duplicate_pubkeys_during_startup(pubkeys, &timings);
-                            let intermediate = DuplicatePubkeysVisitedInfo {
-                                accounts_data_len_from_duplicates,
-                                num_duplicate_accounts: accounts_duplicates_num,
-                                duplicates_lt_hash,
-                            };
-                            DuplicatePubkeysVisitedInfo::reduce(accum, intermediate)
-                        })
-                        .reduce(
-                            DuplicatePubkeysVisitedInfo::default,
-                            DuplicatePubkeysVisitedInfo::reduce,
-                        );
-                    DuplicatePubkeysVisitedInfo::reduce(accum, intermediate)
-                },
-            )
-            .reduce(
-                DuplicatePubkeysVisitedInfo::default,
-                DuplicatePubkeysVisitedInfo::reduce,
-            );
-        accounts_data_len_dedup_timer.stop();
-        timings.accounts_data_len_dedup_time_us = accounts_data_len_dedup_timer.as_us();
-        timings.num_duplicate_accounts = num_duplicate_accounts;
-
-        total_accum.lt_hash.mix_out(&duplicates_lt_hash.0);
-        total_accum.accounts_data_len -= accounts_data_len_from_duplicates;
-        info!("accounts data len: {}", total_accum.accounts_data_len);
+        // Step 7: Deduplicate accounts data
+        self.deduplicate_accounts(&unique_pubkeys_by_bin, &mut timings, &mut total_accum);
 
         // insert all zero lamport account storage into the dirty stores and add them into the uncleaned roots for clean to pick up
         info!(
