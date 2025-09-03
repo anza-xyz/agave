@@ -15,7 +15,6 @@ use {
     solana_keypair::Keypair,
     solana_message::Message,
     solana_metrics::datapoint_info,
-    solana_net_utils::sockets::unique_port_range_for_tests,
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
@@ -344,7 +343,7 @@ pub fn run_local_faucet(faucet_keypair: Keypair, per_time_cap: Option<u64>) -> S
     let port: u16 = {
         #[cfg(debug_assertions)]
         {
-            unique_port_range_for_tests(1).start
+            solana_net_utils::sockets::unique_port_range_for_tests(1).start
         }
         #[cfg(not(debug_assertions))]
         {
