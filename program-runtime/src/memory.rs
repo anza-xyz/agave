@@ -1,6 +1,9 @@
 //! Memory translation utilities.
 
-use std::mem::align_of;
+use {
+    solana_sbpf::memory_region::{AccessType, MemoryMapping},
+    std::{mem::align_of, slice::from_raw_parts_mut},
+};
 
 /// Error types for memory translation operations.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -69,4 +72,58 @@ macro_rules! translate_slice_inner {
         }
         Ok(unsafe { from_raw_parts_mut(host_addr as *mut $T, $len as usize) })
     }};
+}
+
+pub fn translate_type<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    check_aligned: bool,
+) -> Result<&'a T, Box<dyn std::error::Error>> {
+    translate_type_inner!(memory_mapping, AccessType::Load, vm_addr, T, check_aligned)
+        .map(|value| &*value)
+}
+
+pub fn translate_slice<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    len: u64,
+    check_aligned: bool,
+) -> Result<&'a [T], Box<dyn std::error::Error>> {
+    translate_slice_inner!(
+        memory_mapping,
+        AccessType::Load,
+        vm_addr,
+        len,
+        T,
+        check_aligned,
+    )
+    .map(|value| &*value)
+}
+
+/// CPI-specific version with intentionally different lifetime signature.
+/// This version is missing lifetime 'a of the return type in the parameter &MemoryMapping.
+pub fn translate_type_mut_for_cpi<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    check_aligned: bool,
+) -> Result<&'a mut T, Box<dyn std::error::Error>> {
+    translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
+}
+
+/// CPI-specific version with intentionally different lifetime signature.
+/// This version is missing lifetime 'a of the return type in the parameter &MemoryMapping.
+pub fn translate_slice_mut_for_cpi<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    len: u64,
+    check_aligned: bool,
+) -> Result<&'a mut [T], Box<dyn std::error::Error>> {
+    translate_slice_inner!(
+        memory_mapping,
+        AccessType::Store,
+        vm_addr,
+        len,
+        T,
+        check_aligned,
+    )
 }
