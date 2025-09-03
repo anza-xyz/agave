@@ -24,10 +24,7 @@ use {
     solana_accounts_db::{
         account_storage::{AccountStorageMap, AccountStoragesOrderer},
         account_storage_reader::AccountStorageReader,
-        accounts_db::{
-            AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId,
-            DEFAULT_MEMLOCK_BUDGET_SIZE,
-        },
+        accounts_db::{AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId},
         accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
         hardened_unpack::{self, UnpackError},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
@@ -1599,7 +1596,7 @@ pub fn verify_and_unarchive_snapshots(
     full_snapshot_archive_info: &FullSnapshotArchiveInfo,
     incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
     account_paths: &[PathBuf],
-    accounts_db_config: Option<&AccountsDbConfig>,
+    accounts_db_config: &AccountsDbConfig,
 ) -> Result<(UnarchivedSnapshots, UnarchivedSnapshotsGuard)> {
     check_are_snapshots_compatible(
         full_snapshot_archive_info,
@@ -1881,17 +1878,12 @@ fn unarchive_snapshot(
     account_paths: &[PathBuf],
     archive_format: ArchiveFormat,
     next_append_vec_id: Arc<AtomicAccountsFileId>,
-    accounts_db_config: Option<&AccountsDbConfig>,
+    accounts_db_config: &AccountsDbConfig,
 ) -> Result<UnarchivedSnapshot> {
     let unpack_dir = tempfile::Builder::new()
         .prefix(unpacked_snapshots_dir_prefix)
         .tempdir_in(bank_snapshots_dir)?;
     let unpacked_snapshots_dir = unpack_dir.path().join(BANK_SNAPSHOTS_DIR);
-
-    let (memlock_budget_size, storage_access) = accounts_db_config
-        .as_ref()
-        .map(|config| (config.memlock_budget_size, config.storage_access))
-        .unwrap_or((DEFAULT_MEMLOCK_BUDGET_SIZE, StorageAccess::default()));
 
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
     let unarchive_handle = streaming_unarchive_snapshot(
@@ -1900,7 +1892,7 @@ fn unarchive_snapshot(
         unpack_dir.path().to_path_buf(),
         snapshot_archive_path.as_ref().to_path_buf(),
         archive_format,
-        memlock_budget_size,
+        accounts_db_config.memlock_budget_size,
     );
 
     let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
@@ -1920,7 +1912,7 @@ fn unarchive_snapshot(
                     num_rebuilder_threads,
                     next_append_vec_id,
                     SnapshotFrom::Archive,
-                    storage_access,
+                    accounts_db_config.storage_access,
                 )?,
                 measure_name
             );

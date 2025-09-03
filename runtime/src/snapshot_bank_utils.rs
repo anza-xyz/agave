@@ -58,7 +58,7 @@ use {
 pub fn bank_fields_from_snapshot_archives(
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
-    accounts_db_config: Option<&AccountsDbConfig>,
+    accounts_db_config: &AccountsDbConfig,
 ) -> snapshot_utils::Result<BankFieldsToDeserialize> {
     let full_snapshot_archive_info =
         get_highest_full_snapshot_archive_info(&full_snapshot_archives_dir).ok_or_else(|| {
@@ -1592,10 +1592,10 @@ mod tests {
         let bank_fields = bank_fields_from_snapshot_archives(
             &all_snapshots_dir,
             &all_snapshots_dir,
-            Some(&AccountsDbConfig {
+            &AccountsDbConfig {
                 storage_access,
                 ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            }),
+            },
         )
         .unwrap();
         assert_eq!(bank_fields.slot, bank2.slot());

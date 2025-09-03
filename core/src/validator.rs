@@ -33,9 +33,7 @@ use {
     crossbeam_channel::{bounded, unbounded, Receiver},
     quinn::Endpoint,
     solana_accounts_db::{
-        accounts_db::{
-            AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING, DEFAULT_MEMLOCK_BUDGET_SIZE,
-        },
+        accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         hardened_unpack::{
             open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -703,11 +701,8 @@ impl Validator {
         sigverify::init();
         info!("Initializing sigverify done.");
 
-        let accounts_db_config = config.accounts_db_config.as_ref();
         solana_accounts_db::validate_memlock_limit_for_disk_io(
-            accounts_db_config
-                .map(|config| config.memlock_budget_size)
-                .unwrap_or(DEFAULT_MEMLOCK_BUDGET_SIZE),
+            config.accounts_db_config.memlock_budget_size,
         )?;
 
         if !ledger_path.is_dir() {
