@@ -80,13 +80,15 @@ impl SlotsStats {
         stats: &mut LruCache<Slot, SlotStats>,
         slot: Slot,
     ) -> (&mut SlotStats, Option<(Slot, SlotStats)>) {
-        let evicted = if stats.len() == stats.cap() {
-            match stats.peek_lru() {
-                Some((s, _)) if *s == slot => None,
-                _ => stats.pop_lru(),
-            }
-        } else {
+        let evicted = if stats.contains(&slot) {
             None
+        } else {
+            // insert slot in cache which might potentially evict an entry
+            let evicted = stats.push(slot, SlotStats::default());
+            if let Some((evicted_slot, _)) = evicted {
+                assert_ne!(evicted_slot, slot);
+            }
+            evicted
         };
         (stats.get_mut(&slot).unwrap(), evicted)
     }
