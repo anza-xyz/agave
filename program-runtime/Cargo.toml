@@ -32,6 +32,7 @@ percentage = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
+solana-account-info = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }

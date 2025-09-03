@@ -189,3 +189,280 @@ pub fn check_authorized_program(
     }
     Ok(())
 }
+
+/// Host side representation of AccountInfo or SolAccountInfo passed to the CPI syscall.
+///
+/// At the start of a CPI, this can be different from the data stored in the
+/// corresponding BorrowedAccount, and needs to be synched.
+pub struct CallerAccount<'a> {
+    pub lamports: &'a mut u64,
+    pub owner: &'a mut Pubkey,
+    // The original data length of the account at the start of the current
+    // instruction. We use this to determine wether an account was shrunk or
+    // grown before or after CPI, and to derive the vm address of the realloc
+    // region.
+    pub original_data_len: usize,
+    // This points to the data section for this account, as serialized and
+    // mapped inside the vm (see serialize_parameters() in
+    // BpfExecutor::execute).
+    //
+    // This is only set when account_data_direct_mapping is off.
+    pub serialized_data: &'a mut [u8],
+    // Given the corresponding input AccountInfo::data, vm_data_addr points to
+    // the pointer field and ref_to_len_in_vm points to the length field.
+    pub vm_data_addr: u64,
+    pub ref_to_len_in_vm: &'a mut u64,
+}
+
+impl<'a> CallerAccount<'a> {
+    pub fn get_serialized_data(
+        memory_mapping: &solana_sbpf::memory_region::MemoryMapping<'_>,
+        vm_addr: u64,
+        len: u64,
+        stricter_abi_and_runtime_constraints: bool,
+        account_data_direct_mapping: bool,
+    ) -> Result<&'a mut [u8], Box<dyn std::error::Error>> {
+        use crate::memory::translate_slice_mut_for_cpi;
+
+        if stricter_abi_and_runtime_constraints && account_data_direct_mapping {
+            Ok(&mut [])
+        } else if stricter_abi_and_runtime_constraints {
+            // Workaround the memory permissions (as these are from the PoV of being inside the VM)
+            let serialization_ptr = translate_slice_mut_for_cpi::<u8>(
+                memory_mapping,
+                solana_sbpf::ebpf::MM_INPUT_START,
+                1,
+                false, // Don't care since it is byte aligned
+            )?
+            .as_mut_ptr();
+            unsafe {
+                Ok(std::slice::from_raw_parts_mut(
+                    serialization_ptr
+                        .add(vm_addr.saturating_sub(solana_sbpf::ebpf::MM_INPUT_START) as usize),
+                    len as usize,
+                ))
+            }
+        } else {
+            translate_slice_mut_for_cpi::<u8>(
+                memory_mapping,
+                vm_addr,
+                len,
+                false, // Don't care since it is byte aligned
+            )
+        }
+    }
+
+    // Create a CallerAccount given an AccountInfo.
+    pub fn from_account_info(
+        invoke_context: &InvokeContext,
+        memory_mapping: &solana_sbpf::memory_region::MemoryMapping<'_>,
+        check_aligned: bool,
+        _vm_addr: u64,
+        account_info: &solana_account_info::AccountInfo,
+        account_metadata: &crate::invoke_context::SerializedAccountMetadata,
+    ) -> Result<CallerAccount<'a>, Box<dyn std::error::Error>> {
+        use crate::memory::{translate_type, translate_type_mut_for_cpi};
+
+        let stricter_abi_and_runtime_constraints = invoke_context
+            .get_feature_set()
+            .stricter_abi_and_runtime_constraints;
+
+        if stricter_abi_and_runtime_constraints {
+            check_account_info_pointer(
+                invoke_context,
+                account_info.key as *const _ as u64,
+                account_metadata.vm_key_addr,
+                "key",
+            )?;
+            check_account_info_pointer(
+                invoke_context,
+                account_info.owner as *const _ as u64,
+                account_metadata.vm_owner_addr,
+                "owner",
+            )?;
+        }
+
+        // account_info points to host memory. The addresses used internally are
+        // in vm space so they need to be translated.
+        let lamports = {
+            // Double translate lamports out of RefCell
+            let ptr = translate_type::<u64>(
+                memory_mapping,
+                account_info.lamports.as_ptr() as u64,
+                check_aligned,
+            )?;
+            if stricter_abi_and_runtime_constraints {
+                if account_info.lamports.as_ptr() as u64 >= solana_sbpf::ebpf::MM_INPUT_START {
+                    return Err(Box::new(CpiError::InvalidPointer));
+                }
+
+                check_account_info_pointer(
+                    invoke_context,
+                    *ptr,
+                    account_metadata.vm_lamports_addr,
+                    "lamports",
+                )?;
+            }
+            translate_type_mut_for_cpi::<u64>(memory_mapping, *ptr, check_aligned)?
+        };
+
+        let owner = translate_type_mut_for_cpi::<Pubkey>(
+            memory_mapping,
+            account_info.owner as *const _ as u64,
+            check_aligned,
+        )?;
+
+        let (serialized_data, vm_data_addr, ref_to_len_in_vm) = {
+            if stricter_abi_and_runtime_constraints
+                && account_info.data.as_ptr() as u64 >= solana_sbpf::ebpf::MM_INPUT_START
+            {
+                return Err(Box::new(CpiError::InvalidPointer));
+            }
+
+            // Double translate data out of RefCell
+            let data = *translate_type::<&[u8]>(
+                memory_mapping,
+                account_info.data.as_ptr() as *const _ as u64,
+                check_aligned,
+            )?;
+            if stricter_abi_and_runtime_constraints {
+                check_account_info_pointer(
+                    invoke_context,
+                    data.as_ptr() as u64,
+                    account_metadata.vm_data_addr,
+                    "data",
+                )?;
+            }
+
+            invoke_context.consume_checked(
+                (data.len() as u64)
+                    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                    .unwrap_or(u64::MAX),
+            )?;
+
+            let vm_len_addr = (account_info.data.as_ptr() as *const u64 as u64)
+                .saturating_add(std::mem::size_of::<u64>() as u64);
+            if stricter_abi_and_runtime_constraints {
+                // In the same vein as the other check_account_info_pointer() checks, we don't lock
+                // this pointer to a specific address but we don't want it to be inside accounts, or
+                // callees might be able to write to the pointed memory.
+                if vm_len_addr >= solana_sbpf::ebpf::MM_INPUT_START {
+                    return Err(Box::new(CpiError::InvalidPointer));
+                }
+            }
+            let ref_to_len_in_vm =
+                translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
+            let vm_data_addr = data.as_ptr() as u64;
+            let serialized_data = CallerAccount::get_serialized_data(
+                memory_mapping,
+                vm_data_addr,
+                data.len() as u64,
+                stricter_abi_and_runtime_constraints,
+                invoke_context.account_data_direct_mapping,
+            )?;
+            (serialized_data, vm_data_addr, ref_to_len_in_vm)
+        };
+
+        Ok(CallerAccount {
+            lamports,
+            owner,
+            original_data_len: account_metadata.original_data_len,
+            serialized_data,
+            vm_data_addr,
+            ref_to_len_in_vm,
+        })
+    }
+
+    // Create a CallerAccount given a SolAccountInfo.
+    pub fn from_sol_account_info(
+        invoke_context: &InvokeContext,
+        memory_mapping: &solana_sbpf::memory_region::MemoryMapping<'_>,
+        check_aligned: bool,
+        vm_addr: u64,
+        account_info: &SolAccountInfo,
+        account_metadata: &crate::invoke_context::SerializedAccountMetadata,
+    ) -> Result<CallerAccount<'a>, Box<dyn std::error::Error>> {
+        use crate::memory::translate_type_mut_for_cpi;
+
+        let stricter_abi_and_runtime_constraints = invoke_context
+            .get_feature_set()
+            .stricter_abi_and_runtime_constraints;
+
+        if stricter_abi_and_runtime_constraints {
+            check_account_info_pointer(
+                invoke_context,
+                account_info.key_addr,
+                account_metadata.vm_key_addr,
+                "key",
+            )?;
+
+            check_account_info_pointer(
+                invoke_context,
+                account_info.owner_addr,
+                account_metadata.vm_owner_addr,
+                "owner",
+            )?;
+
+            check_account_info_pointer(
+                invoke_context,
+                account_info.lamports_addr,
+                account_metadata.vm_lamports_addr,
+                "lamports",
+            )?;
+
+            check_account_info_pointer(
+                invoke_context,
+                account_info.data_addr,
+                account_metadata.vm_data_addr,
+                "data",
+            )?;
+        }
+
+        // account_info points to host memory. The addresses used internally are
+        // in vm space so they need to be translated.
+        let lamports = translate_type_mut_for_cpi::<u64>(
+            memory_mapping,
+            account_info.lamports_addr,
+            check_aligned,
+        )?;
+        let owner = translate_type_mut_for_cpi::<Pubkey>(
+            memory_mapping,
+            account_info.owner_addr,
+            check_aligned,
+        )?;
+
+        invoke_context.consume_checked(
+            account_info
+                .data_len
+                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+                .unwrap_or(u64::MAX),
+        )?;
+
+        let serialized_data = CallerAccount::get_serialized_data(
+            memory_mapping,
+            account_info.data_addr,
+            account_info.data_len,
+            stricter_abi_and_runtime_constraints,
+            invoke_context.account_data_direct_mapping,
+        )?;
+
+        // we already have the host addr we want: &mut account_info.data_len.
+        // The account info might be read only in the vm though, so we translate
+        // to ensure we can write. This is tested by programs/sbf/rust/ro_modify
+        // which puts SolAccountInfo in rodata.
+        let vm_len_addr = vm_addr
+            .saturating_add(&account_info.data_len as *const u64 as u64)
+            .saturating_sub(account_info as *const _ as *const u64 as u64);
+        let ref_to_len_in_vm =
+            translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
+
+        Ok(CallerAccount {
+            lamports,
+            owner,
+            original_data_len: account_metadata.original_data_len,
+            serialized_data,
+            vm_data_addr: account_info.data_addr,
+            ref_to_len_in_vm,
+        })
+    }
+}
