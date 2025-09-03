@@ -1394,6 +1394,49 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
     }
 }
 
+/// Accumulator for the values produced while generating the index
+#[derive(Debug)]
+struct IndexGenerationAccumulator {
+    insert_us: u64,
+    num_accounts: u64,
+    accounts_data_len: u64,
+    zero_lamport_pubkeys: HashSet<Pubkey, PubkeyHasherBuilder>,
+    all_accounts_are_zero_lamports_slots: u64,
+    all_zeros_slots: Vec<(Slot, Arc<AccountStorageEntry>)>,
+    num_did_not_exist: u64,
+    num_existed_in_mem: u64,
+    num_existed_on_disk: u64,
+    lt_hash: LtHash,
+}
+impl IndexGenerationAccumulator {
+    fn new() -> Self {
+        Self {
+            insert_us: 0,
+            num_accounts: 0,
+            accounts_data_len: 0,
+            zero_lamport_pubkeys: HashSet::default(),
+            all_accounts_are_zero_lamports_slots: 0,
+            all_zeros_slots: Vec::new(),
+            num_did_not_exist: 0,
+            num_existed_in_mem: 0,
+            num_existed_on_disk: 0,
+            lt_hash: LtHash::identity(),
+        }
+    }
+    fn accumulate(&mut self, other: Self) {
+        self.insert_us += other.insert_us;
+        self.num_accounts += other.num_accounts;
+        self.accounts_data_len += other.accounts_data_len;
+        self.zero_lamport_pubkeys.extend(other.zero_lamport_pubkeys);
+        self.all_accounts_are_zero_lamports_slots += other.all_accounts_are_zero_lamports_slots;
+        self.all_zeros_slots.extend(other.all_zeros_slots);
+        self.num_did_not_exist += other.num_did_not_exist;
+        self.num_existed_in_mem += other.num_existed_in_mem;
+        self.num_existed_on_disk += other.num_existed_on_disk;
+        self.lt_hash.mix_in(&other.lt_hash);
+    }
+}
+
 impl AccountsDb {
     // The default high and low watermark sizes for the accounts read cache.
     // If the cache size exceeds MAX_SIZE_HI, it'll evict entries until the size is <= MAX_SIZE_LO.
@@ -6703,71 +6746,17 @@ impl AccountsDb {
         }
     }
 
-    pub fn generate_index(
+    /// Parallel index generation for storages
+    /// Returns (total_accumulator, index_time_measure)
+    fn parallel_generate_index(
         &self,
-        limit_load_slot_count_from_snapshot: Option<usize>,
-        verify: bool,
-    ) -> IndexGenerationInfo {
-        let mut total_time = Measure::start("generate_index");
-
-        let mut storages = self.storage.all_storages();
-        storages.sort_unstable_by_key(|storage| storage.slot);
-        if let Some(limit) = limit_load_slot_count_from_snapshot {
-            storages.truncate(limit); // get rid of the newer slots and keep just the older
-        }
-        let num_storages = storages.len();
-
-        self.accounts_index
-            .set_startup(Startup::StartupWithExtraThreads);
-        let storage_info = StorageSizeAndCountMap::default();
-
-        /// Accumulator for the values produced while generating the index
-        #[derive(Debug)]
-        struct IndexGenerationAccumulator {
-            insert_us: u64,
-            num_accounts: u64,
-            accounts_data_len: u64,
-            zero_lamport_pubkeys: HashSet<Pubkey, PubkeyHasherBuilder>,
-            all_accounts_are_zero_lamports_slots: u64,
-            all_zeros_slots: Vec<(Slot, Arc<AccountStorageEntry>)>,
-            num_did_not_exist: u64,
-            num_existed_in_mem: u64,
-            num_existed_on_disk: u64,
-            lt_hash: LtHash,
-        }
-        impl IndexGenerationAccumulator {
-            fn new() -> Self {
-                Self {
-                    insert_us: 0,
-                    num_accounts: 0,
-                    accounts_data_len: 0,
-                    zero_lamport_pubkeys: HashSet::default(),
-                    all_accounts_are_zero_lamports_slots: 0,
-                    all_zeros_slots: Vec::new(),
-                    num_did_not_exist: 0,
-                    num_existed_in_mem: 0,
-                    num_existed_on_disk: 0,
-                    lt_hash: LtHash::identity(),
-                }
-            }
-            fn accumulate(&mut self, other: Self) {
-                self.insert_us += other.insert_us;
-                self.num_accounts += other.num_accounts;
-                self.accounts_data_len += other.accounts_data_len;
-                self.zero_lamport_pubkeys.extend(other.zero_lamport_pubkeys);
-                self.all_accounts_are_zero_lamports_slots +=
-                    other.all_accounts_are_zero_lamports_slots;
-                self.all_zeros_slots.extend(other.all_zeros_slots);
-                self.num_did_not_exist += other.num_did_not_exist;
-                self.num_existed_in_mem += other.num_existed_in_mem;
-                self.num_existed_on_disk += other.num_existed_on_disk;
-                self.lt_hash.mix_in(&other.lt_hash);
-            }
-        }
-
+        storages: &[Arc<AccountStorageEntry>],
+        storage_info: &StorageSizeAndCountMap,
+        num_storages: usize,
+    ) -> (IndexGenerationAccumulator, Measure) {
         let mut total_accum = IndexGenerationAccumulator::new();
         let storages_orderer =
-            AccountStoragesOrderer::with_random_order(&storages).into_concurrent_consumer();
+            AccountStoragesOrderer::with_random_order(storages).into_concurrent_consumer();
         let exit_logger = AtomicBool::new(false);
         let num_processed = AtomicU64::new(0);
         let num_threads = num_cpus::get();
@@ -6790,7 +6779,7 @@ impl AccountsDb {
                                     storage,
                                     slot,
                                     store_id,
-                                    &storage_info,
+                                    storage_info,
                                 );
                                 thread_accum.insert_us += slot_info.insert_time_us;
                                 thread_accum.num_accounts += slot_info.num_accounts;
@@ -6852,31 +6841,61 @@ impl AccountsDb {
         });
         index_time.stop();
 
-        {
-            // Update the index stats now.
-            let index_stats = self.accounts_index.bucket_map_holder_stats();
+        (total_accum, index_time)
+    }
 
-            // stats for inserted entries that previously did *not* exist
-            index_stats.inc_insert_count(total_accum.num_did_not_exist);
-            index_stats.add_mem_count(total_accum.num_did_not_exist as usize);
+    /// Update index statistics based on the accumulator data
+    fn update_index_stats(&self, total_accum: &IndexGenerationAccumulator) {
+        // Update the index stats now.
+        let index_stats = self.accounts_index.bucket_map_holder_stats();
 
-            // stats for inserted entries that previous did exist *in-mem*
-            index_stats
-                .entries_from_mem
-                .fetch_add(total_accum.num_existed_in_mem, Ordering::Relaxed);
-            index_stats
-                .updates_in_mem
-                .fetch_add(total_accum.num_existed_in_mem, Ordering::Relaxed);
+        // stats for inserted entries that previously did *not* exist
+        index_stats.inc_insert_count(total_accum.num_did_not_exist);
+        index_stats.add_mem_count(total_accum.num_did_not_exist as usize);
 
-            // stats for inserted entries that previously did exist *on-disk*
-            index_stats.add_mem_count(total_accum.num_existed_on_disk as usize);
-            index_stats
-                .entries_missing
-                .fetch_add(total_accum.num_existed_on_disk, Ordering::Relaxed);
-            index_stats
-                .updates_in_mem
-                .fetch_add(total_accum.num_existed_on_disk, Ordering::Relaxed);
+        // stats for inserted entries that previous did exist *in-mem*
+        index_stats
+            .entries_from_mem
+            .fetch_add(total_accum.num_existed_in_mem, Ordering::Relaxed);
+        index_stats
+            .updates_in_mem
+            .fetch_add(total_accum.num_existed_in_mem, Ordering::Relaxed);
+
+        // stats for inserted entries that previously did exist *on-disk*
+        index_stats.add_mem_count(total_accum.num_existed_on_disk as usize);
+        index_stats
+            .entries_missing
+            .fetch_add(total_accum.num_existed_on_disk, Ordering::Relaxed);
+        index_stats
+            .updates_in_mem
+            .fetch_add(total_accum.num_existed_on_disk, Ordering::Relaxed);
+    }
+
+    pub fn generate_index(
+        &self,
+        limit_load_slot_count_from_snapshot: Option<usize>,
+        verify: bool,
+    ) -> IndexGenerationInfo {
+        // Step 1: Prepare storages and stats
+        let mut total_time = Measure::start("generate_index");
+
+        let mut storages = self.storage.all_storages();
+        storages.sort_unstable_by_key(|storage| storage.slot);
+        if let Some(limit) = limit_load_slot_count_from_snapshot {
+            storages.truncate(limit); // get rid of the newer slots and keep just the older
         }
+        let num_storages = storages.len();
+
+        self.accounts_index
+            .set_startup(Startup::StartupWithExtraThreads);
+        let storage_info = StorageSizeAndCountMap::default();
+
+        // Step 2: Generate index in parallel
+        let (mut total_accum, index_time) =
+            self.parallel_generate_index(&storages, &storage_info, num_storages);
+
+        // Step 3: Update index stats
+        self.update_index_stats(&total_accum);
 
         if verify {
             info!("Verifying index...");
