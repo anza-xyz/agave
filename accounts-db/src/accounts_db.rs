@@ -1437,6 +1437,23 @@ impl IndexGenerationAccumulator {
     }
 }
 
+#[derive(Debug, Default)]
+struct DuplicatePubkeysVisitedInfo {
+    accounts_data_len_from_duplicates: u64,
+    num_duplicate_accounts: u64,
+    duplicates_lt_hash: Box<DuplicatesLtHash>,
+}
+impl DuplicatePubkeysVisitedInfo {
+    fn reduce(mut self, other: Self) -> Self {
+        self.accounts_data_len_from_duplicates += other.accounts_data_len_from_duplicates;
+        self.num_duplicate_accounts += other.num_duplicate_accounts;
+        self.duplicates_lt_hash
+            .0
+            .mix_in(&other.duplicates_lt_hash.0);
+        self
+    }
+}
+
 impl AccountsDb {
     // The default high and low watermark sizes for the accounts read cache.
     // If the cache size exceeds MAX_SIZE_HI, it'll evict entries until the size is <= MAX_SIZE_LO.
@@ -6844,6 +6861,68 @@ impl AccountsDb {
         (total_accum, index_time)
     }
 
+    /// Handle duplicate keys from the accounts index after initial index generation
+    /// Returns (unique_pubkeys_by_bin, timings)
+    fn handle_duplicates(
+        &self,
+        index_time: &Measure,
+        total_accum: &IndexGenerationAccumulator,
+        num_storages: usize,
+    ) -> (Vec<Vec<Pubkey>>, GenerateIndexTimings) {
+        let total_duplicate_slot_keys = AtomicU64::default();
+        let total_num_unique_duplicate_keys = AtomicU64::default();
+
+        // outer vec is accounts index bin (determined by pubkey value)
+        // inner vec is the pubkeys within that bin that are present in > 1 slot
+        let unique_pubkeys_by_bin = Mutex::new(Vec::<Vec<Pubkey>>::default());
+        // tell accounts index we are done adding the initial accounts at startup
+        let mut m = Measure::start("accounts_index_idle_us");
+        self.accounts_index.set_startup(Startup::Normal);
+        m.stop();
+        let index_flush_us = m.as_us();
+
+        let populate_duplicate_keys_us = measure_us!({
+            // this has to happen before visit_duplicate_pubkeys_during_startup below
+            // get duplicate keys from acct idx. We have to wait until we've finished flushing.
+            self.accounts_index
+                .populate_and_retrieve_duplicate_keys_from_startup(|slot_keys| {
+                    total_duplicate_slot_keys.fetch_add(slot_keys.len() as u64, Ordering::Relaxed);
+                    let unique_keys =
+                        HashSet::<Pubkey>::from_iter(slot_keys.iter().map(|(_, key)| *key));
+                    for (slot, key) in slot_keys {
+                        self.uncleaned_pubkeys.entry(slot).or_default().push(key);
+                    }
+                    let unique_pubkeys_by_bin_inner = unique_keys.into_iter().collect::<Vec<_>>();
+                    total_num_unique_duplicate_keys
+                        .fetch_add(unique_pubkeys_by_bin_inner.len() as u64, Ordering::Relaxed);
+                    // does not matter that this is not ordered by slot
+                    unique_pubkeys_by_bin
+                        .lock()
+                        .unwrap()
+                        .push(unique_pubkeys_by_bin_inner);
+                });
+        })
+        .1;
+        let unique_pubkeys_by_bin = unique_pubkeys_by_bin.into_inner().unwrap();
+
+        let timings = GenerateIndexTimings {
+            index_flush_us,
+            scan_time: 0,
+            index_time: index_time.as_us(),
+            insertion_time_us: total_accum.insert_us,
+            total_duplicate_slot_keys: total_duplicate_slot_keys.load(Ordering::Relaxed),
+            total_num_unique_duplicate_keys: total_num_unique_duplicate_keys
+                .load(Ordering::Relaxed),
+            populate_duplicate_keys_us,
+            total_including_duplicates: total_accum.num_accounts,
+            total_slots: num_storages as u64,
+            all_accounts_are_zero_lamports_slots: total_accum.all_accounts_are_zero_lamports_slots,
+            ..GenerateIndexTimings::default()
+        };
+
+        (unique_pubkeys_by_bin, timings)
+    }
+
     /// Verify the generated index by checking that all accounts in storage
     /// have corresponding entries in the accounts index
     fn verify_index(&self, storages: &[Arc<AccountStorageEntry>]) {
@@ -6934,73 +7013,9 @@ impl AccountsDb {
             self.verify_index(&storages);
         }
 
-        let total_duplicate_slot_keys = AtomicU64::default();
-        let total_num_unique_duplicate_keys = AtomicU64::default();
-
-        // outer vec is accounts index bin (determined by pubkey value)
-        // inner vec is the pubkeys within that bin that are present in > 1 slot
-        let unique_pubkeys_by_bin = Mutex::new(Vec::<Vec<Pubkey>>::default());
-        // tell accounts index we are done adding the initial accounts at startup
-        let mut m = Measure::start("accounts_index_idle_us");
-        self.accounts_index.set_startup(Startup::Normal);
-        m.stop();
-        let index_flush_us = m.as_us();
-
-        let populate_duplicate_keys_us = measure_us!({
-            // this has to happen before visit_duplicate_pubkeys_during_startup below
-            // get duplicate keys from acct idx. We have to wait until we've finished flushing.
-            self.accounts_index
-                .populate_and_retrieve_duplicate_keys_from_startup(|slot_keys| {
-                    total_duplicate_slot_keys.fetch_add(slot_keys.len() as u64, Ordering::Relaxed);
-                    let unique_keys =
-                        HashSet::<Pubkey>::from_iter(slot_keys.iter().map(|(_, key)| *key));
-                    for (slot, key) in slot_keys {
-                        self.uncleaned_pubkeys.entry(slot).or_default().push(key);
-                    }
-                    let unique_pubkeys_by_bin_inner = unique_keys.into_iter().collect::<Vec<_>>();
-                    total_num_unique_duplicate_keys
-                        .fetch_add(unique_pubkeys_by_bin_inner.len() as u64, Ordering::Relaxed);
-                    // does not matter that this is not ordered by slot
-                    unique_pubkeys_by_bin
-                        .lock()
-                        .unwrap()
-                        .push(unique_pubkeys_by_bin_inner);
-                });
-        })
-        .1;
-        let unique_pubkeys_by_bin = unique_pubkeys_by_bin.into_inner().unwrap();
-
-        let mut timings = GenerateIndexTimings {
-            index_flush_us,
-            scan_time: 0,
-            index_time: index_time.as_us(),
-            insertion_time_us: total_accum.insert_us,
-            total_duplicate_slot_keys: total_duplicate_slot_keys.load(Ordering::Relaxed),
-            total_num_unique_duplicate_keys: total_num_unique_duplicate_keys
-                .load(Ordering::Relaxed),
-            populate_duplicate_keys_us,
-            total_including_duplicates: total_accum.num_accounts,
-            total_slots: num_storages as u64,
-            all_accounts_are_zero_lamports_slots: total_accum.all_accounts_are_zero_lamports_slots,
-            ..GenerateIndexTimings::default()
-        };
-
-        #[derive(Debug, Default)]
-        struct DuplicatePubkeysVisitedInfo {
-            accounts_data_len_from_duplicates: u64,
-            num_duplicate_accounts: u64,
-            duplicates_lt_hash: Box<DuplicatesLtHash>,
-        }
-        impl DuplicatePubkeysVisitedInfo {
-            fn reduce(mut self, other: Self) -> Self {
-                self.accounts_data_len_from_duplicates += other.accounts_data_len_from_duplicates;
-                self.num_duplicate_accounts += other.num_duplicate_accounts;
-                self.duplicates_lt_hash
-                    .0
-                    .mix_in(&other.duplicates_lt_hash.0);
-                self
-            }
-        }
+        // Step 5: Handle duplicated keys
+        let (unique_pubkeys_by_bin, mut timings) =
+            self.handle_duplicates(&index_time, &total_accum, num_storages);
 
         let (num_zero_lamport_single_refs, visit_zero_lamports_us) = measure_us!(
             self.visit_zero_lamport_pubkeys_during_startup(&total_accum.zero_lamport_pubkeys)
