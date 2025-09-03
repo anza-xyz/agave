@@ -6844,6 +6844,38 @@ impl AccountsDb {
         (total_accum, index_time)
     }
 
+    /// Verify the generated index by checking that all accounts in storage
+    /// have corresponding entries in the accounts index
+    fn verify_index(&self, storages: &[Arc<AccountStorageEntry>]) {
+        info!("Verifying index...");
+        let start = Instant::now();
+        storages.par_iter().for_each(|storage| {
+            let store_id = storage.id();
+            let slot = storage.slot();
+            storage
+                .accounts
+                .scan_accounts_without_data(|offset, account| {
+                    let key = account.pubkey();
+                    let index_entry = self.accounts_index.get_cloned(key).unwrap();
+                    let slot_list = index_entry.slot_list.read().unwrap();
+                    let mut count = 0;
+                    for (slot2, account_info2) in slot_list.iter() {
+                        if *slot2 == slot {
+                            count += 1;
+                            let ai = AccountInfo::new(
+                                StorageLocation::AppendVec(store_id, offset), // will never be cached
+                                account.is_zero_lamport(),
+                            );
+                            assert_eq!(&ai, account_info2);
+                        }
+                    }
+                    assert_eq!(1, count);
+                })
+                .expect("must scan accounts storage");
+        });
+        info!("Verifying index... Done in {:?}", start.elapsed());
+    }
+
     /// Update index statistics based on the accumulator data
     fn update_index_stats(&self, total_accum: &IndexGenerationAccumulator) {
         // Update the index stats now.
@@ -6897,34 +6929,9 @@ impl AccountsDb {
         // Step 3: Update index stats
         self.update_index_stats(&total_accum);
 
+        // Step 4: Optionally verify index
         if verify {
-            info!("Verifying index...");
-            let start = Instant::now();
-            storages.par_iter().for_each(|storage| {
-                let store_id = storage.id();
-                let slot = storage.slot();
-                storage
-                    .accounts
-                    .scan_accounts_without_data(|offset, account| {
-                        let key = account.pubkey();
-                        let index_entry = self.accounts_index.get_cloned(key).unwrap();
-                        let slot_list = index_entry.slot_list.read().unwrap();
-                        let mut count = 0;
-                        for (slot2, account_info2) in slot_list.iter() {
-                            if *slot2 == slot {
-                                count += 1;
-                                let ai = AccountInfo::new(
-                                    StorageLocation::AppendVec(store_id, offset), // will never be cached
-                                    account.is_zero_lamport(),
-                                );
-                                assert_eq!(&ai, account_info2);
-                            }
-                        }
-                        assert_eq!(1, count);
-                    })
-                    .expect("must scan accounts storage");
-            });
-            info!("Verifying index... Done in {:?}", start.elapsed());
+            self.verify_index(&storages);
         }
 
         let total_duplicate_slot_keys = AtomicU64::default();
