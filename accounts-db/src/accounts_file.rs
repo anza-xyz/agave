@@ -5,7 +5,6 @@ use {
         account_info::{AccountInfo, Offset},
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_db::AccountsFileId,
-        accounts_update_notifier_interface::AccountForGeyser,
         append_vec::{AppendVec, AppendVecError},
         buffered_reader::RequiredLenBufFileRead,
         storable_accounts::StorableAccounts,
@@ -13,7 +12,7 @@ use {
             error::TieredStorageError, hot::HOT_FORMAT, index::IndexOffset, TieredStorage,
         },
     },
-    solana_account::{AccountSharedData, ReadableAccount as _},
+    solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::{
@@ -313,26 +312,6 @@ impl AccountsFile {
                 unimplemented!("StoredAccountMeta is only implemented for AppendVec")
             }
         }
-    }
-
-    /// Iterate over all accounts and call `callback` with each account.
-    /// Only intended to be used by Geyser.
-    pub(crate) fn scan_accounts_for_geyser<'a>(
-        &'a self,
-        reader: &mut impl RequiredLenBufFileRead<'a>,
-        mut callback: impl for<'local> FnMut(AccountForGeyser<'local>),
-    ) -> Result<()> {
-        self.scan_accounts(reader, |_offset, account| {
-            let account_for_geyser = AccountForGeyser {
-                pubkey: account.pubkey(),
-                lamports: account.lamports(),
-                owner: account.owner(),
-                executable: account.executable(),
-                rent_epoch: account.rent_epoch(),
-                data: account.data(),
-            };
-            callback(account_for_geyser)
-        })
     }
 
     /// Calculate the amount of storage required for an account with the passed

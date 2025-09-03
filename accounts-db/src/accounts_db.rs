@@ -47,7 +47,7 @@ use {
             UpsertReclaim, ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
         },
         accounts_index_storage::Startup,
-        accounts_update_notifier_interface::AccountsUpdateNotifier,
+        accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
         append_vec::{self, aligned_stored_size, IndexInfo, IndexInfoInner, STORE_META_OVERHEAD},
@@ -6619,6 +6619,22 @@ impl AccountsDb {
                 ));
             };
 
+            let geyser_notifier = self
+                .accounts_update_notifier
+                .as_ref()
+                .filter(|notifier| notifier.snapshot_notifications_enabled());
+
+            // If geyser notifications at startup from snapshot are enabled, we need to pass in a
+            // write version for each account notification.  This value does not need to be
+            // globally unique, as geyser plugins also receive the slot number.  We only need to
+            // ensure that more recent accounts have a higher write version than older accounts.
+            // Even more relaxed, we really only need to have different write versions if there are
+            // multiple versions of the same account in a single storage, which is not allowed.
+            //
+            // Since we scan the storage from oldest to newest, we can simply increment a local
+            // counter per account and use that for the write version.
+            let mut write_version_for_geyser = 0;
+
             storage
                 .accounts
                 .scan_accounts(reader, |offset, account| {
@@ -6645,6 +6661,24 @@ impl AccountsDb {
 
                     let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
                     slot_lt_hash.0.mix_in(&account_lt_hash.0);
+
+                    if let Some(geyser_notifier) = geyser_notifier {
+                        debug_assert!(geyser_notifier.snapshot_notifications_enabled());
+                        let account_for_geyser = AccountForGeyser {
+                            pubkey: account.pubkey(),
+                            lamports: account.lamports(),
+                            owner: account.owner(),
+                            executable: account.executable(),
+                            rent_epoch: account.rent_epoch(),
+                            data: account.data(),
+                        };
+                        geyser_notifier.notify_account_restore_from_snapshot(
+                            slot,
+                            write_version_for_geyser,
+                            &account_for_geyser,
+                        );
+                        write_version_for_geyser += 1;
+                    }
                 })
                 .expect("must scan accounts storage");
             self.accounts_index
@@ -6863,6 +6897,12 @@ impl AccountsDb {
             index_stats
                 .updates_in_mem
                 .fetch_add(total_accum.num_existed_on_disk, Ordering::Relaxed);
+        }
+
+        if let Some(geyser_notifier) = &self.accounts_update_notifier {
+            // We've finished scanning all the storages, and have thus sent all the
+            // account notifications.  Now, let the geyser plugins know we're done.
+            geyser_notifier.notify_end_of_restore_from_snapshot();
         }
 
         if verify {

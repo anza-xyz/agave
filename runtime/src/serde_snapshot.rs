@@ -47,7 +47,6 @@ use {
             atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc,
         },
-        thread::Builder,
         time::Instant,
     },
     storage::SerializableStorage,
@@ -1039,17 +1038,6 @@ where
         .write_version
         .fetch_add(snapshot_version, Ordering::Release);
 
-    let mut measure_notify = Measure::start("accounts_notify");
-
-    let accounts_db = Arc::new(accounts_db);
-    let accounts_db_clone = accounts_db.clone();
-    let handle = Builder::new()
-        .name("solNfyAccRestor".to_string())
-        .spawn(move || {
-            accounts_db_clone.notify_account_restore_from_snapshot();
-        })
-        .unwrap();
-
     info!("Building accounts index...");
     let start = Instant::now();
     let IndexGenerationInfo {
@@ -1058,16 +1046,8 @@ where
     } = accounts_db.generate_index(limit_load_slot_count_from_snapshot, verify_index);
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
-    handle.join().unwrap();
-    measure_notify.stop();
-
-    datapoint_info!(
-        "reconstruct_accountsdb_from_fields()",
-        ("accountsdb-notify-at-start-us", measure_notify.as_us(), i64),
-    );
-
     Ok((
-        Arc::try_unwrap(accounts_db).unwrap(),
+        accounts_db,
         ReconstructedAccountsDbInfo {
             accounts_data_len,
             calculated_accounts_lt_hash,
