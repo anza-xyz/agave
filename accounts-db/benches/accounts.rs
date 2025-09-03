@@ -33,7 +33,7 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 fn new_accounts_db(account_paths: Vec<PathBuf>) -> AccountsDb {
     AccountsDb::new_with_config(
         account_paths,
-        Some(ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS),
+        ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
         None,
         Arc::default(),
     )

@@ -552,7 +552,7 @@ pub(crate) fn bank_from_streams<R>(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> std::result::Result<(Bank, BankFromStreamsInfo), Error>
@@ -808,7 +808,7 @@ pub(crate) fn reconstruct_bank_from_fields<E>(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> Result<(Bank, ReconstructedBankInfo), Error>
@@ -984,7 +984,7 @@ fn reconstruct_accountsdb_from_fields<E>(
     storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), Error>

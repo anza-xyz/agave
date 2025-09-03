@@ -843,7 +843,7 @@ pub struct ProcessOptions {
     pub allow_dead_slots: bool,
     pub accounts_db_skip_shrink: bool,
     pub accounts_db_force_initial_clean: bool,
-    pub accounts_db_config: Option<AccountsDbConfig>,
+    pub accounts_db_config: AccountsDbConfig,
     pub verify_index: bool,
     pub runtime_config: RuntimeConfig,
     /// true if after processing the contents of the blockstore at startup, we should run an accounts hash calc

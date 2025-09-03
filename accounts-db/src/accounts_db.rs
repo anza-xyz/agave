@@ -1471,7 +1471,7 @@ impl AccountsDb {
     ) -> Self {
         let mut db = AccountsDb::new_with_config(
             paths,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         );
@@ -1481,11 +1481,10 @@ impl AccountsDb {
 
     pub fn new_with_config(
         paths: Vec<PathBuf>,
-        accounts_db_config: Option<AccountsDbConfig>,
+        accounts_db_config: AccountsDbConfig,
         accounts_update_notifier: Option<AccountsUpdateNotifier>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let accounts_db_config = accounts_db_config.unwrap_or_default();
         let accounts_index_config = accounts_db_config.index.unwrap_or_default();
         let accounts_index = AccountsIndex::new(&accounts_index_config, exit);
 

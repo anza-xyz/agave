@@ -448,8 +448,6 @@ pub fn execute(
         ..AccountsDbConfig::default()
     };
 
-    let accounts_db_config = Some(accounts_db_config);
-
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
         Some(
             values_t_or_exit!(matches, "geyser_plugin_config", String)

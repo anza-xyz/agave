@@ -1011,7 +1011,7 @@ mod tests {
             false,
             false,
             false,
-            Some(accounts_db_config),
+            accounts_db_config,
             None,
             Arc::default(),
         )
@@ -1110,7 +1110,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )

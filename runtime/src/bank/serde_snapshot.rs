@@ -161,7 +161,7 @@ mod tests {
             None,
             None,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -246,7 +246,7 @@ mod tests {
             None,
             None,
             false,
-            Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -304,7 +304,7 @@ mod tests {
             false,
             false,
             false,
-            Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )

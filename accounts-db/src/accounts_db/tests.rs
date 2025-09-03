@@ -5397,10 +5397,10 @@ fn test_sweep_get_oldest_non_ancient_slot_max() {
     ] {
         let db = AccountsDb::new_with_config(
             Vec::new(),
-            Some(AccountsDbConfig {
+            AccountsDbConfig {
                 ancient_append_vec_offset: Some(ancient_append_vec_offset as i64),
                 ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            }),
+            },
             None,
             Arc::default(),
         );
@@ -5428,10 +5428,10 @@ fn test_sweep_get_oldest_non_ancient_slot() {
     let ancient_append_vec_offset = 50_000;
     let db = AccountsDb::new_with_config(
         Vec::new(),
-        Some(AccountsDbConfig {
+        AccountsDbConfig {
             ancient_append_vec_offset: Some(ancient_append_vec_offset),
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        }),
+        },
         None,
         Arc::default(),
     );
@@ -5480,10 +5480,10 @@ fn test_sweep_get_oldest_non_ancient_slot2() {
         for starting_slot_offset in [0, avoid_saturation] {
             let db = AccountsDb::new_with_config(
                 Vec::new(),
-                Some(AccountsDbConfig {
+                AccountsDbConfig {
                     ancient_append_vec_offset: Some(ancient_append_vec_offset),
                     ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-                }),
+                },
                 None,
                 Arc::default(),
             );

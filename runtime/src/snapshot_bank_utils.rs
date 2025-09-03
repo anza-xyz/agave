@@ -138,7 +138,7 @@ pub fn bank_from_snapshot_archives(
     accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> snapshot_utils::Result<Bank> {
@@ -173,10 +173,7 @@ pub fn bank_from_snapshot_archives(
         full_snapshot_archive_info,
         incremental_snapshot_archive_info,
         account_paths,
-        accounts_db_config
-            .as_ref()
-            .map(|config| config.storage_access)
-            .unwrap_or_default(),
+        accounts_db_config.storage_access,
     )?;
 
     if let Some(incremental_storage) = incremental_storage {
@@ -284,7 +281,7 @@ pub fn bank_from_latest_snapshot_archives(
     accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> snapshot_utils::Result<(
@@ -336,7 +333,7 @@ pub fn bank_from_snapshot_dir(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> snapshot_utils::Result<Bank> {
@@ -352,17 +349,13 @@ pub fn bank_from_snapshot_dir(
     }
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
-    let storage_access = accounts_db_config
-        .as_ref()
-        .map(|config| config.storage_access)
-        .unwrap_or_default();
 
     let ((storage, bank_fields, accounts_db_fields), measure_rebuild_storages) = measure_time!(
         rebuild_storages_from_snapshot_dir(
             bank_snapshot,
             account_paths,
             next_append_vec_id.clone(),
-            storage_access,
+            accounts_db_config.storage_access,
         )?,
         "rebuild storages from snapshot dir"
     );
@@ -438,7 +431,7 @@ pub fn bank_from_latest_snapshot_dir(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> snapshot_utils::Result<Bank> {
@@ -939,7 +932,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1038,7 +1031,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1138,7 +1131,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1256,7 +1249,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1364,7 +1357,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1493,7 +1486,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1551,7 +1544,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1925,7 +1918,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1961,10 +1954,10 @@ mod tests {
             None,
             None,
             false,
-            Some(AccountsDbConfig {
+            AccountsDbConfig {
                 storage_access,
                 ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            }),
+            },
             None,
             Arc::default(),
         )
@@ -2004,7 +1997,7 @@ mod tests {
             None,
             None,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )

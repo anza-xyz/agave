@@ -1397,10 +1397,7 @@ fn main() {
 pub mod test {
     use {
         super::*,
-        solana_accounts_db::{
-            accounts_db::ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
-            accounts_index::{AccountIndex, AccountSecondaryIndexes},
-        },
+        solana_accounts_db::accounts_index::{AccountIndex, AccountSecondaryIndexes},
         solana_core::validator::ValidatorConfig,
         solana_faucet::faucet::run_local_faucet,
         solana_local_cluster::{
@@ -1416,15 +1413,7 @@ pub mod test {
     };
 
     fn initialize_and_add_secondary_indexes(validator_config: &mut ValidatorConfig) {
-        if validator_config.accounts_db_config.is_none() {
-            validator_config.accounts_db_config = Some(ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS);
-        }
-
-        let account_indexes = &mut validator_config
-            .accounts_db_config
-            .as_mut()
-            .unwrap()
-            .account_indexes;
+        let account_indexes = &mut validator_config.accounts_db_config.account_indexes;
         if account_indexes.is_none() {
             *account_indexes = Some(AccountSecondaryIndexes::default());
         }

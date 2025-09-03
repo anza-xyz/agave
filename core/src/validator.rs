@@ -300,7 +300,7 @@ pub struct ValidatorConfig {
     pub poh_pinned_cpu_core: usize,
     pub poh_hashes_per_batch: u64,
     pub process_ledger_before_services: bool,
-    pub accounts_db_config: Option<AccountsDbConfig>,
+    pub accounts_db_config: AccountsDbConfig,
     pub warp_slot: Option<Slot>,
     pub accounts_db_skip_shrink: bool,
     pub accounts_db_force_initial_clean: bool,
@@ -387,7 +387,7 @@ impl ValidatorConfig {
             validator_exit: Arc::new(RwLock::new(Exit::default())),
             validator_exit_backpressure: HashMap::default(),
             no_wait_for_vote_to_start_leader: true,
-            accounts_db_config: Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            accounts_db_config: ACCOUNTS_DB_CONFIG_FOR_TESTING,
             wait_to_vote_slot: None,
             runtime_config: RuntimeConfig::default(),
             banking_trace_dir_byte_limit: 0,
@@ -2801,11 +2801,7 @@ fn cleanup_accounts_paths(config: &ValidatorConfig) {
     for account_path in &config.account_paths {
         move_and_async_delete_path_contents(account_path);
     }
-    if let Some(shrink_paths) = config
-        .accounts_db_config
-        .as_ref()
-        .and_then(|config| config.shrink_paths.as_ref())
-    {
+    if let Some(shrink_paths) = &config.accounts_db_config.shrink_paths {
         for shrink_path in shrink_paths {
             move_and_async_delete_path_contents(shrink_path);
         }
