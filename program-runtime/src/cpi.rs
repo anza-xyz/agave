@@ -92,10 +92,10 @@ pub struct SolSignerSeedsC {
 }
 
 /// Maximum number of account info structs that can be used in a single CPI invocation
-pub const MAX_CPI_ACCOUNT_INFOS: usize = 128;
+const MAX_CPI_ACCOUNT_INFOS: usize = 128;
 
 /// Check that an account info pointer field points to the expected address
-pub fn check_account_info_pointer(
+fn check_account_info_pointer(
     invoke_context: &InvokeContext,
     vm_addr: u64,
     expected_vm_addr: u64,
