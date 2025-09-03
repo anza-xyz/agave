@@ -9,7 +9,7 @@ source ci/rust-version.sh nightly
 _ cargo "+${rust_nightly}" miri test -p solana-unified-scheduler-logic
 
 # test big endian branch
-_ cargo "+${rust_nightly}" miri test --target s390x-unknown-linux-gnu --no-default-features --features miri -p solana-vote -- "vote_state_view" --skip "arbitrary"
+_ cargo "+${rust_nightly}" miri test --target s390x-unknown-linux-gnu -p solana-vote -- "vote_state_view" --skip "arbitrary"
 # test little endian branch for UB
 _ cargo "+${rust_nightly}" miri test -p solana-vote -- "vote_state_view" --skip "arbitrary"
 

@@ -1,7 +1,7 @@
 use {
     crate::stakes::SerdeStakesToStakeFormat,
     serde::{Deserialize, Serialize},
-    solana_bls_signatures::Pubkey as BLSPubkey,
+    solana_bls_signatures::{Pubkey as BLSPubkey, PubkeyCompressed as BLSPubkeyCompressed},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccountsHashMap,
@@ -31,7 +31,13 @@ impl BLSPubkeyToRankMap {
             .filter_map(|(pubkey, (stake, account))| {
                 if *stake > 0 {
                     account
-                        .bls_pubkey()
+                        .vote_state_view()
+                        .bls_pubkey_compressed()
+                        .and_then(|bls_pubkey_compressed_bytes| {
+                            let bls_pubkey_compressed =
+                                BLSPubkeyCompressed(bls_pubkey_compressed_bytes);
+                            BLSPubkey::try_from(bls_pubkey_compressed).ok()
+                        })
                         .map(|bls_pubkey| (*pubkey, bls_pubkey, *stake))
                 } else {
                     None
