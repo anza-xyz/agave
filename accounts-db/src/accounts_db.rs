@@ -6740,6 +6740,19 @@ impl AccountsDb {
                     lt_hash: LtHash::identity(),
                 }
             }
+            fn accumulate(&mut self, other: Self) {
+                self.insert_us += other.insert_us;
+                self.num_accounts += other.num_accounts;
+                self.accounts_data_len += other.accounts_data_len;
+                self.zero_lamport_pubkeys.extend(other.zero_lamport_pubkeys);
+                self.all_accounts_are_zero_lamports_slots +=
+                    other.all_accounts_are_zero_lamports_slots;
+                self.all_zeros_slots.extend(other.all_zeros_slots);
+                self.num_did_not_exist += other.num_did_not_exist;
+                self.num_existed_in_mem += other.num_existed_in_mem;
+                self.num_existed_on_disk += other.num_existed_on_disk;
+                self.lt_hash.mix_in(&other.lt_hash);
+            }
         }
 
         let mut total_accum = IndexGenerationAccumulator::new();
@@ -6820,21 +6833,7 @@ impl AccountsDb {
                     exit_logger.store(true, Ordering::Relaxed);
                     panic!("index generation failed");
                 };
-                total_accum.insert_us += thread_accum.insert_us;
-                total_accum.num_accounts += thread_accum.num_accounts;
-                total_accum.accounts_data_len += thread_accum.accounts_data_len;
-                total_accum
-                    .zero_lamport_pubkeys
-                    .extend(thread_accum.zero_lamport_pubkeys);
-                total_accum.all_accounts_are_zero_lamports_slots +=
-                    thread_accum.all_accounts_are_zero_lamports_slots;
-                total_accum
-                    .all_zeros_slots
-                    .extend(thread_accum.all_zeros_slots);
-                total_accum.num_did_not_exist += thread_accum.num_did_not_exist;
-                total_accum.num_existed_in_mem += thread_accum.num_existed_in_mem;
-                total_accum.num_existed_on_disk += thread_accum.num_existed_on_disk;
-                total_accum.lt_hash.mix_in(&thread_accum.lt_hash);
+                total_accum.accumulate(thread_accum);
             }
             // Make sure to join the logger thread *after* the main threads.
             // This way, if a main thread errors, we won't spin indefinitely
