@@ -3,6 +3,7 @@ use {
     solana_instruction::Instruction,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_program_runtime::{
+        cpi::{SolAccountInfo, SolAccountMeta, SolInstruction, SolSignerSeedC, SolSignerSeedsC},
         invoke_context::SerializedAccountMetadata,
         memory::{
             translate_slice, translate_slice_mut_for_cpi, translate_type,
@@ -491,57 +492,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
             Ok(vec![])
         }
     }
-}
-
-/// Rust representation of C's SolInstruction
-#[derive(Debug)]
-#[repr(C)]
-struct SolInstruction {
-    program_id_addr: u64,
-    accounts_addr: u64,
-    accounts_len: u64,
-    data_addr: u64,
-    data_len: u64,
-}
-
-/// Rust representation of C's SolAccountMeta
-#[derive(Debug)]
-#[repr(C)]
-struct SolAccountMeta {
-    pubkey_addr: u64,
-    is_writable: bool,
-    is_signer: bool,
-}
-
-/// Rust representation of C's SolAccountInfo
-#[derive(Debug)]
-#[repr(C)]
-struct SolAccountInfo {
-    key_addr: u64,
-    lamports_addr: u64,
-    data_len: u64,
-    data_addr: u64,
-    owner_addr: u64,
-    rent_epoch: u64,
-    is_signer: bool,
-    is_writable: bool,
-    executable: bool,
-}
-
-/// Rust representation of C's SolSignerSeed
-#[derive(Debug)]
-#[repr(C)]
-struct SolSignerSeedC {
-    addr: u64,
-    len: u64,
-}
-
-/// Rust representation of C's SolSignerSeeds
-#[derive(Debug)]
-#[repr(C)]
-struct SolSignerSeedsC {
-    addr: u64,
-    len: u64,
 }
 
 declare_builtin_function!(

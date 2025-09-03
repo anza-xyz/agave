@@ -34,3 +34,54 @@ pub enum CpiError {
     #[error("Program {0} not supported by inner instructions")]
     ProgramNotSupported(Pubkey),
 }
+
+/// Rust representation of C's SolInstruction
+#[derive(Debug)]
+#[repr(C)]
+pub struct SolInstruction {
+    pub program_id_addr: u64,
+    pub accounts_addr: u64,
+    pub accounts_len: u64,
+    pub data_addr: u64,
+    pub data_len: u64,
+}
+
+/// Rust representation of C's SolAccountMeta
+#[derive(Debug)]
+#[repr(C)]
+pub struct SolAccountMeta {
+    pub pubkey_addr: u64,
+    pub is_writable: bool,
+    pub is_signer: bool,
+}
+
+/// Rust representation of C's SolAccountInfo
+#[derive(Debug)]
+#[repr(C)]
+pub struct SolAccountInfo {
+    pub key_addr: u64,
+    pub lamports_addr: u64,
+    pub data_len: u64,
+    pub data_addr: u64,
+    pub owner_addr: u64,
+    pub rent_epoch: u64,
+    pub is_signer: bool,
+    pub is_writable: bool,
+    pub executable: bool,
+}
+
+/// Rust representation of C's SolSignerSeed
+#[derive(Debug)]
+#[repr(C)]
+pub struct SolSignerSeedC {
+    pub addr: u64,
+    pub len: u64,
+}
+
+/// Rust representation of C's SolSignerSeeds
+#[derive(Debug)]
+#[repr(C)]
+pub struct SolSignerSeedsC {
+    pub addr: u64,
+    pub len: u64,
+}
