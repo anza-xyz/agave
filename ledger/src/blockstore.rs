@@ -7061,7 +7061,7 @@ pub mod tests {
                 &keypair,
                 &entries,
                 true,
-                None, //chained_merkle_root
+                Some(Hash::default()), // merkle_root
                 0,
                 0,
                 &rsc,
@@ -7089,9 +7089,9 @@ pub mod tests {
                 &keypair,
                 &[],
                 true,
-                None, //chained_merkle_root
-                6,    // next_shred_index,
-                6,    // next_code_index
+                Some(Hash::default()), // merkle_root
+                6,                     // next_shred_index,
+                6,                     // next_code_index
                 &rsc,
                 &mut ProcessShredsStats::default(),
             )
@@ -7152,9 +7152,9 @@ pub mod tests {
                 &Keypair::new(),
                 &entries,
                 true,
-                None,     //chained_merkle_root
-                last_idx, // next_shred_index,
-                last_idx, // next_code_index
+                Some(Hash::default()), // merkle_root
+                last_idx,              // next_shred_index,
+                last_idx,              // next_code_index
                 &rsc,
                 &mut ProcessShredsStats::default(),
             )
