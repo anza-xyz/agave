@@ -29,11 +29,8 @@ use {
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
-        memory::{
-            translate_slice, translate_slice_mut, translate_type, translate_type_mut,
-            MemoryTranslationError,
-        },
-        stable_log, translate_inner,
+        memory::MemoryTranslationError,
+        stable_log, translate_inner, translate_slice_inner, translate_type_inner,
     },
     solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES},
     solana_sbpf::{
@@ -57,6 +54,7 @@ use {
         alloc::Layout,
         marker::PhantomData,
         mem::{align_of, size_of},
+        slice::from_raw_parts_mut,
         str::{from_utf8, Utf8Error},
     },
     thiserror::Error as ThisError,
@@ -554,6 +552,31 @@ pub fn create_program_runtime_environment_v2<'a>(
     BuiltinProgram::new_loader(config)
 }
 
+fn translate_type<'a, T>(
+    memory_mapping: &'a MemoryMapping,
+    vm_addr: u64,
+    check_aligned: bool,
+) -> Result<&'a T, Error> {
+    translate_type_inner!(memory_mapping, AccessType::Load, vm_addr, T, check_aligned)
+        .map(|value| &*value)
+}
+fn translate_slice<'a, T>(
+    memory_mapping: &'a MemoryMapping,
+    vm_addr: u64,
+    len: u64,
+    check_aligned: bool,
+) -> Result<&'a [T], Error> {
+    translate_slice_inner!(
+        memory_mapping,
+        AccessType::Load,
+        vm_addr,
+        len,
+        T,
+        check_aligned,
+    )
+    .map(|value| &*value)
+}
+
 /// Take a virtual pointer to a string (points to SBF VM memory space), translate it
 /// pass it to a user-defined work function
 fn translate_string_and_do(
@@ -568,6 +591,31 @@ fn translate_string_and_do(
         Ok(message) => work(message),
         Err(err) => Err(SyscallError::InvalidString(err, buf.to_vec()).into()),
     }
+}
+
+// Do not use this directly
+fn translate_type_mut<'a, T>(
+    memory_mapping: &'a MemoryMapping,
+    vm_addr: u64,
+    check_aligned: bool,
+) -> Result<&'a mut T, Error> {
+    translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
+}
+// Do not use this directly
+fn translate_slice_mut<'a, T>(
+    memory_mapping: &'a MemoryMapping,
+    vm_addr: u64,
+    len: u64,
+    check_aligned: bool,
+) -> Result<&'a mut [T], Error> {
+    translate_slice_inner!(
+        memory_mapping,
+        AccessType::Store,
+        vm_addr,
+        len,
+        T,
+        check_aligned,
+    )
 }
 
 fn touch_type_mut<T>(memory_mapping: &mut MemoryMapping, vm_addr: u64) -> Result<(), Error> {
