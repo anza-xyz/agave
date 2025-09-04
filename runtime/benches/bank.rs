@@ -149,7 +149,7 @@ fn do_bench_transactions(
     info!("  {:?} ns/iter median", summary.median as u64);
     assert!(0f64 != summary.median);
     let tps = transactions.len() as u64 * (ns_per_s / summary.median as u64);
-    info!("  {:?} TPS", tps);
+    info!("  {tps:?} TPS");
 }
 
 #[bench]

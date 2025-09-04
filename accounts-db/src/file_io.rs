@@ -147,9 +147,11 @@ pub fn file_creator<'a>(
     if agave_io_uring::io_uring_supported() {
         use crate::io_uring::file_creator::{IoUringFileCreator, DEFAULT_WRITE_SIZE};
 
-        let buf_size = buf_size.max(DEFAULT_WRITE_SIZE);
-        let io_uring_creator = IoUringFileCreator::with_buffer_capacity(buf_size, file_complete)?;
-        return Ok(Box::new(io_uring_creator));
+        if buf_size >= DEFAULT_WRITE_SIZE {
+            let io_uring_creator =
+                IoUringFileCreator::with_buffer_capacity(buf_size, file_complete)?;
+            return Ok(Box::new(io_uring_creator));
+        }
     }
     Ok(Box::new(SyncIoFileCreator::new(buf_size, file_complete)))
 }
@@ -204,6 +206,20 @@ impl FileCreator for SyncIoFileCreator<'_> {
     }
 
     fn drain(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+pub fn validate_memlock_limit_for_disk_io(required_size: usize) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        // memory locked requirement is only necessary on linux where io_uring is used
+        use crate::io_uring::memory::adjust_ulimit_memlock;
+        adjust_ulimit_memlock(required_size)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = required_size;
         Ok(())
     }
 }

@@ -173,7 +173,16 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
     append_vec.accounts.write_accounts(&storable_accounts, 0);
 
     assert!(!db.accounts_index.contains(&pubkey));
-    db.generate_index(None, false);
+    let storage_info = StorageSizeAndCountMap::default();
+    let storage = db.get_storage_for_slot(slot0).unwrap();
+    let mut reader = append_vec::new_scan_accounts_reader();
+    db.generate_index_for_slot(
+        &mut reader,
+        &storage,
+        storage.slot(),
+        storage.id(),
+        &storage_info,
+    );
 }
 
 define_accounts_db_test!(
@@ -1070,17 +1079,32 @@ fn test_clean_dead_slot_with_obsolete_accounts() {
 
     // Obsolete accounts are already unreffed so they should not be unreffed again
 
-    let accounts = AccountsDb::new_single_for_tests();
+    let accounts = AccountsDb::new_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        },
+        None,
+        Arc::default(),
+    );
+
     let pubkey = solana_pubkey::new_rand();
+    let pubkey2 = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
+    let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+    accounts.set_latest_full_snapshot_slot(2);
 
-    // Store account 1 in slot 0
-    accounts.store_for_tests((0, [(&pubkey, &account)].as_slice()));
+    // Store pubkey1 and pubkey2 in slot 0
+    accounts.store_for_tests((0, [(&pubkey, &account), (&pubkey2, &account)].as_slice()));
 
-    // Update account 1 as in slot 1
-    accounts.store_for_tests((1, [(&pubkey, &account)].as_slice()));
+    // Update pubkey1 and make pubkey2 a zero lamport account in slot 1
+    accounts.store_for_tests((
+        1,
+        [(&pubkey, &account), (&pubkey2, &zero_lamport_account)].as_slice(),
+    ));
 
-    // Update account 1 as in slot 2
+    // Update pubkey1 as in slot 2
     accounts.store_for_tests((2, [(&pubkey, &account)].as_slice()));
 
     // Flush the slots individually to avoid reclaims
@@ -1088,30 +1112,24 @@ fn test_clean_dead_slot_with_obsolete_accounts() {
     accounts.add_root_and_flush_write_cache(1);
     accounts.add_root_and_flush_write_cache(2);
 
-    // Pubkey1 should be in 3 slots, 0 and 1 and 2
-    accounts.assert_ref_count(&pubkey, 3);
+    // Slot 1 should not be removed as it has the zero lamport account
+    assert!(accounts.storage.get_slot_storage_entry(1).is_some());
+    let slot = accounts.storage.get_slot_storage_entry(1).unwrap();
 
-    // Mark pubkey in slot 1 as obsolete, simulating obsolete accounts being enabled
-    let old_storage = accounts
-        .storage
-        .get_slot_storage_entry_shrinking_in_progress_ok(1)
-        .unwrap();
-    old_storage.mark_accounts_obsolete(vec![(0, 1)].into_iter(), 2);
+    // Ensure that slot1 also still contains the obsolete account
+    assert_eq!(slot.get_obsolete_accounts(None).len(), 1);
 
-    // Unreference pubkey, which would occur during the normal mark_accounts_obsolete flow
-    accounts.unref_pubkeys([pubkey].iter(), 1, &HashSet::new());
+    // Ref count for pubkey1 should be 1 as obsolete accounts are enabled
+    accounts.assert_ref_count(&pubkey, 1);
 
-    // Pubkey1 should now have two references: Slot0 and Slot2.
-    accounts.assert_ref_count(&pubkey, 2);
-
-    // Clean, remove slot0/1.
+    // Clean, which will remove slot1
     accounts.clean_accounts_for_tests();
+
     assert!(accounts.storage.get_slot_storage_entry(0).is_none());
     assert!(accounts.storage.get_slot_storage_entry(1).is_none());
 
-    // Ref count for pubkey should be 1. It was decremented for slot1 and above, and decremented
-    // for slot0 during clean_accounts_for_tests
-    // It was NOT decremented for slot1 during clean_accounts_for_test as it was marked obsolete
+    // Ref count for pubkey should be 1. It was NOT decremented during clean_accounts_for_tests
+    // despite slot 1 being removed, because the account was already obsolete
     accounts.assert_ref_count(&pubkey, 1);
 }
 
@@ -5418,10 +5436,10 @@ fn test_sweep_get_oldest_non_ancient_slot_max() {
     ] {
         let db = AccountsDb::new_with_config(
             Vec::new(),
-            Some(AccountsDbConfig {
+            AccountsDbConfig {
                 ancient_append_vec_offset: Some(ancient_append_vec_offset as i64),
                 ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            }),
+            },
             None,
             Arc::default(),
         );
@@ -5449,10 +5467,10 @@ fn test_sweep_get_oldest_non_ancient_slot() {
     let ancient_append_vec_offset = 50_000;
     let db = AccountsDb::new_with_config(
         Vec::new(),
-        Some(AccountsDbConfig {
+        AccountsDbConfig {
             ancient_append_vec_offset: Some(ancient_append_vec_offset),
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        }),
+        },
         None,
         Arc::default(),
     );
@@ -5501,10 +5519,10 @@ fn test_sweep_get_oldest_non_ancient_slot2() {
         for starting_slot_offset in [0, avoid_saturation] {
             let db = AccountsDb::new_with_config(
                 Vec::new(),
-                Some(AccountsDbConfig {
+                AccountsDbConfig {
                     ancient_append_vec_offset: Some(ancient_append_vec_offset),
                     ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-                }),
+                },
                 None,
                 Arc::default(),
             );

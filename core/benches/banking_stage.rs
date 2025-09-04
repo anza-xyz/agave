@@ -177,7 +177,7 @@ fn bench_banking(
         .unwrap()
         .set_limits(u64::MAX, u64::MAX, u64::MAX);
 
-    debug!("threads: {} txs: {}", num_threads, txes);
+    debug!("threads: {num_threads} txs: {txes}");
 
     let transactions = match tx_type {
         TransactionType::Accounts | TransactionType::AccountsAndVotes => {

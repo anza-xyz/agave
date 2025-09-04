@@ -203,7 +203,6 @@ impl FixedIoBuffer {
         buffer: &mut [u8],
         ring: &Ring<S, E>,
     ) -> io::Result<()> {
-        adjust_ulimit_memlock(buffer.len())?;
         let iovecs = buffer
             .chunks(FIXED_BUFFER_LEN)
             .map(|buf| libc::iovec {
@@ -221,11 +220,10 @@ impl AsRef<[u8]> for FixedIoBuffer {
     }
 }
 
+/// Check kernel memory lock limit and increase it if necessary.
+///
+/// Returns `Err` when current limit is below `min_required` and cannot be increased.
 pub fn adjust_ulimit_memlock(min_required: usize) -> io::Result<()> {
-    // This value reflects recommended memory lock limit documented in the validator's
-    // setup instructions at docs/src/operations/guides/validator-start.md
-    const DESIRED_MEMLOCK: u64 = 2_000_000_000;
-
     fn get_memlock() -> libc::rlimit {
         let mut memlock = libc::rlimit {
             rlim_cur: 0,
@@ -240,18 +238,17 @@ pub fn adjust_ulimit_memlock(min_required: usize) -> io::Result<()> {
     let mut memlock = get_memlock();
     let current = memlock.rlim_cur as usize;
     if current < min_required {
-        memlock.rlim_cur = DESIRED_MEMLOCK;
-        memlock.rlim_max = DESIRED_MEMLOCK;
+        memlock.rlim_cur = min_required as u64;
+        memlock.rlim_max = min_required as u64;
         if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &memlock) } != 0 {
             log::error!(
-                "Unable to increase the maximum memory lock limit to {} from {current}",
-                memlock.rlim_cur
+                "Unable to increase the maximum memory lock limit to {min_required} from {current}"
             );
 
             if cfg!(target_os = "macos") {
                 log::error!(
                     "On mac OS you may need to run |sudo launchctl limit memlock \
-                     {DESIRED_MEMLOCK} {DESIRED_MEMLOCK}| first"
+                     {min_required} {min_required}| first"
                 );
             }
             return Err(io::Error::new(

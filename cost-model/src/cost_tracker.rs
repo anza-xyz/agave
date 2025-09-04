@@ -239,6 +239,7 @@ impl CostTracker {
         }
 
         let (costliest_account, costliest_account_cost) = self.find_costliest_account();
+        let number_of_contended_accounts = self.find_number_of_contended_accounts();
 
         datapoint_info!(
             "cost_tracker_stats",
@@ -282,6 +283,7 @@ impl CostTracker {
             ),
             ("total_transaction_fee", total_transaction_fee, i64),
             ("total_priority_fee", total_priority_fee, i64),
+            ("number_of_contended_accounts", number_of_contended_accounts, i64),
         );
     }
 
@@ -291,6 +293,19 @@ impl CostTracker {
             .max_by_key(|(_, &cost)| cost)
             .map(|(&pubkey, &cost)| (pubkey, cost))
             .unwrap_or_default()
+    }
+
+    fn find_number_of_contended_accounts(&self) -> usize {
+        // accounts has more than 95% of account_cu_limit is considered as highly contended
+        let contended_cost_mark: u64 = self
+            .account_cost_limit
+            .saturating_mul(95)
+            .saturating_div(100);
+
+        self.cost_by_writable_accounts
+            .values()
+            .filter(|&&cost| cost >= contended_cost_mark)
+            .count()
     }
 
     fn would_fit(

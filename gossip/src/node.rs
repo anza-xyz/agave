@@ -29,13 +29,22 @@ use {
     },
 };
 
+// Socket addresses for each protocol across all interfaces
+#[derive(Debug, Clone)]
+pub struct MultihomingAddresses {
+    pub tvu: Box<[SocketAddr]>,
+    pub tpu_vote: Box<[SocketAddr]>,
+    pub tpu_quic: Box<[SocketAddr]>,
+    pub tpu_forwards_quic: Box<[SocketAddr]>,
+    pub tpu_vote_quic: Box<[SocketAddr]>,
+}
+
 #[derive(Debug)]
 pub struct Node {
     pub info: ContactInfo,
     pub sockets: Sockets,
     pub bind_ip_addrs: Arc<BindIpAddrs>,
-    // Store TVU addresses for each interface
-    pub tvu_addresses: Vec<SocketAddr>,
+    pub addresses: MultihomingAddresses,
 }
 
 impl Node {
@@ -117,10 +126,7 @@ impl Node {
             )
             .expect("Secondary bind TVU"),
         );
-        let tvu_addresses: Vec<SocketAddr> = bind_ip_addrs
-            .iter()
-            .map(|&ip| SocketAddr::new(ip, tvu_port))
-            .collect();
+        let tvu_addresses = Self::get_socket_addrs(&bind_ip_addrs, tvu_port);
 
         let (tvu_quic_port, tvu_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
@@ -146,6 +152,7 @@ impl Node {
             &mut Self::bind_to_extra_ip(&bind_ip_addrs, tpu_port_quic, 32, socket_config)
                 .expect("Secondary bind TPU QUIC"),
         );
+        let tpu_quic_addresses = Self::get_socket_addrs(&bind_ip_addrs, tpu_port_quic);
 
         let ((tpu_forwards_port, tpu_forwards_socket), (tpu_forwards_quic_port, tpu_forwards_quic)) =
             bind_two_in_range_with_offset_and_config(
@@ -171,6 +178,7 @@ impl Node {
             )
             .expect("Secondary bind TPU forwards"),
         );
+        let tpu_forwards_quic_addresses = Self::get_socket_addrs(&bind_ip_addrs, tpu_forwards_port);
 
         let (tpu_vote_port, mut tpu_vote_sockets) =
             multi_bind_in_range_with_config(bind_ip_addr, port_range, socket_config, 1)
@@ -180,6 +188,7 @@ impl Node {
             Self::bind_to_extra_ip(&bind_ip_addrs, tpu_vote_port, 1, socket_config)
                 .expect("Secondary binds for tpu vote"),
         );
+        let tpu_vote_addresses = Self::get_socket_addrs(&bind_ip_addrs, tpu_vote_port);
 
         let (tpu_vote_quic_port, tpu_vote_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
@@ -196,6 +205,7 @@ impl Node {
             )
             .expect("Secondary bind TPU vote"),
         );
+        let tpu_vote_quic_addresses = Self::get_socket_addrs(&bind_ip_addrs, tpu_vote_quic_port);
 
         let (tvu_retransmit_port, mut retransmit_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
@@ -350,8 +360,22 @@ impl Node {
             info,
             sockets,
             bind_ip_addrs,
-            tvu_addresses,
+            addresses: MultihomingAddresses {
+                tvu: tvu_addresses,
+                tpu_vote: tpu_vote_addresses,
+                tpu_quic: tpu_quic_addresses,
+                tpu_forwards_quic: tpu_forwards_quic_addresses,
+                tpu_vote_quic: tpu_vote_quic_addresses,
+            },
         }
+    }
+
+    fn get_socket_addrs(bind_ip_addrs: &BindIpAddrs, port: u16) -> Box<[SocketAddr]> {
+        bind_ip_addrs
+            .iter()
+            .map(|&ip| SocketAddr::new(ip, port))
+            .collect::<Vec<_>>()
+            .into()
     }
 
     /// Binds num sockets to each of the addresses in bind_ip_addrs except primary_ip_addr
@@ -378,23 +402,22 @@ impl Node {
 #[cfg(feature = "agave-unstable-api")]
 mod multihoming {
     use {
-        crate::{cluster_info::ClusterInfo, node::Node},
+        crate::{
+            cluster_info::ClusterInfo,
+            contact_info::Protocol::{QUIC, UDP},
+            node::{MultihomingAddresses, Node},
+        },
         solana_net_utils::multihomed_sockets::BindIpAddrs,
         std::{
-            net::{IpAddr, SocketAddr, UdpSocket},
+            net::{IpAddr, UdpSocket},
             sync::Arc,
         },
     };
 
     #[derive(Debug, Clone)]
-    pub struct SocketsMultihomed {
-        pub gossip: Arc<[UdpSocket]>,
-        pub tvu_ingress: Vec<SocketAddr>,
-    }
-
-    #[derive(Debug, Clone)]
     pub struct NodeMultihoming {
-        pub sockets: SocketsMultihomed,
+        pub gossip_socket: Arc<[UdpSocket]>,
+        pub addresses: MultihomingAddresses,
         pub bind_ip_addrs: Arc<BindIpAddrs>,
     }
 
@@ -420,7 +443,7 @@ mod multihoming {
                 })?;
 
             // update gossip socket
-            let gossip_addr = self.sockets.gossip[interface_index]
+            let gossip_addr = self.gossip_socket[interface_index]
                 .local_addr()
                 .map_err(|e| e.to_string())?;
             // Set the new gossip address in contact-info
@@ -429,9 +452,33 @@ mod multihoming {
                 .map_err(|e| e.to_string())?;
 
             // update tvu ingress advertised socket
-            let tvu_ingress_address = self.sockets.tvu_ingress[interface_index];
+            let tvu_ingress_address = self.addresses.tvu[interface_index];
             cluster_info
                 .set_tvu_socket(tvu_ingress_address)
+                .map_err(|e| e.to_string())?;
+
+            // tpu_quic
+            let tpu_quic_address = self.addresses.tpu_quic[interface_index];
+            cluster_info
+                .set_tpu(tpu_quic_address)
+                .map_err(|e| e.to_string())?;
+
+            // tpu_forwards_quic
+            let tpu_forwards_quic_address = self.addresses.tpu_forwards_quic[interface_index];
+            cluster_info
+                .set_tpu_forwards(tpu_forwards_quic_address)
+                .map_err(|e| e.to_string())?;
+
+            // tpu_vote_quic
+            let tpu_vote_quic_address = self.addresses.tpu_vote_quic[interface_index];
+            cluster_info
+                .set_tpu_vote(QUIC, tpu_vote_quic_address)
+                .map_err(|e| e.to_string())?;
+
+            // tpu_vote (udp)
+            let tpu_vote_address = self.addresses.tpu_vote[interface_index];
+            cluster_info
+                .set_tpu_vote(UDP, tpu_vote_address)
                 .map_err(|e| e.to_string())?;
 
             // Update active index for tvu broadcast, tvu retransmit, and tpu forwarding client
@@ -448,10 +495,8 @@ mod multihoming {
     impl From<&Node> for NodeMultihoming {
         fn from(node: &Node) -> Self {
             NodeMultihoming {
-                sockets: SocketsMultihomed {
-                    gossip: node.sockets.gossip.clone(),
-                    tvu_ingress: node.tvu_addresses.clone(),
-                },
+                gossip_socket: node.sockets.gossip.clone(),
+                addresses: node.addresses.clone(),
                 bind_ip_addrs: node.bind_ip_addrs.clone(),
             }
         }

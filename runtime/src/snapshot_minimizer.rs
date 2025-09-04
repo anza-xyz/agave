@@ -670,7 +670,7 @@ mod tests {
             false,
             false,
             false,
-            Some(accounts_db_config),
+            accounts_db_config,
             None,
             Arc::default(),
         )

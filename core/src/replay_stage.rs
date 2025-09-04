@@ -8818,6 +8818,13 @@ pub(crate) mod tests {
         map1.len() == map2.len() && map1.iter().all(|(k, v)| map2.get(k).unwrap() == v)
     }
 
+    // test-helper to wait for poh service to pick up and handle poh controller messages
+    fn wait_for_poh_service(poh_controller: &PohController) {
+        while poh_controller.has_pending_message() {
+            std::hint::spin_loop();
+        }
+    }
+
     #[test]
     fn test_check_for_vote_only_mode() {
         let in_vote_only_mode = AtomicBool::new(false);
@@ -9282,6 +9289,7 @@ pub(crate) mod tests {
             &mut poh_controller,
             &leader_schedule_cache,
         );
+        wait_for_poh_service(&poh_controller);
 
         // Register just over one slot worth of ticks directly with PoH recorder
         let num_poh_ticks =
@@ -9352,6 +9360,8 @@ pub(crate) mod tests {
             has_new_vote_been_rooted,
         )
         .is_some());
+        wait_for_poh_service(&poh_controller);
+
         // Get the new working bank, which is also the new leader bank/slot
         let working_bank = bank_forks.read().unwrap().working_bank();
         // The new bank's slot must NOT be dummy_slot as the blockstore already

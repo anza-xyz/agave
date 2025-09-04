@@ -1069,11 +1069,11 @@ impl TestValidator {
             }
         }
 
-        let accounts_db_config = Some(AccountsDbConfig {
+        let accounts_db_config = AccountsDbConfig {
             index: Some(AccountsIndexConfig::default()),
             account_indexes: Some(config.rpc_config.account_indexes.clone()),
             ..AccountsDbConfig::default()
-        });
+        };
 
         let runtime_config = RuntimeConfig {
             compute_budget: config

@@ -40,7 +40,7 @@ fn parse_duration(arg: &str) -> Result<std::time::Duration, std::num::ParseFloat
 const LAMPORTS_PER_SOL: u64 = 1000000000;
 
 pub fn load_staked_nodes_overrides(path: &String) -> anyhow::Result<HashMap<Pubkey, u64>> {
-    debug!("Loading staked nodes overrides configuration from {}", path);
+    debug!("Loading staked nodes overrides configuration from {path}");
     if Path::new(&path).exists() {
         let file = std::fs::File::open(path)?;
         let reader = BufReader::new(file);

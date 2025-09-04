@@ -8,7 +8,6 @@ use {
             SnapshotRootPaths, UnpackedSnapshotsDirAndVersion,
         },
     },
-    solana_accounts_db::accounts_file::StorageAccess,
     tempfile::TempDir,
 };
 use {
@@ -59,7 +58,7 @@ use {
 pub fn bank_fields_from_snapshot_archives(
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
-    storage_access: StorageAccess,
+    accounts_db_config: &AccountsDbConfig,
 ) -> snapshot_utils::Result<BankFieldsToDeserialize> {
     let full_snapshot_archive_info =
         get_highest_full_snapshot_archive_info(&full_snapshot_archives_dir).ok_or_else(|| {
@@ -88,7 +87,7 @@ pub fn bank_fields_from_snapshot_archives(
         &full_snapshot_archive_info,
         incremental_snapshot_archive_info.as_ref(),
         &account_paths,
-        storage_access,
+        accounts_db_config,
     )?;
 
     bank_fields_from_snapshots(
@@ -138,7 +137,7 @@ pub fn bank_from_snapshot_archives(
     accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> snapshot_utils::Result<Bank> {
@@ -173,10 +172,7 @@ pub fn bank_from_snapshot_archives(
         full_snapshot_archive_info,
         incremental_snapshot_archive_info,
         account_paths,
-        accounts_db_config
-            .as_ref()
-            .map(|config| config.storage_access)
-            .unwrap_or_default(),
+        &accounts_db_config,
     )?;
 
     if let Some(incremental_storage) = incremental_storage {
@@ -284,7 +280,7 @@ pub fn bank_from_latest_snapshot_archives(
     accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> snapshot_utils::Result<(
@@ -336,7 +332,7 @@ pub fn bank_from_snapshot_dir(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> snapshot_utils::Result<Bank> {
@@ -352,17 +348,13 @@ pub fn bank_from_snapshot_dir(
     }
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
-    let storage_access = accounts_db_config
-        .as_ref()
-        .map(|config| config.storage_access)
-        .unwrap_or_default();
 
     let ((storage, bank_fields, accounts_db_fields), measure_rebuild_storages) = measure_time!(
         rebuild_storages_from_snapshot_dir(
             bank_snapshot,
             account_paths,
             next_append_vec_id.clone(),
-            storage_access,
+            accounts_db_config.storage_access,
         )?,
         "rebuild storages from snapshot dir"
     );
@@ -438,7 +430,7 @@ pub fn bank_from_latest_snapshot_dir(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
+    accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> snapshot_utils::Result<Bank> {
@@ -832,7 +824,10 @@ mod tests {
             },
             status_cache::Status,
         },
-        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        solana_accounts_db::{
+            accounts_db::{MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+            accounts_file::StorageAccess,
+        },
         solana_genesis_config::create_genesis_config,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -939,7 +934,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -958,7 +953,17 @@ mod tests {
 
         // Create a few accounts
         let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-        let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        let bank_test_config = BankTestConfig {
+            accounts_db_config: AccountsDbConfig {
+                mark_obsolete_accounts: MarkObsoleteAccounts::Enabled,
+                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+            },
+        };
+
+        let bank = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
+
+        let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank);
         bank0
             .transfer(LAMPORTS_PER_SOL, &mint_keypair, &key1.pubkey())
             .unwrap();
@@ -974,29 +979,6 @@ mod tests {
         bank0.squash();
         bank0.force_flush_accounts_cache();
 
-        // Find the account storage entry for slot 0
-        let target_slot = 0;
-        let account_storage_entry = bank0
-            .accounts()
-            .accounts_db
-            .storage
-            .get_slot_storage_entry(target_slot)
-            .unwrap();
-
-        // Find all the accounts in slot 0
-        let accounts = bank0
-            .accounts()
-            .accounts_db
-            .get_unique_accounts_from_storage(&account_storage_entry);
-
-        // Find the offset of pubkey `key1` in the accounts db slot0 and save the offset.
-        let offset = accounts
-            .stored_accounts
-            .iter()
-            .find(|account| key1.pubkey() == *account.pubkey())
-            .map(|account| account.index_info.offset())
-            .expect("Pubkey1 is present in Slot0");
-
         // Create a new slot, and invalidate the account for key1 in slot0
         let slot = 1;
         let bank1 =
@@ -1006,9 +988,6 @@ mod tests {
             .unwrap();
 
         bank1.fill_bank_with_ticks_for_tests();
-
-        // Mark the entry for pubkey1 as obsolete in slot0
-        account_storage_entry.mark_accounts_obsolete(vec![(offset, 0)].into_iter(), slot);
 
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
@@ -1037,7 +1016,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1136,7 +1115,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1253,7 +1232,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1360,7 +1339,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1488,7 +1467,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1545,7 +1524,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1613,7 +1592,10 @@ mod tests {
         let bank_fields = bank_fields_from_snapshot_archives(
             &all_snapshots_dir,
             &all_snapshots_dir,
-            storage_access,
+            &AccountsDbConfig {
+                storage_access,
+                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+            },
         )
         .unwrap();
         assert_eq!(bank_fields.slot, bank2.slot());
@@ -1918,7 +1900,7 @@ mod tests {
             false,
             false,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -1952,10 +1934,10 @@ mod tests {
             None,
             None,
             false,
-            Some(AccountsDbConfig {
+            AccountsDbConfig {
                 storage_access,
                 ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-            }),
+            },
             None,
             Arc::default(),
         )
@@ -1993,7 +1975,7 @@ mod tests {
             None,
             None,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )

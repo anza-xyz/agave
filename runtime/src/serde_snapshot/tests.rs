@@ -70,7 +70,7 @@ mod serde_snapshot_tests {
             storage_and_next_append_vec_id,
             None,
             false,
-            Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -300,10 +300,10 @@ mod serde_snapshot_tests {
             solana_logger::setup();
             let accounts = AccountsDb::new_with_config(
                 Vec::new(),
-                Some(AccountsDbConfig {
+                AccountsDbConfig {
                     mark_obsolete_accounts,
                     ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-                }),
+                },
                 None,
                 Arc::default(),
             );

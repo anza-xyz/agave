@@ -53,7 +53,7 @@ fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
             p.meta_mut().addr = ips[ip_index];
         }
     }
-    info!("total packets: {}", total);
+    info!("total packets: {total}");
 
     bencher.iter(move || {
         SigVerifyStage::discard_excess_packets(&mut batches, 10_000);
@@ -175,7 +175,7 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
         }
         let mut received = 0;
         let expected = if use_same_tx { 1 } else { sent_len };
-        trace!("sent: {}, expected: {}", sent_len, expected);
+        trace!("sent: {sent_len}, expected: {expected}");
         loop {
             if let Ok(verifieds) = verified_r.recv_timeout(Duration::from_millis(10)) {
                 received += verifieds.iter().map(|batch| batch.len()).sum::<usize>();
@@ -185,7 +185,7 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
                 }
             }
         }
-        trace!("received: {}", received);
+        trace!("received: {received}");
     });
     // This will wait for all packets to make it through sigverify.
     stage.join().unwrap();

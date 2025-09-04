@@ -139,7 +139,7 @@ fn restore_from_snapshot(
         false,
         false,
         false,
-        Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+        ACCOUNTS_DB_CONFIG_FOR_TESTING,
         None,
         Arc::default(),
     )
@@ -542,7 +542,7 @@ fn restore_from_snapshots_and_check_banks_are_equal(
         false,
         false,
         false,
-        Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+        ACCOUNTS_DB_CONFIG_FOR_TESTING,
         None,
         Arc::default(),
     )?;
@@ -735,7 +735,7 @@ fn test_snapshots_with_background_services() {
         false,
         false,
         false,
-        Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+        ACCOUNTS_DB_CONFIG_FOR_TESTING,
         None,
         exit.clone(),
     )

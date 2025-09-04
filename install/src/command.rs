@@ -319,7 +319,7 @@ fn check_env_path_for_bin_dir(config: &Config) {
 #[cfg(windows)]
 pub fn string_to_winreg_bytes(s: &str) -> Vec<u8> {
     use std::{ffi::OsString, os::windows::ffi::OsStrExt};
-    let v: Vec<_> = OsString::from(format!("{}\x00", s)).encode_wide().collect();
+    let v: Vec<_> = OsString::from(format!("{s}\x00")).encode_wide().collect();
     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len() * 2).to_vec() }
 }
 
@@ -361,7 +361,7 @@ fn get_windows_path_var() -> Result<Option<String>, String> {
     let root = RegKey::predef(HKEY_CURRENT_USER);
     let environment = root
         .open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
-        .map_err(|err| format!("Unable to open HKEY_CURRENT_USER\\Environment: {}", err))?;
+        .map_err(|err| format!("Unable to open HKEY_CURRENT_USER\\Environment: {err}"))?;
 
     let reg_value = environment.get_raw_value("PATH");
     match reg_value {
@@ -395,7 +395,7 @@ fn add_to_path(new_path: &str) -> bool {
     };
 
     let Some(old_path) =
-        get_windows_path_var().unwrap_or_else(|err| panic!("Unable to get PATH: {}", err))
+        get_windows_path_var().unwrap_or_else(|err| panic!("Unable to get PATH: {err}"))
     else {
         return false;
     };
@@ -410,7 +410,7 @@ fn add_to_path(new_path: &str) -> bool {
         let root = RegKey::predef(HKEY_CURRENT_USER);
         let environment = root
             .open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
-            .unwrap_or_else(|err| panic!("Unable to open HKEY_CURRENT_USER\\Environment: {}", err));
+            .unwrap_or_else(|err| panic!("Unable to open HKEY_CURRENT_USER\\Environment: {err}"));
 
         let reg_value = RegValue {
             bytes: string_to_winreg_bytes(&new_path),
@@ -419,9 +419,7 @@ fn add_to_path(new_path: &str) -> bool {
 
         environment
             .set_raw_value("PATH", &reg_value)
-            .unwrap_or_else(|err| {
-                panic!("Unable set HKEY_CURRENT_USER\\Environment\\PATH: {}", err)
-            });
+            .unwrap_or_else(|err| panic!("Unable set HKEY_CURRENT_USER\\Environment\\PATH: {err}"));
 
         // Tell other processes to update their environment
         unsafe {

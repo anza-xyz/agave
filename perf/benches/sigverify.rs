@@ -149,7 +149,7 @@ fn bench_sigverify_uneven(b: &mut Bencher) {
         }
         batches.push(PacketBatch::from(batch));
     }
-    info!("num_packets: {} valid: {}", num_packets, num_valid);
+    info!("num_packets: {num_packets} valid: {num_valid}");
 
     let recycler = Recycler::default();
     let recycler_out = Recycler::default();

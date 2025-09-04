@@ -24,7 +24,7 @@ use {
     solana_accounts_db::{
         account_storage::{AccountStorageMap, AccountStoragesOrderer},
         account_storage_reader::AccountStorageReader,
-        accounts_db::{AccountStorageEntry, AtomicAccountsFileId},
+        accounts_db::{AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId},
         accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
         hardened_unpack::{self, UnpackError},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
@@ -1596,7 +1596,7 @@ pub fn verify_and_unarchive_snapshots(
     full_snapshot_archive_info: &FullSnapshotArchiveInfo,
     incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
     account_paths: &[PathBuf],
-    storage_access: StorageAccess,
+    accounts_db_config: &AccountsDbConfig,
 ) -> Result<(UnarchivedSnapshots, UnarchivedSnapshotsGuard)> {
     check_are_snapshots_compatible(
         full_snapshot_archive_info,
@@ -1619,7 +1619,7 @@ pub fn verify_and_unarchive_snapshots(
         account_paths,
         full_snapshot_archive_info.archive_format(),
         next_append_vec_id.clone(),
-        storage_access,
+        accounts_db_config,
     )?;
 
     let (
@@ -1645,7 +1645,7 @@ pub fn verify_and_unarchive_snapshots(
             account_paths,
             incremental_snapshot_archive_info.archive_format(),
             next_append_vec_id.clone(),
-            storage_access,
+            accounts_db_config,
         )?;
         (
             Some(unpack_dir),
@@ -1690,17 +1690,19 @@ fn streaming_unarchive_snapshot(
     ledger_dir: PathBuf,
     snapshot_archive_path: PathBuf,
     archive_format: ArchiveFormat,
+    memlock_budget_size: usize,
 ) -> JoinHandle<Result<()>> {
     Builder::new()
         .name("solTarUnpack".to_string())
         .spawn(move || {
-            let archive_size = fs::metadata(&snapshot_archive_path)?.len();
-            let buf_size = archive_size.min(MAX_SNAPSHOT_READER_BUF_SIZE);
+            let archive_size = fs::metadata(&snapshot_archive_path)?.len() as usize;
+            let read_write_budget_size = (memlock_budget_size / 2).min(archive_size);
+            let read_buf_size = MAX_SNAPSHOT_READER_BUF_SIZE.min(read_write_budget_size as u64);
             let decompressor =
-                decompressed_tar_reader(archive_format, snapshot_archive_path, buf_size)?;
+                decompressed_tar_reader(archive_format, snapshot_archive_path, read_buf_size)?;
             hardened_unpack::streaming_unpack_snapshot(
                 Archive::new(decompressor),
-                archive_size,
+                read_write_budget_size,
                 ledger_dir.as_path(),
                 &account_paths,
                 &file_sender,
@@ -1876,7 +1878,7 @@ fn unarchive_snapshot(
     account_paths: &[PathBuf],
     archive_format: ArchiveFormat,
     next_append_vec_id: Arc<AtomicAccountsFileId>,
-    storage_access: StorageAccess,
+    accounts_db_config: &AccountsDbConfig,
 ) -> Result<UnarchivedSnapshot> {
     let unpack_dir = tempfile::Builder::new()
         .prefix(unpacked_snapshots_dir_prefix)
@@ -1890,6 +1892,7 @@ fn unarchive_snapshot(
         unpack_dir.path().to_path_buf(),
         snapshot_archive_path.as_ref().to_path_buf(),
         archive_format,
+        accounts_db_config.memlock_budget_size,
     );
 
     let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
@@ -1909,7 +1912,7 @@ fn unarchive_snapshot(
                     num_rebuilder_threads,
                     next_append_vec_id,
                     SnapshotFrom::Archive,
-                    storage_access,
+                    accounts_db_config.storage_access,
                 )?,
                 measure_name
             );

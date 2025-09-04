@@ -55,12 +55,8 @@ fn bench_u16_parsing(c: &mut Criterion) {
 fn decode_shortu16_len_iter(values_serialized_lengths_and_buffers: &[(u16, usize, Vec<u8>)]) {
     for (value, serialized_len, buffer) in values_serialized_lengths_and_buffers.iter() {
         let (read_value, bytes_read) = decode_shortu16_len(black_box(buffer)).unwrap();
-        assert_eq!(read_value, *value as usize, "Value mismatch for: {}", value);
-        assert_eq!(
-            bytes_read, *serialized_len,
-            "Offset mismatch for: {}",
-            value
-        );
+        assert_eq!(read_value, *value as usize, "Value mismatch for: {value}");
+        assert_eq!(bytes_read, *serialized_len, "Offset mismatch for: {value}");
     }
 }
 
@@ -68,8 +64,8 @@ fn read_compressed_u16_iter(values_serialized_lengths_and_buffers: &[(u16, usize
     for (value, serialized_len, buffer) in values_serialized_lengths_and_buffers.iter() {
         let mut offset = 0;
         let read_value = read_compressed_u16(black_box(buffer), &mut offset).unwrap();
-        assert_eq!(read_value, *value, "Value mismatch for: {}", value);
-        assert_eq!(offset, *serialized_len, "Offset mismatch for: {}", value);
+        assert_eq!(read_value, *value, "Value mismatch for: {value}");
+        assert_eq!(offset, *serialized_len, "Offset mismatch for: {value}");
     }
 }
 
@@ -79,8 +75,8 @@ fn optimized_read_compressed_u16_iter(
     for (value, serialized_len, buffer) in values_serialized_lengths_and_buffers.iter() {
         let mut offset = 0;
         let read_value = optimized_read_compressed_u16(black_box(buffer), &mut offset).unwrap();
-        assert_eq!(read_value, *value, "Value mismatch for: {}", value);
-        assert_eq!(offset, *serialized_len, "Offset mismatch for: {}", value);
+        assert_eq!(read_value, *value, "Value mismatch for: {value}");
+        assert_eq!(offset, *serialized_len, "Offset mismatch for: {value}");
     }
 }
 
