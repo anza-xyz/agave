@@ -8,10 +8,7 @@ use {
     solana_hash::Hash,
     solana_measure::measure_us,
     solana_transaction::versioned::VersionedTransaction,
-    std::{
-        num::Saturating,
-        sync::{atomic::AtomicBool, Arc},
-    },
+    std::num::Saturating,
 };
 
 #[derive(Default, Debug)]
@@ -43,15 +40,11 @@ pub struct RecordTransactionsSummary {
 pub struct TransactionRecorder {
     // shared by all users of PohRecorder
     pub record_sender: RecordSender,
-    pub is_exited: Arc<AtomicBool>,
 }
 
 impl TransactionRecorder {
-    pub fn new(record_sender: RecordSender, is_exited: Arc<AtomicBool>) -> Self {
-        Self {
-            record_sender,
-            is_exited,
-        }
+    pub fn new(record_sender: RecordSender) -> Self {
+        Self { record_sender }
     }
 
     /// Hashes `transactions` and sends to PoH service for recording. Waits for response up to 1s.
