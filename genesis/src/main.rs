@@ -1175,27 +1175,29 @@ mod tests {
 
     #[test]
     fn test_genesis_account_struct_compatibility() {
-        let yaml_string_pubkey = "---
-98frSc8R8toHoS3tQ1xWSvHCvGEADRM9hAm5qmUKjSDX:
-  balance: 4
-  owner: Gw6S9CPzR8jHku1QQMdiqcmUKjC2dhJ3gzagWduA6PGw
-  data:
-  executable: true
-88frSc8R8toHoS3tQ1xWSvHCvGEADRM9hAm5qmUKjSDX:
-  balance: 3
-  owner: Gw7S9CPzR8jHku1QQMdiqcmUKjC2dhJ3gzagWduA6PGw
-  data: ~
-  executable: true
-6s36rsNPDfRSvzwek7Ly3mQu9jUMwgqBhjePZMV6Acp4:
-  balance: 2
-  owner: DBC5d45LUHTCrq42ZmCdzc8A8ufwTaiYsL9pZY7KU6TR
-  data: aGVsbG8=
-  executable: false
-8Y98svZv5sPHhQiPqZvqA5Z5djQ8hieodscvb61RskMJ:
-  balance: 1
-  owner: DSknYr8cPucRbx2VyssZ7Yx3iiRqNGD38VqVahkUvgV1
-  data: aGVsbG8gd29ybGQ=
-  executable: true";
+        #[rustfmt::skip]
+        let yaml_string_pubkey =
+            "---\
+             \n98frSc8R8toHoS3tQ1xWSvHCvGEADRM9hAm5qmUKjSDX:\
+             \n  balance: 4\
+             \n  owner: Gw6S9CPzR8jHku1QQMdiqcmUKjC2dhJ3gzagWduA6PGw\
+             \n  data:\
+             \n  executable: true\
+             \n88frSc8R8toHoS3tQ1xWSvHCvGEADRM9hAm5qmUKjSDX:\
+             \n  balance: 3\
+             \n  owner: Gw7S9CPzR8jHku1QQMdiqcmUKjC2dhJ3gzagWduA6PGw\
+             \n  data: ~\
+             \n  executable: true\
+             \n6s36rsNPDfRSvzwek7Ly3mQu9jUMwgqBhjePZMV6Acp4:\
+             \n  balance: 2\
+             \n  owner: DBC5d45LUHTCrq42ZmCdzc8A8ufwTaiYsL9pZY7KU6TR\
+             \n  data: aGVsbG8=\
+             \n  executable: false\
+             \n8Y98svZv5sPHhQiPqZvqA5Z5djQ8hieodscvb61RskMJ:\
+             \n  balance: 1\
+             \n  owner: DSknYr8cPucRbx2VyssZ7Yx3iiRqNGD38VqVahkUvgV1\
+             \n  data: aGVsbG8gd29ybGQ=\
+             \n  executable: true";
 
         let tmpfile = tempfile::NamedTempFile::new().unwrap();
         let path = tmpfile.path();
@@ -1208,29 +1210,30 @@ mod tests {
 
         assert_eq!(genesis_config.accounts.len(), 4);
 
+        #[rustfmt::skip]
         let yaml_string_keypair =
-            "---
-\"[17,12,234,59,35,246,168,6,64,36,169,164,219,96,253,79,238,202,164,160,195,89,9,96,179,117,255,\
-             239,32,64,124,66,233,130,19,107,172,54,86,32,119,148,4,39,199,40,122,230,249,47,150,\
-             168,163,159,83,233,97,18,25,238,103,25,253,108]\":
-  balance: 20
-  owner: 9ZfsP6Um1KU8d5gNzTsEbSJxanKYp5EPF36qUu4FJqgp
-  data: Y2F0IGRvZw==
-  executable: true
-\"[36,246,244,43,37,214,110,50,134,148,148,8,205,82,233,67,223,245,122,5,149,232,213,125,244,182,\
-             26,29,56,224,70,45,42,163,71,62,222,33,229,54,73,136,53,174,128,103,247,235,222,27,\
-             219,129,180,77,225,174,220,74,201,123,97,155,159,234]\":
-  balance: 15
-  owner: F9dmtjJPi8vfLu1EJN4KkyoGdXGmVfSAhxz35Qo9RDCJ
-  data: bW9ua2V5IGVsZXBoYW50
-  executable: false
-\"[103,27,132,107,42,149,72,113,24,138,225,109,209,31,158,6,26,11,8,76,24,128,131,215,156,80,251,\
-             114,103,220,111,235,56,22,87,5,209,56,53,12,224,170,10,66,82,42,11,138,51,76,120,27,\
-             166,200,237,16,200,31,23,5,57,22,131,221]\":
-  balance: 30
-  owner: AwAR5mAbNPbvQ4CvMeBxwWE8caigQoMC2chkWAbh2b9V
-  data: Y29tYSBtb2Nh
-  executable: true";
+            "---\
+             \n\"[17,12,234,59,35,246,168,6,64,36,169,164,219,96,253,79,238,202,164,160,195,89,9,\
+             96,179,117,255,239,32,64,124,66,233,130,19,107,172,54,86,32,119,148,4,39,199,40,122,\
+             230,249,47,150,168,163,159,83,233,97,18,25,238,103,25,253,108]\":\
+             \n  balance: 20\
+             \n  owner: 9ZfsP6Um1KU8d5gNzTsEbSJxanKYp5EPF36qUu4FJqgp\
+             \n  data: Y2F0IGRvZw==\
+             \n  executable: true\
+             \n\"[36,246,244,43,37,214,110,50,134,148,148,8,205,82,233,67,223,245,122,5,149,232,\
+             213,125,244,182,26,29,56,224,70,45,42,163,71,62,222,33,229,54,73,136,53,174,128,103,\
+             247,235,222,27,219,129,180,77,225,174,220,74,201,123,97,155,159,234]\":\
+             \n  balance: 15\
+             \n  owner: F9dmtjJPi8vfLu1EJN4KkyoGdXGmVfSAhxz35Qo9RDCJ\
+             \n  data: bW9ua2V5IGVsZXBoYW50\
+             \n  executable: false\
+             \n\"[103,27,132,107,42,149,72,113,24,138,225,109,209,31,158,6,26,11,8,76,24,128,131,\
+             215,156,80,251,114,103,220,111,235,56,22,87,5,209,56,53,12,224,170,10,66,82,42,11,138,\
+             51,76,120,27,166,200,237,16,200,31,23,5,57,22,131,221]\":\
+             \n  balance: 30
+             \n  owner: AwAR5mAbNPbvQ4CvMeBxwWE8caigQoMC2chkWAbh2b9V
+             \n  data: Y29tYSBtb2Nh
+             \n  executable: true";
 
         let tmpfile = tempfile::NamedTempFile::new().unwrap();
         let path = tmpfile.path();
