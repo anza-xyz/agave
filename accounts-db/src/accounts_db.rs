@@ -6538,97 +6538,96 @@ impl AccountsDb {
         let mut all_accounts_are_zero_lamports = true;
         let mut slot_lt_hash = SlotLtHash::default();
 
-        let (insert_time_us, generate_index_results) = {
-            let mut keyed_account_infos = vec![];
-            // this closure is the shared code when scanning the storage
-            let mut itemizer = |info: IndexInfo| {
-                stored_size_alive += info.stored_size_aligned;
-                if info.index_info.lamports > 0 {
-                    accounts_data_len += info.index_info.data_len;
-                    all_accounts_are_zero_lamports = false;
-                } else {
-                    // With obsolete accounts enabled, all zero lamport accounts
-                    // are obsolete or single ref by the end of index generation
-                    // Store the offsets here
-                    if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
-                        zero_lamport_offsets.push(info.index_info.offset);
-                    }
-                    zero_lamport_pubkeys.push(info.index_info.pubkey);
+        let mut keyed_account_infos = vec![];
+        // this closure is the shared code when scanning the storage
+        let mut itemizer = |info: IndexInfo| {
+            stored_size_alive += info.stored_size_aligned;
+            if info.index_info.lamports > 0 {
+                accounts_data_len += info.index_info.data_len;
+                all_accounts_are_zero_lamports = false;
+            } else {
+                // With obsolete accounts enabled, all zero lamport accounts
+                // are obsolete or single ref by the end of index generation
+                // Store the offsets here
+                if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
+                    zero_lamport_offsets.push(info.index_info.offset);
                 }
-                keyed_account_infos.push((
-                    info.index_info.pubkey,
-                    AccountInfo::new(
-                        StorageLocation::AppendVec(store_id, info.index_info.offset), // will never be cached
-                        info.index_info.is_zero_lamport(),
-                    ),
-                ));
-            };
-
-            let geyser_notifier = self
-                .accounts_update_notifier
-                .as_ref()
-                .filter(|notifier| notifier.snapshot_notifications_enabled());
-
-            // If geyser notifications at startup from snapshot are enabled, we need to pass in a
-            // write version for each account notification.  This value does not need to be
-            // globally unique, as geyser plugins also receive the slot number.  We only need to
-            // ensure that more recent accounts have a higher write version than older accounts.
-            // Even more relaxed, we really only need to have different write versions if there are
-            // multiple versions of the same account in a single storage, which is not allowed.
-            //
-            // Since we scan the storage from oldest to newest, we can simply increment a local
-            // counter per account and use that for the write version.
-            let mut write_version_for_geyser = 0;
-
-            storage
-                .accounts
-                .scan_accounts(reader, |offset, account| {
-                    let data_len = account.data.len() as u64;
-                    let stored_size_aligned =
-                        storage.accounts.calculate_stored_size(data_len as usize);
-                    let info = IndexInfo {
-                        stored_size_aligned,
-                        index_info: IndexInfoInner {
-                            offset,
-                            pubkey: *account.pubkey,
-                            lamports: account.lamports,
-                            data_len,
-                        },
-                    };
-                    itemizer(info);
-                    if !self.account_indexes.is_empty() {
-                        self.accounts_index.update_secondary_indexes(
-                            account.pubkey,
-                            &account,
-                            &self.account_indexes,
-                        );
-                    }
-
-                    let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
-                    slot_lt_hash.0.mix_in(&account_lt_hash.0);
-
-                    if let Some(geyser_notifier) = geyser_notifier {
-                        debug_assert!(geyser_notifier.snapshot_notifications_enabled());
-                        let account_for_geyser = AccountForGeyser {
-                            pubkey: account.pubkey(),
-                            lamports: account.lamports(),
-                            owner: account.owner(),
-                            executable: account.executable(),
-                            rent_epoch: account.rent_epoch(),
-                            data: account.data(),
-                        };
-                        geyser_notifier.notify_account_restore_from_snapshot(
-                            slot,
-                            write_version_for_geyser,
-                            &account_for_geyser,
-                        );
-                        write_version_for_geyser += 1;
-                    }
-                })
-                .expect("must scan accounts storage");
-            self.accounts_index
-                .insert_new_if_missing_into_primary_index(slot, keyed_account_infos)
+                zero_lamport_pubkeys.push(info.index_info.pubkey);
+            }
+            keyed_account_infos.push((
+                info.index_info.pubkey,
+                AccountInfo::new(
+                    StorageLocation::AppendVec(store_id, info.index_info.offset), // will never be cached
+                    info.index_info.is_zero_lamport(),
+                ),
+            ));
         };
+
+        let geyser_notifier = self
+            .accounts_update_notifier
+            .as_ref()
+            .filter(|notifier| notifier.snapshot_notifications_enabled());
+
+        // If geyser notifications at startup from snapshot are enabled, we need to pass in a
+        // write version for each account notification.  This value does not need to be
+        // globally unique, as geyser plugins also receive the slot number.  We only need to
+        // ensure that more recent accounts have a higher write version than older accounts.
+        // Even more relaxed, we really only need to have different write versions if there are
+        // multiple versions of the same account in a single storage, which is not allowed.
+        //
+        // Since we scan the storage from oldest to newest, we can simply increment a local
+        // counter per account and use that for the write version.
+        let mut write_version_for_geyser = 0;
+
+        storage
+            .accounts
+            .scan_accounts(reader, |offset, account| {
+                let data_len = account.data.len() as u64;
+                let stored_size_aligned = storage.accounts.calculate_stored_size(data_len as usize);
+                let info = IndexInfo {
+                    stored_size_aligned,
+                    index_info: IndexInfoInner {
+                        offset,
+                        pubkey: *account.pubkey,
+                        lamports: account.lamports,
+                        data_len,
+                    },
+                };
+                itemizer(info);
+                if !self.account_indexes.is_empty() {
+                    self.accounts_index.update_secondary_indexes(
+                        account.pubkey,
+                        &account,
+                        &self.account_indexes,
+                    );
+                }
+
+                let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
+                slot_lt_hash.0.mix_in(&account_lt_hash.0);
+
+                if let Some(geyser_notifier) = geyser_notifier {
+                    debug_assert!(geyser_notifier.snapshot_notifications_enabled());
+                    let account_for_geyser = AccountForGeyser {
+                        pubkey: account.pubkey(),
+                        lamports: account.lamports(),
+                        owner: account.owner(),
+                        executable: account.executable(),
+                        rent_epoch: account.rent_epoch(),
+                        data: account.data(),
+                    };
+                    geyser_notifier.notify_account_restore_from_snapshot(
+                        slot,
+                        write_version_for_geyser,
+                        &account_for_geyser,
+                    );
+                    write_version_for_geyser += 1;
+                }
+            })
+            .expect("must scan accounts storage");
+
+        let (insert_time_us, generate_index_results) = self
+            .accounts_index
+            .insert_new_if_missing_into_primary_index(slot, keyed_account_infos);
 
         {
             // second, collect into the shared DashMap once we've figured out all the info per store_id
