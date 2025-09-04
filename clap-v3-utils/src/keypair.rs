@@ -179,8 +179,9 @@ impl DefaultSigner {
                         })
                         .unwrap_or_else(|| self.path.clone());
                     std::io::Error::other(format!(
-                        "No default signer found, run \"solana-keygen new -o {default_path}\" to create a new \
-                         one"
+                        "No default signer found, run \"solana-keygen new -o {}\" to create a new \
+                         one",
+                        default_path
                     ))
                 })?;
             *self.is_path_checked.borrow_mut() = true;
