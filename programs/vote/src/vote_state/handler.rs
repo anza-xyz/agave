@@ -33,6 +33,7 @@ pub enum VoteStateTargetVersion {
     V4,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 enum TargetVoteState {
     V3(VoteStateV3),
     V4(VoteStateV4),
@@ -43,6 +44,7 @@ enum TargetVoteState {
 /// * Converting vote state in-memory to target version
 /// * Operating on the vote state data agnostically
 /// * Serializing the resulting state to the vote account
+#[derive(Clone, Debug, PartialEq)]
 pub struct VoteStateHandler {
     target_state: TargetVoteState,
 }
@@ -356,5 +358,61 @@ impl VoteStateHandler {
             }
         };
         vote_account.set_state(&state)
+    }
+
+    #[cfg(test)]
+    pub fn new_v3(vote_state: VoteStateV3) -> Self {
+        Self {
+            target_state: TargetVoteState::V3(vote_state),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn default_v3() -> Self {
+        Self::new_v3(VoteStateV3::default())
+    }
+
+    #[cfg(test)]
+    pub fn last_lockout(&self) -> Option<&Lockout> {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.last_lockout(),
+            TargetVoteState::V4(_v4) => {
+                // V4 implementation not yet available
+                unimplemented!("V4 vote state not yet implemented")
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn credits(&self) -> u64 {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.credits(),
+            TargetVoteState::V4(_v4) => {
+                // V4 implementation not yet available
+                unimplemented!("V4 vote state not yet implemented")
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => &v3.epoch_credits,
+            TargetVoteState::V4(_v4) => {
+                // V4 implementation not yet available
+                unimplemented!("V4 vote state not yet implemented")
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn nth_recent_lockout(&self, position: usize) -> Option<&Lockout> {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.nth_recent_lockout(position),
+            TargetVoteState::V4(_v4) => {
+                // V4 implementation not yet available
+                unimplemented!("V4 vote state not yet implemented")
+            }
+        }
     }
 }
