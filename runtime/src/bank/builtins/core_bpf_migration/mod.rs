@@ -199,8 +199,8 @@ impl Bank {
             load_program_metrics.submit_datapoint(&mut dummy_invoke_context.timings);
 
             // Update the program cache with a new entry to avoid a `DelayVisibility`
-            // error byt setting deployment slot to be equal to effective slot. It is
-            // safe to do this here since we are not in a transaction context.
+            // error by setting the deployment slot to be equal to effective slot. It
+            // is safe to do this here since we are not in a transaction context.
             let updated = ProgramCacheEntry::new(
                 &bpf_loader_upgradeable::id(),
                 program_runtime_environment,
