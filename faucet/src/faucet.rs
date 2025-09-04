@@ -15,7 +15,6 @@ use {
     solana_keypair::Keypair,
     solana_message::Message,
     solana_metrics::datapoint_info,
-    solana_net_utils::sockets::unique_port_range_for_tests,
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
@@ -338,21 +337,10 @@ pub fn run_local_faucet_with_port(
     });
 }
 
-/// For integration tests. Listens on a random open port and reports the port to Sender.
-/// In test/debug builds, a non-overlapping port is allocated instead of a random port.
+// For integration tests. Listens on random open port and reports port to Sender.
 pub fn run_local_faucet(faucet_keypair: Keypair, per_time_cap: Option<u64>) -> SocketAddr {
-    let port: u16 = {
-        #[cfg(debug_assertions)]
-        {
-            unique_port_range_for_tests(1).start
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            0
-        }
-    };
     let (sender, receiver) = unbounded();
-    run_local_faucet_with_port(faucet_keypair, sender, None, per_time_cap, None, port);
+    run_local_faucet_with_port(faucet_keypair, sender, None, per_time_cap, None, 0);
     receiver
         .recv()
         .expect("run_local_faucet")

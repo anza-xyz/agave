@@ -36,7 +36,6 @@ solana-keypair = "=3.0.1"
 solana-logger = "=3.0.0"
 solana-message = "=3.0.1"
 solana-metrics = { workspace = true }
-solana-net-utils = { workspace = true }
 solana-packet = "=3.0.0"
 solana-pubkey = { version = "=3.0.0", features = ["rand"] }
 solana-signer = "=3.0.0"
