@@ -374,11 +374,8 @@ mod tests {
         run_test_data_shredder(0x1234_5678_9abc_def0, chained, is_last_in_slot);
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_deserialize_shred_payload(chained: bool, is_last_in_slot: bool) {
+    #[test_matrix([true, false])]
+    fn test_deserialize_shred_payload(is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let shredder = Shredder::new(
             259_241_705, // slot
@@ -401,10 +398,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            369, // next_shred_index
-            776, // next_code_index
+            Some(Hash::new_from_array(rand::thread_rng().gen())), // chained_merkle_root
+            369,                                                  // next_shred_index
+            776,                                                  // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
