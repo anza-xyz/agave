@@ -147,8 +147,10 @@ impl Poh {
     }
 
     pub fn remaining_hashes_in_slot(&self, ticks_per_slot: u64) -> u64 {
+        // ticks_per_slot must be a power of two so we can use a bitmask
+        debug_assert!(ticks_per_slot.is_power_of_two() && ticks_per_slot > 0);
         ticks_per_slot
-            .saturating_sub(self.tick_number % ticks_per_slot + 1)
+            .saturating_sub((self.tick_number & (ticks_per_slot.wrapping_sub(1))).wrapping_add(1))
             .wrapping_mul(self.hashes_per_tick)
             .wrapping_add(self.remaining_hashes_until_tick)
     }
