@@ -16,7 +16,7 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::ProgramCacheForTxBatch,
+        loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -24,7 +24,10 @@ use {
     solana_svm_callback::InvokeContextCallback,
     solana_transaction_context::TransactionContext,
     source_buffer::SourceBuffer,
-    std::{cmp::Ordering, sync::atomic::Ordering::Relaxed},
+    std::{
+        cmp::Ordering,
+        sync::{atomic::Ordering::Relaxed, Arc},
+    },
     target_builtin::TargetBuiltin,
     target_core_bpf::TargetCoreBpf,
 };
@@ -194,6 +197,22 @@ impl Bank {
                 self.slot,
             )?;
             load_program_metrics.submit_datapoint(&mut dummy_invoke_context.timings);
+
+            // Update the program cache with a new entry to avoid a `DelayVisibility`
+            // error byt setting deployment slot to be equal to effective slot. It is
+            // safe to do this here since we are not in a transaction context.
+            let updated = ProgramCacheEntry::new(
+                &bpf_loader_upgradeable::id(),
+                program_runtime_environment,
+                self.slot,
+                self.slot,
+                elf,
+                data_len,
+                &mut load_program_metrics,
+            )
+            .map_err(|_err| InstructionError::ProgramEnvironmentSetupFailure)?;
+
+            program_cache_for_tx_batch.store_modified_entry(*program_id, Arc::new(updated));
         }
 
         // Update the program cache by merging with `programs_modified`, which
@@ -710,7 +729,7 @@ pub(crate) mod tests {
             // The target program entry should be updated.
             assert_eq!(target_entry.account_size, program_data_account.data().len());
             assert_eq!(target_entry.deployment_slot, migration_or_upgrade_slot);
-            assert_eq!(target_entry.effective_slot, migration_or_upgrade_slot + 1);
+            assert_eq!(target_entry.effective_slot, migration_or_upgrade_slot);
 
             // The target program entry should be a BPF program.
             assert_matches!(target_entry.program, ProgramCacheEntryType::Loaded(..));
