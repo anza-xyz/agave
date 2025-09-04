@@ -30,7 +30,14 @@ pub struct SharablePubkeys {
 /// TPU passes transactions to the external pack process.
 /// This is also a transfer of ownership of the transaction:
 ///   the external pack process is responsible for freeing the memory.
-pub type TpuToPackMessage = SharableTransaction;
+pub struct TpuToPackMessage {
+    pub transaction: SharableTransaction,
+    /// The source address of the transaction.
+    /// IPv6-mapped IPv4 addresses: `::ffff:a.b.c.d`
+    /// where a.b.c.d is the IPv4 address.
+    /// See <https://datatracker.ietf.org/doc/html/rfc4291#section-2.5.5.2>.
+    pub src_addr: [u8; 16],
+}
 
 /// Message: [Agave -> Pack]
 /// Agave passes leader status to the external pack process.
