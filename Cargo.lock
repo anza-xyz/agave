@@ -1365,7 +1365,6 @@ checksum = "1bc2832c24239b0141d5674bb9174f9d68a8b5b3f2753311927c172ca46f7e9c"
 dependencies = [
  "funty",
  "radium",
- "serde",
  "tap",
  "wyz",
 ]
@@ -11864,20 +11863,12 @@ dependencies = [
 name = "solana-votor-messages"
 version = "3.1.0"
 dependencies = [
- "bitvec",
- "bytemuck",
- "num_enum",
  "serde",
- "solana-account",
  "solana-bls-signatures",
  "solana-clock",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash",
- "solana-logger",
- "solana-program",
- "solana-vote-interface",
- "spl-pod",
 ]
 
 [[package]]
