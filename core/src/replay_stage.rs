@@ -1123,8 +1123,8 @@ impl ReplayStage {
                                     Err(err) => {
                                         error!(
                                             "Unable to load new tower when attempting to change \
-                                             identity from {my_old_pubkey} to {my_pubkey} on
-                                         set-identity, Exiting: {err}"
+                                             identity from {my_old_pubkey} to {my_pubkey} on \
+                                             set-identity, Exiting: {err}"
                                         );
                                         // drop(_exit) will set the exit flag, eventually tearing down the entire process
                                         return;
