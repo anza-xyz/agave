@@ -425,7 +425,7 @@ impl BankingStage {
         num_workers: NonZeroUsize,
     ) -> thread::Result<()> {
         if let Some(context) = self.context.as_ref() {
-            info!("Shutting down banking stage non-vote threads");
+            info!("Shutting down banking stage threads");
             context.exit_signal.store(true, Ordering::Relaxed);
             for bank_thread_hdl in self.thread_hdls.drain(..) {
                 bank_thread_hdl.join()?;
