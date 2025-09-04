@@ -6611,7 +6611,7 @@ impl AccountsDb {
             })
             .expect("must scan accounts storage");
 
-        let (insert_time_us, generate_index_results) = self
+        let (insert_time_us, insert_info) = self
             .accounts_index
             .insert_new_if_missing_into_primary_index(slot, keyed_account_infos);
 
@@ -6619,7 +6619,7 @@ impl AccountsDb {
             // second, collect into the shared DashMap once we've figured out all the info per store_id
             let mut info = storage_info.entry(store_id).or_default();
             info.stored_size += stored_size_alive;
-            info.count += generate_index_results.count;
+            info.count += insert_info.count;
 
             // sanity check that stored_size is not larger than the u64 aligned size of the accounts files.
             // Note that the stored_size is aligned, so it can be larger than the size of the accounts file.
@@ -6652,13 +6652,13 @@ impl AccountsDb {
         }
         SlotIndexGenerationInfo {
             insert_time_us,
-            num_accounts: generate_index_results.count as u64,
+            num_accounts: insert_info.count as u64,
             accounts_data_len,
             zero_lamport_pubkeys,
             all_accounts_are_zero_lamports,
-            num_did_not_exist: generate_index_results.num_did_not_exist,
-            num_existed_in_mem: generate_index_results.num_existed_in_mem,
-            num_existed_on_disk: generate_index_results.num_existed_on_disk,
+            num_did_not_exist: insert_info.num_did_not_exist,
+            num_existed_in_mem: insert_info.num_existed_in_mem,
+            num_existed_on_disk: insert_info.num_existed_on_disk,
             slot_lt_hash,
         }
     }
