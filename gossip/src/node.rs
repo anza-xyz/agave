@@ -126,7 +126,7 @@ impl Node {
             )
             .expect("Secondary bind TVU"),
         );
-        let tvu_addresses = Self::get_socket_addrs(&bind_ip_addrs, tvu_port);
+        let tvu_addresses = Self::get_socket_addrs(&tvu_sockets);
 
         let (tvu_quic_port, tvu_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
@@ -152,7 +152,7 @@ impl Node {
             &mut Self::bind_to_extra_ip(&bind_ip_addrs, tpu_port_quic, 32, socket_config)
                 .expect("Secondary bind TPU QUIC"),
         );
-        let tpu_quic_addresses = Self::get_socket_addrs(&bind_ip_addrs, tpu_port_quic);
+        let tpu_quic_addresses = Self::get_socket_addrs(&tpu_quic);
 
         let ((tpu_forwards_port, tpu_forwards_socket), (tpu_forwards_quic_port, tpu_forwards_quic)) =
             bind_two_in_range_with_offset_and_config(
@@ -178,7 +178,7 @@ impl Node {
             )
             .expect("Secondary bind TPU forwards"),
         );
-        let tpu_forwards_quic_addresses = Self::get_socket_addrs(&bind_ip_addrs, tpu_forwards_port);
+        let tpu_forwards_quic_addresses = Self::get_socket_addrs(&tpu_forwards_quic);
 
         let (tpu_vote_port, mut tpu_vote_sockets) =
             multi_bind_in_range_with_config(bind_ip_addr, port_range, socket_config, 1)
@@ -188,7 +188,7 @@ impl Node {
             Self::bind_to_extra_ip(&bind_ip_addrs, tpu_vote_port, 1, socket_config)
                 .expect("Secondary binds for tpu vote"),
         );
-        let tpu_vote_addresses = Self::get_socket_addrs(&bind_ip_addrs, tpu_vote_port);
+        let tpu_vote_addresses = Self::get_socket_addrs(&tpu_vote_sockets);
 
         let (tpu_vote_quic_port, tpu_vote_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
@@ -205,7 +205,7 @@ impl Node {
             )
             .expect("Secondary bind TPU vote"),
         );
-        let tpu_vote_quic_addresses = Self::get_socket_addrs(&bind_ip_addrs, tpu_vote_quic_port);
+        let tpu_vote_quic_addresses = Self::get_socket_addrs(&tpu_vote_quic);
 
         let (tvu_retransmit_port, mut retransmit_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
@@ -370,12 +370,18 @@ impl Node {
         }
     }
 
-    fn get_socket_addrs(bind_ip_addrs: &BindIpAddrs, port: u16) -> Box<[SocketAddr]> {
-        bind_ip_addrs
-            .iter()
-            .map(|&ip| SocketAddr::new(ip, port))
-            .collect::<Vec<_>>()
-            .into()
+    /// Extract unique addresses from bound sockets
+    fn get_socket_addrs(sockets: &[UdpSocket]) -> Box<[SocketAddr]> {
+        let mut addresses = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        for socket in sockets {
+            let addr = socket.local_addr().unwrap();
+            if seen.insert(addr) {
+                addresses.push(addr);
+            }
+        }
+        addresses.into()
     }
 
     /// Binds num sockets to each of the addresses in bind_ip_addrs except primary_ip_addr
