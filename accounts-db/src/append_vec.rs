@@ -124,38 +124,6 @@ impl<'a> ValidSlice<'a> {
     }
 }
 
-/// info from an entry useful for building an index
-pub(crate) struct IndexInfo {
-    /// size of entry, aligned to next u64
-    /// This matches the return of `get_account`
-    pub stored_size_aligned: usize,
-    /// info on the entry
-    pub index_info: IndexInfoInner,
-}
-
-/// info from an entry useful for building an index
-pub(crate) struct IndexInfoInner {
-    /// offset to this entry
-    pub offset: usize,
-    pub pubkey: Pubkey,
-    pub lamports: u64,
-    pub data_len: u64,
-}
-
-impl IsZeroLamport for IndexInfoInner {
-    #[inline(always)]
-    fn is_zero_lamport(&self) -> bool {
-        self.lamports == 0
-    }
-}
-
-impl IsZeroLamport for IndexInfo {
-    #[inline(always)]
-    fn is_zero_lamport(&self) -> bool {
-        self.index_info.is_zero_lamport()
-    }
-}
-
 /// offsets to help navigate the persisted format of `AppendVec`
 #[derive(Debug)]
 struct AccountOffsets {

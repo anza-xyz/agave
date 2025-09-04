@@ -50,7 +50,7 @@ use {
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
-        append_vec::{self, aligned_stored_size, IndexInfo, IndexInfoInner, STORE_META_OVERHEAD},
+        append_vec::{self, aligned_stored_size, STORE_META_OVERHEAD},
         buffered_reader::RequiredLenBufFileRead,
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
@@ -6537,31 +6537,7 @@ impl AccountsDb {
         let mut zero_lamport_offsets = vec![];
         let mut all_accounts_are_zero_lamports = true;
         let mut slot_lt_hash = SlotLtHash::default();
-
         let mut keyed_account_infos = vec![];
-        // this closure is the shared code when scanning the storage
-        let mut itemizer = |info: IndexInfo| {
-            stored_size_alive += info.stored_size_aligned;
-            if info.index_info.lamports > 0 {
-                accounts_data_len += info.index_info.data_len;
-                all_accounts_are_zero_lamports = false;
-            } else {
-                // With obsolete accounts enabled, all zero lamport accounts
-                // are obsolete or single ref by the end of index generation
-                // Store the offsets here
-                if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
-                    zero_lamport_offsets.push(info.index_info.offset);
-                }
-                zero_lamport_pubkeys.push(info.index_info.pubkey);
-            }
-            keyed_account_infos.push((
-                info.index_info.pubkey,
-                AccountInfo::new(
-                    StorageLocation::AppendVec(store_id, info.index_info.offset), // will never be cached
-                    info.index_info.is_zero_lamport(),
-                ),
-            ));
-        };
 
         let geyser_notifier = self
             .accounts_update_notifier
@@ -6582,18 +6558,28 @@ impl AccountsDb {
         storage
             .accounts
             .scan_accounts(reader, |offset, account| {
-                let data_len = account.data.len() as u64;
-                let stored_size_aligned = storage.accounts.calculate_stored_size(data_len as usize);
-                let info = IndexInfo {
-                    stored_size_aligned,
-                    index_info: IndexInfoInner {
-                        offset,
-                        pubkey: *account.pubkey,
-                        lamports: account.lamports,
-                        data_len,
-                    },
-                };
-                itemizer(info);
+                let data_len = account.data.len();
+                stored_size_alive += storage.accounts.calculate_stored_size(data_len);
+                if account.lamports > 0 {
+                    accounts_data_len += data_len as u64;
+                    all_accounts_are_zero_lamports = false;
+                } else {
+                    // With obsolete accounts enabled, all zero lamport accounts
+                    // are obsolete or single ref by the end of index generation
+                    // Store the offsets here
+                    if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
+                        zero_lamport_offsets.push(offset);
+                    }
+                    zero_lamport_pubkeys.push(*account.pubkey);
+                }
+                keyed_account_infos.push((
+                    *account.pubkey,
+                    AccountInfo::new(
+                        StorageLocation::AppendVec(store_id, offset), // will never be cached
+                        account.is_zero_lamport(),
+                    ),
+                ));
+
                 if !self.account_indexes.is_empty() {
                     self.accounts_index.update_secondary_indexes(
                         account.pubkey,
