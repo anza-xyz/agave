@@ -339,10 +339,9 @@ pub struct BatchedTransactionErrorDetails {
 }
 
 pub struct BankingStage {
-    vote_thread_hdl: JoinHandle<()>,
     // Only None during final join of BankingStage.
-    non_vote_context: Option<BankingStageContext>,
-    non_vote_thread_hdls: Vec<JoinHandle<()>>,
+    context: Option<BankingStageContext>,
+    thread_hdls: Vec<JoinHandle<()>>,
 }
 
 pub trait LikeClusterInfo: Send + Sync + 'static + Clone {
@@ -395,18 +394,18 @@ impl BankingStage {
             committer,
             log_messages_bytes_limit,
         };
-
-        let vote_thread_hdl = Self::spawn_vote_worker(&context);
+        // + 1 for vote worker
+        // + 1 for the scheduler thread
+        let mut thread_hdls = Vec::with_capacity(num_workers.get() + 2);
+        thread_hdls.push(Self::spawn_vote_worker(&context));
 
         let use_greedy_scheduler = matches!(
             block_production_method,
             BlockProductionMethod::CentralSchedulerGreedy
         );
 
-        // + 1 for the scheduler thread
-        let mut non_vote_thread_hdls = Vec::with_capacity(num_workers.get() + 1);
         Self::new_central_scheduler(
-            &mut non_vote_thread_hdls,
+            &mut thread_hdls,
             transaction_struct,
             use_greedy_scheduler,
             num_workers,
@@ -414,33 +413,33 @@ impl BankingStage {
         );
 
         Self {
-            vote_thread_hdl,
-            non_vote_context: Some(context),
-            non_vote_thread_hdls,
+            context: Some(context),
+            thread_hdls,
         }
     }
 
-    pub fn spawn_non_vote_threads(
+    pub fn spawn_threads(
         &mut self,
         transaction_struct: TransactionStructure,
         block_production_method: BlockProductionMethod,
         num_workers: NonZeroUsize,
     ) -> thread::Result<()> {
-        if let Some(context) = self.non_vote_context.as_ref() {
+        if let Some(context) = self.context.as_ref() {
             info!("Shutting down banking stage non-vote threads");
             context.exit_signal.store(true, Ordering::Relaxed);
-            for bank_thread_hdl in self.non_vote_thread_hdls.drain(..) {
+            for bank_thread_hdl in self.thread_hdls.drain(..) {
                 bank_thread_hdl.join()?;
             }
 
             info!(
-                "Spawning new banking stage non-vote threads with block-production-method: \
+                "Spawning new banking stage threads with block-production-method: \
                  {block_production_method:?} transaction-structure: {transaction_struct:?} \
                  num-workers: {num_workers}"
             );
             context.exit_signal.store(false, Ordering::Relaxed);
+            self.thread_hdls.push(Self::spawn_vote_worker(context));
             Self::new_central_scheduler(
-                &mut self.non_vote_thread_hdls,
+                &mut self.thread_hdls,
                 transaction_struct,
                 matches!(
                     block_production_method,
@@ -461,7 +460,6 @@ impl BankingStage {
         num_workers: NonZeroUsize,
         context: &BankingStageContext,
     ) {
-        assert!(non_vote_thread_hdls.is_empty());
         match transaction_struct {
             TransactionStructure::Sdk => {
                 let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
@@ -602,11 +600,13 @@ impl BankingStage {
         );
         let decision_maker = DecisionMaker::from(context.poh_recorder.read().unwrap().deref());
 
+        let exit_signal = context.exit_signal.clone();
         let bank_forks = context.bank_forks.clone();
         Builder::new()
             .name("solBanknStgVote".to_string())
             .spawn(move || {
                 VoteWorker::new(
+                    exit_signal,
                     decision_maker,
                     tpu_receiver,
                     gossip_receiver,
@@ -628,14 +628,12 @@ impl BankingStage {
     }
 
     pub fn join(mut self) -> thread::Result<()> {
-        self.vote_thread_hdl.join()?;
-
-        self.non_vote_context
+        self.context
             .take()
             .expect("non-vote context must be Some")
             .exit_signal
             .store(true, Ordering::Relaxed);
-        for bank_thread_hdl in self.non_vote_thread_hdls {
+        for bank_thread_hdl in self.thread_hdls {
             bank_thread_hdl.join()?;
         }
         Ok(())
