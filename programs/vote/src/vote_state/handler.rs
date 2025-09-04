@@ -10,8 +10,8 @@
 //! getter and setter API around vote state, for all operations required by the
 //! vote program.
 
-#![allow(unused)]
-
+#[cfg(test)]
+use solana_vote_interface::state::Lockout;
 use {
     solana_clock::{Clock, Epoch, Slot},
     solana_instruction::error::InstructionError,
@@ -19,24 +19,21 @@ use {
     solana_transaction_context::BorrowedInstructionAccount,
     solana_vote_interface::{
         error::VoteError,
-        state::{
-            LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3, VoteStateV4,
-            VoteStateVersions,
-        },
+        state::{LandedVote, VoteInit, VoteState1_14_11, VoteStateV3, VoteStateVersions},
     },
-    std::{collections::VecDeque, ops::Deref},
+    std::collections::VecDeque,
 };
 
 /// The target version to convert all deserialized vote state into.
 pub enum VoteStateTargetVersion {
     V3,
-    V4,
+    // New vote state versions will be added here...
 }
 
 #[derive(Clone, Debug, PartialEq)]
 enum TargetVoteState {
     V3(VoteStateV3),
-    V4(VoteStateV4),
+    // New vote state versions will be added here...
 }
 
 /// Vote state handler for
@@ -59,10 +56,6 @@ impl VoteStateHandler {
         let state = vote_account.get_state::<VoteStateVersions>()?;
         let target_state = match target_version {
             VoteStateTargetVersion::V3 => TargetVoteState::V3(state.convert_to_v3()),
-            VoteStateTargetVersion::V4 => {
-                // Requires vote-interface release or local reimplementation.
-                unimplemented!()
-            }
         };
         Ok(Self { target_state })
     }
@@ -71,21 +64,18 @@ impl VoteStateHandler {
     pub fn is_uninitialized(&self) -> bool {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.node_pubkey == Pubkey::default(),
-            TargetVoteState::V4(v4) => v4.node_pubkey == Pubkey::default(),
         }
     }
 
     pub fn authorized_withdrawer(&self) -> &Pubkey {
         match &self.target_state {
             TargetVoteState::V3(v3) => &v3.authorized_withdrawer,
-            TargetVoteState::V4(v4) => &v4.authorized_withdrawer,
         }
     }
 
     pub fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.authorized_withdrawer = authorized_withdrawer,
-            TargetVoteState::V4(v4) => v4.authorized_withdrawer = authorized_withdrawer,
         }
     }
 
@@ -103,10 +93,6 @@ impl VoteStateHandler {
             TargetVoteState::V3(v3) => {
                 v3.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
             }
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
@@ -116,100 +102,60 @@ impl VoteStateHandler {
     ) -> Result<Pubkey, InstructionError> {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.get_and_update_authorized_voter(current_epoch),
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn commission(&self) -> u8 {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.commission,
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn set_commission(&mut self, commission: u8) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.commission = commission,
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn node_pubkey(&self) -> &Pubkey {
         match &self.target_state {
             TargetVoteState::V3(v3) => &v3.node_pubkey,
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn set_node_pubkey(&mut self, node_pubkey: Pubkey) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.node_pubkey = node_pubkey,
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn votes(&self) -> &VecDeque<LandedVote> {
         match &self.target_state {
             TargetVoteState::V3(v3) => &v3.votes,
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn votes_mut(&mut self) -> &mut VecDeque<LandedVote> {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => &mut v3.votes,
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn set_votes(&mut self, votes: VecDeque<LandedVote>) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.votes = votes,
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn contains_slot(&self, slot: Slot) -> bool {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.contains_slot(slot),
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn last_voted_slot(&self) -> Option<Slot> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.last_voted_slot(),
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
@@ -220,70 +166,42 @@ impl VoteStateHandler {
     pub fn root_slot(&self) -> Option<Slot> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.root_slot,
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn set_root_slot(&mut self, root_slot: Option<Slot>) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.root_slot = root_slot,
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn current_epoch(&self) -> Epoch {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.current_epoch(),
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.epoch_credits.last(),
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn credits_for_vote_at_index(&self, index: usize) -> u64 {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.credits_for_vote_at_index(index),
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn increment_credits(&mut self, epoch: Epoch, credits: u64) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.increment_credits(epoch, credits),
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn process_timestamp(&mut self, slot: Slot, timestamp: i64) -> Result<(), VoteError> {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.process_timestamp(slot, timestamp),
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
@@ -297,17 +215,12 @@ impl VoteStateHandler {
             TargetVoteState::V3(v3) => {
                 v3.process_next_vote_slot(next_vote_slot, epoch, current_slot)
             }
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
     pub fn deinitialize(&mut self) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => *v3 = VoteStateV3::default(),
-            TargetVoteState::V4(v4) => *v4 = VoteStateV4::default(),
         }
     }
 
@@ -335,10 +248,6 @@ impl VoteStateHandler {
                 // Vote account is large enough to store the newest version of vote state
                 vote_account.set_state(&VoteStateVersions::V3(Box::new(v3.clone())))
             }
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
@@ -351,10 +260,6 @@ impl VoteStateHandler {
         let state = match target_version {
             VoteStateTargetVersion::V3 => {
                 VoteStateVersions::V3(Box::new(VoteStateV3::new(vote_init, clock)))
-            }
-            VoteStateTargetVersion::V4 => {
-                // VoteStateVersions::V4(Box::new(VoteStateV4::new(vote_init, clock)))
-                unimplemented!()
             }
         };
         vote_account.set_state(&state)
@@ -371,7 +276,6 @@ impl VoteStateHandler {
     pub fn unwrap_v3(self) -> VoteStateV3 {
         match self.target_state {
             TargetVoteState::V3(v3) => v3,
-            TargetVoteState::V4(_v4) => panic!("not a V3 vote state"),
         }
     }
 
@@ -384,10 +288,6 @@ impl VoteStateHandler {
     pub fn last_lockout(&self) -> Option<&Lockout> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.last_lockout(),
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
@@ -395,10 +295,6 @@ impl VoteStateHandler {
     pub fn credits(&self) -> u64 {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.credits(),
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
@@ -406,10 +302,6 @@ impl VoteStateHandler {
     pub fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
         match &self.target_state {
             TargetVoteState::V3(v3) => &v3.epoch_credits,
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 
@@ -417,10 +309,6 @@ impl VoteStateHandler {
     pub fn nth_recent_lockout(&self, position: usize) -> Option<&Lockout> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.nth_recent_lockout(position),
-            TargetVoteState::V4(_v4) => {
-                // V4 implementation not yet available
-                unimplemented!("V4 vote state not yet implemented")
-            }
         }
     }
 }
