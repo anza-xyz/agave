@@ -26,6 +26,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-hash = { workspace = true, features = ["serde"] }
+solana-logger = { workspace = true }
 
 [lints]
 workspace = true

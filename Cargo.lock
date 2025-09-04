@@ -11869,6 +11869,7 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash",
+ "solana-logger",
 ]
 
 [[package]]
