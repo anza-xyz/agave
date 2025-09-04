@@ -10788,18 +10788,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
-name = "solana-svm-conformance"
-version = "2.3.8"
-dependencies = [
- "prost",
- "prost-build",
- "prost-types",
-]
-
-[[package]]
-=======
->>>>>>> 7b98233b2 (🪓 Remove SVM conformance tests 🪓 (#7322))
 name = "solana-svm-feature-set"
 version = "2.3.8"
 

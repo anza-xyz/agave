@@ -515,27 +515,15 @@ solana-slot-hashes = "2.2.1"
 solana-slot-history = "2.2.1"
 solana-stable-layout = "2.2.1"
 solana-stake-interface = { version = "1.2.1" }
-<<<<<<< HEAD
 solana-stake-program = { path = "programs/stake", version = "=2.3.8" }
 solana-storage-bigtable = { path = "storage-bigtable", version = "=2.3.8" }
 solana-storage-proto = { path = "storage-proto", version = "=2.3.8" }
 solana-streamer = { path = "streamer", version = "=2.3.8" }
 solana-svm = { path = "svm", version = "=2.3.8" }
 solana-svm-callback = { path = "svm-callback", version = "=2.3.8" }
-solana-svm-conformance = { path = "svm-conformance", version = "=2.3.8" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=2.3.8" }
 solana-svm-rent-collector = { path = "svm-rent-collector", version = "=2.3.8" }
 solana-svm-transaction = { path = "svm-transaction", version = "=2.3.8" }
-=======
-solana-stake-program = { path = "programs/stake", version = "=3.0.0" }
-solana-storage-bigtable = { path = "storage-bigtable", version = "=3.0.0" }
-solana-storage-proto = { path = "storage-proto", version = "=3.0.0" }
-solana-streamer = { path = "streamer", version = "=3.0.0" }
-solana-svm = { path = "svm", version = "=3.0.0" }
-solana-svm-callback = { path = "svm-callback", version = "=3.0.0" }
-solana-svm-feature-set = { path = "svm-feature-set", version = "=3.0.0" }
-solana-svm-transaction = { path = "svm-transaction", version = "=3.0.0" }
->>>>>>> 7b98233b2 (🪓 Remove SVM conformance tests 🪓 (#7322))
 solana-system-interface = "1.0"
 solana-system-program = { path = "programs/system", version = "=2.3.8" }
 solana-system-transaction = "2.2.1"
