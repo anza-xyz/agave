@@ -360,10 +360,18 @@ impl VoteStateHandler {
         vote_account.set_state(&state)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn new_v3(vote_state: VoteStateV3) -> Self {
         Self {
             target_state: TargetVoteState::V3(vote_state),
+        }
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub fn unwrap_v3(self) -> VoteStateV3 {
+        match self.target_state {
+            TargetVoteState::V3(v3) => v3,
+            TargetVoteState::V4(_v4) => panic!("not a V3 vote state"),
         }
     }
 

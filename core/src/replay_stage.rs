@@ -4353,7 +4353,9 @@ pub(crate) mod tests {
         solana_transaction_error::TransactionError,
         solana_transaction_status::VersionedTransactionWithStatusMeta,
         solana_vote::vote_transaction,
-        solana_vote_program::vote_state::{self, TowerSync, VoteStateVersions},
+        solana_vote_program::vote_state::{
+            self, process_slot_vote_unchecked_v3_for_tests, TowerSync, VoteStateVersions,
+        },
         std::{
             fs::remove_dir_all,
             iter,
@@ -5139,7 +5141,7 @@ pub(crate) mod tests {
         fn leader_vote(vote_slot: Slot, bank: &Bank, pubkey: &Pubkey) -> (Pubkey, TowerVoteState) {
             let mut leader_vote_account = bank.get_account(pubkey).unwrap();
             let mut vote_state = vote_state::from(&leader_vote_account).unwrap();
-            vote_state::process_slot_vote_unchecked(&mut vote_state, vote_slot);
+            process_slot_vote_unchecked_v3_for_tests(&mut vote_state, vote_slot);
             let versioned = VoteStateVersions::new_v3(vote_state.clone());
             vote_state::to(&versioned, &mut leader_vote_account).unwrap();
             bank.store_account(pubkey, &leader_vote_account);

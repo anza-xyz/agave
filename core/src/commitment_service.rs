@@ -282,7 +282,8 @@ mod tests {
         solana_stake_program::stake_state,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{
-            self, process_slot_vote_unchecked, TowerSync, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            self, process_slot_vote_unchecked_v3_for_tests, TowerSync, VoteStateVersions,
+            MAX_LOCKOUT_HISTORY,
         },
     };
 
@@ -464,8 +465,8 @@ mod tests {
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
         let mut vote_state1 = vote_state::from(&vote_account1).unwrap();
-        process_slot_vote_unchecked(&mut vote_state1, 3);
-        process_slot_vote_unchecked(&mut vote_state1, 5);
+        process_slot_vote_unchecked_v3_for_tests(&mut vote_state1, 3);
+        process_slot_vote_unchecked_v3_for_tests(&mut vote_state1, 5);
         if !with_node_vote_state {
             let versioned = VoteStateVersions::new_v3(vote_state1.clone());
             vote_state::to(&versioned, &mut vote_account1).unwrap();
@@ -473,8 +474,8 @@ mod tests {
         }
 
         let mut vote_state2 = vote_state::from(&vote_account2).unwrap();
-        process_slot_vote_unchecked(&mut vote_state2, 9);
-        process_slot_vote_unchecked(&mut vote_state2, 10);
+        process_slot_vote_unchecked_v3_for_tests(&mut vote_state2, 9);
+        process_slot_vote_unchecked_v3_for_tests(&mut vote_state2, 10);
         let versioned = VoteStateVersions::new_v3(vote_state2);
         vote_state::to(&versioned, &mut vote_account2).unwrap();
         bank.store_account(&pk2, &vote_account2);

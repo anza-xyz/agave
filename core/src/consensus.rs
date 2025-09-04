@@ -1788,7 +1788,8 @@ pub mod test {
         solana_slot_history::SlotHistory,
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{
-            process_slot_vote_unchecked, Vote, VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            process_slot_vote_unchecked_v3_for_tests, Vote, VoteStateV3, VoteStateVersions,
+            MAX_LOCKOUT_HISTORY,
         },
         std::{
             collections::{HashMap, VecDeque},
@@ -1813,7 +1814,7 @@ pub mod test {
                 });
                 let mut vote_state = VoteStateV3::default();
                 for slot in *votes {
-                    process_slot_vote_unchecked(&mut vote_state, *slot);
+                    process_slot_vote_unchecked_v3_for_tests(&mut vote_state, *slot);
                 }
                 VoteStateV3::serialize(
                     &VoteStateVersions::new_v3(vote_state),

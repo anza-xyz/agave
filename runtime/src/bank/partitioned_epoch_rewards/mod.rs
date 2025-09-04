@@ -325,7 +325,9 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
         solana_vote_interface::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
-        solana_vote_program::vote_state::{self, TowerSync},
+        solana_vote_program::vote_state::{
+            self, process_slot_vote_unchecked_v3_for_tests, TowerSync,
+        },
         std::sync::{Arc, RwLock},
     };
 
@@ -497,7 +499,7 @@ mod tests {
             let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
             for i in 0..MAX_LOCKOUT_HISTORY + 42 {
                 if let Some(v) = vote_state.as_mut() {
-                    vote_state::process_slot_vote_unchecked(v, i as u64)
+                    process_slot_vote_unchecked_v3_for_tests(v, i as u64)
                 }
                 let versioned = VoteStateVersions::V3(Box::new(vote_state.take().unwrap()));
                 vote_state::to(&versioned, &mut vote_account).unwrap();
