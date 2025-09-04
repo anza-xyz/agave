@@ -3,7 +3,7 @@ use {
     clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
-        accounts_db::AccountsDbConfig,
+        accounts_db::{AccountsDbConfig, DEFAULT_MEMLOCK_BUDGET_SIZE},
         accounts_file::StorageAccess,
         accounts_index::{AccountsIndexConfig, IndexLimitMb, ScanFilter},
     },
@@ -311,6 +311,7 @@ pub fn get_accounts_db_config(
         storage_access,
         scan_filter_for_shrinking,
         num_hash_threads,
+        memlock_budget_size: DEFAULT_MEMLOCK_BUDGET_SIZE,
         ..AccountsDbConfig::default()
     }
 }
