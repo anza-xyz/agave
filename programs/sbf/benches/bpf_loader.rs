@@ -153,8 +153,7 @@ fn bench_program_alu(bencher: &mut Bencher) {
     println!("  {:?} MIPS", mips);
     println!(
         "{{ \"type\": \"bench\", \"name\": \"bench_program_alu_interpreted_mips\", \"median\": \
-         {:?}, \"deviation\": 0 }}",
-        mips
+         {mips:?}, \"deviation\": 0 }}",
     );
 
     println!("JIT to native:");
@@ -178,8 +177,7 @@ fn bench_program_alu(bencher: &mut Bencher) {
     println!("  {:?} MIPS", mips);
     println!(
         "{{ \"type\": \"bench\", \"name\": \"bench_program_alu_jit_to_native_mips\", \"median\": \
-         {:?}, \"deviation\": 0 }}",
-        mips
+         {mips:?}, \"deviation\": 0 }}",
     );
 }
 
