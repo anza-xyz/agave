@@ -537,8 +537,7 @@ mod tests {
                 atomic::{AtomicBool, AtomicU64, Ordering},
                 Arc, RwLock,
             },
-            thread::{Builder, JoinHandle},
-            time::Duration,
+            thread::JoinHandle,
         },
         test_case::test_case,
     };
@@ -830,35 +829,10 @@ mod tests {
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         fn poh_tick_before_returning_record_response(
-            record_receiver: RecordReceiver,
-            poh_recorder: Arc<RwLock<PohRecorder>>,
+            _record_receiver: RecordReceiver,
+            _poh_recorder: Arc<RwLock<PohRecorder>>,
         ) -> JoinHandle<()> {
-            let is_exited = poh_recorder.read().unwrap().is_exited.clone();
-            let tick_producer = Builder::new()
-                .name("solana-simulate_poh".to_string())
-                .spawn(move || loop {
-                    let timeout = Duration::from_millis(10);
-                    let record = record_receiver.recv_timeout(timeout);
-                    if let Ok(record) = record {
-                        let record_response = poh_recorder.write().unwrap().record(
-                            record.slot,
-                            record.mixins,
-                            record.transaction_batches,
-                        );
-                        poh_recorder.write().unwrap().tick();
-                        if record
-                            .sender
-                            .send(record_response.map(|r| r.starting_transaction_index))
-                            .is_err()
-                        {
-                            panic!("Error returning mixin hash");
-                        }
-                    }
-                    if is_exited.load(Ordering::Relaxed) {
-                        break;
-                    }
-                });
-            tick_producer.unwrap()
+            todo!()
         }
 
         // Simulate a race condition by setting up poh to do the last tick

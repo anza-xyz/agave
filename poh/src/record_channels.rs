@@ -247,13 +247,11 @@ mod tests {
         let (sender, mut receiver) = record_channels(false);
 
         // Initially shutdown.
-        let (dummy_sender, _receiver) = bounded(0);
         assert!(matches!(
             sender.try_send(Record {
                 slot: 0,
                 transaction_batches: vec![],
                 mixins: vec![],
-                sender: dummy_sender.clone(),
             }),
             Err(RecordSenderError::Shutdown)
         ));
@@ -267,7 +265,6 @@ mod tests {
                 slot: 0,
                 transaction_batches: vec![],
                 mixins: vec![],
-                sender: dummy_sender.clone(),
             }),
             Err(RecordSenderError::InactiveSlot)
         ));
@@ -278,7 +275,6 @@ mod tests {
                 slot: 1,
                 transaction_batches: vec![vec![]],
                 mixins: vec![],
-                sender: dummy_sender.clone(),
             }),
             Ok(None)
         ));
@@ -289,7 +285,6 @@ mod tests {
                 slot: 1,
                 transaction_batches: vec![vec![]; 1_023],
                 mixins: vec![],
-                sender: dummy_sender.clone(),
             }),
             Err(RecordSenderError::Full(_))
         ));
@@ -300,7 +295,6 @@ mod tests {
                 slot: 1,
                 transaction_batches: vec![vec![]; 1_022],
                 mixins: vec![],
-                sender: dummy_sender.clone(),
             }),
             Ok(None)
         ));
@@ -311,7 +305,6 @@ mod tests {
                 slot: 1,
                 transaction_batches: vec![vec![]],
                 mixins: vec![],
-                sender: dummy_sender.clone(),
             }),
             Err(RecordSenderError::Full(_))
         ));
@@ -328,13 +321,11 @@ mod tests {
         let (sender, mut receiver) = record_channels(true);
 
         // Initially shutdown.
-        let (dummy_sender, _receiver) = bounded(0);
         assert!(matches!(
             sender.try_send(Record {
                 slot: 0,
                 transaction_batches: vec![],
                 mixins: vec![],
-                sender: dummy_sender.clone(),
             }),
             Err(RecordSenderError::Shutdown)
         ));
@@ -348,7 +339,6 @@ mod tests {
                 slot: 0,
                 transaction_batches: vec![],
                 mixins: vec![],
-                sender: dummy_sender.clone(),
             }),
             Err(RecordSenderError::InactiveSlot)
         ));
@@ -359,7 +349,6 @@ mod tests {
                 slot: 1,
                 transaction_batches: vec![vec![VersionedTransaction::default()]],
                 mixins: vec![],
-                sender: dummy_sender.clone(),
             }),
             Ok(Some(0))
         ));
@@ -376,7 +365,6 @@ mod tests {
                     ],
                 ],
                 mixins: vec![],
-                sender: dummy_sender.clone(),
             }),
             Ok(Some(1))
         ));

@@ -1185,7 +1185,7 @@ mod tests {
     }
 
     pub(crate) fn simulate_poh(
-        record_receiver: RecordReceiver,
+        mut record_receiver: RecordReceiver,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
     ) -> JoinHandle<()> {
         let poh_recorder = poh_recorder.clone();
@@ -1195,8 +1195,9 @@ mod tests {
             .spawn(move || loop {
                 PohService::read_record_receiver_and_process(
                     &poh_recorder,
-                    &record_receiver,
+                    &mut record_receiver,
                     Duration::from_millis(10),
+                    64,
                 );
                 if is_exited.load(Ordering::Relaxed) {
                     break;

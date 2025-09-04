@@ -82,7 +82,7 @@ fn bench_poh_lock_time_per_batch(bencher: &mut Bencher) {
 }
 
 #[bench]
-fn bench_poh_recorder_record_transaction_index(bencher: &mut Bencher) {
+fn bench_poh_recorder_record(bencher: &mut Bencher) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore =
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger");
@@ -124,8 +124,6 @@ fn bench_poh_recorder_record_transaction_index(bencher: &mut Bencher) {
                 vec![test::black_box(h1)],
                 vec![test::black_box(txs.clone())],
             )
-            .unwrap()
-            .starting_transaction_index
             .unwrap();
     });
     poh_recorder.tick();
