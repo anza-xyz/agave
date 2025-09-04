@@ -72,10 +72,6 @@ pub struct ProgressMessage {
 /// [`PackToWorkerMessage`].
 pub const MAX_TRANSACTIONS_PER_PACK_MESSAGE: usize = 32;
 
-/// Special value for [`PackToWorkerMessage::slot`] indicating the transactions
-/// can be processed in any slot in agave.
-pub const ANY_SLOT: u64 = u64::MAX;
-
 /// Message: [Pack -> Worker]
 /// External pack processe passes transactions to worker threads within agave.
 ///
@@ -86,10 +82,11 @@ pub struct PackToWorkerMessage {
     /// Flags on how to handle this message.
     /// See [`pack_message_flags`] for details.
     pub flags: u16,
-    /// If [`pack_message_flags::RESOLVE`] flag is not set, this is the slot
-    /// the transactions can be processed in. If the flag is set to
-    /// [`ANY_SLOT`], the transactions can be processed in any slot in agave.
-    pub slot: u64,
+    /// If [`pack_message_flags::RESOLVE`] flag is not set, this is the
+    /// maximum slot the transactions can be processed in. If the working
+    /// bank's slot in the worker thread is greater than this slot,
+    /// the transaction will not be processed.
+    pub max_execution_slot: u64,
     /// The number of transactions in this message.
     /// MUST be in the range [1, [`MAX_TRANSACTIONS_PER_PACK_MESSAGE`]].
     pub num_transactions: u8,
