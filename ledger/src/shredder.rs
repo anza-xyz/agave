@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(verify, shred.verify(pk));
     }
 
-    fn run_test_data_shredder(slot: Slot, chained: bool, is_last_in_slot: bool) {
+    fn run_test_data_shredder(slot: Slot, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
 
         // Test that parent cannot be > current slot
@@ -308,10 +308,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            start_index, // next_shred_index
-            start_index, // next_code_index
+            Some(Hash::new_from_array(rand::thread_rng().gen())), // chained_merkle_root
+            start_index,                                          // next_shred_index
+            start_index,                                          // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -366,12 +365,9 @@ mod tests {
         assert_eq!(entries, deshred_entries);
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_data_shredder(chained: bool, is_last_in_slot: bool) {
-        run_test_data_shredder(0x1234_5678_9abc_def0, chained, is_last_in_slot);
+    #[test_matrix([true, false])]
+    fn test_data_shredder(is_last_in_slot: bool) {
+        run_test_data_shredder(0x1234_5678_9abc_def0, is_last_in_slot);
     }
 
     #[test_matrix([true, false])]
