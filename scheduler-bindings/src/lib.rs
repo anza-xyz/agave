@@ -32,11 +32,25 @@ pub struct SharablePubkeys {
 ///   the external pack process is responsible for freeing the memory.
 pub struct TpuToPackMessage {
     pub transaction: SharableTransaction,
+    /// See [`tpu_message_flags`] for details.
+    pub flags: u8,
     /// The source address of the transaction.
     /// IPv6-mapped IPv4 addresses: `::ffff:a.b.c.d`
     /// where a.b.c.d is the IPv4 address.
     /// See <https://datatracker.ietf.org/doc/html/rfc4291#section-2.5.5.2>.
     pub src_addr: [u8; 16],
+}
+
+pub mod tpu_message_flags {
+    /// No special flags.
+    pub const NONE: u8 = 0;
+
+    /// The transaction is a simple vote transaction.
+    pub const IS_SIMPLE_VOTE: u8 = 1 << 0;
+    /// The transaction was forwarded by a validator node.
+    pub const FORWARDED: u8 = 1 << 1;
+    /// The transaction was sent from a staked node.
+    pub const FROM_STAKED_NODE: u8 = 1 << 2;
 }
 
 /// Message: [Agave -> Pack]
