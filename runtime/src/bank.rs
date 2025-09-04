@@ -5266,6 +5266,19 @@ impl Bank {
         if new_feature_activations.contains(&feature_set::raise_account_cu_limit::id()) {
             self.apply_simd_0306_cost_tracker_changes();
         }
+
+        if new_feature_activations.contains(&feature_set::replace_spl_token_with_p_token::id()) {
+            if let Err(e) = self.upgrade_loader_v2_owned_program(
+                &feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID,
+                &feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
+                "replace_spl_token_with_p_token",
+            ) {
+                warn!(
+                    "Failed to replace SPL Token with p-token buffer '{}': {e}",
+                    feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
+                );
+            }
+        }
     }
 
     fn adjust_sysvar_balance_for_rent(&self, account: &mut AccountSharedData) {
