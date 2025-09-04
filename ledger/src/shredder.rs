@@ -455,11 +455,8 @@ mod tests {
         assert_eq!(deserialized_shred.reference_tick(), 5);
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_shred_reference_tick_overflow(chained: bool, is_last_in_slot: bool) {
+    #[test_matrix([true, false])]
+    fn test_shred_reference_tick_overflow(is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let slot = 1;
         let parent_slot = 0;
@@ -478,10 +475,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0, // next_shred_index
-            0, // next_code_index
+            Some(Hash::new_from_array(rand::thread_rng().gen())), // chained_merkle_root
+            0,                                                    // next_shred_index
+            0,                                                    // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
