@@ -330,8 +330,8 @@ impl AppendVec {
                 let mmap = unsafe { MmapMut::map_mut(&data) };
                 let mmap = mmap.unwrap_or_else(|err| {
                     panic!(
-                        "Failed to map the data file (size: {size}): {err}. Please increase sysctl \
-                         vm.max_map_count or equivalent for your platform.",
+                        "Failed to map the data file (size: {size}): {err}. Please increase \
+                         sysctl vm.max_map_count or equivalent for your platform.",
                     );
                 });
                 APPEND_VEC_STATS

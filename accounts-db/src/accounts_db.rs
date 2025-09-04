@@ -6772,7 +6772,10 @@ impl AccountsDb {
                         }
                         let now = Instant::now();
                         if now - last_update > Duration::from_secs(2) {
-                            info!("generating index: processed {num_processed}/{num_storages} slots...");
+                            info!(
+                                "generating index: processed {num_processed}/{num_storages} \
+                                 slots..."
+                            );
                             last_update = now;
                         }
                         thread::sleep(Duration::from_millis(500))

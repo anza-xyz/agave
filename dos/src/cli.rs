@@ -48,7 +48,8 @@ pub struct DosClientParameters {
     #[clap(
         long,
         conflicts_with("skip-gossip"),
-        help = "The shred version to use for gossip discovery. If not provided, will be discovered from the network"
+        help = "The shred version to use for gossip discovery. If not provided, will be \
+                discovered from the network"
     )]
     pub shred_version: Option<u16>,
 
@@ -175,7 +176,10 @@ fn validate_input(params: &DosClientParameters) {
     if params.data_type != DataType::Transaction {
         let tp = &params.transaction_params;
         if tp.valid_blockhash || tp.valid_signatures || tp.unique_transactions {
-            eprintln!("Arguments valid-blockhash, valid-sign, unique-transactions are ignored if data-type != transaction");
+            eprintln!(
+                "Arguments valid-blockhash, valid-sign, unique-transactions are ignored if \
+                 data-type != transaction"
+            );
             exit(1);
         }
     }

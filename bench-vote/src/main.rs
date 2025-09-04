@@ -87,7 +87,10 @@ fn main() -> Result<()> {
                 .value_name("KEYPAIR")
                 .takes_value(true)
                 .validator(is_keypair_or_ask_keyword)
-                .help("Identity keypair for the QUIC endpoint. If it is not specified a random key is created."),
+                .help(
+                    "Identity keypair for the QUIC endpoint. If it is not specified a random key \
+                     is created.",
+                ),
         )
         .arg(
             Arg::with_name("num-recv-sockets")
@@ -122,7 +125,9 @@ fn main() -> Result<()> {
                 .long("max-connections-per-ipaddr-per-min")
                 .value_name("NUM")
                 .takes_value(true)
-                .help("Maximum client connections per ipaddr per minute allowed on the server side."),
+                .help(
+                    "Maximum client connections per ipaddr per minute allowed on the server side.",
+                ),
         )
         .arg(
             Arg::with_name("connection-pool-size")
@@ -151,7 +156,10 @@ fn main() -> Result<()> {
                 .value_name("HOST:PORT")
                 .takes_value(true)
                 .validator(|arg| solana_net_utils::is_host_port(arg.to_string()))
-                .help("The destination streamer address to which the client will send transactions to"),
+                .help(
+                    "The destination streamer address to which the client will send transactions \
+                     to",
+                ),
         )
         .arg(
             Arg::with_name("use-connection-cache")

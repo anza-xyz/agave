@@ -209,7 +209,8 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                     // sanity check that the address is routable through our NIC
                     if next_hop.if_index != dev.if_index() {
                         log::warn!(
-                            "dropping packet: turbine peer {addr} must be routed through if_index: {} our if_index: {}",
+                            "dropping packet: turbine peer {addr} must be routed through \
+                             if_index: {} our if_index: {}",
                             next_hop.if_index,
                             dev.if_index()
                         );
@@ -218,7 +219,11 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
 
                     // we need the MAC address to send the packet
                     if next_hop.mac_addr.is_none() {
-                        log::warn!("dropping packet: turbine peer {addr} must be routed through {} which has no known MAC address", next_hop.ip_addr);
+                        log::warn!(
+                            "dropping packet: turbine peer {addr} must be routed through {} which \
+                             has no known MAC address",
+                            next_hop.ip_addr
+                        );
                         skip = true;
                     };
 

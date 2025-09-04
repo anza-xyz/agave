@@ -1123,7 +1123,7 @@ impl ReplayStage {
                                     Err(err) => {
                                         error!(
                                             "Unable to load new tower when attempting to change \
-                                         identity from {my_old_pubkey} to {my_pubkey} on
+                                             identity from {my_old_pubkey} to {my_pubkey} on
                                          set-identity, Exiting: {err}"
                                         );
                                         // drop(_exit) will set the exit flag, eventually tearing down the entire process
@@ -2488,7 +2488,8 @@ impl ReplayStage {
                 {
                     *first_alpenglow_slot = Some(activation_slot);
                     info!(
-                        "alpenglow feature detected in root bank {new_root}, to be enabled on slot {activation_slot}",
+                        "alpenglow feature detected in root bank {new_root}, to be enabled on \
+                         slot {activation_slot}",
                     );
                 }
             }
