@@ -932,12 +932,10 @@ fn do_create_test_recorder(
     }
     let ticks_per_slot = bank.ticks_per_slot();
 
-    poh_recorder.set_bank(BankWithScheduler::new_without_scheduler(bank));
-
     let (record_sender, record_receiver) = record_channels(track_transaction_indexes);
     let transaction_recorder = TransactionRecorder::new(record_sender);
     let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-    let (poh_controller, poh_service_message_receiver) = PohController::new();
+    let (mut poh_controller, poh_service_message_receiver) = PohController::new();
     let poh_service = PohService::new(
         poh_recorder.clone(),
         &poh_config,
@@ -948,6 +946,10 @@ fn do_create_test_recorder(
         record_receiver,
         poh_service_message_receiver,
     );
+
+    poh_controller
+        .set_bank_sync(BankWithScheduler::new_without_scheduler(bank))
+        .unwrap();
 
     (
         exit,
