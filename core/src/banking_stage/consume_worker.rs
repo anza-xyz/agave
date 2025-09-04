@@ -781,6 +781,7 @@ mod tests {
         },
         solana_poh::{
             poh_recorder::{PohRecorder, WorkingBankEntry},
+            record_channels::record_channels,
             transaction_recorder::TransactionRecorder,
         },
         solana_poh_config::PohConfig,
@@ -862,7 +863,7 @@ mod tests {
             &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
-        let (record_sender, record_receiver) = unbounded();
+        let (record_sender, record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let poh_simulator = simulate_poh(record_receiver, &poh_recorder);

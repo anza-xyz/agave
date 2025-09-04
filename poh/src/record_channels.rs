@@ -317,9 +317,9 @@ mod tests {
         ));
 
         // Receive 1 record.
-        assert!(matches!(receiver.try_recv(), Ok(_)));
+        assert!(receiver.try_recv().is_ok());
         assert!(!receiver.is_empty());
-        assert!(matches!(receiver.try_recv(), Ok(_)));
+        assert!(receiver.try_recv().is_ok());
         assert!(receiver.is_empty());
     }
 

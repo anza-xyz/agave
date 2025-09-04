@@ -10,6 +10,7 @@ use {
         poh_controller::PohController,
         poh_recorder::PohRecorder,
         poh_service::{PohService, DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE},
+        record_channels::record_channels,
         transaction_recorder::TransactionRecorder,
     },
     solana_poh_config::PohConfig,
@@ -60,7 +61,7 @@ fn bench_record_transactions(c: &mut Criterion) {
     );
     poh_recorder.set_bank_for_test(bank.clone());
 
-    let (record_sender, record_receiver) = crossbeam_channel::unbounded();
+    let (record_sender, record_receiver) = record_channels(false);
     let transaction_recorder = TransactionRecorder::new(record_sender, exit.clone());
 
     let txs: Vec<_> = (0..NUM_TRANSACTIONS)

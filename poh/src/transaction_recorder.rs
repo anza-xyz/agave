@@ -1,6 +1,9 @@
 use {
-    crate::poh_recorder::{PohRecorderError, Record, Result},
-    crossbeam_channel::{bounded, RecvTimeoutError, Sender},
+    crate::{
+        poh_recorder::{PohRecorderError, Record, Result},
+        record_channels::RecordSender,
+    },
+    crossbeam_channel::{bounded, RecvTimeoutError},
     solana_clock::Slot,
     solana_entry::entry::hash_transactions,
     solana_hash::Hash,
@@ -44,12 +47,12 @@ pub struct RecordTransactionsSummary {
 #[derive(Clone, Debug)]
 pub struct TransactionRecorder {
     // shared by all users of PohRecorder
-    pub record_sender: Sender<Record>,
+    pub record_sender: RecordSender,
     pub is_exited: Arc<AtomicBool>,
 }
 
 impl TransactionRecorder {
-    pub fn new(record_sender: Sender<Record>, is_exited: Arc<AtomicBool>) -> Self {
+    pub fn new(record_sender: RecordSender, is_exited: Arc<AtomicBool>) -> Self {
         Self {
             record_sender,
             is_exited,
@@ -112,7 +115,7 @@ impl TransactionRecorder {
     ) -> Result<Option<usize>> {
         // create a new channel so that there is only 1 sender and when it goes out of scope, the receiver fails
         let (result_sender, result_receiver) = bounded(1);
-        let res = self.record_sender.send(Record::new(
+        let res = self.record_sender.try_send(Record::new(
             mixins,
             transaction_batches,
             bank_slot,

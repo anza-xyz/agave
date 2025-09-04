@@ -683,7 +683,7 @@ mod tests {
         super::*,
         crate::banking_trace::{BankingTracer, Channels},
         agave_banking_stage_ingress_types::BankingPacketBatch,
-        crossbeam_channel::{unbounded, Receiver},
+        crossbeam_channel::unbounded,
         itertools::Itertools,
         solana_entry::entry::{self, EntrySlice},
         solana_hash::Hash,
@@ -698,8 +698,9 @@ mod tests {
         },
         solana_perf::packet::to_packet_batches,
         solana_poh::{
-            poh_recorder::{create_test_recorder, PohRecorderError, Record},
+            poh_recorder::{create_test_recorder, PohRecorderError},
             poh_service::PohService,
+            record_channels::{record_channels, RecordReceiver},
             transaction_recorder::RecordTransactionsSummary,
         },
         solana_poh_config::PohConfig,
@@ -1124,7 +1125,7 @@ mod tests {
             &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
-        let (record_sender, record_receiver) = unbounded();
+        let (record_sender, record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
@@ -1184,7 +1185,7 @@ mod tests {
     }
 
     pub(crate) fn simulate_poh(
-        record_receiver: Receiver<Record>,
+        record_receiver: RecordReceiver,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
     ) -> JoinHandle<()> {
         let poh_recorder = poh_recorder.clone();
