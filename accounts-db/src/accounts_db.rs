@@ -306,7 +306,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     mark_obsolete_accounts: MarkObsoleteAccounts::Disabled,
     num_background_threads: None,
     num_foreground_threads: None,
-    num_hash_threads: None,
     memlock_budget_size: MEMLOCK_BUDGET_SIZE_FOR_TESTS,
 };
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
@@ -329,7 +328,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     mark_obsolete_accounts: MarkObsoleteAccounts::Disabled,
     num_background_threads: None,
     num_foreground_threads: None,
-    num_hash_threads: None,
     memlock_budget_size: MEMLOCK_BUDGET_SIZE_FOR_TESTS,
 };
 
@@ -455,8 +453,6 @@ pub struct AccountsDbConfig {
     pub num_background_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool_foreground`)
     pub num_foreground_threads: Option<NonZeroUsize>,
-    /// Number of threads for background accounts hashing
-    pub num_hash_threads: Option<NonZeroUsize>,
     /// Amount of memory (in bytes) that is allowed to be locked during db operations.
     /// On linux it's verified on start-up with the kernel limits, such that during runtime
     /// parts of it can be utilized without panicking.
@@ -1278,8 +1274,6 @@ pub struct AccountsDb {
     pub thread_pool_foreground: ThreadPool,
     /// Thread pool for background tasks, e.g. AccountsBackgroundService and flush/clean/shrink
     pub thread_pool_background: ThreadPool,
-    // number of threads to use for accounts hash verify at startup
-    pub num_hash_threads: Option<NonZeroUsize>,
 
     pub stats: AccountsStats,
 
@@ -1370,12 +1364,6 @@ pub fn quarter_thread_count() -> usize {
     std::cmp::max(2, num_cpus::get() / 4)
 }
 
-/// Returns the default number of threads to use for background accounts hashing
-pub fn default_num_hash_threads() -> NonZeroUsize {
-    // 1/8 of the number of cpus and up to 6 threads gives good balance for the system.
-    let num_threads = (num_cpus::get() / 8).clamp(2, 6);
-    NonZeroUsize::new(num_threads).unwrap()
-}
 pub fn default_num_foreground_threads() -> usize {
     get_thread_count()
 }
@@ -1537,7 +1525,6 @@ impl AccountsDb {
             scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
             thread_pool_foreground,
             thread_pool_background,
-            num_hash_threads: accounts_db_config.num_hash_threads,
             active_stats: ActiveStats::default(),
             storage: AccountStorage::default(),
             accounts_cache: AccountsCache::default(),

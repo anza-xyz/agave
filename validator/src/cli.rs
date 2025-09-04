@@ -136,6 +136,14 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         replaced_by: "accounts-db-background-threads",
     );
     add_arg!(
+        // deprecated in v3.1.0
+        Arg::with_name("accounts_db_hash_threads")
+            .long("accounts-db-hash-threads")
+            .takes_value(true)
+            .value_name("NUMBER"),
+        usage_warning: "There is no more startup background accounts hash calculation",
+    );
+    add_arg!(
         // deprecated in v3.0.0
         Arg::with_name("accounts_db_read_cache_limit_mb")
             .long("accounts-db-read-cache-limit-mb")
