@@ -63,8 +63,9 @@ pub struct ProgressMessage {
     /// Negative values indicate approximate time until the first leader slot
     /// begins.
     pub progress: i16,
-    /// The number of compute units packed in the current block, if leader.
-    pub total_compute_units: u64,
+    /// The remaining cost units allowed to be packed in the block.
+    /// i.e. block_limit - current_cost_units_used.
+    pub remaining_cost_units: u64,
 }
 
 /// The maximum number of transactions that can be included in a single
@@ -203,8 +204,8 @@ pub mod worker_message_types {
     pub struct Included {
         /// The transaction that was included.
         pub transaction: SharableTransaction,
-        /// Compute units used by the transaction.
-        pub compute_units: u64,
+        /// cost units used by the transaction.
+        pub cost_units: u64,
         /// The fee-payer balance after execution.
         pub fee_payer_balance: u64,
     }
