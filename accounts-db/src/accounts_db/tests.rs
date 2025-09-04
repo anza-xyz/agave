@@ -6693,3 +6693,39 @@ fn test_obsolete_accounts_empty_default_duplicate_hash(mark_obsolete_accounts: b
         );
     }
 }
+
+#[test]
+fn test_batch_insert_zero_lamport_single_ref_account_offsets() {
+    let accounts = AccountsDb::new_single_for_tests();
+    let storage = accounts.create_and_insert_store(1, 100, "test");
+
+    // Test inserting new offsets
+    let offsets1 = vec![10, 20, 30];
+    let count1 = storage.batch_insert_zero_lamport_single_ref_account_offsets(&offsets1);
+    assert_eq!(count1, 3, "Should insert all 3 new offsets");
+    assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 3);
+
+    // Test inserting some duplicate and some new offsets
+    let offsets2 = vec![20, 30, 40, 50]; // 20,30 are duplicates, 40,50 are new
+    let count2 = storage.batch_insert_zero_lamport_single_ref_account_offsets(&offsets2);
+    assert_eq!(count2, 2, "Should insert only 2 new offsets (40, 50)");
+    assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 5);
+
+    // Test inserting all duplicates
+    let offsets3 = vec![10, 20];
+    let count3 = storage.batch_insert_zero_lamport_single_ref_account_offsets(&offsets3);
+    assert_eq!(count3, 0, "Should not insert any duplicates");
+    assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 5);
+
+    // Test inserting empty slice
+    let empty_offsets: Vec<usize> = vec![];
+    let count4 = storage.batch_insert_zero_lamport_single_ref_account_offsets(&empty_offsets);
+    assert_eq!(count4, 0, "Should handle empty slice");
+    assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 5);
+
+    // Test inserting large batch with mixed duplicates
+    let offsets5 = vec![10, 60, 20, 70, 30, 80, 40]; // 10,20,30,40 duplicates, 60,70,80 new
+    let count5 = storage.batch_insert_zero_lamport_single_ref_account_offsets(&offsets5);
+    assert_eq!(count5, 3, "Should insert only 3 new offsets (60, 70, 80)");
+    assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 8);
+}
