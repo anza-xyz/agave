@@ -1107,7 +1107,7 @@ pub mod disable_zk_elgamal_proof_program {
 }
 
 pub mod reenable_zk_elgamal_proof_program {
-    solana_pubkey::declare_id!("zkeygbBwEGgThKda6nVFVUjJHSYXbwydbmaPUeNQbmK");
+    solana_pubkey::declare_id!("zkesAyFB19sTkX8i9ReoKaMNDA4YNTPYJpZKPDt7FMW");
 }
 
 pub mod raise_block_limits_to_100m {
