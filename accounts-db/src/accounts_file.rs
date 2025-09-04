@@ -113,6 +113,7 @@ impl AccountsFile {
         }
     }
 
+    /// Flushes contents to disk
     pub fn flush(&self) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.flush(),
@@ -134,6 +135,7 @@ impl AccountsFile {
         }
     }
 
+    /// Returns the number of bytes, *not accounts*, used in the AccountsFile
     pub fn len(&self) -> usize {
         match self {
             Self::AppendVec(av) => av.len(),
@@ -148,6 +150,7 @@ impl AccountsFile {
         }
     }
 
+    /// Returns the total number of bytes, *not accounts*, the AccountsFile can hold
     pub fn capacity(&self) -> u64 {
         match self {
             Self::AppendVec(av) => av.capacity(),

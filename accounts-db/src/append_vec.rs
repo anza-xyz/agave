@@ -386,6 +386,7 @@ impl AppendVec {
         aligned_stored_size(0) * count
     }
 
+    /// Flushes contents to disk
     pub fn flush(&self) -> Result<()> {
         // Check to see if we're actually dirty before flushing.
         let should_flush = self.is_dirty.swap(false, Ordering::AcqRel);
@@ -443,6 +444,7 @@ impl AppendVec {
             .saturating_sub(u64_align!(self.len()) as u64)
     }
 
+    /// Returns the number of bytes, *not items*, used in the AppendVec
     pub fn len(&self) -> usize {
         self.current_len.load(Ordering::Acquire)
     }
@@ -451,6 +453,7 @@ impl AppendVec {
         self.len() == 0
     }
 
+    /// Returns the total number of bytes, *not items*, the AppendVec can hold
     pub fn capacity(&self) -> u64 {
         self.file_size
     }
