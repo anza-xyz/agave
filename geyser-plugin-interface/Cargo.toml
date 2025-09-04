@@ -16,6 +16,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 log = { workspace = true, features = ["std"] }
 solana-clock = { workspace = true }
 solana-hash = { workspace = true }
+solana-lattice-hash = { workspace = true }
 solana-signature = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
