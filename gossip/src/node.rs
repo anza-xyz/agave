@@ -428,6 +428,16 @@ mod multihoming {
     }
 
     impl NodeMultihoming {
+        /// Error handling note for `switch_active_interface(...)`
+        ///
+        /// Both self.gossip_socket and self.addresses are guaranteed to have the same length
+        /// since they hold unique addresses and are bound by the length of self.bind_ip_addrs.
+        ///
+        /// `set_<protocol>_socket(...)` can only fail in 4 scenarios:
+        /// 1. port is 0 (impossible - we can't bind to port 0)
+        /// 2. ip is multicast (checked at startup)
+        /// 3. ip is unspecified (checked at startup)
+        /// 4. > 255 IPs (impossible - bounded by bind_ip_addrs.len())
         pub fn switch_active_interface(
             &self,
             interface: IpAddr,
