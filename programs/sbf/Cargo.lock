@@ -6156,7 +6156,6 @@ version = "3.1.0"
 dependencies = [
  "chrono",
  "clap",
- "dirs-next",
  "rpassword",
  "solana-clock",
  "solana-cluster-type",
