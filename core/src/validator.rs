@@ -27,7 +27,7 @@ use {
             verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
         },
         tpu::{ForwardingClientOption, Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
-        tvu::{Tvu, TvuConfig, TvuSockets},
+        tvu::{Tvu, TvuConfig, TvuSockets, VoteClientOption},
     },
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
@@ -1103,12 +1103,13 @@ impl Validator {
             ))),
             (true, _) => None,
         };
+        let mut vote_client_socket = Some(node.sockets.quic_vote_client);
 
-        let vote_connection_cache = if vote_use_quic {
-            let vote_connection_cache = ConnectionCache::new_with_client_options(
+        let vote_connection_cache = match (config.use_tpu_client_next, vote_use_quic) {
+            (false, true) => Some(Arc::new(ConnectionCache::new_with_client_options(
                 "connection_cache_vote_quic",
                 tpu_connection_pool_size,
-                Some(node.sockets.quic_vote_client),
+                Some(vote_client_socket.take().expect("Socket should exist.")),
                 Some((
                     &identity_keypair,
                     node.info
@@ -1119,13 +1120,12 @@ impl Validator {
                         .ip(),
                 )),
                 Some((&staked_nodes, &identity_keypair.pubkey())),
-            );
-            Arc::new(vote_connection_cache)
-        } else {
-            Arc::new(ConnectionCache::with_udp(
+            ))),
+            (true, true) => None,
+            (_, false) => Some(Arc::new(ConnectionCache::with_udp(
                 "connection_cache_vote_udp",
                 tpu_connection_pool_size,
-            ))
+            ))),
         };
 
         // test-validator crate may start the validator in a tokio runtime
@@ -1508,6 +1508,9 @@ impl Validator {
             } else {
                 None
             };
+        let vote_connection_cache_for_warmup = vote_connection_cache
+            .as_ref()
+            .filter(|cache| cache.use_quic());
         let (xdp_retransmitter, xdp_sender) =
             if let Some(xdp_config) = config.retransmit_xdp.clone() {
                 let src_port = node.sockets.retransmit_sockets[0]
@@ -1528,6 +1531,21 @@ impl Validator {
             node.sockets.alpenglow
         } else {
             None
+        };
+
+        let vote_client = if let Some(connection_cache) = &vote_connection_cache {
+            VoteClientOption::ConnectionCache(connection_cache.clone())
+        } else {
+            let runtime_handle = tpu_client_next_runtime
+                .as_ref()
+                .map(TokioRuntime::handle)
+                .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+            VoteClientOption::TpuClientNext(
+                Arc::as_ref(&identity_keypair),
+                vote_client_socket.take().expect("Socket should exist."),
+                runtime_handle.clone(),
+                cancel_tpu_client_next.clone(),
+            )
         };
 
         let tvu = Tvu::new(
@@ -1592,7 +1610,8 @@ impl Validator {
             cluster_slots.clone(),
             wen_restart_repair_slots.clone(),
             slot_status_notifier,
-            vote_connection_cache,
+            vote_connection_cache_for_warmup,
+            vote_client,
         )
         .map_err(ValidatorError::Other)?;
 
@@ -1632,6 +1651,7 @@ impl Validator {
                 node_multihoming.clone(),
             ))
         };
+
         let tpu = Tpu::new_with_client(
             &cluster_info,
             &poh_recorder,

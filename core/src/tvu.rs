@@ -55,7 +55,8 @@ use {
         sync::{atomic::AtomicBool, Arc, RwLock},
         thread::{self, JoinHandle},
     },
-    tokio::sync::mpsc::Sender as AsyncSender,
+    tokio::{runtime::Handle as RuntimeHandle, sync::mpsc::Sender as AsyncSender},
+    tokio_util::sync::CancellationToken,
 };
 
 /// Sets the upper bound on the number of batches stored in the retransmit
@@ -119,6 +120,16 @@ impl Default for TvuConfig {
     }
 }
 
+/// [`VoteClientOption`] enum represents the available client types for
+/// Vote communication:
+/// * [`ConnectionCacheClient`]: Uses a shared [`ConnectionCache`] to manage
+///   connections.
+/// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate.
+pub enum VoteClientOption<'a> {
+    ConnectionCache(Arc<ConnectionCache>),
+    TpuClientNext(&'a Keypair, UdpSocket, RuntimeHandle, CancellationToken),
+}
+
 impl Tvu {
     /// This service receives messages from a leader in the network and processes the transactions
     /// on the bank state.
@@ -173,7 +184,8 @@ impl Tvu {
         cluster_slots: Arc<ClusterSlots>,
         wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
-        vote_connection_cache: Arc<ConnectionCache>,
+        vote_connection_cache: Option<&Arc<ConnectionCache>>,
+        vote_client: VoteClientOption,
     ) -> Result<Self, String> {
         let in_wen_restart = wen_restart_repair_slots.is_some();
 
@@ -353,7 +365,7 @@ impl Tvu {
             cluster_info.clone(),
             poh_recorder.clone(),
             tower_storage,
-            vote_connection_cache.clone(),
+            vote_client,
             alpenglow_socket,
             bank_forks.clone(),
         );
@@ -437,13 +449,15 @@ impl Tvu {
 
 fn create_cache_warmer_if_needed(
     connection_cache: Option<&Arc<ConnectionCache>>,
-    vote_connection_cache: Arc<ConnectionCache>,
+    vote_connection_cache: Option<&Arc<ConnectionCache>>,
     cluster_info: &Arc<ClusterInfo>,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
     exit: &Arc<AtomicBool>,
 ) -> Option<WarmQuicCacheService> {
     let tpu_connection_cache = connection_cache.filter(|cache| cache.use_quic()).cloned();
-    let vote_connection_cache = Some(vote_connection_cache).filter(|cache| cache.use_quic());
+    let vote_connection_cache = vote_connection_cache
+        .filter(|cache| cache.use_quic())
+        .cloned();
 
     (tpu_connection_cache.is_some() || vote_connection_cache.is_some()).then(|| {
         WarmQuicCacheService::new(
@@ -553,6 +567,8 @@ pub mod tests {
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )
         };
+        let connection_cache = Arc::new(connection_cache);
+        let client_option = VoteClientOption::ConnectionCache(connection_cache.clone());
 
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
@@ -614,7 +630,8 @@ pub mod tests {
             cluster_slots,
             wen_restart_repair_slots,
             None,
-            Arc::new(connection_cache),
+            Some(&connection_cache),
+            client_option,
         )
         .expect("assume success");
         if enable_wen_restart {
