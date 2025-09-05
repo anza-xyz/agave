@@ -7073,8 +7073,11 @@ impl AccountsDb {
     ) -> u64 {
         let mut slot_offsets = HashMap::<_, Vec<_>>::default();
         let mut pubkeys: Vec<_> = pubkeys.into_iter().collect();
-        pubkeys.sort_unstable();
 
+        // sort the pubkeys first so that in scan, the pubkeys are visited in
+        // index bucket in order. This helps to reduce the page faults and speed
+        // up the scan compare to visit the pubkeys in random order.
+        pubkeys.sort_unstable();
         self.accounts_index.scan(
             pubkeys.iter(),
             |_pubkey, slots_refs, _entry| {
