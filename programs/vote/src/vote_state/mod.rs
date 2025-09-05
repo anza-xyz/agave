@@ -5,7 +5,7 @@ mod handler;
 
 pub use solana_vote_interface::state::{vote_state_versions::*, *};
 use {
-    handler::{VoteStateHandler, VoteStateTargetVersion},
+    handler::{VoteStateHandle, VoteStateHandler, VoteStateTargetVersion},
     log::*,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Clock, Epoch, Slot},

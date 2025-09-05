@@ -30,6 +30,194 @@ pub enum VoteStateTargetVersion {
     // New vote state versions will be added here...
 }
 
+/// Trait defining the interface for vote state operations.
+pub trait VoteStateHandle {
+    fn is_uninitialized(&self) -> bool;
+
+    fn authorized_withdrawer(&self) -> &Pubkey;
+
+    fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey);
+
+    fn set_new_authorized_voter<F>(
+        &mut self,
+        authorized_pubkey: &Pubkey,
+        current_epoch: Epoch,
+        target_epoch: Epoch,
+        verify: F,
+    ) -> Result<(), InstructionError>
+    where
+        F: Fn(Pubkey) -> Result<(), InstructionError>;
+
+    fn get_and_update_authorized_voter(
+        &mut self,
+        current_epoch: Epoch,
+    ) -> Result<Pubkey, InstructionError>;
+
+    fn commission(&self) -> u8;
+
+    fn set_commission(&mut self, commission: u8);
+
+    fn node_pubkey(&self) -> &Pubkey;
+
+    fn set_node_pubkey(&mut self, node_pubkey: Pubkey);
+
+    fn votes(&self) -> &VecDeque<LandedVote>;
+
+    fn votes_mut(&mut self) -> &mut VecDeque<LandedVote>;
+
+    fn set_votes(&mut self, votes: VecDeque<LandedVote>);
+
+    fn contains_slot(&self, slot: Slot) -> bool;
+
+    fn last_voted_slot(&self) -> Option<Slot>;
+
+    fn root_slot(&self) -> Option<Slot>;
+
+    fn set_root_slot(&mut self, root_slot: Option<Slot>);
+
+    fn current_epoch(&self) -> Epoch;
+
+    fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)>;
+
+    fn credits_for_vote_at_index(&self, index: usize) -> u64;
+
+    fn increment_credits(&mut self, epoch: Epoch, credits: u64);
+
+    fn process_timestamp(&mut self, slot: Slot, timestamp: i64) -> Result<(), VoteError>;
+
+    fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot);
+
+    fn set_vote_account_state(
+        &self,
+        vote_account: &mut BorrowedInstructionAccount,
+    ) -> Result<(), InstructionError>;
+}
+
+impl VoteStateHandle for VoteStateV3 {
+    fn is_uninitialized(&self) -> bool {
+        self.node_pubkey == Pubkey::default()
+    }
+
+    fn authorized_withdrawer(&self) -> &Pubkey {
+        &self.authorized_withdrawer
+    }
+
+    fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey) {
+        self.authorized_withdrawer = authorized_withdrawer;
+    }
+
+    fn set_new_authorized_voter<F>(
+        &mut self,
+        authorized_pubkey: &Pubkey,
+        current_epoch: Epoch,
+        target_epoch: Epoch,
+        verify: F,
+    ) -> Result<(), InstructionError>
+    where
+        F: Fn(Pubkey) -> Result<(), InstructionError>,
+    {
+        self.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
+    }
+
+    fn get_and_update_authorized_voter(
+        &mut self,
+        current_epoch: Epoch,
+    ) -> Result<Pubkey, InstructionError> {
+        self.get_and_update_authorized_voter(current_epoch)
+    }
+
+    fn commission(&self) -> u8 {
+        self.commission
+    }
+
+    fn set_commission(&mut self, commission: u8) {
+        self.commission = commission;
+    }
+
+    fn node_pubkey(&self) -> &Pubkey {
+        &self.node_pubkey
+    }
+
+    fn set_node_pubkey(&mut self, node_pubkey: Pubkey) {
+        self.node_pubkey = node_pubkey;
+    }
+
+    fn votes(&self) -> &VecDeque<LandedVote> {
+        &self.votes
+    }
+
+    fn votes_mut(&mut self) -> &mut VecDeque<LandedVote> {
+        &mut self.votes
+    }
+
+    fn set_votes(&mut self, votes: VecDeque<LandedVote>) {
+        self.votes = votes;
+    }
+
+    fn contains_slot(&self, slot: Slot) -> bool {
+        self.contains_slot(slot)
+    }
+
+    fn last_voted_slot(&self) -> Option<Slot> {
+        self.last_voted_slot()
+    }
+
+    fn root_slot(&self) -> Option<Slot> {
+        self.root_slot
+    }
+
+    fn set_root_slot(&mut self, root_slot: Option<Slot>) {
+        self.root_slot = root_slot;
+    }
+
+    fn current_epoch(&self) -> Epoch {
+        self.current_epoch()
+    }
+
+    fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)> {
+        self.epoch_credits.last()
+    }
+
+    fn credits_for_vote_at_index(&self, index: usize) -> u64 {
+        self.credits_for_vote_at_index(index)
+    }
+
+    fn increment_credits(&mut self, epoch: Epoch, credits: u64) {
+        self.increment_credits(epoch, credits)
+    }
+
+    fn process_timestamp(&mut self, slot: Slot, timestamp: i64) -> Result<(), VoteError> {
+        self.process_timestamp(slot, timestamp)
+    }
+
+    fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot) {
+        self.process_next_vote_slot(next_vote_slot, epoch, current_slot)
+    }
+
+    fn set_vote_account_state(
+        &self,
+        vote_account: &mut BorrowedInstructionAccount,
+    ) -> Result<(), InstructionError> {
+        // If the account is not large enough to store the vote state, then attempt a realloc to make it large enough.
+        // The realloc can only proceed if the vote account has balance sufficient for rent exemption at the new size.
+        if (vote_account.get_data().len() < VoteStateVersions::vote_state_size_of(true))
+            && (!vote_account
+                .is_rent_exempt_at_data_length(VoteStateVersions::vote_state_size_of(true))
+                || vote_account
+                    .set_data_length(VoteStateVersions::vote_state_size_of(true))
+                    .is_err())
+        {
+            // Account cannot be resized to the size of a vote state as it will not be rent exempt, or failed to be
+            // resized for other reasons.  So store the V1_14_11 version.
+            return vote_account.set_state(&VoteStateVersions::V1_14_11(Box::new(
+                VoteState1_14_11::from(self.clone()),
+            )));
+        }
+        // Vote account is large enough to store the newest version of vote state
+        vote_account.set_state(&VoteStateVersions::V3(Box::new(self.clone())))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum TargetVoteState {
     V3(VoteStateV3),
@@ -46,40 +234,26 @@ pub struct VoteStateHandler {
     target_state: TargetVoteState,
 }
 
-impl VoteStateHandler {
-    /// Create a new handler for the provided target version by deserializing
-    /// the vote state and converting it to the target.
-    pub fn deserialize_and_convert(
-        vote_account: &BorrowedInstructionAccount,
-        target_version: VoteStateTargetVersion,
-    ) -> Result<Self, InstructionError> {
-        let state = vote_account.get_state::<VoteStateVersions>()?;
-        let target_state = match target_version {
-            VoteStateTargetVersion::V3 => TargetVoteState::V3(state.convert_to_v3()),
-        };
-        Ok(Self { target_state })
-    }
-
-    /// Check if the vote state is uninitialized.
-    pub fn is_uninitialized(&self) -> bool {
+impl VoteStateHandle for VoteStateHandler {
+    fn is_uninitialized(&self) -> bool {
         match &self.target_state {
-            TargetVoteState::V3(v3) => v3.node_pubkey == Pubkey::default(),
+            TargetVoteState::V3(v3) => v3.is_uninitialized(),
         }
     }
 
-    pub fn authorized_withdrawer(&self) -> &Pubkey {
+    fn authorized_withdrawer(&self) -> &Pubkey {
         match &self.target_state {
-            TargetVoteState::V3(v3) => &v3.authorized_withdrawer,
+            TargetVoteState::V3(v3) => v3.authorized_withdrawer(),
         }
     }
 
-    pub fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey) {
+    fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey) {
         match &mut self.target_state {
-            TargetVoteState::V3(v3) => v3.authorized_withdrawer = authorized_withdrawer,
+            TargetVoteState::V3(v3) => v3.set_authorized_withdrawer(authorized_withdrawer),
         }
     }
 
-    pub fn set_new_authorized_voter<F>(
+    fn set_new_authorized_voter<F>(
         &mut self,
         authorized_pubkey: &Pubkey,
         current_epoch: Epoch,
@@ -96,7 +270,7 @@ impl VoteStateHandler {
         }
     }
 
-    pub fn get_and_update_authorized_voter(
+    fn get_and_update_authorized_voter(
         &mut self,
         current_epoch: Epoch,
     ) -> Result<Pubkey, InstructionError> {
@@ -105,112 +279,103 @@ impl VoteStateHandler {
         }
     }
 
-    pub fn commission(&self) -> u8 {
+    fn commission(&self) -> u8 {
         match &self.target_state {
-            TargetVoteState::V3(v3) => v3.commission,
+            TargetVoteState::V3(v3) => v3.commission(),
         }
     }
 
-    pub fn set_commission(&mut self, commission: u8) {
+    fn set_commission(&mut self, commission: u8) {
         match &mut self.target_state {
-            TargetVoteState::V3(v3) => v3.commission = commission,
+            TargetVoteState::V3(v3) => v3.set_commission(commission),
         }
     }
 
-    pub fn node_pubkey(&self) -> &Pubkey {
+    fn node_pubkey(&self) -> &Pubkey {
         match &self.target_state {
-            TargetVoteState::V3(v3) => &v3.node_pubkey,
+            TargetVoteState::V3(v3) => v3.node_pubkey(),
         }
     }
 
-    pub fn set_node_pubkey(&mut self, node_pubkey: Pubkey) {
+    fn set_node_pubkey(&mut self, node_pubkey: Pubkey) {
         match &mut self.target_state {
-            TargetVoteState::V3(v3) => v3.node_pubkey = node_pubkey,
+            TargetVoteState::V3(v3) => v3.set_node_pubkey(node_pubkey),
         }
     }
 
-    pub fn votes(&self) -> &VecDeque<LandedVote> {
+    fn votes(&self) -> &VecDeque<LandedVote> {
         match &self.target_state {
-            TargetVoteState::V3(v3) => &v3.votes,
+            TargetVoteState::V3(v3) => v3.votes(),
         }
     }
 
-    pub fn votes_mut(&mut self) -> &mut VecDeque<LandedVote> {
+    fn votes_mut(&mut self) -> &mut VecDeque<LandedVote> {
         match &mut self.target_state {
-            TargetVoteState::V3(v3) => &mut v3.votes,
+            TargetVoteState::V3(v3) => v3.votes_mut(),
         }
     }
 
-    pub fn set_votes(&mut self, votes: VecDeque<LandedVote>) {
+    fn set_votes(&mut self, votes: VecDeque<LandedVote>) {
         match &mut self.target_state {
-            TargetVoteState::V3(v3) => v3.votes = votes,
+            TargetVoteState::V3(v3) => v3.set_votes(votes),
         }
     }
 
-    pub fn contains_slot(&self, slot: Slot) -> bool {
+    fn contains_slot(&self, slot: Slot) -> bool {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.contains_slot(slot),
         }
     }
 
-    pub fn last_voted_slot(&self) -> Option<Slot> {
+    fn last_voted_slot(&self) -> Option<Slot> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.last_voted_slot(),
         }
     }
 
-    pub fn compute_vote_latency(voted_for_slot: Slot, current_slot: Slot) -> u8 {
-        std::cmp::min(current_slot.saturating_sub(voted_for_slot), u8::MAX as u64) as u8
-    }
-
-    pub fn root_slot(&self) -> Option<Slot> {
+    fn root_slot(&self) -> Option<Slot> {
         match &self.target_state {
-            TargetVoteState::V3(v3) => v3.root_slot,
+            TargetVoteState::V3(v3) => v3.root_slot(),
         }
     }
 
-    pub fn set_root_slot(&mut self, root_slot: Option<Slot>) {
+    fn set_root_slot(&mut self, root_slot: Option<Slot>) {
         match &mut self.target_state {
-            TargetVoteState::V3(v3) => v3.root_slot = root_slot,
+            TargetVoteState::V3(v3) => v3.set_root_slot(root_slot),
         }
     }
 
-    pub fn current_epoch(&self) -> Epoch {
+    fn current_epoch(&self) -> Epoch {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.current_epoch(),
         }
     }
 
-    pub fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)> {
+    fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)> {
         match &self.target_state {
-            TargetVoteState::V3(v3) => v3.epoch_credits.last(),
+            TargetVoteState::V3(v3) => v3.epoch_credits_last(),
         }
     }
 
-    pub fn credits_for_vote_at_index(&self, index: usize) -> u64 {
+    fn credits_for_vote_at_index(&self, index: usize) -> u64 {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.credits_for_vote_at_index(index),
         }
     }
 
-    pub fn increment_credits(&mut self, epoch: Epoch, credits: u64) {
+    fn increment_credits(&mut self, epoch: Epoch, credits: u64) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.increment_credits(epoch, credits),
         }
     }
 
-    pub fn process_timestamp(&mut self, slot: Slot, timestamp: i64) -> Result<(), VoteError> {
+    fn process_timestamp(&mut self, slot: Slot, timestamp: i64) -> Result<(), VoteError> {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.process_timestamp(slot, timestamp),
         }
     }
 
-    pub fn process_next_vote_slot(
-        &mut self,
-        next_vote_slot: Slot,
-        epoch: Epoch,
-        current_slot: Slot,
-    ) {
+    fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => {
                 v3.process_next_vote_slot(next_vote_slot, epoch, current_slot)
@@ -218,31 +383,32 @@ impl VoteStateHandler {
         }
     }
 
-    pub fn set_vote_account_state(
+    fn set_vote_account_state(
         &self,
         vote_account: &mut BorrowedInstructionAccount,
     ) -> Result<(), InstructionError> {
         match &self.target_state {
-            TargetVoteState::V3(v3) => {
-                // If the account is not large enough to store the vote state, then attempt a realloc to make it large enough.
-                // The realloc can only proceed if the vote account has balance sufficient for rent exemption at the new size.
-                if (vote_account.get_data().len() < VoteStateVersions::vote_state_size_of(true))
-                    && (!vote_account
-                        .is_rent_exempt_at_data_length(VoteStateVersions::vote_state_size_of(true))
-                        || vote_account
-                            .set_data_length(VoteStateVersions::vote_state_size_of(true))
-                            .is_err())
-                {
-                    // Account cannot be resized to the size of a vote state as it will not be rent exempt, or failed to be
-                    // resized for other reasons.  So store the V1_14_11 version.
-                    return vote_account.set_state(&VoteStateVersions::V1_14_11(Box::new(
-                        VoteState1_14_11::from(v3.clone()),
-                    )));
-                }
-                // Vote account is large enough to store the newest version of vote state
-                vote_account.set_state(&VoteStateVersions::V3(Box::new(v3.clone())))
-            }
+            TargetVoteState::V3(v3) => v3.set_vote_account_state(vote_account),
         }
+    }
+}
+
+impl VoteStateHandler {
+    /// Create a new handler for the provided target version by deserializing
+    /// the vote state and converting it to the target.
+    pub fn deserialize_and_convert(
+        vote_account: &BorrowedInstructionAccount,
+        target_version: VoteStateTargetVersion,
+    ) -> Result<Self, InstructionError> {
+        let state = vote_account.get_state::<VoteStateVersions>()?;
+        let target_state = match target_version {
+            VoteStateTargetVersion::V3 => TargetVoteState::V3(state.convert_to_v3()),
+        };
+        Ok(Self { target_state })
+    }
+
+    pub fn compute_vote_latency(voted_for_slot: Slot, current_slot: Slot) -> u8 {
+        std::cmp::min(current_slot.saturating_sub(voted_for_slot), u8::MAX as u64) as u8
     }
 
     pub fn init_vote_account_state(
