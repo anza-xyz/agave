@@ -1107,9 +1107,9 @@ impl AccountStorageEntry {
         // enforce invariant that we're not removing too many bytes or accounts
         assert!(
             num_bytes <= prev_alive_bytes && num_accounts <= prev_count,
-            "Too many bytes or accounts removed from storage! slot: {}, id: {}, \
-             initial alive bytes: {prev_alive_bytes}, initial num accounts: {prev_count}, \
-             num bytes removed: {num_bytes}, num accounts removed: {num_accounts}",
+            "Too many bytes or accounts removed from storage! slot: {}, id: {}, initial alive \
+             bytes: {prev_alive_bytes}, initial num accounts: {prev_count}, num bytes removed: \
+             {num_bytes}, num accounts removed: {num_accounts}",
             self.slot,
             self.id,
         );
