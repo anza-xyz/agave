@@ -1115,7 +1115,6 @@ impl Bank {
         runtime_config: Arc<RuntimeConfig>,
         paths: Vec<PathBuf>,
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
-        debug_do_not_add_builtins: bool,
         accounts_db_config: AccountsDbConfig,
         accounts_update_notifier: Option<AccountsUpdateNotifier>,
         #[allow(unused)] collector_id_for_tests: Option<Pubkey>,
@@ -1129,6 +1128,10 @@ impl Bank {
         let mut bank = Self::default_with_accounts(accounts);
         bank.ancestors = Ancestors::from(vec![bank.slot()]);
         bank.compute_budget = runtime_config.compute_budget;
+        if let Some(compute_budget) = &bank.compute_budget {
+            bank.transaction_processor
+                .set_execution_cost(compute_budget.to_cost());
+        }
         bank.transaction_account_lock_limit = runtime_config.transaction_account_lock_limit;
         bank.transaction_debug_keys = debug_keys;
         bank.cluster_type = Some(genesis_config.cluster_type);
@@ -1143,7 +1146,7 @@ impl Bank {
         #[cfg(feature = "dev-context-only-utils")]
         bank.process_genesis_config(genesis_config, collector_id_for_tests, genesis_hash);
 
-        bank.finish_init(debug_do_not_add_builtins);
+        bank.compute_and_apply_genesis_features();
 
         // genesis needs stakes for all epochs up to the epoch implied by
         //  slot = 0 and genesis configuration
@@ -1679,7 +1682,6 @@ impl Bank {
         parent.freeze();
         let parent_timestamp = parent.clock().unix_timestamp;
         let mut new = Bank::new_from_parent(parent, collector_id, slot);
-        new.compute_and_apply_activated_features(false);
         new.update_epoch_stakes(new.epoch_schedule().get_epoch(slot));
         new.tick_height.store(new.max_tick_height(), Relaxed);
 
@@ -1705,7 +1707,6 @@ impl Bank {
         runtime_config: Arc<RuntimeConfig>,
         fields: BankFieldsToDeserialize,
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
-        debug_do_not_add_builtins: bool,
         accounts_data_size_initial: u64,
     ) -> Self {
         let now = Instant::now();
@@ -1804,6 +1805,10 @@ impl Bank {
 
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
+        if let Some(compute_budget) = &bank.compute_budget {
+            bank.transaction_processor
+                .set_execution_cost(compute_budget.to_cost());
+        }
 
         // TODO: Only create the thread pool if we need to recalculate rewards,
         // i.e. epoch_reward_status is active. Currently, this thread pool is
@@ -1818,7 +1823,7 @@ impl Bank {
             .expect("new rayon threadpool");
         bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
 
-        bank.finish_init(debug_do_not_add_builtins);
+        bank.compute_and_apply_features_after_snapshot_restore();
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
 
@@ -4045,13 +4050,17 @@ impl Bank {
         cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
     }
 
-    fn finish_init(&mut self, debug_do_not_add_builtins: bool) {
-        if let Some(compute_budget) = self.compute_budget {
-            self.transaction_processor
-                .set_execution_cost(compute_budget.to_cost());
-        }
+    /// This is called from genesis and snapshot restore
+    fn apply_activated_features(&mut self) {
+        // Update active set of reserved account keys which are not allowed to be write locked
+        self.reserved_account_keys = {
+            let mut reserved_keys = ReservedAccountKeys::clone(&self.reserved_account_keys);
+            reserved_keys.update_active_set(&self.feature_set);
+            Arc::new(reserved_keys)
+        };
 
-        self.compute_and_apply_activated_features(debug_do_not_add_builtins);
+        // Update the transaction processor with all active built-in programs
+        self.add_active_builtin_programs();
 
         // Cost-Tracker is not serialized in snapshot or any configs.
         // We must apply previously activated features related to limits here
@@ -5158,6 +5167,28 @@ impl Bank {
         &self.reserved_account_keys.active
     }
 
+    /// Compute and apply all activated features and also add accounts for builtins
+    fn compute_and_apply_genesis_features(&mut self) {
+        // Update the feature set to include all features active at this slot
+        let feature_set = self.compute_active_feature_set(false).0;
+        self.feature_set = Arc::new(feature_set);
+
+        // Add built-in program accounts to the bank if they don't already exist
+        self.add_builtin_program_accounts();
+
+        self.apply_activated_features();
+    }
+
+    /// Compute and apply all activated features but do not add built-in
+    /// accounts because we shouldn't modify accounts db for a completed bank
+    fn compute_and_apply_features_after_snapshot_restore(&mut self) {
+        // Update the feature set to include all features active at this slot
+        let feature_set = self.compute_active_feature_set(false).0;
+        self.feature_set = Arc::new(feature_set);
+
+        self.apply_activated_features();
+    }
+
     /// This is called from each epoch boundary
     fn compute_and_apply_new_feature_activations(&mut self) {
         let include_pending = true;
@@ -5285,24 +5316,6 @@ impl Bank {
         }
     }
 
-    // This is called from snapshot restore (among other callers) so the entire
-    // code path herein must be idempotent
-    fn compute_and_apply_activated_features(&mut self, debug_do_not_add_builtins: bool) {
-        let feature_set = self.compute_active_feature_set(false).0;
-        self.feature_set = Arc::new(feature_set);
-
-        // Update active set of reserved account keys which are not allowed to be write locked
-        self.reserved_account_keys = {
-            let mut reserved_keys = ReservedAccountKeys::clone(&self.reserved_account_keys);
-            reserved_keys.update_active_set(&self.feature_set);
-            Arc::new(reserved_keys)
-        };
-
-        if !debug_do_not_add_builtins {
-            self.add_active_builtin_programs();
-        }
-    }
-
     fn adjust_sysvar_balance_for_rent(&self, account: &mut AccountSharedData) {
         account.set_lamports(
             self.get_minimum_balance_for_rent_exemption(account.data().len())
@@ -5400,15 +5413,55 @@ impl Bank {
                     .enable_feature_id
                     .and_then(|feature_id| self.feature_set.activated_slot(&feature_id))
                     .unwrap_or(0);
-                self.add_builtin(
+                self.transaction_processor.add_builtin(
                     builtin.program_id,
-                    builtin.name,
                     ProgramCacheEntry::new_builtin(
                         activation_slot,
                         builtin.name.len(),
                         builtin.entrypoint,
                     ),
                 );
+            }
+        }
+    }
+
+    fn add_builtin_program_accounts(&mut self) {
+        for builtin in BUILTINS.iter() {
+            // The `builtin_is_bpf` flag is used to handle the case where a
+            // builtin is scheduled to be enabled by one feature gate and
+            // later migrated to Core BPF by another.
+            //
+            // There should never be a case where a builtin is set to be
+            // migrated to Core BPF and is also set to be enabled on feature
+            // activation on the same feature gate. However, the
+            // `builtin_is_bpf` flag will handle this case as well, electing
+            // to first attempt the migration to Core BPF.
+            //
+            // The migration to Core BPF will fail gracefully because the
+            // program account will not exist. The builtin will subsequently
+            // be enabled, but it will never be migrated to Core BPF.
+            //
+            // Using the same feature gate for both enabling and migrating a
+            // builtin to Core BPF should be strictly avoided.
+            let builtin_is_bpf = builtin.core_bpf_migration_config.is_some() && {
+                self.get_account(&builtin.program_id)
+                    .map(|a| a.owner() == &bpf_loader_upgradeable::id())
+                    .unwrap_or(false)
+            };
+
+            // If the builtin has already been migrated to Core BPF, do not
+            // add it to the bank's builtins.
+            if builtin_is_bpf {
+                continue;
+            }
+
+            let builtin_is_active = builtin
+                .enable_feature_id
+                .map(|feature_id| self.feature_set.is_active(&feature_id))
+                .unwrap_or(true);
+
+            if builtin_is_active {
+                self.add_builtin_account(builtin.name, &builtin.program_id);
             }
         }
 
@@ -5713,7 +5766,6 @@ impl Bank {
             runtime_config,
             paths,
             None,
-            false,
             test_config.accounts_db_config,
             None,
             Some(Pubkey::new_unique()),
@@ -5735,7 +5787,6 @@ impl Bank {
             Arc::<RuntimeConfig>::default(),
             paths,
             None,
-            false,
             ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
             None,
             Some(Pubkey::new_unique()),

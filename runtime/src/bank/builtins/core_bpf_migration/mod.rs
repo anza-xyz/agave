@@ -1428,8 +1428,9 @@ pub(crate) mod tests {
             ),
         );
 
-        // Run `finish_init` to simulate starting up from a snapshot.
-        // Clear all builtins to simulate a fresh bank init.
+        // Run `compute_and_apply_features_after_snapshot_restore` to simulate
+        // starting up from a snapshot. Clear all builtins to simulate a fresh
+        // bank init.
         bank.transaction_processor
             .global_program_cache
             .write()
@@ -1447,7 +1448,7 @@ pub(crate) mod tests {
             .write()
             .unwrap()
             .clear();
-        bank.finish_init(false);
+        bank.compute_and_apply_features_after_snapshot_restore();
 
         // Assert the feature is active and the bank still added the builtin.
         assert!(bank.feature_set.is_active(feature_id));
@@ -1597,8 +1598,9 @@ pub(crate) mod tests {
             ),
         );
 
-        // Run `finish_init` to simulate starting up from a snapshot.
-        // Clear all builtins to simulate a fresh bank init.
+        // Run `compute_and_apply_features_after_snapshot_restore` to simulate
+        // starting up from a snapshot. Clear all builtins to simulate a fresh
+        // bank init.
         bank.transaction_processor
             .global_program_cache
             .write()
@@ -1616,7 +1618,7 @@ pub(crate) mod tests {
             .write()
             .unwrap()
             .clear();
-        bank.finish_init(false);
+        bank.compute_and_apply_features_after_snapshot_restore();
 
         check_builtin_is_bpf(&bank);
     }

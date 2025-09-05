@@ -830,15 +830,12 @@ where
     let bank_rc = BankRc::new(Accounts::new(Arc::new(accounts_db)));
     let runtime_config = Arc::new(runtime_config.clone());
 
-    // if limit_load_slot_count_from_snapshot is set, then we need to side-step some correctness checks beneath this call
-    let debug_do_not_add_builtins = limit_load_slot_count_from_snapshot.is_some();
     let bank = Bank::new_from_fields(
         bank_rc,
         genesis_config,
         runtime_config,
         bank_fields,
         debug_keys,
-        debug_do_not_add_builtins,
         reconstructed_accounts_db_info.accounts_data_len,
     );
 
