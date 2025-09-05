@@ -6952,6 +6952,7 @@ impl AccountsDb {
             }
             let unique_pubkeys_by_bin = unique_pubkeys_by_bin.into_inner().unwrap();
 
+<<<<<<< HEAD
             let mut timings = GenerateIndexTimings {
                 index_flush_us,
                 scan_time,
@@ -6967,6 +6968,13 @@ impl AccountsDb {
                     .load(Ordering::Relaxed),
                 ..GenerateIndexTimings::default()
             };
+=======
+        let (num_zero_lamport_single_refs, visit_zero_lamports_us) = measure_us!(
+            self.visit_zero_lamport_pubkeys_during_startup(total_accum.zero_lamport_pubkeys)
+        );
+        timings.visit_zero_lamports_us = visit_zero_lamports_us;
+        timings.num_zero_lamport_single_refs = num_zero_lamport_single_refs;
+>>>>>>> 246338ffd (Optimize zero pubkey scan at startup: sort the pubkey before scanning them. (#7795))
 
             if pass == 0 {
                 #[derive(Debug, Default)]
@@ -7200,8 +7208,22 @@ impl AccountsDb {
     /// Visit zero lamport pubkeys and populate zero_lamport_single_ref info on
     /// storage.
     /// Returns the number of zero lamport single ref accounts found.
+<<<<<<< HEAD
     fn visit_zero_lamport_pubkeys_during_startup(&self, pubkeys: &HashSet<Pubkey>) -> u64 {
         let mut count = 0;
+=======
+    fn visit_zero_lamport_pubkeys_during_startup(
+        &self,
+        pubkeys: HashSet<Pubkey, PubkeyHasherBuilder>,
+    ) -> u64 {
+        let mut slot_offsets = HashMap::<_, Vec<_>>::default();
+        let mut pubkeys: Vec<_> = pubkeys.into_iter().collect();
+
+        // sort the pubkeys first so that in scan, the pubkeys are visited in
+        // index bucket in order. This helps to reduce the page faults and speed
+        // up the scan compared to visiting the pubkeys in random order.
+        pubkeys.sort_unstable();
+>>>>>>> 246338ffd (Optimize zero pubkey scan at startup: sort the pubkey before scanning them. (#7795))
         self.accounts_index.scan(
             pubkeys.iter(),
             |_pubkey, slots_refs, _entry| {
