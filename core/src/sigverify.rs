@@ -13,7 +13,7 @@ use {
         sigverify_stage::{SigVerifier, SigVerifyServiceError},
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Sender, TrySendError},
     solana_perf::{cuda_runtime::PinnedVec, packet::PacketBatch, recycler::Recycler, sigverify},
 };
 
@@ -61,7 +61,11 @@ impl SigVerifier for TransactionSigVerifier {
         if let Some(forward_stage_sender) = &self.forward_stage_sender {
             self.banking_stage_sender
                 .send(banking_packet_batch.clone())?;
-            let _ = forward_stage_sender.try_send((banking_packet_batch, self.reject_non_vote));
+            if let Err(TrySendError::Full(_)) =
+                forward_stage_sender.try_send((banking_packet_batch, self.reject_non_vote))
+            {
+                warn!("forwarding stage channel is full, dropping packets.");
+            }
         } else {
             self.banking_stage_sender.send(banking_packet_batch)?;
         }
