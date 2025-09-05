@@ -199,7 +199,7 @@ pub struct CertificateMessage {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "CwKtX5nWfGbQZSBh1YTr3NABwThE4zFTxzQL9K5xkqYW")
+    frozen_abi(digest = "A153ivdrfucQXtKNtYh9ySFg9t8mrcz3oa4j5MUB3wPV")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]
