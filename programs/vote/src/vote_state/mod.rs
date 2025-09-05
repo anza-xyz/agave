@@ -280,8 +280,8 @@ fn check_and_filter_proposed_vote_state(
     Ok(())
 }
 
-fn check_slots_are_valid(
-    vote_state: &VoteStateHandler,
+fn check_slots_are_valid<T: VoteStateHandle>(
+    vote_state: &T,
     vote_slots: &[Slot],
     vote_hash: &Hash,
     slot_hashes: &[(Slot, Hash)],
@@ -593,8 +593,8 @@ pub fn process_new_vote_state(
     Ok(())
 }
 
-pub fn process_vote_unfiltered(
-    vote_state: &mut VoteStateHandler,
+pub fn process_vote_unfiltered<T: VoteStateHandle>(
+    vote_state: &mut T,
     vote_slots: &[Slot],
     vote: &Vote,
     slot_hashes: &[SlotHash],
@@ -639,8 +639,8 @@ pub fn process_vote(
 }
 
 /// "unchecked" functions used by tests and Tower
-pub fn process_vote_unchecked(
-    vote_state: &mut VoteStateHandler,
+pub fn process_vote_unchecked<T: VoteStateHandle>(
+    vote_state: &mut T,
     vote: Vote,
 ) -> Result<(), VoteError> {
     if vote.slots.is_empty() {
@@ -658,13 +658,13 @@ pub fn process_vote_unchecked(
 }
 
 #[cfg(test)]
-pub fn process_slot_votes_unchecked(vote_state: &mut VoteStateHandler, slots: &[Slot]) {
+pub fn process_slot_votes_unchecked<T: VoteStateHandle>(vote_state: &mut T, slots: &[Slot]) {
     for slot in slots {
         process_slot_vote_unchecked(vote_state, *slot);
     }
 }
 
-pub fn process_slot_vote_unchecked(vote_state: &mut VoteStateHandler, slot: Slot) {
+pub fn process_slot_vote_unchecked<T: VoteStateHandle>(vote_state: &mut T, slot: Slot) {
     let _ = process_vote_unchecked(vote_state, Vote::new(vec![slot], Hash::default()));
 }
 
