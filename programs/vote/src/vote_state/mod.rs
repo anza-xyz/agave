@@ -668,15 +668,6 @@ pub fn process_slot_vote_unchecked<T: VoteStateHandle>(vote_state: &mut T, slot:
     let _ = process_vote_unchecked(vote_state, Vote::new(vec![slot], Hash::default()));
 }
 
-// Temporary adapter test method for runtime, core, etc. while vote state
-// transition to handler is underway.
-#[cfg(feature = "dev-context-only-utils")]
-pub fn process_slot_vote_unchecked_v3_for_tests(vote_state_v3: &mut VoteStateV3, slot: Slot) {
-    let mut vote_state = VoteStateHandler::new_v3(vote_state_v3.clone());
-    process_slot_vote_unchecked(&mut vote_state, slot);
-    *vote_state_v3 = vote_state.unwrap_v3();
-}
-
 /// Authorize the given pubkey to withdraw or sign votes. This may be called multiple times,
 /// but will implicitly withdraw authorization from the previously authorized
 /// key

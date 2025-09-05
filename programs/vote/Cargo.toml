@@ -18,7 +18,6 @@ name = "solana_vote_program"
 
 [features]
 default = ["metrics"]
-dev-context-only-utils = []
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",

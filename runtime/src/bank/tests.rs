@@ -118,9 +118,8 @@ use {
     solana_vote_program::{
         vote_instruction,
         vote_state::{
-            self, create_account_with_authorized, process_slot_vote_unchecked_v3_for_tests,
-            BlockTimestamp, VoteAuthorize, VoteInit, VoteStateV3, VoteStateVersions,
-            MAX_LOCKOUT_HISTORY,
+            self, create_account_with_authorized, BlockTimestamp, VoteAuthorize, VoteInit,
+            VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
     spl_generic_token::token,
@@ -731,7 +730,7 @@ where
     let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
     for i in 0..MAX_LOCKOUT_HISTORY + 42 {
         if let Some(v) = vote_state.as_mut() {
-            process_slot_vote_unchecked_v3_for_tests(v, i as u64)
+            vote_state::process_slot_vote_unchecked(v, i as u64)
         }
         let versioned = VoteStateVersions::V3(Box::new(vote_state.take().unwrap()));
         vote_state::to(&versioned, &mut vote_account).unwrap();
@@ -881,7 +880,7 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
     let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
     for i in 0..MAX_LOCKOUT_HISTORY + 42 {
         if let Some(v) = vote_state.as_mut() {
-            process_slot_vote_unchecked_v3_for_tests(v, i as u64)
+            vote_state::process_slot_vote_unchecked(v, i as u64)
         }
         let versioned = VoteStateVersions::V3(Box::new(vote_state.take().unwrap()));
         vote_state::to(&versioned, &mut vote_account).unwrap();
