@@ -24,12 +24,6 @@ use {
     std::collections::VecDeque,
 };
 
-/// The target version to convert all deserialized vote state into.
-pub enum VoteStateTargetVersion {
-    V3,
-    // New vote state versions will be added here...
-}
-
 /// Trait defining the interface for vote state operations.
 pub trait VoteStateHandle {
     fn is_uninitialized(&self) -> bool;
@@ -216,6 +210,12 @@ impl VoteStateHandle for VoteStateV3 {
         // Vote account is large enough to store the newest version of vote state
         vote_account.set_state(&VoteStateVersions::V3(Box::new(self.clone())))
     }
+}
+
+/// The target version to convert all deserialized vote state into.
+pub enum VoteStateTargetVersion {
+    V3,
+    // New vote state versions will be added here...
 }
 
 #[derive(Clone, Debug, PartialEq)]
