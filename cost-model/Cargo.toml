@@ -31,6 +31,7 @@ frozen-abi = [
     "solana-pubkey/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
+post-analysis = []
 
 [dependencies]
 agave-feature-set = { workspace = true }

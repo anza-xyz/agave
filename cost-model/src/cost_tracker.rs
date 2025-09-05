@@ -3,11 +3,10 @@
 //! - would_fit(&tx_cost), immutable function to test if tx with tx_cost would fit into current block
 //! - add_transaction_cost(&tx_cost), mutable function to accumulate tx_cost to tracker.
 //!
+#[cfg(feature = "post-analysis")]
+use crate::cost_tracker_post_analysis::CostTrackerPostAnalysis;
 use {
-    crate::{
-        block_cost_limits::*, cost_tracker_post_analysis::CostTrackerPostAnalysis,
-        transaction_cost::TransactionCost,
-    },
+    crate::{block_cost_limits::*, transaction_cost::TransactionCost},
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -439,6 +438,7 @@ impl CostTracker {
 /// Implement the trait for the cost tracker
 /// This is only used for post-analysis to avoid lock contention
 /// Do not use in the hot path
+#[cfg(feature = "post-analysis")]
 impl CostTrackerPostAnalysis for CostTracker {
     fn get_cost_by_writable_accounts(&self) -> &HashMap<Pubkey, u64, ahash::RandomState> {
         &self.cost_by_writable_accounts
@@ -1012,6 +1012,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "post-analysis")]
     fn test_get_cost_by_writable_accounts_post_analysis() {
         let mut cost_tracker = CostTracker::default();
         let cost = 100u64;
