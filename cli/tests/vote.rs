@@ -5,10 +5,10 @@ use {
         check_balance,
         cli::{process_command, request_and_confirm_airdrop, CliCommand, CliConfig},
         spend_utils::SpendAmount,
+        test_utils::run_local_faucet,
     },
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
     solana_commitment_config::CommitmentConfig,
-    solana_faucet::faucet::run_local_faucet,
     solana_keypair::Keypair,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_nonce_utils::blockhash_query::{self, BlockhashQuery},
@@ -24,7 +24,7 @@ use {
 fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair, None);
+    let faucet_addr = run_local_faucet(mint_keypair);
     let test_validator =
         TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
 
@@ -229,7 +229,7 @@ fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
 fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair, None);
+    let faucet_addr = run_local_faucet(mint_keypair);
     let test_validator =
         TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
 
