@@ -28,5 +28,8 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-hash = { workspace = true, features = ["serde"] }
 solana-logger = { workspace = true }
 
+[dev-dependencies]
+bincode = { workspace = true }
+
 [lints]
 workspace = true
