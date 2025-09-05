@@ -431,6 +431,11 @@ impl CostTracker {
             .filter(|units| **units > 0)
             .count()
     }
+
+    /// Get a reference to the cost by writable accounts map
+    pub fn get_cost_by_writable_accounts(&self) -> &HashMap<Pubkey, u64, ahash::RandomState> {
+        &self.cost_by_writable_accounts
+    }
 }
 
 #[cfg(test)]
