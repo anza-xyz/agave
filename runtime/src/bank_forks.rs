@@ -202,7 +202,7 @@ impl BankForks {
     pub fn frozen_banks(&self) -> impl Iterator<Item = (Slot, Arc<Bank>)> + '_ {
         self.banks.iter().filter_map(|(&slot, bank)| {
             bank.is_frozen()
-                .then_some((slot, bank.clone_without_scheduler()))
+                .then(|| (slot, bank.clone_without_scheduler()))
         })
     }
 
