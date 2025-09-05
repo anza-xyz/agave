@@ -395,32 +395,30 @@ impl Consumer {
                         .collect_vec()
                 }
                 CostTrackingKind::AddOnly => {
-                    let processed_transactions = batch
-                        .sanitized_transactions()
-                        .iter()
-                        .zip(processing_results.iter())
-                        .filter_map(|(tx, result)| result.as_ref().ok().map(|_| tx));
                     let transaction_costs = batch
                         .sanitized_transactions()
                         .iter()
                         .zip(processing_results.iter())
-                        .filter_map(|(tx, result)| {
-                            result.as_ref().ok().map(|pr| {
-                                Ok(CostModel::calculate_cost_for_executed_transaction(
-                                    tx,
-                                    pr.executed_units(),
-                                    pr.loaded_accounts_data_size(),
-                                    &bank.feature_set,
-                                ))
-                            })
+                        .map(|(tx, result)| {
+                            result
+                                .as_ref()
+                                .map(|pr| {
+                                    CostModel::calculate_cost_for_executed_transaction(
+                                        tx,
+                                        pr.executed_units(),
+                                        pr.loaded_accounts_data_size(),
+                                        &bank.feature_set,
+                                    )
+                                })
+                                .map_err(|e| e.clone())
                         });
-                    let (selected_transactions, _) = self.qos_service.select_transactions_per_cost(
-                        processed_transactions.clone(),
-                        transaction_costs,
-                        bank,
-                    );
+                    let (selected_transactions, _) = self
+                        .qos_service
+                        .select_transactions_per_cost(transaction_costs, bank);
 
-                    processed_transactions
+                    batch
+                        .sanitized_transactions()
+                        .iter()
                         .zip(selected_transactions)
                         .filter_map(|(tx, selected)| {
                             selected.ok().map(|_| tx.to_versioned_transaction())
