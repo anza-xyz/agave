@@ -6913,8 +6913,8 @@ fn test_block_limits() {
         &feature_set::raise_block_limits_to_100m::id(),
         &feature::create_account(&Feature::default(), 42),
     );
-    // update_active_features will not cause the block limit to be updated
-    bank.update_active_features(true);
+    // compute_and_apply_activated_features will not cause the block limit to be updated
+    bank.compute_and_apply_activated_features(true);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_block_limit(),
         MAX_BLOCK_UNITS,
@@ -6948,8 +6948,8 @@ fn test_block_limits() {
         &feature::create_account(&Feature::default(), 42),
     );
 
-    // update_active_features will not cause the block limit to be updated
-    bank.update_active_features(true);
+    // compute_and_apply_activated_features will not cause the block limit to be updated
+    bank.compute_and_apply_activated_features(true);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_account_limit(),
         MAX_WRITABLE_ACCOUNT_UNITS,
@@ -6973,8 +6973,8 @@ fn test_block_limits() {
         &feature_set::raise_account_cu_limit::id(),
         &feature::create_account(&Feature::default(), 42),
     );
-    // update_active_features will not cause the block limit to be updated
-    bank.update_active_features(true);
+    // compute_and_apply_activated_features will not cause the block limit to be updated
+    bank.compute_and_apply_activated_features(true);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_account_limit(),
         MAX_WRITABLE_ACCOUNT_UNITS,
@@ -6999,8 +6999,8 @@ fn test_block_limits() {
         &feature_set::raise_block_limits_to_100m::id(),
         &feature::create_account(&Feature::default(), 42),
     );
-    // update_active_features will not cause the block limit to be updated
-    bank.update_active_features(true);
+    // compute_and_apply_activated_features will not cause the block limit to be updated
+    bank.compute_and_apply_activated_features(true);
     assert_eq!(
         bank.read_cost_tracker().unwrap().get_block_limit(),
         MAX_BLOCK_UNITS,

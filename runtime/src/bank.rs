@@ -1679,7 +1679,7 @@ impl Bank {
         parent.freeze();
         let parent_timestamp = parent.clock().unix_timestamp;
         let mut new = Bank::new_from_parent(parent, collector_id, slot);
-        new.update_active_features(false);
+        new.compute_and_apply_activated_features(false);
         new.update_epoch_stakes(new.epoch_schedule().get_epoch(slot));
         new.tick_height.store(new.max_tick_height(), Relaxed);
 
@@ -4051,7 +4051,7 @@ impl Bank {
                 .set_execution_cost(compute_budget.to_cost());
         }
 
-        self.update_active_features(debug_do_not_add_builtins);
+        self.compute_and_apply_activated_features(debug_do_not_add_builtins);
 
         // Cost-Tracker is not serialized in snapshot or any configs.
         // We must apply previously activated features related to limits here
@@ -5314,7 +5314,7 @@ impl Bank {
 
     // This is called from snapshot restore (among other callers) so the entire
     // code path herein must be idempotent
-    fn update_active_features(&mut self, debug_do_not_add_builtins: bool) {
+    fn compute_and_apply_activated_features(&mut self, debug_do_not_add_builtins: bool) {
         let feature_set = self.compute_active_feature_set(false).0;
         self.feature_set = Arc::new(feature_set);
 
