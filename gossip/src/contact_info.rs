@@ -6,6 +6,7 @@ use {
         legacy_contact_info::LegacyContactInfo,
         tlv::{self, TlvDecodeError, TlvRecord},
     },
+    arrayvec::ArrayVec,
     assert_matches::{assert_matches, debug_assert_matches},
     serde::{Deserialize, Deserializer, Serialize},
     solana_pubkey::Pubkey,
@@ -28,8 +29,8 @@ const DEFAULT_RPC_PUBSUB_PORT: u16 = 8900;
 
 pub const SOCKET_ADDR_UNSPECIFIED: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), /*port:*/ 0u16);
-const EMPTY_SOCKET_ADDR_CACHE: [SocketAddr; SOCKET_CACHE_SIZE] =
-    [SOCKET_ADDR_UNSPECIFIED; SOCKET_CACHE_SIZE];
+const EMPTY_SOCKET_ADDR_CACHE: [ArrayVec<SocketAddr, MAX_IP_ADDRS>; SOCKET_CACHE_SIZE] =
+    [const { ArrayVec::new_const() }; SOCKET_CACHE_SIZE];
 
 const SOCKET_TAG_GOSSIP: u8 = 0;
 const SOCKET_TAG_RPC: u8 = 2;
@@ -47,6 +48,9 @@ const SOCKET_TAG_TVU_QUIC: u8 = 11;
 const SOCKET_TAG_ALPENGLOW: u8 = 13;
 const_assert_eq!(SOCKET_CACHE_SIZE, 14);
 const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_ALPENGLOW as usize + 1usize;
+
+/// The maximum amount of IP addresses the node can advertise
+const MAX_IP_ADDRS: usize = 2;
 
 // An alias for a function that reads data from a ContactInfo entry stored in
 // the gossip CRDS table.
@@ -99,7 +103,7 @@ pub struct ContactInfo {
     extensions: Vec<Extension>,
     // Only sanitized socket-addrs can be cached!
     #[serde(skip_serializing)]
-    cache: [SocketAddr; SOCKET_CACHE_SIZE],
+    cache: [ArrayVec<SocketAddr, MAX_IP_ADDRS>; SOCKET_CACHE_SIZE],
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -150,10 +154,8 @@ macro_rules! get_socket {
     ($name:ident, $key:ident) => {
         #[inline]
         pub fn $name(&self) -> Option<SocketAddr> {
-            let socket = &self.cache[usize::from($key)];
-            (socket != &SOCKET_ADDR_UNSPECIFIED)
-                .then_some(socket)
-                .copied()
+            let socket = *self.cache[usize::from($key)].first()?;
+            (socket != SOCKET_ADDR_UNSPECIFIED).then_some(socket)
         }
     };
     ($name:ident, $udp:ident, $quic:ident) => {
@@ -163,10 +165,8 @@ macro_rules! get_socket {
                 Protocol::QUIC => $quic,
                 Protocol::UDP => $udp,
             };
-            let socket = &self.cache[usize::from(key)];
-            (socket != &SOCKET_ADDR_UNSPECIFIED)
-                .then_some(socket)
-                .copied()
+            let socket = *self.cache[usize::from(key)].first()?;
+            (socket != SOCKET_ADDR_UNSPECIFIED).then_some(socket)
         }
     };
 }
@@ -349,35 +349,48 @@ impl ContactInfo {
     }
 
     pub fn set_socket(&mut self, key: u8, socket: SocketAddr) -> Result<(), Error> {
-        sanitize_socket(&socket)?;
+        self.set_sockets_internal(key, &[socket])
+    }
+
+    fn set_sockets_internal(&mut self, key: u8, sockets: &[SocketAddr]) -> Result<(), Error> {
+        if sockets.len() > MAX_IP_ADDRS {
+            return Err(Error::IpAddrsSaturated);
+        }
+        for socket in sockets {
+            sanitize_socket(socket)?;
+        }
         // Remove the old entry associated with this key (if any).
         self.remove_socket(key);
-        // Find the index at which the new socket entry would be inserted into
-        // self.sockets, and the respective port offset.
-        let mut offset = socket.port();
-        let index = self.sockets.iter().position(|entry| {
-            offset = match offset.checked_sub(entry.offset) {
-                None => return true,
-                Some(offset) => offset,
+        for socket in sockets {
+            sanitize_socket(socket)?;
+
+            // Find the index at which the new socket entry would be inserted into
+            // self.sockets, and the respective port offset.
+            let mut offset = socket.port();
+            let index = self.sockets.iter().position(|entry| {
+                offset = match offset.checked_sub(entry.offset) {
+                    None => return true,
+                    Some(offset) => offset,
+                };
+                false
+            });
+            let entry = SocketEntry {
+                key,
+                index: self.push_addr(socket.ip())?,
+                offset,
             };
-            false
-        });
-        let entry = SocketEntry {
-            key,
-            index: self.push_addr(socket.ip())?,
-            offset,
-        };
-        // Insert the new entry into self.sockets.
-        // Adjust the port offset of the next entry (if any).
-        match index {
-            None => self.sockets.push(entry),
-            Some(index) => {
-                self.sockets[index].offset -= entry.offset;
-                self.sockets.insert(index, entry);
+            // Insert the new entry into self.sockets.
+            // Adjust the port offset of the next entry (if any).
+            match index {
+                None => self.sockets.push(entry),
+                Some(index) => {
+                    self.sockets[index].offset -= entry.offset;
+                    self.sockets.insert(index, entry);
+                }
             }
-        }
-        if let Some(entry) = self.cache.get_mut(usize::from(key)) {
-            *entry = socket; // socket is already sanitized above.
+            if let Some(entry) = self.cache.get_mut(usize::from(key)) {
+                entry.push(*socket);
+            }
         }
         debug_assert_matches!(sanitize_entries(&self.addrs, &self.sockets), Ok(()));
         Ok(())
@@ -392,7 +405,7 @@ impl ContactInfo {
             }
             self.maybe_remove_addr(entry.index);
             if let Some(entry) = self.cache.get_mut(usize::from(key)) {
-                *entry = SOCKET_ADDR_UNSPECIFIED;
+                entry.clear();
             }
         }
     }
@@ -577,7 +590,9 @@ impl TryFrom<ContactInfoLite> for ContactInfo {
             };
             let socket = SocketAddr::new(addr, port);
             if sanitize_socket(&socket).is_ok() {
-                *entry = socket;
+                entry
+                    .try_push(socket)
+                    .map_err(|_| Error::IpAddrsSaturated)?;
             }
         }
         Ok(node)
@@ -616,18 +631,6 @@ fn sanitize_entries(addrs: &[IpAddr], sockets: &[SocketEntry]) -> Result<(), Err
             if !seen.insert(addr) {
                 return Err(Error::DuplicateIpAddr(*addr));
             }
-        }
-    }
-    // Verify that all socket entries have unique key.
-    {
-        let mut mask = [0u64; 4]; // 256-bit bitmask.
-        for &SocketEntry { key, .. } in sockets {
-            let mask = &mut mask[usize::from(key / 64u8)];
-            let bit = 1u64 << (key % 64u8);
-            if (*mask & bit) != 0u64 {
-                return Err(Error::DuplicateSocket(key));
-            }
-            *mask |= bit;
         }
     }
     // Verify that all socket entries reference a valid IP address, and
@@ -774,19 +777,6 @@ mod tests {
                 Err(Error::DuplicateIpAddr(_))
             );
         }
-        // Duplicate socket keys.
-        {
-            let keys = [0u8, 1, 5, 1, 3];
-            let (index, offset) = (0u8, 0u16);
-            let sockets: Vec<_> = keys
-                .iter()
-                .map(|&key| SocketEntry { key, index, offset })
-                .collect();
-            assert_matches!(
-                sanitize_entries(/*addrs:*/ &[], &sockets),
-                Err(Error::DuplicateSocket(_))
-            );
-        }
         // Invalid IP address index.
         {
             let offset = 0u16;
@@ -875,11 +865,8 @@ mod tests {
                 assert_eq!(node.get_socket(key).ok().as_ref(), socket);
                 if usize::from(key) < SOCKET_CACHE_SIZE {
                     assert_eq!(
-                        node.cache[usize::from(key)],
-                        socket
-                            .filter(|socket| sanitize_socket(socket).is_ok())
-                            .copied()
-                            .unwrap_or(SOCKET_ADDR_UNSPECIFIED),
+                        node.cache[usize::from(key)].first(),
+                        socket.filter(|socket| sanitize_socket(socket).is_ok())
                     );
                 }
             }
@@ -1068,6 +1055,22 @@ mod tests {
         );
         other.set_ip(socket.ip());
         assert_matches!(sanitize_quic_offset(&Some(socket), &Some(other)), Ok(()));
+    }
+
+    #[test]
+    fn test_multihoming_contactinfo() {
+        let mut contactinfo = ContactInfo::new(Keypair::new().pubkey(), 42, 777);
+        let sockets = [
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(12, 34, 56, 78)), 8000),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0x9a, 0xbc, 0xde, 0xff)), 8000),
+        ];
+        contactinfo
+            .set_sockets_internal(SOCKET_TAG_GOSSIP, &sockets)
+            .unwrap();
+        dbg!(&contactinfo);
+        let bytes = bincode::serialize(&contactinfo).unwrap();
+        let other: ContactInfo = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(contactinfo, other);
     }
 
     #[test]
