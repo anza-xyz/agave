@@ -7076,7 +7076,7 @@ impl AccountsDb {
 
         // sort the pubkeys first so that in scan, the pubkeys are visited in
         // index bucket in order. This helps to reduce the page faults and speed
-        // up the scan compare to visit the pubkeys in random order.
+        // up the scan compared to visiting the pubkeys in random order.
         pubkeys.sort_unstable();
         self.accounts_index.scan(
             pubkeys.iter(),
