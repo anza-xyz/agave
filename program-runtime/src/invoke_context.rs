@@ -421,16 +421,25 @@ impl<'a> InvokeContext<'a> {
             }
 
             // Find and validate executables / program accounts
-            let callee_program_id = instruction.program_id;
-            let program_account_index = instruction_context
-                .find_index_of_instruction_account(self.transaction_context, &callee_program_id)
-                .ok_or_else(|| {
-                    ic_msg!(self, "Unknown program {}", callee_program_id);
-                    InstructionError::MissingAccount
-                })?;
+            let callee_program_id = &instruction.program_id;
+            let program_account_index_in_transaction = self
+                .transaction_context
+                .find_index_of_account(callee_program_id);
+            let program_account_index_in_instruction = program_account_index_in_transaction
+                .map(|index| instruction_context.get_index_of_account_in_instruction(index));
 
-            instruction_context
-                .get_index_of_instruction_account_in_transaction(program_account_index)?
+            // We first check if the account exists in the transaction, and then see if it is part
+            // of the instruction.
+            if program_account_index_in_instruction.is_none()
+                || program_account_index_in_instruction.unwrap().is_err()
+            {
+                ic_msg!(self, "Unknown program {}", callee_program_id);
+                return Err(InstructionError::MissingAccount);
+            }
+
+            // SAFETY: This unwrap is safe, because we checked the index in instruction in the
+            // previous if-condition.
+            program_account_index_in_transaction.unwrap()
         };
 
         self.transaction_context.configure_next_instruction(
