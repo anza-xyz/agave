@@ -12,9 +12,6 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
-[features]
-dev-context-only-utils = []
-
 [lib]
 crate-type = ["lib"]
 name = "solana_faucet"
@@ -22,6 +19,9 @@ name = "solana_faucet"
 [[bin]]
 name = "solana-faucet"
 path = "src/bin/faucet.rs"
+
+[features]
+dev-context-only-utils = []
 
 [dependencies]
 bincode = { workspace = true }
@@ -39,6 +39,7 @@ solana-keypair = "=3.0.1"
 solana-logger = "=3.0.0"
 solana-message = "=3.0.1"
 solana-metrics = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-packet = "=3.0.0"
 solana-pubkey = { version = "=3.0.0", features = ["rand"] }
 solana-signer = "=3.0.0"
@@ -49,3 +50,6 @@ solana-version = { workspace = true }
 spl-memo-interface = { version = "=2.0.0" }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+solana-faucet = { path = ".", features = ["dev-context-only-utils"] }
