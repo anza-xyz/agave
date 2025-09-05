@@ -249,7 +249,7 @@ where
                         if has_target {
                             let ts = solana_time_utils::timestamp();
                             let sig = tx.signatures[0];
-                            info!("[WINDOW] TVU transaction with target account - slot: {slot}, ts_ms: {ts}, signature: {sig}");
+                            info!("TVU transaction ts_ms: {ts}, signature: {sig}");
                         }
                     }
                 }
