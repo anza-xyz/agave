@@ -7072,7 +7072,7 @@ impl AccountsDb {
         pubkeys: HashSet<Pubkey, PubkeyHasherBuilder>,
     ) -> u64 {
         let mut slot_offsets = HashMap::<_, Vec<_>>::default();
-        let mut pubkeys: Vec<Pubkey> = pubkeys.into_iter().collect();
+        let mut pubkeys: Vec<_> = pubkeys.into_iter().collect();
         pubkeys.sort_unstable();
 
         self.accounts_index.scan(
