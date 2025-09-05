@@ -816,7 +816,7 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 ) -> Result<(), InstructionError> {
     let mut vote_account =
         instruction_context.try_borrow_instruction_account(vote_account_index)?;
-    let mut vote_state =
+    let vote_state =
         VoteStateHandler::deserialize_and_convert(&vote_account, VoteStateTargetVersion::V3)?;
 
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
@@ -842,8 +842,10 @@ pub fn withdraw<S: std::hash::BuildHasher>(
             return Err(VoteError::ActiveVoteAccountClose.into());
         } else {
             // Deinitialize upon zero-balance
-            vote_state.deinitialize();
-            vote_state.set_vote_account_state(&mut vote_account)?;
+            VoteStateHandler::deinitialize_vote_account_state(
+                &mut vote_account,
+                VoteStateTargetVersion::V3,
+            )?;
         }
     } else {
         let min_rent_exempt_balance = rent_sysvar.minimum_balance(vote_account.get_data().len());

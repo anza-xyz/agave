@@ -218,12 +218,6 @@ impl VoteStateHandler {
         }
     }
 
-    pub fn deinitialize(&mut self) {
-        match &mut self.target_state {
-            TargetVoteState::V3(v3) => *v3 = VoteStateV3::default(),
-        }
-    }
-
     pub fn set_vote_account_state(
         &self,
         vote_account: &mut BorrowedInstructionAccount,
@@ -261,6 +255,16 @@ impl VoteStateHandler {
             VoteStateTargetVersion::V3 => {
                 VoteStateVersions::V3(Box::new(VoteStateV3::new(vote_init, clock)))
             }
+        };
+        vote_account.set_state(&state)
+    }
+
+    pub fn deinitialize_vote_account_state(
+        vote_account: &mut BorrowedInstructionAccount,
+        target_version: VoteStateTargetVersion,
+    ) -> Result<(), InstructionError> {
+        let state = match target_version {
+            VoteStateTargetVersion::V3 => VoteStateVersions::V3(Box::default()),
         };
         vote_account.set_state(&state)
     }
