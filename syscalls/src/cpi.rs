@@ -1,6 +1,6 @@
 use {
     super::*,
-    crate::{translate_inner, translate_slice_inner, translate_type_inner},
+    crate::{translate_inner, translate_type_inner},
     solana_clock::Epoch,
     solana_instruction::Instruction,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
@@ -46,22 +46,6 @@ fn translate_type_mut<'a, T>(
 ) -> Result<&'a mut T, Error> {
     translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
 }
-// This version is missing the lifetime 'a of the return type in the parameter &MemoryMapping.
-fn translate_slice_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    len: u64,
-    check_aligned: bool,
-) -> Result<&'a mut [T], Error> {
-    translate_slice_inner!(
-        memory_mapping,
-        AccessType::Store,
-        vm_addr,
-        len,
-        T,
-        check_aligned,
-    )
-}
 
 /// Host side representation of VmAccountInfo or SolAccountInfo passed to the CPI syscall.
 ///
@@ -98,15 +82,16 @@ impl<'a> CallerAccount<'a> {
         if stricter_abi_and_runtime_constraints && account_data_direct_mapping {
             Ok(&mut [])
         } else if stricter_abi_and_runtime_constraints {
-            // Workaround the memory permissions (as these are from the PoV of being inside the VM)
-            let serialization_ptr = translate_slice_mut::<u8>(
-                memory_mapping,
-                solana_sbpf::ebpf::MM_INPUT_START,
-                1,
-                false, // Don't care since it is byte aligned
-            )?
-            .as_mut_ptr();
+            // Use unsafe to bypass lifetime constraints
+            let host_addr = translate_inner!(
+            memory_mapping,
+            map,
+            AccessType::Store,
+            solana_sbpf::ebpf::MM_INPUT_START,
+            1,
+        )?;
             unsafe {
+                let serialization_ptr = host_addr as *mut u8;
                 Ok(std::slice::from_raw_parts_mut(
                     serialization_ptr
                         .add(vm_addr.saturating_sub(solana_sbpf::ebpf::MM_INPUT_START) as usize),
@@ -114,19 +99,25 @@ impl<'a> CallerAccount<'a> {
                 ))
             }
         } else {
-            translate_slice_mut::<u8>(
-                memory_mapping,
-                vm_addr,
-                len,
-                false, // Don't care since it is byte aligned
-            )
+            // Use unsafe here too to bypass lifetime constraints
+            let host_addr = translate_inner!(
+            memory_mapping,
+            map,
+            AccessType::Store,
+            vm_addr,
+            len,
+        )?;
+            unsafe {
+                Ok(std::slice::from_raw_parts_mut(host_addr as *mut u8, len as usize))
+            }
         }
     }
 
     // Create a CallerAccount given a VmAccountInfo.
+    // Create a CallerAccount given a VmAccountInfo.
     fn from_vm_account_info(
         invoke_context: &InvokeContext,
-        memory_mapping: &'a MemoryMapping<'_>,
+        memory_mapping: &MemoryMapping<'_>,
         check_aligned: bool,
         _vm_addr: u64,
         account_info: &VmAccountInfo,
@@ -174,18 +165,18 @@ impl<'a> CallerAccount<'a> {
                     "lamports",
                 )?;
             }
-            translate_type_mut::<u64>(
-                memory_mapping,
-                ptr_box.value,
-                check_aligned
-            )?
+            unsafe {
+                std::mem::transmute::<&mut u64, &'a mut u64>(
+                    translate_type_mut::<u64>(memory_mapping, ptr_box.value, check_aligned)?
+                )
+            }
         };
 
-        let owner = translate_type_mut::<Pubkey>(
-            memory_mapping,
-            account_info.owner,
-            check_aligned,
-        )?;
+        let owner = unsafe {
+            std::mem::transmute::<&mut Pubkey, &'a mut Pubkey>(
+                translate_type_mut::<Pubkey>(memory_mapping, account_info.owner, check_aligned)?
+            )
+        };
 
         let (serialized_data, vm_data_addr, ref_to_len_in_vm) = {
             if stricter_abi_and_runtime_constraints
@@ -238,10 +229,18 @@ impl<'a> CallerAccount<'a> {
                     return Err(SyscallError::InvalidPointer.into());
                 }
             }
-            let ref_to_len_in_vm = translate_type_mut::<u64>(memory_mapping, vm_len_addr, false)?;
-            let serialized_data = ptr_box
-                .value
-                .translate_mut(memory_mapping, invoke_context.get_check_aligned())?;
+            let ref_to_len_in_vm = unsafe {
+                std::mem::transmute::<&mut u64, &'a mut u64>(
+                    translate_type_mut::<u64>(memory_mapping, vm_len_addr, false)?
+                )
+            };
+            let serialized_data = unsafe {
+                std::mem::transmute::<&mut [u8], &'a mut [u8]>(
+                    ptr_box
+                        .value
+                        .translate_mut(memory_mapping, invoke_context.get_check_aligned())?
+                )
+            };
 
             (serialized_data, vm_data_addr, ref_to_len_in_vm)
         };
@@ -259,7 +258,7 @@ impl<'a> CallerAccount<'a> {
     // Create a CallerAccount given a SolAccountInfo.
     fn from_sol_account_info(
         invoke_context: &InvokeContext,
-        memory_mapping: &'a MemoryMapping<'_>,
+        memory_mapping: &MemoryMapping<'_>,
         check_aligned: bool,
         vm_addr: u64,
         account_info: &SolAccountInfo,
@@ -301,10 +300,16 @@ impl<'a> CallerAccount<'a> {
 
         // account_info points to host memory. The addresses used internally are
         // in vm space so they need to be translated.
-        let lamports =
-            translate_type_mut::<u64>(memory_mapping, account_info.lamports_addr, check_aligned)?;
-        let owner =
-            translate_type_mut::<Pubkey>(memory_mapping, account_info.owner_addr, check_aligned)?;
+        let lamports = unsafe {
+            std::mem::transmute::<&mut u64, &'a mut u64>(
+                translate_type_mut::<u64>(memory_mapping, account_info.lamports_addr, check_aligned)?
+            )
+        };
+        let owner = unsafe {
+            std::mem::transmute::<&mut Pubkey, &'a mut Pubkey>(
+                translate_type_mut::<Pubkey>(memory_mapping, account_info.owner_addr, check_aligned)?
+            )
+        };
 
         consume_compute_meter(
             invoke_context,
@@ -314,13 +319,17 @@ impl<'a> CallerAccount<'a> {
                 .unwrap_or(u64::MAX),
         )?;
 
-        let serialized_data = CallerAccount::get_serialized_data(
-            memory_mapping,
-            account_info.data_addr,
-            account_info.data_len,
-            stricter_abi_and_runtime_constraints,
-            invoke_context.account_data_direct_mapping,
-        )?;
+        let serialized_data = unsafe {
+            std::mem::transmute::<&mut [u8], &'a mut [u8]>(
+                CallerAccount::get_serialized_data(
+                    memory_mapping,
+                    account_info.data_addr,
+                    account_info.data_len,
+                    stricter_abi_and_runtime_constraints,
+                    invoke_context.account_data_direct_mapping,
+                )?
+            )
+        };
 
         // we already have the host addr we want: &mut account_info.data_len.
         // The account info might be read only in the vm though, so we translate
@@ -329,7 +338,11 @@ impl<'a> CallerAccount<'a> {
         let vm_len_addr = vm_addr
             .saturating_add(&account_info.data_len as *const u64 as u64)
             .saturating_sub(account_info as *const _ as *const u64 as u64);
-        let ref_to_len_in_vm = translate_type_mut::<u64>(memory_mapping, vm_len_addr, false)?;
+        let ref_to_len_in_vm = unsafe {
+            std::mem::transmute::<&mut u64, &'a mut u64>(
+                translate_type_mut::<u64>(memory_mapping, vm_len_addr, false)?
+            )
+        };
 
         Ok(CallerAccount {
             lamports,
