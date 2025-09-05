@@ -1437,6 +1437,41 @@ mod tests {
         assert!(bucket.storage.is_disk_index_enabled());
         bucket
     }
+    #[test]
+    fn test_remove_uncached_slot_list_from_disk() {
+        let key = solana_pubkey::new_rand();
+        let test = new_for_test::<u64>();
+
+        // Simulate a disk entry for the key
+        let one_element_slot_list = (0_u64, 0_u64);
+
+        if let Some(bucket) = &test.bucket {
+            bucket
+                .try_write(&key, (&[one_element_slot_list], 1))
+                .unwrap();
+        }
+
+        let mut map = test.map_internal.write().unwrap();
+        let entry = map.entry(key);
+
+        // Ensure that entry is kept if the slot list is not empty
+        assert!(!test.remove_if_slot_list_empty_entry(entry));
+        assert!(test.bucket.as_ref().unwrap().read_value(&key).is_some());
+
+        // Now simulate an empty slot list on disk
+        let empty_disk_entry = (vec![], 1); // Empty slot list
+        if let Some(bucket) = &test.bucket {
+            bucket
+                .try_write(&key, (&empty_disk_entry.0[..], empty_disk_entry.1))
+                .unwrap();
+        }
+
+        let entry = map.entry(key);
+
+        // Ensure that the entry is removed if the slot list is empty
+        assert!(test.remove_if_slot_list_empty_entry(entry));
+        assert!(test.bucket.as_ref().unwrap().read_value(&key).is_none());
+    }
 
     #[test]
     fn test_get_or_create_index_entry_for_pubkey_insert_new() {
@@ -1739,6 +1774,58 @@ mod tests {
                 ref_count == 1
             );
         }
+    }
+
+    #[test]
+    fn test_upsert_entry_on_disk_not_in_mem() {
+        let bucket = new_for_test::<u64>();
+        let pubkey = solana_pubkey::new_rand();
+        let slot = 0;
+        let value = 5;
+        let other_slot = None;
+
+        // Use startup to ensure flushes occur
+        bucket.storage.set_startup(true);
+
+        // Prepopulate the map with an entry
+        let preallocated_entry =
+            PreAllocatedAccountMapEntry::new(slot, value, &bucket.storage, true);
+        bucket.insert_new_entry_if_missing_with_lock(pubkey, preallocated_entry);
+
+        // Flush the entry to disk
+        if let Some(flush_guard) = FlushGuard::lock(&bucket.flushing_active) {
+            bucket.set_has_aged(bucket.storage.current_age(), true); // Mark the bucket as aged
+            bucket.flush_internal(&flush_guard, true);
+        }
+
+        // Ensure the entry is not in the cache
+        bucket.get_only_in_mem(&pubkey, false, |entry| {
+            assert!(entry.is_none(), "Entry should not be in the cache");
+        });
+
+        // Prepare a new value to upsert
+        let new_slot = 1;
+        let new_value = 10;
+        let new_preallocated_entry =
+            PreAllocatedAccountMapEntry::new(new_slot, new_value, &bucket.storage, true);
+
+        let mut reclaims = Vec::new();
+        bucket.upsert(
+            &pubkey,
+            new_preallocated_entry,
+            other_slot,
+            &mut reclaims,
+            UpsertReclaim::IgnoreReclaims,
+        );
+
+        // Verify the entry was updated
+        bucket.get_only_in_mem(&pubkey, false, |entry| {
+            let entry = entry.expect("Entry should exist");
+            let slot_list = entry.slot_list.read().unwrap();
+            assert_eq!(slot_list.len(), 2);
+            assert!(slot_list.contains(&(slot, value)));
+            assert!(slot_list.contains(&(new_slot, new_value)));
+        });
     }
 
     #[test]
