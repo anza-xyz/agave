@@ -368,7 +368,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .default_value(&default_args.dynamic_port_range)
             .validator(port_range_validator)
-            .help("Range to use for dynamically assigned ports"),
+            .help(
+                "Range to use for dynamically assigned ports. MIN_PORT-MAX_PORT yields the range \
+                 [MIN_PORT, MAX_PORT)",
+            ),
     )
     .arg(
         Arg::with_name("maximum_local_snapshot_age")
