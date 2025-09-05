@@ -831,12 +831,13 @@ pub mod test {
     use {
         super::*,
         solana_core::validator::ValidatorConfig,
-        solana_faucet::faucet::run_local_faucet,
+        solana_faucet::faucet::run_local_faucet_for_tests,
         solana_local_cluster::{
             cluster::Cluster,
             local_cluster::{ClusterConfig, LocalCluster},
             validator_configs::make_identical_validator_configs,
         },
+        solana_net_utils::sockets::unique_port_range_for_tests,
         solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
         solana_rpc::rpc::JsonRpcConfig,
         solana_time_utils::timestamp,
@@ -1086,7 +1087,11 @@ pub mod test {
         // 1. Create faucet thread
         let faucet_keypair = Keypair::new();
         let faucet_pubkey = faucet_keypair.pubkey();
-        let faucet_addr = run_local_faucet(faucet_keypair, None);
+        let faucet_addr = run_local_faucet_for_tests(
+            faucet_keypair,
+            None,                                 /* per_time_cap */
+            unique_port_range_for_tests(1).start, /* socket */
+        );
         let mut validator_config = ValidatorConfig::default_for_test();
         validator_config.rpc_config = JsonRpcConfig {
             faucet_addr: Some(faucet_addr),
