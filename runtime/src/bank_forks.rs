@@ -200,17 +200,16 @@ impl BankForks {
     }
 
     pub fn frozen_banks(&self) -> impl Iterator<Item = (Slot, Arc<Bank>)> + '_ {
-        self.banks
-            .iter()
-            .filter(|(_, b)| b.is_frozen())
-            .map(|(&k, b)| (k, b.clone_without_scheduler()))
+        self.banks.iter().filter_map(|(&slot, bank)| {
+            bank.is_frozen()
+                .then_some((slot, bank.clone_without_scheduler()))
+        })
     }
 
     pub fn active_bank_slots(&self) -> Vec<Slot> {
         self.banks
             .iter()
-            .filter(|(_, v)| !v.is_frozen())
-            .map(|(k, _v)| *k)
+            .filter_map(|(&slot, bank)| (!bank.is_frozen()).then_some(slot))
             .collect()
     }
 
