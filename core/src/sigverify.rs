@@ -61,7 +61,12 @@ impl SigVerifier for TransactionSigVerifier {
         if let Some(forward_stage_sender) = &self.forward_stage_sender {
             self.banking_stage_sender
                 .send(banking_packet_batch.clone())?;
-            let _ = forward_stage_sender.try_send((banking_packet_batch, self.reject_non_vote));
+            if forward_stage_sender
+                .try_send((banking_packet_batch, self.reject_non_vote))
+                .is_err()
+            {
+                warn!("forwarding stage channel is full, dropping packets.");
+            }
         } else {
             self.banking_stage_sender.send(banking_packet_batch)?;
         }
