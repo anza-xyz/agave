@@ -31,7 +31,7 @@ use {
         account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
-            AccountStorage, AccountStorageStatus, AccountStoragesOrderer, ShrinkInProgress,
+            AccountStorage, AccountStoragesOrderer, ShrinkInProgress,
         },
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
@@ -894,12 +894,8 @@ pub struct AccountStorageEntry {
     /// storage holding the accounts
     pub accounts: AccountsFile,
 
-    /// Keeps track of the number of accounts stored in a specific AppendVec.
-    ///  This is periodically checked to reuse the stores that do not have
-    ///  any accounts in it
-    /// status corresponding to the storage, lets us know that
-    ///  the append_vec, once maxed out, then emptied, can be reclaimed
-    count_and_status: SeqLock<(usize, AccountStorageStatus)>,
+    /// The number of alive accounts in this storage
+    count: AtomicUsize,
 
     alive_bytes: AtomicUsize,
 
@@ -943,7 +939,7 @@ impl AccountStorageEntry {
             id,
             slot,
             accounts,
-            count_and_status: SeqLock::new((0, AccountStorageStatus::Available)),
+            count: AtomicUsize::new(0),
             alive_bytes: AtomicUsize::new(0),
             zero_lamport_single_ref_offsets: RwLock::default(),
             obsolete_accounts: RwLock::default(),
@@ -958,11 +954,10 @@ impl AccountStorageEntry {
             return None;
         }
 
-        let count_and_status = self.count_and_status.lock_write();
         self.accounts.reopen_as_readonly().map(|accounts| Self {
             id: self.id,
             slot: self.slot,
-            count_and_status: SeqLock::new(*count_and_status),
+            count: AtomicUsize::new(self.count()),
             alive_bytes: AtomicUsize::new(self.alive_bytes()),
             accounts,
             zero_lamport_single_ref_offsets: RwLock::new(
@@ -977,40 +972,16 @@ impl AccountStorageEntry {
             id,
             slot,
             accounts,
-            count_and_status: SeqLock::new((0, AccountStorageStatus::Available)),
+            count: AtomicUsize::new(0),
             alive_bytes: AtomicUsize::new(0),
             zero_lamport_single_ref_offsets: RwLock::default(),
             obsolete_accounts: RwLock::default(),
         }
     }
 
-    pub fn set_status(&self, mut status: AccountStorageStatus) {
-        let mut count_and_status = self.count_and_status.lock_write();
-
-        let count = count_and_status.0;
-
-        if status == AccountStorageStatus::Full && count == 0 {
-            // this case arises when the append_vec is full (store_ptrs fails),
-            //  but all accounts have already been removed from the storage
-            //
-            // the only time it's safe to call reset() on an append_vec is when
-            //  every account has been removed
-            //          **and**
-            //  the append_vec has previously been completely full
-            //
-            self.accounts.reset();
-            status = AccountStorageStatus::Available;
-        }
-
-        *count_and_status = (count, status);
-    }
-
-    pub fn status(&self) -> AccountStorageStatus {
-        self.count_and_status.read().1
-    }
-
+    /// Returns the number of alive accounts in this storage
     pub fn count(&self) -> usize {
-        self.count_and_status.read().0
+        self.count.load(Ordering::Acquire)
     }
 
     pub fn alive_bytes(&self) -> usize {
@@ -1096,10 +1067,12 @@ impl AccountStorageEntry {
         self.alive_bytes().saturating_sub(zero_lamport_dead_bytes)
     }
 
+    /// Returns the number of bytes used in this storage
     pub fn written_bytes(&self) -> u64 {
         self.accounts.len() as u64
     }
 
+    /// Returns the number of bytes, not accounts, this storage can hold
     pub fn capacity(&self) -> u64 {
         self.accounts.capacity()
     }
@@ -1121,45 +1094,28 @@ impl AccountStorageEntry {
     }
 
     fn add_accounts(&self, num_accounts: usize, num_bytes: usize) {
-        let mut count_and_status = self.count_and_status.lock_write();
-        *count_and_status = (count_and_status.0 + num_accounts, count_and_status.1);
+        self.count.fetch_add(num_accounts, Ordering::Release);
         self.alive_bytes.fetch_add(num_bytes, Ordering::Release);
     }
 
-    /// returns # of accounts remaining in the storage
+    /// Removes `num_bytes` and `num_accounts` from the storage,
+    /// and returns the remaining number of accounts.
     fn remove_accounts(&self, num_bytes: usize, num_accounts: usize) -> usize {
-        let mut count_and_status = self.count_and_status.lock_write();
-        let (mut count, mut status) = *count_and_status;
+        let prev_alive_bytes = self.alive_bytes.fetch_sub(num_bytes, Ordering::Release);
+        let prev_count = self.count.fetch_sub(num_accounts, Ordering::Release);
 
-        if count == num_accounts && status == AccountStorageStatus::Full {
-            // this case arises when we remove the last account from the
-            //  storage, but we've learned from previous write attempts that
-            //  the storage is full
-            //
-            // the only time it's safe to call reset() on an append_vec is when
-            //  every account has been removed
-            //          **and**
-            //  the append_vec has previously been completely full
-            //
-            // otherwise, the storage may be in flight with a store()
-            //   call
-            self.accounts.reset();
-            status = AccountStorageStatus::Available;
-        }
-
-        // Some code path is removing accounts too many; this may result in an
-        // unintended reveal of old state for unrelated accounts.
+        // enforce invariant that we're not removing too many bytes or accounts
         assert!(
-            count >= num_accounts,
-            "double remove of account in slot: {}/store: {}!!",
-            self.slot(),
-            self.id(),
+            num_bytes <= prev_alive_bytes && num_accounts <= prev_count,
+            "Too many bytes or accounts removed from storage! slot: {}, id: {}, \
+             initial alive bytes: {prev_alive_bytes}, initial num accounts: {prev_count}, \
+             num bytes removed: {num_bytes}, num accounts removed: {num_accounts}",
+            self.slot,
+            self.id,
         );
 
-        self.alive_bytes.fetch_sub(num_bytes, Ordering::Release);
-        count = count.saturating_sub(num_accounts);
-        *count_and_status = (count, status);
-        count
+        // SAFETY: subtraction is safe since we just asserted num_accounts <= prev_num_accounts
+        prev_count - num_accounts
     }
 
     /// Returns the path to the underlying accounts storage file
@@ -4566,16 +4522,6 @@ impl AccountsDb {
         }
     }
 
-    fn has_space_available(&self, slot: Slot, size: u64) -> bool {
-        let store = self.storage.get_slot_storage_entry(slot).unwrap();
-        if store.status() == AccountStorageStatus::Available
-            && store.accounts.remaining_bytes() >= size
-        {
-            return true;
-        }
-        false
-    }
-
     fn create_store(
         &self,
         slot: Slot,
@@ -6217,12 +6163,10 @@ impl AccountsDb {
             append_accounts.stop();
             total_append_accounts_us += append_accounts.as_us();
             let Some(stored_accounts_info) = stored_accounts_info else {
-                storage.set_status(AccountStorageStatus::Full);
-
-                // See if an account overflows the append vecs in the slot.
+                // See if an account overflows the storage in the slot.
                 let data_len = accounts_and_meta_to_store.data_len(infos.len());
                 let data_len = (data_len + STORE_META_OVERHEAD) as u64;
-                if !self.has_space_available(slot, data_len) {
+                if data_len > storage.accounts.remaining_bytes() {
                     info!(
                         "write_accounts_to_storage, no space: {}, {}, {}, {}, {}",
                         storage.accounts.capacity(),
@@ -6248,9 +6192,6 @@ impl AccountsDb {
                 stored_accounts_info.offsets.len(),
                 stored_accounts_info.size,
             );
-
-            // restore the state to available
-            storage.set_status(AccountStorageStatus::Available);
         }
 
         self.stats
@@ -7249,16 +7190,15 @@ impl AccountsDb {
                     store.count(),
                 );
                 {
-                    let mut count_and_status = store.count_and_status.lock_write();
-                    assert_eq!(count_and_status.0, 0);
-                    count_and_status.0 = entry.count;
+                    let prev_count = store.count.swap(entry.count, Ordering::Release);
+                    assert_eq!(prev_count, 0);
                 }
                 store
                     .alive_bytes
                     .store(entry.stored_size, Ordering::Release);
             } else {
                 trace!("id: {id} clearing count");
-                store.count_and_status.lock_write().0 = 0;
+                store.count.store(0, Ordering::Release);
             }
         }
         storage_size_storages_time.stop();
@@ -7298,10 +7238,10 @@ impl AccountsDb {
         for slot in &slots {
             let entry = self.storage.get_slot_storage_entry(*slot).unwrap();
             info!(
-                "  slot: {} id: {} count_and_status: {:?} len: {} capacity: {}",
+                "  slot: {} id: {} count: {} len: {} capacity: {}",
                 slot,
                 entry.id(),
-                entry.count_and_status.read(),
+                entry.count(),
                 entry.accounts.len(),
                 entry.accounts.capacity(),
             );
@@ -7450,7 +7390,6 @@ impl AccountsDb {
 
     pub fn check_storage(&self, slot: Slot, alive_count: usize, total_count: usize) {
         let store = self.storage.get_slot_storage_entry(slot).unwrap();
-        assert_eq!(store.status(), AccountStorageStatus::Available);
         assert_eq!(store.count(), alive_count);
         assert_eq!(store.accounts_count(), total_count);
     }

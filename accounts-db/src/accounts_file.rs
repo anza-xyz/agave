@@ -120,13 +120,6 @@ impl AccountsFile {
         }
     }
 
-    pub fn reset(&self) {
-        match self {
-            Self::AppendVec(av) => av.reset(),
-            Self::TieredStorage(_) => {}
-        }
-    }
-
     pub fn remaining_bytes(&self) -> u64 {
         match self {
             Self::AppendVec(av) => av.remaining_bytes(),

@@ -372,6 +372,7 @@ impl AppendVec {
         Ok(())
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn reset(&self) {
         // Writable state's mutex forces append to be single threaded, but concurrent
         // with reads. See UNSAFE usage in `append_ptr`

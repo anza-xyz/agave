@@ -881,7 +881,6 @@ fn test_account_grow() {
     for pass in 0..27 {
         let accounts = AccountsDb::new_single_for_tests();
 
-        let status = [AccountStorageStatus::Available, AccountStorageStatus::Full];
         let pubkey1 = solana_pubkey::new_rand();
         let account1 = AccountSharedData::new(1, DEFAULT_FILE_SIZE as usize / 2, &pubkey1);
         accounts.store_for_tests((0, [(&pubkey1, &account1)].as_slice()));
@@ -889,7 +888,6 @@ fn test_account_grow() {
             accounts.add_root_and_flush_write_cache(0);
             let store = &accounts.storage.get_slot_storage_entry(0).unwrap();
             assert_eq!(store.count(), 1);
-            assert_eq!(store.status(), AccountStorageStatus::Available);
             continue;
         }
 
@@ -902,7 +900,6 @@ fn test_account_grow() {
             assert_eq!(accounts.storage.len(), 1);
             let store = &accounts.storage.get_slot_storage_entry(0).unwrap();
             assert_eq!(store.count(), 2);
-            assert_eq!(store.status(), AccountStorageStatus::Available);
             continue;
         }
         let ancestors = vec![(0, 0)].into_iter().collect();
@@ -928,8 +925,6 @@ fn test_account_grow() {
             if flush {
                 accounts.add_root_and_flush_write_cache(0);
                 assert_eq!(accounts.storage.len(), 1);
-                let store = &accounts.storage.get_slot_storage_entry(0).unwrap();
-                assert_eq!(store.status(), status[0]);
             }
             let ancestors = vec![(0, 0)].into_iter().collect();
             assert_eq!(
@@ -2260,7 +2255,7 @@ fn test_get_snapshot_storages_with_base_slot() {
 
 define_accounts_db_test!(
     test_storage_remove_account_double_remove,
-    panic = "double remove of account in slot: 0/store: 0!!",
+    panic = "Too many bytes or accounts removed from storage! slot: 0, id: 0",
     |accounts| {
         let pubkey = solana_pubkey::new_rand();
         let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
@@ -4965,8 +4960,7 @@ define_accounts_db_test!(test_set_storage_count_and_alive_bytes, |accounts| {
     // fake out the store count to avoid the assert
     for (_, store) in accounts.storage.iter() {
         store.alive_bytes.store(0, Ordering::Release);
-        let mut count_and_status = store.count_and_status.lock_write();
-        count_and_status.0 = 0;
+        store.count.store(0, Ordering::Release);
     }
 
     // count needs to be <= approx stored count in store.
@@ -4984,14 +4978,14 @@ define_accounts_db_test!(test_set_storage_count_and_alive_bytes, |accounts| {
     );
 
     for (_, store) in accounts.storage.iter() {
-        assert_eq!(store.count_and_status.read().0, 0);
+        assert_eq!(store.count(), 0);
         assert_eq!(store.alive_bytes(), 0);
     }
     accounts.set_storage_count_and_alive_bytes(dashmap, &mut GenerateIndexTimings::default());
     assert_eq!(accounts.storage.len(), 1);
     for (_, store) in accounts.storage.iter() {
         assert_eq!(store.id(), 0);
-        assert_eq!(store.count_and_status.read().0, count);
+        assert_eq!(store.count(), count);
         assert_eq!(store.alive_bytes(), 2);
     }
 });
