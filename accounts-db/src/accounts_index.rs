@@ -1367,6 +1367,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 .then_with(|| pubkey_a.cmp(pubkey_b))
         });
 
+        let storage = self.storage.storage.as_ref();
         while !items.is_empty() {
             let mut start_index = items.len() - 1;
             let mut last_pubkey = &items[start_index].0;
@@ -1386,7 +1387,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 last_pubkey = next_pubkey;
             }
 
-            let r_account_maps = &self.account_maps[pubkey_bin];
+            let r_account_maps = self.account_maps[pubkey_bin].as_ref();
             // count only considers non-duplicate accounts
             count += items.len() - start_index;
 
@@ -1398,12 +1399,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 // this is no longer the default case
                 let mut duplicates_from_in_memory = vec![];
                 items.for_each(|(pubkey, account_info)| {
-                    let new_entry = PreAllocatedAccountMapEntry::new(
-                        slot,
-                        account_info,
-                        &self.storage.storage,
-                        use_disk,
-                    );
+                    let new_entry =
+                        PreAllocatedAccountMapEntry::new(slot, account_info, storage, use_disk);
                     match r_account_maps.insert_new_entry_if_missing_with_lock(pubkey, new_entry) {
                         InsertNewEntryResults::DidNotExist => {
                             num_did_not_exist += 1;

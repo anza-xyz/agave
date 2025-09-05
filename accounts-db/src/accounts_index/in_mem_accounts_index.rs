@@ -1068,10 +1068,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let mut num_existed_in_mem = 0;
         let mut num_existed_on_disk = 0;
 
+        let storage = self.storage.as_ref();
         let duplicates = duplicates_put_on_disk
             .into_iter()
             .chain(duplicates.into_iter().map(|(slot, key, info)| {
-                let entry = PreAllocatedAccountMapEntry::new(slot, info, &self.storage, true);
+                let entry = PreAllocatedAccountMapEntry::new(slot, info, storage, true);
                 match self.insert_new_entry_if_missing_with_lock(key, entry) {
                     InsertNewEntryResults::DidNotExist => {
                         num_did_not_exist += 1;
