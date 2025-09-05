@@ -89,6 +89,19 @@ pub struct LeaderProcessedTransactionCounts {
 pub struct ConsumerConfig {
     /// Should initial checks be performed before locking accounts.
     pub pre_lock_checks: bool,
+    /// How cost-tracking should be performed.
+    pub cost_tracking_kind: CostTrackingKind,
+}
+
+#[derive(Default)]
+pub enum CostTrackingKind {
+    /// Reserve CUs before beginning execution, and update with actual consumed
+    /// CUs after execution. This is the default behavior and ensures that
+    /// there is no wasted execution. However, can lead to false positives for
+    /// transactions being throttled due to cost model if estimated costs are
+    /// significantly higher than actual costs.
+    #[default]
+    ReserveRefund,
 }
 
 pub struct Consumer {
@@ -194,11 +207,11 @@ impl Consumer {
         let (
             (transaction_qos_cost_results, cost_model_throttled_transactions_count),
             cost_model_us,
-        ) = measure_us!(self.qos_service.select_and_accumulate_transaction_costs(
-            bank,
-            txs,
-            pre_results
-        ));
+        ) = measure_us!(match self.config.cost_tracking_kind {
+            CostTrackingKind::ReserveRefund => self
+                .qos_service
+                .select_and_accumulate_transaction_costs(bank, txs, pre_results),
+        });
 
         // Only lock accounts for those transactions are selected for the block;
         // Once accounts are locked, other threads cannot encode transactions that will modify the
@@ -225,15 +238,19 @@ impl Consumer {
             ..
         } = execute_and_commit_transactions_output;
 
-        // Costs of all transactions are added to the cost_tracker before processing.
-        // To ensure accurate tracking of compute units, transactions that ultimately
-        // were not included in the block should have their cost removed, the rest
-        // should update with their actually consumed units.
-        QosService::remove_or_update_costs(
-            transaction_qos_cost_results.iter(),
-            commit_transactions_result.as_ref().ok(),
-            bank,
-        );
+        match self.config.cost_tracking_kind {
+            CostTrackingKind::ReserveRefund => {
+                // Costs of all transactions are added to the cost_tracker before processing.
+                // To ensure accurate tracking of compute units, transactions that ultimately
+                // were not included in the block should have their cost removed, the rest
+                // should update with their actually consumed units.
+                QosService::remove_or_update_costs(
+                    transaction_qos_cost_results.iter(),
+                    commit_transactions_result.as_ref().ok(),
+                    bank,
+                );
+            }
+        }
 
         // reports qos service stats for this batch
         self.qos_service.report_metrics(bank.slot());
