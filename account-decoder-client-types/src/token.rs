@@ -120,7 +120,7 @@ pub enum UiExtension {
     TokenGroup(UiTokenGroup),
     TokenGroupMember(UiTokenGroupMember),
     ConfidentialMintBurn(UiConfidentialMintBurn),
-    UnparseableExtension,
+    UnparsableExtension,
     ScaledUiAmountConfig(UiScaledUiAmountConfig),
     PausableConfig(UiPausableConfig),
     PausableAccount,
