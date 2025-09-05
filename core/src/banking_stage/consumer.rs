@@ -7,6 +7,7 @@ use {
     },
     itertools::Itertools,
     solana_clock::MAX_PROCESSING_AGE,
+    solana_cost_model::cost_model::CostModel,
     solana_fee::FeeFeatures,
     solana_fee_structure::FeeBudgetLimits,
     solana_measure::measure_us,
@@ -102,6 +103,12 @@ pub enum CostTrackingKind {
     /// significantly higher than actual costs.
     #[default]
     ReserveRefund,
+    /// Only track actual consumed CUs after execution. This ensures that
+    /// transactions are not falsely throttled due to cost model. However,
+    /// can lead to wasted execution if the scheduler is not careful about
+    /// only scheduling transactions that are likely to fit within the cost
+    /// limits.
+    AddOnly,
 }
 
 pub struct Consumer {
@@ -211,6 +218,9 @@ impl Consumer {
             CostTrackingKind::ReserveRefund => self
                 .qos_service
                 .select_and_accumulate_transaction_costs(bank, txs, pre_results),
+            CostTrackingKind::AddOnly => {
+                todo!()
+            }
         });
 
         // Only lock accounts for those transactions are selected for the block;
@@ -249,6 +259,9 @@ impl Consumer {
                     commit_transactions_result.as_ref().ok(),
                     bank,
                 );
+            }
+            CostTrackingKind::AddOnly => {
+                // Costs were added immediately before recording. Nothing to do here.
             }
         }
 
@@ -396,17 +409,56 @@ impl Consumer {
         };
 
         let (processed_transactions, processing_results_to_transactions_us) =
-            measure_us!(processing_results
-                .iter()
-                .zip(batch.sanitized_transactions())
-                .filter_map(|(processing_result, tx)| {
-                    if processing_result.was_processed() {
-                        Some(tx.to_versioned_transaction())
-                    } else {
-                        None
-                    }
-                })
-                .collect_vec());
+            measure_us!(match self.config.cost_tracking_kind {
+                CostTrackingKind::ReserveRefund => {
+                    // Since CUs were reserved before execution, and will be refunded,
+                    // we just collect processed transactions only.
+                    processing_results
+                        .iter()
+                        .zip(batch.sanitized_transactions())
+                        .filter_map(|(processing_result, tx)| {
+                            if processing_result.was_processed() {
+                                Some(tx.to_versioned_transaction())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect_vec()
+                }
+                CostTrackingKind::AddOnly => {
+                    let processed_transactions = batch
+                        .sanitized_transactions()
+                        .iter()
+                        .zip(processing_results.iter())
+                        .filter_map(|(tx, result)| result.as_ref().ok().map(|_| tx));
+                    let transaction_costs = batch
+                        .sanitized_transactions()
+                        .iter()
+                        .zip(processing_results.iter())
+                        .filter_map(|(tx, result)| {
+                            result.as_ref().ok().map(|pr| {
+                                Ok(CostModel::calculate_cost_for_executed_transaction(
+                                    tx,
+                                    pr.executed_units(),
+                                    pr.loaded_accounts_data_size(),
+                                    &bank.feature_set,
+                                ))
+                            })
+                        });
+                    let (selected_transactions, _) = self.qos_service.select_transactions_per_cost(
+                        processed_transactions.clone(),
+                        transaction_costs,
+                        bank,
+                    );
+
+                    processed_transactions
+                        .zip(selected_transactions)
+                        .filter_map(|(tx, selected)| {
+                            selected.ok().map(|_| tx.to_versioned_transaction())
+                        })
+                        .collect_vec()
+                }
+            });
 
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
