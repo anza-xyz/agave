@@ -1,4 +1,5 @@
 use {
+    crate::run_local_faucet,
     solana_cli::{
         address_lookup_table::{
             AddressLookupTableCliCommand, DEACTIVATE_LOOKUP_TABLE_WARNING,
@@ -7,7 +8,6 @@ use {
         cli::{process_command, CliCommand, CliConfig},
     },
     solana_cli_output::{CliAddressLookupTable, CliAddressLookupTableCreated, OutputFormat},
-    solana_faucet::faucet::run_local_faucet,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,

@@ -17,7 +17,7 @@ name = "solana"
 path = "src/main.rs"
 
 [features]
-dev-context-only-utils = []
+dev-context-only-utils = ["solana-faucet/dev-context-only-utils"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -55,6 +55,7 @@ solana-compute-budget-interface = { version = "=3.0.0", features = ["borsh"] }
 solana-config-interface = "=2.0.0"
 solana-connection-cache = { workspace = true }
 solana-epoch-schedule = "=3.0.0"
+solana-faucet = { workspace = true }
 solana-feature-gate-interface = { version = "=3.0.0", features = ["bincode"] }
 solana-fee-calculator = "=3.0.0"
 solana-fee-structure = "=3.0.0"
@@ -67,6 +68,7 @@ solana-loader-v4-program = { workspace = true }
 solana-logger = "=3.0.0"
 solana-message = "=3.0.1"
 solana-native-token = "=3.0.0"
+solana-net-utils = { workspace = true }
 solana-nonce = "=3.0.0"
 solana-offchain-message = { version = "=3.0.0", features = ["verify"] }
 solana-packet = "=3.0.0"
@@ -105,7 +107,6 @@ tiny-bip39 = { workspace = true }
 assert_matches = { workspace = true }
 solana-cli = { path = ".", features = ["dev-context-only-utils"] }
 solana-client = { workspace = true, features = ["dev-context-only-utils"] }
-solana-faucet = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-presigner = { workspace = true }
 solana-rpc = { workspace = true }
