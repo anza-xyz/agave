@@ -3711,14 +3711,12 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
             continue;
         }
 
-        bank.transaction_processor.add_builtin(
-            &bank,
+        bank.add_builtin(
             vote_id,
             "mock_program1",
             ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm),
         );
-        bank.transaction_processor.add_builtin(
-            &bank,
+        bank.add_builtin(
             stake_id,
             "mock_program2",
             ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm),
@@ -5144,8 +5142,7 @@ fn test_fuzz_instructions() {
         .map(|i| {
             let key = solana_pubkey::new_rand();
             let name = format!("program{i:?}");
-            bank.transaction_processor.add_builtin(
-                &bank,
+            bank.add_builtin(
                 key,
                 name.as_str(),
                 ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm),

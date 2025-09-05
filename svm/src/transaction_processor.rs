@@ -1055,21 +1055,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     }
 
     /// Add a built-in program
-    pub fn add_builtin<CB: TransactionProcessingCallback>(
-        &self,
-        callbacks: &CB,
-        program_id: Pubkey,
-        name: &str,
-        builtin: ProgramCacheEntry,
-    ) {
-        debug!("Adding program {name} under {program_id:?}");
-        callbacks.add_builtin_account(name, &program_id);
+    pub fn add_builtin(&self, program_id: Pubkey, builtin: ProgramCacheEntry) {
         self.builtin_program_ids.write().unwrap().insert(program_id);
         self.global_program_cache
             .write()
             .unwrap()
             .assign_program(program_id, Arc::new(builtin));
-        debug!("Added program {name} under {program_id:?}");
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -1161,15 +1152,6 @@ mod tests {
                 .unwrap()
                 .get(pubkey)
                 .map(|account| (account.clone(), 0))
-        }
-
-        fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
-            let mut account_data = AccountSharedData::default();
-            account_data.set_data(name.as_bytes().to_vec());
-            self.account_shared_data
-                .write()
-                .unwrap()
-                .insert(*program_id, account_data);
         }
 
         fn inspect_account(
@@ -1884,7 +1866,6 @@ mod tests {
 
     #[test]
     fn test_add_builtin() {
-        let mock_bank = MockBankCallback::default();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
         let batch_processor =
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
@@ -1897,12 +1878,7 @@ mod tests {
             |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
         );
 
-        batch_processor.add_builtin(&mock_bank, key, name, program);
-
-        assert_eq!(
-            mock_bank.account_shared_data.read().unwrap()[&key].data(),
-            name.as_bytes()
-        );
+        batch_processor.add_builtin(key, program);
 
         let mut loaded_programs_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
             0,

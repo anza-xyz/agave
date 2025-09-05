@@ -655,8 +655,7 @@ pub(crate) mod tests {
             let account =
                 AccountSharedData::new_data(1, &builtin_name, &native_loader::id()).unwrap();
             bank.store_account_and_update_capitalization(&builtin_id, &account);
-            bank.transaction_processor.add_builtin(
-                &bank,
+            bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
                 ProgramCacheEntry::default(),
@@ -792,8 +791,7 @@ pub(crate) mod tests {
             let account =
                 AccountSharedData::new_data(1, &builtin_name, &native_loader::id()).unwrap();
             bank.store_account_and_update_capitalization(&builtin_id, &account);
-            bank.transaction_processor.add_builtin(
-                &bank,
+            bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
                 ProgramCacheEntry::default(),
@@ -843,8 +841,7 @@ pub(crate) mod tests {
             let account =
                 AccountSharedData::new_data(1, &builtin_name, &native_loader::id()).unwrap();
             bank.store_account_and_update_capitalization(&builtin_id, &account);
-            bank.transaction_processor.add_builtin(
-                &bank,
+            bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
                 ProgramCacheEntry::default(),
@@ -894,8 +891,7 @@ pub(crate) mod tests {
             let account =
                 AccountSharedData::new_data(1, &builtin_name, &native_loader::id()).unwrap();
             bank.store_account_and_update_capitalization(&builtin_id, &account);
-            bank.transaction_processor.add_builtin(
-                &bank,
+            bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
                 ProgramCacheEntry::default(),
@@ -1184,8 +1180,7 @@ pub(crate) mod tests {
         // Set up the CPI mockup to test CPI'ing to the migrated program.
         let cpi_program_id = Pubkey::new_unique();
         let cpi_program_name = "mock_cpi_program";
-        root_bank.transaction_processor.add_builtin(
-            &root_bank,
+        root_bank.add_builtin(
             cpi_program_id,
             cpi_program_name,
             ProgramCacheEntry::new_builtin(0, cpi_program_name.len(), cpi_mockup::Entrypoint::vm),
