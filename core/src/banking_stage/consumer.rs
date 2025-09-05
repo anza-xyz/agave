@@ -86,10 +86,13 @@ pub struct LeaderProcessedTransactionCounts {
 }
 
 #[derive(Default)]
-pub struct ConsumerConfig {}
+pub struct ConsumerConfig {
+    /// Should initial checks be performed before locking accounts.
+    pub pre_lock_checks: bool,
+}
 
 pub struct Consumer {
-    _config: ConsumerConfig,
+    config: ConsumerConfig,
     committer: Committer,
     transaction_recorder: TransactionRecorder,
     qos_service: QosService,
@@ -105,7 +108,7 @@ impl Consumer {
         log_messages_bytes_limit: Option<usize>,
     ) -> Self {
         Self {
-            _config: config,
+            config,
             committer,
             transaction_recorder,
             qos_service,
@@ -120,15 +123,19 @@ impl Consumer {
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
         let pre_results = vec![Ok(()); txs.len()];
-        let check_results =
-            bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
-        let check_results: Vec<_> = check_results
-            .into_iter()
-            .map(|result| match result {
-                Ok(_) => Ok(()),
-                Err(err) => Err(err),
-            })
-            .collect();
+        let check_results: Vec<_> = if self.config.pre_lock_checks {
+            let check_results =
+                bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
+            check_results
+                .into_iter()
+                .map(|result| match result {
+                    Ok(_) => Ok(()),
+                    Err(err) => Err(err),
+                })
+                .collect()
+        } else {
+            pre_results
+        };
         let mut output = self.process_and_record_transactions_with_pre_results(
             bank,
             txs,
