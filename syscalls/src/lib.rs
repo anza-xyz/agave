@@ -122,10 +122,48 @@ pub enum SyscallError {
     InvalidPointer,
     #[error("Arithmetic overflow")]
     ArithmeticOverflow,
-    #[error(transparent)]
-    MemoryTranslation(#[from] MemoryTranslationError),
-    #[error(transparent)]
-    Cpi(#[from] CpiError),
+}
+
+impl From<MemoryTranslationError> for SyscallError {
+    fn from(error: MemoryTranslationError) -> Self {
+        match error {
+            MemoryTranslationError::UnalignedPointer => SyscallError::UnalignedPointer,
+            MemoryTranslationError::InvalidLength => SyscallError::InvalidLength,
+        }
+    }
+}
+
+impl From<CpiError> for SyscallError {
+    fn from(error: CpiError) -> Self {
+        match error {
+            CpiError::InvalidPointer => SyscallError::InvalidPointer,
+            CpiError::TooManySigners => SyscallError::TooManySigners,
+            CpiError::BadSeeds(e) => SyscallError::BadSeeds(e),
+            CpiError::InvalidLength => SyscallError::InvalidLength,
+            CpiError::MaxInstructionAccountsExceeded {
+                num_accounts,
+                max_accounts,
+            } => SyscallError::MaxInstructionAccountsExceeded {
+                num_accounts,
+                max_accounts,
+            },
+            CpiError::MaxInstructionDataLenExceeded {
+                data_len,
+                max_data_len,
+            } => SyscallError::MaxInstructionDataLenExceeded {
+                data_len,
+                max_data_len,
+            },
+            CpiError::MaxInstructionAccountInfosExceeded {
+                num_account_infos,
+                max_account_infos,
+            } => SyscallError::MaxInstructionAccountInfosExceeded {
+                num_account_infos,
+                max_account_infos,
+            },
+            CpiError::ProgramNotSupported(pubkey) => SyscallError::ProgramNotSupported(pubkey),
+        }
+    }
 }
 
 type Error = Box<dyn std::error::Error>;
