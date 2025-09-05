@@ -4,7 +4,11 @@
 //! - add_transaction_cost(&tx_cost), mutable function to accumulate tx_cost to tracker.
 //!
 use {
-    crate::{block_cost_limits::*, transaction_cost::TransactionCost},
+    crate::{
+        block_cost_limits::*,
+        contended_accounts_stats::{ContendedAccountsDetails, ContendedAccountsStats},
+        transaction_cost::TransactionCost,
+    },
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -76,6 +80,8 @@ pub struct CostTracker {
     /// removal if the transaction does not end up getting committed.
     in_flight_transaction_count: Saturating<usize>,
     secp256r1_instruction_signature_count: Saturating<u64>,
+    /// additional stats on contended accounts
+    contended_accounts_stats: ContendedAccountsStats,
 }
 
 impl Default for CostTracker {
@@ -103,6 +109,7 @@ impl Default for CostTracker {
             ed25519_instruction_signature_count: Saturating(0),
             in_flight_transaction_count: Saturating(0),
             secp256r1_instruction_signature_count: Saturating(0),
+            contended_accounts_stats: ContendedAccountsStats::new(MAX_WRITABLE_ACCOUNT_UNITS),
         }
     }
 }
@@ -129,6 +136,7 @@ impl CostTracker {
         self.ed25519_instruction_signature_count = Saturating(0);
         self.secp256r1_instruction_signature_count = Saturating(0);
         self.in_flight_transaction_count = Saturating(0);
+        self.contended_accounts_stats = ContendedAccountsStats::new(self.account_cost_limit);
     }
 
     /// Get the overall account limit.
@@ -239,7 +247,9 @@ impl CostTracker {
         }
 
         let (costliest_account, costliest_account_cost) = self.find_costliest_account();
-        let number_of_contended_accounts = self.find_number_of_contended_accounts();
+        let number_of_contended_accounts = self
+            .contended_accounts_stats
+            .get_number_of_contended_accounts();
 
         datapoint_info!(
             "cost_tracker_stats",
@@ -285,6 +295,12 @@ impl CostTracker {
             ("total_priority_fee", total_priority_fee, i64),
             ("number_of_contended_accounts", number_of_contended_accounts, i64),
         );
+
+        // Note: leader would report additional details for contended accounts, such as
+        // number of attempted (but not landed) txs on contended accounts as a measure of
+        // further pressures.
+        self.contended_accounts_stats
+            .report_contended_accounts_stats(bank_slot, is_leader);
     }
 
     fn find_costliest_account(&self) -> (Pubkey, u64) {
@@ -295,21 +311,8 @@ impl CostTracker {
             .unwrap_or_default()
     }
 
-    fn find_number_of_contended_accounts(&self) -> usize {
-        // accounts has more than 95% of account_cu_limit is considered as highly contended
-        let contended_cost_mark: u64 = self
-            .account_cost_limit
-            .saturating_mul(95)
-            .saturating_div(100);
-
-        self.cost_by_writable_accounts
-            .values()
-            .filter(|&&cost| cost >= contended_cost_mark)
-            .count()
-    }
-
     fn would_fit(
-        &self,
+        &mut self,
         tx_cost: &TransactionCost<impl TransactionWithMeta>,
     ) -> Result<(), CostTrackerError> {
         let cost: u64 = tx_cost.sum();
@@ -342,7 +345,37 @@ impl CostTracker {
         for account_key in tx_cost.writable_accounts() {
             match self.cost_by_writable_accounts.get(account_key) {
                 Some(chained_cost) => {
-                    if chained_cost.saturating_add(cost) > self.account_cost_limit {
+                    let would_exceed_account_limit =
+                        chained_cost.saturating_add(cost) > self.account_cost_limit;
+
+                    // record contended accounts detail stats: the latest accumulated CU, count of
+                    // attempted txs (eg back pressure)
+                    if self
+                        .contended_accounts_stats
+                        .account_is_contended(*chained_cost)
+                    {
+                        self.contended_accounts_stats
+                            .accumulate_contended_accounts_stats(
+                                account_key,
+                                &ContendedAccountsDetails {
+                                    accumulated_cu: chained_cost.saturating_add(
+                                        if would_exceed_account_limit { 0 } else { cost },
+                                    ),
+                                    attempted_tx_count: if would_exceed_account_limit {
+                                        1
+                                    } else {
+                                        0
+                                    },
+                                    attempted_total_cus: if would_exceed_account_limit {
+                                        cost
+                                    } else {
+                                        0
+                                    },
+                                },
+                            );
+                    }
+
+                    if would_exceed_account_limit {
                         return Err(CostTrackerError::WouldExceedAccountMaxLimit);
                     } else {
                         continue;
@@ -721,7 +754,8 @@ mod tests {
         let cost2 = tx_cost2.sum();
 
         // build testee that passes
-        let testee = CostTracker::new(cmp::max(cost1, cost2), cost1 + cost2 - 1, cost1 + cost2 - 1);
+        let mut testee =
+            CostTracker::new(cmp::max(cost1, cost2), cost1 + cost2 - 1, cost1 + cost2 - 1);
         assert!(testee.would_fit(&tx_cost1).is_ok());
         // data is too big
         assert_eq!(

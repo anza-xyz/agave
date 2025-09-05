@@ -2,6 +2,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 pub mod block_cost_limits;
+mod contended_accounts_stats;
 pub mod cost_model;
 pub mod cost_tracker;
 pub mod transaction_cost;
