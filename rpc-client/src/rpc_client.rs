@@ -27,7 +27,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface::Feature,
     solana_hash::Hash,
-    solana_message::{v0, Message as LegacyMessage},
+    solana_message::{Message, VersionedMessage},
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
         client_error::{Error as ClientError, ErrorKind, Result as ClientResult},
@@ -59,12 +59,6 @@ impl RpcClientConfig {
         }
     }
 }
-
-/// Trait used to add support for versioned messages to RPC APIs while
-/// retaining backwards compatibility
-pub trait SerializableMessage: Serialize {}
-impl SerializableMessage for LegacyMessage {}
-impl SerializableMessage for v0::Message {}
 
 /// Trait used to add support for versioned transactions to RPC APIs while
 /// retaining backwards compatibility
@@ -3723,8 +3717,13 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).is_blockhash_valid(blockhash, commitment))
     }
 
-    pub fn get_fee_for_message(&self, message: &impl SerializableMessage) -> ClientResult<u64> {
+    pub fn get_fee_for_message(&self, message: &VersionedMessage) -> ClientResult<u64> {
         self.invoke((self.rpc_client.as_ref()).get_fee_for_message(message))
+    }
+
+    pub fn get_fee_for_message_with_legacy(&self, message: &Message) -> ClientResult<u64> {
+        let versioned_message = VersionedMessage::Legacy(message.clone());
+        self.get_fee_for_message(&versioned_message)
     }
 
     pub fn get_new_latest_blockhash(&self, blockhash: &Hash) -> ClientResult<Hash> {
@@ -3803,6 +3802,7 @@ mod tests {
         serde_json::{json, Number},
         solana_account_decoder::encode_ui_account,
         solana_account_decoder_client_types::UiAccountEncoding,
+        solana_hash::Hash,
         solana_instruction::error::InstructionError,
         solana_keypair::Keypair,
         solana_rpc_client_api::client_error::ErrorKind,

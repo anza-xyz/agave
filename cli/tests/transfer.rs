@@ -515,7 +515,9 @@ fn test_transfer_all(compute_unit_price: Option<u64>) {
         let blockhash = rpc_client.get_latest_blockhash().unwrap();
         let sample_message =
             Message::new_with_blockhash(&instructions, Some(&default_signer.pubkey()), &blockhash);
-        rpc_client.get_fee_for_message(&sample_message).unwrap()
+        rpc_client
+            .get_fee_for_message_with_legacy(&sample_message)
+            .unwrap()
     };
 
     let mut config = CliConfig::recent_for_tests();
