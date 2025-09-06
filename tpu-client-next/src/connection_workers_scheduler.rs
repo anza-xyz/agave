@@ -140,6 +140,8 @@ impl From<StakeIdentity> for QuicClientCertificate {
 /// addresses. Implementations of this trait are used by the
 /// [`ConnectionWorkersScheduler`] to distribute transactions to workers
 /// accordingly.
+///
+/// This trait supports both stateless and stateful implementations.
 #[async_trait]
 pub trait WorkersBroadcaster {
     /// Sends a `transaction_batch` to workers associated with the given
@@ -148,7 +150,10 @@ pub trait WorkersBroadcaster {
     /// Returns error if a critical issue occurs, e.g. the implementation
     /// encounters an unrecoverable error. In this case, it will trigger
     /// stopping the scheduler and cleaning all the data.
+    ///
+    /// For stateful broadcasters, this method can access and modify internal state.
     async fn send_to_workers(
+        &mut self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
@@ -192,8 +197,8 @@ impl ConnectionWorkersScheduler {
         self,
         config: ConnectionWorkersSchedulerConfig,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
-        self.run_with_broadcaster::<NonblockingBroadcaster>(config)
-            .await
+        let broadcaster = NonblockingBroadcaster::new();
+        self.run_with_broadcaster(config, broadcaster).await
     }
 
     /// Starts the scheduler, which manages the distribution of transactions to
@@ -216,6 +221,7 @@ impl ConnectionWorkersScheduler {
             max_reconnect_attempts,
             leaders_fanout,
         }: ConnectionWorkersSchedulerConfig,
+        mut broadcaster: Broadcaster,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
         let ConnectionWorkersScheduler {
             mut leader_updater,
@@ -288,8 +294,9 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
-            if let Err(error) =
-                Broadcaster::send_to_workers(&mut workers, &send_leaders, transaction_batch).await
+            if let Err(error) = broadcaster
+                .send_to_workers(&mut workers, &send_leaders, transaction_batch)
+                .await
             {
                 last_error = Some(error);
                 break;
@@ -329,11 +336,22 @@ fn build_client_config(stake_identity: Option<&StakeIdentity>) -> ClientConfig {
 /// [`NonblockingBroadcaster`] attempts to immediately send transactions to all
 /// the workers. If worker cannot accept transactions because it's channel is
 /// full, the transactions will not be sent to this worker.
-struct NonblockingBroadcaster;
+///
+/// This is a stateless broadcaster that maintains no internal state.
+#[derive(Default)]
+pub struct NonblockingBroadcaster;
+
+impl NonblockingBroadcaster {
+    /// Creates a new instance of NonblockingBroadcaster
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 #[async_trait]
 impl WorkersBroadcaster for NonblockingBroadcaster {
     async fn send_to_workers(
+        &mut self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
