@@ -337,6 +337,65 @@ pub fn run_local_faucet_with_port(
     });
 }
 
+/// Configuration for running a local faucet server.
+pub struct LocalFaucetConfig {
+    pub keypair: Keypair,
+    pub address: Ipv4Addr,
+    pub port: u16,
+    pub time_input: Option<u64>,
+    pub per_time_cap: Option<u64>,
+    pub per_request_cap: Option<u64>,
+}
+
+/// Runs a local faucet server with the specified configuration.
+///
+/// # Arguments
+/// * `sender` - Channel to report the bound socket address or startup errors
+/// * `config` - Faucet configuration (use `config.port = 0` for random open port)
+pub fn run_local_faucet_with_config(
+    sender: Sender<Result<SocketAddr, String>>,
+    config: LocalFaucetConfig,
+) {
+    thread::spawn(move || {
+        let faucet_addr = socketaddr!(config.address, config.port);
+        let faucet = Arc::new(Mutex::new(Faucet::new(
+            config.keypair,
+            config.time_input,
+            config.per_time_cap,
+            config.per_request_cap,
+        )));
+        let runtime = Runtime::new().unwrap();
+        runtime.block_on(run_faucet(faucet, faucet_addr, Some(sender)));
+    });
+}
+
+/// For integration tests and benchmarks.
+///
+/// Listens on `LOCALHOST` with a random open port (unless port is provided) and reports to Sender.
+#[cfg(feature = "dev-context-only-utils")]
+pub fn run_local_faucet_for_tests(
+    keypair: Keypair,
+    per_time_cap: Option<u64>,
+    port: u16,
+) -> SocketAddr {
+    let (sender, receiver) = unbounded();
+    run_local_faucet_with_config(
+        sender,
+        LocalFaucetConfig {
+            keypair,
+            address: Ipv4Addr::LOCALHOST,
+            port,
+            time_input: None,
+            per_time_cap,
+            per_request_cap: None,
+        },
+    );
+    receiver
+        .recv()
+        .expect("run_local_faucet_for_tests")
+        .expect("faucet_addr")
+}
+
 // For integration tests. Listens on random open port and reports port to Sender.
 pub fn run_local_faucet(faucet_keypair: Keypair, per_time_cap: Option<u64>) -> SocketAddr {
     let (sender, receiver) = unbounded();

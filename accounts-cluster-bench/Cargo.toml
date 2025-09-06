@@ -53,7 +53,7 @@ jemallocator = { workspace = true }
 [dev-dependencies]
 solana-accounts-db = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
-solana-faucet = { workspace = true }
+solana-faucet = { workspace = true, features = ["dev-context-only-utils"] }
 solana-local-cluster = { workspace = true, features = ["dev-context-only-utils"] }
 solana-native-token = { workspace = true }
 solana-poh-config = { workspace = true }
