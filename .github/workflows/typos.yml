@@ -1,0 +1,33 @@
+name: Spelling
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CLICOLOR: 1
+
+jobs:
+  spelling:
+    name: Spell Check with Typos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run typos (check only)
+        uses: crate-ci/typos@v1.36.2
+        with:
+          config: ./typos.toml
+        continue-on-error: true
+        id: typos
+        
+      - name: Fail if typos found
+        if: steps.typos.outcome == 'failure'
+        run: |
+          echo "Typos found. Please fix them or add to typos.toml if intentional."
+          exit 1

@@ -1,0 +1,16 @@
+# This file is for custom spelling configuration
+# Add words to 'extend-words' to whitelist project-specific terms
+# Add files or patterns to 'exclude' to skip them
+
+[default]
+extend-words = [
+  # Add more project-specific words here
+]
+
+[files]
+exclude = [
+  "**/target/**",
+  "**/.git/**",
+  "**/Cargo.lock",
+  # Add more patterns to exclude generated or vendored files
+]
