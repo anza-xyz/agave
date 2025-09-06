@@ -14,14 +14,14 @@ use {
 /// An account key and the matching account
 pub type TransactionAccount = (Pubkey, AccountSharedData);
 pub(crate) type OwnedTransactionAccounts = (
-    UnsafeCell<Box<[AccountSharedData]>>,
+    UnsafeCell<Box<[TransactionAccount]>>,
     Box<[Cell<bool>]>,
     Cell<i64>,
 );
 
 #[derive(Debug)]
 pub struct TransactionAccounts {
-    accounts: UnsafeCell<Box<[AccountSharedData]>>,
+    accounts: UnsafeCell<Box<[TransactionAccount]>>,
     borrow_counters: Box<[BorrowCounter]>,
     touched_flags: Box<[Cell<bool>]>,
     resize_delta: Cell<i64>,
@@ -30,7 +30,7 @@ pub struct TransactionAccounts {
 
 impl TransactionAccounts {
     #[cfg(not(target_os = "solana"))]
-    pub(crate) fn new(accounts: Vec<AccountSharedData>) -> TransactionAccounts {
+    pub(crate) fn new(accounts: Vec<TransactionAccount>) -> TransactionAccounts {
         let touched_flags = vec![Cell::new(false); accounts.len()].into_boxed_slice();
         let borrow_counters = vec![BorrowCounter::default(); accounts.len()].into_boxed_slice();
         let accounts = UnsafeCell::new(accounts.into_boxed_slice());
@@ -102,7 +102,7 @@ impl TransactionAccounts {
         // SAFETY: The borrow counter guarantees this is the only mutable borrow of this account.
         // The unwrap is safe because accounts.len() == borrow_counters.len(), so the missing
         // account error should have been returned above.
-        let account = unsafe { (*self.accounts.get()).get_mut(index as usize).unwrap() };
+        let account = unsafe { &mut (*self.accounts.get()).get_mut(index as usize).unwrap().1 };
 
         Ok(AccountRefMut {
             account,
@@ -120,7 +120,7 @@ impl TransactionAccounts {
         // SAFETY: The borrow counter guarantees there are no mutable borrow of this account.
         // The unwrap is safe because accounts.len() == borrow_counters.len(), so the missing
         // account error should have been returned above.
-        let account = unsafe { (*self.accounts.get()).get(index as usize).unwrap() };
+        let account = unsafe { &(*self.accounts.get()).get(index as usize).unwrap().1 };
 
         Ok(AccountRef {
             account,
@@ -148,6 +148,16 @@ impl TransactionAccounts {
 
     pub fn resize_delta(&self) -> i64 {
         self.resize_delta.get()
+    }
+
+    pub(crate) fn account_key(&self, index: IndexOfAccount) -> Option<&Pubkey> {
+        // SAFETY: We never modify an account key, so returning a reference to it is safe.
+        unsafe { (*self.accounts.get()).get(index as usize).map(|acc| &acc.0) }
+    }
+
+    pub(crate) fn account_keys_iter(&self) -> impl Iterator<Item = &Pubkey> {
+        // SAFETY: We never modify account keys, so returning an immutable reference to them is safe.
+        unsafe { (*self.accounts.get()).iter().map(|item| &item.0) }
     }
 }
 
@@ -256,8 +266,14 @@ mod tests {
     #[test]
     fn test_missing_account() {
         let accounts = vec![
-            AccountSharedData::new(2, 1, &Pubkey::new_unique()),
-            AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+            ),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+            ),
         ];
 
         let tx_accounts = TransactionAccounts::new(accounts);
@@ -272,8 +288,14 @@ mod tests {
     #[test]
     fn test_invalid_borrow() {
         let accounts = vec![
-            AccountSharedData::new(2, 1, &Pubkey::new_unique()),
-            AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+            ),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+            ),
         ];
 
         let tx_accounts = TransactionAccounts::new(accounts);
@@ -343,8 +365,14 @@ mod tests {
     #[test]
     fn too_many_borrows() {
         let accounts = vec![
-            AccountSharedData::new(2, 1, &Pubkey::new_unique()),
-            AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+            ),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+            ),
         ];
 
         let tx_accounts = TransactionAccounts::new(accounts);
