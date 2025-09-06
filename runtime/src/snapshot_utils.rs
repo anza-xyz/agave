@@ -21,6 +21,7 @@ use {
     crossbeam_channel::{Receiver, Sender},
     log::*,
     regex::Regex,
+    semver::Version,
     solana_accounts_db::{
         account_storage::{AccountStorageMap, AccountStoragesOrderer},
         account_storage_reader::AccountStorageReader,
@@ -58,7 +59,8 @@ pub use {archive_format::*, snapshot_interval::SnapshotInterval};
 
 pub const SNAPSHOT_STATUS_CACHE_FILENAME: &str = "status_cache";
 pub const SNAPSHOT_VERSION_FILENAME: &str = "version";
-pub const SNAPSHOT_STATE_COMPLETE_FILENAME: &str = "state_complete";
+pub const SNAPSHOT_STATE_COMPLETE_LEGACY_FILENAME: &str = "state_complete";
+pub const SNAPSHOT_STATE_COMPLETE_FILENAME: &str = "state_complete_versioned";
 pub const SNAPSHOT_STORAGES_FLUSHED_FILENAME: &str = "storages_flushed";
 pub const SNAPSHOT_ACCOUNTS_HARDLINKS: &str = "accounts_hardlinks";
 pub const SNAPSHOT_ARCHIVE_DOWNLOAD_DIR: &str = "remote";
@@ -69,6 +71,7 @@ pub const SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME: &str = "full_snapshot_slot";
 pub const BANK_SNAPSHOTS_DIR: &str = "snapshots";
 pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
+const FASTBOOT_VERSION: Version = Version::new(1, 0, 0);
 const VERSION_STRING_V1_2_0: &str = "1.2.0";
 pub const TMP_SNAPSHOT_ARCHIVE_PREFIX: &str = "tmp-snapshot-archive-";
 pub const BANK_SNAPSHOT_PRE_FILENAME_EXTENSION: &str = "pre";
@@ -185,8 +188,14 @@ impl BankSnapshotInfo {
 
         // There is a time window from the slot directory being created, and the content being completely
         // filled.  Check the completion to avoid using a highest found slot directory with missing content.
-        if !is_bank_snapshot_complete(&bank_snapshot_dir) {
+        let Ok(version) = is_bank_snapshot_complete(&bank_snapshot_dir) else {
             return Err(SnapshotNewFromDirError::IncompleteDir(bank_snapshot_dir));
+        };
+
+        if !is_bank_snapshot_compatible(&version) {
+            return Err(SnapshotNewFromDirError::IncompatibleSnapshotVersion(
+                version,
+            ));
         }
 
         let status_cache_file = bank_snapshot_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME);
@@ -428,6 +437,9 @@ pub enum SnapshotNewFromDirError {
     #[error("snapshot directory incomplete '{0}'")]
     IncompleteDir(PathBuf),
 
+    #[error("snapshot version is incompatible '{0}'")]
+    IncompatibleSnapshotVersion(Version),
+
     #[error("missing snapshot file '{0}'")]
     MissingSnapshotFile(PathBuf),
 }
@@ -665,7 +677,7 @@ pub fn purge_incomplete_bank_snapshots(bank_snapshots_dir: impl AsRef<Path>) {
         return;
     };
 
-    let is_incomplete = |dir: &PathBuf| !is_bank_snapshot_complete(dir);
+    let is_incomplete = |dir: &PathBuf| is_bank_snapshot_complete(dir).is_err();
 
     let incomplete_dirs: Vec<_> = read_dir_iter
         .filter_map(|entry| entry.ok())
@@ -688,15 +700,40 @@ pub fn purge_incomplete_bank_snapshots(bank_snapshots_dir: impl AsRef<Path>) {
 }
 
 /// Is the bank snapshot complete?
-fn is_bank_snapshot_complete(bank_snapshot_dir: impl AsRef<Path>) -> bool {
+fn is_bank_snapshot_complete(bank_snapshot_dir: impl AsRef<Path>) -> io::Result<Version> {
+    let state_complete_path = bank_snapshot_dir
+        .as_ref()
+        .join(SNAPSHOT_STATE_COMPLETE_LEGACY_FILENAME);
+
+    // If the legacy file is present, then the fast boot directory is
+    // compatible with 0,0,0
+    if state_complete_path.is_file() {
+        return Ok(Version::new(0, 0, 0));
+    }
+
     let state_complete_path = bank_snapshot_dir
         .as_ref()
         .join(SNAPSHOT_STATE_COMPLETE_FILENAME);
-    state_complete_path.is_file()
+
+    let version_str = fs::read_to_string(&state_complete_path)?;
+    Version::parse(version_str.trim()).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to parse version: {err}"),
+        )
+    })
+}
+
+/// Is the bank snapshot version compatible?
+fn is_bank_snapshot_compatible(version: &Version) -> bool {
+    version.major <= FASTBOOT_VERSION.major
 }
 
 /// Marks the bank snapshot as complete
-fn write_snapshot_state_complete_file(bank_snapshot_dir: impl AsRef<Path>) -> io::Result<()> {
+fn write_snapshot_state_complete_file(
+    bank_snapshot_dir: impl AsRef<Path>,
+    write_legacy_completer: bool,
+) -> io::Result<()> {
     let state_complete_path = bank_snapshot_dir
         .as_ref()
         .join(SNAPSHOT_STATE_COMPLETE_FILENAME);
@@ -706,6 +743,25 @@ fn write_snapshot_state_complete_file(bank_snapshot_dir: impl AsRef<Path>) -> io
             state_complete_path.display(),
         ))
     })?;
+
+    fs::write(&state_complete_path, FASTBOOT_VERSION.to_string()).map_err(|err| {
+        IoError::other(format!(
+            "failed to write version to file '{}': {err}",
+            state_complete_path.display(),
+        ))
+    })?;
+
+    if write_legacy_completer {
+        let state_complete_path_legacy = bank_snapshot_dir
+            .as_ref()
+            .join(SNAPSHOT_STATE_COMPLETE_LEGACY_FILENAME);
+        fs::File::create(&state_complete_path_legacy).map_err(|err| {
+            IoError::other(format!(
+                "failed to create file '{}': {err}",
+                state_complete_path_legacy.display(),
+            ))
+        })?;
+    }
     Ok(())
 }
 
@@ -1007,7 +1063,7 @@ fn serialize_snapshot(
 
         // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
         let (_, write_state_complete_file_us) = measure_us!({
-            write_snapshot_state_complete_file(&bank_snapshot_dir)
+            write_snapshot_state_complete_file(&bank_snapshot_dir, true)
                 .map_err(AddBankSnapshotError::MarkSnapshotComplete)?
         });
 
@@ -1862,7 +1918,7 @@ fn create_snapshot_meta_files_for_unarchived_snapshot(unpack_dir: impl AsRef<Pat
         slot_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME),
     )?;
 
-    write_snapshot_state_complete_file(slot_dir)?;
+    write_snapshot_state_complete_file(slot_dir, true)?;
 
     Ok(())
 }
@@ -2608,6 +2664,7 @@ mod tests {
         bincode::{deserialize_from, serialize_into},
         std::{convert::TryFrom, mem::size_of},
         tempfile::NamedTempFile,
+        test_case::test_case,
     };
 
     #[test]
@@ -2949,6 +3006,7 @@ mod tests {
         bank_snapshots_dir: &Path,
         min_slot: Slot,
         max_slot: Slot,
+        write_legacy_completer: bool,
     ) {
         for slot in min_slot..max_slot {
             let snapshot_dir = get_bank_snapshot_dir(bank_snapshots_dir, slot);
@@ -2965,27 +3023,39 @@ mod tests {
             fs::write(version_path, SnapshotVersion::default().as_str().as_bytes()).unwrap();
 
             // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
-            write_snapshot_state_complete_file(snapshot_dir).unwrap();
+            write_snapshot_state_complete_file(snapshot_dir, write_legacy_completer).unwrap();
         }
     }
 
-    #[test]
-    fn test_get_bank_snapshots() {
+    #[test_case(true)]
+    #[test_case(false)]
+    fn test_get_bank_snapshots(write_legacy_completer: bool) {
         let temp_snapshots_dir = tempfile::TempDir::new().unwrap();
         let min_slot = 10;
         let max_slot = 20;
-        common_create_bank_snapshot_files(temp_snapshots_dir.path(), min_slot, max_slot);
+        common_create_bank_snapshot_files(
+            temp_snapshots_dir.path(),
+            min_slot,
+            max_slot,
+            write_legacy_completer,
+        );
 
         let bank_snapshots = get_bank_snapshots(temp_snapshots_dir.path());
         assert_eq!(bank_snapshots.len() as Slot, max_slot - min_slot);
     }
 
-    #[test]
-    fn test_get_highest_bank_snapshot_post() {
+    #[test_case(true)]
+    #[test_case(false)]
+    fn test_get_highest_bank_snapshot_post(write_legacy_completer: bool) {
         let temp_snapshots_dir = tempfile::TempDir::new().unwrap();
         let min_slot = 99;
         let max_slot = 123;
-        common_create_bank_snapshot_files(temp_snapshots_dir.path(), min_slot, max_slot);
+        common_create_bank_snapshot_files(
+            temp_snapshots_dir.path(),
+            min_slot,
+            max_slot,
+            write_legacy_completer,
+        );
 
         let highest_bank_snapshot = get_highest_bank_snapshot_post(temp_snapshots_dir.path());
         assert!(highest_bank_snapshot.is_some());

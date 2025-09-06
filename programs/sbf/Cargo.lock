@@ -8101,6 +8101,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "regex",
+ "semver",
  "serde",
  "serde_derive",
  "serde_json",

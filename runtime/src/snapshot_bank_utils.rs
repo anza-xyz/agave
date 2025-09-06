@@ -824,6 +824,7 @@ mod tests {
             },
             status_cache::Status,
         },
+        semver::Version,
         solana_accounts_db::{
             accounts_db::{MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
             accounts_file::StorageAccess,
@@ -1641,6 +1642,64 @@ mod tests {
         assert!(hardlink_dirs.iter().all(|dir| fs::metadata(dir).is_err()));
     }
 
+    /// Test versioning when booting from directories
+    /// If the legacy version file is present, booting from directories should always pass
+    /// If the newer version file is present, the version should be checked for compatibility
+    #[test]
+    fn test_snapshot_versioning() {
+        let genesis_config = GenesisConfig::default();
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let _bank =
+            create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 3, 0, true);
+
+        // Test 1: Remove the legacy version file
+        let snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
+        assert_eq!(snapshot.slot, 3);
+
+        let legacy_complete_flag_file = snapshot
+            .snapshot_dir
+            .join(snapshot_utils::SNAPSHOT_STATE_COMPLETE_LEGACY_FILENAME);
+        fs::remove_file(legacy_complete_flag_file).unwrap();
+
+        // If the legacy snapshot file is removed, the version in the versioned file
+        // should be checked, and the snapshot should be found
+        let snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
+        assert_eq!(snapshot.slot, 3);
+
+        // Test 2: Modify the version in the versioned file to something newer than current
+        let complete_flag_file = snapshot
+            .snapshot_dir
+            .join(snapshot_utils::SNAPSHOT_STATE_COMPLETE_FILENAME);
+        let version = fs::read_to_string(&complete_flag_file).unwrap();
+        let version = Version::parse(&version).unwrap();
+        let new_version = Version::new(version.major + 1, version.minor, version.patch);
+
+        fs::write(&complete_flag_file, new_version.to_string()).unwrap();
+
+        // With an invalid version and no legacy file, the snapshot will be considered invalid
+        let snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
+        assert_eq!(snapshot.slot, 2);
+
+        // Test 3: Remove the versioned file
+        let complete_flag_file = snapshot
+            .snapshot_dir
+            .join(snapshot_utils::SNAPSHOT_STATE_COMPLETE_FILENAME);
+        fs::remove_file(complete_flag_file).unwrap();
+
+        // The legacy file should be found, making this a valid snapshot
+        let snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
+        assert_eq!(snapshot.slot, 2);
+
+        // Test 4: Remove the legacy file, the snapshot should no longer be found
+        let legacy_complete_flag_file = snapshot
+            .snapshot_dir
+            .join(snapshot_utils::SNAPSHOT_STATE_COMPLETE_LEGACY_FILENAME);
+        fs::remove_file(legacy_complete_flag_file).unwrap();
+
+        let snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
+        assert_eq!(snapshot.slot, 1);
+    }
+
     #[test_case(false)]
     #[test_case(true)]
     fn test_get_highest_bank_snapshot(should_flush_and_hard_link_storages: bool) {
@@ -1660,6 +1719,11 @@ mod tests {
         let complete_flag_file = snapshot
             .snapshot_dir
             .join(snapshot_utils::SNAPSHOT_STATE_COMPLETE_FILENAME);
+        fs::remove_file(complete_flag_file).unwrap();
+
+        let complete_flag_file = snapshot
+            .snapshot_dir
+            .join(snapshot_utils::SNAPSHOT_STATE_COMPLETE_LEGACY_FILENAME);
         fs::remove_file(complete_flag_file).unwrap();
         // The incomplete snapshot dir should still exist
         let snapshot_dir_4 = snapshot.snapshot_dir;
@@ -1765,6 +1829,13 @@ mod tests {
             let bank_snapshot_dir = get_bank_snapshot_dir(&bank_snapshots_dir, slot);
             let state_complete_file =
                 bank_snapshot_dir.join(snapshot_utils::SNAPSHOT_STATE_COMPLETE_FILENAME);
+            fs::remove_file(state_complete_file).unwrap();
+        }
+
+        for slot in [1, 2] {
+            let bank_snapshot_dir = get_bank_snapshot_dir(&bank_snapshots_dir, slot);
+            let state_complete_file =
+                bank_snapshot_dir.join(snapshot_utils::SNAPSHOT_STATE_COMPLETE_LEGACY_FILENAME);
             fs::remove_file(state_complete_file).unwrap();
         }
 
