@@ -86,6 +86,7 @@ use {
         poh_controller::PohController,
         poh_recorder::PohRecorder,
         poh_service::{self, PohService},
+        record_channels::record_channels,
         transaction_recorder::TransactionRecorder,
     },
     solana_pubkey::Pubkey,
@@ -959,9 +960,8 @@ impl Validator {
         if transaction_status_sender.is_some() {
             poh_recorder.track_transaction_indexes();
         }
-        let (record_sender, record_receiver) = unbounded();
-        let transaction_recorder =
-            TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
+        let (record_sender, record_receiver) = record_channels(transaction_status_sender.is_some());
+        let transaction_recorder = TransactionRecorder::new(record_sender);
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let (poh_controller, poh_service_message_receiver) = PohController::new();
 
