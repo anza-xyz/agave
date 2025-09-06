@@ -830,7 +830,7 @@ where
     let bank_rc = BankRc::new(Accounts::new(Arc::new(accounts_db)));
     let runtime_config = Arc::new(runtime_config.clone());
 
-    let bank = Bank::new_from_fields(
+    let bank = Bank::new_from_snapshot(
         bank_rc,
         genesis_config,
         runtime_config,
