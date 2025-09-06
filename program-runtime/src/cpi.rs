@@ -687,3 +687,796 @@ pub fn update_caller_account(
 
     Ok(())
 }
+
+#[allow(clippy::indexing_slicing)]
+#[allow(clippy::arithmetic_side_effects)]
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::{
+            invoke_context::SerializedAccountMetadata, memory::translate_type,
+            with_mock_invoke_context_with_feature_set,
+        },
+        assert_matches::assert_matches,
+        solana_account::{Account, AccountSharedData, ReadableAccount},
+        solana_account_info::AccountInfo,
+        solana_sbpf::{
+            ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
+        },
+        solana_sdk_ids::{bpf_loader, system_program},
+        solana_svm_feature_set::SVMFeatureSet,
+        solana_transaction_context::{
+            transaction_accounts::TransactionAccount, IndexOfAccount, InstructionAccount,
+        },
+        std::{
+            cell::{Cell, RefCell},
+            mem, ptr,
+            rc::Rc,
+            slice,
+        },
+        test_case::test_matrix,
+    };
+
+    macro_rules! mock_invoke_context {
+        ($invoke_context:ident,
+         $transaction_context:ident,
+         $instruction_data:expr,
+         $transaction_accounts:expr,
+         $program_account:expr,
+         $instruction_accounts:expr) => {
+            let instruction_data = $instruction_data;
+            let instruction_accounts = $instruction_accounts
+                .iter()
+                .map(|index_in_transaction| {
+                    InstructionAccount::new(
+                        *index_in_transaction as IndexOfAccount,
+                        false,
+                        $transaction_accounts[*index_in_transaction as usize].2,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let transaction_accounts = $transaction_accounts
+                .into_iter()
+                .map(|a| (a.0, a.1))
+                .collect::<Vec<TransactionAccount>>();
+            let mut feature_set = SVMFeatureSet::all_enabled();
+            feature_set.stricter_abi_and_runtime_constraints = false;
+            let feature_set = &feature_set;
+            with_mock_invoke_context_with_feature_set!(
+                $invoke_context,
+                $transaction_context,
+                feature_set,
+                transaction_accounts
+            );
+            $invoke_context
+                .transaction_context
+                .configure_next_instruction_for_tests(
+                    $program_account,
+                    instruction_accounts,
+                    instruction_data,
+                )
+                .unwrap();
+            $invoke_context.push().unwrap();
+        };
+    }
+
+    macro_rules! borrow_instruction_account {
+        ($borrowed_account:ident, $invoke_context:expr, $index:expr) => {
+            let instruction_context = $invoke_context
+                .transaction_context
+                .get_current_instruction_context()
+                .unwrap();
+            let $borrowed_account = instruction_context
+                .try_borrow_instruction_account($index)
+                .unwrap();
+        };
+    }
+
+    fn is_zeroed(data: &[u8]) -> bool {
+        data.iter().all(|b| *b == 0)
+    }
+
+    struct MockCallerAccount {
+        lamports: u64,
+        owner: Pubkey,
+        vm_addr: u64,
+        data: Vec<u8>,
+        len: u64,
+        regions: Vec<MemoryRegion>,
+        stricter_abi_and_runtime_constraints: bool,
+    }
+
+    impl MockCallerAccount {
+        fn new(
+            lamports: u64,
+            owner: Pubkey,
+            data: &[u8],
+            stricter_abi_and_runtime_constraints: bool,
+        ) -> MockCallerAccount {
+            let vm_addr = MM_INPUT_START;
+            let mut region_addr = vm_addr;
+            let region_len = mem::size_of::<u64>()
+                + if stricter_abi_and_runtime_constraints {
+                    0
+                } else {
+                    data.len() + MAX_PERMITTED_DATA_INCREASE
+                };
+            let mut d = vec![0; region_len];
+            let mut regions = vec![];
+
+            // always write the [len] part even when stricter_abi_and_runtime_constraints
+            unsafe { ptr::write_unaligned::<u64>(d.as_mut_ptr().cast(), data.len() as u64) };
+
+            // write the account data when not stricter_abi_and_runtime_constraints
+            if !stricter_abi_and_runtime_constraints {
+                d[mem::size_of::<u64>()..][..data.len()].copy_from_slice(data);
+            }
+
+            // create a region for [len][data+realloc if !stricter_abi_and_runtime_constraints]
+            regions.push(MemoryRegion::new_writable(&mut d[..region_len], vm_addr));
+            region_addr += region_len as u64;
+
+            if stricter_abi_and_runtime_constraints {
+                // create a region for the directly mapped data
+                regions.push(MemoryRegion::new_readonly(data, region_addr));
+                region_addr += data.len() as u64;
+
+                // create a region for the realloc padding
+                regions.push(MemoryRegion::new_writable(
+                    &mut d[mem::size_of::<u64>()..],
+                    region_addr,
+                ));
+            } else {
+                // caller_account.serialized_data must have the actual data length
+                d.truncate(mem::size_of::<u64>() + data.len());
+            }
+
+            MockCallerAccount {
+                lamports,
+                owner,
+                vm_addr,
+                data: d,
+                len: data.len() as u64,
+                regions,
+                stricter_abi_and_runtime_constraints,
+            }
+        }
+
+        fn data_slice<'a>(&self) -> &'a [u8] {
+            // lifetime crimes
+            unsafe {
+                slice::from_raw_parts(
+                    self.data[mem::size_of::<u64>()..].as_ptr(),
+                    self.data.capacity() - mem::size_of::<u64>(),
+                )
+            }
+        }
+
+        fn caller_account(&mut self) -> CallerAccount {
+            let data = if self.stricter_abi_and_runtime_constraints {
+                &mut []
+            } else {
+                &mut self.data[mem::size_of::<u64>()..]
+            };
+            CallerAccount {
+                lamports: &mut self.lamports,
+                owner: &mut self.owner,
+                original_data_len: self.len as usize,
+                serialized_data: data,
+                vm_data_addr: self.vm_addr + mem::size_of::<u64>() as u64,
+                ref_to_len_in_vm: &mut self.len,
+            }
+        }
+    }
+
+    struct MockAccountInfo<'a> {
+        key: Pubkey,
+        is_signer: bool,
+        is_writable: bool,
+        lamports: u64,
+        data: &'a [u8],
+        owner: Pubkey,
+        executable: bool,
+        _unused: u64,
+    }
+
+    impl MockAccountInfo<'_> {
+        fn new(key: Pubkey, account: &AccountSharedData) -> MockAccountInfo {
+            MockAccountInfo {
+                key,
+                is_signer: false,
+                is_writable: false,
+                lamports: account.lamports(),
+                data: account.data(),
+                owner: *account.owner(),
+                executable: account.executable(),
+                _unused: account.rent_epoch(),
+            }
+        }
+
+        fn into_region(self, vm_addr: u64) -> (Vec<u8>, MemoryRegion, SerializedAccountMetadata) {
+            let size = mem::size_of::<AccountInfo>()
+                + mem::size_of::<Pubkey>() * 2
+                + mem::size_of::<RcBox<RefCell<&mut u64>>>()
+                + mem::size_of::<u64>()
+                + mem::size_of::<RcBox<RefCell<&mut [u8]>>>()
+                + self.data.len();
+            let mut data = vec![0; size];
+
+            let vm_addr = vm_addr as usize;
+            let key_addr = vm_addr + mem::size_of::<AccountInfo>();
+            let lamports_cell_addr = key_addr + mem::size_of::<Pubkey>();
+            let lamports_addr = lamports_cell_addr + mem::size_of::<RcBox<RefCell<&mut u64>>>();
+            let owner_addr = lamports_addr + mem::size_of::<u64>();
+            let data_cell_addr = owner_addr + mem::size_of::<Pubkey>();
+            let data_addr = data_cell_addr + mem::size_of::<RcBox<RefCell<&mut [u8]>>>();
+
+            #[allow(deprecated)]
+            #[allow(clippy::used_underscore_binding)]
+            let info = AccountInfo {
+                key: unsafe { (key_addr as *const Pubkey).as_ref() }.unwrap(),
+                is_signer: self.is_signer,
+                is_writable: self.is_writable,
+                lamports: unsafe {
+                    Rc::from_raw((lamports_cell_addr + RcBox::<&mut u64>::VALUE_OFFSET) as *const _)
+                },
+                data: unsafe {
+                    Rc::from_raw((data_cell_addr + RcBox::<&mut [u8]>::VALUE_OFFSET) as *const _)
+                },
+                owner: unsafe { (owner_addr as *const Pubkey).as_ref() }.unwrap(),
+                executable: self.executable,
+                _unused: self._unused,
+            };
+
+            unsafe {
+                ptr::write_unaligned(data.as_mut_ptr().cast(), info);
+                ptr::write_unaligned(
+                    (data.as_mut_ptr() as usize + key_addr - vm_addr) as *mut _,
+                    self.key,
+                );
+                ptr::write_unaligned(
+                    (data.as_mut_ptr() as usize + lamports_cell_addr - vm_addr) as *mut _,
+                    RcBox::new(RefCell::new((lamports_addr as *mut u64).as_mut().unwrap())),
+                );
+                ptr::write_unaligned(
+                    (data.as_mut_ptr() as usize + lamports_addr - vm_addr) as *mut _,
+                    self.lamports,
+                );
+                ptr::write_unaligned(
+                    (data.as_mut_ptr() as usize + owner_addr - vm_addr) as *mut _,
+                    self.owner,
+                );
+                ptr::write_unaligned(
+                    (data.as_mut_ptr() as usize + data_cell_addr - vm_addr) as *mut _,
+                    RcBox::new(RefCell::new(slice::from_raw_parts_mut(
+                        data_addr as *mut u8,
+                        self.data.len(),
+                    ))),
+                );
+                data[data_addr - vm_addr..].copy_from_slice(self.data);
+            }
+
+            let region = MemoryRegion::new_writable(data.as_mut_slice(), vm_addr as u64);
+            (
+                data,
+                region,
+                SerializedAccountMetadata {
+                    original_data_len: self.data.len(),
+                    vm_key_addr: key_addr as u64,
+                    vm_lamports_addr: lamports_addr as u64,
+                    vm_owner_addr: owner_addr as u64,
+                    vm_data_addr: data_addr as u64,
+                },
+            )
+        }
+    }
+
+    #[repr(C)]
+    struct RcBox<T> {
+        strong: Cell<usize>,
+        weak: Cell<usize>,
+        value: T,
+    }
+
+    impl<T> RcBox<T> {
+        const VALUE_OFFSET: usize = mem::size_of::<Cell<usize>>() * 2;
+        fn new(value: T) -> RcBox<T> {
+            RcBox {
+                strong: Cell::new(0),
+                weak: Cell::new(0),
+                value,
+            }
+        }
+    }
+
+    type TestTransactionAccount = (Pubkey, AccountSharedData, bool);
+
+    fn transaction_with_one_writable_instruction_account(
+        data: Vec<u8>,
+    ) -> Vec<TestTransactionAccount> {
+        let program_id = Pubkey::new_unique();
+        let account = AccountSharedData::from(Account {
+            lamports: 1,
+            data,
+            owner: program_id,
+            executable: false,
+            rent_epoch: 100,
+        });
+        vec![
+            (
+                program_id,
+                AccountSharedData::from(Account {
+                    lamports: 0,
+                    data: vec![],
+                    owner: bpf_loader::id(),
+                    executable: true,
+                    rent_epoch: 0,
+                }),
+                false,
+            ),
+            (Pubkey::new_unique(), account, true),
+        ]
+    }
+
+    fn transaction_with_one_readonly_instruction_account(
+        data: Vec<u8>,
+    ) -> Vec<TestTransactionAccount> {
+        let program_id = Pubkey::new_unique();
+        let account_owner = Pubkey::new_unique();
+        let account = AccountSharedData::from(Account {
+            lamports: 1,
+            data,
+            owner: account_owner,
+            executable: false,
+            rent_epoch: 100,
+        });
+        vec![
+            (
+                program_id,
+                AccountSharedData::from(Account {
+                    lamports: 0,
+                    data: vec![],
+                    owner: bpf_loader::id(),
+                    executable: true,
+                    rent_epoch: 0,
+                }),
+                false,
+            ),
+            (Pubkey::new_unique(), account, true),
+        ]
+    }
+
+    #[test]
+    fn test_caller_account_from_account_info() {
+        let transaction_accounts =
+            transaction_with_one_writable_instruction_account(b"foo".to_vec());
+        let account = transaction_accounts[1].1.clone();
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1]
+        );
+
+        let key = Pubkey::new_unique();
+        let vm_addr = MM_INPUT_START;
+        let (_mem, region, account_metadata) =
+            MockAccountInfo::new(key, &account).into_region(vm_addr);
+
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
+
+        let account_info = translate_type::<AccountInfo>(&memory_mapping, vm_addr, false).unwrap();
+
+        let caller_account = CallerAccount::from_account_info(
+            &invoke_context,
+            &memory_mapping,
+            true, // check_aligned
+            vm_addr,
+            account_info,
+            &account_metadata,
+        )
+        .unwrap();
+        assert_eq!(*caller_account.lamports, account.lamports());
+        assert_eq!(caller_account.owner, account.owner());
+        assert_eq!(caller_account.original_data_len, account.data().len());
+        assert_eq!(
+            *caller_account.ref_to_len_in_vm as usize,
+            account.data().len()
+        );
+        assert_eq!(caller_account.serialized_data, account.data());
+    }
+
+    #[test_matrix([false, true])]
+    fn test_update_caller_account_lamports_owner(stricter_abi_and_runtime_constraints: bool) {
+        let transaction_accounts = transaction_with_one_writable_instruction_account(vec![]);
+        let account = transaction_accounts[1].1.clone();
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1]
+        );
+
+        let mut mock_caller_account =
+            MockCallerAccount::new(1234, *account.owner(), account.data(), false);
+
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping = MemoryMapping::new(
+            mock_caller_account.regions.split_off(0),
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let mut caller_account = mock_caller_account.caller_account();
+        let instruction_context = invoke_context
+            .transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        let mut callee_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+        callee_account.set_lamports(42).unwrap();
+        callee_account
+            .set_owner(Pubkey::new_unique().as_ref())
+            .unwrap();
+
+        update_caller_account(
+            &invoke_context,
+            &memory_mapping,
+            true, // check_aligned
+            &mut caller_account,
+            &mut callee_account,
+            stricter_abi_and_runtime_constraints,
+        )
+        .unwrap();
+
+        assert_eq!(*caller_account.lamports, 42);
+        assert_eq!(caller_account.owner, callee_account.get_owner());
+    }
+
+    #[test]
+    fn test_update_caller_account_data() {
+        let transaction_accounts =
+            transaction_with_one_writable_instruction_account(b"foobar".to_vec());
+        let account = transaction_accounts[1].1.clone();
+        let original_data_len = account.data().len();
+
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1]
+        );
+
+        let mut mock_caller_account =
+            MockCallerAccount::new(account.lamports(), *account.owner(), account.data(), false);
+
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping = MemoryMapping::new(
+            mock_caller_account.regions.clone(),
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let data_slice = mock_caller_account.data_slice();
+        let len_ptr = unsafe {
+            data_slice
+                .as_ptr()
+                .offset(-(mem::size_of::<u64>() as isize))
+        };
+        let serialized_len = || unsafe { *len_ptr.cast::<u64>() as usize };
+        let mut caller_account = mock_caller_account.caller_account();
+        let instruction_context = invoke_context
+            .transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        let mut callee_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        for (new_value, expected_realloc_size) in [
+            (b"foo".to_vec(), MAX_PERMITTED_DATA_INCREASE + 3),
+            (b"foobaz".to_vec(), MAX_PERMITTED_DATA_INCREASE),
+            (b"foobazbad".to_vec(), MAX_PERMITTED_DATA_INCREASE - 3),
+        ] {
+            assert_eq!(caller_account.serialized_data, callee_account.get_data());
+            callee_account.set_data_from_slice(&new_value).unwrap();
+
+            update_caller_account(
+                &invoke_context,
+                &memory_mapping,
+                true, // check_aligned
+                &mut caller_account,
+                &mut callee_account,
+                false,
+            )
+            .unwrap();
+
+            let data_len = callee_account.get_data().len();
+            assert_eq!(data_len, *caller_account.ref_to_len_in_vm as usize);
+            assert_eq!(data_len, serialized_len());
+            assert_eq!(data_len, caller_account.serialized_data.len());
+            assert_eq!(
+                callee_account.get_data(),
+                &caller_account.serialized_data[..data_len]
+            );
+            assert_eq!(data_slice[data_len..].len(), expected_realloc_size);
+            assert!(is_zeroed(&data_slice[data_len..]));
+        }
+
+        callee_account
+            .set_data_length(original_data_len + MAX_PERMITTED_DATA_INCREASE)
+            .unwrap();
+        update_caller_account(
+            &invoke_context,
+            &memory_mapping,
+            true, // check_aligned
+            &mut caller_account,
+            &mut callee_account,
+            false,
+        )
+        .unwrap();
+        let data_len = callee_account.get_data().len();
+        assert_eq!(data_slice[data_len..].len(), 0);
+        assert!(is_zeroed(&data_slice[data_len..]));
+
+        callee_account
+            .set_data_length(original_data_len + MAX_PERMITTED_DATA_INCREASE + 1)
+            .unwrap();
+        assert_matches!(
+            update_caller_account(
+                &invoke_context,
+                &memory_mapping,
+                true, // check_aligned
+                &mut caller_account,
+                &mut callee_account,
+                false,
+            ),
+            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::InvalidRealloc
+        );
+
+        // close the account
+        callee_account.set_data_length(0).unwrap();
+        callee_account
+            .set_owner(system_program::id().as_ref())
+            .unwrap();
+        update_caller_account(
+            &invoke_context,
+            &memory_mapping,
+            true, // check_aligned
+            &mut caller_account,
+            &mut callee_account,
+            false,
+        )
+        .unwrap();
+        let data_len = callee_account.get_data().len();
+        assert_eq!(data_len, 0);
+    }
+
+    #[test_matrix([false, true])]
+    fn test_update_callee_account_lamports_owner(stricter_abi_and_runtime_constraints: bool) {
+        let transaction_accounts = transaction_with_one_writable_instruction_account(vec![]);
+        let account = transaction_accounts[1].1.clone();
+
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1]
+        );
+
+        let mut mock_caller_account =
+            MockCallerAccount::new(1234, *account.owner(), account.data(), false);
+
+        let caller_account = mock_caller_account.caller_account();
+
+        borrow_instruction_account!(callee_account, invoke_context, 0);
+
+        *caller_account.lamports = 42;
+        *caller_account.owner = Pubkey::new_unique();
+
+        update_callee_account(
+            true, // check_aligned
+            &caller_account,
+            callee_account,
+            stricter_abi_and_runtime_constraints,
+            true, // account_data_direct_mapping
+        )
+        .unwrap();
+
+        borrow_instruction_account!(callee_account, invoke_context, 0);
+        assert_eq!(callee_account.get_lamports(), 42);
+        assert_eq!(caller_account.owner, callee_account.get_owner());
+    }
+
+    #[test_matrix([false, true])]
+    fn test_update_callee_account_data_writable(stricter_abi_and_runtime_constraints: bool) {
+        let transaction_accounts =
+            transaction_with_one_writable_instruction_account(b"foobar".to_vec());
+        let account = transaction_accounts[1].1.clone();
+
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1]
+        );
+
+        let mut mock_caller_account =
+            MockCallerAccount::new(1234, *account.owner(), account.data(), false);
+
+        let mut caller_account = mock_caller_account.caller_account();
+        borrow_instruction_account!(callee_account, invoke_context, 0);
+
+        // stricter_abi_and_runtime_constraints does not copy data in update_callee_account()
+        caller_account.serialized_data[0] = b'b';
+        update_callee_account(
+            true, // check_aligned
+            &caller_account,
+            callee_account,
+            false, // stricter_abi_and_runtime_constraints
+            false, // account_data_direct_mapping
+        )
+        .unwrap();
+        borrow_instruction_account!(callee_account, invoke_context, 0);
+        assert_eq!(callee_account.get_data(), b"boobar");
+
+        // growing resize
+        let mut data = b"foobarbaz".to_vec();
+        *caller_account.ref_to_len_in_vm = data.len() as u64;
+        caller_account.serialized_data = &mut data;
+        assert_eq!(
+            update_callee_account(
+                true, // check_aligned
+                &caller_account,
+                callee_account,
+                stricter_abi_and_runtime_constraints,
+                true, // account_data_direct_mapping
+            )
+            .unwrap(),
+            stricter_abi_and_runtime_constraints,
+        );
+
+        // truncating resize
+        let mut data = b"baz".to_vec();
+        *caller_account.ref_to_len_in_vm = data.len() as u64;
+        caller_account.serialized_data = &mut data;
+        borrow_instruction_account!(callee_account, invoke_context, 0);
+        assert_eq!(
+            update_callee_account(
+                true, // check_aligned
+                &caller_account,
+                callee_account,
+                stricter_abi_and_runtime_constraints,
+                true, // account_data_direct_mapping
+            )
+            .unwrap(),
+            stricter_abi_and_runtime_constraints,
+        );
+
+        // close the account
+        let mut data = Vec::new();
+        caller_account.serialized_data = &mut data;
+        *caller_account.ref_to_len_in_vm = 0;
+        let mut owner = system_program::id();
+        caller_account.owner = &mut owner;
+        borrow_instruction_account!(callee_account, invoke_context, 0);
+        update_callee_account(
+            true, // check_aligned
+            &caller_account,
+            callee_account,
+            stricter_abi_and_runtime_constraints,
+            true, // account_data_direct_mapping
+        )
+        .unwrap();
+        borrow_instruction_account!(callee_account, invoke_context, 0);
+        assert_eq!(callee_account.get_data(), b"");
+
+        // growing beyond address_space_reserved_for_account
+        *caller_account.ref_to_len_in_vm = (7 + MAX_PERMITTED_DATA_INCREASE) as u64;
+        let result = update_callee_account(
+            true, // check_aligned
+            &caller_account,
+            callee_account,
+            stricter_abi_and_runtime_constraints,
+            true, // account_data_direct_mapping
+        );
+        if stricter_abi_and_runtime_constraints {
+            assert_matches!(
+                result,
+                Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::InvalidRealloc
+            );
+        } else {
+            result.unwrap();
+        }
+    }
+
+    #[test_matrix([false, true])]
+    fn test_update_callee_account_data_readonly(stricter_abi_and_runtime_constraints: bool) {
+        let transaction_accounts =
+            transaction_with_one_readonly_instruction_account(b"foobar".to_vec());
+        let account = transaction_accounts[1].1.clone();
+
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1]
+        );
+
+        let mut mock_caller_account =
+            MockCallerAccount::new(1234, *account.owner(), account.data(), false);
+        let mut caller_account = mock_caller_account.caller_account();
+        borrow_instruction_account!(callee_account, invoke_context, 0);
+
+        // stricter_abi_and_runtime_constraints does not copy data in update_callee_account()
+        caller_account.serialized_data[0] = b'b';
+        assert_matches!(
+            update_callee_account(
+                true, // check_aligned
+                &caller_account,
+                callee_account,
+                false, // stricter_abi_and_runtime_constraints
+                false, // account_data_direct_mapping
+            ),
+            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ExternalAccountDataModified
+        );
+
+        // growing resize
+        let mut data = b"foobarbaz".to_vec();
+        *caller_account.ref_to_len_in_vm = data.len() as u64;
+        caller_account.serialized_data = &mut data;
+        borrow_instruction_account!(callee_account, invoke_context, 0);
+        assert_matches!(
+            update_callee_account(
+                true, // check_aligned
+                &caller_account,
+                callee_account,
+                stricter_abi_and_runtime_constraints,
+                true, // account_data_direct_mapping
+            ),
+            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
+        );
+
+        // truncating resize
+        let mut data = b"baz".to_vec();
+        *caller_account.ref_to_len_in_vm = data.len() as u64;
+        caller_account.serialized_data = &mut data;
+        borrow_instruction_account!(callee_account, invoke_context, 0);
+        assert_matches!(
+            update_callee_account(
+                true, // check_aligned
+                &caller_account,
+                callee_account,
+                stricter_abi_and_runtime_constraints,
+                true, // account_data_direct_mapping
+            ),
+            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
+        );
+    }
+}
