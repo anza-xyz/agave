@@ -503,7 +503,10 @@ fn run_tpu_send_transaction(tpu_use_quic: bool) {
         CommitmentConfig::processed(),
     ));
     let connection_cache = if tpu_use_quic {
-        ConnectionCache::new_quic("connection_cache_test", DEFAULT_TPU_CONNECTION_POOL_SIZE)
+        ConnectionCache::new_quic_for_tests(
+            "connection_cache_test",
+            DEFAULT_TPU_CONNECTION_POOL_SIZE,
+        )
     } else {
         ConnectionCache::with_udp("connection_cache_test", DEFAULT_TPU_CONNECTION_POOL_SIZE)
     };

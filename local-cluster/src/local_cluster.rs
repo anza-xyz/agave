@@ -983,7 +983,7 @@ fn create_connection_cache(
         Arc::new(ConnectionCache::new_with_client_options(
             "connection_cache_local_cluster_quic_staked",
             tpu_connection_pool_size,
-            None,
+            Some(solana_net_utils::sockets::bind_to_localhost_unique().unwrap()),
             Some((
                 &config.client_keypair,
                 IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
