@@ -2419,14 +2419,15 @@ mod tests {
         let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
         assert_eq!(bank_snapshot.slot, highest_bank_snapshot_post.slot - 1);
 
-        // 8. delete the full snapshot slot file, get_highest_loadable() should return NONE
+        // 8. delete the full snapshot slot file, get_highest_loadable() should return return Some() again, with slot-1
         fs::remove_file(
             bank_snapshot
                 .snapshot_dir
                 .join(SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME),
         )
         .unwrap();
-        assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
+        let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
+        assert_eq!(bank_snapshot.slot, highest_bank_snapshot_post.slot - 1);
 
         // 9. however, a load-only snapshot config should return Some() again
         let bank_snapshot2 =
