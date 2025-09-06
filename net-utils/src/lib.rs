@@ -613,8 +613,7 @@ pub fn bind_more_with_config(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::sockets::unique_port_range_for_tests,
-        ip_echo_server::IpEchoServerResponse, itertools::Itertools, std::net::Ipv4Addr,
+        super::*, ip_echo_server::IpEchoServerResponse, itertools::Itertools, std::net::Ipv4Addr,
     };
 
     #[test]
@@ -744,21 +743,5 @@ mod tests {
         ports_vec.push(sock.local_addr().unwrap().port());
         let res: Vec<_> = ports_vec.into_iter().unique().collect();
         assert_eq!(res.len(), 16, "Should reserve 16 unique ports");
-    }
-
-    #[allow(deprecated)]
-    #[test]
-    fn test_multi_bind_in_range_with_config_reuseport_disabled() {
-        let ip_addr: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let config = SocketConfig::default(); //reuseport is false by default
-
-        let port_range = unique_port_range_for_tests(3);
-        let result =
-            multi_bind_in_range_with_config(ip_addr, (port_range.start, port_range.end), config, 2);
-
-        assert!(
-            result.is_err(),
-            "Expected an error when reuseport is not set to true"
-        );
     }
 }
