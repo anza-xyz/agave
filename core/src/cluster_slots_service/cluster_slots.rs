@@ -74,6 +74,7 @@ struct RootEpoch {
     number: Epoch,
     schedule: EpochSchedule,
 }
+
 #[derive(Default)]
 pub struct ClusterSlots {
     // ring buffer storing, per slot, which stakes were committed to a certain slot.
@@ -95,6 +96,23 @@ struct RowContent {
 }
 
 impl ClusterSlots {
+    #[inline]
+    pub fn new(root_bank: &Bank) -> Self {
+        Self {
+            cluster_slots: RwLock::new(VecDeque::new()),
+            epoch_metadata: RwLock::new(HashMap::new()),
+            current_slot: AtomicU64::default(),
+            root_epoch: RwLock::new(Some(RootEpoch {
+                number: root_bank.epoch(),
+                schedule: root_bank.epoch_schedule().clone(),
+            })),
+            cursor: Mutex::new(Cursor::default()),
+            metrics_last_report: AtomicInterval::default(),
+            metric_allocations: AtomicU64::default(),
+            metric_write_locks: AtomicU64::default(),
+        }
+    }
+
     #[inline]
     pub(crate) fn lookup(&self, slot: Slot) -> Option<Arc<SlotSupporters>> {
         let cluster_slots = self.cluster_slots.read().unwrap();
