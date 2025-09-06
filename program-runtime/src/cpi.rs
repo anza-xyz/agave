@@ -1,13 +1,21 @@
 //! Cross-Program Invocation (CPI) error types
 
 use {
-    crate::invoke_context::InvokeContext,
+    crate::{
+        invoke_context::InvokeContext,
+        memory::translate_type_mut_for_cpi,
+        serialization::{create_memory_region_of_account, modify_memory_region_of_account},
+    },
+    solana_instruction::error::InstructionError,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
+    solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
     solana_pubkey::{Pubkey, PubkeyError},
+    solana_sbpf::memory_region::MemoryMapping,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, native_loader},
     solana_svm_log_collector::ic_msg,
     solana_transaction_context::{
-        IndexOfAccount, MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
+        BorrowedInstructionAccount, IndexOfAccount, MAX_ACCOUNTS_PER_INSTRUCTION,
+        MAX_INSTRUCTION_DATA_LEN,
     },
     thiserror::Error,
 };
@@ -475,4 +483,207 @@ pub struct TranslatedAccount<'a> {
     pub caller_account: CallerAccount<'a>,
     pub update_caller_account_region: bool,
     pub update_caller_account_info: bool,
+}
+
+// Update the given account before executing CPI.
+//
+// caller_account and callee_account describe the same account. At CPI entry
+// caller_account might include changes the caller has made to the account
+// before executing CPI.
+//
+// This method updates callee_account so the CPI callee can see the caller's
+// changes.
+//
+// When true is returned, the caller account must be updated after CPI. This
+// is only set for stricter_abi_and_runtime_constraints when the pointer may have changed.
+pub fn update_callee_account(
+    check_aligned: bool,
+    caller_account: &CallerAccount,
+    mut callee_account: BorrowedInstructionAccount<'_>,
+    stricter_abi_and_runtime_constraints: bool,
+    account_data_direct_mapping: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut must_update_caller = false;
+
+    if callee_account.get_lamports() != *caller_account.lamports {
+        callee_account.set_lamports(*caller_account.lamports)?;
+    }
+
+    if stricter_abi_and_runtime_constraints {
+        let prev_len = callee_account.get_data().len();
+        let post_len = *caller_account.ref_to_len_in_vm as usize;
+        if prev_len != post_len {
+            let is_caller_loader_deprecated = !check_aligned;
+            let address_space_reserved_for_account = if is_caller_loader_deprecated {
+                caller_account.original_data_len
+            } else {
+                caller_account
+                    .original_data_len
+                    .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+            };
+            if post_len > address_space_reserved_for_account {
+                return Err(InstructionError::InvalidRealloc.into());
+            }
+            callee_account.set_data_length(post_len)?;
+            // pointer to data may have changed, so caller must be updated
+            must_update_caller = true;
+        }
+        if !account_data_direct_mapping && callee_account.can_data_be_changed().is_ok() {
+            callee_account.set_data_from_slice(caller_account.serialized_data)?;
+        }
+    } else {
+        // The redundant check helps to avoid the expensive data comparison if we can
+        match callee_account.can_data_be_resized(caller_account.serialized_data.len()) {
+            Ok(()) => callee_account.set_data_from_slice(caller_account.serialized_data)?,
+            Err(err) if callee_account.get_data() != caller_account.serialized_data => {
+                return Err(Box::new(err));
+            }
+            _ => {}
+        }
+    }
+
+    // Change the owner at the end so that we are allowed to change the lamports and data before
+    if callee_account.get_owner() != caller_account.owner {
+        callee_account.set_owner(caller_account.owner.as_ref())?;
+        // caller gave ownership and thus write access away, so caller must be updated
+        must_update_caller = true;
+    }
+
+    Ok(must_update_caller)
+}
+
+pub fn update_caller_account_region(
+    memory_mapping: &mut MemoryMapping,
+    check_aligned: bool,
+    caller_account: &CallerAccount,
+    callee_account: &mut BorrowedInstructionAccount<'_>,
+    account_data_direct_mapping: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let is_caller_loader_deprecated = !check_aligned;
+    let address_space_reserved_for_account = if is_caller_loader_deprecated {
+        caller_account.original_data_len
+    } else {
+        caller_account
+            .original_data_len
+            .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+    };
+
+    if address_space_reserved_for_account > 0 {
+        // We can trust vm_data_addr to point to the correct region because we
+        // enforce that in CallerAccount::from_(sol_)account_info.
+        let (region_index, region) = memory_mapping
+            .find_region(caller_account.vm_data_addr)
+            .ok_or_else(|| Box::new(InstructionError::MissingAccount))?;
+        // vm_data_addr must always point to the beginning of the region
+        debug_assert_eq!(region.vm_addr, caller_account.vm_data_addr);
+        let mut new_region;
+        if !account_data_direct_mapping {
+            new_region = region.clone();
+            modify_memory_region_of_account(callee_account, &mut new_region);
+        } else {
+            new_region = create_memory_region_of_account(callee_account, region.vm_addr)?;
+        }
+        memory_mapping.replace_region(region_index, new_region)?;
+    }
+
+    Ok(())
+}
+
+// Update the given account after executing CPI.
+//
+// caller_account and callee_account describe to the same account. At CPI exit
+// callee_account might include changes the callee has made to the account
+// after executing.
+//
+// This method updates caller_account so the CPI caller can see the callee's
+// changes.
+//
+// Safety: Once `stricter_abi_and_runtime_constraints` is enabled all fields of [CallerAccount] used
+// in this function should never point inside the address space reserved for
+// accounts (regardless of the current size of an account).
+pub fn update_caller_account(
+    invoke_context: &InvokeContext,
+    memory_mapping: &MemoryMapping<'_>,
+    check_aligned: bool,
+    caller_account: &mut CallerAccount<'_>,
+    callee_account: &mut BorrowedInstructionAccount<'_>,
+    stricter_abi_and_runtime_constraints: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    *caller_account.lamports = callee_account.get_lamports();
+    *caller_account.owner = *callee_account.get_owner();
+
+    let prev_len = *caller_account.ref_to_len_in_vm as usize;
+    let post_len = callee_account.get_data().len();
+    let is_caller_loader_deprecated = !check_aligned;
+    let address_space_reserved_for_account =
+        if stricter_abi_and_runtime_constraints && is_caller_loader_deprecated {
+            caller_account.original_data_len
+        } else {
+            caller_account
+                .original_data_len
+                .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+        };
+
+    if post_len > address_space_reserved_for_account
+        && (stricter_abi_and_runtime_constraints || prev_len != post_len)
+    {
+        let max_increase =
+            address_space_reserved_for_account.saturating_sub(caller_account.original_data_len);
+        ic_msg!(
+            invoke_context,
+            "Account data size realloc limited to {max_increase} in inner instructions",
+        );
+        return Err(Box::new(InstructionError::InvalidRealloc));
+    }
+
+    if prev_len != post_len {
+        // when stricter_abi_and_runtime_constraints is enabled we don't cache the serialized data in
+        // caller_account.serialized_data. See CallerAccount::from_account_info.
+        if !(stricter_abi_and_runtime_constraints && invoke_context.account_data_direct_mapping) {
+            // If the account has been shrunk, we're going to zero the unused memory
+            // *that was previously used*.
+            if post_len < prev_len {
+                caller_account
+                    .serialized_data
+                    .get_mut(post_len..)
+                    .ok_or_else(|| Box::new(InstructionError::AccountDataTooSmall))?
+                    .fill(0);
+            }
+            // Set the length of caller_account.serialized_data to post_len.
+            caller_account.serialized_data = CallerAccount::get_serialized_data(
+                memory_mapping,
+                caller_account.vm_data_addr,
+                post_len as u64,
+                stricter_abi_and_runtime_constraints,
+                invoke_context.account_data_direct_mapping,
+            )?;
+        }
+        // this is the len field in the AccountInfo::data slice
+        *caller_account.ref_to_len_in_vm = post_len as u64;
+
+        // this is the len field in the serialized parameters
+        let serialized_len_ptr = translate_type_mut_for_cpi::<u64>(
+            memory_mapping,
+            caller_account
+                .vm_data_addr
+                .saturating_sub(std::mem::size_of::<u64>() as u64),
+            check_aligned,
+        )?;
+        *serialized_len_ptr = post_len as u64;
+    }
+
+    if !(stricter_abi_and_runtime_constraints && invoke_context.account_data_direct_mapping) {
+        // Propagate changes in the callee up to the caller.
+        let to_slice = &mut caller_account.serialized_data;
+        let from_slice = callee_account
+            .get_data()
+            .get(0..post_len)
+            .ok_or(CpiError::InvalidLength)?;
+        if to_slice.len() != from_slice.len() {
+            return Err(Box::new(InstructionError::AccountDataTooSmall));
+        }
+        to_slice.copy_from_slice(from_slice);
+    }
+
+    Ok(())
 }
