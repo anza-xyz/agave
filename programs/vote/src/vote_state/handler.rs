@@ -407,10 +407,6 @@ impl VoteStateHandler {
         Ok(Self { target_state })
     }
 
-    pub fn compute_vote_latency(voted_for_slot: Slot, current_slot: Slot) -> u8 {
-        std::cmp::min(current_slot.saturating_sub(voted_for_slot), u8::MAX as u64) as u8
-    }
-
     pub fn init_vote_account_state(
         vote_account: &mut BorrowedInstructionAccount,
         vote_init: &VoteInit,
