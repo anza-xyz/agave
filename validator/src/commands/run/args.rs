@@ -26,7 +26,7 @@ use {
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
     solana_send_transaction_service::send_transaction_service::{
-        MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
+        Config as SendTransactionServiceConfig, MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
     },
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
@@ -62,6 +62,7 @@ pub mod json_rpc_config;
 pub mod pub_sub_config;
 pub mod rpc_bigtable_config;
 pub mod rpc_bootstrap_config;
+pub mod send_transaction_config;
 
 #[derive(Debug, PartialEq)]
 pub struct RunArgs {
@@ -74,6 +75,7 @@ pub struct RunArgs {
     pub blockstore_options: BlockstoreOptions,
     pub json_rpc_config: JsonRpcConfig,
     pub pub_sub_config: PubSubConfig,
+    pub send_transaction_service_config: SendTransactionServiceConfig,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -123,6 +125,9 @@ impl FromClapArgMatches for RunArgs {
             blockstore_options: BlockstoreOptions::from_clap_arg_match(matches)?,
             json_rpc_config: JsonRpcConfig::from_clap_arg_match(matches)?,
             pub_sub_config: PubSubConfig::from_clap_arg_match(matches)?,
+            send_transaction_service_config: SendTransactionServiceConfig::from_clap_arg_match(
+                matches,
+            )?,
         })
     }
 }
@@ -1752,6 +1757,7 @@ mod tests {
                         solana_rpc::rpc_pubsub_service::DEFAULT_QUEUE_CAPACITY_ITEMS,
                     ..PubSubConfig::default_for_tests()
                 },
+                send_transaction_service_config: SendTransactionServiceConfig::default(),
             }
         }
     }
@@ -1768,6 +1774,7 @@ mod tests {
                 blockstore_options: self.blockstore_options.clone(),
                 json_rpc_config: self.json_rpc_config.clone(),
                 pub_sub_config: self.pub_sub_config.clone(),
+                send_transaction_service_config: self.send_transaction_service_config.clone(),
             }
         }
     }
