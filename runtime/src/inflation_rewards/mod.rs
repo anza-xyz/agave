@@ -5,9 +5,10 @@ use {
         calculate_stake_points_and_credits, CalculatedStakePoints, InflationPointCalculationEvent,
         PointValue, SkippedReason,
     },
+    crate::stake_account::StakeAccount,
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
-    solana_stake_interface::{error::StakeError, stake_history::StakeHistory},
+    solana_stake_interface::{error::StakeError, stake_history::StakeHistory, state::Delegation},
     solana_stake_program::stake_state::{Stake, StakeStateV2},
     solana_vote::vote_state_view::VoteStateView,
 };
@@ -25,14 +26,14 @@ struct CalculatedStakeRewards {
 // returns a tuple of (stakers_reward,voters_reward)
 pub fn redeem_rewards(
     rewarded_epoch: Epoch,
-    stake_state: &mut StakeStateV2,
+    stake_account: &StakeAccount<Delegation>,
     vote_state: &VoteStateView,
     point_value: &PointValue,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
-) -> Result<(u64, u64), InstructionError> {
-    if let StakeStateV2::Stake(meta, stake, _stake_flags) = stake_state {
+) -> Result<(u64, u64, Stake), InstructionError> {
+    if let StakeStateV2::Stake(meta, stake, _stake_flags) = stake_account.stake_state() {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
             inflation_point_calc_tracer(
                 &InflationPointCalculationEvent::EffectiveStakeAtRewardedEpoch(stake.stake(
@@ -49,16 +50,17 @@ pub fn redeem_rewards(
             ));
         }
 
+        let mut stake = *stake;
         if let Some((stakers_reward, voters_reward)) = redeem_stake_rewards(
             rewarded_epoch,
-            stake,
+            &mut stake,
             point_value,
             vote_state,
             stake_history,
             inflation_point_calc_tracer,
             new_rate_activation_epoch,
         ) {
-            Ok((stakers_reward, voters_reward))
+            Ok((stakers_reward, voters_reward, stake))
         } else {
             Err(StakeError::NoCreditsToRedeem.into())
         }
