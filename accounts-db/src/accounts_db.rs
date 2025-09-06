@@ -1354,36 +1354,6 @@ impl AccountsDb {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     const DEFAULT_READ_ONLY_CACHE_EVICT_SAMPLE_SIZE: usize = 8;
 
-    pub fn default_for_tests() -> Self {
-        Self::new_single_for_tests()
-    }
-
-    pub fn new_single_for_tests() -> Self {
-        AccountsDb::new_for_tests(Vec::new())
-    }
-
-    pub fn new_single_for_tests_with_provider(file_provider: AccountsFileProvider) -> Self {
-        AccountsDb::new_for_tests_with_provider(Vec::new(), file_provider)
-    }
-
-    pub fn new_for_tests(paths: Vec<PathBuf>) -> Self {
-        Self::new_for_tests_with_provider(paths, AccountsFileProvider::default())
-    }
-
-    fn new_for_tests_with_provider(
-        paths: Vec<PathBuf>,
-        accounts_file_provider: AccountsFileProvider,
-    ) -> Self {
-        let mut db = AccountsDb::new_with_config(
-            paths,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            None,
-            Arc::default(),
-        );
-        db.accounts_file_provider = accounts_file_provider;
-        db
-    }
-
     pub fn new_with_config(
         paths: Vec<PathBuf>,
         accounts_db_config: AccountsDbConfig,
@@ -1999,11 +1969,6 @@ impl AccountsDb {
         }
 
         (candidates, min_dirty_slot)
-    }
-
-    /// Call clean_accounts() with the common parameters that tests/benches use.
-    pub fn clean_accounts_for_tests(&self) {
-        self.clean_accounts(None, false, &EpochSchedule::default())
     }
 
     /// called with cli argument to verify refcounts are correct on all accounts
@@ -4971,12 +4936,6 @@ impl AccountsDb {
         self.accounts_cache.report_size();
     }
 
-    // These functions/fields are only usable from a dev context (i.e. tests and benches)
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {
-        self.flush_slot_cache(slot);
-    }
-
     /// true if write cache is too big
     fn should_aggressively_flush_cache(&self) -> bool {
         self.write_cache_limit_bytes
@@ -7296,6 +7255,36 @@ impl AccountStorageEntry {
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
 #[cfg(feature = "dev-context-only-utils")]
 impl AccountsDb {
+    pub fn default_for_tests() -> Self {
+        Self::new_single_for_tests()
+    }
+
+    pub fn new_single_for_tests() -> Self {
+        AccountsDb::new_for_tests(Vec::new())
+    }
+
+    pub fn new_single_for_tests_with_provider(file_provider: AccountsFileProvider) -> Self {
+        AccountsDb::new_for_tests_with_provider(Vec::new(), file_provider)
+    }
+
+    pub fn new_for_tests(paths: Vec<PathBuf>) -> Self {
+        Self::new_for_tests_with_provider(paths, AccountsFileProvider::default())
+    }
+
+    fn new_for_tests_with_provider(
+        paths: Vec<PathBuf>,
+        accounts_file_provider: AccountsFileProvider,
+    ) -> Self {
+        let mut db = AccountsDb::new_with_config(
+            paths,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        );
+        db.accounts_file_provider = accounts_file_provider;
+        db
+    }
+
     /// Return the number of slots marked with uncleaned pubkeys.
     /// This is useful for testing clean algorithms.
     pub fn get_len_of_slots_with_uncleaned_pubkeys(&self) -> usize {
@@ -7305,6 +7294,15 @@ impl AccountsDb {
     #[cfg(test)]
     pub fn storage_access(&self) -> StorageAccess {
         self.storage_access
+    }
+
+    /// Call clean_accounts() with the common parameters that tests/benches use.
+    pub fn clean_accounts_for_tests(&self) {
+        self.clean_accounts(None, false, &EpochSchedule::default())
+    }
+
+    pub fn flush_accounts_cache_slot_for_tests(&self, slot: Slot) {
+        self.flush_slot_cache(slot);
     }
 
     /// useful to adapt tests written prior to introduction of the write cache
