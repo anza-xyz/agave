@@ -8,6 +8,7 @@ use {
     solana_clock::Slot,
     solana_nohash_hasher::{BuildNoHashHasher, IntMap},
     std::{
+        collections::VecDeque,
         ops::{Index, Range},
         sync::{
             atomic::{AtomicUsize, Ordering},
@@ -409,6 +410,35 @@ impl<'a> AccountStoragesConcurrentConsumer<'a> {
         } else {
             None
         }
+    }
+
+    /// Add a number of consecutive `AccountStorageEntry` entries to `chunk`.
+    ///
+    /// Returns iterator over new entries added to `chunk` (consuming it won't affect the chunk).
+    ///
+    /// Chunk is filled up to its existing capacity (no reallocation will happen).
+    pub fn take_up_to_capacity<'b>(
+        &'a self,
+        chunk: &'b mut VecDeque<NextItem<'a>>,
+    ) -> impl Iterator<Item = &'b NextItem<'a>> + 'b {
+        let starting_len = chunk.len();
+        let num_missing_items = chunk.capacity() - starting_len;
+        let consume_pos = self
+            .current_position
+            .fetch_add(num_missing_items, Ordering::Relaxed);
+        let consume_end_pos = self
+            .orderer
+            .entries_len()
+            .min(consume_pos + num_missing_items);
+        for position in consume_pos..consume_end_pos {
+            let original_index = self.orderer.original_index(position);
+            chunk.push_back(NextItem {
+                position,
+                original_index,
+                storage: &self.orderer[position],
+            });
+        }
+        chunk.range(starting_len..)
     }
 }
 
