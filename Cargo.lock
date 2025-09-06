@@ -7451,6 +7451,7 @@ dependencies = [
  "base64 0.22.1",
  "blst",
  "blstrs",
+ "bytemuck",
  "cfg_eval",
  "ff",
  "group",
@@ -7461,6 +7462,9 @@ dependencies = [
  "serde_with",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-signature",
+ "solana-signer",
+ "subtle",
  "thiserror 2.0.16",
 ]
 
@@ -11855,6 +11859,20 @@ dependencies = [
  "solana-vote-interface",
  "test-case",
  "thiserror 2.0.16",
+]
+
+[[package]]
+name = "solana-votor-messages"
+version = "3.1.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "solana-bls-signatures",
+ "solana-clock",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-hash",
+ "solana-logger",
 ]
 
 [[package]]
