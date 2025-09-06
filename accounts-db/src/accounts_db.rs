@@ -6488,7 +6488,8 @@ impl AccountsDb {
             .scan_accounts(reader, |offset, account| {
                 let data_len = account.data.len();
                 stored_size_alive += storage.accounts.calculate_stored_size(data_len);
-                if account.lamports > 0 {
+                let is_account_zero_lamport = account.is_zero_lamport();
+                if !is_account_zero_lamport {
                     accounts_data_len += data_len as u64;
                     all_accounts_are_zero_lamports = false;
                 } else {
@@ -6504,7 +6505,7 @@ impl AccountsDb {
                     *account.pubkey,
                     AccountInfo::new(
                         StorageLocation::AppendVec(store_id, offset), // will never be cached
-                        account.is_zero_lamport(),
+                        is_account_zero_lamport,
                     ),
                 ));
 
