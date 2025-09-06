@@ -202,7 +202,8 @@ impl Bank {
             if without_delay_visibility {
                 // Update the program cache with a new entry to avoid a `DelayVisibility`
                 // error by setting the deployment slot to be equal to effective slot. It
-                // is safe to do this here since we are not in a transaction context.
+                // is safe to do this here since we are at a block boundary, not inside
+                // a transaction.
                 let updated = ProgramCacheEntry::new(
                     &bpf_loader_upgradeable::id(),
                     program_runtime_environment,
@@ -1327,13 +1328,12 @@ pub(crate) mod tests {
             first_slot_in_next_epoch,
         );
 
+        // Determine the expected effective slot of the migrated program.
+        let expected_effective_slot = migration_slot + if without_delay_visibility { 0 } else { 1 };
+
         // Run the post-migration program checks.
         assert!(bank.feature_set.is_active(feature_id));
-        test_context.run_program_checks(
-            &bank,
-            migration_slot,
-            migration_slot + if without_delay_visibility { 0 } else { 1 },
-        );
+        test_context.run_program_checks(&bank, migration_slot, expected_effective_slot);
 
         // Advance one slot so that the new BPF loader v3 program becomes
         // effective in the program cache.
@@ -1380,11 +1380,7 @@ pub(crate) mod tests {
 
         // Run the post-migration program checks again.
         assert!(bank.feature_set.is_active(feature_id));
-        test_context.run_program_checks(
-            &bank,
-            migration_slot,
-            migration_slot + if without_delay_visibility { 0 } else { 1 },
-        );
+        test_context.run_program_checks(&bank, migration_slot, expected_effective_slot);
 
         // Again, successfully invoke the new BPF loader v3 program.
         bank.process_transaction(&Transaction::new(
