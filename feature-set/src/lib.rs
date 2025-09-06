@@ -2095,7 +2095,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (vote_state_v4::id(), "SIMD-0185: Vote State v4"),
         (
-            migrate_ptoken_to_spl_token_program::id(),
+            replace_spl_token_with_p_token::id(),
             "SIMD-0266: Efficient Token program",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
