@@ -5306,7 +5306,7 @@ fn test_bank_hash_consistency() {
     // in the hash computation that may arise from feature set changes
     let feature_set = FeatureSet::all_enabled();
 
-    let mut bank = Arc::new(Bank::new_with_paths(
+    let mut bank = Arc::new(Bank::new_from_genesis(
         &genesis_config,
         Arc::new(RuntimeConfig::default()),
         vec![],
@@ -8224,7 +8224,7 @@ fn test_epoch_schedule_from_genesis_config() {
 
     genesis_config.epoch_schedule = EpochSchedule::custom(8192, 100, true);
 
-    let bank = Arc::new(Bank::new_with_paths(
+    let bank = Arc::new(Bank::new_from_genesis(
         &genesis_config,
         Arc::<RuntimeConfig>::default(),
         Vec::new(),
@@ -8252,7 +8252,7 @@ where
         &validator_keypairs,
         vec![LAMPORTS_PER_SOL; 2],
     );
-    let bank = Arc::new(Bank::new_with_paths(
+    let bank = Arc::new(Bank::new_from_genesis(
         &genesis_config,
         Arc::<RuntimeConfig>::default(),
         Vec::new(),

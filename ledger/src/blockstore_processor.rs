@@ -900,7 +900,7 @@ pub(crate) fn process_blockstore_for_bank_0(
     exit: Arc<AtomicBool>,
 ) -> result::Result<Arc<RwLock<BankForks>>, BlockstoreProcessorError> {
     // Setup bank for slot 0
-    let bank0 = Bank::new_with_paths(
+    let bank0 = Bank::new_from_genesis(
         genesis_config,
         Arc::new(opts.runtime_config.clone()),
         account_paths,

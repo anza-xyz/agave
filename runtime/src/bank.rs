@@ -1110,7 +1110,7 @@ impl Bank {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new_with_paths(
+    pub fn new_from_genesis(
         genesis_config: &GenesisConfig,
         runtime_config: Arc<RuntimeConfig>,
         paths: Vec<PathBuf>,
@@ -1830,7 +1830,7 @@ impl Bank {
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
         // (BankFieldsToSerialize/BankFieldsToDeserialize) and initializing
-        // from the passed in genesis_config instead (as new()/new_with_paths() already do)
+        // from the passed in genesis_config instead (as new()/new_from_genesis() already do)
         assert_eq!(
             bank.genesis_creation_time, genesis_config.creation_time,
             "Bank snapshot genesis creation time does not match genesis.bin creation time. The \
@@ -5761,7 +5761,7 @@ impl Bank {
         test_config: BankTestConfig,
         paths: Vec<PathBuf>,
     ) -> Self {
-        Self::new_with_paths(
+        Self::new_from_genesis(
             genesis_config,
             runtime_config,
             paths,
@@ -5782,7 +5782,7 @@ impl Bank {
     /// Intended for use by benches only.
     /// create new bank with the given config and paths.
     pub fn new_with_paths_for_benches(genesis_config: &GenesisConfig, paths: Vec<PathBuf>) -> Self {
-        Self::new_with_paths(
+        Self::new_from_genesis(
             genesis_config,
             Arc::<RuntimeConfig>::default(),
             paths,
