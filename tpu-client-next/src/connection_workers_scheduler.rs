@@ -12,7 +12,7 @@ use {
             create_client_config, create_client_endpoint, QuicClientCertificate, QuicError,
         },
         transaction_batch::TransactionBatch,
-        workers_cache::{shutdown_worker, spawn_worker, WorkersCache, WorkersCacheError},
+        workers_cache::{shutdown_worker, WorkersCache, WorkersCacheError},
         SendTransactionStats,
     },
     async_trait::async_trait,
@@ -272,19 +272,16 @@ impl ConnectionWorkersScheduler {
             // add future leaders to the cache to hide the latency of opening
             // the connection.
             for peer in connect_leaders {
-                if !workers.contains(&peer) {
-                    let worker = spawn_worker(
-                        &endpoint,
-                        &peer,
-                        worker_channel_size,
-                        skip_check_transaction_age,
-                        max_reconnect_attempts,
-                        DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
-                        stats.clone(),
-                    );
-                    if let Some(pop_worker) = workers.push(peer, worker) {
-                        shutdown_worker(pop_worker)
-                    }
+                if let Some(evicted_worker) = workers.ensure_worker(
+                    peer,
+                    &endpoint,
+                    worker_channel_size,
+                    skip_check_transaction_age,
+                    max_reconnect_attempts,
+                    DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
+                    stats.clone(),
+                ) {
+                    shutdown_worker(evicted_worker);
                 }
             }
 
@@ -339,15 +336,13 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
         transaction_batch: TransactionBatch,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
         for new_leader in leaders {
-            if !workers.contains(new_leader) {
-                warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
-                continue;
-            }
-
             let send_res =
                 workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
             match send_res {
                 Ok(()) => (),
+                Err(WorkersCacheError::WorkerNotFound) => {
+                    warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
+                }
                 Err(WorkersCacheError::ShutdownError) => {
                     debug!("Connection to {new_leader} was closed, worker cache shutdown");
                 }
