@@ -6,7 +6,9 @@ use {
     solana_pubkey::{Pubkey, PubkeyError},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, native_loader},
     solana_svm_log_collector::ic_msg,
-    solana_transaction_context::{MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN},
+    solana_transaction_context::{
+        IndexOfAccount, MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
+    },
     thiserror::Error,
 };
 
@@ -465,4 +467,12 @@ impl<'a> CallerAccount<'a> {
             ref_to_len_in_vm,
         })
     }
+}
+
+/// Account data and metadata that has been translated from caller space.
+pub struct TranslatedAccount<'a> {
+    pub index_in_caller: IndexOfAccount,
+    pub caller_account: CallerAccount<'a>,
+    pub update_caller_account_region: bool,
+    pub update_caller_account_info: bool,
 }

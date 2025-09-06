@@ -5,6 +5,7 @@ use {
         cpi::{
             check_account_infos, check_authorized_program, check_instruction_size, CallerAccount,
             SolAccountInfo, SolAccountMeta, SolInstruction, SolSignerSeedC, SolSignerSeedsC,
+            TranslatedAccount,
         },
         invoke_context::SerializedAccountMetadata,
         memory::{translate_slice, translate_type, translate_type_mut_for_cpi},
@@ -16,13 +17,6 @@ use {
     solana_transaction_context::BorrowedInstructionAccount,
     std::mem,
 };
-
-struct TranslatedAccount<'a> {
-    index_in_caller: IndexOfAccount,
-    caller_account: CallerAccount<'a>,
-    update_caller_account_region: bool,
-    update_caller_account_info: bool,
-}
 
 /// Implemented by language specific data structure translators
 trait SyscallInvokeSigned {
