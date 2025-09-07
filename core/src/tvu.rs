@@ -523,7 +523,7 @@ pub mod tests {
             poh_controller,
             _transaction_recorder,
             poh_service,
-            _entry_receiver,
+            _entry_receiever,
         ) = create_test_recorder(bank.clone(), blockstore.clone(), None, None);
         let vote_keypair = Keypair::new();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));

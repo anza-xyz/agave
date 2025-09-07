@@ -323,7 +323,7 @@ mod test {
         )
     }
 
-    fn prioritized_transfers(
+    fn prioritized_tranfers(
         from_keypair: &Keypair,
         to_pubkeys: impl IntoIterator<Item = impl Borrow<Pubkey>>,
         lamports: u64,
@@ -355,7 +355,7 @@ mod test {
     ) -> TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>> {
         let mut container = TransactionStateContainer::with_capacity(10 * 1024);
         for (from_keypair, to_pubkeys, lamports, compute_unit_price) in tx_infos.into_iter() {
-            let transaction = prioritized_transfers(
+            let transaction = prioritized_tranfers(
                 from_keypair.borrow(),
                 to_pubkeys,
                 lamports,

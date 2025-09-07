@@ -9,7 +9,7 @@ use {
             simulate_and_update_compute_unit_limit, ComputeUnitConfig, WithComputeUnitConfig,
         },
         memo::WithMemo,
-        spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
+        spend_utils::{resolve_spendtx_anf_check_account_balance, SpendAmount},
     },
     clap::{App, Arg, ArgMatches, SubCommand},
     solana_account::Account,
@@ -511,7 +511,7 @@ pub fn process_create_nonce_account(
 
     let latest_blockhash = rpc_client.get_latest_blockhash()?;
 
-    let (message, lamports) = resolve_spend_tx_and_check_account_balance(
+    let (message, lamports) = resolve_spendtx_anf_check_account_balance(
         rpc_client,
         false,
         amount,

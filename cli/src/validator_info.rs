@@ -2,7 +2,7 @@ use {
     crate::{
         cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
         compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
-        spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
+        spend_utils::{resolve_spendtx_anf_check_account_balance, SpendAmount},
     },
     bincode::{deserialize, serialized_size},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
@@ -400,7 +400,7 @@ pub fn process_set_validator_info(
 
     // Submit transaction
     let latest_blockhash = rpc_client.get_latest_blockhash()?;
-    let (message, _) = resolve_spend_tx_and_check_account_balance(
+    let (message, _) = resolve_spendtx_anf_check_account_balance(
         rpc_client,
         false,
         SpendAmount::Some(lamports),

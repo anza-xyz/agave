@@ -349,14 +349,14 @@ impl Tpu {
 
         let (entry_receiver, tpu_entry_notifier) =
             if let Some(entry_notification_sender) = entry_notification_sender {
-                let (broadcast_entry_sender, broadcast_entry_receiver) = unbounded();
+                let (broadcast_entry_sender, broadcast_entry_receiever) = unbounded();
                 let tpu_entry_notifier = TpuEntryNotifier::new(
                     entry_receiver,
                     entry_notification_sender,
                     broadcast_entry_sender,
                     exit.clone(),
                 );
-                (broadcast_entry_receiver, Some(tpu_entry_notifier))
+                (broadcast_entry_receiever, Some(tpu_entry_notifier))
             } else {
                 (entry_receiver, None)
             };

@@ -5,7 +5,7 @@ use {
             simulate_for_compute_unit_limit, ComputeUnitConfig, WithComputeUnitConfig,
         },
         feature::get_feature_activation_epoch,
-        spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
+        spend_utils::{resolve_spendtx_anf_check_account_balance, SpendAmount},
     },
     clap::{value_t, value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand},
     console::style,
@@ -1503,7 +1503,7 @@ pub fn process_ping(
             });
             Message::new(&ixs, Some(&config.signers[0].pubkey()))
         };
-        let (message, _) = resolve_spend_tx_and_check_account_balance(
+        let (message, _) = resolve_spendtx_anf_check_account_balance(
             rpc_client,
             false,
             SpendAmount::Some(lamports),

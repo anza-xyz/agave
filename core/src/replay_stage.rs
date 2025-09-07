@@ -9613,7 +9613,7 @@ pub(crate) mod tests {
     }
 
     #[test_case(true ; "same_batch")]
-    #[test_case(false ; "separate_batches")]
+    #[test_case(false ; "seperate_batches")]
     #[should_panic(expected = "Additional duplicate confirmed notification for slot 6")]
     fn test_process_duplicate_confirmed_slots(same_batch: bool) {
         let generate_votes = |pubkeys: Vec<Pubkey>| {

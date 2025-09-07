@@ -60,7 +60,7 @@ struct SpendAndFee {
     fee: u64,
 }
 
-pub fn resolve_spend_tx_and_check_account_balance<F>(
+pub fn resolve_spendtx_anf_check_account_balance<F>(
     rpc_client: &RpcClient,
     sign_only: bool,
     amount: SpendAmount,
@@ -73,7 +73,7 @@ pub fn resolve_spend_tx_and_check_account_balance<F>(
 where
     F: Fn(u64) -> Message,
 {
-    resolve_spend_tx_and_check_account_balances(
+    resolve_spendtx_anf_check_account_balances(
         rpc_client,
         sign_only,
         amount,
@@ -86,7 +86,7 @@ where
     )
 }
 
-pub fn resolve_spend_tx_and_check_account_balances<F>(
+pub fn resolve_spendtx_anf_check_account_balances<F>(
     rpc_client: &RpcClient,
     sign_only: bool,
     amount: SpendAmount,

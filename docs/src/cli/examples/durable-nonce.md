@@ -74,7 +74,7 @@ solana nonce nonce-keypair.json
 - Output
 
 ```text
-8GRipryfxcsxN8mAGjy8zbFor9ezaUsh47TsPzmZbuytU
+8GRipryfxcsxN8mAGjy8zbFo9ezaUsh47TsPzmZbuytU
 ```
 
 > [Full usage documentation](../usage.md#solana-get-nonce)
@@ -131,7 +131,7 @@ solana withdraw-from-nonce-account nonce-keypair.json ~/.config/solana/id.json 0
 - Output
 
 ```text
-3forNy1SBqwXSsfSfTdmYKDuhnVheRnKXpoPySiUDBVeDEs6iMVokgqm7AqfTjbk7QBE8mqomvMUMNQhtdMvFLide
+3foNy1SBqwXSsfSfTdmYKDuhnVheRnKXpoPySiUDBVeDEs6iMVokgqm7AqfTjbk7QBE8mqomvMUMNQhtdMvFLide
 ```
 
 > Close a nonce account by withdrawing the full balance

@@ -11,7 +11,7 @@ use {
         feature::get_feature_activation_epoch,
         memo::WithMemo,
         nonce::check_nonce_account,
-        spend_utils::{resolve_spend_tx_and_check_account_balances, SpendAmount},
+        spend_utils::{resolve_spendtx_anf_check_account_balances, SpendAmount},
     },
     clap::{value_t, App, AppSettings, Arg, ArgGroup, ArgMatches, SubCommand},
     solana_account::{from_account, state_traits::StateMut, Account},
@@ -1473,7 +1473,7 @@ pub fn process_create_stake_account(
         };
     }
 
-    let (message, lamports) = resolve_spend_tx_and_check_account_balances(
+    let (message, lamports) = resolve_spendtx_anf_check_account_balances(
         rpc_client,
         sign_only,
         amount,
@@ -1902,7 +1902,7 @@ pub fn process_withdraw_stake(
         }
     };
 
-    let (message, _) = resolve_spend_tx_and_check_account_balances(
+    let (message, _) = resolve_spendtx_anf_check_account_balances(
         rpc_client,
         sign_only,
         amount,

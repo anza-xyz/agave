@@ -411,7 +411,7 @@ var handleObject = function handleObject(tree, a11yStrings, atomType) {
           if (tree.hasBarLine) {
             regionStrings.push("start fraction");
             leftDelim && buildString(leftDelim, "open", regionStrings);
-            buildA11yStrings(tree.number, regionStrings, atomType);
+            buildA11yStrings(tree.numer, regionStrings, atomType);
             regionStrings.push("divided by");
             buildA11yStrings(tree.denom, regionStrings, atomType);
             rightDelim && buildString(rightDelim, "close", regionStrings);
@@ -419,7 +419,7 @@ var handleObject = function handleObject(tree, a11yStrings, atomType) {
           } else {
             regionStrings.push("start binomial");
             leftDelim && buildString(leftDelim, "open", regionStrings);
-            buildA11yStrings(tree.number, regionStrings, atomType);
+            buildA11yStrings(tree.numer, regionStrings, atomType);
             regionStrings.push("over");
             buildA11yStrings(tree.denom, regionStrings, atomType);
             rightDelim && buildString(rightDelim, "close", regionStrings);

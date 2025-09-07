@@ -843,7 +843,7 @@ mod test {
             r"Block Time: 2021-08-10T22:16:31Z
 Version: legacy
 Recent Blockhash: 11111111111111111111111111111111
-Signature 0: 5pkjrE4VBy3Bu9CMKXgh1U345cT1gGo8QBVRTzHAo6gHeiPae5BTbShP15g6NgqRMNqu8Qrhph1ATmrfC1Ley3rx (pass)
+Signature 0: 5pkjrE4VBa3Bu9CMKXgh1U345cT1gGo8QBVRTzHAo6gHeiPae5BTbShP15g6NgqRMNqu8Qrhph1ATmrfC1Ley3rx (pass)
 Account 0: srw- 4zvwRjXUKGfvwnParsHAS3HuSVzV5cA4McphgmoCtajS (fee payer)
 Account 1: -r-x 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi
 Instruction 0

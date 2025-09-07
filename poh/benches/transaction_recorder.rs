@@ -47,7 +47,7 @@ fn bench_record_transactions(c: &mut Criterion) {
     let blockstore = Arc::new(
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
     );
-    let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+    let (mut poh_recorder, _entry_receiever) = PohRecorder::new(
         bank.tick_height(),
         bank.last_blockhash(),
         bank.clone(),

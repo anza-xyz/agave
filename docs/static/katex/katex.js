@@ -5237,7 +5237,7 @@ var ptPerUnit = {
   // didot
   "cc": 14856 / 1157,
   // cicero (12 didot)
-  "and": 685 / 642,
+  "nd": 685 / 642,
   // new didot
   "nc": 1370 / 107,
   // new cicero (12 new didot)
@@ -10877,7 +10877,7 @@ var genfrac_htmlBuilder = function htmlBuilder(group, options) {
   var dstyle = style.fracDen();
   var newOptions;
   newOptions = options.havingStyle(nstyle);
-  var numerm = buildHTML_buildGroup(group.number, newOptions, options);
+  var numerm = buildHTML_buildGroup(group.numer, newOptions, options);
 
   if (group.continued) {
     // \cfrac inserts a \strut into the numerator.
@@ -11026,7 +11026,7 @@ var genfrac_htmlBuilder = function htmlBuilder(group, options) {
 };
 
 var genfrac_mathmlBuilder = function mathmlBuilder(group, options) {
-  var node = new mathMLTree.MathNode("mfrac", [buildMathML_buildGroup(group.number, options), buildMathML_buildGroup(group.denom, options)]);
+  var node = new mathMLTree.MathNode("mfrac", [buildMathML_buildGroup(group.numer, options), buildMathML_buildGroup(group.denom, options)]);
 
   if (!group.hasBarLine) {
     node.setAttribute("linethickness", "0px");
@@ -11078,7 +11078,7 @@ defineFunction({
   handler: function handler(_ref, args) {
     var parser = _ref.parser,
         funcName = _ref.funcName;
-    var number = args[0];
+    var numer = args[0];
     var denom = args[1];
     var hasBarLine;
     var leftDelim = null;
@@ -11138,7 +11138,7 @@ defineFunction({
       type: "genfrac",
       mode: parser.mode,
       continued: funcName === "\\cfrac",
-      number: number,
+      numer: numer,
       denom: denom,
       hasBarLine: hasBarLine,
       leftDelim: leftDelim,
@@ -11198,7 +11198,7 @@ defineFunction({
     };
   }
 });
-var styleArray = ["display", "text", "script", "scriptscript"];
+var stylArray = ["display", "text", "script", "scriptscript"];
 
 var delimFromValue = function delimFromValue(delimString) {
   var delim = null;
@@ -11221,7 +11221,7 @@ defineFunction({
   },
   handler: function handler(_ref3, args) {
     var parser = _ref3.parser;
-    var number = args[4];
+    var numer = args[4];
     var denom = args[5]; // Look into the parse nodes to get the desired delimiters.
 
     var leftDelim = args[0].type === "atom" && args[0].family === "open" ? delimFromValue(args[0].text) : null;
@@ -11242,22 +11242,22 @@ defineFunction({
 
 
     var size = "auto";
-    var style = args[3];
+    var styl = args[3];
 
-    if (style.type === "ordgroup") {
-      if (style.body.length > 0) {
-        var textOrd = assertNodeType(style.body[0], "textord");
-        size = styleArray[Number(textOrd.text)];
+    if (styl.type === "ordgroup") {
+      if (styl.body.length > 0) {
+        var textOrd = assertNodeType(styl.body[0], "textord");
+        size = stylArray[Number(textOrd.text)];
       }
     } else {
-      style = assertNodeType(style, "textord");
-      size = styleArray[Number(style.text)];
+      styl = assertNodeType(styl, "textord");
+      size = stylArray[Number(styl.text)];
     }
 
     return {
       type: "genfrac",
       mode: parser.mode,
-      number: number,
+      numer: numer,
       denom: denom,
       continued: false,
       hasBarLine: hasBarLine,
@@ -11302,14 +11302,14 @@ defineFunction({
   handler: function handler(_ref5, args) {
     var parser = _ref5.parser,
         funcName = _ref5.funcName;
-    var number = args[0];
+    var numer = args[0];
     var barSize = assert(assertNodeType(args[1], "infix").size);
     var denom = args[2];
     var hasBarLine = barSize.number > 0;
     return {
       type: "genfrac",
       mode: parser.mode,
-      number: number,
+      numer: numer,
       denom: denom,
       continued: false,
       hasBarLine: hasBarLine,
@@ -16171,18 +16171,18 @@ function () {
     }
 
     if (overIndex !== -1 && funcName) {
-      var numberNode;
+      var numerNode;
       var denomNode;
-      var numberBody = body.slice(0, overIndex);
+      var numerBody = body.slice(0, overIndex);
       var denomBody = body.slice(overIndex + 1);
 
-      if (numberBody.length === 1 && numberBody[0].type === "ordgroup") {
-        numberNode = numberBody[0];
+      if (numerBody.length === 1 && numerBody[0].type === "ordgroup") {
+        numerNode = numerBody[0];
       } else {
-        numberNode = {
+        numerNode = {
           type: "ordgroup",
           mode: this.mode,
-          body: numberBody
+          body: numerBody
         };
       }
 
@@ -16199,9 +16199,9 @@ function () {
       var node;
 
       if (funcName === "\\\\abovefrac") {
-        node = this.callFunction(funcName, [numberNode, body[overIndex], denomNode], []);
+        node = this.callFunction(funcName, [numerNode, body[overIndex], denomNode], []);
       } else {
-        node = this.callFunction(funcName, [numberNode, denomNode], []);
+        node = this.callFunction(funcName, [numerNode, denomNode], []);
       }
 
       return [node];

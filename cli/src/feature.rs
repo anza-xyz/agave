@@ -4,7 +4,7 @@ use {
             log_instruction_custom_error, log_instruction_custom_error_to_str, CliCommand,
             CliCommandInfo, CliConfig, CliError, ProcessResult,
         },
-        spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
+        spend_utils::{resolve_spendtx_anf_check_account_balance, SpendAmount},
     },
     agave_feature_set::FEATURE_NAMES,
     clap::{value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand},
@@ -1022,7 +1022,7 @@ fn process_activate(
     let rent = rpc_client.get_minimum_balance_for_rent_exemption(Feature::size_of())?;
 
     let blockhash = rpc_client.get_latest_blockhash()?;
-    let (message, _) = resolve_spend_tx_and_check_account_balance(
+    let (message, _) = resolve_spendtx_anf_check_account_balance(
         rpc_client,
         false,
         SpendAmount::Some(rent),
@@ -1076,7 +1076,7 @@ fn process_revoke(
     }
 
     let blockhash = rpc_client.get_latest_blockhash()?;
-    let (message, _) = resolve_spend_tx_and_check_account_balance(
+    let (message, _) = resolve_spendtx_anf_check_account_balance(
         rpc_client,
         false,
         SpendAmount::Some(0),

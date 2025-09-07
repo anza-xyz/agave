@@ -162,7 +162,7 @@ pub mod test_only {
             solana_pubkey::declare_id!("AnjsdWg7LXFbjDdy78wncCJs9PyTdWpKkFmHAwQU1mQ6");
         }
         pub mod source_buffer {
-            solana_pubkey::declare_id!("EDEhzg1Jk79Work4mwpRa7txjgRxcE6igXwd6egFDVhuz");
+            solana_pubkey::declare_id!("EDEhzg1Jk79Wrk4mwpRa7txjgRxcE6igXwd6egFDVhuz");
         }
         pub mod upgrade_authority {
             solana_pubkey::declare_id!("4d14UK2o1FKKoecEBWhVDZrBBbRuhug75G1j9XYCawC2");
@@ -302,7 +302,7 @@ pub mod test_only {
             solana_pubkey::declare_id!("Cz5JthYp27KR3rwTCtVJhbRgwHCurbwcYX46D8setL22");
         }
         pub mod source_buffer {
-            solana_pubkey::declare_id!("EH45pKy1kzjifB93wEJi91js3S4HETdsteywR7ZCNOn5");
+            solana_pubkey::declare_id!("EH45pKy1kzjifB93wEJi91js3S4HETdsteywR7ZCNPn5");
         }
         pub mod upgrade_authority {
             solana_pubkey::declare_id!("AWbiYRbFts9GVX5uwUkwV46hTFP85PxCAM8e8ir8Hqtq");

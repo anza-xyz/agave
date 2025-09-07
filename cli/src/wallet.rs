@@ -7,7 +7,7 @@ use {
         compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
         memo::WithMemo,
         nonce::check_nonce_account,
-        spend_utils::{resolve_spend_tx_and_check_account_balances, SpendAmount},
+        spend_utils::{resolve_spendtx_anf_check_account_balances, SpendAmount},
     },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     hex::FromHex,
@@ -952,7 +952,7 @@ pub fn process_transfer(
         }
     };
 
-    let (message, _) = resolve_spend_tx_and_check_account_balances(
+    let (message, _) = resolve_spendtx_anf_check_account_balances(
         rpc_client,
         sign_only,
         amount,

@@ -90,7 +90,7 @@ fn bench_poh_recorder_record_transaction_index(bencher: &mut Bencher) {
     let bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let prev_hash = bank.last_blockhash();
 
-    let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+    let (mut poh_recorder, _entry_receiever) = PohRecorder::new(
         0,
         prev_hash,
         bank.clone(),
@@ -140,7 +140,7 @@ fn bench_poh_recorder_set_bank(bencher: &mut Bencher) {
     let bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let prev_hash = bank.last_blockhash();
 
-    let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+    let (mut poh_recorder, _entry_receiever) = PohRecorder::new(
         0,
         prev_hash,
         bank.clone(),

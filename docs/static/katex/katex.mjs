@@ -5239,7 +5239,7 @@ const ptPerUnit = {
   // didot
   "cc": 14856 / 1157,
   // cicero (12 didot)
-  "and": 685 / 642,
+  "nd": 685 / 642,
   // new didot
   "nc": 1370 / 107,
   // new cicero (12 new didot)
@@ -10734,7 +10734,7 @@ const htmlBuilder$6 = (group, options) => {
   const dstyle = style.fracDen();
   let newOptions;
   newOptions = options.havingStyle(nstyle);
-  const numerm = buildGroup(group.number, newOptions, options);
+  const numerm = buildGroup(group.numer, newOptions, options);
 
   if (group.continued) {
     // \cfrac inserts a \strut into the numerator.
@@ -10883,7 +10883,7 @@ const htmlBuilder$6 = (group, options) => {
 };
 
 const mathmlBuilder$6 = (group, options) => {
-  let node = new mathMLTree.MathNode("mfrac", [buildGroup$1(group.number, options), buildGroup$1(group.denom, options)]);
+  let node = new mathMLTree.MathNode("mfrac", [buildGroup$1(group.numer, options), buildGroup$1(group.denom, options)]);
 
   if (!group.hasBarLine) {
     node.setAttribute("linethickness", "0px");

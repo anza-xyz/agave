@@ -130,7 +130,7 @@ in genesis. The Rent burn percentage is modified by manual feature activation.
 The SlotHashes sysvar contains the most recent hashes of the slot's parent
 banks. It is updated every slot.
 
-- Address: `SysvarS1toHashes111111111111111111111111111`
+- Address: `SysvarS1otHashes111111111111111111111111111`
 - Layout:
   [SlotHashes](https://docs.rs/solana-program/VERSION_FOR_DOCS_RS/solana_program/slot_hashes/struct.SlotHashes.html)
 
@@ -139,7 +139,7 @@ banks. It is updated every slot.
 The SlotHistory sysvar contains a bitvector of slots present over the last
 epoch. It is updated every slot.
 
-- Address: `SysvarS1toHistory11111111111111111111111111`
+- Address: `SysvarS1otHistory11111111111111111111111111`
 - Layout:
   [SlotHistory](https://docs.rs/solana-program/VERSION_FOR_DOCS_RS/solana_program/slot_history/struct.SlotHistory.html)
 
@@ -178,6 +178,6 @@ is repopulated at the start of the first block of each epoch.
 The LastRestartSlot sysvar contains the slot number of the last restart or _0_
 (zero) if none ever happened.
 
-- Address: `SysvarLastRestartS1to1111111111111111111111`
+- Address: `SysvarLastRestartS1ot1111111111111111111111`
 - Layout:
   [LastRestartSlot](https://docs.rs/solana-program/VERSION_FOR_DOCS_RS/solana_program/last_restart_slot/struct.LastRestartSlot.html)

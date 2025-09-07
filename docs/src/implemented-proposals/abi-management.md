@@ -35,12 +35,12 @@ changing the source code.
 For that purpose, we introduce a mechanism of marking every ABI-related things
 in source code (`struct`s, `enum`s) with the new `#[frozen_abi]` attribute. This
 takes hard-coded digest value derived from types of its fields via
-`set::Serialize`. And the attribute automatically generates a unit test to try
+`ser::Serialize`. And the attribute automatically generates a unit test to try
 to detect any unsanctioned changes to the marked ABI-related things.
 
 However, the detection cannot be complete; no matter how hard we statically
 analyze the source code, it's still possible to break ABI. For example, this
-includes not-`derive`d hand-written `set::Serialize`, underlying library's
+includes not-`derive`d hand-written `ser::Serialize`, underlying library's
 implementation changes (for example `bincode`), CPU architecture differences.
 The detection of these possible ABI incompatibilities is out-of-scope for this
 ABI management.

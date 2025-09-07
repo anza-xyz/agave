@@ -741,7 +741,7 @@ mod tests {
             _poh_controller,
             transaction_recorder,
             poh_service,
-            _entry_receiver,
+            _entry_receiever,
         ) = create_test_recorder(bank, blockstore, None, None);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
@@ -1224,7 +1224,7 @@ mod tests {
             _poh_controller,
             transaction_recorder,
             poh_service,
-            _entry_receiver,
+            _entry_receiever,
         ) = create_test_recorder(bank.clone(), blockstore, None, None);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 

@@ -361,7 +361,7 @@ mod test {
         );
     }
 
-    fn prep_feature_minimal_cus_for_builtin_instructions(
+    fn prep_feature_minimial_cus_for_builtin_instructions(
         instruction_details: &ComputeBudgetInstructionDetails,
     ) -> u32 {
         let ComputeBudgetInstructionDetails {
@@ -397,7 +397,7 @@ mod test {
             ..ComputeBudgetInstructionDetails::default()
         };
         let expected_compute_unit_limit =
-            prep_feature_minimal_cus_for_builtin_instructions(&instruction_details);
+            prep_feature_minimial_cus_for_builtin_instructions(&instruction_details);
         assert_eq!(
             instruction_details.sanitize_and_convert_to_compute_budget_limits(&feature_set),
             Ok(ComputeBudgetLimits {

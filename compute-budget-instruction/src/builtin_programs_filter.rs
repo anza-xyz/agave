@@ -70,7 +70,7 @@ mod test {
         },
     };
 
-    const DUMMY_PROGRAM_ID: &str = "dummy1111111111111111111111111111111111111";
+    const DUMMY_PROGRAM_ID: &str = "dummmy1111111111111111111111111111111111111";
 
     #[test]
     fn get_program_kind() {

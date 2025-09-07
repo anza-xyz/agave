@@ -161,7 +161,7 @@ impl AncestorHashesService {
         let outstanding_requests = Arc::<RwLock<OutstandingAncestorHashesRepairs>>::default();
         let (response_sender, response_receiver) = unbounded();
         let t_receiver = streamer::receiver(
-            "solRcvrAndHash".to_string(),
+            "solRcvrAncHash".to_string(),
             ancestor_hashes_request_socket.clone(),
             exit.clone(),
             response_sender.clone(),
@@ -184,7 +184,7 @@ impl AncestorHashesService {
         let t_receiver_quic = {
             let exit = exit.clone();
             Builder::new()
-                .name(String::from("solAndHashQuic"))
+                .name(String::from("solAncHashQuic"))
                 .spawn(|| {
                     receive_quic_datagrams(
                         ancestor_hashes_response_quic_receiver,
@@ -251,7 +251,7 @@ impl AncestorHashesService {
         ancestor_socket: Arc<UdpSocket>,
     ) -> JoinHandle<()> {
         Builder::new()
-            .name("solAndHashesSvc".to_string())
+            .name("solAncHashesSvc".to_string())
             .spawn(move || {
                 let mut last_stats_report = Instant::now();
                 let mut stats = AncestorHashesResponsesStats::default();
@@ -630,7 +630,7 @@ impl AncestorHashesService {
         // to MAX_ANCESTOR_HASHES_SLOT_REQUESTS_PER_SECOND/second
         let mut request_throttle = vec![];
         Builder::new()
-            .name("solManAndReqs".to_string())
+            .name("solManAncReqs".to_string())
             .spawn(move || loop {
                 if exit.load(Ordering::Relaxed) {
                     return;
