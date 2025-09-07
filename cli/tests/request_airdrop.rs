@@ -2,7 +2,7 @@
 use {
     solana_cli::{
         cli::{process_command, CliCommand, CliConfig},
-        test_utils::run_local_faucet,
+        test_utils::run_local_faucet_cli,
     },
     solana_commitment_config::CommitmentConfig,
     solana_keypair::Keypair,
@@ -17,7 +17,7 @@ use {
 fn test_cli_request_airdrop() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair);
+    let faucet_addr = run_local_faucet_cli(mint_keypair);
     let test_validator =
         TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
 

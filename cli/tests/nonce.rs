@@ -4,7 +4,7 @@ use {
         check_balance,
         cli::{process_command, request_and_confirm_airdrop, CliCommand, CliConfig},
         spend_utils::SpendAmount,
-        test_utils::{check_ready, run_local_faucet},
+        test_utils::{check_ready, run_local_faucet_cli},
     },
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
     solana_commitment_config::CommitmentConfig,
@@ -28,7 +28,7 @@ use {
 fn test_nonce(seed: Option<String>, use_nonce_authority: bool, compute_unit_price: Option<u64>) {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair);
+    let faucet_addr = run_local_faucet_cli(mint_keypair);
     let test_validator =
         TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
 
@@ -217,7 +217,7 @@ fn test_create_account_with_seed() {
     solana_logger::setup();
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair);
+    let faucet_addr = run_local_faucet_cli(mint_keypair);
     let test_validator = TestValidator::with_custom_fees(
         mint_pubkey,
         ONE_SIG_FEE,

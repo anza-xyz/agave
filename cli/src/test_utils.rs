@@ -63,9 +63,17 @@ pub fn wait_for_next_epoch_plus_n_slots(rpc_client: &RpcClient, n: u64) -> (Epoc
     }
 }
 
-/// Runs local faucet for tests, with non-overlapping ports.
+/// Runs local faucet for cli tests, with non-overlapping, unique port.
+///
+/// # Arguments
+///
+/// * `keypair` - Faucet keypair that controls the funding account
+///
+/// # Returns
+///
+/// Socket on which the faucet is listening (localhost with picked unique port)
 #[cfg(feature = "dev-context-only-utils")]
-pub fn run_local_faucet(keypair: solana_keypair::Keypair) -> std::net::SocketAddr {
+pub fn run_local_faucet_cli(keypair: solana_keypair::Keypair) -> std::net::SocketAddr {
     solana_faucet::faucet::run_local_faucet_for_tests(
         keypair,
         None, /* per_time_cap */

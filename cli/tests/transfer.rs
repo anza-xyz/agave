@@ -4,7 +4,7 @@ use {
         check_balance,
         cli::{process_command, request_and_confirm_airdrop, CliCommand, CliConfig},
         spend_utils::SpendAmount,
-        test_utils::{check_ready, run_local_faucet},
+        test_utils::{check_ready, run_local_faucet_cli},
     },
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
     solana_commitment_config::CommitmentConfig,
@@ -33,7 +33,7 @@ fn test_transfer(skip_preflight: bool) {
     let fee_two_sig = FeeStructure::default().get_max_fee(2, 0);
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair);
+    let faucet_addr = run_local_faucet_cli(mint_keypair);
     let test_validator = TestValidator::with_custom_fees(
         mint_pubkey,
         fee_one_sig,
@@ -331,7 +331,7 @@ fn test_transfer_multisession_signing() {
     let fee_two_sig = FeeStructure::default().get_max_fee(2, 0);
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair);
+    let faucet_addr = run_local_faucet_cli(mint_keypair);
     let test_validator = TestValidator::with_custom_fees(
         mint_pubkey,
         fee_one_sig,
@@ -480,7 +480,7 @@ fn test_transfer_all(compute_unit_price: Option<u64>) {
     let lamports_per_signature = FeeStructure::default().get_max_fee(1, 0);
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair);
+    let faucet_addr = run_local_faucet_cli(mint_keypair);
     let test_validator = TestValidator::with_custom_fees(
         mint_pubkey,
         lamports_per_signature,
@@ -557,7 +557,7 @@ fn test_transfer_unfunded_recipient() {
     solana_logger::setup();
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair);
+    let faucet_addr = run_local_faucet_cli(mint_keypair);
     let test_validator = TestValidator::with_custom_fees(
         mint_pubkey,
         1,
@@ -613,7 +613,7 @@ fn test_transfer_with_seed() {
     let fee = FeeStructure::default().get_max_fee(1, 0);
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair);
+    let faucet_addr = run_local_faucet_cli(mint_keypair);
     let test_validator = TestValidator::with_custom_fees(
         mint_pubkey,
         fee,
