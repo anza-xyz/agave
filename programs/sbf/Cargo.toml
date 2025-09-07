@@ -157,7 +157,7 @@ solana-sbpf = "=0.12.2"
 solana-sdk-ids = "=3.0.0"
 solana-secp256k1-recover = "=3.0.0"
 solana-sha256-hasher = { version = "=3.0.0", features = ["sha2"] }
-solana-stake-interface = { version = "=2.0.0", features = ["bincode"] }
+solana-stake-interface = { version = "=2.0.1", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=3.0.2" }
 solana-svm-callback = { path = "../../svm-callback", version = "=3.0.2" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=3.0.2" }
@@ -236,7 +236,7 @@ solana-sbf-rust-realloc-invoke-dep = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = "3.0.0"
 solana-signer = "3.0.0"
-solana-stake-interface = "2.0.0"
+solana-stake-interface = "2.0.1"
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
