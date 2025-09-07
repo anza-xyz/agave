@@ -506,13 +506,13 @@ impl<'a> InvokeContext<'a> {
         &mut self,
         program_id: &Pubkey,
         instruction_data: &[u8],
-        message_instruction_datas_iter: impl Iterator<Item = &'ix_data [u8]>,
+        message_instruction_data_iter: impl Iterator<Item = &'ix_data [u8]>,
     ) -> Result<(), InstructionError> {
         self.push()?;
-        let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
+        let instruction_data: Vec<_> = message_instruction_data_iter.collect();
         self.environment_config
             .epoch_stake_callback
-            .process_precompile(program_id, instruction_data, instruction_datas)
+            .process_precompile(program_id, instruction_data, instruction_data)
             .map_err(InstructionError::from)
             .and(self.pop())
     }

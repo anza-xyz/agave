@@ -690,7 +690,7 @@ async fn copy(args: CopyArgs) -> Result<(), Box<dyn std::error::Error>> {
         app_profile_id: args.source_app_profile_id,
         timeout: None,
         emulated_source: args.emulated_source,
-        crediential_path: args.source_credential_path,
+        credential_path: args.source_credential_path,
     })
     .await?;
 
@@ -700,7 +700,7 @@ async fn copy(args: CopyArgs) -> Result<(), Box<dyn std::error::Error>> {
         app_profile_id: args.destination_app_profile_id,
         timeout: None,
         emulated_source: args.emulated_destination,
-        crediential_path: args.destination_credential_path,
+        credential_path: args.destination_credential_path,
     })
     .await?;
 
@@ -857,7 +857,7 @@ struct GetBigtableArgs {
     app_profile_id: String,
     timeout: Option<std::time::Duration>,
     emulated_source: Option<String>,
-    crediential_path: Option<String>,
+    credential_path: Option<String>,
 }
 
 async fn get_bigtable(
@@ -875,7 +875,7 @@ async fn get_bigtable(
             solana_storage_bigtable::LedgerStorageConfig {
                 read_only: args.read_only,
                 timeout: args.timeout,
-                credential_type: CredentialType::Filepath(Some(args.crediential_path.unwrap())),
+                credential_type: CredentialType::Filepath(Some(args.credential_path.unwrap())),
                 instance_name: args.instance_name,
                 app_profile_id: args.app_profile_id,
                 max_message_size: solana_storage_bigtable::DEFAULT_MAX_MESSAGE_SIZE,

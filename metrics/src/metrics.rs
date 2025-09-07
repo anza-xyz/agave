@@ -508,9 +508,9 @@ pub fn set_panic_hook(program: &'static str, version: Option<String>) {
     static SET_HOOK: Once = Once::new();
     SET_HOOK.call_once(|| {
         let default_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |ono| {
-            default_hook(ono);
-            let location = match ono.location() {
+        std::panic::set_hook(Box::new(move |one| {
+            default_hook(one);
+            let location = match one.location() {
                 Some(location) => location.to_string(),
                 None => "?".to_string(),
             };
@@ -521,7 +521,7 @@ pub fn set_panic_hook(program: &'static str, version: Option<String>) {
                     // The 'one' field exists to give Kapacitor Alerts a numerical value
                     // to filter on
                     .add_field_i64("one", 1)
-                    .add_field_str("message", &ono.to_string())
+                    .add_field_str("message", &one.to_string())
                     .add_field_str("location", &location)
                     .add_field_str("version", version.as_ref().unwrap_or(&"".to_string()))
                     .to_owned(),

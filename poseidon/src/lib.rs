@@ -30,7 +30,7 @@ pub enum PoseidonSyscallError {
     #[error("Failed to convert a vector of bytes into an array.")]
     VecToArray,
     #[error("Failed to convert the number of inputs from u64 to u8.")]
-    U64Tou8,
+    U64You8,
     #[error("Failed to convert bytes to BigInt")]
     BytesToBigInt,
     #[error("Invalid width. Choose a width between 2 and 16 for 1 to 15 inputs.")]
@@ -50,7 +50,7 @@ impl From<u64> for PoseidonSyscallError {
             6 => PoseidonSyscallError::BytesToPrimeFieldElement,
             7 => PoseidonSyscallError::InputLargerThanModulus,
             8 => PoseidonSyscallError::VecToArray,
-            9 => PoseidonSyscallError::U64Tou8,
+            9 => PoseidonSyscallError::U64You8,
             10 => PoseidonSyscallError::BytesToBigInt,
             11 => PoseidonSyscallError::InvalidWidthCircom,
             _ => PoseidonSyscallError::Unexpected,
@@ -69,7 +69,7 @@ impl From<PoseidonSyscallError> for u64 {
             PoseidonSyscallError::BytesToPrimeFieldElement => 6,
             PoseidonSyscallError::InputLargerThanModulus => 7,
             PoseidonSyscallError::VecToArray => 8,
-            PoseidonSyscallError::U64Tou8 => 9,
+            PoseidonSyscallError::U64You8 => 9,
             PoseidonSyscallError::BytesToBigInt => 10,
             PoseidonSyscallError::InvalidWidthCircom => 11,
             PoseidonSyscallError::Unexpected => 12,
@@ -238,7 +238,7 @@ pub fn hashv(
                         PoseidonSyscallError::InputLargerThanModulus
                     }
                     PoseidonError::VecToArray => PoseidonSyscallError::VecToArray,
-                    PoseidonError::U64Tou8 => PoseidonSyscallError::U64Tou8,
+                    PoseidonError::U64You8 => PoseidonSyscallError::U64You8,
                     PoseidonError::BytesToBigInt => PoseidonSyscallError::BytesToBigInt,
                     PoseidonError::InvalidWidthCircom { .. } => {
                         PoseidonSyscallError::InvalidWidthCircom

@@ -3079,7 +3079,7 @@ fn test_is_empty() {
     let (bank0, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let key1 = Keypair::new();
 
-    // The zeroth bank is empty becasue there are no transactions
+    // The zeroth bank is empty because there are no transactions
     assert!(bank0.is_empty());
 
     // Set is_delta to true, bank is no longer empty
@@ -7109,7 +7109,7 @@ fn min_rent_exempt_balance_for_sysvars(bank: &Bank, sysvar_ids: &[Pubkey]) -> u6
     sysvar_ids
         .iter()
         .map(|sysvar_id| {
-            trace!("min_rent_excempt_balance_for_sysvars: {sysvar_id}");
+            trace!("min_rent_exempt_balance_for_sysvars: {sysvar_id}");
             bank.get_minimum_balance_for_rent_exemption(
                 bank.get_account(sysvar_id).unwrap().data().len(),
             )
@@ -9159,7 +9159,7 @@ fn test_check_reserved_keys() {
 }
 
 #[test]
-fn test_call_precomiled_program() {
+fn test_call_precompiled_program() {
     let GenesisConfigInfo {
         mut genesis_config,
         mint_keypair,
@@ -10794,14 +10794,14 @@ fn test_calculate_fee_with_congestion_multiplier() {
     let ix1 = system_instruction::transfer(&key1, &key0, 1);
     let message = new_sanitized_message(Message::new(&[ix0, ix1], Some(&key0)));
 
-    // assert when lamports_per_signature is less than BASE_LAMPORTS, turnning on/off
+    // assert when lamports_per_signature is less than BASE_LAMPORTS, turning on/off
     // congestion_multiplier has no effect on fee.
     assert_eq!(
         calculate_test_fee(&message, cheap_lamports_per_signature, &fee_structure),
         signature_fee * signature_count
     );
 
-    // assert when lamports_per_signature is more than BASE_LAMPORTS, turnning on/off
+    // assert when lamports_per_signature is more than BASE_LAMPORTS, turning on/off
     // congestion_multiplier will change calculated fee.
     assert_eq!(
         calculate_test_fee(&message, expensive_lamports_per_signature, &fee_structure,),
@@ -11480,7 +11480,7 @@ fn test_last_restart_slot() {
     let GenesisConfigInfo {
         mut genesis_config, ..
     } = create_genesis_config_with_leader(mint_lamports, &leader_pubkey, validator_stake_lamports);
-    // Remove last restart slot account so we can simluate its' activation
+    // Remove last restart slot account so we can simulate its' activation
     genesis_config
         .accounts
         .remove(&feature_set::last_restart_slot_sysvar::id())

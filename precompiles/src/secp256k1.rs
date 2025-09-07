@@ -13,8 +13,8 @@ use {
 /// This is the same as the verification routine executed by the runtime's secp256k1 native program,
 /// and is primarily of use to the runtime.
 ///
-/// `data` is the secp256k1 program's instruction data. `instruction_datas` is
-/// the full slice of instruction datas for all instructions in the transaction,
+/// `data` is the secp256k1 program's instruction data. `instruction_data` is
+/// the full slice of instruction data for all instructions in the transaction,
 /// including the secp256k1 program's instruction data.
 ///
 /// `feature_set` is the set of active Solana features. It is used to enable or
@@ -23,7 +23,7 @@ use {
 /// purposes passing `FeatureSet::all_enabled()` is reasonable.
 pub fn verify(
     data: &[u8],
-    instruction_datas: &[&[u8]],
+    instruction_data: &[&[u8]],
     _feature_set: &FeatureSet,
 ) -> Result<(), PrecompileError> {
     if data.is_empty() {
@@ -53,10 +53,10 @@ pub fn verify(
 
         // Parse out signature
         let signature_index = offsets.signature_instruction_index as usize;
-        if signature_index >= instruction_datas.len() {
+        if signature_index >= instruction_data.len() {
             return Err(PrecompileError::InvalidInstructionDataSize);
         }
-        let signature_instruction = instruction_datas[signature_index];
+        let signature_instruction = instruction_data[signature_index];
         let sig_start = offsets.signature_offset as usize;
         let sig_end = sig_start.saturating_add(SIGNATURE_SERIALIZED_SIZE);
         if sig_end >= signature_instruction.len() {
@@ -73,7 +73,7 @@ pub fn verify(
 
         // Parse out pubkey
         let eth_address_slice = get_data_slice(
-            instruction_datas,
+            instruction_data,
             offsets.eth_address_instruction_index,
             offsets.eth_address_offset,
             HASHED_PUBKEY_SERIALIZED_SIZE,
@@ -81,7 +81,7 @@ pub fn verify(
 
         // Parse out message
         let message_slice = get_data_slice(
-            instruction_datas,
+            instruction_data,
             offsets.message_instruction_index,
             offsets.message_data_offset,
             offsets.message_data_size as usize,
@@ -107,23 +107,23 @@ pub fn verify(
 }
 
 fn get_data_slice<'a>(
-    instruction_datas: &'a [&[u8]],
+    instruction_data: &'a [&[u8]],
     instruction_index: u8,
     offset_start: u16,
     size: usize,
 ) -> Result<&'a [u8], PrecompileError> {
     let signature_index = instruction_index as usize;
-    if signature_index >= instruction_datas.len() {
+    if signature_index >= instruction_data.len() {
         return Err(PrecompileError::InvalidDataOffsets);
     }
-    let signature_instruction = &instruction_datas[signature_index];
+    let signature_instruction = &instruction_data[signature_index];
     let start = offset_start as usize;
     let end = start.saturating_add(size);
     if end > signature_instruction.len() {
         return Err(PrecompileError::InvalidSignature);
     }
 
-    Ok(&instruction_datas[signature_index][start..end])
+    Ok(&instruction_data[signature_index][start..end])
 }
 
 #[cfg(test)]

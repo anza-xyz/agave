@@ -3664,7 +3664,7 @@ function assertSpan(group) {
 // 7-8pt), and scriptscriptstyle (size index 1 and 2: 5-6pt).  These are
 // provided in the arrays below, in that order.
 //
-// The font metrics are stored in fonts cmsy10, cmsy7, and cmsy5 respsectively.
+// The font metrics are stored in fonts cmsy10, cmsy7, and cmsy5 respectively.
 // This was determined by running the following script:
 //
 //     latex -interaction=nonstopmode \
@@ -3888,7 +3888,7 @@ function getCharacterMetrics(character, font, mode) {
     // So if the character is in a script we support but we
     // don't have metrics for it, just use the metrics for
     // the Latin capital letter M. This is close enough because
-    // we (currently) only care about the height of the glpyh
+    // we (currently) only care about the height of the glyph
     // not its width.
     if (supportedCodepoint(ch)) {
       metrics = fontMetricsData[font][77]; // 77 is the charcode for 'M'
@@ -4620,7 +4620,7 @@ defineSymbol(symbols_text, main, symbols_accent, "\u02DA", "\\r"); // ring above
 
 defineSymbol(symbols_text, main, symbols_accent, "\u02C7", "\\v"); // caron
 
-defineSymbol(symbols_text, main, symbols_accent, "\xA8", '\\"'); // diaresis
+defineSymbol(symbols_text, main, symbols_accent, "\xA8", '\\"'); // diaeresis
 
 defineSymbol(symbols_text, main, symbols_accent, "\u02DD", "\\H"); // double acute
 
@@ -5237,7 +5237,7 @@ var ptPerUnit = {
   // didot
   "cc": 14856 / 1157,
   // cicero (12 didot)
-  "nd": 685 / 642,
+  "and": 685 / 642,
   // new didot
   "nc": 1370 / 107,
   // new cicero (12 new didot)
@@ -5544,7 +5544,7 @@ var buildCommon_canCombine = function canCombine(prev, next) {
   return true;
 };
 /**
- * Combine consequetive domTree.symbolNodes into a single symbolNode.
+ * Combine consecutive domTree.symbolNodes into a single symbolNode.
  * Note: this function mutates the argument.
  */
 
@@ -6557,7 +6557,7 @@ function buildHTML(tree, options) {
  * since we're mainly using MathML to improve accessibility, we don't manage
  * any of the styling state that the plain DOM nodes do.
  *
- * The `toNode` and `toMarkup` functions work simlarly to how they do in
+ * The `toNode` and `toMarkup` functions work similarly to how they do in
  * domTree.js, creating namespaced DOM nodes and HTML text markup respectively.
  */
 
@@ -6691,7 +6691,7 @@ function () {
   }
   /**
    * Converts the text node into a string
-   * (representing the text iteself).
+   * (representing the text itself).
    */
   ;
 
@@ -6792,7 +6792,7 @@ function () {
 });
 // CONCATENATED MODULE: ./src/buildMathML.js
 /**
- * This file converts a parse tree into a cooresponding MathML tree. The main
+ * This file converts a parse tree into a corresponding MathML tree. The main
  * entry point is the `buildMathML` function, which takes a parse tree from the
  * parser.
  */
@@ -8549,7 +8549,7 @@ var delimiter_makeStackedDelim = function makeStackedDelim(delim, heightTotal, c
     var middleMetrics = delimiter_getMetrics(middle, font, mode);
     middleHeightTotal = middleMetrics.height + middleMetrics.depth;
     middleFactor = 2; // repeat symmetrically above and below middle
-  } // Calcuate the minimal height that the delimiter can have.
+  } // Calculate the minimal height that the delimiter can have.
   // It is at least the size of the top, bottom, and optional middle combined.
 
 
@@ -9312,7 +9312,7 @@ defineFunction({
     return middleDelim;
   },
   mathmlBuilder: function mathmlBuilder(group, options) {
-    // A Firefox \middle will strech a character vertically only if it
+    // A Firefox \middle will stretch a character vertically only if it
     // is in the fence part of the operator dictionary at:
     // https://www.w3.org/TR/MathML3/appendixc.html.
     // So we need to avoid U+2223 and use plain "|" instead.
@@ -10047,7 +10047,7 @@ var array_mathmlBuilder = function mathmlBuilder(group, options) {
   // LaTeX \arraystretch multiplies the row baseline-to-baseline distance.
   // We simulate this by adding (arraystretch - 1)em to the gap. This
   // does a reasonable job of adjusting arrays containing 1 em tall content.
-  // The 0.16 and 0.09 values are found emprically. They produce an array
+  // The 0.16 and 0.09 values are found empirically. They produce an array
   // similar to LaTeX and in which content does not interfere with \hines.
 
   var gap = group.arraystretch === 0.5 ? 0.1 // {smallmatrix}, {subarray}
@@ -10877,7 +10877,7 @@ var genfrac_htmlBuilder = function htmlBuilder(group, options) {
   var dstyle = style.fracDen();
   var newOptions;
   newOptions = options.havingStyle(nstyle);
-  var numerm = buildHTML_buildGroup(group.numer, newOptions, options);
+  var numerm = buildHTML_buildGroup(group.number, newOptions, options);
 
   if (group.continued) {
     // \cfrac inserts a \strut into the numerator.
@@ -11026,7 +11026,7 @@ var genfrac_htmlBuilder = function htmlBuilder(group, options) {
 };
 
 var genfrac_mathmlBuilder = function mathmlBuilder(group, options) {
-  var node = new mathMLTree.MathNode("mfrac", [buildMathML_buildGroup(group.numer, options), buildMathML_buildGroup(group.denom, options)]);
+  var node = new mathMLTree.MathNode("mfrac", [buildMathML_buildGroup(group.number, options), buildMathML_buildGroup(group.denom, options)]);
 
   if (!group.hasBarLine) {
     node.setAttribute("linethickness", "0px");
@@ -11078,7 +11078,7 @@ defineFunction({
   handler: function handler(_ref, args) {
     var parser = _ref.parser,
         funcName = _ref.funcName;
-    var numer = args[0];
+    var number = args[0];
     var denom = args[1];
     var hasBarLine;
     var leftDelim = null;
@@ -11138,7 +11138,7 @@ defineFunction({
       type: "genfrac",
       mode: parser.mode,
       continued: funcName === "\\cfrac",
-      numer: numer,
+      number: number,
       denom: denom,
       hasBarLine: hasBarLine,
       leftDelim: leftDelim,
@@ -11198,7 +11198,7 @@ defineFunction({
     };
   }
 });
-var stylArray = ["display", "text", "script", "scriptscript"];
+var styleArray = ["display", "text", "script", "scriptscript"];
 
 var delimFromValue = function delimFromValue(delimString) {
   var delim = null;
@@ -11221,7 +11221,7 @@ defineFunction({
   },
   handler: function handler(_ref3, args) {
     var parser = _ref3.parser;
-    var numer = args[4];
+    var number = args[4];
     var denom = args[5]; // Look into the parse nodes to get the desired delimiters.
 
     var leftDelim = args[0].type === "atom" && args[0].family === "open" ? delimFromValue(args[0].text) : null;
@@ -11242,22 +11242,22 @@ defineFunction({
 
 
     var size = "auto";
-    var styl = args[3];
+    var style = args[3];
 
-    if (styl.type === "ordgroup") {
-      if (styl.body.length > 0) {
-        var textOrd = assertNodeType(styl.body[0], "textord");
-        size = stylArray[Number(textOrd.text)];
+    if (style.type === "ordgroup") {
+      if (style.body.length > 0) {
+        var textOrd = assertNodeType(style.body[0], "textord");
+        size = styleArray[Number(textOrd.text)];
       }
     } else {
-      styl = assertNodeType(styl, "textord");
-      size = stylArray[Number(styl.text)];
+      style = assertNodeType(style, "textord");
+      size = styleArray[Number(style.text)];
     }
 
     return {
       type: "genfrac",
       mode: parser.mode,
-      numer: numer,
+      number: number,
       denom: denom,
       continued: false,
       hasBarLine: hasBarLine,
@@ -11302,14 +11302,14 @@ defineFunction({
   handler: function handler(_ref5, args) {
     var parser = _ref5.parser,
         funcName = _ref5.funcName;
-    var numer = args[0];
+    var number = args[0];
     var barSize = assert(assertNodeType(args[1], "infix").size);
     var denom = args[2];
     var hasBarLine = barSize.number > 0;
     return {
       type: "genfrac",
       mode: parser.mode,
-      numer: numer,
+      number: number,
       denom: denom,
       continued: false,
       hasBarLine: hasBarLine,
@@ -13538,7 +13538,7 @@ defineFunctionBuilders({
     return buildCommon.makeSpan([mclass], [base, buildCommon.makeSpan(["msupsub"], [supsub])], options);
   },
   mathmlBuilder: function mathmlBuilder(group, options) {
-    // Is the inner group a relevant horizonal brace?
+    // Is the inner group a relevant horizontal brace?
     var isBrace = false;
     var isOver;
     var isSup;
@@ -16171,18 +16171,18 @@ function () {
     }
 
     if (overIndex !== -1 && funcName) {
-      var numerNode;
+      var numberNode;
       var denomNode;
-      var numerBody = body.slice(0, overIndex);
+      var numberBody = body.slice(0, overIndex);
       var denomBody = body.slice(overIndex + 1);
 
-      if (numerBody.length === 1 && numerBody[0].type === "ordgroup") {
-        numerNode = numerBody[0];
+      if (numberBody.length === 1 && numberBody[0].type === "ordgroup") {
+        numberNode = numberBody[0];
       } else {
-        numerNode = {
+        numberNode = {
           type: "ordgroup",
           mode: this.mode,
-          body: numerBody
+          body: numberBody
         };
       }
 
@@ -16199,9 +16199,9 @@ function () {
       var node;
 
       if (funcName === "\\\\abovefrac") {
-        node = this.callFunction(funcName, [numerNode, body[overIndex], denomNode], []);
+        node = this.callFunction(funcName, [numberNode, body[overIndex], denomNode], []);
       } else {
-        node = this.callFunction(funcName, [numerNode, denomNode], []);
+        node = this.callFunction(funcName, [numberNode, denomNode], []);
       }
 
       return [node];
@@ -17045,7 +17045,7 @@ Parser_Parser.endOfGroup = {
    * Parses an "expression", which is a list of atoms.
    *
    * `breakOnInfix`: Should the parsing stop when we hit infix nodes? This
-   *                 happens when functions have higher precendence han infix
+   *                 happens when functions have higher precedence han infix
    *                 nodes in implicit parses.
    *
    * `breakOnTokenText`: The text of the token that the expression should end

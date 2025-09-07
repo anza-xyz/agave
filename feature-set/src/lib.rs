@@ -176,7 +176,7 @@ pub mod full_inflation {
     pub mod mainnet {
         pub mod certusone {
             pub mod vote {
-                solana_pubkey::declare_id!("BzBBveUDymEYoYzcMWNQCx3cd4jQs7puaVFHLtsbB6fm");
+                solana_pubkey::declare_id!("BzBBeUDymEYoYzcMWNQCx3cd4jQs7puaVFHLtsbB6fm");
             }
             pub mod enable {
                 solana_pubkey::declare_id!("7XRJcS5Ud5vxGB54JbK9N2vBZVwnwdBNeJW1ibRgD9gx");
@@ -374,7 +374,7 @@ pub mod leave_nonce_on_success {
 }
 
 pub mod reject_empty_instruction_without_program {
-    solana_pubkey::declare_id!("9kdtFSrXHQg3hKkbXkQ6trJ3Ja1xpJ22CTFSNAciEwmL");
+    solana_pubkey::declare_id!("9kdtFSrXHQg3hKkbXkQ6trJ3Ja1xpJ22CTFSNAcpiEwmL");
 }
 
 pub mod fixed_memcpy_nonoverlapping_check {
@@ -426,7 +426,7 @@ pub mod reject_vote_account_close_unless_zero_credit_epoch {
 }
 
 pub mod add_get_processed_sibling_instruction_syscall {
-    solana_pubkey::declare_id!("CFK1hRCNy8JJuAAY8Pb2GjLFNdCThS2qwZNe3izzBMgn");
+    solana_pubkey::declare_id!("CFK1hRCNy8JJuAAY8Pb2GjLFAndCThS2qwZNe3izzBMgn");
 }
 
 pub mod bank_transaction_count_fix {
@@ -527,7 +527,7 @@ pub mod stake_raise_minimum_delegation_to_1_sol {
 }
 
 pub mod stake_minimum_delegation_for_rewards {
-    solana_pubkey::declare_id!("G6ANXD6ptCSyNd9znZm7j4dEczAJCfx7Cy43oBx3rKHJ");
+    solana_pubkey::declare_id!("G6ANXD6ptCSyAnd9znZm7j4dEczAJCfx7Cy43oBx3rKHJ");
 }
 
 pub mod add_set_compute_unit_price_ix {
@@ -595,7 +595,7 @@ pub mod skip_rent_rewrites {
 }
 
 pub mod prevent_crediting_accounts_that_end_rent_paying {
-    solana_pubkey::declare_id!("812kqX67odAp5NFwM8D2N24cku7WTm9CHUTFUXaDkWPn");
+    solana_pubkey::declare_id!("812kqX67odAp5NFwM8D2N24cku7WTm9CHUTFUXaDkWOn");
 }
 
 pub mod cap_bpf_program_instruction_accounts {
@@ -943,7 +943,7 @@ pub mod migrate_feature_gate_program_to_core_bpf {
 }
 
 pub mod vote_only_full_fec_sets {
-    solana_pubkey::declare_id!("ffecLRhhakKSGhMuc6Fz2Lnfq4uT9q3iu9ZsNaPLxPc");
+    solana_pubkey::declare_id!("ffecLRhhakKSGhMuch6Fz2Lnfq4uT9q3iu9ZsNaPLxPc");
 }
 
 pub mod migrate_config_program_to_core_bpf {

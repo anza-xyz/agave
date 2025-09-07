@@ -66,7 +66,7 @@ current epoch, but must also be random across different epochs. One way to
 achieve these properties is to hash the account's pubkey with some epoch
 dependent values, sort the results, and divide them into `M` bins. The epoch
 dependent value can be the epoch number, total rewards for the epoch, the leader
-pubkey for the epoch block, etc. `M` can be choses based on 50K account per
+pubkey for the epoch block, etc. `M` can be chooses based on 50K account per
 block, which equal to `ceil(num_stake_accounts/50,000)`.
 
 `num_stake_account` is extracted from `leader_schedule_epoch` block, so we don't

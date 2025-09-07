@@ -504,7 +504,7 @@ mod tests {
     #[test_case(0x19a0a360e9f3094d, "Ec6wiaqDuVc5AzZpq4GAZ6GLsRJvw9mAVWVrCpDoGaRm")]
     #[test_case(0xc5e0204894ca50dc, "BqxDzSFw8rJRHnTZmsPRzF77G3xgfK4hD8JyYeAFfxuZ")]
     #[test_case(0xf1336cf933eeda07, "3Ux2vciDFdgNqULpsQpXfpaxZykWmBFCseqX9dwpGnyH")]
-    #[test_case(0xe666e7514f37c7a1, "Fc3gAUgh2mD1se3kkhPnLMKpQCiARd2PSdGf7b2fDS2n")]
+    #[test_case(0xe666e7514f37c7a1, "Fc3gAUgh2mD1se3kkhOnLMKpQCiARd2PSdGf7b2fDS2n")]
     fn test_weighted_shuffle_hard_coded_paranoid(seed: u64, expected_hash: &str) {
         let expected_hash = Hash::from_str(expected_hash).unwrap();
         let mut rng = <[u8; 32]>::try_from(

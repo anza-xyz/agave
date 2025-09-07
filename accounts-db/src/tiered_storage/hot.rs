@@ -865,7 +865,7 @@ mod tests {
         /// owners for the accounts
         owners: Vec<Pubkey>,
         /// data for the accounts
-        datas: Vec<Vec<u8>>,
+        data: Vec<Vec<u8>>,
         /// path to the hot storage file that was written
         file_path: PathBuf,
         /// temp directory where the hot storage file was written
@@ -891,7 +891,7 @@ mod tests {
             .collect();
 
         // create account data
-        let datas: Vec<_> = (0..num_accounts)
+        let data: Vec<_> = (0..num_accounts)
             .map(|i| vec![i as u8; rng.gen_range(0..4096)])
             .collect();
 
@@ -901,7 +901,7 @@ mod tests {
                 HotAccountMeta::new()
                     .with_lamports(rng.gen())
                     .with_owner_offset(OwnerOffset(rng.gen_range(0..num_owners) as u32))
-                    .with_account_data_padding(padding_bytes(datas[i].len()))
+                    .with_account_data_padding(padding_bytes(data[i].len()))
             })
             .collect();
 
@@ -921,7 +921,7 @@ mod tests {
             let padding_buffer = [0u8; HOT_ACCOUNT_ALIGNMENT];
             let index_writer_entries: Vec<_> = metas
                 .iter()
-                .zip(datas.iter())
+                .zip(data.iter())
                 .zip(addresses.iter())
                 .map(|((meta, data), address)| {
                     let prev_offset = current_offset;
@@ -962,7 +962,7 @@ mod tests {
             metas,
             addresses,
             owners,
-            datas,
+            data,
             file_path,
             temp_dir,
         }
@@ -1348,7 +1348,7 @@ mod tests {
             hot_storage
                 .get_stored_account_without_data_callback(IndexOffset(i as u32), |stored_account| {
                     assert_eq!(stored_account.lamports, test_info.metas[i].lamports());
-                    assert_eq!(stored_account.data_len, test_info.datas[i].len());
+                    assert_eq!(stored_account.data_len, test_info.data[i].len());
                     assert_eq!(
                         *stored_account.owner,
                         test_info.owners[test_info.metas[i].owner_offset().0 as usize]
@@ -1384,8 +1384,8 @@ mod tests {
             hot_storage
                 .get_stored_account_callback(IndexOffset(i as u32), |stored_account| {
                     assert_eq!(stored_account.lamports(), test_info.metas[i].lamports());
-                    assert_eq!(stored_account.data().len(), test_info.datas[i].len());
-                    assert_eq!(stored_account.data(), test_info.datas[i]);
+                    assert_eq!(stored_account.data().len(), test_info.data[i].len());
+                    assert_eq!(stored_account.data(), test_info.data[i]);
                     assert_eq!(
                         *stored_account.owner(),
                         test_info.owners[test_info.metas[i].owner_offset().0 as usize]
@@ -1422,8 +1422,8 @@ mod tests {
                 .unwrap();
 
             assert_eq!(account.lamports(), test_info.metas[i].lamports());
-            assert_eq!(account.data().len(), test_info.datas[i].len());
-            assert_eq!(account.data(), test_info.datas[i]);
+            assert_eq!(account.data().len(), test_info.data[i].len());
+            assert_eq!(account.data(), test_info.data[i]);
             assert_eq!(
                 *account.owner(),
                 test_info.owners[test_info.metas[i].owner_offset().0 as usize],

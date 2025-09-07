@@ -1,0 +1,20 @@
+name: Spelling Check
+
+on:
+  pull_request:
+    branches: [master, main]
+  push:
+    branches: [master, main]
+
+jobs:
+  spelling:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install typos
+        uses: crate-ci/typos@v1.26.0
+
+      - name: Check for typos
+        run: typos --config typos.toml

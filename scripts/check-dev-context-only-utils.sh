@@ -30,7 +30,7 @@ source ci/rust-version.sh nightly
 # package isn't part of released binaries.
 source scripts/dcou-tainted-packages.sh
 
-# convert to comma separeted (ref: https://stackoverflow.com/a/53839433)
+# convert to comma separated (ref: https://stackoverflow.com/a/53839433)
 printf -v allowed '"%s",' "${dcou_tainted_packages[@]}"
 allowed="${allowed%,}"
 

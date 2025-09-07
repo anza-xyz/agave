@@ -5,8 +5,8 @@ use {
         getsockname, nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
         AF_INET, AF_INET6, AF_NETLINK, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE,
         NLA_ALIGNTO, NLA_TYPE_MASK, NLMSG_DONE, NLMSG_ERROR, NLM_F_DUMP, NLM_F_MULTI,
-        NLM_F_REQUEST, NUD_PERMANENT, NUD_REACHABLE, NUD_STALE, RTA_DST, RTA_GATEWAY, RTA_IIF,
-        RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWNEIGH,
+        NLM_F_REQUEST, NUD_PERMANENT, NUD_REACHABLE, NUD_STALE, RTA_DST, RTA_GATEWAY, RTA_IF,
+        RTA_OF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWNEIGH,
         RTM_NEWROUTE, RT_TABLE_MAIN, SOCK_RAW, SOL_NETLINK,
     },
     std::{
@@ -382,9 +382,9 @@ pub fn netlink_get_neighbors(
 }
 
 pub fn parse_rtm_newneigh(msg: NetlinkMessage, if_index: Option<i32>) -> Option<NeighborEntry> {
-    let nd_msg = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ndmsg) };
+    let and_msg = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ndmsg) };
     if let Some(idx) = if_index {
-        if nd_msg.ndm_ifindex != idx {
+        if and_msg.ndm_ifindex != idx {
             return None;
         }
     }
@@ -394,11 +394,11 @@ pub fn parse_rtm_newneigh(msg: NetlinkMessage, if_index: Option<i32>) -> Option<
     let mut neighbor = NeighborEntry {
         destination: None,
         lladdr: None,
-        ifindex: nd_msg.ndm_ifindex,
-        state: nd_msg.ndm_state,
+        ifindex: and_msg.ndm_ifindex,
+        state: and_msg.ndm_state,
     };
     if let Some(dst_attr) = attrs.get(&NDA_DST) {
-        neighbor.destination = parse_ip_address(dst_attr.data, nd_msg.ndm_family);
+        neighbor.destination = parse_ip_address(dst_attr.data, and_msg.ndm_family);
     }
     if let Some(lladdr_attr) = attrs.get(&NDA_LLADDR) {
         if lladdr_attr.data.len() >= 6 {
@@ -534,11 +534,11 @@ pub fn parse_rtm_newroute(msg: NetlinkMessage) -> Option<RouteEntry> {
             .map(|data| u32::from_ne_bytes([data[0], data[1], data[2], data[3]]))
     };
 
-    if let Some(oif_attr) = attrs.get(&RTA_OIF) {
-        route.out_if_index = u32_from_ne_bytes(oif_attr.data).map(|i| i as i32);
+    if let Some(of_attr) = attrs.get(&RTA_OF) {
+        route.out_if_index = u32_from_ne_bytes(of_attr.data).map(|i| i as i32);
     }
-    if let Some(iif_attr) = attrs.get(&RTA_IIF) {
-        route.in_if_index = u32_from_ne_bytes(iif_attr.data).map(|i| i as i32);
+    if let Some(if_attr) = attrs.get(&RTA_IF) {
+        route.in_if_index = u32_from_ne_bytes(if_attr.data).map(|i| i as i32);
     }
     if let Some(priority_attr) = attrs.get(&RTA_PRIORITY) {
         route.priority = u32_from_ne_bytes(priority_attr.data);

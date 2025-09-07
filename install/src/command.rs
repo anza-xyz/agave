@@ -53,7 +53,7 @@ fn new_spinner_progress_bar() -> ProgressBar {
     progress_bar.set_style(
         ProgressStyle::default_spinner()
             .template("{spinner:.green} {wide_msg}")
-            .expect("ProgresStyle::template direct input to be correct"),
+            .expect("ProgressStyle::template direct input to be correct"),
     );
     progress_bar.enable_steady_tick(Duration::from_millis(100));
     progress_bar
@@ -121,7 +121,7 @@ fn download_to_temp(
             .template(
                 "{spinner:.green}{wide_msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})",
             )
-            .expect("ProgresStyle::template direct input to be correct")
+            .expect("ProgressStyle::template direct input to be correct")
             .progress_chars("=> "),
     );
     progress_bar.set_message(format!("{TRUCK}Downloading"));
@@ -824,7 +824,7 @@ pub fn gc(config_file: &str) -> Result<(), String> {
             progress_bar.set_style(
                 ProgressStyle::default_bar()
                     .template("{spinner:.green}{wide_msg} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
-                    .expect("ProgresStyle::template direct input to be correct")
+                    .expect("ProgressStyle::template direct input to be correct")
                     .progress_chars("=> "),
             );
             progress_bar.set_message(format!("{RECYCLING}Removing old releases"));

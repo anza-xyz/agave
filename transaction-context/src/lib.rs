@@ -738,7 +738,7 @@ impl BorrowedInstructionAccount<'_> {
         self.account.owner()
     }
 
-    /// Assignes the owner of this account (transaction wide)
+    /// Assigns the owner of this account (transaction wide)
     #[cfg(not(target_os = "solana"))]
     pub fn set_owner(&mut self, pubkey: &[u8]) -> Result<(), InstructionError> {
         // Only the owner can assign a new owner
@@ -902,7 +902,7 @@ impl BorrowedInstructionAccount<'_> {
         // about to write into it. Make the account mutable by copying it in a
         // buffer with MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION capacity so that if the
         // transaction reallocs, we don't have to copy the whole account data a
-        // second time to fullfill the realloc.
+        // second time to fulfill the realloc.
         if self.account.is_shared() {
             self.account
                 .reserve(MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION);

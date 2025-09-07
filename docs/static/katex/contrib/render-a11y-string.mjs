@@ -299,7 +299,7 @@ const handleObject = (tree, a11yStrings, atomType) => {
           if (tree.hasBarLine) {
             regionStrings.push("start fraction");
             leftDelim && buildString(leftDelim, "open", regionStrings);
-            buildA11yStrings(tree.numer, regionStrings, atomType);
+            buildA11yStrings(tree.number, regionStrings, atomType);
             regionStrings.push("divided by");
             buildA11yStrings(tree.denom, regionStrings, atomType);
             rightDelim && buildString(rightDelim, "close", regionStrings);
@@ -307,7 +307,7 @@ const handleObject = (tree, a11yStrings, atomType) => {
           } else {
             regionStrings.push("start binomial");
             leftDelim && buildString(leftDelim, "open", regionStrings);
-            buildA11yStrings(tree.numer, regionStrings, atomType);
+            buildA11yStrings(tree.number, regionStrings, atomType);
             regionStrings.push("over");
             buildA11yStrings(tree.denom, regionStrings, atomType);
             rightDelim && buildString(rightDelim, "close", regionStrings);
@@ -679,7 +679,7 @@ const handleObject = (tree, a11yStrings, atomType) => {
 
     case "mathchoice":
       {
-        // TODO: track which which style we're using, e.g. dispaly, text, etc.
+        // TODO: track which which style we're using, e.g. display, text, etc.
         // default to text style if even that may not be the correct style
         buildA11yStrings(tree.text, a11yStrings, atomType);
         break;

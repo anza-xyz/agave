@@ -280,7 +280,7 @@ fn network_simulator_pull_only(thread_pool: &ThreadPool, network: &Network) {
     assert!(converged >= 0.9);
 }
 
-fn network_simulator(thread_pool: &ThreadPool, network: &mut Network, max_convergance: f64) {
+fn network_simulator(thread_pool: &ThreadPool, network: &mut Network, max_convergence: f64) {
     let num = network.len();
     // run for a small amount of time
     let (converged, bytes_tx) = network_run_pull(thread_pool, network, 0, 10, 1.0);
@@ -333,7 +333,7 @@ fn network_simulator(thread_pool: &ThreadPool, network: &mut Network, max_conver
             "network_simulator_push_{num}: converged: {converged} bytes: {bytes_tx} total_bytes: \
              {total_bytes}"
         );
-        if converged > max_convergance {
+        if converged > max_convergence {
             break;
         }
     }
@@ -382,7 +382,7 @@ fn network_run_push(
                 (node_pubkey, messages)
             })
             .collect();
-        let transfered: Vec<_> = requests
+        let transferred: Vec<_> = requests
             .into_par_iter()
             .map(|(from, push_messages)| {
                 let mut bytes: usize = 0;
@@ -446,7 +446,7 @@ fn network_run_push(
             })
             .collect();
 
-        for (b, d, m, p) in transfered {
+        for (b, d, m, p) in transferred {
             bytes += b;
             delivered += d;
             num_msgs += m;
@@ -492,12 +492,12 @@ fn network_run_pull(
     network: &Network,
     start: usize,
     end: usize,
-    max_convergance: f64,
+    max_convergence: f64,
 ) -> (f64, usize) {
     let mut bytes: usize = 0;
     let mut msgs: usize = 0;
     let mut overhead: usize = 0;
-    let mut convergance = 0f64;
+    let mut convergence = 0f64;
     let num = network.len();
     let network_values: Vec<Node> = network.values().cloned().collect();
     let stakes = stakes(network);
@@ -562,7 +562,7 @@ fn network_run_pull(
                 })
                 .collect()
         };
-        let transfered: Vec<_> = requests
+        let transferred: Vec<_> = requests
             .into_iter()
             .map(|(to, filters, caller_info)| {
                 let mut bytes: usize = 0;
@@ -632,7 +632,7 @@ fn network_run_pull(
                 (bytes, msgs, overhead)
             })
             .collect();
-        for (b, m, o) in transfered {
+        for (b, m, o) in transferred {
             bytes += b;
             msgs += m;
             overhead += o;
@@ -641,16 +641,16 @@ fn network_run_pull(
             .par_iter()
             .map(|v| v.gossip.crds.read().unwrap().len())
             .sum();
-        convergance = total as f64 / ((num * num) as f64);
-        if convergance > max_convergance {
+        convergence = total as f64 / ((num * num) as f64);
+        if convergence > max_convergence {
             break;
         }
         trace!(
-            "network_run_pull_{num}: now: {now} connections: {total} convergance: {convergance} \
+            "network_run_pull_{num}: now: {now} connections: {total} convergence: {convergence} \
              bytes: {bytes} msgs: {msgs} overhead: {overhead}"
         );
     }
-    (convergance, bytes)
+    (convergence, bytes)
 }
 
 fn build_gossip_thread_pool() -> ThreadPool {

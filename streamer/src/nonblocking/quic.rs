@@ -541,7 +541,7 @@ fn handle_and_cache_new_connection(
     {
         let remote_addr = connection.remote_address();
         let receive_window =
-            compute_recieve_window(params.max_stake, params.min_stake, params.peer_type);
+            compute_receive_window(params.max_stake, params.min_stake, params.peer_type);
 
         debug!(
             "Peer type {:?}, total stake {}, max streams {} receive_window {:?} from peer {}",
@@ -636,7 +636,7 @@ async fn prune_unstaked_connections_and_add_new_connection(
 
 /// Calculate the ratio for per connection receive window from a staked peer
 fn compute_receive_window_ratio_for_staked_node(max_stake: u64, min_stake: u64, stake: u64) -> u64 {
-    // Testing shows the maximum througput from a connection is achieved at receive_window =
+    // Testing shows the maximum throughput from a connection is achieved at receive_window =
     // PACKET_DATA_SIZE * 10. Beyond that, there is not much gain. We linearly map the
     // stake to the ratio range from QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO to
     // QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO. Where the linear algebra of finding the ratio 'r'
@@ -660,7 +660,7 @@ fn compute_receive_window_ratio_for_staked_node(max_stake: u64, min_stake: u64, 
     }
 }
 
-fn compute_recieve_window(
+fn compute_receive_window(
     max_stake: u64,
     min_stake: u64,
     peer_type: ConnectionPeerType,
@@ -740,7 +740,7 @@ async fn setup_connection(
                         stats.clone(),
                     ),
                     |(pubkey, stake, total_stake, max_stake, min_stake)| {
-                        // The heuristic is that the stake should be large engouh to have 1 stream pass throuh within one throttle
+                        // The heuristic is that the stake should be large enough to have 1 stream pass through within one throttle
                         // interval during which we allow max (MAX_STREAMS_PER_MS * STREAM_THROTTLING_INTERVAL_MS) streams.
                         let min_stake_ratio =
                             1_f64 / (max_streams_per_ms * STREAM_THROTTLING_INTERVAL_MS) as f64;
@@ -2351,7 +2351,7 @@ pub mod test {
     }
 
     #[test]
-    fn test_cacluate_receive_window_ratio_for_staked_node() {
+    fn test_calculate_receive_window_ratio_for_staked_node() {
         let mut max_stake = 10000;
         let mut min_stake = 0;
         let ratio = compute_receive_window_ratio_for_staked_node(max_stake, min_stake, min_stake);

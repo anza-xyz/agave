@@ -592,7 +592,7 @@ fn run_dos_transactions<T: 'static + TpsClient + Send + Sync>(
     send_batch_size: usize,
 ) {
     // Number of payers is the number of generating threads
-    // Later, we will create a new payer for each thread since Keypair is not clonable
+    // Later, we will create a new payer for each thread since Keypair is not cloneable
     let payers: Vec<Option<Keypair>> = create_payers(
         transaction_params.valid_blockhash,
         num_gen_threads,

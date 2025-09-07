@@ -468,7 +468,7 @@ mod tests {
         )
     }
 
-    fn prioritized_tranfers(
+    fn prioritized_transfers(
         from_keypair: &Keypair,
         to_pubkeys: impl IntoIterator<Item = impl Borrow<Pubkey>>,
         lamports: u64,
@@ -514,7 +514,7 @@ mod tests {
     ) -> TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>> {
         let mut container = TransactionStateContainer::with_capacity(capacity);
         for (from_keypair, to_pubkeys, lamports, compute_unit_price) in tx_infos.into_iter() {
-            let transaction = prioritized_tranfers(
+            let transaction = prioritized_transfers(
                 from_keypair.borrow(),
                 to_pubkeys,
                 lamports,
@@ -715,7 +715,7 @@ mod tests {
     fn test_schedule_over_full_container() {
         let (mut scheduler, _work_receivers, _finished_work_sender) = create_test_frame(1);
 
-        // set up a container is larger enough that single pass of schedulling will not deplete it.
+        // set up a container is larger enough that single pass of scheduling will not deplete it.
         let capacity = scheduler
             .config
             .max_scanned_transactions_per_scheduling_pass

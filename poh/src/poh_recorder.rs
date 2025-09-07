@@ -177,7 +177,7 @@ pub struct PohRecorder {
     /// This field MUST be kept consistent with the `shared_working_bank` field.
     working_bank: Option<WorkingBank>,
     /// This is used to store the current working bank - just the Arc<Bank> without
-    /// schduler or any other metadata. It MUST be kept consistent with
+    /// scheduler or any other metadata. It MUST be kept consistent with
     /// the `working_bank` field of this struct.
     shared_working_bank: SharedWorkingBank,
     working_bank_sender: Sender<WorkingBankEntry>,
@@ -1790,7 +1790,7 @@ mod tests {
         assert!(poh_recorder.working_bank.is_none());
 
         // Even thought we ticked much further than working_bank.max_tick_height,
-        // the `start_slot` is still the slot of the last workign bank set by
+        // the `start_slot` is still the slot of the last working bank set by
         // the earlier call to `poh_recorder.set_bank()`
         assert_eq!(poh_recorder.start_slot(), bank.slot());
     }

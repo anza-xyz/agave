@@ -329,7 +329,7 @@ mod test {
         let mut signers = HashSet::new();
         signers.insert(*nonce_account.get_key());
         let versions = nonce_account.get_state::<Versions>().unwrap();
-        // New is in Uninitialzed state
+        // New is in Uninitialized state
         assert_eq!(versions.state(), &State::Uninitialized);
         set_invoke_context_blockhash!(invoke_context, 95);
         let authorized = *nonce_account.get_key();
@@ -526,7 +526,7 @@ mod test {
     }
 
     #[test]
-    fn withdraw_inx_unintialized_acc_ok() {
+    fn withdraw_inx_uninitialized_acc_ok() {
         prepare_mockup!(invoke_context, instruction_accounts, rent);
         push_instruction_context!(
             invoke_context,
@@ -573,7 +573,7 @@ mod test {
     }
 
     #[test]
-    fn withdraw_inx_unintialized_acc_unsigned_fail() {
+    fn withdraw_inx_uninitialized_acc_unsigned_fail() {
         prepare_mockup!(invoke_context, instruction_accounts, rent);
         push_instruction_context!(
             invoke_context,
@@ -607,7 +607,7 @@ mod test {
     }
 
     #[test]
-    fn withdraw_inx_unintialized_acc_insuff_funds_fail() {
+    fn withdraw_inx_uninitialized_acc_insuff_funds_fail() {
         prepare_mockup!(invoke_context, instruction_accounts, rent);
         push_instruction_context!(
             invoke_context,
@@ -1090,7 +1090,7 @@ mod test {
         let mut signers = HashSet::new();
         signers.insert(nonce_account.get_key());
         let versions: Versions = nonce_account.get_state().unwrap();
-        // New is in Uninitialzed state
+        // New is in Uninitialized state
         assert_eq!(versions.state(), &State::Uninitialized);
         set_invoke_context_blockhash!(invoke_context, 0);
         let authorized = *nonce_account.get_key();
@@ -1145,7 +1145,7 @@ mod test {
         let mut signers = HashSet::new();
         signers.insert(nonce_account.get_key());
         let versions: Versions = nonce_account.get_state().unwrap();
-        // New is in Uninitialzed state
+        // New is in Uninitialized state
         assert_eq!(versions.state(), &State::Uninitialized);
         set_invoke_context_blockhash!(invoke_context, 0);
         let authorized = *nonce_account.get_key();

@@ -134,9 +134,9 @@ enum ForkReplayMode {
 
 enum GenerateVoteTxResult {
     // non voting validator, not eligible for refresh
-    // until authorized keypair is overriden
+    // until authorized keypair is overridden
     NonVoting,
-    // hot spare validator, not eligble for refresh
+    // hot spare validator, not eligible for refresh
     // until set identity is invoked
     HotSpare,
     // failed generation, eligible for refresh
@@ -2743,7 +2743,7 @@ impl ReplayStage {
             // On the fly adjustments via the cli will be picked up for the next vote.
             BlockhashStatus::NonVoting | BlockhashStatus::HotSpare => return false,
             // In this case we have not voted since restart, our setup is unclear.
-            // We have a vote from our previous restart that is eligble for refresh, we must refresh.
+            // We have a vote from our previous restart that is eligible for refresh, we must refresh.
             BlockhashStatus::Uninitialized => None,
             BlockhashStatus::Blockhash(blockhash) => Some(blockhash),
         };
@@ -8064,7 +8064,7 @@ pub(crate) mod tests {
 
         // Trying to refresh the vote on a sibling bank where:
         // 1) The vote for slot 1 hasn't landed
-        // 2) The blockheight is still eligble for a refresh
+        // 2) The blockheight is still eligible for a refresh
         // This will still not refresh because `MAX_VOTE_REFRESH_INTERVAL_MILLIS` has not expired yet
         let expired_bank_sibling = {
             let mut parent_bank = bank2.clone();
@@ -8980,7 +8980,7 @@ pub(crate) mod tests {
                     slot 6
 
             We had some point voted 0 - 6, while the rest of the network voted 0 - 4.
-            We are sitting with an oudated tower that has voted until 1. We see that 4 is the heaviest slot,
+            We are sitting with an outdated tower that has voted until 1. We see that 4 is the heaviest slot,
             however in the past we have voted up to 6. We must acknowledge the vote state present at 6,
             adopt it as our own and *not* vote on 2 or 4, to respect slashing rules as there is
             not enough stake to switch
@@ -9061,7 +9061,7 @@ pub(crate) mod tests {
                     slot 6
 
             We had some point voted 0 - 6, while the rest of the network voted 0 - 4.
-            We are sitting with an oudated tower that has voted until 1. We see that 4 is the heaviest slot,
+            We are sitting with an outdated tower that has voted until 1. We see that 4 is the heaviest slot,
             however in the past we have voted up to 6. We must acknowledge the vote state present at 6,
             adopt it as our own and *not* vote on 3 or 4, to respect slashing rules as we are locked
             out on 4, even though there is enough stake to switch. However we should still reset onto
@@ -9131,7 +9131,7 @@ pub(crate) mod tests {
                       |
                     slot 6
 
-            We had some point voted 0 - 6, we are sitting with an oudated tower that has voted until 1.
+            We had some point voted 0 - 6, we are sitting with an outdated tower that has voted until 1.
         */
 
         let generate_votes = |pubkeys: Vec<Pubkey>| {
@@ -9280,7 +9280,7 @@ pub(crate) mod tests {
             last_hash =
                 fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, i + 1, i, last_hash);
         }
-        // Artifically root 3 and 4
+        // Artificially root 3 and 4
         blockstore.set_roots([3, 4].iter()).unwrap();
 
         // Set up bank0
@@ -9541,7 +9541,7 @@ pub(crate) mod tests {
 
         assert!(!duplicate_confirmed_slots.contains_key(&0));
 
-        // Mark 5 as duplicate confirmed, should suceed
+        // Mark 5 as duplicate confirmed, should succeed
         let bank_hash_5 = bank_forks.read().unwrap().bank_hash(5).unwrap();
         let confirmed_slots = [(5, bank_hash_5)];
 
@@ -9612,7 +9612,7 @@ pub(crate) mod tests {
     }
 
     #[test_case(true ; "same_batch")]
-    #[test_case(false ; "seperate_batches")]
+    #[test_case(false ; "separate_batches")]
     #[should_panic(expected = "Additional duplicate confirmed notification for slot 6")]
     fn test_process_duplicate_confirmed_slots(same_batch: bool) {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
@@ -9656,7 +9656,7 @@ pub(crate) mod tests {
 
         assert!(!duplicate_confirmed_slots.contains_key(&0));
 
-        // Mark 5 as duplicate confirmed, should succed
+        // Mark 5 as duplicate confirmed, should succeed
         let bank_hash_5 = bank_forks.read().unwrap().bank_hash(5).unwrap();
         sender.send(vec![(5, bank_hash_5)]).unwrap();
 
@@ -9680,7 +9680,7 @@ pub(crate) mod tests {
             .is_duplicate_confirmed(&(5, bank_hash_5))
             .unwrap_or(false));
 
-        // Mark 5 and 6 as duplicate confirmed, should suceed
+        // Mark 5 and 6 as duplicate confirmed, should succeed
         let bank_hash_6 = bank_forks.read().unwrap().bank_hash(6).unwrap();
         if same_batch {
             sender

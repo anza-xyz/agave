@@ -45,10 +45,10 @@ impl Precompile {
     pub fn verify(
         &self,
         data: &[u8],
-        instruction_datas: &[&[u8]],
+        instruction_data: &[&[u8]],
         feature_set: &FeatureSet,
     ) -> std::result::Result<(), PrecompileError> {
-        (self.verify_fn)(data, instruction_datas, feature_set)
+        (self.verify_fn)(data, instruction_data, feature_set)
     }
 }
 
@@ -106,13 +106,13 @@ pub fn verify_if_precompile(
 ) -> Result<(), PrecompileError> {
     for precompile in PRECOMPILES.iter() {
         if precompile.check_id(program_id, |feature_id| feature_set.is_active(feature_id)) {
-            let instruction_datas: Vec<_> = all_instructions
+            let instruction_data: Vec<_> = all_instructions
                 .iter()
                 .map(|instruction| instruction.data.as_ref())
                 .collect();
             return precompile.verify(
                 &precompile_instruction.data,
-                &instruction_datas,
+                &instruction_data,
                 feature_set,
             );
         }
@@ -124,7 +124,7 @@ pub fn verify_if_precompile(
 pub(crate) fn test_verify_with_alignment(
     verify: Verify,
     instruction_data: &[u8],
-    instruction_datas: &[&[u8]],
+    instruction_data: &[&[u8]],
     feature_set: &FeatureSet,
 ) -> Result<(), PrecompileError> {
     // Copy instruction data.
@@ -133,13 +133,13 @@ pub(crate) fn test_verify_with_alignment(
     // Verify the instruction data.
     let result = verify(
         &instruction_data_copy[..instruction_data.len()],
-        instruction_datas,
+        instruction_data,
         feature_set,
     );
 
     // Shift alignment by 1 to test `verify` does not rely on alignment.
     instruction_data_copy[1..].copy_from_slice(instruction_data);
-    let result_shifted = verify(&instruction_data_copy[1..], instruction_datas, feature_set);
+    let result_shifted = verify(&instruction_data_copy[1..], instruction_data, feature_set);
     assert_eq!(result, result_shifted);
     result
 }

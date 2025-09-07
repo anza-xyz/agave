@@ -617,7 +617,7 @@ fn setup_slot_recording(
     let verify_slots = arg_matches.occurrences_of("verify_slots") > 0;
     match (record_slots, verify_slots) {
         (false, false) => {
-            // for regualr replay ledger, report cost-tracker-stats after each
+            // for regular replay ledger, report cost-tracker-stats after each
             // slot is confirmed.
             let slot_callback = Arc::new(move |bank: &Bank| {
                 // Block must be frozen by this point
@@ -1894,7 +1894,7 @@ fn main() {
 
                     if let Some(mut slot_recorder_config) = slot_recorder_config {
                         // Drop transaction_status_sender to break transaction_recorder
-                        // out of its' recieve loop
+                        // out of its' receive loop
                         let transaction_status_sender =
                             slot_recorder_config.transaction_status_sender.take();
                         drop(transaction_status_sender);

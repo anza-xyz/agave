@@ -738,7 +738,7 @@ async fn test_verify_proof_without_context<T, U>(
     let client = &mut context.banks_client;
     let payer = &context.payer;
 
-    // verify a valid proof (wihtout creating a context account)
+    // verify a valid proof (without creating a context account)
     let instructions = vec![proof_instruction.encode_verify_proof(None, success_proof_data)];
     let transaction = Transaction::new_signed_with_payer(
         &instructions.with_max_compute_unit_limit(),

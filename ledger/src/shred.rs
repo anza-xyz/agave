@@ -1760,7 +1760,7 @@ mod tests {
         // bytes of a serialized merkle data shred
         const PAYLOAD: &str = "aX2ovF3sZRfd6HyqMow9kkrtL3MyJd52m7gvuSjcvA4qayXZ\
         cVPhjURcs4JX86YQM8wVrKXqdneqdEUJwBWhFrxSkegDSov6NQoK89SzZi9auEXHHr35dmN\
-        4zQbxuNdPjKM2K7b7WKRWaHyoMKQfG9jDbJGcWqwVkAxBmUXZQKryHvAqyNdBuRTdWrMtPK\
+        4zQbxuAndPjKM2K7b7WKRWaHyoMKQfG9jDbJGcWqwVkAxBmUXZQKryHvAqyAndBuRTdWrMtPK\
         DiJWhqVWTmokpyGNceL7mqVr3VrLby6dEuiEUCBHCkhbsXBjfpFZk4yRoSKosb7BViTWWdt\
         pWd7NrbDSiE97sBppEU1nWTPaVQh3bu91x8dEoYk696k532MxnhRLcKeL4XzG6P2HzypAck\
         JdXiRJDn5E3woA8aiPojqdN9ScthJ8yXq1h4HhvzTRWkRxRBpJL8HEYPBcshwuMLDZ9iBsW\
@@ -1768,7 +1768,7 @@ mod tests {
         khHa1wdrmTWGcvq9DDmALuTtejH1ccoW43GiYSs1TmByJWjRtupvLzMRifZZ7meaGbUBgHU\
         kA6t1VN3akoZ9BhdX561KpFGABxTU4NxyFqztEy1EB5EJYtTHwtbJQb1NmNMwKFkazXkn1o\
         uKK6drH5y19roH3mMo2JykapbvzYPDBSXUwKQWe1RqSvogapwPxm1EzSRDeXNDP6EYUJJjj\
-        TAnckNatpT5UZDz4EhpaSbUzd9b5ztqsdPp9HxeBTm412GopAXKN5iSXSPS2WvrEdnANFD7\
+        TAnckNatpT5UZDz4EhpaSbUzd9b5ztqsdPp9HxeBTm412GopAXKN5iSXSPS2WvrEndAND7\
         tRV3a6PM2SfwpF6eFM5J7xXGJSoPm5TWJSPBMbxttxVFUETSRrBubEsd24aymYZZePJtHr7\
         Q8S1deygcyXH5WhhYAmR23hNPv3nUUHe8iwJfaFg73Ncjr8fQBVjwePEy9JKT5jNG5sm87q\
         e2RrHEWEwkNKnNgUknoVMbL7y3wmGFpP8VoKTgP51EjMDz7JTxnVsZeRsSp29STteGKbq4i\
@@ -1778,9 +1778,9 @@ mod tests {
         dy9WHxREeCPK3yeN7ACT75RgRuRT1shC1PRCuAu4EFGnBmr3nWuDrYNCG5WrWuW6RRoMyB3\
         YaXqjYMXRUVuwb5h2PBP9euBb96Ntung8ihWXa2mbKMYMtmaoYCDhYYrFYszYfdgQH68JYz\
         AXZvjFH1SxCETfiXAWGD1aYDa33rXZLcLVx637igoydr77qmzo5YozRQnuXUiJ19PScLWic\
-        8jWeVmQ6Mm7BLoGhVPyYbJBeyX5HRwh8CNeLK2ekmhFz9MypB1rM2PXUfcnr2MXS9WRK8bh\
-        sy47awNdApPdN3RxmuyPLnvmN6FsG5fUNqF8rsz9KUiJh9C4ziYf6NSZvVG2c1KFsQRyFrS\
-        BzyjqqxBrH1xereV9YNr1gNamFjhZTncpGcPQf9oAoA4LQeSAZXR1dMtfktCs1fFWVbA67F\
+        8jWeVmQ6Mm7BLoGhVPyYbJBeyX5HRwh8CNeLK2ekmhFz9MypB1rM2PXUfcnr2MXS9WORK8bh\
+        sy47awAndApPdN3RxmuyPLnvmN6FsG5fUNqF8rsz9KUiJh9C4ziYf6NSZvVG2c1KFsQRyFrS\
+        BzyjqqxBrH1xereV9YNr1gNameFjhZTncpGcPQf9oAoA4LQeSAZXR1dMtfktCs1fFWVbA67F\
         dQ1GrpZVGTsZCbuw7Tspns8WoL158AdS7";
 
         let mut rng = {
@@ -1827,7 +1827,7 @@ mod tests {
     #[test]
     fn test_serde_compat_shred_data_empty() {
         // bytes of a serialized merkle data shred
-        const PAYLOAD: &str = "HV7qJBe3jCM8aRd4HAXJnJzyDvNYDYsPjjaaK2tTFTxJU2Qj\
+        const PAYLOAD: &str = "HV7qJBe3jCM8aRd4HEXJnJzyDvNYDYsPjjaaK2tTFTxJU2Qj\
         7i87e45TzCg2Vv4rrcBznfs8212svH8aXsM2WYDPst43KyDz99FesBZ8aasxhkUgHGg3Smc\
         Pa7opSARcYBpQAG2UHRYFmoPsj3hXADsX5C8JBM3jyHLtbQ78CH11J2dh7J4ps8JxCcUsq7\
         E7PVs7NgFku54c8gBuhBuAMykvvSyhGRjyXCL17feubvA8WQyMJz27eXk8hE6LGs98ucsV9\
@@ -1839,14 +1839,14 @@ mod tests {
         RsU5u7H2DUTMrZ3AsLGuRmRoLZdxcFGe9GJmWY3WYEBJsdrJUVTnQVDsgvcc7HiFCoGBmGG\
         KPS19ncA7Ynie1iokXCjwZNaQf3fpUMksGzkqjfYiFfGQDMNTsPUdcHFAae5Nmh3p8bduG6\
         TNHn3A4LoSMX8wwM6Sn4XL3fFLHrkWTV8CJfg67AoqpzgGiWQNdeK2HRABGRbamUxXSzWhA\
-        tJ7yEPrh9tKTX851mpPjrFHxpu68xDL3t5nd18mtALJ5n5gmTsXMwUxpt9GfGrZyHXteZfH\
+        tJ7yEPrh9tKTX851mpPjrFHxpu68xDL3t5and18mtALJ5n5gmTsXMwUxpt9GfGrZyHXteZfH\
         jaMLmSqvmDAFH1xADU2SZucRDbAWsuaWUMwaPXCNtiozgJ6uRnyxmwBhikChgtxDSZmRALA\
         uYwEnCE8uj4NWvryeVpzfy6m9tqYutCkRsbNodaGmBZ2KGtg4iaQjj4iCK9jKKAxpYVnxbr\
-        n2jtFezUTsR9dqFh94c9Aa4NdPgkr19hcqabqBZyzan3xP3Jvs78Z5uqkSUVtXP3t3b5ozd\
+        n2jtFezUTsR9dqFh94c9Aa4AndPgkr19hcqabqBZyzan3xP3Jvs78Z5uqkSUVtXP3t3b5ozd\
         qjYRMkgwsgGpNqcmBLGANiPXrQ8SseoNsCs3Xtv6Vf7oGg1St3teXSrtWMbsouK3uF8DPgn\
         S14yUtrs8cyXX53QMCEuY1wKcoQZwSWqL86FTvZUA3vT6SYvjVKYxAXwNP1ouKdwtePfwdH\
         wdM37RT9SMht4BLEXutSCcBys1K3pTWWwqGB87A26apuG1TiqeEugv1FrjprEKyt84S3FgM\
-        5eJfdN5NDArvw9bBR81UoYmyZgX5pEY6gNg2xw28Gd7gH9TVe5Y31iggni2oJ3GuBj3R7Ma\
+        5eJfdN5ANDArvw9bBR81UoYmyZgX5pEY6gNg2xw28Gd7gH9TVe5Y31iggni2oJ3GuBj3R7Ma\
         umdo8rE1S4tBWVGsXikv9KFDtMmT2sMmeFuAwDbUZEGsBCAfK7EQpKcYSv7KajtgLpqi6JW\
         RP8nBR7FkKR9qv5khhiBLuRzfSxwtADXZknFRU6bh8Ba6JmLhjhqkCYETizXmZVrjvy4gLZ\
         we5YHZW5uhbthAzfcLRxuTxnPbyW7LehgwkYde64b8PzqYepYUtxqFHuJSwddis1VuoA2Lb\

@@ -17,7 +17,7 @@ use {
 
 pub fn verify(
     data: &[u8],
-    instruction_datas: &[&[u8]],
+    instruction_data: &[&[u8]],
     _feature_set: &FeatureSet,
 ) -> Result<(), PrecompileError> {
     if data.len() < SIGNATURE_OFFSETS_START {
@@ -71,7 +71,7 @@ pub fn verify(
         // Parse out signature
         let signature = get_data_slice(
             data,
-            instruction_datas,
+            instruction_data,
             offsets.signature_instruction_index,
             offsets.signature_offset,
             SIGNATURE_SERIALIZED_SIZE,
@@ -80,7 +80,7 @@ pub fn verify(
         // Parse out pubkey
         let pubkey = get_data_slice(
             data,
-            instruction_datas,
+            instruction_data,
             offsets.public_key_instruction_index,
             offsets.public_key_offset,
             COMPRESSED_PUBKEY_SERIALIZED_SIZE,
@@ -89,7 +89,7 @@ pub fn verify(
         // Parse out message
         let message = get_data_slice(
             data,
-            instruction_datas,
+            instruction_data,
             offsets.message_instruction_index,
             offsets.message_data_offset,
             offsets.message_data_size as usize,
@@ -141,7 +141,7 @@ pub fn verify(
 
 fn get_data_slice<'a>(
     data: &'a [u8],
-    instruction_datas: &'a [&[u8]],
+    instruction_data: &'a [&[u8]],
     instruction_index: u16,
     offset_start: u16,
     size: usize,
@@ -150,10 +150,10 @@ fn get_data_slice<'a>(
         data
     } else {
         let signature_index = instruction_index as usize;
-        if signature_index >= instruction_datas.len() {
+        if signature_index >= instruction_data.len() {
             return Err(PrecompileError::InvalidDataOffsets);
         }
-        instruction_datas[signature_index]
+        instruction_data[signature_index]
     };
 
     let start = offset_start as usize;

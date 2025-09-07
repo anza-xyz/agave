@@ -2031,7 +2031,7 @@ impl ClusterInfo {
             ) {
                 true
             } else {
-                self.stats.num_unverifed_gossip_addrs.add_relaxed(1);
+                self.stats.num_unverified_gossip_addrs.add_relaxed(1);
                 false
             }
         };

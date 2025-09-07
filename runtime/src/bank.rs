@@ -2449,7 +2449,7 @@ impl Bank {
     /// Recalculates the bank hash
     ///
     /// This is used by ledger-tool when creating a snapshot, which
-    /// recalcuates the bank hash.
+    /// recalculates the bank hash.
     ///
     /// Note that the account state is *not* allowed to change by rehashing.
     /// If modifying accounts in ledger-tool is needed, create a new bank.
@@ -5566,12 +5566,12 @@ impl InvokeContextCallback for Bank {
         &self,
         program_id: &Pubkey,
         data: &[u8],
-        instruction_datas: Vec<&[u8]>,
+        instruction_data: Vec<&[u8]>,
     ) -> std::result::Result<(), PrecompileError> {
         if let Some(precompile) = get_precompile(program_id, |feature_id: &Pubkey| {
             self.feature_set.is_active(feature_id)
         }) {
-            precompile.verify(data, &instruction_datas, &self.feature_set)
+            precompile.verify(data, &instruction_data, &self.feature_set)
         } else {
             Err(PrecompileError::InvalidPublicKey)
         }

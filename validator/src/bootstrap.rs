@@ -689,7 +689,7 @@ fn get_rpc_nodes(
     bootstrap_config: &RpcBootstrapConfig,
 ) -> Result<Vec<GetRpcNodeResult>, GetRpcNodeError> {
     let mut blacklist_timeout = Instant::now();
-    let mut get_rpc_peers_timout = Instant::now();
+    let mut get_rpc_peers_timeout = Instant::now();
     let mut newer_cluster_snapshot_timeout = None;
     let mut retry_reason = None;
     loop {
@@ -706,7 +706,7 @@ fn get_rpc_nodes(
             bootstrap_config,
         );
         if rpc_peers.is_empty() {
-            if get_rpc_peers_timout.elapsed() > GET_RPC_PEERS_TIMEOUT {
+            if get_rpc_peers_timeout.elapsed() > GET_RPC_PEERS_TIMEOUT {
                 return Err(GetRpcNodeError::NoRpcPeersFound);
             }
             continue;
@@ -714,7 +714,7 @@ fn get_rpc_nodes(
 
         // Reset timeouts if we found any viable RPC peers.
         blacklist_timeout = Instant::now();
-        get_rpc_peers_timout = Instant::now();
+        get_rpc_peers_timeout = Instant::now();
         if bootstrap_config.no_snapshot_fetch {
             let random_peer = &rpc_peers[thread_rng().gen_range(0..rpc_peers.len())];
             return Ok(vec![GetRpcNodeResult {
@@ -860,7 +860,7 @@ type KnownSnapshotHashes = HashMap<(Slot, Hash), HashSet<(Slot, Hash)>>;
 /// queried for their individual snapshot hashes, their results will be checked against this
 /// map to verify correctness.
 ///
-/// NOTE: Only a single snashot hash is allowed per slot.  If somehow two known validators have
+/// NOTE: Only a single snapshot hash is allowed per slot.  If somehow two known validators have
 /// a snapshot hash with the same slot and _different_ hashes, the second will be skipped.
 /// This applies to both full and incremental snapshot hashes.
 fn get_snapshot_hashes_from_known_validators(

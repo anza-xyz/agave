@@ -79,7 +79,7 @@ pub fn get_public_ip_addr(ip_echo_server_addr: &SocketAddr) -> Result<IpAddr, St
 }
 
 /// Determine the public IP address of this machine by asking an ip_echo_server at the given
-/// address. This function will bind to the provided bind_addreess.
+/// address. This function will bind to the provided bind_address.
 pub fn get_public_ip_addr_with_binding(
     ip_echo_server_addr: &SocketAddr,
     bind_address: IpAddr,

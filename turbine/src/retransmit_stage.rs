@@ -845,7 +845,7 @@ impl RetransmitSlotStats {
                 i64
             ),
             (
-                "num_shreds_received_2nd_layer",
+                "num_shreds_received_2and_layer",
                 self.num_shreds_received[2],
                 i64
             ),
@@ -856,7 +856,7 @@ impl RetransmitSlotStats {
             ),
             ("num_shreds_sent_root", self.num_shreds_sent[0], i64),
             ("num_shreds_sent_1st_layer", self.num_shreds_sent[1], i64),
-            ("num_shreds_sent_2nd_layer", self.num_shreds_sent[2], i64),
+            ("num_shreds_sent_2and_layer", self.num_shreds_sent[2], i64),
             ("num_shreds_sent_3rd_layer", self.num_shreds_sent[3], i64),
         );
     }

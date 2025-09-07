@@ -552,7 +552,7 @@ impl LoadingTaskCookie {
     }
 }
 
-/// Suspends the thread in case no cooprative loading task was assigned
+/// Suspends the thread in case no cooperative loading task was assigned
 #[derive(Debug, Default)]
 pub struct LoadingTaskWaiter {
     cookie: Mutex<LoadingTaskCookie>,

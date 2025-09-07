@@ -25,7 +25,7 @@ pub trait InvokeContextCallback {
         &self,
         _program_id: &Pubkey,
         _data: &[u8],
-        _instruction_datas: Vec<&[u8]>,
+        _instruction_data: Vec<&[u8]>,
     ) -> Result<(), PrecompileError> {
         Err(PrecompileError::InvalidPublicKey)
     }

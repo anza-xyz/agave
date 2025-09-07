@@ -286,7 +286,7 @@ impl Rocks {
         // opposed to manual compaction requests on a range.
         // - Periodic compaction operates on individual files once the file
         //   has reached a certain (configurable) age. See comments at
-        //   PERIODIC_COMPACTION_SECONDS for some more deatil.
+        //   PERIODIC_COMPACTION_SECONDS for some more detail.
         // - Manual compaction operates on a range and could end up propagating
         //   through several files and/or levels of the db.
         //
@@ -1377,7 +1377,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_remove_deprecated_progam_costs_column_compat() {
+    fn test_remove_deprecated_program_costs_column_compat() {
         solana_logger::setup();
 
         fn is_program_costs_column_present(path: &Path) -> bool {

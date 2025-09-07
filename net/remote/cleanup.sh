@@ -14,7 +14,7 @@ for pid in solana/*.pid; do
     $sudo kill -- -"$pgid"
   fi
 done
-for pattern in validator.sh boostrap-leader.sh solana- remote- iftop validator client node; do
+for pattern in validator.sh bootstrap-leader.sh solana- remote- iftop validator client node; do
   echo "killing $pattern"
   pkill -f $pattern
 done

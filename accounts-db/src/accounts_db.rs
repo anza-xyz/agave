@@ -1909,7 +1909,7 @@ impl AccountsDb {
                         // correctness so that scan WILL try to look in disk if it is
                         // not in-mem. These keys are from 1) recently processed
                         // slots, 2) zero lamports found in shrink. Therefore, they are very likely
-                        // to be in-memory, and seldomly do we need to look them up in disk.
+                        // to be in-memory, and seldom do we need to look them up in disk.
                         candidates_bin.insert(
                             removed_pubkey,
                             CleaningInfo {
@@ -2782,7 +2782,7 @@ impl AccountsDb {
     ///    and should not be unref'd. If they exist in the accounts index, they are NEW.
     /// clean_stored_dead_slots - clean_stored_dead_slots iterates through all the pubkeys in the dead
     ///    slots and unrefs them in the acocunts index if they are not present in
-    ///    pubkeys_removed_from_accounts_index. Skipping clean is the equivilent to
+    ///    pubkeys_removed_from_accounts_index. Skipping clean is the equivalent to
     ///    pubkeys_removed_from_accounts_index containing all the pubkeys in the dead slots
     fn process_dead_slots(
         &self,

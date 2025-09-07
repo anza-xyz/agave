@@ -137,6 +137,6 @@ proofs.
 - `PercentageWithCap`:
 
   - The percentage with cap proof certifies that percentage relation useful
-    for fee calcluations
+    for fee calculation
     - Mathematical description and proof of security:
       [[Notes]](https://github.com/anza-xyz/agave/blob/master/docs/src/runtime/zk-docs/percentage_with_cap.pdf)

@@ -26,7 +26,7 @@ expectedCrateVersion="$MAJOR.$MINOR.$PATCH$SPECIAL"
   exit 1
 }
 
-# check workspace.version for worksapce root
+# check workspace.version for workspace root
 workspace_cargo_tomls=(Cargo.toml programs/sbf/Cargo.toml)
 for cargo_toml in "${workspace_cargo_tomls[@]}"; do
   if ! grep -q "^version = \"$expectedCrateVersion\"$" "$cargo_toml"; then
@@ -40,7 +40,7 @@ Cargo_tomls=$(ci/order-crates-for-publishing.py)
 for Cargo_toml in $Cargo_tomls; do
   echo "--- $Cargo_toml"
 
-  # check the version which doesn't inherit from worksapce
+  # check the version which doesn't inherit from workspace
   if ! grep -q "^version = { workspace = true }$" "$Cargo_toml"; then
     echo "Warn: $Cargo_toml doesn't use the inherited version"
     grep -q "^version = \"$expectedCrateVersion\"$" "$Cargo_toml" || {

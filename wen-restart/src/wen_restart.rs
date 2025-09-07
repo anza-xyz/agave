@@ -508,7 +508,7 @@ pub(crate) fn generate_snapshot(
     }
 
     // Snapshot generation calls AccountsDb background tasks (flush/clean/shrink).
-    // These cannot run conncurrent with each other, so we must shutdown
+    // These cannot run concurrent with each other, so we must shutdown
     // AccountsBackgroundService before proceeding.
     abs_status.stop();
     info!("Waiting for AccountsBackgroundService to stop");
@@ -2078,7 +2078,7 @@ mod tests {
             let node = ContactInfo::new_rand(&mut rng, Some(node_pubkey));
             let last_vote_hash = Hash::new_unique();
             let now = timestamp();
-            // Validator 0 votes for the new_epoch_bank while everyone elese vote for old_epoch_bank.
+            // Validator 0 votes for the new_epoch_bank while everyone else vote for old_epoch_bank.
             let last_voted_fork_slots = if index == 0 {
                 vec![new_epoch_slot, my_heaviest_fork_slot, 0]
             } else {

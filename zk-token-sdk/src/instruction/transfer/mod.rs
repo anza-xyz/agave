@@ -50,7 +50,7 @@ pub fn split_u64(amount: u64, bit_length: usize) -> (u64, u64) {
 
 /// Takes in a 64-bit number `amount` and a bit length `bit_length`. It returns:
 /// - the `bit_length` low bits of `amount` interpreted as u64
-/// - the `(64 - bit_length)` high bits of `amount` interpretted as u64
+/// - the `(64 - bit_length)` high bits of `amount` interpreted as u64
 #[cfg(not(target_os = "solana"))]
 pub fn try_split_u64(amount: u64, bit_length: usize) -> Result<(u64, u64), InstructionError> {
     match bit_length {
@@ -81,7 +81,7 @@ pub fn combine_lo_hi_u64(amount_lo: u64, amount_hi: u64, bit_length: usize) -> u
     }
 }
 
-/// Combine two numbers that are interpretted as the low and high bits of a target number. The
+/// Combine two numbers that are interpreted as the low and high bits of a target number. The
 /// `bit_length` parameter specifies the number of bits that `amount_hi` is to be shifted by.
 #[cfg(not(target_os = "solana"))]
 pub fn try_combine_lo_hi_u64(

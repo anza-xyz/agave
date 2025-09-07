@@ -64,7 +64,7 @@ impl TransactionStatusService {
         transaction_notifier: Option<TransactionNotifierArc>,
         blockstore: Arc<Blockstore>,
         enable_extended_tx_metadata_storage: bool,
-        depenency_tracker: Option<Arc<DependencyTracker>>,
+        dependency_tracker: Option<Arc<DependencyTracker>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
         let thread_hdl = Builder::new()
@@ -98,7 +98,7 @@ impl TransactionStatusService {
                             transaction_notifier.clone(),
                             &blockstore,
                             enable_extended_tx_metadata_storage,
-                            depenency_tracker.clone(),
+                            dependency_tracker.clone(),
                         ) {
                             Ok(_) => {}
                             Err(err) => {

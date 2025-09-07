@@ -7,7 +7,7 @@ use {
 };
 
 /// Meta contains enough context to recover the index from storage itself
-/// This struct will be backed by mmaped and snapshotted data files.
+/// This struct will be backed by mapped and snapshotted data files.
 /// So the data layout must be stable and consistent across the entire cluster!
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[repr(C)]
@@ -22,7 +22,7 @@ pub struct StoredMeta {
     pub pubkey: Pubkey,
 }
 
-/// This struct will be backed by mmaped and snapshotted data files.
+/// This struct will be backed by mapped and snapshotted data files.
 /// So the data layout must be stable and consistent across the entire cluster!
 #[derive(Serialize, Deserialize, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(C)]

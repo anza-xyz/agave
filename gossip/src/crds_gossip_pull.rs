@@ -629,7 +629,7 @@ pub(crate) fn get_max_bloom_filter_bytes(caller: &CrdsValue) -> usize {
                 })
                 .dedup();
             let size_of_filter = iter.next().unwrap();
-            // All filters should have the same serialzied size.
+            // All filters should have the same serialized size.
             assert_eq!(iter.next(), None);
             out[size_of_filter] = u16::try_from(max_bytes).unwrap();
         }

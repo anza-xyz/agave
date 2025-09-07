@@ -663,7 +663,7 @@ mod tests {
                 &self,
                 program_id: &Pubkey,
                 _data: &[u8],
-                _instruction_datas: Vec<&[u8]>,
+                _instruction_data: Vec<&[u8]>,
             ) -> std::result::Result<(), PrecompileError> {
                 if self.is_precompile(program_id) {
                     Ok(())

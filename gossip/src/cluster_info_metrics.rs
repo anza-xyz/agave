@@ -118,7 +118,7 @@ pub struct GossipStats {
     pub(crate) new_pull_requests: Counter,
     pub(crate) new_push_requests2: Counter,
     pub(crate) new_push_requests: Counter,
-    pub(crate) num_unverifed_gossip_addrs: Counter,
+    pub(crate) num_unverified_gossip_addrs: Counter,
     pub(crate) packets_received_count: Counter,
     packets_received_ping_messages_count: Counter,
     packets_received_pong_messages_count: Counter,
@@ -488,8 +488,8 @@ pub(crate) fn submit_gossip_stats(
     datapoint_info!(
         "cluster_info_stats5",
         (
-            "num_unverifed_gossip_addrs",
-            stats.num_unverifed_gossip_addrs.clear(),
+            "num_unverified_gossip_addrs",
+            stats.num_unverified_gossip_addrs.clear(),
             i64
         ),
         (

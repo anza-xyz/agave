@@ -485,8 +485,8 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_details_timing_acumulate_program() {
-        // Acumulate an erroring transaction
+    fn test_execute_details_timing_accumulate_program() {
+        // Accumulate an erroring transaction
         let program_id = Pubkey::new_unique();
         let us = 100;
         let compute_units_consumed = 1;
@@ -494,8 +494,8 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_details_timing_acumulate() {
-        // Acumulate an erroring transaction
+    fn test_execute_details_timing_accumulate() {
+        // Accumulate an erroring transaction
         let program_id = Pubkey::new_unique();
         let us = 100;
         let compute_units_consumed = 1;

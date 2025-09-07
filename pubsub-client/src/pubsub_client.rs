@@ -236,7 +236,7 @@ where
         )))
     }
 
-    /// Shutdown the internel message receiver and wait for its thread to exit.
+    /// Shutdown the internal message receiver and wait for its thread to exit.
     ///
     /// Note that this will block as long as the subscription receiver is
     /// waiting on messages from the server, and this can take an unbounded

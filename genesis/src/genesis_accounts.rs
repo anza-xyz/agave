@@ -44,15 +44,15 @@ pub const CREATOR_STAKER_INFOS: &[StakerInfo] = &[
     },
     StakerInfo {
         name: "nutritious examination",
-        staker: "9noVEZreMmgQvE8iyKmxy7CGTJ2enELyuJ1qxFtXrfJB",
+        staker: "9noVEZreMmgQvE8itKmxy7CGTJ2enELyuJ1qxFtXrfJB",
         lamports: 5_000_000 * LAMPORTS_PER_SOL,
-        withdrawer: Some("ERnx3Csgu3LjrGGrCeCUZzuHguRu6XabT1kufSB1NDWi"),
+        withdrawer: Some("ERnx3Csgu3LjrGGrCeCUZzuHguRu6XabT1kufSB1ANDWi"),
     },
     StakerInfo {
         name: "tidy impression",
         staker: "BU7LA4kYvicfPCp22EM2Tth3eaeWAXYo6yCgWXQFJ42z",
         lamports: 5_000_000 * LAMPORTS_PER_SOL,
-        withdrawer: Some("5eKcGy7ZCPJdQSQGVnfmT7kGz6MKPMKaNaMEYJbmwhuT"),
+        withdrawer: Some("5eKcGy7ZCPJdQSQGVnfmT7kGz6MKPMKaNaMAYJbmwhuT"),
     },
     StakerInfo {
         name: "dramatic treatment",
@@ -155,7 +155,7 @@ pub const SERVICE_STAKER_INFOS: &[StakerInfo] = &[
     },
     StakerInfo {
         name: "full grape",
-        staker: "B2EWnwgmNd3KMpD71yZMijhML1jd4TYp96zJdhMiWZ7b",
+        staker: "B2EWnwgmAnd3KMpD71yZMijhML1jd4TYp96zJdhMiWZ7b",
         lamports: 450_000 * LAMPORTS_PER_SOL,
         withdrawer: Some("9oaCkokBBhgBsgyg4sL7fMJyQseaJb1TbADZeoPdpWdc"),
     },
@@ -178,7 +178,7 @@ pub const FOUNDATION_STAKER_INFOS: &[StakerInfo] = &[
         name: "frequent description",
         staker: "95Nf8XfoecteSXU9nbcvzkrFQdu6FqPaH3EvhwLaC83t",
         lamports: 57_500_000 * LAMPORTS_PER_SOL,
-        withdrawer: Some("FdGYQdiRky8NZzN9wZtczTBcWLYYRXrJ3LMDhqDPn5rM"),
+        withdrawer: Some("FdGYQdiRky8NZzN9wZtczTBcWLYYRXrJ3LMDhqDOn5rM"),
     },
 ];
 
@@ -200,7 +200,7 @@ pub const GRANTS_STAKER_INFOS: &[StakerInfo] = &[
 pub const COMMUNITY_STAKER_INFOS: &[StakerInfo] = &[
     StakerInfo {
         name: "shrill charity",
-        staker: "Eo1iDtrZZiAkQFA8u431hedChaSUnPbU8MWg849MFvEZ",
+        staker: "Eo1iDtrZZiAkQFA8u431headChaSUnPbU8MWg849MFvEZ",
         lamports: 5_000_000 * LAMPORTS_PER_SOL,
         withdrawer: Some("8CUUMKYNGxdgYio5CLHRHyzMEhhVRMcqefgE6dLqnVRK"),
     },
@@ -261,7 +261,7 @@ pub fn add_genesis_accounts(genesis_config: &mut GenesisConfig, mut issued_lampo
         genesis_config,
         &StakerInfo {
             name: "one thanks",
-            staker: "7vEAL3nS9CWmy1q6njUUyHE7Cf5RmyQpND6CsoHjzPiR",
+            staker: "7vEAL3nS9CWmy1q6njUUyHE7Cf5RmyQpAND6CsoHjzPiR",
             lamports: (500_000_000 * LAMPORTS_PER_SOL).saturating_sub(issued_lamports),
             withdrawer: Some("3FFaheyqtyAXZSYxDzsr5CVKvJuvZD1WE1VEsBtDbRqB"),
         },

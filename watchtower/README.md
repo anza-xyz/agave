@@ -10,7 +10,7 @@ notifications to issues only affecting that set of validators.
 
 User can provide either 1 or 3 RPC URLs for the cluster via the `--url` or `--urls`
 command-line arguments respectively. 2 URLs are not accepted because it's not enough
-to have redundnacy, and more than 3 URLs are not accepted because there's little
+to have redundancy, and more than 3 URLs are not accepted because there's little
 benefit from having more than 3. If 3 URLs are provided, at least 2 of them have to
 confirm health of a cluster.
 

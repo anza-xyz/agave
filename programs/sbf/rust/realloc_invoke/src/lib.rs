@@ -247,7 +247,7 @@ fn process_instruction(
             assert_eq!(final_len, accounts[1].data_len());
         }
         INVOKE_DEALLOC_AND_ASSIGN => {
-            msg!("realloc zerod");
+            msg!("realloc zeroed");
             let (bytes, _) = instruction_data[2..].split_at(std::mem::size_of::<usize>());
             let pre_len = usize::from_le_bytes(bytes.try_into().unwrap());
             let new_len = pre_len.saturating_mul(2);

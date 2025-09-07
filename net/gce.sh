@@ -156,7 +156,7 @@ $(
                       (by default preemptible instances are used to reduce
                       cost).  Note that the bootstrap validator,
                       blockstreamer and client nodes are always dedicated.
-                      Set this flag on colo to prevent your testnet from being pre-empted by nightly test automation.
+                      Set this flag on colo to prevent your testnet from being pre-emptied by nightly test automation.
    --self-destruct-hours [number]
                     - Specify lifetime of the allocated instances in hours. 0 to
                       disable. Only supported on GCE. (default: $selfDestructHours)
@@ -254,7 +254,7 @@ while [[ -n $1 ]]; do
   fi
 done
 
-while getopts "h?p:Pn:c:r:z:gG:a:d:uxf" opt "${shortArgs[@]}"; do
+while getopts "h?p:On:c:r:z:gG:a:d:uxf" opt "${shortArgs[@]}"; do
   case $opt in
   h | \?)
     usage

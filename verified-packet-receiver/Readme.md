@@ -8,7 +8,7 @@ ingestion and verification more scalable compared to a single-node solution.
 
 This module implements the VerifiedPacketReceiver in the below architecture
 which encapsulates the functionality of receiving the verified packet batches
-from the vortexor. In the first impelementation, we use UDP to receive the
+from the vortexor. In the first implementation, we use UDP to receive the
 verified packets from the vortexor. It is designed to support other protocol
 option such as using QUIC.
 

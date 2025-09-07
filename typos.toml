@@ -1,0 +1,96 @@
+[files]
+extend-exclude = ["**/*.min.js", "**/target/**", "**/node_modules/**", "**/docs/static/**", "**/genesis/**", "**/tokens/README.md"]
+
+[default]
+extend-glob = ["**/*.rs", "**/*.md", "**/*.txt", "**/*.sh", "**/*.py", "**/*.yml", "**/*.yaml"]
+extend-ignore-re = ["[a-f0-9]{32,}", "digest = \"[^\"]+\""]
+
+[default.extend-words]
+# Solana-specific terms
+solana = "solana"
+agave = "agave"
+rpc = "rpc"
+tpu = "tpu"
+tvu = "tvu"
+poh = "poh"
+gossip = "gossip"
+turbine = "turbine"
+banking = "banking"
+validator = "validator"
+stake = "stake"
+delegation = "delegation"
+epoch = "epoch"
+slot = "slot"
+hash = "hash"
+merkle = "merkle"
+# Additional Solana terms
+ledger = "ledger"
+genesis = "genesis"
+faucet = "faucet"
+cluster = "cluster"
+node = "node"
+peer = "peer"
+consensus = "consensus"
+voting = "voting"
+leader = "leader"
+follower = "follower"
+replay = "replay"
+snapshot = "snapshot"
+accounts = "accounts"
+program = "program"
+instruction = "instruction"
+transaction = "transaction"
+signature = "signature"
+keypair = "keypair"
+pubkey = "pubkey"
+privkey = "privkey"
+# Technical terms
+cryptocurrency = "cryptocurrency"
+blockchain = "blockchain"
+cryptographic = "cryptographic"
+cryptography = "cryptography"
+# Common programming terms
+async = "async"
+await = "await"
+callback = "callback"
+mutex = "mutex"
+semaphore = "semaphore"
+# File extensions and formats
+json = "json"
+yaml = "yaml"
+toml = "toml"
+# Common misspellings in code
+usange = "usage"
+# Technical abbreviations and terms
+typ = "type"
+vai = "via"
+ths = "this"
+ot = "to"
+ue = "use"
+ba = "by"
+fo = "for"
+nax = "max"
+mis = "miss"
+# System and protocol terms
+sysvar = "sysvar"
+syscalls = "syscalls"
+cpi = "cpi"
+# Math and scientific terms
+braket = "bracket"
+preceeded = "preceded"
+# Common technical abbreviations
+messager = "messenger"
+initating = "initiating"
+wether = "whether"
+incremential = "incremental"
+clonable = "cloneable"
+shrinked = "shrunk"
+meory = "memory"
+initiall = "initially"
+possbile = "possible"
+converage = "coverage"
+execting = "executing"
+Entrys = "Entries"
+theyre = "their"
+heler = "helper"
+uite = "suite"

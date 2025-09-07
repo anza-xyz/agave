@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# To prevent usange of `./cargo` without `nightly`
-# Introduce cargoNighlty and disable warning to use word splitting
+# To prevent usage of `./cargo` without `nightly`
+# Introduce cargoNightly and disable warning to use word splitting
 # shellcheck disable=SC2086
 
 set -e

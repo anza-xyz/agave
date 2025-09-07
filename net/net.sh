@@ -27,7 +27,7 @@ usage() {
                                      This will start 2 bench-tps clients, and supply "--tx_count 25000"
                                      to the bench-tps client.
 --use-unstaked-connection          - Use unstaked connection. By default, staked connection with
-                                     bootstrap node credendials is used.
+                                     bootstrap node credentials is used.
 EOM
 )
   cat <<EOF
@@ -143,7 +143,7 @@ Operate a configured testnet
    -i [ip address]                    - IP Address of the node to start or stop
 
  startnode specific option:
-   --wen-restart [coordinator_pubkey]      - Use given coordinator pubkey and apply wen_restat
+   --wen-restart [coordinator_pubkey]      - Use given coordinator pubkey and apply wen_restart
 
  startclients-specific options:
    $CLIENT_OPTIONS

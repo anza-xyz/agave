@@ -246,7 +246,7 @@ pub fn execute_batch<'a>(
             batch.sanitized_transactions(),
         ))
     } else {
-        // Unified scheduler block production wihout metadata recording
+        // Unified scheduler block production without metadata recording
         Ok(vec![])
     };
     check_block_costs_elapsed.stop();
@@ -1097,7 +1097,7 @@ fn verify_ticks(
 
         // If the bank is in the alpenglow epoch, but the parent is from an epoch
         // where the feature flag is not active, we must verify ticks that correspond
-        // to the epoch in which PoH is active. This verification is criticial, as otherwise
+        // to the epoch in which PoH is active. This verification is critical, as otherwise
         // a leader could jump the gun and publish a block in the alpenglow epoch without waiting
         // the appropriate time as determined by PoH in the prior epoch.
         if bank.slot() >= first_alpenglow_slot && next_bank_tick_height == max_bank_tick_height {
@@ -3639,7 +3639,7 @@ pub mod tests {
 
     #[test_case(false; "old")]
     #[test_case(true; "simd83")]
-    fn test_process_entries_2nd_entry_collision_with_self_and_error(
+    fn test_process_entries_2and_entry_collision_with_self_and_error(
         relax_intrabatch_account_locks: bool,
     ) {
         solana_logger::setup();
@@ -5048,7 +5048,7 @@ pub mod tests {
         .unwrap();
         assert_eq!(progress.num_txs, 5);
         let batch = transaction_status_receiver.recv().unwrap();
-        if let TransactionStatusMessage::Batch((batch, _sequnce)) = batch {
+        if let TransactionStatusMessage::Batch((batch, _sequence)) = batch {
             assert_eq!(batch.transactions.len(), 3);
             assert_eq!(batch.transaction_indexes.len(), 3);
             assert_eq!(batch.transaction_indexes, [2, 3, 4]);
@@ -5244,7 +5244,7 @@ pub mod tests {
             }),
         );
 
-        // pre_commit_callback() should alwasy be called regardless of tx_result
+        // pre_commit_callback() should always be called regardless of tx_result
         assert!(is_called);
 
         if should_commit {

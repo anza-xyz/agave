@@ -44,7 +44,7 @@ impl Sanitize for Uncompressed {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-pub struct Flate2 {
+pub struct Flat2 {
     pub first_slot: Slot,
     pub num: usize,
     #[serde(with = "serde_compat_bytes")]
@@ -75,7 +75,7 @@ mod serde_compat_bytes {
     }
 }
 
-impl Sanitize for Flate2 {
+impl Sanitize for Flat2 {
     fn sanitize(&self) -> std::result::Result<(), SanitizeError> {
         if self.first_slot >= MAX_SLOT {
             return Err(SanitizeError::ValueOutOfBounds);
@@ -106,7 +106,7 @@ impl std::convert::From<flate2::DecompressError> for Error {
     }
 }
 
-impl Flate2 {
+impl Flat2 {
     fn deflate(mut unc: Uncompressed) -> Result<Self> {
         let mut compressed = Vec::with_capacity(unc.slots.block_capacity());
         let mut compressor = Compress::new(Compression::best(), false);
@@ -182,7 +182,7 @@ impl Uncompressed {
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum CompressedSlots {
-    Flate2(Flate2),
+    Flat2(Flat2),
     Uncompressed(Uncompressed),
 }
 
@@ -190,7 +190,7 @@ impl Sanitize for CompressedSlots {
     fn sanitize(&self) -> std::result::Result<(), SanitizeError> {
         match self {
             CompressedSlots::Uncompressed(a) => a.sanitize(),
-            CompressedSlots::Flate2(b) => b.sanitize(),
+            CompressedSlots::Flat2(b) => b.sanitize(),
         }
     }
 }
@@ -209,27 +209,27 @@ impl CompressedSlots {
     pub fn first_slot(&self) -> Slot {
         match self {
             CompressedSlots::Uncompressed(a) => a.first_slot,
-            CompressedSlots::Flate2(b) => b.first_slot,
+            CompressedSlots::Flat2(b) => b.first_slot,
         }
     }
 
     pub fn num_slots(&self) -> usize {
         match self {
             CompressedSlots::Uncompressed(a) => a.num,
-            CompressedSlots::Flate2(b) => b.num,
+            CompressedSlots::Flat2(b) => b.num,
         }
     }
 
     pub fn add(&mut self, slots: &[Slot]) -> usize {
         match self {
             CompressedSlots::Uncompressed(vals) => vals.add(slots),
-            CompressedSlots::Flate2(_) => 0,
+            CompressedSlots::Flat2(_) => 0,
         }
     }
     fn to_slots(&self, min_slot: Slot) -> Result<impl Iterator<Item = Slot> + '_> {
         let slots = match self {
             Self::Uncompressed(slots) => Cow::Borrowed(slots),
-            Self::Flate2(slots) => Cow::Owned(slots.inflate()?),
+            Self::Flat2(slots) => Cow::Owned(slots.inflate()?),
         };
         Ok(Uncompressed::get_slots(slots, min_slot))
     }
@@ -237,11 +237,11 @@ impl CompressedSlots {
         match self {
             CompressedSlots::Uncompressed(vals) => {
                 let unc = vals.clone();
-                let compressed = Flate2::deflate(unc)?;
-                *self = CompressedSlots::Flate2(compressed);
+                let compressed = Flat2::deflate(unc)?;
+                *self = CompressedSlots::Flat2(compressed);
                 Ok(())
             }
-            CompressedSlots::Flate2(_) => Ok(()),
+            CompressedSlots::Flat2(_) => Ok(()),
         }
     }
 }
@@ -417,7 +417,7 @@ mod tests {
         let mut slots = Uncompressed::new(100);
         slots.add(&[1, 701, 2]);
         assert_eq!(slots.num, 701);
-        let compressed = Flate2::deflate(slots).unwrap();
+        let compressed = Flat2::deflate(slots).unwrap();
         assert_eq!(compressed.first_slot, 1);
         assert_eq!(compressed.num, 701);
         assert!(compressed.compressed.len() < 32);
@@ -450,7 +450,7 @@ mod tests {
         o.slots = Arc::new(BitVec::with_capacity(8)); // capacity() not equal to len()
         assert_eq!(o.sanitize(), Err(SanitizeError::ValueOutOfBounds));
 
-        let compressed = Flate2::deflate(slots).unwrap();
+        let compressed = Flat2::deflate(slots).unwrap();
         assert!(compressed.sanitize().is_ok());
 
         let mut o = compressed.clone();

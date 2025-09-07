@@ -752,7 +752,7 @@ mod tests {
             _poh_controller,
             transaction_recorder,
             poh_service,
-            _entry_receiever,
+            _entry_receiver,
         ) = create_test_recorder(bank, blockstore, None, None);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
@@ -916,10 +916,10 @@ mod tests {
         // bad tx, AccountNotFound
         let keypair = Keypair::new();
         let to3 = solana_pubkey::new_rand();
-        let tx_anf = system_transaction::transfer(&keypair, &to3, 1, start_hash);
+        let tx_and = system_transaction::transfer(&keypair, &to3, 1, start_hash);
 
         // send 'em over
-        let mut packet_batches = to_packet_batches(&[tx_no_ver, tx_anf, tx], 3);
+        let mut packet_batches = to_packet_batches(&[tx_no_ver, tx_and, tx], 3);
         packet_batches[0]
             .first_mut()
             .unwrap()
@@ -929,7 +929,7 @@ mod tests {
         // glad they all fit
         assert_eq!(packet_batches.len(), 1);
 
-        non_vote_sender // no_ver, anf, tx
+        non_vote_sender // no_ver, and, tx
             .send(BankingPacketBatch::new(packet_batches))
             .unwrap();
 

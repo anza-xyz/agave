@@ -912,10 +912,10 @@ mod tests {
     fn test_update_execution_cost() {
         let estimated_programs_execution_cost = 100;
         let estimated_loaded_accounts_data_size_cost = 200;
-        let number_writeble_accounts = 3;
+        let number_writable_accounts = 3;
         let transaction = WritableKeysTransaction(
             std::iter::repeat_with(Pubkey::new_unique)
-                .take(number_writeble_accounts)
+                .take(number_writable_accounts)
                 .collect(),
         );
 
@@ -932,7 +932,7 @@ mod tests {
         );
 
         let test_update_cost_tracker =
-            |execution_cost_adjust: i64, loaded_acounts_data_size_cost_adjust: i64| {
+            |execution_cost_adjust: i64, loaded_accounts_data_size_cost_adjust: i64| {
                 let mut cost_tracker = CostTracker::default();
                 assert!(cost_tracker.try_add(&tx_cost).is_ok());
 
@@ -940,10 +940,10 @@ mod tests {
                     (estimated_programs_execution_cost as i64 + execution_cost_adjust) as u64;
                 let actual_loaded_accounts_data_size_cost =
                     (estimated_loaded_accounts_data_size_cost as i64
-                        + loaded_acounts_data_size_cost_adjust) as u64;
+                        + loaded_accounts_data_size_cost_adjust) as u64;
                 let expected_cost = (estimated_tx_cost as i64
                     + execution_cost_adjust
-                    + loaded_acounts_data_size_cost_adjust)
+                    + loaded_accounts_data_size_cost_adjust)
                     as u64;
 
                 cost_tracker.update_execution_cost(
@@ -955,7 +955,7 @@ mod tests {
                 assert_eq!(expected_cost, cost_tracker.block_cost);
                 assert_eq!(0, cost_tracker.vote_cost);
                 assert_eq!(
-                    number_writeble_accounts,
+                    number_writable_accounts,
                     cost_tracker.cost_by_writable_accounts.len()
                 );
                 for writable_account_cost in cost_tracker.cost_by_writable_accounts.values() {

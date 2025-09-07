@@ -14,7 +14,7 @@ use {
 };
 
 const NUM_TRANSACTIONS_PER_ITER: usize = 1024;
-const DUMMY_PROGRAM_ID: &str = "dummmy1111111111111111111111111111111111111";
+const DUMMY_PROGRAM_ID: &str = "dummy1111111111111111111111111111111111111";
 
 fn build_sanitized_transaction(
     payer_keypair: &Keypair,

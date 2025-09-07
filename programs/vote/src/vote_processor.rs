@@ -710,7 +710,7 @@ mod tests {
     #[test]
     fn test_vote_signature() {
         let (vote_pubkey, vote_account) = create_test_account();
-        let (vote, instruction_datas) = create_serialized_votes();
+        let (vote, instruction_data) = create_serialized_votes();
         let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
         let slot_hashes_account = account::create_account_shared_data_for_test(&slot_hashes);
         let mut instruction_accounts = vec![
@@ -731,7 +731,7 @@ mod tests {
             },
         ];
 
-        for (instruction_data, is_tower_sync) in instruction_datas {
+        for (instruction_data, is_tower_sync) in instruction_data {
             let mut transaction_accounts = vec![
                 (vote_pubkey, vote_account.clone()),
                 (sysvar::slot_hashes::id(), slot_hashes_account.clone()),
@@ -918,7 +918,7 @@ mod tests {
         instruction_accounts.pop();
 
         // should fail, not signed by authorized voter
-        let (vote, instruction_datas) = create_serialized_votes();
+        let (vote, instruction_data) = create_serialized_votes();
         let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
         let slot_hashes_account = account::create_account_shared_data_for_test(&slot_hashes);
         transaction_accounts.push((sysvar::slot_hashes::id(), slot_hashes_account));
@@ -937,7 +937,7 @@ mod tests {
             is_writable: false,
         });
 
-        for (instruction_data, is_tower_sync) in instruction_datas {
+        for (instruction_data, is_tower_sync) in instruction_data {
             process_instruction(
                 &instruction_data,
                 transaction_accounts.clone(),

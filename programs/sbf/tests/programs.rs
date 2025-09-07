@@ -5020,7 +5020,7 @@ fn test_clone_account_data() {
     let error = format!("Program {invoke_program_id} failed: instruction modified data of an account it does not own");
     assert!(logs.iter().any(|log| log.contains(&error)), "{logs:?}");
 
-    // II. Clone data, call, modifiy in callee and then make the same change in the caller - transaction succeeds
+    // II. Clone data, call, modify in callee and then make the same change in the caller - transaction succeeds
     // Note the caller needs to modify the original account data, not the copy
     let mut account = AccountSharedData::new(42, 10240, &invoke_program_id2);
     let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
