@@ -291,14 +291,6 @@ mod tests {
                 .get(pubkey)
                 .map(|account| (account.clone(), 0))
         }
-
-        fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
-            let mut account_data = AccountSharedData::default();
-            account_data.set_data(name.as_bytes().to_vec());
-            self.account_shared_data
-                .borrow_mut()
-                .insert(*program_id, account_data);
-        }
     }
 
     #[test]

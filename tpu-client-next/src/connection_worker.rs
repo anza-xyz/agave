@@ -170,7 +170,11 @@ impl ConnectionWorker {
                     }
                     ConnectionState::Retry(num_reconnects) => {
                         if *num_reconnects > self.max_reconnect_attempts {
-                            error!("Failed to establish connection to {}: reached max reconnect attempts", self.peer);
+                            error!(
+                                "Failed to establish connection to {}: reached max reconnect \
+                                 attempts",
+                                self.peer
+                            );
                             self.connection = ConnectionState::Closing;
                             continue;
                         }
@@ -355,7 +359,11 @@ impl ConnectionWorker {
                         self.connection = ConnectionState::Closing;
                     }
                     e => {
-                        error!("Unexpected error has happened while trying to create connection to {}: {e}", self.peer);
+                        error!(
+                            "Unexpected error has happened while trying to create connection to \
+                             {}: {e}",
+                            self.peer
+                        );
                         self.connection = ConnectionState::Closing;
                     }
                 }

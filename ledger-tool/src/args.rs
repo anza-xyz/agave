@@ -10,7 +10,7 @@ use {
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::pubkeys_of,
-        input_validators::{is_parsable, is_pow2, is_within_range},
+        input_validators::{is_parsable, is_pow2},
     },
     solana_cli_output::CliAccountNewConfig,
     solana_clock::Slot,
@@ -21,7 +21,6 @@ use {
     solana_runtime::runtime_config::RuntimeConfig,
     std::{
         collections::HashSet,
-        num::NonZeroUsize,
         path::{Path, PathBuf},
         sync::Arc,
     },
@@ -107,13 +106,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .takes_value(true)
             .possible_values(&["mmap", "file"])
             .help("Access account storages using this method"),
-        Arg::with_name("accounts_db_hash_threads")
-            .long("accounts-db-hash-threads")
-            .value_name("NUM_THREADS")
-            .takes_value(true)
-            .validator(|s| is_within_range(s, 1..=num_cpus::get()))
-            .help("Number of threads to use for background accounts hashing")
-            .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_ancient_storage_ideal_size")
             .long("accounts-db-ancient-storage-ideal-size")
             .value_name("BYTES")
@@ -290,10 +282,6 @@ pub fn get_accounts_db_config(
         })
         .unwrap_or_default();
 
-    let num_hash_threads = arg_matches
-        .is_present("accounts_db_hash_threads")
-        .then(|| value_t_or_exit!(arg_matches, "accounts_db_hash_threads", NonZeroUsize));
-
     AccountsDbConfig {
         index: Some(accounts_index_config),
         base_working_path: Some(ledger_tool_ledger_path),
@@ -310,7 +298,6 @@ pub fn get_accounts_db_config(
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
         storage_access,
         scan_filter_for_shrinking,
-        num_hash_threads,
         memlock_budget_size: DEFAULT_MEMLOCK_BUDGET_SIZE,
         ..AccountsDbConfig::default()
     }

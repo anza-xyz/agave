@@ -624,7 +624,7 @@ fn verify_slot_history(
 fn verify_epoch_stakes(bank: &Bank) -> std::result::Result<(), VerifyEpochStakesError> {
     // Stakes are required for epochs from the current epoch up-to-and-including the
     // leader schedule epoch.  In practice this will only be two epochs: the current and the next.
-    // Using a range mirrors how Bank::new_with_paths() seeds the initial epoch stakes.
+    // Using a range mirrors how Bank::new_from_genesis() seeds the initial epoch stakes.
     let current_epoch = bank.epoch();
     let leader_schedule_epoch = bank.get_leader_schedule_epoch(bank.slot());
     let required_epochs = current_epoch..=leader_schedule_epoch;

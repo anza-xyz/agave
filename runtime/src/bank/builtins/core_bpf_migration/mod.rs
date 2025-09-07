@@ -301,7 +301,7 @@ impl Bank {
 
     /// Upgrade a Core BPF program.
     /// To use this function, add a feature-gated callsite to bank's
-    /// `apply_feature_activations` function, similar to below.
+    /// `apply_new_feature_activations` function, similar to below.
     ///
     /// ```ignore
     /// if new_feature_activations.contains(&agave_feature_set::test_upgrade_program::id()) {
@@ -655,8 +655,7 @@ pub(crate) mod tests {
             let account =
                 AccountSharedData::new_data(1, &builtin_name, &native_loader::id()).unwrap();
             bank.store_account_and_update_capitalization(&builtin_id, &account);
-            bank.transaction_processor.add_builtin(
-                &bank,
+            bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
                 ProgramCacheEntry::default(),
@@ -792,8 +791,7 @@ pub(crate) mod tests {
             let account =
                 AccountSharedData::new_data(1, &builtin_name, &native_loader::id()).unwrap();
             bank.store_account_and_update_capitalization(&builtin_id, &account);
-            bank.transaction_processor.add_builtin(
-                &bank,
+            bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
                 ProgramCacheEntry::default(),
@@ -843,8 +841,7 @@ pub(crate) mod tests {
             let account =
                 AccountSharedData::new_data(1, &builtin_name, &native_loader::id()).unwrap();
             bank.store_account_and_update_capitalization(&builtin_id, &account);
-            bank.transaction_processor.add_builtin(
-                &bank,
+            bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
                 ProgramCacheEntry::default(),
@@ -894,8 +891,7 @@ pub(crate) mod tests {
             let account =
                 AccountSharedData::new_data(1, &builtin_name, &native_loader::id()).unwrap();
             bank.store_account_and_update_capitalization(&builtin_id, &account);
-            bank.transaction_processor.add_builtin(
-                &bank,
+            bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
                 ProgramCacheEntry::default(),
@@ -1184,8 +1180,7 @@ pub(crate) mod tests {
         // Set up the CPI mockup to test CPI'ing to the migrated program.
         let cpi_program_id = Pubkey::new_unique();
         let cpi_program_name = "mock_cpi_program";
-        root_bank.transaction_processor.add_builtin(
-            &root_bank,
+        root_bank.add_builtin(
             cpi_program_id,
             cpi_program_name,
             ProgramCacheEntry::new_builtin(0, cpi_program_name.len(), cpi_mockup::Entrypoint::vm),
@@ -1433,8 +1428,9 @@ pub(crate) mod tests {
             ),
         );
 
-        // Run `finish_init` to simulate starting up from a snapshot.
-        // Clear all builtins to simulate a fresh bank init.
+        // Run `compute_and_apply_features_after_snapshot_restore` to simulate
+        // starting up from a snapshot. Clear all builtins to simulate a fresh
+        // bank init.
         bank.transaction_processor
             .global_program_cache
             .write()
@@ -1452,7 +1448,7 @@ pub(crate) mod tests {
             .write()
             .unwrap()
             .clear();
-        bank.finish_init(false);
+        bank.compute_and_apply_features_after_snapshot_restore();
 
         // Assert the feature is active and the bank still added the builtin.
         assert!(bank.feature_set.is_active(feature_id));
@@ -1602,8 +1598,9 @@ pub(crate) mod tests {
             ),
         );
 
-        // Run `finish_init` to simulate starting up from a snapshot.
-        // Clear all builtins to simulate a fresh bank init.
+        // Run `compute_and_apply_features_after_snapshot_restore` to simulate
+        // starting up from a snapshot. Clear all builtins to simulate a fresh
+        // bank init.
         bank.transaction_processor
             .global_program_cache
             .write()
@@ -1621,7 +1618,7 @@ pub(crate) mod tests {
             .write()
             .unwrap()
             .clear();
-        bank.finish_init(false);
+        bank.compute_and_apply_features_after_snapshot_restore();
 
         check_builtin_is_bpf(&bank);
     }

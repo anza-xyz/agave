@@ -295,20 +295,6 @@ impl ShrinkInProgress<'_> {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Debug, Eq, PartialEq, Copy, Clone, Deserialize, Serialize)]
-pub enum AccountStorageStatus {
-    Available = 0,
-    Full = 1,
-    Candidate = 2,
-}
-
-impl Default for AccountStorageStatus {
-    fn default() -> Self {
-        Self::Available
-    }
-}
-
 /// Wrapper over slice of `Arc<AccountStorageEntry>` that provides an ordered access to storages.
 ///
 /// A few strategies are available for ordering storages:

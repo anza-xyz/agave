@@ -244,8 +244,7 @@ impl LeaderTpuCache {
                 }
                 Err(err) => {
                     warn!(
-                        "Failed to fetch slot leaders (first_slot: \
-                         {}): {err}",
+                        "Failed to fetch slot leaders (first_slot: {}): {err}",
                         cache_update_info.first_slot
                     );
                     has_error = true;

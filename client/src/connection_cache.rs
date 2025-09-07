@@ -74,6 +74,17 @@ impl ConnectionCache {
         Self::new_with_client_options(name, connection_pool_size, None, None, None)
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_quic_for_tests(name: &'static str, connection_pool_size: usize) -> Self {
+        Self::new_with_client_options(
+            name,
+            connection_pool_size,
+            Some(solana_net_utils::sockets::bind_to_localhost_unique().unwrap()),
+            None,
+            None,
+        )
+    }
+
     /// Create a quic connection_cache with more client options
     pub fn new_with_client_options(
         name: &'static str,

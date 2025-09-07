@@ -74,7 +74,8 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     let manage_block_production_args = ManageBlockProductionArgs::from_clap_arg_match(matches)?;
 
     println!(
-        "Respawning block-production threads with method: {}, transaction structure: {} num_workers: {}",
+        "Respawning block-production threads with method: {}, transaction structure: {} \
+         num_workers: {}",
         manage_block_production_args.block_production_method,
         manage_block_production_args.transaction_structure,
         manage_block_production_args.num_workers,

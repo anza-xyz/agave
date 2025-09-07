@@ -27,6 +27,7 @@ use {
     solana_keccak_hasher as keccak, solana_poseidon as poseidon,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_runtime::{
+        cpi::CpiError,
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
         memory::MemoryTranslationError,
@@ -39,7 +40,6 @@ use {
         program::{BuiltinProgram, SBPFVersion},
         vm::Config,
     },
-    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, native_loader},
     solana_secp256k1_recover::{
         Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
     },
@@ -122,8 +122,48 @@ pub enum SyscallError {
     InvalidPointer,
     #[error("Arithmetic overflow")]
     ArithmeticOverflow,
-    #[error(transparent)]
-    MemoryTranslation(#[from] MemoryTranslationError),
+}
+
+impl From<MemoryTranslationError> for SyscallError {
+    fn from(error: MemoryTranslationError) -> Self {
+        match error {
+            MemoryTranslationError::UnalignedPointer => SyscallError::UnalignedPointer,
+            MemoryTranslationError::InvalidLength => SyscallError::InvalidLength,
+        }
+    }
+}
+
+impl From<CpiError> for SyscallError {
+    fn from(error: CpiError) -> Self {
+        match error {
+            CpiError::InvalidPointer => SyscallError::InvalidPointer,
+            CpiError::TooManySigners => SyscallError::TooManySigners,
+            CpiError::BadSeeds(e) => SyscallError::BadSeeds(e),
+            CpiError::InvalidLength => SyscallError::InvalidLength,
+            CpiError::MaxInstructionAccountsExceeded {
+                num_accounts,
+                max_accounts,
+            } => SyscallError::MaxInstructionAccountsExceeded {
+                num_accounts,
+                max_accounts,
+            },
+            CpiError::MaxInstructionDataLenExceeded {
+                data_len,
+                max_data_len,
+            } => SyscallError::MaxInstructionDataLenExceeded {
+                data_len,
+                max_data_len,
+            },
+            CpiError::MaxInstructionAccountInfosExceeded {
+                num_account_infos,
+                max_account_infos,
+            } => SyscallError::MaxInstructionAccountInfosExceeded {
+                num_account_infos,
+                max_account_infos,
+            },
+            CpiError::ProgramNotSupported(pubkey) => SyscallError::ProgramNotSupported(pubkey),
+        }
+    }
 }
 
 type Error = Box<dyn std::error::Error>;
@@ -2091,7 +2131,9 @@ mod tests {
             program::SBPFVersion,
             vm::Config,
         },
-        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, sysvar},
+        solana_sdk_ids::{
+            bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader, sysvar,
+        },
         solana_sha256_hasher::hashv,
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,

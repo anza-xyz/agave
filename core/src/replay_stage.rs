@@ -1123,8 +1123,8 @@ impl ReplayStage {
                                     Err(err) => {
                                         error!(
                                             "Unable to load new tower when attempting to change \
-                                         identity from {my_old_pubkey} to {my_pubkey} on
-                                         set-identity, Exiting: {err}"
+                                             identity from {my_old_pubkey} to {my_pubkey} on \
+                                             set-identity, Exiting: {err}"
                                         );
                                         // drop(_exit) will set the exit flag, eventually tearing down the entire process
                                         return;
@@ -2488,7 +2488,8 @@ impl ReplayStage {
                 {
                     *first_alpenglow_slot = Some(activation_slot);
                     info!(
-                        "alpenglow feature detected in root bank {new_root}, to be enabled on slot {activation_slot}",
+                        "alpenglow feature detected in root bank {new_root}, to be enabled on \
+                         slot {activation_slot}",
                     );
                 }
             }
@@ -7773,7 +7774,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic(
+            ConnectionCache::new_quic_for_tests(
                 "connection_cache_vote_quic",
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )
@@ -7878,7 +7879,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic(
+            ConnectionCache::new_quic_for_tests(
                 "connection_cache_vote_quic",
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )
@@ -8006,7 +8007,7 @@ pub(crate) mod tests {
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
         let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic(
+            ConnectionCache::new_quic_for_tests(
                 "connection_cache_vote_quic",
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )
@@ -8148,7 +8149,7 @@ pub(crate) mod tests {
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
         let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic(
+            ConnectionCache::new_quic_for_tests(
                 "connection_cache_vote_quic",
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )

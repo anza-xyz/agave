@@ -881,7 +881,6 @@ fn test_account_grow() {
     for pass in 0..27 {
         let accounts = AccountsDb::new_single_for_tests();
 
-        let status = [AccountStorageStatus::Available, AccountStorageStatus::Full];
         let pubkey1 = solana_pubkey::new_rand();
         let account1 = AccountSharedData::new(1, DEFAULT_FILE_SIZE as usize / 2, &pubkey1);
         accounts.store_for_tests((0, [(&pubkey1, &account1)].as_slice()));
@@ -889,7 +888,6 @@ fn test_account_grow() {
             accounts.add_root_and_flush_write_cache(0);
             let store = &accounts.storage.get_slot_storage_entry(0).unwrap();
             assert_eq!(store.count(), 1);
-            assert_eq!(store.status(), AccountStorageStatus::Available);
             continue;
         }
 
@@ -902,7 +900,6 @@ fn test_account_grow() {
             assert_eq!(accounts.storage.len(), 1);
             let store = &accounts.storage.get_slot_storage_entry(0).unwrap();
             assert_eq!(store.count(), 2);
-            assert_eq!(store.status(), AccountStorageStatus::Available);
             continue;
         }
         let ancestors = vec![(0, 0)].into_iter().collect();
@@ -928,8 +925,6 @@ fn test_account_grow() {
             if flush {
                 accounts.add_root_and_flush_write_cache(0);
                 assert_eq!(accounts.storage.len(), 1);
-                let store = &accounts.storage.get_slot_storage_entry(0).unwrap();
-                assert_eq!(store.status(), status[0]);
             }
             let ancestors = vec![(0, 0)].into_iter().collect();
             assert_eq!(
@@ -1153,10 +1148,16 @@ fn test_remove_zero_lamport_multi_ref_accounts_panic() {
     let slot = 1;
 
     accounts.store_for_tests((slot, [(&pubkey_zero, &one_lamport_account)].as_slice()));
-    accounts.add_root_and_flush_write_cache(slot);
+
+    // Flush without cleaning to avoid reclaiming pubkey_zero early
+    accounts.add_root(1);
+    accounts.flush_rooted_accounts_cache(Some(slot), false);
 
     accounts.store_for_tests((slot + 1, [(&pubkey_zero, &zero_lamport_account)].as_slice()));
-    accounts.add_root_and_flush_write_cache(slot + 1);
+
+    // Flush without cleaning to avoid reclaiming pubkey_zero early
+    accounts.add_root(2);
+    accounts.flush_rooted_accounts_cache(Some(slot + 1), false);
 
     // This should panic because there are 2 refs for pubkey_zero.
     accounts.remove_zero_lamport_single_ref_accounts_after_shrink(
@@ -1375,6 +1376,10 @@ fn test_clean_multiple_zero_lamport_decrements_index_ref_count() {
     let pubkey2 = solana_pubkey::new_rand();
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
+    // If there is no latest full snapshot, zero lamport accounts can be cleaned and removed
+    // immediately. Set latest full snapshot slot to zero to avoid cleaning zero lamport accounts
+    accounts.set_latest_full_snapshot_slot(0);
+
     // Store 2 accounts in slot 0, then update account 1 in two more slots
     accounts.store_for_tests((0, [(&pubkey1, &zero_lamport_account)].as_slice()));
     accounts.store_for_tests((0, [(&pubkey2, &zero_lamport_account)].as_slice()));
@@ -1404,6 +1409,8 @@ fn test_clean_multiple_zero_lamport_decrements_index_ref_count() {
     accounts.assert_ref_count(&pubkey1, 1);
     accounts.assert_ref_count(&pubkey2, 0);
 
+    // Allow clean to clean any zero lamports up to and including slot 2
+    accounts.set_latest_full_snapshot_slot(2);
     accounts.clean_accounts_for_tests();
     // Slot 2 will now be cleaned, which will leave account 1 with a ref count of 0
     assert!(accounts.storage.get_slot_storage_entry(2).is_none());
@@ -1757,6 +1764,10 @@ fn test_accounts_db_purge_keep_live() {
 
     let accounts = AccountsDb::new_single_for_tests();
     accounts.add_root_and_flush_write_cache(0);
+
+    // If there is no latest full snapshot, zero lamport accounts can be cleaned and removed
+    // immediately. Set latest full snapshot slot to zero to avoid cleaning zero lamport accounts
+    accounts.set_latest_full_snapshot_slot(0);
 
     // Step A
     let mut current_slot = 1;
@@ -2260,7 +2271,7 @@ fn test_get_snapshot_storages_with_base_slot() {
 
 define_accounts_db_test!(
     test_storage_remove_account_double_remove,
-    panic = "double remove of account in slot: 0/store: 0!!",
+    panic = "Too many bytes or accounts removed from storage! slot: 0, id: 0",
     |accounts| {
         let pubkey = solana_pubkey::new_rand();
         let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
@@ -4107,8 +4118,8 @@ fn test_shrink_unref() {
     // Make account_key1 in slot 0 outdated by updating in rooted slot 1
     db.store_for_tests((1, &[(&account_key1, &account1)][..]));
     db.add_root(1);
-    // Flushes all roots
-    db.flush_accounts_cache(true, None);
+    // Flush without cleaning to avoid reclaiming account_key1 early
+    db.flush_rooted_accounts_cache(None, false);
 
     // Clean to remove outdated entry from slot 0
     db.clean_accounts(Some(1), false, &EpochSchedule::default());
@@ -4124,8 +4135,8 @@ fn test_shrink_unref() {
     db.store_for_tests((2, &[(&account_key2, &account1)][..]));
     db.add_root(2);
 
-    // Flushes all roots
-    db.flush_accounts_cache(true, None);
+    // Flush without cleaning to avoid reclaiming account_key2 early
+    db.flush_rooted_accounts_cache(None, false);
 
     // Should be one store before clean for slot 0
     db.get_and_assert_single_storage(0);
@@ -4965,8 +4976,7 @@ define_accounts_db_test!(test_set_storage_count_and_alive_bytes, |accounts| {
     // fake out the store count to avoid the assert
     for (_, store) in accounts.storage.iter() {
         store.alive_bytes.store(0, Ordering::Release);
-        let mut count_and_status = store.count_and_status.lock_write();
-        count_and_status.0 = 0;
+        store.count.store(0, Ordering::Release);
     }
 
     // count needs to be <= approx stored count in store.
@@ -4984,14 +4994,14 @@ define_accounts_db_test!(test_set_storage_count_and_alive_bytes, |accounts| {
     );
 
     for (_, store) in accounts.storage.iter() {
-        assert_eq!(store.count_and_status.read().0, 0);
+        assert_eq!(store.count(), 0);
         assert_eq!(store.alive_bytes(), 0);
     }
     accounts.set_storage_count_and_alive_bytes(dashmap, &mut GenerateIndexTimings::default());
     assert_eq!(accounts.storage.len(), 1);
     for (_, store) in accounts.storage.iter() {
         assert_eq!(store.id(), 0);
-        assert_eq!(store.count_and_status.read().0, count);
+        assert_eq!(store.count(), count);
         assert_eq!(store.alive_bytes(), 2);
     }
 });

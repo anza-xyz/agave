@@ -898,7 +898,7 @@ mod tests {
         )
         .unwrap();
 
-        // Correctly calculating the accounts lt hash in Bank::new_from_fields() depends on the
+        // Correctly calculating the accounts lt hash in Bank::new_from_snapshot() depends on the
         // bank being frozen.  This is so we don't call `update_accounts_lt_hash()` twice on the
         // same bank!
         assert!(roundtrip_bank.is_frozen());

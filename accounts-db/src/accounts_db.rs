@@ -31,7 +31,7 @@ use {
         account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
-            AccountStorage, AccountStorageStatus, AccountStoragesOrderer, ShrinkInProgress,
+            AccountStorage, AccountStoragesOrderer, ShrinkInProgress,
         },
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
@@ -50,7 +50,7 @@ use {
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
-        append_vec::{self, aligned_stored_size, IndexInfo, IndexInfoInner, STORE_META_OVERHEAD},
+        append_vec::{self, aligned_stored_size, STORE_META_OVERHEAD},
         buffered_reader::RequiredLenBufFileRead,
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
@@ -306,7 +306,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     mark_obsolete_accounts: MarkObsoleteAccounts::Disabled,
     num_background_threads: None,
     num_foreground_threads: None,
-    num_hash_threads: None,
     memlock_budget_size: MEMLOCK_BUDGET_SIZE_FOR_TESTS,
 };
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
@@ -329,7 +328,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     mark_obsolete_accounts: MarkObsoleteAccounts::Disabled,
     num_background_threads: None,
     num_foreground_threads: None,
-    num_hash_threads: None,
     memlock_budget_size: MEMLOCK_BUDGET_SIZE_FOR_TESTS,
 };
 
@@ -455,8 +453,6 @@ pub struct AccountsDbConfig {
     pub num_background_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool_foreground`)
     pub num_foreground_threads: Option<NonZeroUsize>,
-    /// Number of threads for background accounts hashing
-    pub num_hash_threads: Option<NonZeroUsize>,
     /// Amount of memory (in bytes) that is allowed to be locked during db operations.
     /// On linux it's verified on start-up with the kernel limits, such that during runtime
     /// parts of it can be utilized without panicking.
@@ -898,12 +894,8 @@ pub struct AccountStorageEntry {
     /// storage holding the accounts
     pub accounts: AccountsFile,
 
-    /// Keeps track of the number of accounts stored in a specific AppendVec.
-    ///  This is periodically checked to reuse the stores that do not have
-    ///  any accounts in it
-    /// status corresponding to the storage, lets us know that
-    ///  the append_vec, once maxed out, then emptied, can be reclaimed
-    count_and_status: SeqLock<(usize, AccountStorageStatus)>,
+    /// The number of alive accounts in this storage
+    count: AtomicUsize,
 
     alive_bytes: AtomicUsize,
 
@@ -947,7 +939,7 @@ impl AccountStorageEntry {
             id,
             slot,
             accounts,
-            count_and_status: SeqLock::new((0, AccountStorageStatus::Available)),
+            count: AtomicUsize::new(0),
             alive_bytes: AtomicUsize::new(0),
             zero_lamport_single_ref_offsets: RwLock::default(),
             obsolete_accounts: RwLock::default(),
@@ -962,11 +954,10 @@ impl AccountStorageEntry {
             return None;
         }
 
-        let count_and_status = self.count_and_status.lock_write();
         self.accounts.reopen_as_readonly().map(|accounts| Self {
             id: self.id,
             slot: self.slot,
-            count_and_status: SeqLock::new(*count_and_status),
+            count: AtomicUsize::new(self.count()),
             alive_bytes: AtomicUsize::new(self.alive_bytes()),
             accounts,
             zero_lamport_single_ref_offsets: RwLock::new(
@@ -981,40 +972,16 @@ impl AccountStorageEntry {
             id,
             slot,
             accounts,
-            count_and_status: SeqLock::new((0, AccountStorageStatus::Available)),
+            count: AtomicUsize::new(0),
             alive_bytes: AtomicUsize::new(0),
             zero_lamport_single_ref_offsets: RwLock::default(),
             obsolete_accounts: RwLock::default(),
         }
     }
 
-    pub fn set_status(&self, mut status: AccountStorageStatus) {
-        let mut count_and_status = self.count_and_status.lock_write();
-
-        let count = count_and_status.0;
-
-        if status == AccountStorageStatus::Full && count == 0 {
-            // this case arises when the append_vec is full (store_ptrs fails),
-            //  but all accounts have already been removed from the storage
-            //
-            // the only time it's safe to call reset() on an append_vec is when
-            //  every account has been removed
-            //          **and**
-            //  the append_vec has previously been completely full
-            //
-            self.accounts.reset();
-            status = AccountStorageStatus::Available;
-        }
-
-        *count_and_status = (count, status);
-    }
-
-    pub fn status(&self) -> AccountStorageStatus {
-        self.count_and_status.read().1
-    }
-
+    /// Returns the number of alive accounts in this storage
     pub fn count(&self) -> usize {
-        self.count_and_status.read().0
+        self.count.load(Ordering::Acquire)
     }
 
     pub fn alive_bytes(&self) -> usize {
@@ -1100,10 +1067,12 @@ impl AccountStorageEntry {
         self.alive_bytes().saturating_sub(zero_lamport_dead_bytes)
     }
 
+    /// Returns the number of bytes used in this storage
     pub fn written_bytes(&self) -> u64 {
         self.accounts.len() as u64
     }
 
+    /// Returns the number of bytes, not accounts, this storage can hold
     pub fn capacity(&self) -> u64 {
         self.accounts.capacity()
     }
@@ -1125,45 +1094,28 @@ impl AccountStorageEntry {
     }
 
     fn add_accounts(&self, num_accounts: usize, num_bytes: usize) {
-        let mut count_and_status = self.count_and_status.lock_write();
-        *count_and_status = (count_and_status.0 + num_accounts, count_and_status.1);
+        self.count.fetch_add(num_accounts, Ordering::Release);
         self.alive_bytes.fetch_add(num_bytes, Ordering::Release);
     }
 
-    /// returns # of accounts remaining in the storage
+    /// Removes `num_bytes` and `num_accounts` from the storage,
+    /// and returns the remaining number of accounts.
     fn remove_accounts(&self, num_bytes: usize, num_accounts: usize) -> usize {
-        let mut count_and_status = self.count_and_status.lock_write();
-        let (mut count, mut status) = *count_and_status;
+        let prev_alive_bytes = self.alive_bytes.fetch_sub(num_bytes, Ordering::Release);
+        let prev_count = self.count.fetch_sub(num_accounts, Ordering::Release);
 
-        if count == num_accounts && status == AccountStorageStatus::Full {
-            // this case arises when we remove the last account from the
-            //  storage, but we've learned from previous write attempts that
-            //  the storage is full
-            //
-            // the only time it's safe to call reset() on an append_vec is when
-            //  every account has been removed
-            //          **and**
-            //  the append_vec has previously been completely full
-            //
-            // otherwise, the storage may be in flight with a store()
-            //   call
-            self.accounts.reset();
-            status = AccountStorageStatus::Available;
-        }
-
-        // Some code path is removing accounts too many; this may result in an
-        // unintended reveal of old state for unrelated accounts.
+        // enforce invariant that we're not removing too many bytes or accounts
         assert!(
-            count >= num_accounts,
-            "double remove of account in slot: {}/store: {}!!",
-            self.slot(),
-            self.id(),
+            num_bytes <= prev_alive_bytes && num_accounts <= prev_count,
+            "Too many bytes or accounts removed from storage! slot: {}, id: {}, initial alive \
+             bytes: {prev_alive_bytes}, initial num accounts: {prev_count}, num bytes removed: \
+             {num_bytes}, num accounts removed: {num_accounts}",
+            self.slot,
+            self.id,
         );
 
-        self.alive_bytes.fetch_sub(num_bytes, Ordering::Release);
-        count = count.saturating_sub(num_accounts);
-        *count_and_status = (count, status);
-        count
+        // SAFETY: subtraction is safe since we just asserted num_accounts <= prev_num_accounts
+        prev_count - num_accounts
     }
 
     /// Returns the path to the underlying accounts storage file
@@ -1278,8 +1230,6 @@ pub struct AccountsDb {
     pub thread_pool_foreground: ThreadPool,
     /// Thread pool for background tasks, e.g. AccountsBackgroundService and flush/clean/shrink
     pub thread_pool_background: ThreadPool,
-    // number of threads to use for accounts hash verify at startup
-    pub num_hash_threads: Option<NonZeroUsize>,
 
     pub stats: AccountsStats,
 
@@ -1370,12 +1320,6 @@ pub fn quarter_thread_count() -> usize {
     std::cmp::max(2, num_cpus::get() / 4)
 }
 
-/// Returns the default number of threads to use for background accounts hashing
-pub fn default_num_hash_threads() -> NonZeroUsize {
-    // 1/8 of the number of cpus and up to 6 threads gives good balance for the system.
-    let num_threads = (num_cpus::get() / 8).clamp(2, 6);
-    NonZeroUsize::new(num_threads).unwrap()
-}
 pub fn default_num_foreground_threads() -> usize {
     get_thread_count()
 }
@@ -1537,7 +1481,6 @@ impl AccountsDb {
             scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
             thread_pool_foreground,
             thread_pool_background,
-            num_hash_threads: accounts_db_config.num_hash_threads,
             active_stats: ActiveStats::default(),
             storage: AccountStorage::default(),
             accounts_cache: AccountsCache::default(),
@@ -4579,16 +4522,6 @@ impl AccountsDb {
         }
     }
 
-    fn has_space_available(&self, slot: Slot, size: u64) -> bool {
-        let store = self.storage.get_slot_storage_entry(slot).unwrap();
-        if store.status() == AccountStorageStatus::Available
-            && store.accounts.remaining_bytes() >= size
-        {
-            return true;
-        }
-        false
-    }
-
     fn create_store(
         &self,
         slot: Slot,
@@ -6230,12 +6163,10 @@ impl AccountsDb {
             append_accounts.stop();
             total_append_accounts_us += append_accounts.as_us();
             let Some(stored_accounts_info) = stored_accounts_info else {
-                storage.set_status(AccountStorageStatus::Full);
-
-                // See if an account overflows the append vecs in the slot.
+                // See if an account overflows the storage in the slot.
                 let data_len = accounts_and_meta_to_store.data_len(infos.len());
                 let data_len = (data_len + STORE_META_OVERHEAD) as u64;
-                if !self.has_space_available(slot, data_len) {
+                if data_len > storage.accounts.remaining_bytes() {
                     info!(
                         "write_accounts_to_storage, no space: {}, {}, {}, {}, {}",
                         storage.accounts.capacity(),
@@ -6261,9 +6192,6 @@ impl AccountsDb {
                 stored_accounts_info.offsets.len(),
                 stored_accounts_info.size,
             );
-
-            // restore the state to available
-            storage.set_status(AccountStorageStatus::Available);
         }
 
         self.stats
@@ -6537,104 +6465,89 @@ impl AccountsDb {
         let mut zero_lamport_offsets = vec![];
         let mut all_accounts_are_zero_lamports = true;
         let mut slot_lt_hash = SlotLtHash::default();
+        let mut keyed_account_infos = vec![];
 
-        let (insert_time_us, generate_index_results) = {
-            let mut keyed_account_infos = vec![];
-            // this closure is the shared code when scanning the storage
-            let mut itemizer = |info: IndexInfo| {
-                stored_size_alive += info.stored_size_aligned;
-                if info.index_info.lamports > 0 {
-                    accounts_data_len += info.index_info.data_len;
+        let geyser_notifier = self
+            .accounts_update_notifier
+            .as_ref()
+            .filter(|notifier| notifier.snapshot_notifications_enabled());
+
+        // If geyser notifications at startup from snapshot are enabled, we need to pass in a
+        // write version for each account notification.  This value does not need to be
+        // globally unique, as geyser plugins also receive the slot number.  We only need to
+        // ensure that more recent accounts have a higher write version than older accounts.
+        // Even more relaxed, we really only need to have different write versions if there are
+        // multiple versions of the same account in a single storage, which is not allowed.
+        //
+        // Since we scan the storage from oldest to newest, we can simply increment a local
+        // counter per account and use that for the write version.
+        let mut write_version_for_geyser = 0;
+
+        storage
+            .accounts
+            .scan_accounts(reader, |offset, account| {
+                let data_len = account.data.len();
+                stored_size_alive += storage.accounts.calculate_stored_size(data_len);
+                if account.lamports > 0 {
+                    accounts_data_len += data_len as u64;
                     all_accounts_are_zero_lamports = false;
                 } else {
                     // With obsolete accounts enabled, all zero lamport accounts
                     // are obsolete or single ref by the end of index generation
                     // Store the offsets here
                     if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
-                        zero_lamport_offsets.push(info.index_info.offset);
+                        zero_lamport_offsets.push(offset);
                     }
-                    zero_lamport_pubkeys.push(info.index_info.pubkey);
+                    zero_lamport_pubkeys.push(*account.pubkey);
                 }
                 keyed_account_infos.push((
-                    info.index_info.pubkey,
+                    *account.pubkey,
                     AccountInfo::new(
-                        StorageLocation::AppendVec(store_id, info.index_info.offset), // will never be cached
-                        info.index_info.is_zero_lamport(),
+                        StorageLocation::AppendVec(store_id, offset), // will never be cached
+                        account.is_zero_lamport(),
                     ),
                 ));
-            };
 
-            let geyser_notifier = self
-                .accounts_update_notifier
-                .as_ref()
-                .filter(|notifier| notifier.snapshot_notifications_enabled());
+                if !self.account_indexes.is_empty() {
+                    self.accounts_index.update_secondary_indexes(
+                        account.pubkey,
+                        &account,
+                        &self.account_indexes,
+                    );
+                }
 
-            // If geyser notifications at startup from snapshot are enabled, we need to pass in a
-            // write version for each account notification.  This value does not need to be
-            // globally unique, as geyser plugins also receive the slot number.  We only need to
-            // ensure that more recent accounts have a higher write version than older accounts.
-            // Even more relaxed, we really only need to have different write versions if there are
-            // multiple versions of the same account in a single storage, which is not allowed.
-            //
-            // Since we scan the storage from oldest to newest, we can simply increment a local
-            // counter per account and use that for the write version.
-            let mut write_version_for_geyser = 0;
+                let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
+                slot_lt_hash.0.mix_in(&account_lt_hash.0);
 
-            storage
-                .accounts
-                .scan_accounts(reader, |offset, account| {
-                    let data_len = account.data.len() as u64;
-                    let stored_size_aligned =
-                        storage.accounts.calculate_stored_size(data_len as usize);
-                    let info = IndexInfo {
-                        stored_size_aligned,
-                        index_info: IndexInfoInner {
-                            offset,
-                            pubkey: *account.pubkey,
-                            lamports: account.lamports,
-                            data_len,
-                        },
+                if let Some(geyser_notifier) = geyser_notifier {
+                    debug_assert!(geyser_notifier.snapshot_notifications_enabled());
+                    let account_for_geyser = AccountForGeyser {
+                        pubkey: account.pubkey(),
+                        lamports: account.lamports(),
+                        owner: account.owner(),
+                        executable: account.executable(),
+                        rent_epoch: account.rent_epoch(),
+                        data: account.data(),
                     };
-                    itemizer(info);
-                    if !self.account_indexes.is_empty() {
-                        self.accounts_index.update_secondary_indexes(
-                            account.pubkey,
-                            &account,
-                            &self.account_indexes,
-                        );
-                    }
+                    geyser_notifier.notify_account_restore_from_snapshot(
+                        slot,
+                        write_version_for_geyser,
+                        &account_for_geyser,
+                    );
+                    write_version_for_geyser += 1;
+                }
+            })
+            .expect("must scan accounts storage");
 
-                    let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
-                    slot_lt_hash.0.mix_in(&account_lt_hash.0);
-
-                    if let Some(geyser_notifier) = geyser_notifier {
-                        debug_assert!(geyser_notifier.snapshot_notifications_enabled());
-                        let account_for_geyser = AccountForGeyser {
-                            pubkey: account.pubkey(),
-                            lamports: account.lamports(),
-                            owner: account.owner(),
-                            executable: account.executable(),
-                            rent_epoch: account.rent_epoch(),
-                            data: account.data(),
-                        };
-                        geyser_notifier.notify_account_restore_from_snapshot(
-                            slot,
-                            write_version_for_geyser,
-                            &account_for_geyser,
-                        );
-                        write_version_for_geyser += 1;
-                    }
-                })
-                .expect("must scan accounts storage");
-            self.accounts_index
-                .insert_new_if_missing_into_primary_index(slot, keyed_account_infos)
-        };
+        let (insert_time_us, insert_info) = self
+            .accounts_index
+            .insert_new_if_missing_into_primary_index(slot, keyed_account_infos);
 
         {
             // second, collect into the shared DashMap once we've figured out all the info per store_id
             let mut info = storage_info.entry(store_id).or_default();
             info.stored_size += stored_size_alive;
-            info.count += generate_index_results.count;
+            info.count += insert_info.count;
 
             // sanity check that stored_size is not larger than the u64 aligned size of the accounts files.
             // Note that the stored_size is aligned, so it can be larger than the size of the accounts file.
@@ -6667,13 +6580,13 @@ impl AccountsDb {
         }
         SlotIndexGenerationInfo {
             insert_time_us,
-            num_accounts: generate_index_results.count as u64,
+            num_accounts: insert_info.count as u64,
             accounts_data_len,
             zero_lamport_pubkeys,
             all_accounts_are_zero_lamports,
-            num_did_not_exist: generate_index_results.num_did_not_exist,
-            num_existed_in_mem: generate_index_results.num_existed_in_mem,
-            num_existed_on_disk: generate_index_results.num_existed_on_disk,
+            num_did_not_exist: insert_info.num_did_not_exist,
+            num_existed_in_mem: insert_info.num_existed_in_mem,
+            num_existed_on_disk: insert_info.num_existed_on_disk,
             slot_lt_hash,
         }
     }
@@ -6806,7 +6719,10 @@ impl AccountsDb {
                         }
                         let now = Instant::now();
                         if now - last_update > Duration::from_secs(2) {
-                            info!("generating index: processed {num_processed}/{num_storages} slots...");
+                            info!(
+                                "generating index: processed {num_processed}/{num_storages} \
+                                 slots..."
+                            );
                             last_update = now;
                         }
                         thread::sleep(Duration::from_millis(500))
@@ -6958,7 +6874,7 @@ impl AccountsDb {
         }
 
         let (num_zero_lamport_single_refs, visit_zero_lamports_us) = measure_us!(
-            self.visit_zero_lamport_pubkeys_during_startup(&total_accum.zero_lamport_pubkeys)
+            self.visit_zero_lamport_pubkeys_during_startup(total_accum.zero_lamport_pubkeys)
         );
         timings.visit_zero_lamports_us = visit_zero_lamports_us;
         timings.num_zero_lamport_single_refs = num_zero_lamport_single_refs;
@@ -7117,9 +7033,15 @@ impl AccountsDb {
     /// Returns the number of zero lamport single ref accounts found.
     fn visit_zero_lamport_pubkeys_during_startup(
         &self,
-        pubkeys: &HashSet<Pubkey, PubkeyHasherBuilder>,
+        pubkeys: HashSet<Pubkey, PubkeyHasherBuilder>,
     ) -> u64 {
         let mut slot_offsets = HashMap::<_, Vec<_>>::default();
+        let mut pubkeys: Vec<_> = pubkeys.into_iter().collect();
+
+        // sort the pubkeys first so that in scan, the pubkeys are visited in
+        // index bucket in order. This helps to reduce the page faults and speed
+        // up the scan compared to visiting the pubkeys in random order.
+        pubkeys.sort_unstable();
         self.accounts_index.scan(
             pubkeys.iter(),
             |_pubkey, slots_refs, _entry| {
@@ -7277,16 +7199,15 @@ impl AccountsDb {
                     store.count(),
                 );
                 {
-                    let mut count_and_status = store.count_and_status.lock_write();
-                    assert_eq!(count_and_status.0, 0);
-                    count_and_status.0 = entry.count;
+                    let prev_count = store.count.swap(entry.count, Ordering::Release);
+                    assert_eq!(prev_count, 0);
                 }
                 store
                     .alive_bytes
                     .store(entry.stored_size, Ordering::Release);
             } else {
                 trace!("id: {id} clearing count");
-                store.count_and_status.lock_write().0 = 0;
+                store.count.store(0, Ordering::Release);
             }
         }
         storage_size_storages_time.stop();
@@ -7326,10 +7247,10 @@ impl AccountsDb {
         for slot in &slots {
             let entry = self.storage.get_slot_storage_entry(*slot).unwrap();
             info!(
-                "  slot: {} id: {} count_and_status: {:?} len: {} capacity: {}",
+                "  slot: {} id: {} count: {} len: {} capacity: {}",
                 slot,
                 entry.id(),
-                entry.count_and_status.read(),
+                entry.count(),
                 entry.accounts.len(),
                 entry.accounts.capacity(),
             );
@@ -7478,7 +7399,6 @@ impl AccountsDb {
 
     pub fn check_storage(&self, slot: Slot, alive_count: usize, total_count: usize) {
         let store = self.storage.get_slot_storage_entry(slot).unwrap();
-        assert_eq!(store.status(), AccountStorageStatus::Available);
         assert_eq!(store.count(), alive_count);
         assert_eq!(store.accounts_count(), total_count);
     }

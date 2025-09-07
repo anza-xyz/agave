@@ -16,6 +16,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 name = "solana"
 path = "src/main.rs"
 
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-syscalls = { workspace = true }
@@ -100,6 +103,8 @@ tiny-bip39 = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+solana-cli = { path = ".", features = ["dev-context-only-utils"] }
+solana-client = { workspace = true, features = ["dev-context-only-utils"] }
 solana-faucet = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-presigner = { workspace = true }
@@ -107,5 +112,6 @@ solana-rpc = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-streamer = { workspace = true }
 solana-test-validator = { workspace = true }
+solana-tps-client = { workspace = true, features = ["dev-context-only-utils"] }
 tempfile = { workspace = true }
 test-case = { workspace = true }

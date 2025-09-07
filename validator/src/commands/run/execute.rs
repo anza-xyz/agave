@@ -100,7 +100,6 @@ pub fn execute(
     let cli::thread_args::NumThreadConfig {
         accounts_db_background_threads,
         accounts_db_foreground_threads,
-        accounts_db_hash_threads,
         accounts_index_flush_threads,
         block_production_num_workers,
         ip_echo_server_threads,
@@ -443,7 +442,6 @@ pub fn execute(
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
-        num_hash_threads: Some(accounts_db_hash_threads),
         mark_obsolete_accounts,
         memlock_budget_size: solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
         ..AccountsDbConfig::default()
@@ -560,9 +558,8 @@ pub fn execute(
         && use_snapshot_archives_at_startup != UseSnapshotArchivesAtStartup::Always
     {
         Err(format!(
-            "The --accounts-db-mark-obsolete-accounts option requires \
-             the --use-snapshot-archives-at-startup option to be set to {}. \
-             Current value: {}",
+            "The --accounts-db-mark-obsolete-accounts option requires the \
+             --use-snapshot-archives-at-startup option to be set to {}. Current value: {}",
             UseSnapshotArchivesAtStartup::Always,
             use_snapshot_archives_at_startup
         ))?;

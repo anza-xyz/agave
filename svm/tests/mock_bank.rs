@@ -76,21 +76,6 @@ impl TransactionProcessingCallback for MockBankCallback {
             .map(|account| (account.clone(), 0))
     }
 
-    fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
-        let account_data = AccountSharedData::from(Account {
-            lamports: 5000,
-            data: name.as_bytes().to_vec(),
-            owner: solana_sdk_ids::native_loader::id(),
-            executable: true,
-            rent_epoch: 0,
-        });
-
-        self.account_shared_data
-            .write()
-            .unwrap()
-            .insert(*program_id, account_data);
-    }
-
     fn inspect_account(&self, address: &Pubkey, account_state: AccountState, is_writable: bool) {
         let account = match account_state {
             AccountState::Dead => None,
@@ -117,6 +102,29 @@ impl MockBankCallback {
             signature_count.saturating_mul(FeeStructure::default().lamports_per_signature),
             prioritization_fee,
         )
+    }
+
+    pub fn add_builtin(
+        &self,
+        batch_processor: &TransactionBatchProcessor<MockForkGraph>,
+        program_id: Pubkey,
+        name: &str,
+        builtin: ProgramCacheEntry,
+    ) {
+        let account_data = AccountSharedData::from(Account {
+            lamports: 5000,
+            data: name.as_bytes().to_vec(),
+            owner: solana_sdk_ids::native_loader::id(),
+            executable: true,
+            rent_epoch: 0,
+        });
+
+        self.account_shared_data
+            .write()
+            .unwrap()
+            .insert(program_id, account_data);
+
+        batch_processor.add_builtin(program_id, builtin);
     }
 
     #[allow(unused)]
@@ -268,8 +276,8 @@ pub fn register_builtins(
     const DEPLOYMENT_SLOT: u64 = 0;
     // We must register LoaderV3 as a loadable account, otherwise programs won't execute.
     let loader_v3_name = "solana_bpf_loader_upgradeable_program";
-    batch_processor.add_builtin(
-        mock_bank,
+    mock_bank.add_builtin(
+        batch_processor,
         solana_sdk_ids::bpf_loader_upgradeable::id(),
         loader_v3_name,
         ProgramCacheEntry::new_builtin(
@@ -281,8 +289,8 @@ pub fn register_builtins(
 
     // Other loaders are needed for testing program cache behavior.
     let loader_v1_name = "solana_bpf_loader_deprecated_program";
-    batch_processor.add_builtin(
-        mock_bank,
+    mock_bank.add_builtin(
+        batch_processor,
         bpf_loader_deprecated::id(),
         loader_v1_name,
         ProgramCacheEntry::new_builtin(
@@ -293,8 +301,8 @@ pub fn register_builtins(
     );
 
     let loader_v2_name = "solana_bpf_loader_program";
-    batch_processor.add_builtin(
-        mock_bank,
+    mock_bank.add_builtin(
+        batch_processor,
         bpf_loader::id(),
         loader_v2_name,
         ProgramCacheEntry::new_builtin(
@@ -306,8 +314,8 @@ pub fn register_builtins(
 
     if with_loader_v4 {
         let loader_v4_name = "solana_loader_v4_program";
-        batch_processor.add_builtin(
-            mock_bank,
+        mock_bank.add_builtin(
+            batch_processor,
             loader_v4::id(),
             loader_v4_name,
             ProgramCacheEntry::new_builtin(
@@ -321,8 +329,8 @@ pub fn register_builtins(
     // In order to perform a transference of native tokens using the system instruction,
     // the system program builtin must be registered.
     let system_program_name = "system_program";
-    batch_processor.add_builtin(
-        mock_bank,
+    mock_bank.add_builtin(
+        batch_processor,
         solana_system_program::id(),
         system_program_name,
         ProgramCacheEntry::new_builtin(
@@ -334,8 +342,8 @@ pub fn register_builtins(
 
     // For testing realloc, we need the compute budget program
     let compute_budget_program_name = "compute_budget_program";
-    batch_processor.add_builtin(
-        mock_bank,
+    mock_bank.add_builtin(
+        batch_processor,
         compute_budget::id(),
         compute_budget_program_name,
         ProgramCacheEntry::new_builtin(

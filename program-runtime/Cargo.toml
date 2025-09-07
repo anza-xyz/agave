@@ -32,6 +32,7 @@ percentage = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
+solana-account-info = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
@@ -45,6 +46,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-last-restart-slot = { workspace = true }
+solana-loader-v3-interface = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }

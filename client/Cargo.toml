@@ -12,6 +12,9 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 async-trait = { workspace = true }
 bincode = { workspace = true }
@@ -33,6 +36,7 @@ solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
@@ -55,4 +59,3 @@ tokio-util = { workspace = true }
 
 [dev-dependencies]
 crossbeam-channel = { workspace = true }
-solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }

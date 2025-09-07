@@ -31,7 +31,10 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::TransactionError,
     std::{
-        sync::{atomic::Ordering, Arc, RwLock},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, RwLock,
+        },
         time::Instant,
     },
 };
@@ -46,6 +49,7 @@ mod transaction {
 pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 16;
 
 pub struct VoteWorker {
+    exit: Arc<AtomicBool>,
     decision_maker: DecisionMaker,
     tpu_receiver: PacketReceiver,
     gossip_receiver: PacketReceiver,
@@ -56,6 +60,7 @@ pub struct VoteWorker {
 
 impl VoteWorker {
     pub fn new(
+        exit: Arc<AtomicBool>,
         decision_maker: DecisionMaker,
         tpu_receiver: PacketReceiver,
         gossip_receiver: PacketReceiver,
@@ -64,6 +69,7 @@ impl VoteWorker {
         consumer: Consumer,
     ) -> Self {
         Self {
+            exit,
             decision_maker,
             tpu_receiver,
             gossip_receiver,
@@ -79,7 +85,7 @@ impl VoteWorker {
 
         let mut last_metrics_update = Instant::now();
 
-        loop {
+        while !self.exit.load(Ordering::Relaxed) {
             if !self.storage.is_empty()
                 || last_metrics_update.elapsed() >= SLOT_BOUNDARY_CHECK_PERIOD
             {

@@ -54,7 +54,8 @@ impl GossipService {
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         trace!(
-            "GossipService: id: {}, listening on primary interface: {:?}, all available interfaces: {:?}",
+            "GossipService: id: {}, listening on primary interface: {:?}, all available \
+             interfaces: {:?}",
             &cluster_info.id(),
             gossip_sockets[0].local_addr().unwrap(),
             gossip_sockets,

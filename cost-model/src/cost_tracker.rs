@@ -4,7 +4,10 @@
 //! - add_transaction_cost(&tx_cost), mutable function to accumulate tx_cost to tracker.
 //!
 use {
-    crate::{block_cost_limits::*, transaction_cost::TransactionCost},
+    crate::{
+        block_cost_limits::*, cost_tracker_post_analysis::CostTrackerPostAnalysis,
+        transaction_cost::TransactionCost,
+    },
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -430,6 +433,15 @@ impl CostTracker {
             .values()
             .filter(|units| **units > 0)
             .count()
+    }
+}
+
+/// Implement the trait for the cost tracker
+/// This is only used for post-analysis to avoid lock contention
+/// Do not use in the hot path
+impl CostTrackerPostAnalysis for CostTracker {
+    fn get_cost_by_writable_accounts(&self) -> &HashMap<Pubkey, u64, ahash::RandomState> {
+        &self.cost_by_writable_accounts
     }
 }
 
@@ -997,5 +1009,21 @@ mod tests {
         assert_eq!(0, cost_tracker.block_cost);
         assert_eq!(0, cost_tracker.vote_cost);
         assert_eq!(0, cost_tracker.allocated_accounts_data_size.0);
+    }
+
+    #[test]
+    fn test_get_cost_by_writable_accounts_post_analysis() {
+        let mut cost_tracker = CostTracker::default();
+        let cost = 100u64;
+        let transaction = WritableKeysTransaction(vec![Pubkey::new_unique()]);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        cost_tracker.add_transaction_cost(&tx_cost);
+        let cost_by_writable_accounts = cost_tracker.get_cost_by_writable_accounts();
+        assert_eq!(1, cost_by_writable_accounts.len());
+        assert_eq!(cost, *cost_by_writable_accounts.values().next().unwrap());
+        assert_eq!(
+            *cost_by_writable_accounts,
+            cost_tracker.cost_by_writable_accounts
+        );
     }
 }

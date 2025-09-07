@@ -164,8 +164,8 @@ where
                 .possible_values(&["processed", "confirmed", "finalized"])
                 .hide_possible_values(true)
                 .help(
-                    "Return information at the selected commitment level \
-                     [possible values: processed, confirmed, finalized]",
+                    "Return information at the selected commitment level [possible values: \
+                     processed, confirmed, finalized]",
                 ),
         )
         .arg(

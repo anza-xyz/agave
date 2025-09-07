@@ -474,12 +474,11 @@ mod tests {
         accounts_db_config.partitioned_epoch_rewards_config =
             PartitionedEpochRewardsConfig::new_for_test(stake_account_stores_per_block);
 
-        let bank = Bank::new_with_paths(
+        let bank = Bank::new_from_genesis(
             &genesis_config,
             Arc::new(RuntimeConfig::default()),
             Vec::new(),
             None,
-            false,
             accounts_db_config,
             None,
             Some(Pubkey::new_unique()),
@@ -574,12 +573,11 @@ mod tests {
         accounts_db_config.partitioned_epoch_rewards_config =
             PartitionedEpochRewardsConfig::new_for_test(10);
 
-        let bank = Bank::new_with_paths(
+        let bank = Bank::new_from_genesis(
             &genesis_config,
             Arc::new(RuntimeConfig::default()),
             Vec::new(),
             None,
-            false,
             accounts_db_config,
             None,
             Some(Pubkey::new_unique()),
