@@ -193,7 +193,7 @@ pub struct PohRecorder {
     last_reported_slot_for_pending_fork: Arc<Mutex<Slot>>,
     pub is_exited: Arc<AtomicBool>,
 
-    // Allocation to hold PohEntrys recorded into PoHStream.
+    // Allocation to hold PohEntries recorded into PoHStream.
     entries: Vec<PohEntry>,
     track_transaction_indexes: bool,
 

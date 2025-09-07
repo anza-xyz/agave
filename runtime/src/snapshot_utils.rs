@@ -2944,7 +2944,7 @@ mod tests {
         .is_err());
     }
 
-    /// A test heler function that creates bank snapshot files
+    /// A test helper function that creates bank snapshot files
     fn common_create_bank_snapshot_files(
         bank_snapshots_dir: &Path,
         min_slot: Slot,

@@ -189,7 +189,7 @@ impl FixedIoBuffer {
     }
 
     /// Return a clone of `self` reduced to specified `size`
-    pub fn into_shrinked(self, size: usize) -> Self {
+    pub fn into_shrunk(self, size: usize) -> Self {
         assert!(size <= self.size);
         Self {
             ptr: self.ptr,

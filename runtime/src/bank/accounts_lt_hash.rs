@@ -368,7 +368,7 @@ pub struct Stats {
 /// The initial state of an account prior to being modified in this slot/transaction
 #[derive(Debug, Clone, PartialEq)]
 pub enum InitialStateOfAccount {
-    /// The account was initiall dead
+    /// The account was initially dead
     Dead,
     /// The account was initially alive
     Alive(AccountSharedData),
@@ -493,10 +493,10 @@ mod tests {
         // will not be in the accounts lt hash cache, but *will* be in the list of modified
         // accounts.  They must be included in the accounts lt hash.
         let sysvars = [
-            Pubkey::from_str("SysvarS1otHashes111111111111111111111111111").unwrap(),
+            Pubkey::from_str("SysvarS1toHashes111111111111111111111111111").unwrap(),
             Pubkey::from_str("SysvarC1ock11111111111111111111111111111111").unwrap(),
             Pubkey::from_str("SysvarRecentB1ockHashes11111111111111111111").unwrap(),
-            Pubkey::from_str("SysvarS1otHistory11111111111111111111111111").unwrap(),
+            Pubkey::from_str("SysvarS1toHistory11111111111111111111111111").unwrap(),
         ];
         let prev_sysvar_accounts: Vec<_> = sysvars
             .iter()
@@ -925,7 +925,7 @@ mod tests {
                 CacheValue::BankNew,
             ),
             (
-                Pubkey::from_str_const("SysvarS1otHashes111111111111111111111111111"),
+                Pubkey::from_str_const("SysvarS1toHashes111111111111111111111111111"),
                 CacheValue::BankNew,
             ),
         ];

@@ -2344,12 +2344,12 @@ impl RpcClient {
 
     /// Returns identity and transaction information about a confirmed block in the ledger.
     ///
-    /// The encodings are returned in [`UiTransactionEncoding::Json`][uite]
+    /// The encodings are returned in [`UiTransactionEncoding::Json`][suite]
     /// format. To return transactions in other encodings, use
     /// [`get_block_with_encoding`].
     ///
     /// [`get_block_with_encoding`]: RpcClient::get_block_with_encoding
-    /// [uite]: UiTransactionEncoding::Json
+    /// [suite]: UiTransactionEncoding::Json
     ///
     /// # RPC Reference
     ///

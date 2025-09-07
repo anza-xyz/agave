@@ -198,7 +198,7 @@ pub struct CallerAccount<'a> {
     pub lamports: &'a mut u64,
     pub owner: &'a mut Pubkey,
     // The original data length of the account at the start of the current
-    // instruction. We use this to determine wether an account was shrunk or
+    // instruction. We use this to determine whether an account was shrunk or
     // grown before or after CPI, and to derive the vm address of the realloc
     // region.
     pub original_data_len: usize,

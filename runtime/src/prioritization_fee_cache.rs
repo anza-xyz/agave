@@ -187,7 +187,7 @@ impl PrioritizationFeeCache {
 
         let service_thread = Some(
             Builder::new()
-                .name("solPrFeeCachSvc".to_string())
+                .name("solPrFeeCacheSvc".to_string())
                 .spawn({
                     let cache = cache.clone();
                     let metrics = metrics.clone();

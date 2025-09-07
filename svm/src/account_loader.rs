@@ -2844,7 +2844,7 @@ mod tests {
                     u64::MAX,
                 );
 
-                // give half loaderv3 accounts (if theyre long enough) a valid programdata
+                // give half loaderv3 accounts (if their long enough) a valid programdata
                 // a quarter a dead pointer and a quarter nothing
                 // we set executable like a program because after the flag is disabled...
                 // ...programdata and buffer accounts can be used as program ids without aborting loading

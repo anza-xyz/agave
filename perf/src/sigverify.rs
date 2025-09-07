@@ -1413,7 +1413,7 @@ mod tests {
             tx.message.instructions[0].data = vec![1, 2, 3];
             let packet = BytesPacket::from_data(None, tx).unwrap();
 
-            // set messager version to v0
+            // set messenger version to v0
             let mut packet_offsets = do_get_packet_offsets(packet.as_ref(), 0).unwrap();
             let msg_start = packet_offsets.msg_start as usize;
             let msg_bytes = packet.data(msg_start..).unwrap();

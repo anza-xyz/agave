@@ -7,7 +7,7 @@ use {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct TlvRecord {
     // type
-    pub(crate) typ: u8,
+    pub(crate) type: u8,
     // length and serialized bytes of the value
     #[serde(with = "short_vec")]
     pub(crate) bytes: Vec<u8>,
@@ -19,7 +19,7 @@ macro_rules! define_tlv_enum {
     (
         $(#[$meta:meta])*
         $vis:vis enum $enum_name:ident {
-            $($typ:literal => $variant:ident($inner:ty)),* $(,)?
+            $($type:literal => $variant:ident($inner:ty)),* $(,)?
         }
     ) => {
         // add the doc-comment if present
@@ -47,11 +47,11 @@ macro_rules! define_tlv_enum {
         impl TryFrom<&TlvRecord> for $enum_name {
             type Error = TlvDecodeError;
             fn try_from(value: &TlvRecord) -> Result<Self, Self::Error> {
-                match value.typ {
+                match value.type {
                     $(
-                        $typ => Ok(Self::$variant(bincode::deserialize::<$inner>(&value.bytes)?)),
+                        $type => Ok(Self::$variant(bincode::deserialize::<$inner>(&value.bytes)?)),
                     )*
-                    _ => Err(TlvDecodeError::UnknownType(value.typ)),
+                    _ => Err(TlvDecodeError::UnknownType(value.type)),
                 }
             }
         }
@@ -63,7 +63,7 @@ macro_rules! define_tlv_enum {
                 match value {
                     $(
                         $enum_name::$variant(inner) => Ok(TlvRecord {
-                            typ: $typ,
+                            type: $type,
                             bytes: bincode::serialize(inner)?,
                         }),
                     )*

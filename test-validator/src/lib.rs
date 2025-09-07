@@ -143,7 +143,7 @@ pub struct TestValidatorGenesis {
 
 impl Default for TestValidatorGenesis {
     fn default() -> Self {
-        // Default to Tower consensus to ensure proper converage pre-Alpenglow.
+        // Default to Tower consensus to ensure proper coverage pre-Alpenglow.
         let deactivate_feature_set = [alpenglow::id()].into_iter().collect();
         Self {
             fee_rate_governor: FeeRateGovernor::default(),

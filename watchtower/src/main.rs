@@ -360,13 +360,13 @@ fn query_endpoint(
                 if vote_accounts
                     .delinquent
                     .iter()
-                    .any(|vai| vai.node_pubkey == *validator_identity.to_string())
+                    .any(|via| via.node_pubkey == *validator_identity.to_string())
                 {
                     validator_errors.push(format!("{formatted_validator_identity} delinquent"));
                 } else if !vote_accounts
                     .current
                     .iter()
-                    .any(|vai| vai.node_pubkey == *validator_identity.to_string())
+                    .any(|via| via.node_pubkey == *validator_identity.to_string())
                 {
                     validator_errors.push(format!("{formatted_validator_identity} missing"));
                 }

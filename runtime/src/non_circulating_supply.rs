@@ -81,7 +81,7 @@ pub fn calculate_non_circulating_supply(bank: &Bank) -> ScanResult<NonCirculatin
 // Mainnet-beta accounts that should be considered non-circulating
 pub fn non_circulating_accounts() -> Vec<Pubkey> {
     [
-        solana_pubkey::pubkey!("9huDUZfxoJ7wGMTffUE7vh1xePqef7gyrLJu9NApncqA"),
+        solana_pubkey::pubkey!("9huDUZfxoJ7wGMTffUSE7vh1xePqef7gyrLJu9NApncqA"),
         solana_pubkey::pubkey!("GK2zqSsXLA2rwVZk347RYhh6jJpRsCA69FjLW93ZGi3B"),
         solana_pubkey::pubkey!("CWeRmXme7LmbaUWTZWFLt6FMnpzLCHaQLuR2TdgFn4Lq"),
         solana_pubkey::pubkey!("HCV5dGFJXRrJ3jhDYA4DCeb9TEDTwGGYXtT3wHksu2Zr"),

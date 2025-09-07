@@ -47,7 +47,7 @@ fn program_cache_execution(threads: usize) {
 
     let account_maps: HashSet<Pubkey> = programs.iter().copied().collect();
 
-    let ths: Vec<_> = (0..threads)
+    let this: Vec<_> = (0..threads)
         .map(|_| {
             let local_bank = mock_bank.clone();
             let processor = TransactionBatchProcessor::new_from(
@@ -93,7 +93,7 @@ fn program_cache_execution(threads: usize) {
         })
         .collect();
 
-    for th in ths {
+    for th in this {
         th.join().unwrap();
     }
 }
@@ -233,7 +233,7 @@ fn svm_concurrent() {
         });
     }
 
-    let ths: Vec<_> = (0..THREADS)
+    let this: Vec<_> = (0..THREADS)
         .map(|idx| {
             let local_batch = batch_processor.clone();
             let local_bank = mock_bank.clone();
@@ -289,7 +289,7 @@ fn svm_concurrent() {
         })
         .collect();
 
-    for th in ths {
+    for th in this {
         th.join().unwrap();
     }
 }

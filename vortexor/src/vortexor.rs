@@ -145,7 +145,7 @@ impl Vortexor {
         )
         .unwrap();
 
-        // Fot TPU forward -- we disallow unstaked connections. Allocate all connection resources
+        // For TPU forward -- we disallow unstaked connections. Allocate all connection resources
         // for staked connections:
         quic_server_params.max_staked_connections = max_fwd_staked_connections;
         quic_server_params.max_unstaked_connections = max_fwd_unstaked_connections;

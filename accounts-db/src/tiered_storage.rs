@@ -215,7 +215,7 @@ mod tests {
             ) => {}
             (Err(TieredStorageError::Unsupported()), Err(TieredStorageError::Unsupported())) => {}
             (Ok(_), Ok(_)) => {}
-            // we don't expect error type mis-match or other error types here
+            // we don't expect error type miss-match or other error types here
             _ => {
                 panic!("actual: {result:?}, expected: {expected_result:?}");
             }

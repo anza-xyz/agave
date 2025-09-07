@@ -588,7 +588,7 @@ impl PartialEq for Bank {
             && *stakes_cache.stakes() == *other.stakes_cache.stakes()
             && epoch_stakes == &other.epoch_stakes
             && is_delta.load(Relaxed) == other.is_delta.load(Relaxed)
-            // No deadlock is possbile, when Arc::ptr_eq() returns false, because of being
+            // No deadlock is possible, when Arc::ptr_eq() returns false, because of being
             // different Mutexes.
             && (Arc::ptr_eq(hash_overrides, &other.hash_overrides) ||
                 *hash_overrides.lock().unwrap() == *other.hash_overrides.lock().unwrap())
