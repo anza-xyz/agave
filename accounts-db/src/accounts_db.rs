@@ -7000,8 +7000,7 @@ impl AccountsDb {
         pubkeys.dedup();
         let uniq_len = pubkeys.len();
         info!(
-            "visit_zero_lamport_pubkeys_during_startup: {} pubkeys, {} after dedup",
-            orig_len, uniq_len
+            "visit_zero_lamport_pubkeys_during_startup: {orig_len} pubkeys, {uniq_len} after dedup",
         );
 
         self.accounts_index.scan(
