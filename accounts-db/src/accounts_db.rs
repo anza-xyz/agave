@@ -6991,7 +6991,7 @@ impl AccountsDb {
     /// storage.
     /// Returns the number of zero lamport single ref accounts found.
     fn visit_zero_lamport_pubkeys_during_startup(&self, mut pubkeys: Vec<Pubkey>) -> u64 {
-        let mut slot_offsets = HashMap::<Slot, Vec<usize>>::default();
+        let mut slot_offsets = HashMap::<_, Vec<_>>::default();
         // sort the pubkeys first so that in scan, the pubkeys are visited in
         // index bucket in order. This helps to reduce the page faults and speed
         // up the scan compared to visiting the pubkeys in random order.
