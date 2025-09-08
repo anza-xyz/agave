@@ -2,10 +2,19 @@
 
 //! Messages passed between agave and an external pack process.
 //! Messages are passed via `shaq::Consumer/Producer`.
+//!
 //! Memory freeing is responsibility of the external pack process,
 //! and is done via `rts-alloc` crate. It is also possible the external
 //! pack process allocates memory to pass to agave, BUT it will still be
 //! the responsibility of the external pack process to free that memory.
+//!
+//! Setting up the shared memory allocator and queues is done outside of
+//! agave - it can be done by the external pack process or another
+//! process. agave will just `join` shared memory regions, but not
+//! create them.
+//! Similarly, agave will not delete files used for shared memory regions.
+//! See `shaq` and `rts-alloc` crates for details.
+//!
 
 /// Reference to a transaction that can shared safely across processes.
 #[repr(C)]
