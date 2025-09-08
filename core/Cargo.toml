@@ -43,6 +43,7 @@ frozen-abi = [
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
 agave-feature-set = { workspace = true }
+agave-scheduler-bindings = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-verified-packet-receiver = { workspace = true }
 agave-votor = { workspace = true, features = ["agave-unstable-api"] }
@@ -76,10 +77,12 @@ rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
 rolling-file = { workspace = true }
+rts-alloc = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
+shaq = { workspace = true }
 slab = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }

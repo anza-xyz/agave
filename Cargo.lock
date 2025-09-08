@@ -6142,6 +6142,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rts-alloc"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cd9f34af8112a1f1e6cebc83e44a3e497a7f720f3384161497ef5e35b099b49"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "rustc-demangle"
 version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6714,6 +6723,15 @@ checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
 dependencies = [
  "digest 0.10.7",
  "keccak",
+]
+
+[[package]]
+name = "shaq"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c451e9289cd55fd2406917d16abe8af5f83c74b3ba3736398f6aadd2ab1fba2"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -8113,6 +8131,7 @@ dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-feature-set",
  "agave-reserved-account-keys",
+ "agave-scheduler-bindings",
  "agave-transaction-view",
  "agave-verified-packet-receiver",
  "agave-votor",
@@ -8148,12 +8167,14 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rayon",
  "rolling-file",
+ "rts-alloc",
  "rustls 0.23.32",
  "serde",
  "serde_bytes",
  "serde_derive",
  "serde_json",
  "serial_test",
+ "shaq",
  "slab",
  "solana-account",
  "solana-accounts-db",
