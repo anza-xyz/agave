@@ -6583,7 +6583,7 @@ impl AccountsDb {
             lt_hash: LtHash,
         }
         impl IndexGenerationAccumulator {
-            fn new() -> Self {
+            const fn new() -> Self {
                 Self {
                     insert_us: 0,
                     num_accounts: 0,
