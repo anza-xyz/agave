@@ -502,6 +502,9 @@ impl SimulatorLoop {
                     &mut self.poh_controller,
                     new_bank,
                 );
+                // Wait for the controller message to be processed.
+                while self.poh_controller.has_pending_message() {}
+
                 (bank, bank_created) = (
                     self.bank_forks
                         .read()
