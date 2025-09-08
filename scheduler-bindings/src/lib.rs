@@ -37,6 +37,15 @@ pub struct SharablePubkeys {
 
 /// Reference to an array of [`SharableTransactionRegion`] that can be shared safely
 /// across processes.
+/// General flow:
+/// 1. External pack process allocates memory for
+///    `num_transactions` [`SharableTransactionRegion`].
+/// 2. External pack sends a [`PackToWorkerMessage`] with `batch`.
+/// 3. agave processes the transactions and sends back a [`WorkerToPackMessage`]
+///    with the same `batch`.
+/// 4. External pack process frees all transaction memory pointed to by the
+///    [`SharableTransactionRegion`] in the batch, then frees the memory for
+///    the array of [`SharableTransactionRegion`].
 #[repr(C)]
 pub struct SharableTransactionBatchRegion {
     /// Number of transactions in the batch.
