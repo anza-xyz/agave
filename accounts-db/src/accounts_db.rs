@@ -6588,7 +6588,7 @@ impl AccountsDb {
                     insert_us: 0,
                     num_accounts: 0,
                     accounts_data_len: 0,
-                    zero_lamport_pubkeys: Vec::default(),
+                    zero_lamport_pubkeys: Vec::new(),
                     all_accounts_are_zero_lamports_slots: 0,
                     all_zeros_slots: Vec::new(),
                     num_did_not_exist: 0,
@@ -6995,8 +6995,14 @@ impl AccountsDb {
         // sort the pubkeys first so that in scan, the pubkeys are visited in
         // index bucket in order. This helps to reduce the page faults and speed
         // up the scan compared to visiting the pubkeys in random order.
+        let orig_len = pubkeys.len();
         pubkeys.sort_unstable();
         pubkeys.dedup();
+        let uniq_len = pubkeys.len();
+        info!(
+            "visit_zero_lamport_pubkeys_during_startup: {} pubkeys, {} after dedup",
+            orig_len, uniq_len
+        );
 
         self.accounts_index.scan(
             pubkeys.iter(),
