@@ -1753,7 +1753,7 @@ dependencies = [
  "num-traits",
  "serde",
  "wasm-bindgen",
- "windows-link",
+ "windows-link 0.1.0",
 ]
 
 [[package]]
@@ -2249,12 +2249,13 @@ dependencies = [
 
 [[package]]
 name = "ctrlc"
-version = "3.4.7"
+version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46f93780a459b7d656ef7f071fe699c4d3d2cb201c4b24d085b6ddc505276e73"
+checksum = "881c5d0a13b2f1498e2306e82cbada78390e152d4b1378fb28a84f4dcd0dc4f3"
 dependencies = [
+ "dispatch",
  "nix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -2547,6 +2548,12 @@ dependencies = [
  "redox_users",
  "winapi 0.3.9",
 ]
+
+[[package]]
+name = "dispatch"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd0c93bb4b0c6d9b77f4435b0ae98c24d17f1c45b2ff844c6151a07256ca923b"
 
 [[package]]
 name = "displaydoc"
@@ -13649,6 +13656,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dccfd733ce2b1753b03b6d3c65edf020262ea35e20ccdf3e288043e6dd620e3"
 
 [[package]]
+name = "windows-link"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45e46c0661abb7180e7b9c281db115305d49ca1709ab8242adf09666d2173c65"
+
+[[package]]
 name = "windows-result"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13700,6 +13713,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
 dependencies = [
  "windows-targets 0.53.2",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.61.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e201184e40b2ede64bc2ea34968b28e33622acdbbf37104f0e4a33f7abe657aa"
+dependencies = [
+ "windows-link 0.2.0",
 ]
 
 [[package]]
