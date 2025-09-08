@@ -6,6 +6,7 @@ use {
     agave_scheduler_bindings::{tpu_message_flags, SharableTransactionRegion, TpuToPackMessage},
     rts_alloc::Allocator,
     solana_packet::PacketFlags,
+    solana_perf::packet::PacketBatch,
     std::{
         net::IpAddr,
         path::{Path, PathBuf},
@@ -21,6 +22,7 @@ use {
 pub fn spawn(
     exit: Arc<AtomicBool>,
     non_vote_receiver: BankingPacketReceiver,
+    vote_receivers: Option<(BankingPacketReceiver, BankingPacketReceiver)>,
     allocator_path: PathBuf,
     allocator_worker_id: u32,
     queue_path: PathBuf,
@@ -32,7 +34,7 @@ pub fn spawn(
             if let Some((allocator, producer)) =
                 setup(allocator_path, allocator_worker_id, queue_path)
             {
-                tpu_to_pack(exit, non_vote_receiver, allocator, producer);
+                tpu_to_pack(exit, non_vote_receiver, vote_receivers, allocator, producer);
             }
         })
         .unwrap()
@@ -41,88 +43,106 @@ pub fn spawn(
 fn tpu_to_pack(
     exit: Arc<AtomicBool>,
     non_vote_receiver: BankingPacketReceiver,
+    vote_receivers: Option<(BankingPacketReceiver, BankingPacketReceiver)>,
     allocator: Allocator,
     mut producer: shaq::Producer<TpuToPackMessage>,
 ) {
+    // Create a round-robin receiver for vote/non-vote packets.
+    // If vote receivers are not provided, this just always returns the non-vote receiver.
+    let mut round_robin_receiver_iter = if let Some(vote_receivers) = vote_receivers {
+        vec![vote_receivers.0, vote_receivers.1, non_vote_receiver]
+            .into_iter()
+            .cycle()
+    } else {
+        vec![non_vote_receiver].into_iter().cycle()
+    };
+
     while exit.load(Ordering::Relaxed) {
-        // Receive packets from the TPU.
-        let Ok(packet_batch) = non_vote_receiver.try_recv() else {
+        // Receive packets from the next receiver in round-robin order.
+        let Ok(packet_batches) = round_robin_receiver_iter.next().unwrap().try_recv() else {
             continue;
         };
+        handle_packet_batches(&allocator, &mut producer, packet_batches);
+    }
+}
 
-        // Clean all remote frees in allocator so we have as much
-        // room as possible.
-        allocator.clean_remote_free_lists();
+fn handle_packet_batches(
+    allocator: &Allocator,
+    producer: &mut shaq::Producer<TpuToPackMessage>,
+    packet_batches: Arc<Vec<PacketBatch>>,
+) {
+    // Clean all remote frees in allocator so we have as much
+    // room as possible.
+    allocator.clean_remote_free_lists();
 
-        // Sync producer queue with reader so we have as much room as possible.
-        producer.sync();
+    // Sync producer queue with reader so we have as much room as possible.
+    producer.sync();
 
-        'batch_loop: for batch in packet_batch.iter() {
-            for packet in batch.iter() {
-                // Check if the packet is valid and get the bytes.
-                let packet_size = packet.meta().size;
-                let Some(packet_bytes) = packet.data(..packet_size) else {
-                    continue;
-                };
+    'batch_loop: for batch in packet_batches.iter() {
+        for packet in batch.iter() {
+            // Check if the packet is valid and get the bytes.
+            let packet_size = packet.meta().size;
+            let Some(packet_bytes) = packet.data(..packet_size) else {
+                continue;
+            };
 
-                // Allocate enough memory for the packet in the allocator.
-                let Some(allocated_ptr) = allocator.allocate(packet_size as u32) else {
-                    // Failed to allocate memory for the packet, drop the rest of the batch.
-                    warn!("Failed to allocate memory for packet. Dropping the rest of the batch.");
-                    break 'batch_loop;
-                };
+            // Allocate enough memory for the packet in the allocator.
+            let Some(allocated_ptr) = allocator.allocate(packet_size as u32) else {
+                // Failed to allocate memory for the packet, drop the rest of the batch.
+                warn!("Failed to allocate memory for packet. Dropping the rest of the batch.");
+                break 'batch_loop;
+            };
 
-                // Reserve space in the producer queue for the packet message.
-                let Some(tpu_to_pack_message) = producer.reserve() else {
-                    // Free the allocated packet if we can't reserve space in the queue.
-                    // SAFETY: `allocated_ptr` was allocated from `allocator`.
-                    unsafe {
-                        allocator.free(allocated_ptr);
-                    }
-                    break 'batch_loop;
-                };
-
-                // Copy the packet data into the allocated memory.
-                // SAFETY:
-                // - `allocated_ptr` is valid for `packet_size` bytes.
-                // - src and dst are valid pointers that are properly aligned
-                //   and do not overlap.
+            // Reserve space in the producer queue for the packet message.
+            let Some(tpu_to_pack_message) = producer.reserve() else {
+                // Free the allocated packet if we can't reserve space in the queue.
+                // SAFETY: `allocated_ptr` was allocated from `allocator`.
                 unsafe {
-                    allocated_ptr.copy_from_nonoverlapping(
-                        NonNull::new(packet_bytes.as_ptr().cast_mut())
-                            .expect("packet bytes must be non-null"),
-                        packet_size,
-                    );
+                    allocator.free(allocated_ptr);
                 }
+                break 'batch_loop;
+            };
 
-                // Create a sharable transaction region for the packet.
-                let transaction = SharableTransactionRegion {
-                    // SAFETY: `allocated_ptr` was allocated from `allocator`.
-                    offset: unsafe { allocator.offset(allocated_ptr) },
-                    length: packet_size as u32,
-                };
+            // Copy the packet data into the allocated memory.
+            // SAFETY:
+            // - `allocated_ptr` is valid for `packet_size` bytes.
+            // - src and dst are valid pointers that are properly aligned
+            //   and do not overlap.
+            unsafe {
+                allocated_ptr.copy_from_nonoverlapping(
+                    NonNull::new(packet_bytes.as_ptr().cast_mut())
+                        .expect("packet bytes must be non-null"),
+                    packet_size,
+                );
+            }
 
-                // Translate flags from meta.
-                let tpu_message_flags = flags_from_meta(packet.meta().flags);
+            // Create a sharable transaction region for the packet.
+            let transaction = SharableTransactionRegion {
+                // SAFETY: `allocated_ptr` was allocated from `allocator`.
+                offset: unsafe { allocator.offset(allocated_ptr) },
+                length: packet_size as u32,
+            };
 
-                // Get the source address of the packet - convert to expected format.
-                let src_addr = map_src_addr(packet.meta().addr);
+            // Translate flags from meta.
+            let tpu_message_flags = flags_from_meta(packet.meta().flags);
 
-                // Populate the message and write it to the queue.
-                unsafe {
-                    tpu_to_pack_message.write(TpuToPackMessage {
-                        transaction,
-                        flags: tpu_message_flags,
-                        src_addr,
-                    });
-                }
+            // Get the source address of the packet - convert to expected format.
+            let src_addr = map_src_addr(packet.meta().addr);
+
+            // Populate the message and write it to the queue.
+            unsafe {
+                tpu_to_pack_message.write(TpuToPackMessage {
+                    transaction,
+                    flags: tpu_message_flags,
+                    src_addr,
+                });
             }
         }
-
-        // Commit the messages to the producer queue.
-        // This makes the messages available to the consumer.
-        producer.commit();
     }
+
+    // Commit the messages to the producer queue.
+    // This makes the messages available to the consumer.
+    producer.commit();
 }
 
 fn flags_from_meta(flags: PacketFlags) -> u8 {
