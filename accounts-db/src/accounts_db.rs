@@ -2999,11 +2999,12 @@ impl AccountsDb {
             alive_total_bytes: 0, // will be updated after `alive_accounts` is populated
         });
 
-        let obsolete_accounts_filtered = total_starting_accounts - stored_accounts.len();
-
         stats
             .accounts_loaded
             .fetch_add(len as u64, Ordering::Relaxed);
+        stats
+            .obsolete_accounts_filtered
+            .fetch_add((total_starting_accounts - len) as u64, Ordering::Relaxed);
         stats
             .num_duplicated_accounts
             .fetch_add(*num_duplicated_accounts as u64, Ordering::Relaxed);
@@ -3019,14 +3020,16 @@ impl AccountsDb {
                     } = self.load_accounts_index_for_shrink(stored_accounts, stats, slot);
 
                     // collect
-                    let mut collect = shrink_collect.lock().unwrap();
-                    collect.alive_accounts.collect(alive_accounts);
-                    collect.pubkeys_to_unref.append(&mut pubkeys_to_unref);
-                    collect
+                    let mut shrink_collect = shrink_collect.lock().unwrap();
+                    shrink_collect.alive_accounts.collect(alive_accounts);
+                    shrink_collect
+                        .pubkeys_to_unref
+                        .append(&mut pubkeys_to_unref);
+                    shrink_collect
                         .zero_lamport_single_ref_pubkeys
                         .append(&mut zero_lamport_single_ref_pubkeys);
                     if !all_are_zero_lamports {
-                        collect.all_are_zero_lamports = false;
+                        shrink_collect.all_are_zero_lamports = false;
                     }
                 });
         });
@@ -3036,10 +3039,6 @@ impl AccountsDb {
         let mut shrink_collect = shrink_collect.into_inner().unwrap();
         let alive_total_bytes = shrink_collect.alive_accounts.alive_bytes();
         shrink_collect.alive_total_bytes = alive_total_bytes;
-
-        stats
-            .obsolete_accounts_filtered
-            .fetch_add(obsolete_accounts_filtered as u64, Ordering::Relaxed);
 
         stats
             .index_read_elapsed
