@@ -1000,10 +1000,12 @@ async fn handle_connection(
         .expect("dividing VarInt by positive integer will never overflow VarInt"),
     );
     debug!(
-        "quic new connection {remote_addr}, max_receive_rate {max_receive_rate_kbps} Kbps (receive_window= {initial_rx_window} RTT={rtt}ms), streams: {streams} connections: {connections}",
+        "quic new connection {remote_addr}, max_receive_rate {max_receive_rate_kbps} Kbps \
+         (receive_window= {initial_rx_window} RTT={rtt}ms), streams: {streams} connections: \
+         {connections}",
         rtt = connection.rtt().as_millis(),
-        streams=stats.total_streams.load(Ordering::Relaxed),
-        connections=stats.total_connections.load(Ordering::Relaxed),
+        streams = stats.total_streams.load(Ordering::Relaxed),
+        connections = stats.total_connections.load(Ordering::Relaxed),
     );
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
 
@@ -1143,8 +1145,12 @@ async fn handle_connection(
         stream_load_ema.update_ema_if_needed();
         if (stream_number % 128) == 0 {
             let new_window = compute_receive_window_bdp(max_receive_rate_kbps, connection.rtt());
-            trace!("Updating receive window for {remote_addr:?} to {new_window:?} based on rtt {:?} and target bitrate {} kbps",
-            connection.rtt(), max_receive_rate_kbps);
+            trace!(
+                "Updating receive window for {remote_addr:?} to {new_window:?} based on rtt {:?} \
+                 and target bitrate {} kbps",
+                connection.rtt(),
+                max_receive_rate_kbps
+            );
             connection.set_receive_window(new_window);
             // we do not update number of allowed streams here since
             // it may cause extra allocations.
