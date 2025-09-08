@@ -475,14 +475,15 @@ define_accounts_db_test!(test_accountsdb_latest_ancestor, |db| {
     );
 
     let mut accounts = Vec::new();
-    db.unchecked_scan_accounts(
-        "",
+    db.scan_accounts(
         &ancestors,
-        |_, account, _| {
-            accounts.push(account.take_account());
+        0,
+        |account| {
+            account.map(|account| accounts.push(account.1));
         },
         &ScanConfig::default(),
-    );
+    )
+    .expect("should scan accounts");
     assert_eq!(accounts, vec![account1]);
 });
 
@@ -1944,26 +1945,28 @@ fn test_accountsdb_scan_accounts() {
 
     let ancestors = vec![(0, 0)].into_iter().collect();
     let mut accounts = Vec::new();
-    db.unchecked_scan_accounts(
-        "",
+    db.scan_accounts(
         &ancestors,
-        |_, account, _| {
-            accounts.push(account.take_account());
+        0,
+        |account| {
+            account.map(|account| accounts.push(account.1));
         },
         &ScanConfig::default(),
-    );
+    )
+    .expect("should scan accounts");
     assert_eq!(accounts, vec![account0]);
 
     let ancestors = vec![(1, 1), (0, 0)].into_iter().collect();
     let mut accounts = Vec::new();
-    db.unchecked_scan_accounts(
-        "",
+    db.scan_accounts(
         &ancestors,
-        |_, account, _| {
-            accounts.push(account.take_account());
+        0,
+        |account| {
+            account.map(|account| accounts.push(account.1));
         },
         &ScanConfig::default(),
-    );
+    )
+    .expect("should scan accounts");
     assert_eq!(accounts.len(), 2);
 }
 

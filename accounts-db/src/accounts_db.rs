@@ -3837,29 +3837,6 @@ impl AccountsDb {
         Ok(())
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn unchecked_scan_accounts<F>(
-        &self,
-        metric_name: &'static str,
-        ancestors: &Ancestors,
-        mut scan_func: F,
-        config: &ScanConfig,
-    ) where
-        F: FnMut(&Pubkey, LoadedAccount, Slot),
-    {
-        self.accounts_index.unchecked_scan_accounts(
-            metric_name,
-            ancestors,
-            |pubkey, (account_info, slot)| {
-                self.get_account_accessor(slot, pubkey, &account_info.storage_location())
-                    .get_loaded_account(|loaded_account| {
-                        scan_func(pubkey, loaded_account, slot);
-                    });
-            },
-            config,
-        );
-    }
-
     pub fn index_scan_accounts<F>(
         &self,
         ancestors: &Ancestors,
