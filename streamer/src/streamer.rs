@@ -11,6 +11,7 @@ use {
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
+    itertools::Itertools,
     solana_net_utils::multihomed_sockets::{
         BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider, SocketProvider,
     },
@@ -80,6 +81,7 @@ pub struct StakedNodes {
     overrides: HashMap<Pubkey, u64>,
     total_stake: u64,
     max_stake: u64,
+    min_stake: u64,
 }
 
 pub type PacketBatchReceiver = Receiver<PacketBatch>;
@@ -427,11 +429,11 @@ impl StreamerSendStats {
 }
 
 impl StakedNodes {
-    /// Calculate the stake stats: return the new (total_stake and max_stake) tuple
+    /// Calculate the stake stats: return the new (total_stake, min_stake and max_stake) tuple
     fn calculate_stake_stats(
         stakes: &Arc<HashMap<Pubkey, u64>>,
         overrides: &HashMap<Pubkey, u64>,
-    ) -> (u64, u64) {
+    ) -> (u64, u64, u64) {
         let values = stakes
             .iter()
             .filter(|(pubkey, _)| !overrides.contains_key(pubkey))
@@ -439,17 +441,18 @@ impl StakedNodes {
             .chain(overrides.values().copied())
             .filter(|&stake| stake > 0);
         let total_stake = values.clone().sum();
-        let max_stake = values.max().unwrap_or_default();
-        (total_stake, max_stake)
+        let (min_stake, max_stake) = values.minmax().into_option().unwrap_or_default();
+        (total_stake, min_stake, max_stake)
     }
 
     pub fn new(stakes: Arc<HashMap<Pubkey, u64>>, overrides: HashMap<Pubkey, u64>) -> Self {
-        let (total_stake, max_stake) = Self::calculate_stake_stats(&stakes, &overrides);
+        let (total_stake, min_stake, max_stake) = Self::calculate_stake_stats(&stakes, &overrides);
         Self {
             stakes,
             overrides,
             total_stake,
             max_stake,
+            min_stake,
         }
     }
 
@@ -467,15 +470,22 @@ impl StakedNodes {
     }
 
     #[inline]
+    pub(super) fn min_stake(&self) -> u64 {
+        self.min_stake
+    }
+
+    #[inline]
     pub(super) fn max_stake(&self) -> u64 {
         self.max_stake
     }
 
     // Update the stake map given a new stakes map
     pub fn update_stake_map(&mut self, stakes: Arc<HashMap<Pubkey, u64>>) {
-        let (total_stake, max_stake) = Self::calculate_stake_stats(&stakes, &self.overrides);
+        let (total_stake, min_stake, max_stake) =
+            Self::calculate_stake_stats(&stakes, &self.overrides);
 
         self.total_stake = total_stake;
+        self.min_stake = min_stake;
         self.max_stake = max_stake;
         self.stakes = stakes;
     }
