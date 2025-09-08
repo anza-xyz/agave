@@ -15,6 +15,37 @@
 //! Similarly, agave will not delete files used for shared memory regions.
 //! See `shaq` and `rts-alloc` crates for details.
 //!
+//! The basic architecture is as follows:
+//!        ┌───────────────┐       ┌─────────────────┐
+//!        │  tpu_to_pack  │       │ progress_tracker│
+//!        └───────┬───────┘       └───────┬─────────┘
+//!                │                       │
+//!                │                       │
+//!                │                       │
+//!             ┌──▼───────────────────────▼───┐
+//!             │  external scheduler          │
+//!             └─▲─────── ▲────────────────▲──┘
+//!               │        │                │
+//!               │        │                │
+//!           ┌───▼───┐ ┌──▼─────┐ ...  ┌───▼───┐
+//!           │worker1│ │worker2 │      │workerN│
+//!           └───────┘ └────────┘      └───────┘
+//!
+//! - [`TpuToPackMessage`] are sent from `tpu_to_pack` queue to the
+//!   external scheduler process. This passes in tpu transactions to be scheduled,
+//!   and optionally vote transactions.
+//! - [`ProgressMessage`] are sent from `progress_tracker` queue to the
+//!   external scheduler process. This passes information about leader status
+//!   and slot progress to the external scheduler process.
+//! - [`PackToWorkerMessage`] are sent from the external scheduler process
+//!   to worker threads within agave. This passes a batch of transactions
+//!   to be processed by the worker threads. This processing can also involve
+//!   resolving the transactions' addresses, or similar operations beyond
+//!   execution.
+//! - [`WorkerToPackMessage`] are sent from worker threads within agave
+//!   back to the external scheduler process. This passes back the results
+//!   of processing the transactions.
+//!
 
 /// Reference to a transaction that can shared safely across processes.
 #[repr(C)]
