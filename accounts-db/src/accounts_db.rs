@@ -2974,11 +2974,6 @@ impl AccountsDb {
 
         let mut index_read_elapsed = Measure::start("index_read_elapsed");
 
-        let len = stored_accounts.len();
-        let alive_accounts_collect = Mutex::new(T::with_capacity(len, slot));
-        let pubkeys_to_unref_collect = Mutex::new(Vec::with_capacity(len));
-        let zero_lamport_single_ref_pubkeys_collect = Mutex::new(Vec::with_capacity(len));
-
         // Get a set of all obsolete offsets
         // Slot is not needed, as all obsolete accounts can be considered
         // dead for shrink. Zero lamport accounts are not marked obsolete
@@ -2989,9 +2984,22 @@ impl AccountsDb {
             .collect();
 
         // Filter all the accounts that are marked obsolete
-        let initial_len = stored_accounts.len();
+        let total_starting_accounts = stored_accounts.len();
         stored_accounts.retain(|account| !obsolete_offsets.contains(&account.index_info.offset()));
-        let obsolete_accounts_filtered = initial_len - stored_accounts.len();
+
+        let len = stored_accounts.len();
+        let shrink_collect = Mutex::new(ShrinkCollect {
+            slot,
+            capacity: *capacity,
+            pubkeys_to_unref: Vec::with_capacity(len),
+            zero_lamport_single_ref_pubkeys: Vec::with_capacity(len),
+            alive_accounts: T::with_capacity(len, slot),
+            total_starting_accounts,
+            all_are_zero_lamports: true,
+            alive_total_bytes: 0, // will be updated after `alive_accounts` is populated
+        });
+
+        let obsolete_accounts_filtered = total_starting_accounts - stored_accounts.len();
 
         stats
             .accounts_loaded
@@ -2999,7 +3007,6 @@ impl AccountsDb {
         stats
             .num_duplicated_accounts
             .fetch_add(*num_duplicated_accounts as u64, Ordering::Relaxed);
-        let all_are_zero_lamports_collect = Mutex::new(true);
         self.thread_pool_background.install(|| {
             stored_accounts
                 .par_chunks(SHRINK_COLLECT_CHUNK_SIZE)
@@ -3012,31 +3019,23 @@ impl AccountsDb {
                     } = self.load_accounts_index_for_shrink(stored_accounts, stats, slot);
 
                     // collect
-                    alive_accounts_collect
-                        .lock()
-                        .unwrap()
-                        .collect(alive_accounts);
-                    pubkeys_to_unref_collect
-                        .lock()
-                        .unwrap()
-                        .append(&mut pubkeys_to_unref);
-                    zero_lamport_single_ref_pubkeys_collect
-                        .lock()
-                        .unwrap()
+                    let mut collect = shrink_collect.lock().unwrap();
+                    collect.alive_accounts.collect(alive_accounts);
+                    collect.pubkeys_to_unref.append(&mut pubkeys_to_unref);
+                    collect
+                        .zero_lamport_single_ref_pubkeys
                         .append(&mut zero_lamport_single_ref_pubkeys);
                     if !all_are_zero_lamports {
-                        *all_are_zero_lamports_collect.lock().unwrap() = false;
+                        collect.all_are_zero_lamports = false;
                     }
                 });
         });
 
-        let alive_accounts = alive_accounts_collect.into_inner().unwrap();
-        let pubkeys_to_unref = pubkeys_to_unref_collect.into_inner().unwrap();
-        let zero_lamport_single_ref_pubkeys = zero_lamport_single_ref_pubkeys_collect
-            .into_inner()
-            .unwrap();
-
         index_read_elapsed.stop();
+
+        let mut shrink_collect = shrink_collect.into_inner().unwrap();
+        let alive_total_bytes = shrink_collect.alive_accounts.alive_bytes();
+        shrink_collect.alive_total_bytes = alive_total_bytes;
 
         stats
             .obsolete_accounts_filtered
@@ -3046,11 +3045,10 @@ impl AccountsDb {
             .index_read_elapsed
             .fetch_add(index_read_elapsed.as_us(), Ordering::Relaxed);
 
-        let alive_total_bytes = alive_accounts.alive_bytes();
-
-        stats
-            .accounts_removed
-            .fetch_add(len - alive_accounts.len(), Ordering::Relaxed);
+        stats.accounts_removed.fetch_add(
+            total_starting_accounts - shrink_collect.alive_accounts.len(),
+            Ordering::Relaxed,
+        );
         stats.bytes_removed.fetch_add(
             capacity.saturating_sub(alive_total_bytes as u64),
             Ordering::Relaxed,
@@ -3059,16 +3057,7 @@ impl AccountsDb {
             .bytes_written
             .fetch_add(alive_total_bytes as u64, Ordering::Relaxed);
 
-        ShrinkCollect {
-            slot,
-            capacity: *capacity,
-            pubkeys_to_unref,
-            zero_lamport_single_ref_pubkeys,
-            alive_accounts,
-            alive_total_bytes,
-            total_starting_accounts: len,
-            all_are_zero_lamports: all_are_zero_lamports_collect.into_inner().unwrap(),
-        }
+        shrink_collect
     }
 
     /// These accounts were found during shrink of `slot` to be slot_list=[slot] and ref_count == 1 and lamports = 0.
