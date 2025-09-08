@@ -7,51 +7,8 @@ use {
     solana_hash::Hash,
 };
 
-const VERSION_MAJOR: u8 = 1;
-const VERSION_MINOR: u8 = 0;
-
 /// The seed used to derive the BLS keypair
 pub const BLS_KEYPAIR_DERIVE_SEED: &[u8; 9] = b"alpenglow";
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-/// The main consensus message containing versioning and the message payload.
-pub struct ConsensusMessage {
-    version_major: u8,
-    version_minor: u8,
-    message: Message,
-}
-
-impl ConsensusMessage {
-    /// Create a new vote message
-    pub fn new_vote(vote: Vote, signature: BLSSignature, rank: u16) -> Self {
-        Self {
-            version_major: VERSION_MAJOR,
-            version_minor: VERSION_MINOR,
-            message: Message::Vote(VoteMessage {
-                vote,
-                signature,
-                rank,
-            }),
-        }
-    }
-
-    /// Create a new certificate message
-    pub fn new_certificate(
-        certificate: Certificate,
-        bitmap: Vec<u8>,
-        signature: BLSSignature,
-    ) -> Self {
-        Self {
-            version_major: VERSION_MAJOR,
-            version_minor: VERSION_MINOR,
-            message: Message::Certificate(CertificateMessage {
-                certificate,
-                signature,
-                bitmap,
-            }),
-        }
-    }
-}
 
 /// Block, a (slot, hash) tuple
 pub type Block = (Slot, Hash);
@@ -199,93 +156,38 @@ pub struct CertificateMessage {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "A153ivdrfucQXtKNtYh9ySFg9t8mrcz3oa4j5MUB3wPV")
+    frozen_abi(digest = "CwKtX5nWfGbQZSBh1YTr3NABwThE4zFTxzQL9K5xkqYW")
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]
 /// BLS message data in Alpenglow
-pub enum Message {
+pub enum ConsensusMessage {
     /// Vote message, with the vote and the rank of the validator.
     Vote(VoteMessage),
     /// Certificate message
     Certificate(CertificateMessage),
 }
 
-#[cfg(test)]
-mod test {
-    use {super::*, bincode};
-
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    struct ConsensusMessageUnknown {
-        version_major: u8,
-        version_minor: u8,
-        message: MessageUnknown,
+impl ConsensusMessage {
+    /// Create a new vote message
+    pub fn new_vote(vote: Vote, signature: BLSSignature, rank: u16) -> Self {
+        Self::Vote(VoteMessage {
+            vote,
+            signature,
+            rank,
+        })
     }
 
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    pub enum MessageUnknown {
-        /// Vote message, with the vote and the rank of the validator.
-        Vote(VoteMessage),
-        /// Certificate message
-        Certificate(CertificateMessage),
-        Unknown,
-    }
-
-    #[test]
-    fn test_new_vote() {
-        let vote_message = ConsensusMessage::new_vote(
-            Vote::new_notarization_vote(1, Hash::new_unique()),
-            BLSSignature::default(),
-            42,
-        );
-
-        // Ensure SerDes works.
-        let vote_message_serialized = bincode::serialize(&vote_message).unwrap();
-        let vote_message_deserialized: ConsensusMessage =
-            bincode::deserialize(&vote_message_serialized).unwrap();
-        assert_eq!(vote_message, vote_message_deserialized);
-
-        // Ensure version fields are properly populated.
-        assert_eq!(vote_message_deserialized.version_major, VERSION_MAJOR);
-        assert_eq!(vote_message_deserialized.version_minor, VERSION_MINOR);
-    }
-
-    #[test]
-    fn test_unknown_message() {
-        let unknown_message = ConsensusMessageUnknown {
-            version_major: VERSION_MAJOR + 1,
-            version_minor: VERSION_MINOR,
-            message: MessageUnknown::Unknown,
-        };
-
-        // SerDes fails for new, unknown version.
-        let message_serialized = bincode::serialize(&unknown_message).unwrap();
-        assert!(bincode::deserialize::<ConsensusMessage>(&message_serialized).is_err());
-
-        let vote_message_new_version = ConsensusMessageUnknown {
-            version_major: VERSION_MAJOR + 1,
-            version_minor: VERSION_MINOR,
-            message: MessageUnknown::Vote(VoteMessage {
-                vote: Vote::new_notarization_vote(1, Hash::new_unique()),
-                signature: BLSSignature::default(),
-                rank: 42,
-            }),
-        };
-
-        // SerDes succeeds for new version.
-        let vote_message_new_version_serialized =
-            bincode::serialize(&vote_message_new_version).unwrap();
-        let vote_message_new_version_deserialized: ConsensusMessage =
-            bincode::deserialize(&vote_message_new_version_serialized).unwrap();
-
-        // Advanced major version field is detected.
-        assert_eq!(
-            vote_message_new_version_deserialized.version_major,
-            VERSION_MAJOR + 1
-        );
-        assert_eq!(
-            vote_message_new_version_deserialized.version_minor,
-            VERSION_MINOR
-        );
+    /// Create a new certificate message
+    pub fn new_certificate(
+        certificate: Certificate,
+        bitmap: Vec<u8>,
+        signature: BLSSignature,
+    ) -> Self {
+        Self::Certificate(CertificateMessage {
+            certificate,
+            signature,
+            bitmap,
+        })
     }
 }

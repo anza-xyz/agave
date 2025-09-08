@@ -11863,7 +11863,6 @@ dependencies = [
 name = "solana-votor-messages"
 version = "3.1.0"
 dependencies = [
- "bincode",
  "serde",
  "solana-bls-signatures",
  "solana-clock",
