@@ -225,6 +225,16 @@ impl PohService {
                 Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
             }
         }
+
+        record_receiver.shutdown();
+        while !record_receiver.is_empty() {
+            Self::read_record_receiver_and_process(
+                &poh_recorder,
+                &mut record_receiver,
+                Duration::ZERO,
+                ticks_per_slot,
+            );
+        }
     }
 
     pub fn read_record_receiver_and_process(
@@ -324,6 +334,16 @@ impl PohService {
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
             }
+        }
+
+        record_receiver.shutdown();
+        while !record_receiver.is_empty() {
+            Self::read_record_receiver_and_process(
+                &poh_recorder,
+                &mut record_receiver,
+                Duration::ZERO,
+                ticks_per_slot,
+            );
         }
     }
 
