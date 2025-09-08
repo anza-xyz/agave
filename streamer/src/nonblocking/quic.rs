@@ -1062,7 +1062,7 @@ async fn handle_connection(
     debug!(
         "quic new connection {} streams: {} connections: {}",
         remote_addr,
-        stats.total_streams.load(Ordering::Relaxed),
+        stats.active_streams.load(Ordering::Relaxed),
         stats.total_connections.load(Ordering::Relaxed),
     );
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
@@ -1117,7 +1117,7 @@ async fn handle_connection(
         }
         stream_load_ema.increment_load(peer_type);
         stream_counter.stream_count.fetch_add(1, Ordering::Relaxed);
-        stats.total_streams.fetch_add(1, Ordering::Relaxed);
+        stats.active_streams.fetch_add(1, Ordering::Relaxed);
         stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
 
         let mut meta = Meta::default();
@@ -1188,14 +1188,14 @@ async fn handle_connection(
                         CONNECTION_CLOSE_CODE_INVALID_STREAM.into(),
                         CONNECTION_CLOSE_REASON_INVALID_STREAM,
                     );
-                    stats.total_streams.fetch_sub(1, Ordering::Relaxed);
+                    stats.active_streams.fetch_sub(1, Ordering::Relaxed);
                     stream_load_ema.update_ema_if_needed();
                     break 'conn;
                 }
             }
         }
 
-        stats.total_streams.fetch_sub(1, Ordering::Relaxed);
+        stats.active_streams.fetch_sub(1, Ordering::Relaxed);
         stream_load_ema.update_ema_if_needed();
     }
 
@@ -1770,7 +1770,7 @@ pub mod test {
         } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
         let conn1 = make_client_endpoint(&server_address, None).await;
-        assert_eq!(stats.total_streams.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.active_streams.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_stream_read_timeouts.load(Ordering::Relaxed), 0);
 
         // Send one byte to start the stream
@@ -1782,7 +1782,7 @@ pub mod test {
         sleep(sleep_time).await;
 
         // Test that the stream was created, but timed out in read
-        assert_eq!(stats.total_streams.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.active_streams.load(Ordering::Relaxed), 0);
         assert_ne!(stats.total_stream_read_timeouts.load(Ordering::Relaxed), 0);
 
         // Test that more writes to the stream will fail (i.e. the stream is no longer writable
@@ -2048,7 +2048,7 @@ pub mod test {
         .unwrap();
 
         check_multiple_streams(receiver, server_address, None).await;
-        assert_eq!(stats.total_streams.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.active_streams.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_new_streams.load(Ordering::Relaxed), 20);
         assert_eq!(stats.total_connections.load(Ordering::Relaxed), 2);
         assert_eq!(stats.total_new_connections.load(Ordering::Relaxed), 2);
