@@ -18,7 +18,7 @@
 
 /// Reference to a transaction that can shared safely across processes.
 #[repr(C)]
-pub struct SharableTransaction {
+pub struct SharableTransactionRegion {
     /// Offset within the shared memory allocator.
     pub offset: usize,
     /// Length of the transaction in bytes.
@@ -40,7 +40,7 @@ pub struct SharablePubkeys {
 /// This is also a transfer of ownership of the transaction:
 ///   the external pack process is responsible for freeing the memory.
 pub struct TpuToPackMessage {
-    pub transaction: SharableTransaction,
+    pub transaction: SharableTransactionRegion,
     /// See [`tpu_message_flags`] for details.
     pub flags: u8,
     /// The source address of the transaction.
@@ -101,7 +101,7 @@ pub struct PackToWorkerMessage {
     pub num_transactions: u8,
     /// Transactions in the message. Only the first `num_transactions`
     /// entries are valid to read.
-    pub transactions: [SharableTransaction; MAX_TRANSACTIONS_PER_PACK_MESSAGE],
+    pub transactions: [SharableTransactionRegion; MAX_TRANSACTIONS_PER_PACK_MESSAGE],
 }
 
 pub mod pack_message_flags {
@@ -136,7 +136,7 @@ pub struct WorkerToPackMessage {
 
 pub mod worker_message_types {
     use {
-        crate::{SharablePubkeys, SharableTransaction},
+        crate::{SharablePubkeys, SharableTransactionRegion},
         core::mem::ManuallyDrop,
     };
 
@@ -168,7 +168,7 @@ pub mod worker_message_types {
     #[repr(C)]
     pub struct NotIncluded {
         /// The transaction that was not included.
-        pub transaction: SharableTransaction,
+        pub transaction: SharableTransactionRegion,
         /// The reason the transaction was not included.
         /// See [`not_included_reasons`] for details.
         pub reason: u8,
@@ -209,7 +209,7 @@ pub mod worker_message_types {
     #[repr(C)]
     pub struct Included {
         /// The transaction that was included.
-        pub transaction: SharableTransaction,
+        pub transaction: SharableTransactionRegion,
         /// cost units used by the transaction.
         pub cost_units: u64,
         /// The fee-payer balance after execution.
@@ -222,7 +222,7 @@ pub mod worker_message_types {
     #[repr(C)]
     pub struct Resolved {
         /// The transaction that was resolved.
-        pub transaction: SharableTransaction,
+        pub transaction: SharableTransactionRegion,
         /// Indicates if resolution was successful.
         pub success: bool,
         /// Slot of the bank used for resolution.
