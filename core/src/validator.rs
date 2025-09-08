@@ -941,7 +941,7 @@ impl Validator {
         let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::default());
 
         let leader_schedule_cache = Arc::new(leader_schedule_cache);
-        let (mut poh_recorder, entry_receiver) = {
+        let (poh_recorder, entry_receiver) = {
             let bank = &bank_forks.read().unwrap().working_bank();
             PohRecorder::new_with_clear_signal(
                 bank.tick_height(),
@@ -957,9 +957,6 @@ impl Validator {
                 exit.clone(),
             )
         };
-        if transaction_status_sender.is_some() {
-            poh_recorder.track_transaction_indexes();
-        }
         let (record_sender, record_receiver) = record_channels(transaction_status_sender.is_some());
         let transaction_recorder = TransactionRecorder::new(record_sender);
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));

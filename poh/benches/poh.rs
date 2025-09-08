@@ -101,7 +101,6 @@ fn bench_poh_recorder_record(bencher: &mut Bencher) {
         &PohConfig::default(),
         Arc::new(AtomicBool::default()),
     );
-    poh_recorder.track_transaction_indexes();
     let h1 = hash(b"hello Agave, hello Anza!");
 
     poh_recorder.set_bank_for_test(bank.clone());
@@ -149,7 +148,6 @@ fn bench_poh_recorder_set_bank(bencher: &mut Bencher) {
         &PohConfig::default(),
         Arc::new(AtomicBool::default()),
     );
-    poh_recorder.track_transaction_indexes();
     bencher.iter(|| {
         poh_recorder.set_bank_for_test(bank.clone());
         poh_recorder.tick();

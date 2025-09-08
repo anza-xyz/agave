@@ -193,7 +193,6 @@ pub struct PohRecorder {
 
     // Allocation to hold PohEntrys recorded into PoHStream.
     entries: Vec<PohEntry>,
-    track_transaction_indexes: bool,
 
     // Alpenglow related migration things
     pub is_alpenglow_enabled: bool,
@@ -284,15 +283,10 @@ impl PohRecorder {
                 last_reported_slot_for_pending_fork: Arc::default(),
                 is_exited,
                 entries: Vec::with_capacity(64),
-                track_transaction_indexes: false,
                 is_alpenglow_enabled: false,
             },
             working_bank_receiver,
         )
-    }
-
-    pub fn track_transaction_indexes(&mut self) {
-        self.track_transaction_indexes = true;
     }
 
     // synchronize PoH with a bank
@@ -916,7 +910,7 @@ fn do_create_test_recorder(
     };
     let exit = Arc::new(AtomicBool::new(false));
     let poh_config = poh_config.unwrap_or_default();
-    let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+    let (poh_recorder, entry_receiver) = PohRecorder::new(
         bank.tick_height(),
         bank.last_blockhash(),
         bank.clone(),
@@ -927,9 +921,6 @@ fn do_create_test_recorder(
         &poh_config,
         exit.clone(),
     );
-    if track_transaction_indexes {
-        poh_recorder.track_transaction_indexes();
-    }
     let ticks_per_slot = bank.ticks_per_slot();
 
     let (record_sender, record_receiver) = record_channels(track_transaction_indexes);
