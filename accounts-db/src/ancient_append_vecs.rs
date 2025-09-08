@@ -1788,7 +1788,7 @@ pub mod tests {
                                         );
                                         assert!(db.accounts_index.purge_exact(
                                             &pk,
-                                            &[storage.slot()]
+                                            [storage.slot()]
                                                 .into_iter()
                                                 .collect::<std::collections::HashSet<Slot>>(),
                                             &mut Vec::default()

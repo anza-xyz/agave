@@ -1986,7 +1986,7 @@ fn test_cleanup_key_not_removed() {
 
     let slots: HashSet<Slot> = vec![1].into_iter().collect();
     let purge_keys = [(key1, slots)];
-    let _ = db.purge_keys_exact(purge_keys.iter());
+    let _ = db.purge_keys_exact(purge_keys);
 
     let account2 = AccountSharedData::new(3, 0, &key);
     db.store_for_tests((2, [(&key1, &account2)].as_slice()));
@@ -5768,7 +5768,7 @@ fn test_shrink_collect_simple() {
                             to_purge.iter().for_each(|pubkey| {
                                 db.accounts_index.purge_exact(
                                     pubkey,
-                                    &([slot5].into_iter().collect::<HashSet<_>>()),
+                                    [slot5].into_iter().collect::<HashSet<_>>(),
                                     &mut Vec::default(),
                                 );
                             });
@@ -5944,7 +5944,7 @@ fn test_shrink_collect_with_obsolete_accounts() {
             // Purge accounts via clean and ensure that they will be unreffed.
             db.accounts_index.purge_exact(
                 pubkey,
-                &([slot].into_iter().collect::<HashSet<_>>()),
+                [slot].into_iter().collect::<HashSet<_>>(),
                 &mut Vec::default(),
             );
             unref_pubkeys.push(*pubkey);

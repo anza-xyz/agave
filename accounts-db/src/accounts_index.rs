@@ -872,15 +872,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     #[must_use]
     pub fn handle_dead_keys(
         &self,
-        dead_keys: &[&Pubkey],
+        dead_keys: &[Pubkey],
         account_indexes: &AccountSecondaryIndexes,
     ) -> HashSet<Pubkey> {
         let mut pubkeys_removed_from_accounts_index = HashSet::default();
         if !dead_keys.is_empty() {
             for key in dead_keys.iter() {
                 let w_index = self.get_bin(key);
-                if w_index.remove_if_slot_list_empty(**key) {
-                    pubkeys_removed_from_accounts_index.insert(**key);
+                if w_index.remove_if_slot_list_empty(*key) {
+                    pubkeys_removed_from_accounts_index.insert(*key);
                     // Note it's only safe to remove all the entries for this key
                     // because we have the lock for this key's entry in the AccountsIndex,
                     // so no other thread is also updating the index
@@ -971,15 +971,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     /// returns true if, after this fn call:
     /// accounts index entry for `pubkey` has an empty slot list
     /// or `pubkey` does not exist in accounts index
-    pub(crate) fn purge_exact<'a, C>(
-        &'a self,
+    pub(crate) fn purge_exact(
+        &self,
         pubkey: &Pubkey,
-        slots_to_purge: &'a C,
+        slots_to_purge: impl for<'a> Contains<'a, Slot>,
         reclaims: &mut SlotList<T>,
-    ) -> bool
-    where
-        C: Contains<'a, Slot>,
-    {
+    ) -> bool {
         self.slot_list_mut(pubkey, |slot_list| {
             slot_list.retain(|(slot, item)| {
                 let should_purge = slots_to_purge.contains(slot);
@@ -3183,11 +3180,11 @@ pub mod tests {
 
         index.purge_exact(
             &account_key,
-            &slots.into_iter().collect::<HashSet<Slot>>(),
+            slots.into_iter().collect::<HashSet<Slot>>(),
             &mut vec![],
         );
 
-        let _ = index.handle_dead_keys(&[&account_key], secondary_indexes);
+        let _ = index.handle_dead_keys(&[account_key], secondary_indexes);
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -3582,7 +3579,7 @@ pub mod tests {
         index.slot_list_mut(&account_key, |slot_list| slot_list.clear());
 
         // Everything should be deleted
-        let _ = index.handle_dead_keys(&[&account_key], &secondary_indexes);
+        let _ = index.handle_dead_keys(&[account_key], &secondary_indexes);
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -3703,8 +3700,8 @@ pub mod tests {
         // Removing the remaining entry for this pubkey in the index should mark the
         // pubkey as dead and finally remove all the secondary indexes
         let mut reclaims = vec![];
-        index.purge_exact(&account_key, &later_slot, &mut reclaims);
-        let _ = index.handle_dead_keys(&[&account_key], secondary_indexes);
+        index.purge_exact(&account_key, later_slot, &mut reclaims);
+        let _ = index.handle_dead_keys(&[account_key], secondary_indexes);
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -4029,7 +4026,7 @@ pub mod tests {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
 
         assert_eq!(
-            index.handle_dead_keys(&[&key], &AccountSecondaryIndexes::default()),
+            index.handle_dead_keys(&[key], &AccountSecondaryIndexes::default()),
             vec![key].into_iter().collect::<HashSet<_>>()
         );
     }

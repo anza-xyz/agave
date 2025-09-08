@@ -318,11 +318,8 @@ impl<'a> SnapshotMinimizer<'a> {
         let remove_pubkeys = purge_pubkeys_collect.into_inner().unwrap();
         let total_bytes = total_bytes_collect.load(Ordering::Relaxed);
 
-        let purge_pubkeys: Vec<_> = remove_pubkeys
-            .into_iter()
-            .map(|pubkey| (*pubkey, slot))
-            .collect();
-        let _ = self.accounts_db().purge_keys_exact(purge_pubkeys.iter());
+        let purge_pubkeys = remove_pubkeys.into_iter().map(|pubkey| (*pubkey, slot));
+        let _ = self.accounts_db().purge_keys_exact(purge_pubkeys);
 
         let mut shrink_in_progress = None;
         if total_bytes > 0 {

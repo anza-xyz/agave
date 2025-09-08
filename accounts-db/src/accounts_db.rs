@@ -1721,26 +1721,27 @@ impl AccountsDb {
     }
 
     #[must_use]
-    pub fn purge_keys_exact<'a, C>(
-        &'a self,
-        pubkey_to_slot_set: impl Iterator<Item = &'a (Pubkey, C)>,
+    pub fn purge_keys_exact<C>(
+        &self,
+        pubkey_to_slot_set: impl IntoIterator<Item = (Pubkey, C)>,
     ) -> (Vec<(Slot, AccountInfo)>, PubkeysRemovedFromAccountsIndex)
     where
-        C: Contains<'a, Slot> + 'a,
+        C: for<'a> Contains<'a, Slot>,
     {
         let mut reclaims = Vec::new();
         let mut dead_keys = Vec::new();
 
         let mut purge_exact_count = 0;
-        let (_, purge_exact_us) = measure_us!(for (pubkey, slots_set) in pubkey_to_slot_set {
-            purge_exact_count += 1;
-            let is_empty = self
-                .accounts_index
-                .purge_exact(pubkey, slots_set, &mut reclaims);
-            if is_empty {
-                dead_keys.push(pubkey);
-            }
-        });
+        let (_, purge_exact_us) =
+            measure_us!(for (pubkey, slots_set) in pubkey_to_slot_set.into_iter() {
+                purge_exact_count += 1;
+                let is_empty = self
+                    .accounts_index
+                    .purge_exact(&pubkey, slots_set, &mut reclaims);
+                if is_empty {
+                    dead_keys.push(pubkey);
+                }
+            });
 
         let (pubkeys_removed_from_accounts_index, handle_dead_keys_us) = measure_us!(self
             .accounts_index
@@ -2389,13 +2390,13 @@ impl AccountsDb {
         let mut reclaims_time = Measure::start("reclaims");
         // Recalculate reclaims with new purge set
         let mut pubkey_to_slot_set = Vec::new();
-        for candidates_bin in candidates.iter() {
+        for candidates_bin in candidates {
             let mut bin_set = candidates_bin
-                .iter()
+                .into_iter()
                 .filter_map(|(pubkey, cleaning_info)| {
-                    let slot_list = &cleaning_info.slot_list;
+                    let slot_list = cleaning_info.slot_list;
                     (!slot_list.is_empty()).then_some((
-                        *pubkey,
+                        pubkey,
                         slot_list
                             .iter()
                             .map(|(slot, _)| *slot)
@@ -2407,7 +2408,7 @@ impl AccountsDb {
         }
 
         let (reclaims, pubkeys_removed_from_accounts_index2) =
-            self.purge_keys_exact(pubkey_to_slot_set.iter());
+            self.purge_keys_exact(pubkey_to_slot_set);
         pubkeys_removed_from_accounts_index.extend(pubkeys_removed_from_accounts_index2);
 
         self.handle_reclaims(
@@ -3109,7 +3110,7 @@ impl AccountsDb {
         );
 
         zero_lamport_single_ref_pubkeys.iter().for_each(|k| {
-            _ = self.purge_keys_exact([&(**k, slot)].into_iter());
+            _ = self.purge_keys_exact([(**k, slot)]);
         });
     }
 
@@ -4722,17 +4723,14 @@ impl AccountsDb {
     }
 
     fn purge_slot_cache(&self, purged_slot: Slot, slot_cache: &SlotCache) {
-        let pubkey_to_slot_set: Vec<(Pubkey, Slot)> = slot_cache
-            .iter()
-            .map(|account| (*account.key(), purged_slot))
-            .collect();
-        self.purge_slot_cache_pubkeys(purged_slot, pubkey_to_slot_set, true);
+        let pubkeys = slot_cache.iter().map(|account| *account.key());
+        self.purge_slot_cache_pubkeys(purged_slot, pubkeys, true);
     }
 
     fn purge_slot_cache_pubkeys(
         &self,
         purged_slot: Slot,
-        pubkey_to_slot_set: Vec<(Pubkey, Slot)>,
+        pubkeys: impl IntoIterator<Item = Pubkey>,
         is_dead: bool,
     ) {
         // Slot purged from cache should not exist in the backing store
@@ -4740,8 +4738,11 @@ impl AccountsDb {
             .storage
             .get_slot_storage_entry_shrinking_in_progress_ok(purged_slot)
             .is_none());
-        let num_purged_keys = pubkey_to_slot_set.len();
-        let (reclaims, _) = self.purge_keys_exact(pubkey_to_slot_set.iter());
+        let mut num_purged_keys = 0;
+        let (reclaims, _) = self.purge_keys_exact(pubkeys.into_iter().map(|key| {
+            num_purged_keys += 1;
+            (key, purged_slot)
+        }));
         assert_eq!(reclaims.len(), num_purged_keys);
         if is_dead {
             self.remove_dead_slots_metadata(std::iter::once(&purged_slot));
@@ -4775,8 +4776,7 @@ impl AccountsDb {
 
         let mut purge_accounts_index_elapsed = Measure::start("purge_accounts_index_elapsed");
         // Purge this slot from the accounts index
-        let (reclaims, pubkeys_removed_from_accounts_index) =
-            self.purge_keys_exact(stored_keys.iter());
+        let (reclaims, pubkeys_removed_from_accounts_index) = self.purge_keys_exact(stored_keys);
         purge_accounts_index_elapsed.stop();
         purge_stats
             .purge_accounts_index_elapsed
@@ -5183,7 +5183,7 @@ impl AccountsDb {
     ) -> FlushStats {
         let mut flush_stats = FlushStats::default();
         let iter_items: Vec<_> = slot_cache.iter().collect();
-        let mut pubkey_to_slot_set: Vec<(Pubkey, Slot)> = vec![];
+        let mut pubkeys: Vec<Pubkey> = vec![];
         if should_flush_f.is_some() {
             if let Some(max_clean_root) = max_clean_root {
                 if slot > max_clean_root {
@@ -5212,7 +5212,7 @@ impl AccountsDb {
                 } else {
                     // If we don't flush, we have to remove the entry from the
                     // index, since it's equivalent to purging
-                    pubkey_to_slot_set.push((*key, slot));
+                    pubkeys.push(*key);
                     flush_stats.num_bytes_purged +=
                         aligned_stored_size(account.data().len()) as u64;
                     flush_stats.num_accounts_purged += 1;
@@ -5224,7 +5224,7 @@ impl AccountsDb {
         let is_dead_slot = accounts.is_empty();
         // Remove the account index entries from earlier roots that are outdated by later roots.
         // Safe because queries to the index will be reading updates from later roots.
-        self.purge_slot_cache_pubkeys(slot, pubkey_to_slot_set, is_dead_slot);
+        self.purge_slot_cache_pubkeys(slot, pubkeys, is_dead_slot);
 
         if !is_dead_slot {
             // This ensures that all updates are written to an AppendVec, before any
@@ -5276,7 +5276,7 @@ impl AccountsDb {
         self.uncleaned_pubkeys
             .entry(slot)
             .or_default()
-            .extend(accounts.iter().map(|(pubkey, _account)| **pubkey));
+            .extend(accounts.into_iter().map(|(pubkey, _account)| *pubkey));
 
         flush_stats
     }
