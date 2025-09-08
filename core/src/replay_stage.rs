@@ -3449,6 +3449,7 @@ impl ReplayStage {
                         Some(bank.block_height()),
                         bank.executed_transaction_count(),
                         r_replay_progress.num_entries as u64,
+                        &bank.accounts_lt_hash().0,
                     )
                 }
                 bank_complete_time.stop();

@@ -2563,6 +2563,10 @@ impl Bank {
         self.parent_hash
     }
 
+    pub fn accounts_lt_hash(&self) -> AccountsLtHash {
+        self.accounts_lt_hash.lock().unwrap().clone()
+    }
+
     fn process_genesis_config(
         &mut self,
         genesis_config: &GenesisConfig,
