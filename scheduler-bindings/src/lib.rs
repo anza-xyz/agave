@@ -35,6 +35,18 @@ pub struct SharablePubkeys {
     pub num_pubkeys: u32,
 }
 
+/// Reference to an array of [`SharableTransactionRegion`] that can be shared safely
+/// across processes.
+#[repr(C)]
+pub struct SharableTransactionBatchRegion {
+    /// Number of transactions in the batch.
+    pub num_transactions: u8,
+    /// Offset within the shared memory allocator for the batch of transactions.
+    /// The transactions are laid out back-to-back in memory as a
+    /// [`SharableTransactionRegion`] with size `num_transactions`.
+    pub transactions_offset: u32,
+}
+
 /// Message: [TPU -> Pack]
 /// TPU passes transactions to the external pack process.
 /// This is also a transfer of ownership of the transaction:
@@ -77,10 +89,6 @@ pub struct ProgressMessage {
     pub remaining_cost_units: u64,
 }
 
-/// The maximum number of transactions that can be included in a single
-/// [`PackToWorkerMessage`].
-pub const MAX_TRANSACTIONS_PER_PACK_MESSAGE: usize = 32;
-
 /// Message: [Pack -> Worker]
 /// External pack processe passes transactions to worker threads within agave.
 ///
@@ -96,12 +104,12 @@ pub struct PackToWorkerMessage {
     /// bank's slot in the worker thread is greater than this slot,
     /// the transaction will not be processed.
     pub max_execution_slot: u64,
-    /// The number of transactions in this message.
-    /// MUST be in the range [1, [`MAX_TRANSACTIONS_PER_PACK_MESSAGE`]].
-    pub num_transactions: u8,
-    /// Transactions in the message. Only the first `num_transactions`
-    /// entries are valid to read.
-    pub transactions: [SharableTransactionRegion; MAX_TRANSACTIONS_PER_PACK_MESSAGE],
+    /// Offset and number of transactions in the batch.
+    /// See [`SharableTransactionBatchRegion`] for details.
+    /// Agave will return this batch in the response message, it is
+    /// the responsibility of the external pack process to free the memory
+    /// ONLY after receiving the response message.
+    pub batch: SharableTransactionBatchRegion,
 }
 
 pub mod pack_message_flags {
@@ -126,31 +134,34 @@ pub mod pack_message_flags {
 /// will follow the order of transactions in the original message.
 #[repr(C)]
 pub struct WorkerToPackMessage {
+    /// Offset and number of transactions in the batch.
+    /// See [`SharableTransactionBatchRegion`] for details.
+    /// Once the external pack process receives this message,
+    /// it is responsible for freeing the memory for this batch,
+    /// and is safe to do so - agave will hold no references to this memory
+    /// after sending this message.
+    pub batch: SharableTransactionBatchRegion,
+
     /// Tag indicating the type of message.
     /// See [`worker_message_types`] for details.
     pub tag: u8,
-    /// The inner message, depending on the tag.
-    /// See [`worker_message_types::WorkerToPackMessageInner`].
-    pub inner: worker_message_types::WorkerToPackMessageInner,
+
+    /// The number of transactions in the original message.
+    /// This corresponds to the number of inner response
+    /// messages that will be pointed to by `response_offset`.
+    /// This MUST be the same as `batch.num_transactions`.
+    pub num_transaction_responses: u8,
+    /// Offset within the shared memory allocator for the array of
+    /// inner messages.
+    /// The inner messages are laid out back-to-back in memory starting at
+    /// this offset. The type of each inner message is indicated by `tag`.
+    /// There are `num_transaction_responses` inner messages.
+    /// See [`worker_message_types`] for details on the inner message types.
+    pub transaction_responses_offset: u32,
 }
 
 pub mod worker_message_types {
-    use {
-        crate::{SharablePubkeys, SharableTransactionRegion},
-        core::mem::ManuallyDrop,
-    };
-
-    #[repr(C)]
-    pub union WorkerToPackMessageInner {
-        /// The message from pack was invalid.
-        pub invalid: ManuallyDrop<InvalidMessage>,
-        /// The transaction was not included in the block.
-        pub not_included: ManuallyDrop<NotIncluded>,
-        /// The transaction was included in the block.
-        pub included: ManuallyDrop<Included>,
-        /// The transaction was resolved.
-        pub resolved: ManuallyDrop<Resolved>,
-    }
+    use crate::SharablePubkeys;
 
     /// Tag indicating [`InvalidMessage`] inner message.
     pub const INVALID_MESSAGE: u8 = 0;
@@ -167,8 +178,6 @@ pub mod worker_message_types {
     /// requested execution i.e. not [`super::pack_message_flags::RESOLVE`].
     #[repr(C)]
     pub struct NotIncluded {
-        /// The transaction that was not included.
-        pub transaction: SharableTransactionRegion,
         /// The reason the transaction was not included.
         /// See [`not_included_reasons`] for details.
         pub reason: u8,
@@ -208,8 +217,6 @@ pub mod worker_message_types {
     /// requested execution i.e. not [`super::pack_message_flags::RESOLVE`].
     #[repr(C)]
     pub struct Included {
-        /// The transaction that was included.
-        pub transaction: SharableTransactionRegion,
         /// cost units used by the transaction.
         pub cost_units: u64,
         /// The fee-payer balance after execution.
@@ -221,8 +228,6 @@ pub mod worker_message_types {
 
     #[repr(C)]
     pub struct Resolved {
-        /// The transaction that was resolved.
-        pub transaction: SharableTransactionRegion,
         /// Indicates if resolution was successful.
         pub success: bool,
         /// Slot of the bank used for resolution.
