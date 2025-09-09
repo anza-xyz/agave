@@ -76,12 +76,11 @@ pub(crate) fn process_message(
 mod tests {
     use {
         super::*,
-        ed25519_dalek::ed25519::signature::Signer,
+        ed25519_dalek::Signer,
         openssl::{
             ec::{EcGroup, EcKey},
             nid::Nid,
         },
-        rand0_7::thread_rng,
         solana_account::{
             Account, AccountSharedData, ReadableAccount, WritableAccount,
             DUMMY_INHERITABLE_ACCOUNT_FIELDS,
@@ -572,7 +571,7 @@ mod tests {
 
     fn secp256k1_instruction_for_test() -> Instruction {
         let message = b"hello";
-        let secret_key = libsecp256k1::SecretKey::random(&mut thread_rng());
+        let secret_key = libsecp256k1::SecretKey::random(&mut rand0_7::thread_rng());
         let pubkey = libsecp256k1::PublicKey::from_secret_key(&secret_key);
         let eth_address = eth_address_from_pubkey(&pubkey.serialize()[1..].try_into().unwrap());
         let (signature, recovery_id) =
@@ -586,9 +585,9 @@ mod tests {
     }
 
     fn ed25519_instruction_for_test() -> Instruction {
-        let secret_key = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let secret_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
         let signature = secret_key.sign(b"hello").to_bytes();
-        let pubkey = secret_key.public.to_bytes();
+        let pubkey = secret_key.verifying_key().to_bytes();
         new_ed25519_instruction_with_signature(b"hello", &signature, &pubkey)
     }
 

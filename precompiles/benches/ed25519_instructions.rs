@@ -5,7 +5,7 @@ use {
     agave_feature_set::FeatureSet,
     agave_precompiles::ed25519::verify,
     ed25519_dalek::ed25519::signature::Signer,
-    rand0_7::{thread_rng, Rng},
+    rand::{thread_rng, Rng},
     solana_ed25519_program::new_ed25519_instruction_with_signature,
     solana_instruction::Instruction,
     test::Bencher,
@@ -19,10 +19,10 @@ fn create_test_instructions(message_length: u16) -> Vec<Instruction> {
     (0..IX_COUNT)
         .map(|_| {
             let mut rng = thread_rng();
-            let privkey = ed25519_dalek::Keypair::generate(&mut rng);
-            let message: Vec<u8> = (0..message_length).map(|_| rng.gen_range(0, 255)).collect();
+            let privkey = ed25519_dalek::SigningKey::generate(&mut rng);
+            let message: Vec<u8> = (0..message_length).map(|_| rng.gen_range(0..255)).collect();
             let signature = privkey.sign(&message).to_bytes();
-            let pubkey = privkey.public.to_bytes();
+            let pubkey = privkey.verifying_key().to_bytes();
             new_ed25519_instruction_with_signature(&message, &signature, &pubkey)
         })
         .collect()
