@@ -157,7 +157,7 @@ pub(crate) trait ShrinkCollectRefs<'a>: Sync + Send {
     fn collect(&mut self, other: Self);
     fn add(
         &mut self,
-        ref_count: u64,
+        ref_count: RefCount,
         account: &'a AccountFromStorage,
         slot_list: &[(Slot, AccountInfo)],
     );
@@ -180,7 +180,7 @@ impl<'a> ShrinkCollectRefs<'a> for AliveAccounts<'a> {
     }
     fn add(
         &mut self,
-        _ref_count: u64,
+        _ref_count: RefCount,
         account: &'a AccountFromStorage,
         _slot_list: &[(Slot, AccountInfo)],
     ) {
@@ -214,7 +214,7 @@ impl<'a> ShrinkCollectRefs<'a> for ShrinkCollectAliveSeparatedByRefs<'a> {
     }
     fn add(
         &mut self,
-        ref_count: u64,
+        ref_count: RefCount,
         account: &'a AccountFromStorage,
         slot_list: &[(Slot, AccountInfo)],
     ) {
@@ -1142,7 +1142,7 @@ pub fn get_temp_accounts_paths(count: u32) -> io::Result<(Vec<TempDir>, Vec<Path
 #[derive(Default, Debug)]
 struct CleaningInfo {
     slot_list: SlotList<AccountInfo>,
-    ref_count: u64,
+    ref_count: RefCount,
     /// Indicates if this account might have a zero lamport index entry.
     /// If false, the account *shall* not have zero lamport index entries.
     /// If true, the account *might* have zero lamport index entries.

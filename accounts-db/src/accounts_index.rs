@@ -2318,7 +2318,7 @@ pub mod tests {
         {
             let entry = index.get_cloned(&key).unwrap();
             let slot_list = entry.slot_list.read().unwrap();
-            assert_eq!(entry.ref_count(), u64::from(!is_cached));
+            assert_eq!(entry.ref_count(), RefCount::from(!is_cached));
             assert_eq!(slot_list.as_slice(), &[(slot0, account_infos[0])]);
             let new_entry = PreAllocatedAccountMapEntry::new(
                 slot0,

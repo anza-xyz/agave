@@ -52,7 +52,7 @@ impl<T: IndexValue> AccountMapEntry<T> {
 
     /// decrement the ref count by the passed in amount
     /// return the refcount prior to the ref count change
-    pub fn unref_by_count(&self, count: u64) -> RefCount {
+    pub fn unref_by_count(&self, count: RefCount) -> RefCount {
         let previous = self.ref_count.fetch_sub(count, Ordering::Release);
         self.set_dirty(true);
         assert!(

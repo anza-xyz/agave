@@ -1122,7 +1122,7 @@ pub mod tests {
                 ShrinkCollectRefs,
             },
             accounts_file::StorageAccess,
-            accounts_index::{AccountsIndexScanResult, ScanFilter, UpsertReclaim},
+            accounts_index::{AccountsIndexScanResult, RefCount, ScanFilter, UpsertReclaim},
             append_vec::{self, aligned_stored_size},
             storable_accounts::StorableAccountsBySlot,
         },
@@ -3739,8 +3739,8 @@ pub mod tests {
                 .map(|_| solana_pubkey::new_rand())
                 .collect::<Vec<_>>();
             // how many of `many_ref_accounts` should be found in the index with ref_count=1
-            let mut expected_ref_counts_before_unref = HashMap::<Pubkey, u64>::default();
-            let mut expected_ref_counts_after_unref = HashMap::<Pubkey, u64>::default();
+            let mut expected_ref_counts_before_unref = HashMap::<Pubkey, RefCount>::default();
+            let mut expected_ref_counts_after_unref = HashMap::<Pubkey, RefCount>::default();
 
             pubkeys_to_unref.iter().for_each(|k| {
                 for slot in 0..2 {

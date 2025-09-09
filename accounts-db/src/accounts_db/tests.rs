@@ -5296,7 +5296,7 @@ fn test_unref_pubkeys_removed_from_accounts_index() {
             vec![(pk1, vec![slot1].into_iter().collect::<IntSet<_>>())],
             purged_stored_account_slots.into_iter().collect::<Vec<_>>()
         );
-        let expected = u64::from(already_removed);
+        let expected = RefCount::from(already_removed);
         db.assert_ref_count(&pk1, expected);
     }
 }
@@ -5417,7 +5417,10 @@ define_accounts_db_test!(test_many_unrefs, |db| {
         })
         .collect::<HashSet<_>>();
 
-    assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), n);
+    assert_eq!(
+        db.accounts_index.ref_count_from_storage(&pk1),
+        n as RefCount,
+    );
     // unref all 'n' slots
     db.unref_accounts(
         purged_slot_pubkeys,
