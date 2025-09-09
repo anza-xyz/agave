@@ -284,7 +284,7 @@ impl MultipleSlots {
         data_bucket
             .get_header_mut::<DataBucketRefCountOccupiedHeader>(data_ix)
             .packed_ref_count
-            .set_ref_count(ref_count);
+            .set_ref_count(ref_count.into());
     }
 
     /// ref_count is stored in the header per cell, in `packed_ref_count`
@@ -293,6 +293,8 @@ impl MultipleSlots {
             .get_header::<DataBucketRefCountOccupiedHeader>(data_ix)
             .packed_ref_count
             .ref_count()
+            .try_into()
+            .unwrap() // safe because we only store legal u32 ref counts here
     }
 }
 

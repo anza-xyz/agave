@@ -1246,7 +1246,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                                 .iter()
                                                 .map(|(slot, info)| (*slot, (*info).into()))
                                                 .collect::<Vec<_>>(),
-                                            ref_count.into(), // ref count on disk is u64
+                                            ref_count,
                                         ),
                                     )
                                 };
@@ -1502,7 +1502,7 @@ mod tests {
         let slot = 0;
 
         // Simulate an entry on disk
-        let disk_entry: (&[(u64, u64)], u64) = (&[(0u64, 42u64)], 1u64);
+        let disk_entry: (&[(u64, u64)], u32) = (&[(0u64, 42u64)], 1u32);
         accounts_index
             .bucket
             .as_ref()
