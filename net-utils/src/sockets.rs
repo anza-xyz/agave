@@ -652,20 +652,15 @@ mod tests {
         assert!(verify_all_reachable_udp(&ip_echo_server_addr, &socket_refs));
     }
 
+    // This test is gated for non-macOS platforms because it requires binding to 127.0.0.2,
+    // which is not supported on macOS by default.
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn test_verify_udp_multiple_ips_reachable() {
         solana_logger::setup();
         let config = SocketConfiguration::default();
         let ip_a = IpAddr::V4(Ipv4Addr::LOCALHOST);
-
-        // 127.0.0.2 is not a valid address to bind to on macOS
-        #[cfg(target_os = "macos")]
-        let (ip_b, assertion_msg) = (ip_a, "all UDP ports on 127.0.0.1 should be reachable");
-        #[cfg(not(target_os = "macos"))]
-        let (ip_b, assertion_msg) = (
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
-            "all UDP ports on both 127.0.0.1 and 127.0.0.2 should be reachable",
-        );
+        let ip_b = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
 
         let port_range = localhost_port_range_for_tests();
 
@@ -692,8 +687,7 @@ mod tests {
 
         assert!(
             verify_all_reachable_udp(&ip_echo_server_addr, &socket_refs),
-            "{}",
-            assertion_msg
+            "all UDP ports on both 127.0.0.1 and 127.0.0.2 should be reachable"
         );
     }
 }
