@@ -39,7 +39,9 @@ impl<T: IndexValue> AccountMapEntry<T> {
     }
 
     pub fn addref(&self) {
-        self.ref_count.fetch_add(1, Ordering::Release);
+        let previous = self.ref_count.fetch_add(1, Ordering::Release);
+        // ensure ref count does not overflow
+        assert_ne!(previous, RefCount::MAX);
         self.set_dirty(true);
     }
 
