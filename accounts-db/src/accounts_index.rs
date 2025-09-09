@@ -35,7 +35,7 @@ use {
         ops::{Bound, Range, RangeBounds},
         path::PathBuf,
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock,
         },
     },
@@ -71,8 +71,14 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
 };
 pub type ScanResult<T> = Result<T, ScanError>;
 pub type SlotList<T> = Vec<(Slot, T)>;
-pub type RefCount = u64;
-pub type AtomicRefCount = AtomicU64;
+
+// The ref count cannot be higher than the total number of storages, and we should never have more
+// than 1 million storages. A 32-bit ref count should be *significantly* more than enough.
+// (We already effectively limit the number of storages to 2^32 since the storage ID type is a u32.)
+// The majority of accounts should only exist in one storage, so the most common ref count is '1'.
+// Heavily updated accounts should still have a ref count that is < 100.
+pub type RefCount = u32;
+pub type AtomicRefCount = AtomicU32;
 
 /// values returned from `insert_new_if_missing_into_primary_index()`
 #[derive(Default, Debug, PartialEq, Eq)]

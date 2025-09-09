@@ -272,7 +272,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     Self::update_stat(&self.stats().load_disk_missing_count, 1);
                 }
             }
-            entry_disk
+            entry_disk.map(|(slot_list, ref_count)| {
+                // SAFETY: ref_count must've come from in-mem first, so converting back is safe.
+                (slot_list, ref_count as RefCount)
+            })
         })
     }
 
@@ -667,7 +670,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// - If UpsertReclaim is ReclaimOldSlots, remove all uncached entries older than `slot`
     ///   and add them to reclaims
     ///
-    /// Returns the reference count change as an `i64`. The reference count change
+    /// Returns the reference count change as an `i32`. The reference count change
     /// is the number of entries added (1) - the number of uncached entries removed
     /// or replaced
     fn update_slot_list(
@@ -677,7 +680,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         other_slot: Option<Slot>,
         reclaims: &mut SlotList<T>,
         reclaim: UpsertReclaim,
-    ) -> i64 {
+    ) -> i32 {
         let mut ref_count_change = 1;
 
         // Cached accounts are not expected by this function, use cache_entry_at_slot instead
@@ -1243,7 +1246,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                                 .iter()
                                                 .map(|(slot, info)| (*slot, (*info).into()))
                                                 .collect::<Vec<_>>(),
-                                            ref_count,
+                                            ref_count.into(), // ref count on disk is u64
                                         ),
                                     )
                                 };
@@ -1685,7 +1688,7 @@ mod tests {
                     expected.push((new_slot, info));
 
                     // Calculate the expected ref count change. It is expected to be 1 - the number of reclaims
-                    let expected_result = 1 - expected_reclaims.len() as i64;
+                    let expected_result = 1 - expected_reclaims.len() as i32;
                     assert_eq!(
                         expected_result, result,
                         "return value different. other: {other_slot:?}, {expected:?}, \
@@ -2088,7 +2091,7 @@ mod tests {
                     expected.push((new_slot, info));
 
                     // Calculate the expected ref count change. It is expected to be 1 - the number of reclaims
-                    let expected_result = 1 - expected_reclaims.len() as i64;
+                    let expected_result = 1 - expected_reclaims.len() as i32;
                     assert_eq!(
                         expected_result, result,
                         "return value different. other: {other_slot:?}, {expected:?}, \
