@@ -12,6 +12,8 @@ use {
 };
 
 /// Create a channel pair for communicating [`Record`]s.
+/// Transaction processing threads (workers/vote thread) send records, and
+/// PohService receives them.
 pub fn record_channels(track_transaction_indexes: bool) -> (RecordSender, RecordReceiver) {
     const CAPACITY: usize = SlotAllowedInsertions::MAX_ALLOWED_INSERTIONS as usize;
     let (sender, receiver) = bounded(CAPACITY);
@@ -168,6 +170,7 @@ impl RecordReceiver {
         );
     }
 
+    /// Drain all available records from the channel with `try_recv` loop.
     pub fn drain(&self) -> impl Iterator<Item = Record> + '_ {
         core::iter::from_fn(|| self.try_recv().ok())
     }
@@ -183,6 +186,7 @@ impl RecordReceiver {
         Ok(record)
     }
 
+    /// Receive a record from the channel, waiting up to `duration`.
     pub fn recv_timeout(&self, duration: Duration) -> Result<Record, RecvTimeoutError> {
         let record = self.receiver.recv_timeout(duration)?;
         self.on_received_record(record.transaction_batches.len() as u64);
@@ -190,6 +194,8 @@ impl RecordReceiver {
     }
 
     fn on_received_record(&self, num_batches: u64) {
+        // The record has been received and processed, so increment the number
+        // of allowed insertions, so that new records can be sent.
         self.slot_allowed_insertions
             .0
             .fetch_add(num_batches, Ordering::AcqRel);
@@ -202,11 +208,18 @@ impl RecordReceiver {
 /// not the number of [`Record`]. This is because each batch is a separate hash
 /// in the PoH stream, and we must guarantee enough space for each hash, if we
 /// allow a [`Record`] to be sent.
+/// The allowed insertions uses 10 bits allowing up to 1023 insertions at a
+/// given time. This is for messages that have been sent but not yet processed
+/// by the receiver.
+/// The `allowed_insertions` is a budget and is decremented when something is
+/// sent/inserted into the channel, and incremented when something is received
+/// from the channel.
 #[derive(Clone, Debug)]
 struct SlotAllowedInsertions(Arc<AtomicU64>);
 
 impl SlotAllowedInsertions {
     const NUM_BITS: u64 = 64;
+    /// Number of bits used to track allowed insertions.
     const ALLOWED_INSERTIONS_BITS: u64 = 10;
     const SLOT_BITS: u64 = Self::NUM_BITS - Self::ALLOWED_INSERTIONS_BITS;
 
@@ -215,7 +228,9 @@ impl SlotAllowedInsertions {
     const MAX_ALLOWED_INSERTIONS: u64 = (1 << Self::ALLOWED_INSERTIONS_BITS) - 1;
 
     /// Create a new `SlotAllowedInsertions` with state consistent with a
-    /// shutdown state.
+    /// shutdown state:
+    /// - slot = `DISABLED_SLOT`
+    /// - allowed_insertions = 0
     fn new_shutdown() -> Self {
         Self(Arc::new(AtomicU64::new(Self::encoded_value(
             Self::DISABLED_SLOT,
@@ -229,10 +244,12 @@ impl SlotAllowedInsertions {
         (slot << 10) | allowed_insertions
     }
 
+    /// The current slot, or `DISABLED_SLOT` if shutdown.
     fn slot(value: u64) -> Slot {
         (value >> 10) & Self::DISABLED_SLOT
     }
 
+    /// How many insertions/sends are allowed at this time.
     fn allowed_insertions(value: u64) -> u64 {
         value & Self::MAX_ALLOWED_INSERTIONS
     }
