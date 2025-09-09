@@ -1,7 +1,7 @@
 use {
     crate::{
         netlink::{netlink_get_neighbors, netlink_get_routes},
-        route::RouteUpdate,
+        route::{filter_routes, RouteUpdate},
     },
     libc::AF_INET,
     std::{
@@ -39,7 +39,10 @@ impl RouteMonitor {
 
                 // Fetch routes
                 match netlink_get_routes(AF_INET as u8) {
-                    Ok(routes) => {
+                    Ok(mut routes) => {
+                        log::info!("greg: Fetched {} total routes from kernel", routes.len());
+                        filter_routes(&mut routes);
+                        log::info!("greg: Filtered routes down to {}", routes.len());
                         if update_sender
                             .send(RouteUpdate::RoutesChanged(routes))
                             .is_err()

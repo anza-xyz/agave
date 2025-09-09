@@ -182,7 +182,6 @@ impl Router {
     }
 
     // Fast route lookup. no locks
-    // replaces Router::route()??
     pub fn route(&self, dest_ip: IpAddr) -> Result<NextHop, RouteError> {
         let route = lookup_route(&self.routes, dest_ip).ok_or(RouteError::NoRouteFound(dest_ip))?;
 
@@ -243,6 +242,34 @@ impl Router {
 
         updated
     }
+}
+
+pub(crate) fn filter_routes(routes: &mut Vec<RouteEntry>) {
+    routes.retain(|route| {
+        // Keep only routes we care about
+        match route.destination {
+            Some(dest) => {
+                // Keep specific network routes (not host routes from MTU discovery)
+                // MTU discovery routes typically have /32 or /128 prefixes
+                match dest {
+                    IpAddr::V4(ipv4) => {
+                        // Keep routes with prefix length <= 24 (subnet routes)
+                        // Filter out /32 host routes (likely from MTU discovery)
+                        route.dst_len <= 24 && !ipv4.is_loopback()
+                    }
+                    IpAddr::V6(ipv6) => {
+                        // Keep routes with prefix length <= 64 (subnet routes)
+                        // Filter out /128 host routes
+                        route.dst_len <= 64 && !ipv6.is_loopback()
+                    }
+                }
+            }
+            None => {
+                // Keep default routes (destination = None)
+                true
+            }
+        }
+    });
 }
 
 struct ArpTable {
