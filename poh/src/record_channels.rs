@@ -256,12 +256,12 @@ impl SlotAllowedInsertions {
     fn encoded_value(slot: Slot, allowed_insertions: u64) -> u64 {
         assert!(slot <= Self::DISABLED_SLOT);
         assert!(allowed_insertions <= Self::MAX_ALLOWED_INSERTIONS);
-        (slot << 10) | allowed_insertions
+        (slot << Self::ALLOWED_INSERTIONS_BITS) | allowed_insertions
     }
 
     /// The current slot, or `DISABLED_SLOT` if shutdown.
     fn slot(value: u64) -> Slot {
-        (value >> 10) & Self::DISABLED_SLOT
+        (value >> Self::ALLOWED_INSERTIONS_BITS) & Self::DISABLED_SLOT
     }
 
     /// How many insertions/sends are allowed at this time.
