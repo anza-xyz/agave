@@ -20,8 +20,8 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{sysconf, _SC_PAGESIZE},
     std::{
-        sync::Arc,
         net::{IpAddr, Ipv4Addr, SocketAddr},
+        sync::Arc,
         thread,
         time::Duration,
     },
@@ -137,7 +137,6 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
 
     let mut timeouts = 0;
     loop {
-
         match receiver.try_recv() {
             Ok((addrs, payload)) => {
                 batched_packets += addrs.as_ref().len();

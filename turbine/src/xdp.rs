@@ -151,7 +151,8 @@ impl XdpRetransmitter {
 
         // Create atomic router for lock-free updates
         let atomic_router = Arc::new(AtomicRouter::new()?);
-        let monitor_handle = RouteMonitor::start(Arc::clone(&atomic_router), Duration::from_secs(60));
+        let monitor_handle =
+            RouteMonitor::start(Arc::clone(&atomic_router), Duration::from_secs(60));
 
         let mut threads = vec![];
         threads.push(monitor_handle); // Add monitor thread

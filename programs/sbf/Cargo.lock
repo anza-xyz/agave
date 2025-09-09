@@ -327,6 +327,7 @@ dependencies = [
 name = "agave-xdp"
 version = "3.1.0"
 dependencies = [
+ "arc-swap",
  "aya",
  "caps",
  "crossbeam-channel",
