@@ -363,23 +363,71 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
     }
 }
 
-/// Extracts a list of unique leader addresses to which transactions will be sent.
+/// Extracts leaders to send transactions to, up to `send_fanout` count.
+/// 
+/// In Solana's leader schedule, each leader produces blocks for [`solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS`]
+/// consecutive slots. The schedule might look like: [L1, L1, L2, L3], where each entry
+/// represents a leader producing [`solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS`] slots. 
+/// So L1, L1 means L1 produces 2 * [`solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS`] consecutive slots.
+/// 
+/// This function skips consecutive duplicates because sending the same transaction multiple
+/// times to the same leader during their consecutive slot range is redundant. 
+/// 
+/// However, non-consecutive duplicates (e.g., L1 appears again after L2) are preserved because
+/// they represent legitimate retry opportunities at different time windows.
+/// 
+/// # Examples
+/// 
+/// [L1, L1, L2] with fanout=3 -> [L1, L2]
+/// L1 has 2 * NUM_CONSECUTIVE_LEADER_SLOTS consecutive slots, no need to send twice
 ///
-/// This function selects up to `send_fanout` addresses from the `leaders` list, ensuring that
-/// only unique addresses are included while maintaining their original order.
-fn extract_send_leaders(leaders: &[SocketAddr], send_fanout: usize) -> Vec<SocketAddr> {
-    let send_count = send_fanout.min(leaders.len());
-    remove_duplicates(&leaders[..send_count])
+/// [L1, L2, L1] with fanout=3 -> [L1, L2, L1]
+/// L1 appears at different times, worth retrying
+pub fn extract_send_leaders(leaders: &[SocketAddr], send_fanout: usize) -> Vec<SocketAddr> {
+    let mut result = Vec::with_capacity(send_fanout);
+    let mut prev_leader: Option<SocketAddr> = None;
+    
+    for &leader in leaders {
+        // Skip only consecutive duplicates
+        if prev_leader != Some(leader) {
+            result.push(leader);
+            if result.len() >= send_fanout {
+                break;
+            }
+        }
+        prev_leader = Some(leader);
+    }
+    
+    result
 }
 
-/// Removes duplicate `SocketAddr` elements from the given slice while
-/// preserving their original order.
-fn remove_duplicates(input: &[SocketAddr]) -> Vec<SocketAddr> {
-    let mut res = Vec::with_capacity(input.len());
-    for address in input {
-        if !res.contains(address) {
-            res.push(*address);
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    fn make_addr(port: u16) -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port)
     }
-    res
+
+    #[test]
+    fn test_consecutive_duplicates_skipped() {
+        let l1 = make_addr(1001);
+        let l2 = make_addr(1002);
+        let l3 = make_addr(1003);
+        
+        // Consecutive duplicates should be skipped
+        let leaders = vec![l1, l1, l1, l2, l2, l3];
+        assert_eq!(extract_send_leaders(&leaders, 3), vec![l1, l2, l3]);
+    }
+
+    #[test]
+    fn test_non_consecutive_duplicates_kept() {
+        let l1 = make_addr(1001);
+        let l2 = make_addr(1002);
+        
+        // Non-consecutive duplicates are legitimate retries
+        let leaders = vec![l1, l2, l1];
+        assert_eq!(extract_send_leaders(&leaders, 3), vec![l1, l2, l1]);
+    }
 }
