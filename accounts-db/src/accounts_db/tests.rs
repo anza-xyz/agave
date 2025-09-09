@@ -478,8 +478,10 @@ define_accounts_db_test!(test_accountsdb_latest_ancestor, |db| {
     db.scan_accounts(
         &ancestors,
         0,
-        |account| {
-            account.map(|account| accounts.push(account.1));
+        |scan_result| {
+            if let Some((_, account, _)) = scan_result {
+                accounts.push(account);
+            }
         },
         &ScanConfig::default(),
     )
@@ -1948,8 +1950,10 @@ fn test_accountsdb_scan_accounts() {
     db.scan_accounts(
         &ancestors,
         0,
-        |account| {
-            account.map(|account| accounts.push(account.1));
+        |scan_result| {
+            if let Some((_, account, _)) = scan_result {
+                accounts.push(account);
+            }
         },
         &ScanConfig::default(),
     )
@@ -1961,8 +1965,10 @@ fn test_accountsdb_scan_accounts() {
     db.scan_accounts(
         &ancestors,
         0,
-        |account| {
-            account.map(|account| accounts.push(account.1));
+        |scan_result| {
+            if let Some((_, account, _)) = scan_result {
+                accounts.push(account);
+            }
         },
         &ScanConfig::default(),
     )
