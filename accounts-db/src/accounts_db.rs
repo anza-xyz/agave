@@ -2992,7 +2992,7 @@ impl AccountsDb {
             slot,
             capacity: *capacity,
             pubkeys_to_unref: Vec::with_capacity(len),
-            zero_lamport_single_ref_pubkeys: Vec::with_capacity(len),
+            zero_lamport_single_ref_pubkeys: Vec::new(),
             alive_accounts: T::with_capacity(len, slot),
             total_starting_accounts,
             all_are_zero_lamports: true,
