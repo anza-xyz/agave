@@ -80,13 +80,17 @@ const TARGET_UNSTAKED_KBPS: u64 = 5000; // about 200 TPS
 const TARGET_MAX_STAKED_KBPS: u64 = TARGET_UNSTAKED_KBPS * 10; // about 2000 TPS
 
 /// Maximal allowed RTT for SWQOS calculations (to limit abuse)
-const MAX_ALLOWED_RTT: Duration = Duration::from_millis(300);
+const MAX_ALLOWED_RTT_MS: u64 = 300;
 
+/// Allow an absolute max of 2 MB RX window (to constraint the computations)
+const MAX_ALLOWED_RX_WINDOW: u32 = 2000 * 1000;
 /// Maximal possible amount of streams to allocate per connection
 const MAX_ALLOWED_UNI_STREAMS: u64 = 1024;
 
 /// Expected mean size of a transaction for the purpose of
 /// receive window => streams conversion
+/// Based on MNB statistics it should be ~600,
+/// so this has some margin to allow for smaller TXs
 const MEAN_TRANSACTION_SIZE: usize = 400;
 
 /// Total new connection counts per second. Heuristically taken from
@@ -492,6 +496,8 @@ struct NewConnectionHandlerParams {
     max_connections_per_peer: usize,
     stats: Arc<StreamerStats>,
     max_stake: u64,
+    max_connections: usize,
+    wait_for_chunk_timeout: Duration,
 }
 
 impl NewConnectionHandlerParams {
@@ -510,6 +516,8 @@ impl NewConnectionHandlerParams {
             max_connections_per_peer,
             stats,
             max_stake: 0,
+            max_connections,
+            wait_for_chunk_timeout,
         }
     }
 }
@@ -618,15 +626,18 @@ fn compute_max_receive_rate_kbps(max_stake: u64, peer: ConnectionPeerType) -> u6
     let min_rate = TARGET_UNSTAKED_KBPS;
     // Linear interpolation between min and max as
     // stake approaches max_stake
-    min_rate + (stake * (max_rate - min_rate) + max_stake / 2) / max_stake
+    min_rate + ((stake as u128 * (max_rate - min_rate) as u128) / (max_stake as u128)) as u64
 }
 
 /// Compute the RX window based on bandwidth-delay-product
 fn compute_receive_window_bdp(max_receive_rate_kbps: u64, rtt: Duration) -> VarInt {
     // max(1) is needed on localhost to avoid zero result
-    let millis = rtt.as_millis().max(1).min(MAX_ALLOWED_RTT.as_millis()) as u64;
+    // truncate here is safe since u64 millis is an eternity
+    let millis = (rtt.as_millis() as u64).clamp(1, MAX_ALLOWED_RTT_MS);
     let receive_window = (max_receive_rate_kbps * millis) / 8;
-    VarInt::from_u64(receive_window).unwrap_or(VarInt::MAX)
+    // hard constraint the RX window to avoid excess memory use
+    let receive_window = receive_window.min(MAX_ALLOWED_RX_WINDOW as u64) as u32;
+    VarInt::from_u32(receive_window)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -710,7 +721,7 @@ async fn setup_connection(
                             total_stake,
                             max_connections_per_peer: quic_server_params.max_connections_per_peer,
                             stats: stats.clone(),
-                            min_stake,
+                            max_stake,
                             wait_for_chunk_timeout: quic_server_params.wait_for_chunk_timeout,
                             max_connections: quic_server_params.max_staked_connections,
                         }
@@ -1026,9 +1037,8 @@ async fn handle_connection(
          (receive_window= {initial_rx_window} RTT={rtt}ms), streams: {streams} connections: \
          {connections}",
         rtt = connection.rtt().as_millis(),
-        remote_addr,
-        stats.active_streams.load(Ordering::Relaxed),
-        stats.total_connections.load(Ordering::Relaxed),
+        streams = stats.active_streams.load(Ordering::Relaxed),
+        connections = stats.total_connections.load(Ordering::Relaxed),
     );
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
 
