@@ -160,14 +160,24 @@ impl RecordReceiver {
         assert!(self.receiver.is_empty()); // Should be empty before restarting.
 
         // Reset transaction indexes if tracking them - BEFORE allowing new insertions.
-        if let Some(transaction_indexes) = self.transaction_indexes.as_ref() {
-            *transaction_indexes.lock().unwrap() = 0;
-        }
+        let transaction_indexes_lock =
+            self.transaction_indexes
+                .as_ref()
+                .map(|transaction_indexes| {
+                    let mut lock = transaction_indexes.lock().unwrap();
+                    *lock = 0;
+                    lock
+                });
 
         self.slot_allowed_insertions.0.store(
             SlotAllowedInsertions::encoded_value(slot, self.capacity),
             Ordering::Release,
         );
+
+        // Drop lock AFTER allowing new insertions. This makes any sends grabbing locks
+        // wait until after the slot has been changed. Meaning the CAS in try_send
+        // will always succeed, if passing previous checks.
+        drop(transaction_indexes_lock);
     }
 
     /// Drain all available records from the channel with `try_recv` loop.
