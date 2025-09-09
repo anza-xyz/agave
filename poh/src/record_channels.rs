@@ -42,9 +42,14 @@ pub fn record_channels(track_transaction_indexes: bool) -> (RecordSender, Record
 }
 
 pub enum RecordSenderError {
+    /// The channel is full, the record was not sent.
     Full(Record),
+    /// The channel is in a shutdown state, it is not valid to
+    /// send records for this slot anymore.
     Shutdown,
+    /// The record's slot does not match the current slot of the channel.
     InactiveSlot,
+    /// The receiver has been dropped, the channel is disconnected.
     Disconnected,
 }
 
