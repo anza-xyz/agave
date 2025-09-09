@@ -3,10 +3,11 @@
 use {
     crate::{
         device::{NetworkDevice, QueueId, RingSizes},
+        netlink::InterfaceInfo,
         netlink::MacAddress,
         packet::{
-            write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
-            UDP_HEADER_SIZE,
+            construct_gre_packet, write_eth_header, write_ip_header_for_udp, write_udp_header,
+            ETH_HEADER_SIZE, GRE_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE,
         },
         route::NextHop,
         set_cpu_affinity,
@@ -27,7 +28,11 @@ use {
 };
 
 #[allow(clippy::too_many_arguments)]
-pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<NextHop>>(
+pub fn tx_loop<
+    T: AsRef<[u8]>,
+    A: AsRef<[SocketAddr]>,
+    R: Fn(&IpAddr) -> Option<(NextHop, InterfaceInfo)>,
+>(
     cpu_id: usize,
     dev: &NetworkDevice,
     queue_id: QueueId,
@@ -58,6 +63,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
         dev.ipv4_addr()
             .expect("no src_ip provided, device must have an IPv4 address")
     });
+    log::info!("greg: xdp: using src ip address {src_ip}");
 
     // some drivers require frame_size=page_size
     let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
@@ -131,6 +137,15 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
     // packets.
     let mut batched_packets = 0;
 
+    //greg: todo implement gre caching
+    // Cache the underlay MAC for the current router epoch and GRE remote.
+    // (Fast-path: single GRE remote per queue. If you have multiple, switch to a small HashMap.)
+    // let mut cached_underlay: Option<(
+    //     usize,    /*router update counter*/
+    //     Ipv4Addr, /*gre.remote*/
+    //     MacAddress,
+    // )> = None;
+
     let mut timeouts = 0;
     loop {
         match receiver.try_recv() {
@@ -165,6 +180,8 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
         // necessary
         let mut chunk_remaining = BATCH_SIZE.min(batched_packets);
 
+        // greg: todo implement update_counter for gre caching
+        // let update_counter = atomic_router.update_counter();
         for (addrs, payload) in batched_items.drain(..) {
             for addr in addrs.as_ref() {
                 if ring.available() == 0 || umem.available() == 0 {
@@ -197,9 +214,10 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
                     panic!("IPv6 not supported");
                 };
 
+                let len = payload.as_ref().len();
                 let dest_mac = {
                     let ip = addr.ip();
-                    let Some(next_hop) = route_fn(&ip) else {
+                    let Some((next_hop, interface_info)) = route_fn(&ip) else {
                         log::warn!("dropping packet: no route for peer {addr}");
                         batched_packets -= 1;
                         umem.release(frame.offset());
@@ -210,7 +228,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
                     let Some(dest_mac) = next_hop.mac_addr else {
                         log::warn!(
                             "dropping packet: peer {addr} must be routed through {} which has no \
-                             known MAC address",
+                                known MAC address",
                             next_hop.ip_addr
                         );
                         batched_packets -= 1;
@@ -218,12 +236,84 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
                         continue;
                     };
 
+                    // log::info!("greg: xdp: dst_ip nh: {next_hop:?} iface: {interface_info:?}");
+                    if let Some(gre) = interface_info.gre_tunnel.as_ref() {
+                        // greg: todo implement underlay MAC caching
+                        let outer_dst_mac = dest_mac;
+                        // Resolve underlay MAC with tiny cache keyed by epoch and gre remote
+                        // let outer_dst_mac = match cached_underlay.as_ref() {
+                        //     Some((uc, ip, mac)) if *uc == update_counter && *ip == gre.remote => {
+                        //         *mac
+                        //     }
+                        //     _ => {
+                        //         let (nh, _iface) = router.route(IpAddr::V4(gre.remote)).unwrap();
+                        //         // log::info!("greg: xdp: new gre n nh: {nh:?} iface: {iface:?}");
+                        //         match nh.mac_addr {
+                        //             Some(m) => {
+                        //                 cached_underlay = Some((update_counter, gre.remote, m));
+                        //                 // log::info!(
+                        //                 //     "greg: xdp: cached underlay MAC: {m}, remote: {}",
+                        //                 //     gre.remote
+                        //                 // );
+                        //                 m
+                        //             }
+                        //             None => {
+                        //                 // log::warn!(
+                        //                 //     "greg: dropping GRE pkt: missing underlay MAC for next-hop {} on {}({})",
+                        //                 //     nh.ip_addr, iface.if_name, iface.if_index
+                        //                 // );
+                        //                 batched_packets -= 1;
+                        //                 umem.release(frame.offset());
+                        //                 continue;
+                        //             }
+                        //         }
+                        //     }
+                        // };
+
+                        // Calculate GRE packet size
+                        const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
+                        let inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
+                        let gre_packet_size =
+                            ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_SIZE + inner_packet_len;
+
+                        // Reserve space for GRE packet
+                        frame.set_len(gre_packet_size);
+                        let packet = umem.map_frame_mut(&frame);
+
+                        let inner_src_ip = next_hop.preferred_src_ip.unwrap_or(src_ip);
+                        // log::info!("greg: xdp: inner src ip: {inner_src_ip}");
+
+                        // Construct the GRE packet
+                        let gre_packet_len = construct_gre_packet(
+                            packet,
+                            &inner_src_ip, // inner src ip
+                            &dst_ip,       // inner dst ip
+                            src_port,
+                            addr.port(),
+                            payload.as_ref(),
+                            gre.local,        // gre src ip
+                            gre.remote,       // gre dst ip
+                            &src_mac.0,       // src MAC (our nic)
+                            &outer_dst_mac.0, //outer dst MAC (underlay next-hop)
+                        );
+
+                        // Update frame length and submit packet
+                        frame.set_len(gre_packet_len);
+                        submit_packet_to_ring(
+                            frame,
+                            &mut ring,
+                            &mut batched_packets,
+                            &mut chunk_remaining,
+                            BATCH_SIZE,
+                        );
+
+                        continue;
+                    }
                     dest_mac
                 };
 
                 const PACKET_HEADER_SIZE: usize =
                     ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
-                let len = payload.as_ref().len();
                 frame.set_len(PACKET_HEADER_SIZE + len);
                 let packet = umem.map_frame_mut(&frame);
 
@@ -232,7 +322,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
 
                 write_eth_header(packet, &src_mac.0, &dest_mac.0);
 
-                write_ip_header(
+                write_ip_header_for_udp(
                     &mut packet[ETH_HEADER_SIZE..],
                     &src_ip,
                     &dst_ip,
@@ -251,22 +341,13 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<
                 );
 
                 // write the packet into the ring
-                ring.write(frame, 0)
-                    .map_err(|_| "ring full")
-                    // this should never happen as we check for available slots above
-                    .expect("failed to write to ring");
-
-                batched_packets -= 1;
-                chunk_remaining -= 1;
-
-                // check if it's time to commit the ring and kick the driver
-                if chunk_remaining == 0 {
-                    chunk_remaining = BATCH_SIZE.min(batched_packets);
-
-                    // commit new frames
-                    ring.commit();
-                    kick(&ring);
-                }
+                submit_packet_to_ring(
+                    frame,
+                    &mut ring,
+                    &mut batched_packets,
+                    &mut chunk_remaining,
+                    BATCH_SIZE,
+                );
             }
             let _ = drop_sender.try_send((addrs, payload));
         }
@@ -321,5 +402,29 @@ fn kick_error(e: std::io::Error) {
         _ => {
             log::error!("network interface driver error: {e:?}");
         }
+    }
+}
+
+/// Common packet submission logic - handles ring writing, batching, and driver kicking
+fn submit_packet_to_ring<'a>(
+    frame: SliceUmemFrame<'a>,
+    ring: &mut TxRing<SliceUmemFrame<'a>>,
+    batched_packets: &mut usize,
+    chunk_remaining: &mut usize,
+    batch_size: usize,
+) {
+    // Write the packet into the ring
+    ring.write(frame, 0)
+        .map_err(|_| "ring full")
+        .expect("failed to write to ring");
+
+    *batched_packets -= 1;
+    *chunk_remaining -= 1;
+
+    // Check if it's time to commit the ring and kick the driver
+    if *chunk_remaining == 0 {
+        *chunk_remaining = batch_size.min(*batched_packets);
+        ring.commit();
+        kick(ring);
     }
 }

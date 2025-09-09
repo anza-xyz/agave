@@ -1,12 +1,15 @@
 use {
     crate::{
-        netlink::{parse_rtm_newneigh, parse_rtm_newroute, NetlinkMessage, NetlinkSocket},
+        netlink::{
+            parse_ifinfomsg, parse_rtm_newneigh, parse_rtm_newroute, NetlinkMessage, NetlinkSocket,
+        },
         route::Router,
     },
     arc_swap::ArcSwap,
     libc::{
-        self, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_NEIGH,
-        RTM_DELNEIGH, RTM_DELROUTE, RTM_NEWNEIGH, RTM_NEWROUTE,
+        self, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, RTMGRP_IPV4_ROUTE, RTMGRP_LINK,
+        RTMGRP_NEIGH, RTM_DELLINK, RTM_DELNEIGH, RTM_DELROUTE, RTM_NEWLINK,
+        RTM_NEWNEIGH, RTM_NEWROUTE,
     },
     log::*,
     std::{
@@ -23,7 +26,7 @@ use {
 pub struct RouteMonitor;
 
 impl RouteMonitor {
-    /// Subscribes to RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH multicast groups
+    /// Subscribes to RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH | RTMGRP_LINK multicast groups
     /// Waits for updates to arrive on the netlink socket
     /// Publishes the updated routing table every `update_interval` if needed
     pub fn start(
@@ -117,6 +120,16 @@ impl RouteMonitor {
                         }
                     }
                 }
+                RTM_NEWLINK => {
+                    if let Some(interface_info) = parse_ifinfomsg(m) {
+                        dirty |= router.upsert_interface(interface_info);
+                    }
+                }
+                RTM_DELLINK => {
+                    if let Some(interface_info) = parse_ifinfomsg(m) {
+                        dirty |= router.remove_interface(interface_info.if_index);
+                    }
+                }
                 _ => {}
             }
         }
@@ -135,7 +148,7 @@ impl RouteMonitorState {
     /// Creates a new RouteMonitorState with a bounded netlink socket
     fn new(router: Router) -> Self {
         Self {
-            sock: NetlinkSocket::bind((RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH) as u32)
+            sock: NetlinkSocket::bind((RTMGRP_IPV4_ROUTE | RTMGRP_NEIGH | RTMGRP_LINK) as u32)
                 .expect("error creating netlink socket"),
             router,
             dirty: false,
