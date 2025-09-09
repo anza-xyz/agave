@@ -152,7 +152,7 @@ dependencies = [
  "bzip2",
  "chrono",
  "clap 2.33.3",
- "console 0.16.0",
+ "console 0.16.1",
  "crossbeam-channel",
  "ctrlc",
  "dirs-next",
@@ -449,7 +449,7 @@ dependencies = [
  "assert_cmd",
  "chrono",
  "clap 2.33.3",
- "console 0.16.0",
+ "console 0.16.1",
  "core_affinity",
  "crossbeam-channel",
  "fd-lock",
@@ -1966,15 +1966,15 @@ dependencies = [
 
 [[package]]
 name = "console"
-version = "0.16.0"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e09ced7ebbccb63b4c65413d821f2e00ce54c5ca4514ddc6b3c892fdbcbc69d"
+checksum = "b430743a6eb14e9764d4260d4c0d8123087d504eeb9c48f2b2a5e810dd369df4"
 dependencies = [
  "encode_unicode",
  "libc",
  "once_cell",
  "unicode-width 0.2.0",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -4004,7 +4004,7 @@ version = "0.17.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4adb2ee6ad319a912210a36e56e3623555817bcc877a7e6e8802d1d69c4d8056"
 dependencies = [
- "console 0.16.0",
+ "console 0.16.1",
  "portable-atomic",
  "unicode-width 0.2.0",
  "unit-prefix",
@@ -4017,7 +4017,7 @@ version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70a646d946d06bedbbc4cac4c218acf4bbf2d87757a784857025f4d447e4e1cd"
 dependencies = [
- "console 0.16.0",
+ "console 0.16.1",
  "portable-atomic",
  "unicode-width 0.2.0",
  "unit-prefix",
@@ -7723,7 +7723,7 @@ dependencies = [
  "bincode",
  "bs58",
  "clap 2.33.3",
- "console 0.16.0",
+ "console 0.16.1",
  "const_format",
  "criterion-stats",
  "crossbeam-channel",
@@ -7832,7 +7832,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap 2.33.3",
- "console 0.16.0",
+ "console 0.16.1",
  "ed25519-dalek 1.0.1",
  "humantime",
  "indicatif 0.18.0",
@@ -9960,7 +9960,7 @@ name = "solana-remote-wallet"
 version = "3.1.0"
 dependencies = [
  "assert_matches",
- "console 0.16.0",
+ "console 0.16.1",
  "dialoguer",
  "hidapi",
  "log",
@@ -11236,7 +11236,7 @@ dependencies = [
  "bincode",
  "chrono",
  "clap 2.33.3",
- "console 0.16.0",
+ "console 0.16.1",
  "csv",
  "ctrlc",
  "indexmap 2.11.1",
