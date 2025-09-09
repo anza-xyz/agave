@@ -2,14 +2,15 @@ use {
     crate::netlink::{
         netlink_get_neighbors, netlink_get_routes, MacAddress, NeighborEntry, RouteEntry,
     },
+    arc_swap::ArcSwap,
     libc::{AF_INET, AF_INET6},
     std::{
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        sync::Arc,
         time::Instant,
     },
     thiserror::Error,
-    tokio::sync::broadcast::{self, Receiver, Sender},
 };
 
 #[derive(Debug, Error)]
@@ -31,11 +32,7 @@ pub struct NextHop {
     pub if_index: u32,
 }
 
-#[derive(Clone)]
-pub enum RouteUpdate {
-    RoutesChanged(Vec<RouteEntry>),
-    ArpChanged(Vec<NeighborEntry>),
-}
+// Remove RouteUpdate enum - no longer needed with ArcSwap
 
 fn lookup_route(routes: &[RouteEntry], dest: IpAddr) -> Option<&RouteEntry> {
     let mut best_match = None;
@@ -119,41 +116,37 @@ fn is_ipv6_match(addr: Ipv6Addr, network: Ipv6Addr, prefix_len: u8) -> bool {
     true
 }
 
+#[derive(Clone)]
 pub struct Router {
-    routes: Vec<RouteEntry>,
-    arp_table: ArpTable,
+    routes: Arc<Vec<RouteEntry>>,
+    arp_table: Arc<ArpTable>,
     last_update: Instant,
-    update_receiver: Receiver<RouteUpdate>,
 }
 
 impl Router {
-    pub fn new() -> Result<(Self, Sender<RouteUpdate>), io::Error> {
-        let (update_sender, _) = broadcast::channel(10); // todo: maybe update
-
-        let routes = netlink_get_routes(AF_INET as u8)?;
-        let arp_table = ArpTable::new()?;
-
-        Ok((
-            Self {
-                routes,
-                arp_table,
-                last_update: Instant::now(),
-                update_receiver: update_sender.subscribe(),
-            },
-            update_sender,
-        ))
-    }
-
-    pub fn subscribe(sender: &broadcast::Sender<RouteUpdate>) -> Result<Self, io::Error> {
-        let routes = netlink_get_routes(AF_INET as u8)?;
+    pub fn new() -> Result<Self, io::Error> {
+        let mut routes = netlink_get_routes(AF_INET as u8)?;
+        filter_routes(&mut routes); // Apply filtering
         let arp_table = ArpTable::new()?;
 
         Ok(Self {
-            routes,
-            arp_table,
+            routes: Arc::new(routes),
+            arp_table: Arc::new(arp_table),
             last_update: Instant::now(),
-            update_receiver: sender.subscribe(),
         })
+    }
+
+    pub fn update_routes(&mut self, mut new_routes: Vec<RouteEntry>) {
+        filter_routes(&mut new_routes); // Apply filtering
+        self.routes = Arc::new(new_routes);
+        self.last_update = Instant::now();
+        log::debug!("greg: Updated routes: {} entries", self.routes.len());
+    }
+
+    pub fn update_arp(&mut self, new_neighbors: Vec<NeighborEntry>) {
+        self.arp_table = Arc::new(ArpTable::from_neighbors(new_neighbors));
+        self.last_update = Instant::now();
+        log::debug!("greg: Updated ARP table: {} entries", self.arp_table.neighbors.len());
     }
 
     pub fn default(&self) -> Result<NextHop, RouteError> {
@@ -203,44 +196,9 @@ impl Router {
         })
     }
 
-    // Check for updates and apply them (non-blocking)
-    pub fn try_update(&mut self) -> bool {
-        let mut updated = false;
-        let mut latest_routes = None;
-        let mut latest_arp = None;
-
-        // Drain all pending updates and keep only the latest
-        // we are writing the whole routing table as updates each time, so we only need to keep the latest
-        while let Ok(update) = self.update_receiver.try_recv() {
-            match update {
-                RouteUpdate::RoutesChanged(new_routes) => {
-                    latest_routes = Some(new_routes);
-                    updated = true;
-                }
-                RouteUpdate::ArpChanged(new_neighbors) => {
-                    latest_arp = Some(new_neighbors);
-                    updated = true;
-                }
-            }
-        }
-
-        // Apply only the latest updates
-        if let Some(routes) = latest_routes {
-            self.routes = routes;
-            self.last_update = Instant::now();
-            log::info!("greg: Updated routes: {} entries", self.routes.len());
-        }
-
-        if let Some(neighbors) = latest_arp {
-            self.arp_table = ArpTable::from_neighbors(neighbors);
-            self.last_update = Instant::now();
-            log::info!(
-                "greg: Updated ARP table: {} entries",
-                self.arp_table.neighbors.len()
-            );
-        }
-
-        updated
+    // Get last update time for monitoring
+    pub fn last_update(&self) -> Instant {
+        self.last_update
     }
 }
 
@@ -291,6 +249,37 @@ impl ArpTable {
             .iter()
             .find(|n| n.destination == Some(ip))
             .and_then(|n| n.lladdr.as_ref())
+    }
+}
+
+pub struct AtomicRouter {
+    router: ArcSwap<Router>,
+}
+
+impl AtomicRouter {
+    pub fn new() -> Result<Self, io::Error> {
+        Ok(Self {
+            router: ArcSwap::from_pointee(Router::new()?),
+        })
+    }
+
+    // Lock-free read - just load the current router
+    pub fn load(&self) -> Arc<Router> {
+        self.router.load().clone()
+    }
+
+    // Atomic update - store new router
+    pub fn update_routes(&self, new_routes: Vec<RouteEntry>) {
+        let mut current_router = (**self.router.load()).clone();
+        current_router.update_routes(new_routes);
+        self.router.store(Arc::new(current_router));
+    }
+
+    // Atomic update - store new router
+    pub fn update_arp(&self, new_neighbors: Vec<NeighborEntry>) {
+        let mut current_router = (**self.router.load()).clone();
+        current_router.update_arp(new_neighbors);
+        self.router.store(Arc::new(current_router));
     }
 }
 
@@ -357,7 +346,7 @@ mod tests {
 
     #[test]
     fn test_route_cache() {
-        let (router, _) = Router::new().unwrap();
+        let router = Router::new().unwrap();
         let next_hop = router.route("1.1.1.1".parse().unwrap()).unwrap();
         eprintln!("{next_hop:?}");
     }

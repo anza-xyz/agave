@@ -57,7 +57,7 @@ impl NetworkDevice {
     }
 
     pub fn new_from_default_route() -> Result<Self, io::Error> {
-        let (router, _) = Router::new()?;
+        let router = Router::new()?;
         let default_route = router.default().unwrap();
         NetworkDevice::new_from_index(default_route.if_index)
     }
