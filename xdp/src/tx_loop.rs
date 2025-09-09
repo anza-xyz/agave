@@ -8,7 +8,7 @@ use {
             write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
             UDP_HEADER_SIZE,
         },
-        route::Router,
+        route::AtomicRouter,
         set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
         umem::{Frame as _, PageAlignedMemory, SliceUmem, SliceUmemFrame, Umem as _},
@@ -20,9 +20,10 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{sysconf, _SC_PAGESIZE},
     std::{
+        sync::Arc,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         thread,
-        time::{Duration, Instant},
+        time::Duration,
     },
 };
 
@@ -38,7 +39,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
     dest_mac: Option<MacAddress>,
     receiver: Receiver<(A, T)>,
     drop_sender: Sender<(A, T)>,
-    mut router: Router,
+    atomic_router: Arc<AtomicRouter>,
 ) {
     log::info!(
         "starting xdp loop on {} queue {queue_id:?} cpu {cpu_id}",
@@ -134,22 +135,8 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
     // packets.
     let mut batched_packets = 0;
 
-    // check for new route updates in the channel every 60 seconds
-    const ROUTE_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60);
-    let mut last_route_check = Instant::now();
-
     let mut timeouts = 0;
     loop {
-        // greg: todo: even though we have a 60 second interval, this will have a pretty
-        // large overhead here. we should optimize this somehow
-        // shared memory with the route monitor?
-        // any contention on the table, just drop the packets?
-        if last_route_check.elapsed() > ROUTE_UPDATE_CHECK_INTERVAL {
-            if router.try_update() {
-                log::debug!("greg: CPU {cpu_id}: Updated routes from channel");
-            }
-            last_route_check = Instant::now();
-        }
 
         match receiver.try_recv() {
             Ok((addrs, payload)) => {
@@ -218,6 +205,8 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                 let dest_mac = if let Some(mac) = dest_mac {
                     mac
                 } else {
+                    // Completely lock-free route lookup with ArcSwap!
+                    let router = atomic_router.load();
                     let next_hop = router.route(addr.ip()).unwrap();
 
                     let mut skip = false;
