@@ -163,10 +163,7 @@ impl RecordReceiver {
 
     /// Shutdown the channel immediately.
     pub fn shutdown(&mut self) {
-        self.slot_allowed_insertions.0.store(
-            SlotAllowedInsertions::encoded_value(SlotAllowedInsertions::DISABLED_SLOT, 0),
-            Ordering::Release,
-        );
+        self.slot_allowed_insertions.shutdown();
     }
 
     /// Re-enable the channel after a shutdown.
@@ -252,18 +249,22 @@ impl SlotAllowedInsertions {
     const MAX_SLOT: Slot = Self::DISABLED_SLOT - 1;
     const MAX_ALLOWED_INSERTIONS: u64 = (1 << Self::ALLOWED_INSERTIONS_BITS) - 1;
 
+    const SHUTDOWN: u64 = Self::encoded_value(Self::DISABLED_SLOT, 0);
+
     /// Create a new `SlotAllowedInsertions` with state consistent with a
     /// shutdown state:
     /// - slot = `DISABLED_SLOT`
     /// - allowed_insertions = 0
     fn new_shutdown() -> Self {
-        Self(Arc::new(AtomicU64::new(Self::encoded_value(
-            Self::DISABLED_SLOT,
-            0,
-        ))))
+        Self(Arc::new(AtomicU64::new(Self::SHUTDOWN)))
     }
 
-    fn encoded_value(slot: Slot, allowed_insertions: u64) -> u64 {
+    /// Shutdown the channel immediately.
+    fn shutdown(&self) {
+        self.0.store(Self::SHUTDOWN, Ordering::Release);
+    }
+
+    const fn encoded_value(slot: Slot, allowed_insertions: u64) -> u64 {
         assert!(slot <= Self::DISABLED_SLOT);
         assert!(allowed_insertions <= Self::MAX_ALLOWED_INSERTIONS);
         (slot << Self::ALLOWED_INSERTIONS_BITS) | allowed_insertions
