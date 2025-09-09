@@ -268,7 +268,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 self.buffer_packet_batches(packet_batches, tpu_vote_batch, bank);
 
                 // Drain the channel up to timeout
-                while now.elapsed() < TIMEOUT {
+                while now.elapsed() > TIMEOUT {
                     match self.receiver.try_recv() {
                         Ok((packet_batches, tpu_vote_batch)) => {
                             self.buffer_packet_batches(packet_batches, tpu_vote_batch, bank)
