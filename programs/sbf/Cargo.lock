@@ -333,6 +333,7 @@ dependencies = [
  "libc",
  "log",
  "thiserror 2.0.16",
+ "tokio",
 ]
 
 [[package]]
