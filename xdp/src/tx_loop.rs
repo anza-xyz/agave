@@ -140,6 +140,10 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
 
     let mut timeouts = 0;
     loop {
+        // greg: todo: even though we have a 60 second interval, this will have a pretty
+        // large overhead here. we should optimize this somehow
+        // shared memory with the route monitor?
+        // any contention on the table, just drop the packets?
         if last_route_check.elapsed() > ROUTE_UPDATE_CHECK_INTERVAL {
             if router.try_update() {
                 log::debug!("greg: CPU {cpu_id}: Updated routes from channel");
