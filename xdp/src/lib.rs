@@ -10,6 +10,8 @@
 #[cfg(target_os = "linux")]
 pub mod device;
 #[cfg(target_os = "linux")]
+pub mod gre;
+#[cfg(target_os = "linux")]
 pub mod netlink;
 #[cfg(target_os = "linux")]
 pub mod packet;

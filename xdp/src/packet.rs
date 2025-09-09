@@ -1,10 +1,14 @@
 #![allow(clippy::arithmetic_side_effects)]
 
-use {libc::ETH_P_IP, std::net::Ipv4Addr};
+use {
+    libc::{ETH_P_IP, IPPROTO_UDP},
+    std::net::Ipv4Addr,
+};
 
 pub const ETH_HEADER_SIZE: usize = 14;
 pub const IP_HEADER_SIZE: usize = 20;
 pub const UDP_HEADER_SIZE: usize = 8;
+const IP_DONT_FRAGMENT: u16 = 0x4000;
 
 pub fn write_eth_header(packet: &mut [u8], src_mac: &[u8; 6], dst_mac: &[u8; 6]) {
     packet[0..6].copy_from_slice(dst_mac);
@@ -12,22 +16,31 @@ pub fn write_eth_header(packet: &mut [u8], src_mac: &[u8; 6], dst_mac: &[u8; 6])
     packet[12..14].copy_from_slice(&(ETH_P_IP as u16).to_be_bytes());
 }
 
-pub fn write_ip_header(packet: &mut [u8], src_ip: &Ipv4Addr, dst_ip: &Ipv4Addr, udp_len: u16) {
-    let total_len = IP_HEADER_SIZE + udp_len as usize;
+pub(crate) fn write_ip_header(
+    packet: &mut [u8],
+    src_ip: &Ipv4Addr,
+    dst_ip: &Ipv4Addr,
+    payload_len: u16,
+    protocol: u8,
+    dont_fragment: bool,
+    ttl: Option<u8>,
+    tos: Option<u8>,
+) {
+    let total_len = IP_HEADER_SIZE + payload_len as usize;
 
     // version (4) and IHL (5)
     packet[0] = 0x45;
     // tos
-    packet[1] = 0;
+    packet[1] = tos.unwrap_or(0);
     packet[2..4].copy_from_slice(&(total_len as u16).to_be_bytes());
     // identification
     packet[4..6].copy_from_slice(&0u16.to_be_bytes());
     // flags & frag offset
-    packet[6..8].copy_from_slice(&0u16.to_be_bytes());
-    // TTL
-    packet[8] = 64;
-    // protocol (UDP = 17)
-    packet[9] = 17;
+    let frag_flags = if dont_fragment { IP_DONT_FRAGMENT } else { 0 };
+    packet[6..8].copy_from_slice(&frag_flags.to_be_bytes());
+    packet[8] = ttl.unwrap_or(64);
+    // protocol
+    packet[9] = protocol;
     // checksum
     packet[10..12].copy_from_slice(&0u16.to_be_bytes());
     packet[12..16].copy_from_slice(&src_ip.octets());
@@ -35,6 +48,25 @@ pub fn write_ip_header(packet: &mut [u8], src_ip: &Ipv4Addr, dst_ip: &Ipv4Addr, 
 
     let checksum = calculate_ip_checksum(&packet[..IP_HEADER_SIZE]);
     packet[10..12].copy_from_slice(&checksum.to_be_bytes());
+}
+
+/// Write IP header configured for UDP protocol
+pub fn write_ip_header_for_udp(
+    packet: &mut [u8],
+    src_ip: &Ipv4Addr,
+    dst_ip: &Ipv4Addr,
+    payload_len: u16,
+) {
+    write_ip_header(
+        packet,
+        src_ip,
+        dst_ip,
+        payload_len,
+        IPPROTO_UDP as u8,
+        false,
+        None,
+        None,
+    );
 }
 
 pub fn write_udp_header(
