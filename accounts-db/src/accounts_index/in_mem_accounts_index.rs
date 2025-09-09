@@ -14,7 +14,7 @@ use {
     solana_bucket_map::bucket_api::BucketApi,
     solana_clock::Slot,
     solana_measure::measure::Measure,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::{
         cmp,
         collections::{hash_map::Entry, HashMap, HashSet},
@@ -97,7 +97,7 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     last_age_flushed: AtomicAge,
 
     // backing store
-    map_internal: RwLock<HashMap<Pubkey, Arc<AccountMapEntry<T>>, ahash::RandomState>>,
+    map_internal: RwLock<HashMap<Pubkey, Arc<AccountMapEntry<T>>, PubkeyHasherBuilder>>,
     storage: Arc<BucketMapHolder<T, U>>,
     _bin: usize,
     pub(crate) lowest_pubkey: Pubkey,
@@ -188,7 +188,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let lowest_pubkey = bin_calc.lowest_pubkey_from_bin(bin);
         let highest_pubkey = bin_calc.highest_pubkey_from_bin(bin);
         Self {
-            map_internal: RwLock::default(),
+            map_internal: RwLock::new(HashMap::default()),
             storage: Arc::clone(storage),
             _bin: bin,
             lowest_pubkey,
