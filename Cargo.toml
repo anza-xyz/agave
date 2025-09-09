@@ -223,7 +223,7 @@ caps = "0.5.5"
 cargo_metadata = "0.15.4"
 cfg-if = "1.0.3"
 cfg_eval = "0.1.2"
-chrono = { version = "0.4.41", default-features = false }
+chrono = { version = "0.4.42", default-features = false }
 chrono-humanize = "0.2.3"
 clap = "2.33.1"
 # Remove this dependency when procedural macros will support non-inline modules.
