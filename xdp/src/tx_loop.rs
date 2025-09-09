@@ -3,15 +3,16 @@
 use {
     crate::{
         device::{DeviceQueue, NetworkDevice, QueueId, RingSizes, TxCompletionRing},
-        netlink::MacAddress,
+        gre::{packet::GreConfig, GreEncapsulator},
+        netlink::{InterfaceInfo, MacAddress},
         packet::{
-            write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
-            UDP_HEADER_SIZE,
+            write_eth_header, write_ip_header_for_udp, write_udp_header, ETH_HEADER_SIZE,
+            IP_HEADER_SIZE, UDP_HEADER_SIZE,
         },
         route::NextHop,
         set_cpu_affinity,
         socket::{Socket, Tx, TxRing},
-        umem::{Frame, OwnedUmem, PageAlignedMemory, Umem},
+        umem::{Frame, OwnedUmem, PageAlignedMemory, SliceUmemFrame, Umem},
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     libc::{sysconf, _SC_PAGESIZE},
@@ -215,7 +216,7 @@ pub struct TxLoop<U: Umem> {
 }
 
 impl<U: Umem> TxLoop<U> {
-    pub fn run<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<NextHop>>(
+    pub fn run<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>, R: Fn(&IpAddr) -> Option<(NextHop, InterfaceInfo)>>(
         self,
         receiver: Receiver<(A, T)>,
         drop_sender: Sender<(A, T)>,
@@ -249,6 +250,7 @@ impl<U: Umem> TxLoop<U> {
 
         // Local buffer where we store packets before sending themi.
         let mut batched_items = Vec::with_capacity(BATCH_SIZE);
+        let mut gre_encapsulator = GreEncapsulator::default();
 
         // How many packets we've batched. This is _not_ batched_items.len(), but item * peers. For
         // example if we have 3 packets to transmit to 2 destination addresses each, we have 6 batched
@@ -321,20 +323,78 @@ impl<U: Umem> TxLoop<U> {
                         panic!("IPv6 not supported");
                     };
 
+                    let len = payload.as_ref().len();
                     let dest_mac = {
-                        let ip = addr.ip();
-                        let Some(next_hop) = route_fn(&ip) else {
+                        let dst = addr.ip();
+                        let Some((next_hop, interface_info)) = route_fn(&dst) else {
                             log::warn!("dropping packet: no route for peer {addr}");
                             batched_packets -= 1;
                             umem.release(frame.offset());
                             continue;
                         };
+                        // Handle GRE tunnel encapsulation if needed
+                        if GreEncapsulator::is_gre(&interface_info) {
+                            let Some(gre) = interface_info.gre_tunnel.as_ref() else {
+                                continue;
+                            };
+
+                            // Convert to GreConfig and calculate packet size
+                            let Ok(gre_config) = GreConfig::try_from(gre) else {
+                                log::warn!("dropping packet: invalid GRE tunnel endpoints");
+                                batched_packets -= 1;
+                                umem.release(frame.offset());
+                                continue;
+                            };
+                            let gre_packet_size =
+                                GreEncapsulator::calculate_packet_size(len, &gre_config);
+                            frame.set_len(gre_packet_size);
+                            let packet = umem.map_frame_mut(&frame);
+
+                            match gre_encapsulator.encapsulate_packet(
+                                packet,
+                                payload.as_ref(),
+                                *addr,
+                                src_ip,
+                                src_port,
+                                src_mac,
+                                &next_hop,
+                                &gre_config,
+                                &route_fn,
+                            ) {
+                                Ok(()) => {
+                                    // write the packet into the ring
+                                    ring.write(frame, 0)
+                                        .map_err(|_| "ring full")
+                                        // this should never happen as we check for available slots above
+                                        .expect("failed to write to ring");
+
+                                    batched_packets -= 1;
+                                    chunk_remaining -= 1;
+
+                                    // check if it's time to commit the ring and kick the driver
+                                    if chunk_remaining == 0 {
+                                        chunk_remaining = BATCH_SIZE.min(batched_packets);
+
+                                        // commit new frames
+                                        ring.commit();
+                                        kick(&ring);
+                                    }
+                                    continue;
+                                }
+                                Err(e) => {
+                                    log::warn!("dropping packet: {e}");
+                                    batched_packets -= 1;
+                                    umem.release(frame.offset());
+                                    continue;
+                                }
+                            }
+                        }
 
                         // we need the MAC address to send the packet
                         let Some(dest_mac) = next_hop.mac_addr else {
                             log::warn!(
-                                "dropping packet: peer {addr} must be routed through {} which has \
-                                 no known MAC address",
+                                "dropping packet: peer {addr} must be routed through {} which has no \
+                                known MAC address",
                                 next_hop.ip_addr
                             );
                             batched_packets -= 1;
@@ -347,7 +407,6 @@ impl<U: Umem> TxLoop<U> {
 
                     const PACKET_HEADER_SIZE: usize =
                         ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
-                    let len = payload.as_ref().len();
                     frame.set_len(PACKET_HEADER_SIZE + len);
                     let packet = umem.map_frame_mut(&frame);
 
@@ -356,7 +415,7 @@ impl<U: Umem> TxLoop<U> {
 
                     write_eth_header(packet, &src_mac.0, &dest_mac.0);
 
-                    write_ip_header(
+                    write_ip_header_for_udp(
                         &mut packet[ETH_HEADER_SIZE..],
                         &src_ip,
                         &dst_ip,
