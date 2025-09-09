@@ -5,6 +5,8 @@ use {
     agave_xdp::{
         device::{NetworkDevice, QueueId},
         load_xdp_program,
+        route::Router,
+        route_monitor::RouteMonitor,
         tx_loop::tx_loop,
     },
     crossbeam_channel::TryRecvError,
@@ -147,7 +149,13 @@ impl XdpRetransmitter {
             .map(|_| crossbeam_channel::bounded(config.rtx_channel_cap))
             .unzip::<_, _, Vec<_>, Vec<_>>();
 
+        // Create broadcast channel for route updates
+        let (_, update_sender) = Router::new()?;
+        let route_monitor = RouteMonitor::new(update_sender.clone(), Duration::from_secs(60));
+        let monitor_handle = route_monitor.start();
+
         let mut threads = vec![];
+        threads.push(monitor_handle); // Add monitor thread
 
         let (drop_sender, drop_receiver) = crossbeam_channel::bounded(DROP_CHANNEL_CAP);
         threads.push(
@@ -180,6 +188,8 @@ impl XdpRetransmitter {
         {
             let dev = Arc::clone(&dev);
             let drop_sender = drop_sender.clone();
+            // Each thread gets its own route cache subscribed to the broadcast
+            let route_cache = Router::subscribe(&update_sender)?;
             threads.push(
                 Builder::new()
                     .name(format!("solRetransmIO{i:02}"))
@@ -195,6 +205,7 @@ impl XdpRetransmitter {
                             None,
                             receiver,
                             drop_sender,
+                            route_cache,
                         )
                     })
                     .unwrap(),
