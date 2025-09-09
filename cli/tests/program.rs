@@ -12,12 +12,13 @@ use {
         cli::{process_command, CliCommand, CliConfig},
         program::{ProgramCliCommand, CLOSE_PROGRAM_WARNING},
         program_v4::{AdditionalCliConfig, ProgramV4CliCommand},
-        test_utils::{run_local_faucet_cli, wait_n_slots},
+        test_utils::wait_n_slots,
     },
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
     solana_client::rpc_config::RpcSendTransactionConfig,
     solana_commitment_config::CommitmentConfig,
     solana_compute_budget_interface::ComputeBudgetInstruction,
+    solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_fee_calculator::FeeRateGovernor,
     solana_keypair::Keypair,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
@@ -55,7 +56,9 @@ fn test_validator_genesis(mint_keypair: Keypair) -> TestValidatorGenesis {
             exemption_threshold: 1.0,
             ..Rent::default()
         })
-        .faucet_addr(Some(run_local_faucet_cli(mint_keypair)));
+        .faucet_addr(Some(run_local_faucet_with_unique_port_for_tests(
+            mint_keypair,
+        )));
     genesis
 }
 
@@ -2928,7 +2931,7 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
 
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet_cli(mint_keypair);
+    let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair);
     let test_validator = TestValidatorGenesis::default()
         .fee_rate_governor(FeeRateGovernor::new(0, 0))
         .rent(Rent {

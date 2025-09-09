@@ -398,6 +398,18 @@ pub fn run_local_faucet_for_tests(
         .expect("faucet_addr")
 }
 
+/// For tests only.
+///
+/// Listens on `LOCALHOST` with unique, non-overlapping port and reports to Sender.
+#[cfg(feature = "dev-context-only-utils")]
+pub fn run_local_faucet_with_unique_port_for_tests(keypair: Keypair) -> SocketAddr {
+    run_local_faucet_for_tests(
+        keypair,
+        None, /* per_time_cap */
+        solana_net_utils::sockets::unique_port_range_for_tests(1).start,
+    )
+}
+
 // For integration tests. Listens on random open port and reports port to Sender.
 pub fn run_local_faucet(faucet_keypair: Keypair, per_time_cap: Option<u64>) -> SocketAddr {
     let (sender, receiver) = unbounded();
