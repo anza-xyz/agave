@@ -14,6 +14,16 @@ use {
 /// Create a channel pair for communicating [`Record`]s.
 /// Transaction processing threads (workers/vote thread) send records, and
 /// PohService receives them.
+///
+/// The receiver can shutdown the channel, preventing any further sends,
+/// and can restart the channel for a new slot, re-enabling sends.
+/// The sender does not wait for the receiver to pick up records, and will return
+/// immediately if the channel is full, shutdown, or if the slot has changed.
+///
+/// The channel has a bounded capacity based on the maximum number of allowed
+/// insertions at a given time. This is for guaranteeing that once shutdown the
+/// service can always process all sent records correctly without dropping any
+/// i.e. once sent records can be guaranteed to be recorded.
 pub fn record_channels(track_transaction_indexes: bool) -> (RecordSender, RecordReceiver) {
     const CAPACITY: usize = SlotAllowedInsertions::MAX_ALLOWED_INSERTIONS as usize;
     let (sender, receiver) = bounded(CAPACITY);
