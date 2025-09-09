@@ -146,7 +146,10 @@ impl Router {
     pub fn update_arp(&mut self, new_neighbors: Vec<NeighborEntry>) {
         self.arp_table = Arc::new(ArpTable::from_neighbors(new_neighbors));
         self.last_update = Instant::now();
-        log::debug!("greg: Updated ARP table: {} entries", self.arp_table.neighbors.len());
+        log::debug!(
+            "greg: Updated ARP table: {} entries",
+            self.arp_table.neighbors.len()
+        );
     }
 
     pub fn default(&self) -> Result<NextHop, RouteError> {
@@ -230,17 +233,26 @@ pub(crate) fn filter_routes(routes: &mut Vec<RouteEntry>) {
     });
 }
 
+pub(crate) fn filter_neighbors(neighbors: &mut Vec<NeighborEntry>) {
+    neighbors.retain(|neighbor| {
+        // Keep only valid neighbor entries
+        neighbor.is_valid()
+    });
+}
+
 struct ArpTable {
     neighbors: Vec<NeighborEntry>,
 }
 
 impl ArpTable {
     pub fn new() -> Result<Self, io::Error> {
-        let neighbors = netlink_get_neighbors(None, AF_INET as u8)?;
+        let mut neighbors = netlink_get_neighbors(None, AF_INET as u8)?;
+        filter_neighbors(&mut neighbors);
         Ok(Self { neighbors })
     }
 
-    pub fn from_neighbors(neighbors: Vec<NeighborEntry>) -> Self {
+    pub fn from_neighbors(mut neighbors: Vec<NeighborEntry>) -> Self {
+        filter_neighbors(&mut neighbors);
         Self { neighbors }
     }
 

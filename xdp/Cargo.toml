@@ -9,12 +9,12 @@ edition = { workspace = true }
 publish = true
 
 [dependencies]
+arc-swap = { workspace = true }
 crossbeam-channel = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-arc-swap = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { workspace = true }
