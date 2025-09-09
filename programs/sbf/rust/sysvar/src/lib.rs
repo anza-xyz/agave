@@ -209,6 +209,16 @@ pub fn process_instruction(
 
             Ok(())
         }
+        Some(&4) => {
+            // Attempt to store the result in the input region instead of the stack or heap
+            unsafe {
+                solana_define_syscall::definitions::sol_get_epoch_rewards_sysvar(
+                    accounts[2].data.borrow_mut().as_mut_ptr(),
+                )
+            };
+
+            Ok(())
+        }
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
