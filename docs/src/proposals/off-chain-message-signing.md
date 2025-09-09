@@ -79,7 +79,7 @@ compatibility and composition of messages.
 
 \* Combined length of the [message preamble](#message-preamble) and message body<br/>
 \*\* Those characters for which [`isprint(3)`](https://linux.die.net/man/3/isprint)
-returns true.  That is, `0x20..=0x7e`.
+returns true (`0x20..=0x7e`) and `0x0A`.
 
 Both the message encoding and maximum message length **MUST** be enforced by
 signer and verifier.
