@@ -618,6 +618,7 @@ name = "agave-xdp"
 version = "4.0.0-alpha.0"
 dependencies = [
  "agave-xdp-ebpf",
+ "arc-swap",
  "aya",
  "caps",
  "crossbeam-channel",
@@ -11704,6 +11705,7 @@ dependencies = [
  "agave-logger",
  "agave-votor",
  "agave-xdp",
+ "arc-swap",
  "assert_matches",
  "bencher",
  "bincode",
