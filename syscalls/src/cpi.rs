@@ -3,18 +3,15 @@ use {
     solana_instruction::Instruction,
     solana_program_runtime::{
         cpi::{
-            check_account_infos, check_authorized_program, check_instruction_size,
-            update_callee_account, update_caller_account, update_caller_account_region,
+            check_authorized_program, check_instruction_size, translate_account_infos,
+            translate_and_update_accounts, update_caller_account, update_caller_account_region,
             CallerAccount, SolAccountInfo, SolAccountMeta, SolInstruction, SolSignerSeedC,
             SolSignerSeedsC, TranslatedAccount,
         },
-        invoke_context::SerializedAccountMetadata,
         memory::{translate_slice, translate_type},
     },
-    solana_sbpf::ebpf,
     solana_stable_layout::stable_instruction::StableInstruction,
     solana_svm_measure::measure::Measure,
-    std::mem,
 };
 
 /// Implemented by language specific data structure translators
@@ -349,180 +346,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
     }
 }
 
-fn translate_account_infos<'a, T, F>(
-    account_infos_addr: u64,
-    account_infos_len: u64,
-    key_addr: F,
-    memory_mapping: &'a MemoryMapping,
-    invoke_context: &mut InvokeContext,
-    check_aligned: bool,
-) -> Result<(&'a [T], Vec<&'a Pubkey>), Error>
-where
-    F: Fn(&T) -> u64,
-{
-    let stricter_abi_and_runtime_constraints = invoke_context
-        .get_feature_set()
-        .stricter_abi_and_runtime_constraints;
-
-    // In the same vein as the other check_account_info_pointer() checks, we don't lock
-    // this pointer to a specific address but we don't want it to be inside accounts, or
-    // callees might be able to write to the pointed memory.
-    if stricter_abi_and_runtime_constraints
-        && account_infos_addr
-            .saturating_add(account_infos_len.saturating_mul(std::mem::size_of::<T>() as u64))
-            >= ebpf::MM_INPUT_START
-    {
-        return Err(SyscallError::InvalidPointer.into());
-    }
-
-    let account_infos = translate_slice::<T>(
-        memory_mapping,
-        account_infos_addr,
-        account_infos_len,
-        check_aligned,
-    )?;
-    check_account_infos(account_infos.len(), invoke_context)?;
-    let mut account_info_keys = Vec::with_capacity(account_infos_len as usize);
-    #[allow(clippy::needless_range_loop)]
-    for account_index in 0..account_infos_len as usize {
-        #[allow(clippy::indexing_slicing)]
-        let account_info = &account_infos[account_index];
-        account_info_keys.push(translate_type::<Pubkey>(
-            memory_mapping,
-            key_addr(account_info),
-            check_aligned,
-        )?);
-    }
-    Ok((account_infos, account_info_keys))
-}
-
-// Finish translating accounts, build CallerAccount values and update callee
-// accounts in preparation of executing the callee.
-fn translate_and_update_accounts<'a, T, F>(
-    account_info_keys: &[&Pubkey],
-    account_infos: &[T],
-    account_infos_addr: u64,
-    invoke_context: &mut InvokeContext,
-    memory_mapping: &MemoryMapping<'_>,
-    check_aligned: bool,
-    do_translate: F,
-) -> Result<Vec<TranslatedAccount<'a>>, Error>
-where
-    F: Fn(
-        &InvokeContext,
-        &MemoryMapping<'_>,
-        bool,
-        u64,
-        &T,
-        &SerializedAccountMetadata,
-    ) -> Result<CallerAccount<'a>, Error>,
-{
-    let transaction_context = &invoke_context.transaction_context;
-    let next_instruction_context = transaction_context.get_next_instruction_context()?;
-    let next_instruction_accounts = next_instruction_context.instruction_accounts();
-    let instruction_context = transaction_context.get_current_instruction_context()?;
-    let mut accounts = Vec::with_capacity(next_instruction_accounts.len());
-
-    // unwrapping here is fine: we're in a syscall and the method below fails
-    // only outside syscalls
-    let accounts_metadata = &invoke_context
-        .get_syscall_context()
-        .unwrap()
-        .accounts_metadata;
-
-    let stricter_abi_and_runtime_constraints = invoke_context
-        .get_feature_set()
-        .stricter_abi_and_runtime_constraints;
-
-    for (instruction_account_index, instruction_account) in
-        next_instruction_accounts.iter().enumerate()
-    {
-        if next_instruction_context
-            .is_instruction_account_duplicate(instruction_account_index as IndexOfAccount)?
-            .is_some()
-        {
-            continue; // Skip duplicate account
-        }
-
-        let index_in_caller = instruction_context
-            .get_index_of_account_in_instruction(instruction_account.index_in_transaction)?;
-        let callee_account = instruction_context.try_borrow_instruction_account(index_in_caller)?;
-        let account_key = invoke_context
-            .transaction_context
-            .get_key_of_account_at_index(instruction_account.index_in_transaction)?;
-
-        #[allow(deprecated)]
-        if callee_account.is_executable() {
-            // Use the known account
-            consume_compute_meter(
-                invoke_context,
-                (callee_account.get_data().len() as u64)
-                    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                    .unwrap_or(u64::MAX),
-            )?;
-        } else if let Some(caller_account_index) =
-            account_info_keys.iter().position(|key| *key == account_key)
-        {
-            let serialized_metadata =
-                accounts_metadata
-                    .get(index_in_caller as usize)
-                    .ok_or_else(|| {
-                        ic_msg!(
-                            invoke_context,
-                            "Internal error: index mismatch for account {}",
-                            account_key
-                        );
-                        Box::new(InstructionError::MissingAccount)
-                    })?;
-
-            // build the CallerAccount corresponding to this account.
-            if caller_account_index >= account_infos.len() {
-                return Err(Box::new(SyscallError::InvalidLength));
-            }
-            #[allow(clippy::indexing_slicing)]
-            let caller_account =
-                do_translate(
-                    invoke_context,
-                    memory_mapping,
-                    check_aligned,
-                    account_infos_addr.saturating_add(
-                        caller_account_index.saturating_mul(mem::size_of::<T>()) as u64,
-                    ),
-                    &account_infos[caller_account_index],
-                    serialized_metadata,
-                )?;
-
-            // before initiating CPI, the caller may have modified the
-            // account (caller_account). We need to update the corresponding
-            // BorrowedAccount (callee_account) so the callee can see the
-            // changes.
-            let update_caller = update_callee_account(
-                check_aligned,
-                &caller_account,
-                callee_account,
-                stricter_abi_and_runtime_constraints,
-                invoke_context.account_data_direct_mapping,
-            )?;
-
-            accounts.push(TranslatedAccount {
-                index_in_caller,
-                caller_account,
-                update_caller_account_region: instruction_account.is_writable() || update_caller,
-                update_caller_account_info: instruction_account.is_writable(),
-            });
-        } else {
-            ic_msg!(
-                invoke_context,
-                "Instruction references an unknown account {}",
-                account_key
-            );
-            return Err(Box::new(InstructionError::MissingAccount));
-        }
-    }
-
-    Ok(accounts)
-}
-
 /// Call process instruction, common to both Rust and C
 fn cpi_common<S: SyscallInvokeSigned>(
     invoke_context: &mut InvokeContext,
@@ -643,7 +466,7 @@ mod tests {
         },
         solana_sdk_ids::bpf_loader,
         solana_transaction_context::{
-            transaction_accounts::TransactionAccount, InstructionAccount,
+            transaction_accounts::TransactionAccount, IndexOfAccount, InstructionAccount,
         },
         std::{
             cell::{Cell, RefCell},
