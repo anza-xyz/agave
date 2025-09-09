@@ -1,7 +1,5 @@
 //! Cross-Program Invocation (CPI) error types
 
-#![allow(clippy::type_complexity)]
-
 use {
     crate::{
         invoke_context::{InvokeContext, SerializedAccountMetadata},
@@ -52,6 +50,8 @@ pub enum CpiError {
     #[error("Program {0} not supported by inner instructions")]
     ProgramNotSupported(Pubkey),
 }
+
+type Error = Box<dyn std::error::Error>;
 
 /// Rust representation of C's SolInstruction
 #[derive(Debug)]
@@ -113,7 +113,7 @@ fn check_account_info_pointer(
     vm_addr: u64,
     expected_vm_addr: u64,
     field: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Error> {
     if vm_addr != expected_vm_addr {
         ic_msg!(
             invoke_context,
@@ -128,10 +128,7 @@ fn check_account_info_pointer(
 }
 
 /// Check that an instruction's account and data lengths are within limits
-pub fn check_instruction_size(
-    num_accounts: usize,
-    data_len: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn check_instruction_size(num_accounts: usize, data_len: usize) -> Result<(), Error> {
     if num_accounts > MAX_ACCOUNTS_PER_INSTRUCTION {
         return Err(Box::new(CpiError::MaxInstructionAccountsExceeded {
             num_accounts: num_accounts as u64,
@@ -151,7 +148,7 @@ pub fn check_instruction_size(
 pub fn check_account_infos(
     num_account_infos: usize,
     invoke_context: &mut InvokeContext,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Error> {
     let max_cpi_account_infos = if invoke_context
         .get_feature_set()
         .increase_tx_account_lock_limit
@@ -176,7 +173,7 @@ pub fn check_authorized_program(
     program_id: &Pubkey,
     instruction_data: &[u8],
     invoke_context: &InvokeContext,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Error> {
     if native_loader::check_id(program_id)
         || bpf_loader::check_id(program_id)
         || bpf_loader_deprecated::check_id(program_id)
@@ -234,7 +231,7 @@ impl<'a> CallerAccount<'a> {
         len: u64,
         stricter_abi_and_runtime_constraints: bool,
         account_data_direct_mapping: bool,
-    ) -> Result<&'a mut [u8], Box<dyn std::error::Error>> {
+    ) -> Result<&'a mut [u8], Error> {
         use crate::memory::translate_slice_mut_for_cpi;
 
         if stricter_abi_and_runtime_constraints && account_data_direct_mapping {
@@ -273,7 +270,7 @@ impl<'a> CallerAccount<'a> {
         _vm_addr: u64,
         account_info: &solana_account_info::AccountInfo,
         account_metadata: &crate::invoke_context::SerializedAccountMetadata,
-    ) -> Result<CallerAccount<'a>, Box<dyn std::error::Error>> {
+    ) -> Result<CallerAccount<'a>, Error> {
         use crate::memory::{translate_type, translate_type_mut_for_cpi};
 
         let stricter_abi_and_runtime_constraints = invoke_context
@@ -394,7 +391,7 @@ impl<'a> CallerAccount<'a> {
         vm_addr: u64,
         account_info: &SolAccountInfo,
         account_metadata: &crate::invoke_context::SerializedAccountMetadata,
-    ) -> Result<CallerAccount<'a>, Box<dyn std::error::Error>> {
+    ) -> Result<CallerAccount<'a>, Error> {
         use crate::memory::translate_type_mut_for_cpi;
 
         let stricter_abi_and_runtime_constraints = invoke_context
@@ -495,7 +492,7 @@ pub fn translate_account_infos<'a, T, F>(
     memory_mapping: &'a MemoryMapping,
     invoke_context: &mut InvokeContext,
     check_aligned: bool,
-) -> Result<(&'a [T], Vec<&'a Pubkey>), Box<dyn std::error::Error>>
+) -> Result<(&'a [T], Vec<&'a Pubkey>), Error>
 where
     F: Fn(&T) -> u64,
 {
@@ -545,7 +542,7 @@ pub fn translate_and_update_accounts<'a, T, F>(
     memory_mapping: &MemoryMapping<'_>,
     check_aligned: bool,
     do_translate: F,
-) -> Result<Vec<TranslatedAccount<'a>>, Box<dyn std::error::Error>>
+) -> Result<Vec<TranslatedAccount<'a>>, Error>
 where
     F: Fn(
         &InvokeContext,
@@ -554,7 +551,7 @@ where
         u64,
         &T,
         &SerializedAccountMetadata,
-    ) -> Result<CallerAccount<'a>, Box<dyn std::error::Error>>,
+    ) -> Result<CallerAccount<'a>, Error>,
 {
     let transaction_context = &invoke_context.transaction_context;
     let next_instruction_context = transaction_context.get_next_instruction_context()?;
@@ -662,10 +659,7 @@ where
     Ok(accounts)
 }
 
-fn consume_compute_meter(
-    invoke_context: &InvokeContext,
-    amount: u64,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn consume_compute_meter(invoke_context: &InvokeContext, amount: u64) -> Result<(), Error> {
     invoke_context.consume_checked(amount)?;
     Ok(())
 }
@@ -687,7 +681,7 @@ pub fn update_callee_account(
     mut callee_account: BorrowedInstructionAccount<'_>,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
-) -> Result<bool, Box<dyn std::error::Error>> {
+) -> Result<bool, Error> {
     let mut must_update_caller = false;
 
     if callee_account.get_lamports() != *caller_account.lamports {
@@ -743,7 +737,7 @@ pub fn update_caller_account_region(
     caller_account: &CallerAccount,
     callee_account: &mut BorrowedInstructionAccount<'_>,
     account_data_direct_mapping: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Error> {
     let is_caller_loader_deprecated = !check_aligned;
     let address_space_reserved_for_account = if is_caller_loader_deprecated {
         caller_account.original_data_len
@@ -793,7 +787,7 @@ pub fn update_caller_account(
     caller_account: &mut CallerAccount<'_>,
     callee_account: &mut BorrowedInstructionAccount<'_>,
     stricter_abi_and_runtime_constraints: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Error> {
     *caller_account.lamports = callee_account.get_lamports();
     *caller_account.owner = *callee_account.get_owner();
 
