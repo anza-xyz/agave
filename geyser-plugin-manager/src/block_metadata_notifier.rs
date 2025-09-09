@@ -4,11 +4,10 @@ use {
         geyser_plugin_manager::GeyserPluginManager,
     },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaBlockInfoV5, ReplicaBlockInfoVersions,
+        ReplicaBlockInfoV4, ReplicaBlockInfoVersions,
     },
     log::*,
     solana_clock::UnixTimestamp,
-    solana_lattice_hash::lt_hash::LtHash,
     solana_measure::measure::Measure,
     solana_metrics::*,
     solana_runtime::bank::KeyedRewardsAndNumPartitions,
@@ -33,7 +32,6 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
         block_height: Option<u64>,
         executed_transaction_count: u64,
         entry_count: u64,
-        accounts_lt_hash: &LtHash,
     ) {
         let plugin_manager = self.plugin_manager.read().unwrap();
         if plugin_manager.plugins.is_empty() {
@@ -51,12 +49,11 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
             block_height,
             executed_transaction_count,
             entry_count,
-            accounts_lt_hash,
         );
 
         for plugin in plugin_manager.plugins.iter() {
             let mut measure = Measure::start("geyser-plugin-update-slot");
-            let block_info = ReplicaBlockInfoVersions::V0_0_5(&block_info);
+            let block_info = ReplicaBlockInfoVersions::V0_0_4(&block_info);
             match plugin.notify_block_metadata(block_info) {
                 Err(err) => {
                     error!(
@@ -103,7 +100,6 @@ impl BlockMetadataNotifierImpl {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn build_replica_block_info<'a>(
         parent_slot: u64,
         parent_blockhash: &'a str,
@@ -114,9 +110,8 @@ impl BlockMetadataNotifierImpl {
         block_height: Option<u64>,
         executed_transaction_count: u64,
         entry_count: u64,
-        accounts_lt_hash: &'a LtHash,
-    ) -> ReplicaBlockInfoV5<'a> {
-        ReplicaBlockInfoV5 {
+    ) -> ReplicaBlockInfoV4<'a> {
+        ReplicaBlockInfoV4 {
             parent_slot,
             parent_blockhash,
             slot,
@@ -126,7 +121,6 @@ impl BlockMetadataNotifierImpl {
             block_height,
             executed_transaction_count,
             entry_count,
-            accounts_lt_hash,
         }
     }
 

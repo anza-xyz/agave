@@ -1,6 +1,5 @@
 use {
-    solana_clock::UnixTimestamp, solana_lattice_hash::lt_hash::LtHash,
-    solana_runtime::bank::KeyedRewardsAndNumPartitions, std::sync::Arc,
+    solana_clock::UnixTimestamp, solana_runtime::bank::KeyedRewardsAndNumPartitions, std::sync::Arc,
 };
 
 /// Interface for notifying block metadata changes
@@ -18,7 +17,6 @@ pub trait BlockMetadataNotifier {
         block_height: Option<u64>,
         executed_transaction_count: u64,
         entry_count: u64,
-        accounts_lt_hash: &LtHash,
     );
 }
 
