@@ -204,7 +204,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                 let dest_mac = if let Some(mac) = dest_mac {
                     mac
                 } else {
-                    // Completely lock-free route lookup with ArcSwap!
+                    // lock free route lookup
                     let router = atomic_router.load();
                     let next_hop = router.route(addr.ip()).unwrap();
 

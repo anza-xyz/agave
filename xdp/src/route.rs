@@ -8,7 +8,6 @@ use {
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
         sync::Arc,
-        time::Instant,
     },
     thiserror::Error,
 };
@@ -120,33 +119,36 @@ fn is_ipv6_match(addr: Ipv6Addr, network: Ipv6Addr, prefix_len: u8) -> bool {
 pub struct Router {
     routes: Arc<Vec<RouteEntry>>,
     arp_table: Arc<ArpTable>,
-    last_update: Instant,
 }
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
         let mut routes = netlink_get_routes(AF_INET as u8)?;
-        filter_routes(&mut routes); // Apply filtering
+        filter_routes(&mut routes);
         let arp_table = ArpTable::new()?;
 
         Ok(Self {
             routes: Arc::new(routes),
             arp_table: Arc::new(arp_table),
-            last_update: Instant::now(),
         })
     }
 
     pub fn update_routes(&mut self, mut new_routes: Vec<RouteEntry>) {
+        log::info!(
+            "greg: Updating routes pre filter: {} entries",
+            new_routes.len()
+        );
         filter_routes(&mut new_routes); // Apply filtering
+        log::info!(
+            "greg: Filtered routes post filter: {} entries",
+            new_routes.len()
+        );
         self.routes = Arc::new(new_routes);
-        self.last_update = Instant::now();
-        log::debug!("greg: Updated routes: {} entries", self.routes.len());
     }
 
     pub fn update_arp(&mut self, new_neighbors: Vec<NeighborEntry>) {
         self.arp_table = Arc::new(ArpTable::from_neighbors(new_neighbors));
-        self.last_update = Instant::now();
-        log::debug!(
+        log::info!(
             "greg: Updated ARP table: {} entries",
             self.arp_table.neighbors.len()
         );
@@ -198,11 +200,6 @@ impl Router {
             if_index,
         })
     }
-
-    // Get last update time for monitoring
-    pub fn last_update(&self) -> Instant {
-        self.last_update
-    }
 }
 
 pub(crate) fn filter_routes(routes: &mut Vec<RouteEntry>) {
@@ -252,7 +249,15 @@ impl ArpTable {
     }
 
     pub fn from_neighbors(mut neighbors: Vec<NeighborEntry>) -> Self {
+        log::info!(
+            "greg: Updating neighbors pre filter: {} entries",
+            neighbors.len()
+        );
         filter_neighbors(&mut neighbors);
+        log::info!(
+            "greg: Filtered neighbors post filter: {} entries",
+            neighbors.len()
+        );
         Self { neighbors }
     }
 
