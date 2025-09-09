@@ -27,7 +27,7 @@ impl RouteMonitor {
                 // Fetch routes
                 match netlink_get_routes(AF_INET as u8) {
                     Ok(routes) => {
-                        log::debug!("Fetched {} total routes from kernel", routes.len());
+                        log::info!("greg: Fetched {} total routes from kernel", routes.len());
                         atomic_router.update_routes(routes);
                     }
                     Err(e) => {
