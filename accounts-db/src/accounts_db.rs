@@ -42,9 +42,9 @@ use {
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             in_mem_accounts_index::StartupStats, AccountSecondaryIndexes, AccountsIndex,
-            AccountsIndexConfig, AccountsIndexRootsStats, AccountsIndexScanResult, DiskIndexValue,
-            IndexKey, IndexValue, IsCached, RefCount, ScanConfig, ScanFilter, ScanResult, SlotList,
-            UpsertReclaim, ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
+            AccountsIndexConfig, AccountsIndexRootsStats, AccountsIndexScanResult, IndexKey,
+            IsCached, RefCount, ScanConfig, ScanFilter, ScanResult, SlotList, UpsertReclaim,
+            ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
         },
         accounts_index_storage::Startup,
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
@@ -657,9 +657,6 @@ impl GenerateIndexTimings {
         );
     }
 }
-
-impl IndexValue for AccountInfo {}
-impl DiskIndexValue for AccountInfo {}
 
 impl IsZeroLamport for AccountSharedData {
     fn is_zero_lamport(&self) -> bool {
