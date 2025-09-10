@@ -10,11 +10,12 @@ use {
         poh_controller::PohController,
         poh_recorder::PohRecorder,
         poh_service::{PohService, DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE},
+        record_channels::record_channels,
         transaction_recorder::TransactionRecorder,
     },
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
+    solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
     solana_transaction::versioned::VersionedTransaction,
     std::{
         sync::{atomic::AtomicBool, Arc, RwLock},
@@ -47,7 +48,7 @@ fn bench_record_transactions(c: &mut Criterion) {
     let blockstore = Arc::new(
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
     );
-    let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+    let (poh_recorder, _entry_receiver) = PohRecorder::new(
         bank.tick_height(),
         bank.last_blockhash(),
         bank.clone(),
@@ -58,10 +59,9 @@ fn bench_record_transactions(c: &mut Criterion) {
         &genesis_config_info.genesis_config.poh_config,
         exit.clone(),
     );
-    poh_recorder.set_bank_for_test(bank.clone());
 
-    let (record_sender, record_receiver) = crossbeam_channel::unbounded();
-    let transaction_recorder = TransactionRecorder::new(record_sender, exit.clone());
+    let (record_sender, record_receiver) = record_channels(false);
+    let transaction_recorder = TransactionRecorder::new(record_sender);
 
     let txs: Vec<_> = (0..NUM_TRANSACTIONS)
         .map(|_| {
@@ -74,8 +74,8 @@ fn bench_record_transactions(c: &mut Criterion) {
         })
         .collect();
 
+    let (mut poh_controller, poh_service_receiver) = PohController::new();
     let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-    let (_poh_controller, poh_service_message_receiver) = PohController::new();
     let poh_service = PohService::new(
         poh_recorder.clone(),
         &genesis_config_info.genesis_config.poh_config,
@@ -84,8 +84,11 @@ fn bench_record_transactions(c: &mut Criterion) {
         DEFAULT_PINNED_CPU_CORE,
         DEFAULT_HASHES_PER_BATCH,
         record_receiver,
-        poh_service_message_receiver,
+        poh_service_receiver,
     );
+    poh_controller
+        .set_bank_sync(BankWithScheduler::new_without_scheduler(bank.clone()))
+        .unwrap();
 
     let mut group = c.benchmark_group("record_transactions");
     group.throughput(criterion::Throughput::Elements(
@@ -97,16 +100,18 @@ fn bench_record_transactions(c: &mut Criterion) {
 
             for _ in 0..iters {
                 let tx_batches: Vec<_> = (0..NUM_BATCHES).map(|_| txs.clone()).collect();
-                poh_recorder.write().unwrap().clear_bank_for_test();
+                let next_slot = bank.slot().wrapping_add(1);
+                poh_controller
+                    .reset_sync(bank.clone(), Some((next_slot, next_slot)))
+                    .unwrap();
                 bank = Arc::new(Bank::new_from_parent(
                     bank.clone(),
                     &Pubkey::default(),
-                    bank.slot().wrapping_add(1),
+                    next_slot,
                 ));
-                poh_recorder
-                    .write()
-                    .unwrap()
-                    .set_bank_for_test(bank.clone());
+                poh_controller
+                    .set_bank_sync(BankWithScheduler::new_without_scheduler(bank.clone()))
+                    .unwrap();
 
                 let start = Instant::now();
                 for txs in tx_batches {
