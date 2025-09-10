@@ -5484,7 +5484,7 @@ impl AccountsDb {
                     );
                 });
             });
-            reclaims
+            reclaims.to_vec()
         };
 
         let threshold = 1;
@@ -5509,6 +5509,7 @@ impl AccountsDb {
         } else {
             update(0, len)
         }
+        .into()
     }
 
     fn should_not_shrink(alive_bytes: u64, total_bytes: u64) -> bool {
