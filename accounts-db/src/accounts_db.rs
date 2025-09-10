@@ -6486,7 +6486,9 @@ impl AccountsDb {
         // This is safe with obsolete accounts as all zero lamport accounts will be single ref
         // or obsolete by the end of index generation
         if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
-            storage.batch_insert_zero_lamport_single_ref_account_offsets(&zero_lamport_offsets);
+            for offset in zero_lamport_offsets {
+                storage.insert_zero_lamport_single_ref_account_offset(offset);
+            }
             zero_lamport_pubkeys = Vec::new();
         }
         SlotIndexGenerationInfo {
