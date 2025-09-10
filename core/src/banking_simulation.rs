@@ -503,6 +503,9 @@ impl SimulatorLoop {
                     new_bank,
                 );
                 // Wait for the controller message to be processed.
+                // This loop assumes that
+                // `update_bank_forks_and_poh_recorder_for_new_tpu_bank`
+                // takes immediate effect in PohRecorder's working bank.
                 while self.poh_controller.has_pending_message() {}
 
                 (bank, bank_created) = (
