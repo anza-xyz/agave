@@ -173,6 +173,7 @@ impl WorkersCache {
     }
 
     /// Ensures a worker exists for the given peer, creating one if necessary.
+    ///
     /// Returns any evicted worker that needs shutdown.
     pub fn ensure_worker(
         &mut self,
