@@ -39,7 +39,7 @@ pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
 pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 2000;
 
 /// The maximum number of connections that can be opened for unstaked peers.
-pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS_PER_IPADDR: usize = 1;
+pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS_PER_IPADDR: usize = 4;
 
 /// Limit to 500K PPS
 pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 500;
