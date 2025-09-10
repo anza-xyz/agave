@@ -67,7 +67,7 @@ use {
     dashmap::DashMap,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
-    rayon::ThreadPoolBuilder,
+    rayon::{ThreadPool, ThreadPoolBuilder},
     serde::Serialize,
     solana_account::{
         create_account_shared_data_with_fields as create_account, from_account, Account,
@@ -1803,23 +1803,6 @@ impl Bank {
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
         };
 
-        bank.transaction_processor =
-            TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
-        if let Some(compute_budget) = &bank.compute_budget {
-            bank.transaction_processor
-                .set_execution_cost(compute_budget.to_cost());
-        }
-
-        bank.recalculate_partitioned_rewards_if_active(|| {
-            ThreadPoolBuilder::new()
-                .thread_name(|i| format!("solBnkClcRwds{i:02}"))
-                .build()
-                .expect("new rayon threadpool")
-        });
-        bank.compute_and_apply_features_after_snapshot_restore();
-        bank.transaction_processor
-            .fill_missing_sysvar_cache_entries(&bank);
-
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
         // (BankFieldsToSerialize/BankFieldsToDeserialize) and initializing
@@ -1846,6 +1829,13 @@ impl Bank {
         );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
         assert_eq!(bank.epoch, bank.epoch_schedule.get_epoch(bank.slot));
+
+        bank.initialize_after_snapshot_restore(|| {
+            ThreadPoolBuilder::new()
+                .thread_name(|i| format!("solBnkClcRwds{i:02}"))
+                .build()
+                .expect("new rayon threadpool")
+        });
 
         datapoint_info!(
             "bank-new-from-fields",
@@ -5158,6 +5148,28 @@ impl Bank {
     /// be write-locked during transaction processing.
     pub fn get_reserved_account_keys(&self) -> &HashSet<Pubkey> {
         &self.reserved_account_keys.active
+    }
+
+    /// Compute and apply all activated features, initialize the transaction
+    /// processor, and recalculate partitioned rewards if needed
+    fn initialize_after_snapshot_restore<F, TP>(&mut self, rewards_thread_pool_builder: F)
+    where
+        F: FnOnce() -> TP,
+        TP: std::borrow::Borrow<ThreadPool>,
+    {
+        self.transaction_processor =
+            TransactionBatchProcessor::new_uninitialized(self.slot, self.epoch);
+        if let Some(compute_budget) = &self.compute_budget {
+            self.transaction_processor
+                .set_execution_cost(compute_budget.to_cost());
+        }
+
+        self.compute_and_apply_features_after_snapshot_restore();
+
+        self.recalculate_partitioned_rewards_if_active(rewards_thread_pool_builder);
+
+        self.transaction_processor
+            .fill_missing_sysvar_cache_entries(self);
     }
 
     /// Compute and apply all activated features and also add accounts for builtins
