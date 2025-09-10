@@ -1990,7 +1990,7 @@ pub(crate) mod tests {
     // Here we want to see that the bank handles the failure gracefully and
     // advances to the next epoch without issue.
     #[test]
-    fn test_test_replace_spl_token_with_p_token_e2e_failure() {
+    fn test_replace_spl_token_with_p_token_e2e_failure() {
         let (genesis_config, _mint_keypair) = create_genesis_config(0);
         let mut root_bank = Bank::new_for_tests(&genesis_config);
 
@@ -2055,5 +2055,67 @@ pub(crate) mod tests {
             bank.get_account(program_id).unwrap().owner(),
             &bpf_loader::id()
         );
+    }
+
+    // Simulate creating a bank from a snapshot after p-token migration feature was
+    // activated and the migration was successful.
+    #[test]
+    fn test_startup_from_snapshot_after_replace_spl_token_with_p_token() {
+        let mut bank = create_simple_test_bank(0);
+
+        let bpf_loader_v2_program_address = Pubkey::new_unique();
+        let source_buffer_address = Pubkey::new_unique();
+
+        {
+            let program_account = {
+                let elf = [4u8; 200]; // Mock ELF to start.
+                let space = elf.len();
+                let lamports = bank.get_minimum_balance_for_rent_exemption(space);
+                let owner = &bpf_loader::id();
+
+                let mut account = AccountSharedData::new(lamports, space, owner);
+                account.set_executable(true);
+                account.data_as_mut_slice().copy_from_slice(&elf);
+                bank.store_account_and_update_capitalization(
+                    &bpf_loader_v2_program_address,
+                    &account,
+                );
+                account
+            };
+
+            assert_eq!(
+                &bank.get_account(&bpf_loader_v2_program_address).unwrap(),
+                &program_account
+            );
+        };
+
+        let test_context = TestContext::new(
+            &bank,
+            &bpf_loader_v2_program_address,
+            &source_buffer_address,
+            None,
+        );
+        let TestContext {
+            source_buffer_address,
+            ..
+        } = test_context;
+
+        // Perform the upgrade.
+        let upgrade_slot = bank.slot();
+        bank.upgrade_loader_v2_program_with_loader_v3_program(
+            &bpf_loader_v2_program_address,
+            &source_buffer_address,
+            "test_upgrade_loader_v2_program_with_loader_v3_program",
+        )
+        .unwrap();
+
+        // Freeze the bank to simulate a snapshot.
+        bank.freeze();
+
+        // Simulate starting up from snapshot finishing the initialization for a frozen bank.
+        bank.compute_and_apply_features_after_snapshot_restore();
+
+        // Run the post-upgrade program checks.
+        test_context.run_program_checks(&bank, upgrade_slot, upgrade_slot);
     }
 }
