@@ -154,8 +154,7 @@ impl XdpRetransmitter {
         let monitor_handle =
             RouteMonitor::start(Arc::clone(&atomic_router), Duration::from_secs(60));
 
-        let mut threads = vec![];
-        threads.push(monitor_handle); // Add monitor thread
+        let mut threads = vec![monitor_handle];
 
         let (drop_sender, drop_receiver) = crossbeam_channel::bounded(DROP_CHANNEL_CAP);
         threads.push(

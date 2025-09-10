@@ -121,12 +121,9 @@ pub struct Router {
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
-        let arp_table = ArpTable::new()?;
-        let routes = netlink_get_routes(AF_INET as u8)?;
-
         Ok(Self {
-            arp_table: Arc::new(arp_table),
-            routes: Arc::new(routes),
+            arp_table: Arc::new(ArpTable::new()?),
+            routes: Arc::new(netlink_get_routes(AF_INET as u8)?),
         })
     }
 
@@ -206,7 +203,6 @@ impl AtomicRouter {
         })
     }
 
-    // Lock-free read - just load the current router
     pub fn load(&self) -> Arc<Router> {
         self.router.load().clone()
     }

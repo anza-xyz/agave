@@ -109,9 +109,6 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
     } = tx;
     let mut ring = ring.unwrap();
 
-    // get the routing table from netlink
-    // let router = Router::new().expect("failed to create router");
-
     // we don't need higher caps anymore
     for cap in [CAP_NET_ADMIN, CAP_NET_RAW] {
         caps::drop(None, CapSet::Effective, cap).unwrap();

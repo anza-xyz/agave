@@ -28,6 +28,7 @@ const NLA_HDR_LEN: usize = align_to(mem::size_of::<nlattr>(), NLA_ALIGNTO as usi
 fn is_valid_route(route: &RouteEntry) -> bool {
     // Filter out cloned routes
     if route.flags & RTM_F_CLONED != 0 {
+        log::info!("greg: Filtered out cloned route: {:?}", route.destination);
         return false;
     }
 
@@ -37,6 +38,11 @@ fn is_valid_route(route: &RouteEntry) -> bool {
             && table != RT_TABLE_MAIN as u32
             && table != RT_TABLE_LOCAL as u32
         {
+            log::info!(
+                "greg: Filtered out route from table {}: {:?}",
+                table,
+                route.destination
+            );
             return false;
         }
     }
@@ -50,7 +56,11 @@ fn is_valid_route(route: &RouteEntry) -> bool {
         RTN_BLACKHOLE => true,
         RTN_THROW => true,
         _ => {
-            log::info!("greg: Unsupported route type: {}", route.type_);
+            log::info!(
+                "greg: Filtered out unsupported route type {}: {:?}",
+                route.type_,
+                route.destination
+            );
             false
         }
     }
@@ -522,6 +532,8 @@ pub fn netlink_get_routes(family: u8) -> Result<Vec<RouteEntry>, io::Error> {
     sock.send(&bytes_of(&req)[..req.header.nlmsg_len as usize])?;
 
     let mut routes = Vec::new();
+    let mut total_routes = 0;
+    let mut filtered_routes = 0;
 
     for msg in sock.recv()? {
         if msg.header.nlmsg_type != RTM_NEWROUTE {
@@ -536,10 +548,20 @@ pub fn netlink_get_routes(family: u8) -> Result<Vec<RouteEntry>, io::Error> {
             continue;
         };
 
+        total_routes += 1;
         if is_valid_route(&route) {
             routes.push(route);
+        } else {
+            filtered_routes += 1;
         }
     }
+
+    log::info!(
+        "greg: Route filtering: {} total routes, {} filtered out, {} kept",
+        total_routes,
+        filtered_routes,
+        routes.len()
+    );
 
     Ok(routes)
 }
