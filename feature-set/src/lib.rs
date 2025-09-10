@@ -751,7 +751,7 @@ pub mod apply_cost_tracker_during_replay {
 }
 
 pub mod stricter_abi_and_runtime_constraints {
-    solana_pubkey::declare_id!("C37iaPi6VE4CZDueU1vL8y6pGp5i8amAbEsF31xzz723");
+    solana_pubkey::declare_id!("CxeBn9PVeeXbmjbNwLv6U4C6svNxnC4JX6mfkvgeMocM");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
@@ -1277,7 +1277,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (clean_up_delegation_errors::id(), "Return InsufficientDelegation instead of InsufficientFunds or InsufficientStake where applicable #31206"),
         (vote_state_add_vote_latency::id(), "replace Lockout with LandedVote (including vote latency) in vote state #31264"),
         (checked_arithmetic_in_fee_validation::id(), "checked arithmetic in fee validation #31273"),
-        (stricter_abi_and_runtime_constraints::id(), "use memory regions to map account data into the rbpf vm instead of copying the data"),
+        (stricter_abi_and_runtime_constraints::id(), "SIMD-0219: Stricter ABI and Runtime Constraints"),
         (last_restart_slot_sysvar::id(), "enable new sysvar last_restart_slot"),
         (reduce_stake_warmup_cooldown::id(), "reduce stake warmup cooldown from 25% to 9%"),
         (revise_turbine_epoch_stakes::id(), "revise turbine epoch stakes"),
