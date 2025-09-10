@@ -5040,7 +5040,7 @@ fn test_boot_from_local_state() {
     let timer = Instant::now();
     let bank_snapshot = loop {
         if let Some(bank_snapshot) =
-            snapshot_utils::get_highest_bank_snapshot_post(&validator2_config.bank_snapshots_dir)
+            snapshot_utils::get_highest_bank_snapshot(&validator2_config.bank_snapshots_dir)
         {
             if bank_snapshot.slot > incremental_snapshot_archive.slot() {
                 break bank_snapshot;

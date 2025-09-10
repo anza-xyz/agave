@@ -36,6 +36,7 @@ solana-transaction-status = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
+solana-client = { workspace = true, features = ["dev-context-only-utils"] }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-connection-cache = { workspace = true }

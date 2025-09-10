@@ -44,7 +44,6 @@ use {
         blockstore::{Blockstore, BlockstoreError, SignatureInfosForAddress},
         blockstore_meta::{PerfSample, PerfSampleV1, PerfSampleV2},
         leader_schedule_cache::LeaderScheduleCache,
-        leader_schedule_utils,
     },
     solana_message::{AddressLoader, SanitizedMessage},
     solana_metrics::inc_new_counter_info,
@@ -985,17 +984,9 @@ impl JsonRpcRequestProcessor {
 
         let mut slot_leaders = Vec::with_capacity(limit);
         while slot_leaders.len() < limit {
-            // First try to get from cache
-            let leader_schedule = if let Some(leader_schedule) =
+            if let Some(leader_schedule) =
                 self.leader_schedule_cache.get_epoch_leader_schedule(epoch)
             {
-                Some(leader_schedule)
-            } else {
-                // If not in cache, try to compute it if the epoch's stake information is available
-                leader_schedule_utils::leader_schedule(epoch, &bank).map(Arc::new)
-            };
-
-            if let Some(leader_schedule) = leader_schedule {
                 slot_leaders.extend(
                     leader_schedule
                         .get_slot_leaders()
@@ -5544,8 +5535,7 @@ pub mod tests {
         );
         assert_eq!(response, expected);
 
-        // Test that epochs beyond max_epoch return appropriate error
-        // The fix enables computation when possible, but still fails when appropriate
+        // Test that invalid epoch returns an error
         let query_start = 2 * bank.epoch_schedule().slots_per_epoch;
         let query_limit = 10;
 
@@ -5557,44 +5547,6 @@ pub mod tests {
             String::from("Invalid slot range: leader schedule for epoch 2 is unavailable"),
         );
         assert_eq!(response, expected);
-    }
-
-    #[test]
-    fn test_get_slot_leaders_computation_fallback() {
-        // Test that the fix enables leader schedule computation on cache miss
-        let rpc = RpcHandler::start();
-        let bank = rpc.working_bank();
-        let current_epoch = bank.epoch();
-
-        // Verify we can compute leader schedules using the utility function
-        let computed_schedule = leader_schedule_utils::leader_schedule(current_epoch, &bank);
-        assert!(
-            computed_schedule.is_some(),
-            "Should be able to compute current epoch schedule"
-        );
-
-        // Test the actual fix logic: cache miss falls back to computation
-        let leader_schedule = if let Some(leader_schedule) = rpc
-            .meta
-            .leader_schedule_cache
-            .get_epoch_leader_schedule(current_epoch)
-        {
-            Some(leader_schedule)
-        } else {
-            // This is the new fallback logic added to get_slot_leaders
-            leader_schedule_utils::leader_schedule(current_epoch, &bank).map(Arc::new)
-        };
-
-        assert!(
-            leader_schedule.is_some(),
-            "Fix should provide leader schedule"
-        );
-        if let Some(schedule) = leader_schedule {
-            assert!(
-                !schedule.get_slot_leaders().is_empty(),
-                "Should have leaders"
-            );
-        }
     }
 
     #[test]

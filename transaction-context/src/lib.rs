@@ -12,7 +12,6 @@ use {
     std::{
         cell::{Cell, UnsafeCell},
         collections::HashSet,
-        pin::Pin,
         rc::Rc,
     },
 };
@@ -109,7 +108,6 @@ impl InstructionAccount {
 /// This context is valid for the entire duration of a transaction being processed.
 #[derive(Debug)]
 pub struct TransactionContext {
-    account_keys: Pin<Box<[Pubkey]>>,
     accounts: Rc<TransactionAccounts>,
     instruction_stack_capacity: usize,
     instruction_trace_capacity: usize,
@@ -130,10 +128,8 @@ impl TransactionContext {
         instruction_stack_capacity: usize,
         instruction_trace_capacity: usize,
     ) -> Self {
-        let (account_keys, accounts): (Vec<_>, Vec<_>) = transaction_accounts.into_iter().unzip();
         Self {
-            account_keys: Pin::new(account_keys.into_boxed_slice()),
-            accounts: Rc::new(TransactionAccounts::new(accounts)),
+            accounts: Rc::new(TransactionAccounts::new(transaction_accounts)),
             instruction_stack_capacity,
             instruction_trace_capacity,
             instruction_stack: Vec::with_capacity(instruction_stack_capacity),
@@ -154,7 +150,12 @@ impl TransactionContext {
         let (accounts, _, _) = Rc::try_unwrap(self.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs")
             .take();
-        Ok(Vec::from(UnsafeCell::into_inner(accounts)))
+
+        Ok(UnsafeCell::into_inner(accounts)
+            .into_vec()
+            .into_iter()
+            .map(|(_, account)| account)
+            .collect())
     }
 
     #[cfg(not(target_os = "solana"))]
@@ -172,15 +173,15 @@ impl TransactionContext {
         &self,
         index_in_transaction: IndexOfAccount,
     ) -> Result<&Pubkey, InstructionError> {
-        self.account_keys
-            .get(index_in_transaction as usize)
+        self.accounts
+            .account_key(index_in_transaction)
             .ok_or(InstructionError::NotEnoughAccountKeys)
     }
 
     /// Searches for an account by its key
     pub fn find_index_of_account(&self, pubkey: &Pubkey) -> Option<IndexOfAccount> {
-        self.account_keys
-            .iter()
+        self.accounts
+            .account_keys_iter()
             .position(|key| key == pubkey)
             .map(|index| index as IndexOfAccount)
     }
@@ -534,23 +535,6 @@ impl<'a> InstructionContext<'a> {
     /// Data parameter for the programs `process_instruction` handler
     pub fn get_instruction_data(&self) -> &[u8] {
         self.instruction_data
-    }
-
-    /// Searches for an instruction account by its key
-    pub fn find_index_of_instruction_account(
-        &self,
-        transaction_context: &TransactionContext,
-        pubkey: &Pubkey,
-    ) -> Option<IndexOfAccount> {
-        self.instruction_accounts
-            .iter()
-            .position(|instruction_account| {
-                transaction_context
-                    .account_keys
-                    .get(instruction_account.index_in_transaction as usize)
-                    == Some(pubkey)
-            })
-            .map(|index| index as IndexOfAccount)
     }
 
     /// Translates the given instruction wide program_account_index into a transaction wide index
@@ -1057,10 +1041,7 @@ impl From<TransactionContext> for ExecutionRecord {
         let (accounts, touched_flags, resize_delta) = Rc::try_unwrap(context.accounts)
             .expect("transaction_context.accounts has unexpected outstanding refs")
             .take();
-        let accounts = Vec::from(Pin::into_inner(context.account_keys))
-            .into_iter()
-            .zip(UnsafeCell::into_inner(accounts))
-            .collect();
+        let accounts = UnsafeCell::into_inner(accounts).into_vec();
         let touched_account_count = touched_flags
             .iter()
             .fold(0usize, |accumulator, was_touched| {

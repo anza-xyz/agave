@@ -1,6 +1,6 @@
 use {
     super::*, crate::translate_mut,
-    solana_program_runtime::execution_budget::SVMTransactionExecutionCost,
+    solana_program_runtime::execution_budget::SVMTransactionExecutionCost, solana_sbpf::ebpf,
 };
 
 fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
@@ -17,6 +17,14 @@ fn get_sysvar<T: std::fmt::Debug + SysvarSerialize + Clone>(
             .sysvar_base_cost
             .saturating_add(size_of::<T>() as u64),
     )?;
+
+    if var_addr >= ebpf::MM_INPUT_START
+        && invoke_context
+            .get_feature_set()
+            .stricter_abi_and_runtime_constraints
+    {
+        return Err(SyscallError::InvalidPointer.into());
+    }
     translate_mut!(
         memory_mapping,
         check_aligned,
@@ -203,6 +211,13 @@ declare_builtin_function!(
                 .saturating_add(std::cmp::max(sysvar_buf_cost, mem_op_base_cost)),
         )?;
 
+        if var_addr >= ebpf::MM_INPUT_START
+            && invoke_context
+                .get_feature_set()
+                .stricter_abi_and_runtime_constraints
+        {
+            return Err(SyscallError::InvalidPointer.into());
+        }
         // Abort: "Not all bytes in VM memory range `[var_addr, var_addr + length)` are writable."
         translate_mut!(
             memory_mapping,

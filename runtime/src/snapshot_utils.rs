@@ -71,7 +71,6 @@ pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 const VERSION_STRING_V1_2_0: &str = "1.2.0";
 pub const TMP_SNAPSHOT_ARCHIVE_PREFIX: &str = "tmp-snapshot-archive-";
-pub const BANK_SNAPSHOT_PRE_FILENAME_EXTENSION: &str = "pre";
 pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: NonZeroU64 =
     NonZeroU64::new(100_000).unwrap();
 pub const DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: NonZeroU64 =
@@ -144,8 +143,6 @@ impl SnapshotVersion {
 pub struct BankSnapshotInfo {
     /// Slot of the bank
     pub slot: Slot,
-    /// Snapshot kind
-    pub snapshot_kind: BankSnapshotKind,
     /// Path to the bank snapshot directory
     pub snapshot_dir: PathBuf,
     /// Snapshot version
@@ -203,23 +200,8 @@ impl BankSnapshotInfo {
         let snapshot_version = SnapshotVersion::from_str(version_str.as_str())
             .or(Err(SnapshotNewFromDirError::InvalidVersion(version_str)))?;
 
-        let bank_snapshot_post_path = bank_snapshot_dir.join(get_snapshot_file_name(slot));
-        let bank_snapshot_pre_path =
-            bank_snapshot_post_path.with_extension(BANK_SNAPSHOT_PRE_FILENAME_EXTENSION);
-
-        // NOTE: It is important that checking for "Pre" happens before "Post.
-        //
-        // Consider the scenario where AccountsHashVerifier is actively processing an
-        // AccountsPackage for a snapshot/slot; if AHV is in the middle of reserializing the
-        // bank snapshot file (writing the new "Post" file), and then the process dies,
-        // there will be an incomplete "Post" file on disk.  We do not want only the existence of
-        // this "Post" file to be sufficient for deciding the snapshot kind as "Post".  More so,
-        // "Post" *requires* the *absence* of a "Pre" file.
-        let snapshot_kind = if bank_snapshot_pre_path.is_file() {
-            BankSnapshotKind::Pre
-        } else if bank_snapshot_post_path.is_file() {
-            BankSnapshotKind::Post
-        } else {
+        let bank_snapshot_path = bank_snapshot_dir.join(get_snapshot_file_name(slot));
+        if !bank_snapshot_path.is_file() {
             return Err(SnapshotNewFromDirError::MissingSnapshotFile(
                 bank_snapshot_dir,
             ));
@@ -227,39 +209,14 @@ impl BankSnapshotInfo {
 
         Ok(BankSnapshotInfo {
             slot,
-            snapshot_kind,
             snapshot_dir: bank_snapshot_dir,
             snapshot_version,
         })
     }
 
     pub fn snapshot_path(&self) -> PathBuf {
-        let mut bank_snapshot_path = self.snapshot_dir.join(get_snapshot_file_name(self.slot));
-
-        let ext = match self.snapshot_kind {
-            BankSnapshotKind::Pre => BANK_SNAPSHOT_PRE_FILENAME_EXTENSION,
-            BankSnapshotKind::Post => "",
-        };
-        bank_snapshot_path.set_extension(ext);
-
-        bank_snapshot_path
+        self.snapshot_dir.join(get_snapshot_file_name(self.slot))
     }
-}
-
-/// Bank snapshots traditionally had their accounts hash calculated prior to serialization.  Since
-/// the hash calculation takes a long time, an optimization has been put in to offload the accounts
-/// hash calculation.  The bank serialization format has not changed, so we need another way to
-/// identify if a bank snapshot contains the calculated accounts hash or not.
-///
-/// When a bank snapshot is first taken, it does not have the calculated accounts hash.  It is said
-/// that this bank snapshot is "pre" accounts hash.  Later, when the accounts hash is calculated,
-/// the bank snapshot is re-serialized, and is now "post" accounts hash.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum BankSnapshotKind {
-    /// This bank snapshot has *not* yet had its accounts hash calculated
-    Pre,
-    /// This bank snapshot *has* had its accounts hash calculated
-    Post,
 }
 
 /// When constructing a bank a snapshot, traditionally the snapshot was from a snapshot archive.  Now,
@@ -777,15 +734,13 @@ fn are_bank_snapshot_storages_flushed(bank_snapshot_dir: impl AsRef<Path>) -> bo
 /// Gets the highest, loadable, bank snapshot
 ///
 /// The highest bank snapshot is the one with the highest slot.
-/// To be loadable, the bank snapshot must be a BankSnapshotKind::Post.
 /// And if we're generating snapshots (e.g. running a normal validator), then
 /// the full snapshot file's slot must match the highest full snapshot archive's.
 /// Lastly, the account storages must have been flushed to be loadable.
 pub fn get_highest_loadable_bank_snapshot(
     snapshot_config: &SnapshotConfig,
 ) -> Option<BankSnapshotInfo> {
-    let highest_bank_snapshot =
-        get_highest_bank_snapshot_post(&snapshot_config.bank_snapshots_dir)?;
+    let highest_bank_snapshot = get_highest_bank_snapshot(&snapshot_config.bank_snapshots_dir)?;
 
     // If we're *not* generating snapshots, e.g. running ledger-tool, then we *can* load
     // this bank snapshot, and we do not need to check for anything else.
@@ -1041,7 +996,6 @@ fn serialize_snapshot(
 
         Ok(BankSnapshotInfo {
             slot,
-            snapshot_kind: BankSnapshotKind::Pre,
             snapshot_dir: bank_snapshot_dir,
             snapshot_version,
         })
@@ -1240,7 +1194,7 @@ pub fn get_bank_snapshots(bank_snapshots_dir: impl AsRef<Path>) -> Vec<BankSnaps
         Ok(paths) => paths
             .filter_map(|entry| {
                 // check if this entry is a directory and only a Slot
-                // bank snapshots are bank_snapshots_dir/slot/slot(BANK_SNAPSHOT_PRE_FILENAME_EXTENSION)
+                // bank snapshots are bank_snapshots_dir/slot/slot
                 entry
                     .ok()
                     .filter(|entry| entry.path().is_dir())
@@ -1262,42 +1216,6 @@ pub fn get_bank_snapshots(bank_snapshots_dir: impl AsRef<Path>) -> Vec<BankSnaps
             ),
     }
     bank_snapshots
-}
-
-/// Get the bank snapshots in a directory
-///
-/// This function retains only the bank snapshots of kind BankSnapshotKind::Pre
-pub fn get_bank_snapshots_pre(bank_snapshots_dir: impl AsRef<Path>) -> Vec<BankSnapshotInfo> {
-    let mut bank_snapshots = get_bank_snapshots(bank_snapshots_dir);
-    bank_snapshots.retain(|bank_snapshot| bank_snapshot.snapshot_kind == BankSnapshotKind::Pre);
-    bank_snapshots
-}
-
-/// Get the bank snapshots in a directory
-///
-/// This function retains only the bank snapshots of kind BankSnapshotKind::Post
-pub fn get_bank_snapshots_post(bank_snapshots_dir: impl AsRef<Path>) -> Vec<BankSnapshotInfo> {
-    let mut bank_snapshots = get_bank_snapshots(bank_snapshots_dir);
-    bank_snapshots.retain(|bank_snapshot| bank_snapshot.snapshot_kind == BankSnapshotKind::Post);
-    bank_snapshots
-}
-
-/// Get the bank snapshot with the highest slot in a directory
-///
-/// This function gets the highest bank snapshot of kind BankSnapshotKind::Pre
-pub fn get_highest_bank_snapshot_pre(
-    bank_snapshots_dir: impl AsRef<Path>,
-) -> Option<BankSnapshotInfo> {
-    do_get_highest_bank_snapshot(get_bank_snapshots_pre(bank_snapshots_dir))
-}
-
-/// Get the bank snapshot with the highest slot in a directory
-///
-/// This function gets the highest bank snapshot of kind BankSnapshotKind::Post
-pub fn get_highest_bank_snapshot_post(
-    bank_snapshots_dir: impl AsRef<Path>,
-) -> Option<BankSnapshotInfo> {
-    do_get_highest_bank_snapshot(get_bank_snapshots_post(bank_snapshots_dir))
 }
 
 /// Get the bank snapshot with the highest slot in a directory
@@ -2437,7 +2355,7 @@ pub fn verify_unpacked_snapshots_dir_and_version(
 
     let snapshot_version = unpacked_snapshots_dir_and_version.snapshot_version;
     let mut bank_snapshots =
-        get_bank_snapshots_post(&unpacked_snapshots_dir_and_version.unpacked_snapshots_dir);
+        get_bank_snapshots(&unpacked_snapshots_dir_and_version.unpacked_snapshots_dir);
     if bank_snapshots.len() > 1 {
         return Err(IoError::other(format!(
             "invalid snapshot format: only one snapshot allowed, but found {}",
@@ -2488,13 +2406,8 @@ pub fn purge_all_bank_snapshots(bank_snapshots_dir: impl AsRef<Path>) {
 pub fn purge_old_bank_snapshots(
     bank_snapshots_dir: impl AsRef<Path>,
     num_bank_snapshots_to_retain: usize,
-    filter_by_kind: Option<BankSnapshotKind>,
 ) {
-    let mut bank_snapshots = match filter_by_kind {
-        Some(BankSnapshotKind::Pre) => get_bank_snapshots_pre(&bank_snapshots_dir),
-        Some(BankSnapshotKind::Post) => get_bank_snapshots_post(&bank_snapshots_dir),
-        None => get_bank_snapshots(&bank_snapshots_dir),
-    };
+    let mut bank_snapshots = get_bank_snapshots(&bank_snapshots_dir);
 
     bank_snapshots.sort_unstable();
     purge_bank_snapshots(
@@ -2506,18 +2419,14 @@ pub fn purge_old_bank_snapshots(
 }
 
 /// At startup, purge old (i.e. unusable) bank snapshots
-///
-/// Only a single bank snapshot could be needed at startup (when using fast boot), so
-/// retain the highest bank snapshot "post", and purge the rest.
 pub fn purge_old_bank_snapshots_at_startup(bank_snapshots_dir: impl AsRef<Path>) {
-    purge_old_bank_snapshots(&bank_snapshots_dir, 0, Some(BankSnapshotKind::Pre));
-    purge_old_bank_snapshots(&bank_snapshots_dir, 1, Some(BankSnapshotKind::Post));
+    purge_old_bank_snapshots(&bank_snapshots_dir, 1);
 
-    let highest_bank_snapshot_post = get_highest_bank_snapshot_post(&bank_snapshots_dir);
-    if let Some(highest_bank_snapshot_post) = highest_bank_snapshot_post {
+    let highest_bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir);
+    if let Some(highest_bank_snapshot) = highest_bank_snapshot {
         debug!(
             "Retained bank snapshot for slot {}, and purged the rest.",
-            highest_bank_snapshot_post.slot
+            highest_bank_snapshot.slot
         );
     }
 }
@@ -2981,13 +2890,13 @@ mod tests {
     }
 
     #[test]
-    fn test_get_highest_bank_snapshot_post() {
+    fn test_get_highest_bank_snapshot() {
         let temp_snapshots_dir = tempfile::TempDir::new().unwrap();
         let min_slot = 99;
         let max_slot = 123;
         common_create_bank_snapshot_files(temp_snapshots_dir.path(), min_slot, max_slot);
 
-        let highest_bank_snapshot = get_highest_bank_snapshot_post(temp_snapshots_dir.path());
+        let highest_bank_snapshot = get_highest_bank_snapshot(temp_snapshots_dir.path());
         assert!(highest_bank_snapshot.is_some());
         assert_eq!(highest_bank_snapshot.unwrap().slot, max_slot - 1);
     }

@@ -8,7 +8,7 @@ use {
     solana_streamer::streamer::StakedNodes,
     std::{
         collections::HashMap,
-        net::IpAddr,
+        net::{IpAddr, UdpSocket},
         sync::{Arc, RwLock},
     },
 };
@@ -56,6 +56,43 @@ pub fn create_connection_cache(
     client_node_id: Option<&Keypair>,
     rpc_client: Arc<RpcClient>,
 ) -> ClientConnectionCache {
+    create_connection_cache_with_client_socket_option(
+        tpu_connection_pool_size,
+        use_quic,
+        bind_address,
+        client_node_id,
+        rpc_client,
+        None,
+    )
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub fn create_connection_cache_for_tests(
+    tpu_connection_pool_size: usize,
+    use_quic: bool,
+    bind_address: IpAddr,
+    client_node_id: Option<&Keypair>,
+    rpc_client: Arc<RpcClient>,
+) -> ClientConnectionCache {
+    // create the client socket for tests to avoid port collision
+    create_connection_cache_with_client_socket_option(
+        tpu_connection_pool_size,
+        use_quic,
+        bind_address,
+        client_node_id,
+        rpc_client,
+        Some(solana_net_utils::sockets::bind_to_localhost_unique().unwrap()),
+    )
+}
+
+fn create_connection_cache_with_client_socket_option(
+    tpu_connection_pool_size: usize,
+    use_quic: bool,
+    bind_address: IpAddr,
+    client_node_id: Option<&Keypair>,
+    rpc_client: Arc<RpcClient>,
+    client_socket: Option<UdpSocket>,
+) -> ClientConnectionCache {
     if !use_quic {
         return ClientConnectionCache::with_udp(
             "solana-tps-connection_cache_udp",
@@ -63,9 +100,12 @@ pub fn create_connection_cache(
         );
     }
     if client_node_id.is_none() {
-        return ClientConnectionCache::new_quic(
+        return ClientConnectionCache::new_with_client_options(
             "solana-tps-connection_cache_quic",
             tpu_connection_pool_size,
+            client_socket,
+            None, // no certificate
+            None, // no stake information
         );
     }
 
@@ -87,7 +127,7 @@ pub fn create_connection_cache(
     ClientConnectionCache::new_with_client_options(
         "solana-tps-connection_cache_quic",
         tpu_connection_pool_size,
-        None,
+        client_socket,
         Some((client_node_id, bind_address)),
         Some((&staked_nodes, &client_node_id.pubkey())),
     )

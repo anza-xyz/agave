@@ -536,14 +536,14 @@ pub mod tests {
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
-        let cluster_slots = Arc::new(ClusterSlots::default());
+        let cluster_slots = Arc::new(ClusterSlots::default_for_tests());
         let wen_restart_repair_slots = if enable_wen_restart {
             Some(Arc::new(RwLock::new(vec![])))
         } else {
             None
         };
         let connection_cache = if DEFAULT_VOTE_USE_QUIC {
-            ConnectionCache::new_quic(
+            ConnectionCache::new_quic_for_tests(
                 "connection_cache_vote_quic",
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             )

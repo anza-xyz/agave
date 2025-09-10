@@ -35,7 +35,6 @@ solana-commitment-config = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
-solana-faucet = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-genesis = { workspace = true }
 solana-genesis-config = { workspace = true }
@@ -76,6 +75,7 @@ jemallocator = { workspace = true }
 [dev-dependencies]
 agave-feature-set = { workspace = true }
 serial_test = { workspace = true }
+solana-faucet = { workspace = true, features = ["dev-context-only-utils"] }
 solana-local-cluster = { workspace = true }
 solana-rent = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }

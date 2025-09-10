@@ -4,8 +4,10 @@
 //! Note that AccountInfo is saved to disk buckets during runtime, but disk buckets are recreated at startup.
 use {
     crate::{
-        accounts_db::AccountsFileId, accounts_file::ALIGN_BOUNDARY_OFFSET,
-        accounts_index::IsCached, is_zero_lamport::IsZeroLamport,
+        accounts_db::AccountsFileId,
+        accounts_file::ALIGN_BOUNDARY_OFFSET,
+        accounts_index::{DiskIndexValue, IndexValue, IsCached},
+        is_zero_lamport::IsZeroLamport,
     },
     modular_bitfield::prelude::*,
 };
@@ -99,6 +101,10 @@ impl IsCached for AccountInfo {
     }
 }
 
+impl IndexValue for AccountInfo {}
+
+impl DiskIndexValue for AccountInfo {}
+
 impl IsCached for StorageLocation {
     fn is_cached(&self) -> bool {
         matches!(self, StorageLocation::Cached)
@@ -164,6 +170,7 @@ impl AccountInfo {
         }
     }
 }
+
 #[cfg(test)]
 mod test {
     use {super::*, crate::append_vec::MAXIMUM_APPEND_VEC_FILE_SIZE};

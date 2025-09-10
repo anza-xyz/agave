@@ -35,7 +35,7 @@ use {
         ops::{Bound, Range, RangeBounds},
         path::PathBuf,
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock,
         },
     },
@@ -71,8 +71,14 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
 };
 pub type ScanResult<T> = Result<T, ScanError>;
 pub type SlotList<T> = Vec<(Slot, T)>;
-pub type RefCount = u64;
-pub type AtomicRefCount = AtomicU64;
+
+// The ref count cannot be higher than the total number of storages, and we should never have more
+// than 1 million storages. A 32-bit ref count should be *significantly* more than enough.
+// (We already effectively limit the number of storages to 2^32 since the storage ID type is a u32.)
+// The majority of accounts should only exist in one storage, so the most common ref count is '1'.
+// Heavily updated accounts should still have a ref count that is < 100.
+pub type RefCount = u32;
+pub type AtomicRefCount = AtomicU32;
 
 /// values returned from `insert_new_if_missing_into_primary_index()`
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -671,21 +677,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn do_unchecked_scan_accounts<F, R>(
-        &self,
-        metric_name: &'static str,
-        ancestors: &Ancestors,
-        func: F,
-        range: Option<R>,
-        config: &ScanConfig,
-    ) where
-        F: FnMut(&Pubkey, (&T, Slot)),
-        R: RangeBounds<Pubkey> + std::fmt::Debug,
-    {
-        self.do_scan_accounts(metric_name, ancestors, func, range, None, config);
-    }
-
     // Scan accounts and return latest version of each account that is either:
     // 1) rooted or
     // 2) present in ancestors
@@ -872,15 +863,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     #[must_use]
     pub fn handle_dead_keys(
         &self,
-        dead_keys: &[&Pubkey],
+        dead_keys: &[Pubkey],
         account_indexes: &AccountSecondaryIndexes,
     ) -> HashSet<Pubkey> {
         let mut pubkeys_removed_from_accounts_index = HashSet::default();
         if !dead_keys.is_empty() {
             for key in dead_keys.iter() {
                 let w_index = self.get_bin(key);
-                if w_index.remove_if_slot_list_empty(**key) {
-                    pubkeys_removed_from_accounts_index.insert(**key);
+                if w_index.remove_if_slot_list_empty(*key) {
+                    pubkeys_removed_from_accounts_index.insert(*key);
                     // Note it's only safe to remove all the entries for this key
                     // because we have the lock for this key's entry in the AccountsIndex,
                     // so no other thread is also updating the index
@@ -913,24 +904,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         )
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub(crate) fn unchecked_scan_accounts<F>(
-        &self,
-        metric_name: &'static str,
-        ancestors: &Ancestors,
-        func: F,
-        config: &ScanConfig,
-    ) where
-        F: FnMut(&Pubkey, (&T, Slot)),
-    {
-        self.do_unchecked_scan_accounts(
-            metric_name,
-            ancestors,
-            func,
-            None::<Range<Pubkey>>,
-            config,
-        );
-    }
     /// call func with every pubkey and index visible from a given set of ancestors
     pub(crate) fn index_scan_accounts<F>(
         &self,
@@ -971,15 +944,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     /// returns true if, after this fn call:
     /// accounts index entry for `pubkey` has an empty slot list
     /// or `pubkey` does not exist in accounts index
-    pub(crate) fn purge_exact<'a, C>(
-        &'a self,
+    pub(crate) fn purge_exact(
+        &self,
         pubkey: &Pubkey,
-        slots_to_purge: &'a C,
+        slots_to_purge: impl for<'a> Contains<'a, Slot>,
         reclaims: &mut SlotList<T>,
-    ) -> bool
-    where
-        C: Contains<'a, Slot>,
-    {
+    ) -> bool {
         self.slot_list_mut(pubkey, |slot_list| {
             slot_list.retain(|(slot, item)| {
                 let should_purge = slots_to_purge.contains(slot);
@@ -1870,12 +1840,14 @@ pub mod tests {
         assert!(!index.contains_with(key, None, None));
 
         let mut num = 0;
-        index.unchecked_scan_accounts(
-            "",
-            &ancestors,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
+        index
+            .scan_accounts(
+                &ancestors,
+                0,
+                |_pubkey, _index| num += 1,
+                &ScanConfig::default(),
+            )
+            .expect("scan should succeed");
         assert_eq!(num, 0);
     }
 
@@ -1948,12 +1920,14 @@ pub mod tests {
         assert!(!index.contains_with(&key, None, None));
 
         let mut num = 0;
-        index.unchecked_scan_accounts(
-            "",
-            &ancestors,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
+        index
+            .scan_accounts(
+                &ancestors,
+                0,
+                |_pubkey, _index| num += 1,
+                &ScanConfig::default(),
+            )
+            .expect("scan should succeed");
         assert_eq!(num, 0);
     }
 
@@ -2010,22 +1984,26 @@ pub mod tests {
         assert!(!index.contains_with(pubkey, None, None));
 
         let mut num = 0;
-        index.unchecked_scan_accounts(
-            "",
-            &ancestors,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
+        index
+            .scan_accounts(
+                &ancestors,
+                0,
+                |_pubkey, _index| num += 1,
+                &ScanConfig::default(),
+            )
+            .expect("scan should succeed");
         assert_eq!(num, 0);
         ancestors.insert(slot, 0);
         assert!(index.contains_with(pubkey, Some(&ancestors), None));
         assert_eq!(index.ref_count_from_storage(pubkey), 1);
-        index.unchecked_scan_accounts(
-            "",
-            &ancestors,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
+        index
+            .scan_accounts(
+                &ancestors,
+                0,
+                |_pubkey, _index| num += 1,
+                &ScanConfig::default(),
+            )
+            .expect("scan should succeed");
         assert_eq!(num, 1);
 
         // not zero lamports
@@ -2043,22 +2021,26 @@ pub mod tests {
         assert!(!index.contains_with(pubkey, None, None));
 
         let mut num = 0;
-        index.unchecked_scan_accounts(
-            "",
-            &ancestors,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
+        index
+            .scan_accounts(
+                &ancestors,
+                0,
+                |_pubkey, _index| num += 1,
+                &ScanConfig::default(),
+            )
+            .expect("scan should succeed");
         assert_eq!(num, 0);
         ancestors.insert(slot, 0);
         assert!(index.contains_with(pubkey, Some(&ancestors), None));
         assert_eq!(index.ref_count_from_storage(pubkey), 1);
-        index.unchecked_scan_accounts(
-            "",
-            &ancestors,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
+        index
+            .scan_accounts(
+                &ancestors,
+                0,
+                |_pubkey, _index| num += 1,
+                &ScanConfig::default(),
+            )
+            .expect("scan should succeed");
         assert_eq!(num, 1);
     }
 
@@ -2321,7 +2303,7 @@ pub mod tests {
         {
             let entry = index.get_cloned(&key).unwrap();
             let slot_list = entry.slot_list.read().unwrap();
-            assert_eq!(entry.ref_count(), u64::from(!is_cached));
+            assert_eq!(entry.ref_count(), RefCount::from(!is_cached));
             assert_eq!(slot_list.as_slice(), &[(slot0, account_infos[0])]);
             let new_entry = PreAllocatedAccountMapEntry::new(
                 slot0,
@@ -2451,21 +2433,25 @@ pub mod tests {
         assert!(!index.contains_with(&key, None, None));
 
         let mut num = 0;
-        index.unchecked_scan_accounts(
-            "",
-            &ancestors,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
+        index
+            .scan_accounts(
+                &ancestors,
+                0,
+                |_pubkey, _index| num += 1,
+                &ScanConfig::default(),
+            )
+            .expect("scan should succeed");
         assert_eq!(num, 0);
         ancestors.insert(slot, 0);
         assert!(index.contains_with(&key, Some(&ancestors), None));
-        index.unchecked_scan_accounts(
-            "",
-            &ancestors,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
+        index
+            .scan_accounts(
+                &ancestors,
+                0,
+                |_pubkey, _index| num += 1,
+                &ScanConfig::default(),
+            )
+            .expect("scan should succeed");
         assert_eq!(num, 1);
     }
 
@@ -2490,12 +2476,14 @@ pub mod tests {
         assert!(!index.contains_with(&key, Some(&ancestors), None));
 
         let mut num = 0;
-        index.unchecked_scan_accounts(
-            "",
-            &ancestors,
-            |_pubkey, _index| num += 1,
-            &ScanConfig::default(),
-        );
+        index
+            .scan_accounts(
+                &ancestors,
+                0,
+                |_pubkey, _index| num += 1,
+                &ScanConfig::default(),
+            )
+            .expect("scan should succeed");
         assert_eq!(num, 0);
     }
     #[test]
@@ -2626,17 +2614,20 @@ pub mod tests {
 
         let mut num = 0;
         let mut found_key = false;
-        index.unchecked_scan_accounts(
-            "",
-            &ancestors,
-            |pubkey, _index| {
-                if pubkey == &key {
-                    found_key = true
-                };
-                num += 1
-            },
-            &ScanConfig::default(),
-        );
+        index
+            .scan_accounts(
+                &ancestors,
+                0,
+                |pubkey, _index| {
+                    if pubkey == &key {
+                        found_key = true
+                    };
+                    num += 1
+                },
+                &ScanConfig::default(),
+            )
+            .expect("scan should succeed");
+
         assert_eq!(num, 1);
         assert!(found_key);
     }
@@ -2683,17 +2674,18 @@ pub mod tests {
 
     fn run_test_scan_accounts(num_pubkeys: usize) {
         let (index, _) = setup_accounts_index_keys(num_pubkeys);
-        let ancestors = Ancestors::default();
 
         let mut scanned_keys = HashSet::new();
-        index.unchecked_scan_accounts(
-            "",
-            &ancestors,
-            |pubkey, _index| {
-                scanned_keys.insert(*pubkey);
-            },
-            &ScanConfig::default(),
-        );
+        index
+            .scan_accounts(
+                &Ancestors::default(),
+                0,
+                |pubkey, _index| {
+                    scanned_keys.insert(*pubkey);
+                },
+                &ScanConfig::default(),
+            )
+            .expect("scan should succeed");
         assert_eq!(scanned_keys.len(), num_pubkeys);
     }
 
@@ -2945,18 +2937,20 @@ pub mod tests {
 
         let mut num = 0;
         let mut found_key = false;
-        index.unchecked_scan_accounts(
-            "",
-            &Ancestors::default(),
-            |pubkey, index| {
-                if pubkey == &key {
-                    found_key = true;
-                    assert_eq!(index, (&true, 3));
-                };
-                num += 1
-            },
-            &ScanConfig::default(),
-        );
+        index
+            .scan_accounts(
+                &Ancestors::default(),
+                0,
+                |pubkey, index| {
+                    if pubkey == &key {
+                        found_key = true;
+                        assert_eq!(index, (&true, 3));
+                    };
+                    num += 1
+                },
+                &ScanConfig::default(),
+            )
+            .expect("scan should succeed");
         assert_eq!(num, 1);
         assert!(found_key);
     }
@@ -3183,11 +3177,11 @@ pub mod tests {
 
         index.purge_exact(
             &account_key,
-            &slots.into_iter().collect::<HashSet<Slot>>(),
+            slots.into_iter().collect::<HashSet<Slot>>(),
             &mut vec![],
         );
 
-        let _ = index.handle_dead_keys(&[&account_key], secondary_indexes);
+        let _ = index.handle_dead_keys(&[account_key], secondary_indexes);
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -3582,7 +3576,7 @@ pub mod tests {
         index.slot_list_mut(&account_key, |slot_list| slot_list.clear());
 
         // Everything should be deleted
-        let _ = index.handle_dead_keys(&[&account_key], &secondary_indexes);
+        let _ = index.handle_dead_keys(&[account_key], &secondary_indexes);
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -3703,8 +3697,8 @@ pub mod tests {
         // Removing the remaining entry for this pubkey in the index should mark the
         // pubkey as dead and finally remove all the secondary indexes
         let mut reclaims = vec![];
-        index.purge_exact(&account_key, &later_slot, &mut reclaims);
-        let _ = index.handle_dead_keys(&[&account_key], secondary_indexes);
+        index.purge_exact(&account_key, later_slot, &mut reclaims);
+        let _ = index.handle_dead_keys(&[account_key], secondary_indexes);
         assert!(secondary_index.index.is_empty());
         assert!(secondary_index.reverse_index.is_empty());
     }
@@ -4029,7 +4023,7 @@ pub mod tests {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
 
         assert_eq!(
-            index.handle_dead_keys(&[&key], &AccountSecondaryIndexes::default()),
+            index.handle_dead_keys(&[key], &AccountSecondaryIndexes::default()),
             vec![key].into_iter().collect::<HashSet<_>>()
         );
     }

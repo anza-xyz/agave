@@ -1399,7 +1399,7 @@ pub mod test {
         super::*,
         solana_accounts_db::accounts_index::{AccountIndex, AccountSecondaryIndexes},
         solana_core::validator::ValidatorConfig,
-        solana_faucet::faucet::run_local_faucet,
+        solana_faucet::faucet::run_local_faucet_for_tests,
         solana_local_cluster::{
             local_cluster::{ClusterConfig, LocalCluster},
             validator_configs::make_identical_validator_configs,
@@ -1533,7 +1533,11 @@ pub mod test {
         solana_logger::setup();
         let mint_keypair = Keypair::new();
         let mint_pubkey = mint_keypair.pubkey();
-        let faucet_addr = run_local_faucet(mint_keypair, None);
+        let faucet_addr = run_local_faucet_for_tests(
+            mint_keypair,
+            None, /* per_time_cap */
+            0,    /* port */
+        );
         let test_validator = TestValidator::with_custom_fees(
             mint_pubkey,
             1,

@@ -223,12 +223,12 @@ caps = "0.5.5"
 cargo_metadata = "0.15.4"
 cfg-if = "1.0.3"
 cfg_eval = "0.1.2"
-chrono = { version = "0.4.41", default-features = false }
+chrono = { version = "0.4.42", default-features = false }
 chrono-humanize = "0.2.3"
 clap = "2.33.1"
 # Remove this dependency when procedural macros will support non-inline modules.
 conditional-mod = "0.1.0"
-console = "0.16.0"
+console = "0.16.1"
 console_error_panic_hook = "0.1.7"
 console_log = "0.2.2"
 const_format = "0.2.34"
@@ -237,7 +237,7 @@ criterion = "0.5.1"
 criterion-stats = "0.3.0"
 crossbeam-channel = "0.5.15"
 csv = "1.3.1"
-ctrlc = "3.4.7"
+ctrlc = "3.5.0"
 curve25519-dalek = { version = "4.1.3", features = ["digest", "rand_core"] }
 dashmap = "5.5.3"
 derivation-path = { version = "0.2.0", default-features = false }
@@ -277,7 +277,7 @@ humantime = "2.2.0"
 hyper = "0.14.32"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
-indexmap = "2.11.0"
+indexmap = "2.11.1"
 indicatif = "0.18.0"
 io-uring = "0.7.10"
 itertools = "0.12.1"
@@ -515,7 +515,7 @@ solana-signer = "3.0.0"
 solana-slot-hashes = "3.0.0"
 solana-slot-history = "3.0.0"
 solana-stable-layout = "3.0.0"
-solana-stake-interface = { version = "2.0.0" }
+solana-stake-interface = { version = "2.0.1" }
 solana-stake-program = { path = "programs/stake", version = "=3.1.0" }
 solana-storage-bigtable = { path = "storage-bigtable", version = "=3.1.0" }
 solana-storage-proto = { path = "storage-proto", version = "=3.1.0" }

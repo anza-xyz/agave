@@ -3205,7 +3205,12 @@ fn send_deploy_messages(
             }
 
             let connection_cache = if config.use_quic {
-                ConnectionCache::new_quic("connection_cache_cli_program_quic", 1)
+                #[cfg(feature = "dev-context-only-utils")]
+                let cache =
+                    ConnectionCache::new_quic_for_tests("connection_cache_cli_program_quic", 1);
+                #[cfg(not(feature = "dev-context-only-utils"))]
+                let cache = ConnectionCache::new_quic("connection_cache_cli_program_quic", 1);
+                cache
             } else {
                 ConnectionCache::with_udp("connection_cache_cli_program_udp", 1)
             };

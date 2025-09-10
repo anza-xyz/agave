@@ -475,14 +475,17 @@ define_accounts_db_test!(test_accountsdb_latest_ancestor, |db| {
     );
 
     let mut accounts = Vec::new();
-    db.unchecked_scan_accounts(
-        "",
+    db.scan_accounts(
         &ancestors,
-        |_, account, _| {
-            accounts.push(account.take_account());
+        0,
+        |scan_result| {
+            if let Some((_, account, _)) = scan_result {
+                accounts.push(account);
+            }
         },
         &ScanConfig::default(),
-    );
+    )
+    .expect("should scan accounts");
     assert_eq!(accounts, vec![account1]);
 });
 
@@ -1944,26 +1947,32 @@ fn test_accountsdb_scan_accounts() {
 
     let ancestors = vec![(0, 0)].into_iter().collect();
     let mut accounts = Vec::new();
-    db.unchecked_scan_accounts(
-        "",
+    db.scan_accounts(
         &ancestors,
-        |_, account, _| {
-            accounts.push(account.take_account());
+        0,
+        |scan_result| {
+            if let Some((_, account, _)) = scan_result {
+                accounts.push(account);
+            }
         },
         &ScanConfig::default(),
-    );
+    )
+    .expect("should scan accounts");
     assert_eq!(accounts, vec![account0]);
 
     let ancestors = vec![(1, 1), (0, 0)].into_iter().collect();
     let mut accounts = Vec::new();
-    db.unchecked_scan_accounts(
-        "",
+    db.scan_accounts(
         &ancestors,
-        |_, account, _| {
-            accounts.push(account.take_account());
+        0,
+        |scan_result| {
+            if let Some((_, account, _)) = scan_result {
+                accounts.push(account);
+            }
         },
         &ScanConfig::default(),
-    );
+    )
+    .expect("should scan accounts");
     assert_eq!(accounts.len(), 2);
 }
 
@@ -1986,7 +1995,7 @@ fn test_cleanup_key_not_removed() {
 
     let slots: HashSet<Slot> = vec![1].into_iter().collect();
     let purge_keys = [(key1, slots)];
-    let _ = db.purge_keys_exact(purge_keys.iter());
+    let _ = db.purge_keys_exact(purge_keys);
 
     let account2 = AccountSharedData::new(3, 0, &key);
     db.store_for_tests((2, [(&key1, &account2)].as_slice()));
@@ -5296,7 +5305,7 @@ fn test_unref_pubkeys_removed_from_accounts_index() {
             vec![(pk1, vec![slot1].into_iter().collect::<IntSet<_>>())],
             purged_stored_account_slots.into_iter().collect::<Vec<_>>()
         );
-        let expected = u64::from(already_removed);
+        let expected = RefCount::from(already_removed);
         db.assert_ref_count(&pk1, expected);
     }
 }
@@ -5417,7 +5426,10 @@ define_accounts_db_test!(test_many_unrefs, |db| {
         })
         .collect::<HashSet<_>>();
 
-    assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), n);
+    assert_eq!(
+        db.accounts_index.ref_count_from_storage(&pk1),
+        n as RefCount,
+    );
     // unref all 'n' slots
     db.unref_accounts(
         purged_slot_pubkeys,
@@ -5768,7 +5780,7 @@ fn test_shrink_collect_simple() {
                             to_purge.iter().for_each(|pubkey| {
                                 db.accounts_index.purge_exact(
                                     pubkey,
-                                    &([slot5].into_iter().collect::<HashSet<_>>()),
+                                    [slot5].into_iter().collect::<HashSet<_>>(),
                                     &mut Vec::default(),
                                 );
                             });
@@ -5944,7 +5956,7 @@ fn test_shrink_collect_with_obsolete_accounts() {
             // Purge accounts via clean and ensure that they will be unreffed.
             db.accounts_index.purge_exact(
                 pubkey,
-                &([slot].into_iter().collect::<HashSet<_>>()),
+                [slot].into_iter().collect::<HashSet<_>>(),
                 &mut Vec::default(),
             );
             unref_pubkeys.push(*pubkey);
