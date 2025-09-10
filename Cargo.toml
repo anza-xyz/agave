@@ -506,7 +506,7 @@ solana-seed-phrase = "3.0.0"
 solana-send-transaction-service = { path = "send-transaction-service", version = "=3.1.0" }
 solana-serde = "3.0.0"
 solana-serde-varint = "3.0.0"
-solana-serialize-utils = "3.0.0"
+solana-serialize-utils = "3.1.0"
 solana-sha256-hasher = "3.0.0"
 solana-short-vec = "3.0.0"
 solana-shred-version = "3.0.0"

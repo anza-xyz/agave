@@ -10604,9 +10604,9 @@ dependencies = [
 
 [[package]]
 name = "solana-serialize-utils"
-version = "3.0.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7665da4f6e07b58c93ef6aaf9fb6a923fd11b0922ffc53ba74c3cadfa490f26"
+checksum = "56e41dd8feea239516c623a02f0a81c2367f4b604d7965237fed0751aeec33ed"
 dependencies = [
  "solana-instruction-error",
  "solana-pubkey",
