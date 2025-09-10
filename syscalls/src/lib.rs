@@ -46,7 +46,6 @@ use {
     solana_sha256_hasher::Hasher,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_log_collector::{ic_logger_msg, ic_msg},
-    solana_svm_timings::ExecuteTimings,
     solana_svm_type_overrides::sync::Arc,
     solana_sysvar::SysvarSerialize,
     std::{

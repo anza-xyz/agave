@@ -3,40 +3,15 @@ use {
     solana_instruction::Instruction,
     solana_program_runtime::{
         cpi::{
-            check_authorized_program, check_instruction_size, translate_account_infos,
-            translate_and_update_accounts, update_caller_account, update_caller_account_region,
-            CallerAccount, SolAccountInfo, SolAccountMeta, SolInstruction, SolSignerSeedC,
-            SolSignerSeedsC, TranslatedAccount,
+            check_instruction_size, cpi_common, translate_account_infos,
+            translate_and_update_accounts, CallerAccount, SolAccountInfo, SolAccountMeta,
+            SolInstruction, SolSignerSeedC, SolSignerSeedsC, SyscallInvokeSigned,
+            TranslatedAccount,
         },
         memory::{translate_slice, translate_type},
     },
     solana_stable_layout::stable_instruction::StableInstruction,
-    solana_svm_measure::measure::Measure,
 };
-
-/// Implemented by language specific data structure translators
-trait SyscallInvokeSigned {
-    fn translate_instruction(
-        addr: u64,
-        memory_mapping: &MemoryMapping,
-        invoke_context: &mut InvokeContext,
-        check_aligned: bool,
-    ) -> Result<Instruction, Error>;
-    fn translate_accounts<'a>(
-        account_infos_addr: u64,
-        account_infos_len: u64,
-        memory_mapping: &MemoryMapping<'_>,
-        invoke_context: &mut InvokeContext,
-        check_aligned: bool,
-    ) -> Result<Vec<TranslatedAccount<'a>>, Error>;
-    fn translate_signers(
-        program_id: &Pubkey,
-        signers_seeds_addr: u64,
-        signers_seeds_len: u64,
-        memory_mapping: &MemoryMapping,
-        check_aligned: bool,
-    ) -> Result<Vec<Pubkey>, Error>;
-}
 
 declare_builtin_function!(
     /// Cross-program invocation called from Rust
@@ -344,109 +319,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
             Ok(vec![])
         }
     }
-}
-
-/// Call process instruction, common to both Rust and C
-fn cpi_common<S: SyscallInvokeSigned>(
-    invoke_context: &mut InvokeContext,
-    instruction_addr: u64,
-    account_infos_addr: u64,
-    account_infos_len: u64,
-    signers_seeds_addr: u64,
-    signers_seeds_len: u64,
-    memory_mapping: &mut MemoryMapping,
-) -> Result<u64, Error> {
-    let check_aligned = invoke_context.get_check_aligned();
-
-    // CPI entry.
-    //
-    // Translate the inputs to the syscall and synchronize the caller's account
-    // changes so the callee can see them.
-    consume_compute_meter(
-        invoke_context,
-        invoke_context.get_execution_cost().invoke_units,
-    )?;
-    if let Some(execute_time) = invoke_context.execute_time.as_mut() {
-        execute_time.stop();
-        invoke_context.timings.execute_us += execute_time.as_us();
-    }
-
-    let instruction = S::translate_instruction(
-        instruction_addr,
-        memory_mapping,
-        invoke_context,
-        check_aligned,
-    )?;
-    let transaction_context = &invoke_context.transaction_context;
-    let instruction_context = transaction_context.get_current_instruction_context()?;
-    let caller_program_id = instruction_context.get_program_key()?;
-    let signers = S::translate_signers(
-        caller_program_id,
-        signers_seeds_addr,
-        signers_seeds_len,
-        memory_mapping,
-        check_aligned,
-    )?;
-    check_authorized_program(&instruction.program_id, &instruction.data, invoke_context)?;
-    invoke_context.prepare_next_instruction(&instruction, &signers)?;
-
-    let mut accounts = S::translate_accounts(
-        account_infos_addr,
-        account_infos_len,
-        memory_mapping,
-        invoke_context,
-        check_aligned,
-    )?;
-
-    // Process the callee instruction
-    let mut compute_units_consumed = 0;
-    invoke_context
-        .process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())?;
-
-    // re-bind to please the borrow checker
-    let transaction_context = &invoke_context.transaction_context;
-    let instruction_context = transaction_context.get_current_instruction_context()?;
-
-    // CPI exit.
-    //
-    // Synchronize the callee's account changes so the caller can see them.
-    let stricter_abi_and_runtime_constraints = invoke_context
-        .get_feature_set()
-        .stricter_abi_and_runtime_constraints;
-
-    for translate_account in accounts.iter_mut() {
-        let mut callee_account = instruction_context
-            .try_borrow_instruction_account(translate_account.index_in_caller)?;
-        if translate_account.update_caller_account_info {
-            update_caller_account(
-                invoke_context,
-                memory_mapping,
-                check_aligned,
-                &mut translate_account.caller_account,
-                &mut callee_account,
-                stricter_abi_and_runtime_constraints,
-            )?;
-        }
-    }
-
-    if stricter_abi_and_runtime_constraints {
-        for translate_account in accounts.iter() {
-            let mut callee_account = instruction_context
-                .try_borrow_instruction_account(translate_account.index_in_caller)?;
-            if translate_account.update_caller_account_region {
-                update_caller_account_region(
-                    memory_mapping,
-                    check_aligned,
-                    &translate_account.caller_account,
-                    &mut callee_account,
-                    invoke_context.account_data_direct_mapping,
-                )?;
-            }
-        }
-    }
-
-    invoke_context.execute_time = Some(Measure::start("execute"));
-    Ok(SUCCESS)
 }
 
 #[allow(clippy::indexing_slicing)]
