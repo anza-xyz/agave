@@ -105,6 +105,7 @@ mod tests {
             super::{secondary::AccountSecondaryIndexes, UpsertReclaim},
             *,
         },
+        crate::accounts_index::SlotList,
         solana_account::AccountSharedData,
         std::ops::Range,
     };
@@ -122,7 +123,7 @@ mod tests {
         for key in pubkeys {
             let slot = 0;
             let value = true;
-            let mut gc = Vec::new();
+            let mut gc = SlotList::new();
             index.upsert(
                 slot,
                 slot,
@@ -161,7 +162,7 @@ mod tests {
         index.add_root(0);
         let mut iter = index.iter(None::<&Range<Pubkey>>, AccountsIndexPubkeyIterOrder::Sorted);
         assert!(iter.next().is_none());
-        let mut gc = vec![];
+        let mut gc = SlotList::new();
         index.upsert(
             0,
             0,

@@ -183,7 +183,7 @@ impl<T: IndexValue> PreAllocatedAccountMapEntry<T> {
         let ref_count = RefCount::from(!is_cached);
         let meta = AccountMapEntryMeta::new_dirty(storage, is_cached);
         Arc::new(AccountMapEntry::new(
-            vec![(slot, account_info)],
+            SlotList::from([(slot, account_info)]),
             ref_count,
             meta,
         ))

@@ -365,7 +365,7 @@ pub(crate) fn append_single_account_with_default_hash(
             account,
             &AccountSecondaryIndexes::default(),
             account_info,
-            &mut Vec::default(),
+            &mut SlotList::new(),
             UpsertReclaim::IgnoreReclaims,
         );
     }
@@ -2783,7 +2783,7 @@ fn test_delete_dependencies() {
     let info1 = AccountInfo::new(StorageLocation::AppendVec(1, 0), true);
     let info2 = AccountInfo::new(StorageLocation::AppendVec(2, 0), true);
     let info3 = AccountInfo::new(StorageLocation::AppendVec(3, 0), true);
-    let mut reclaims = vec![];
+    let mut reclaims = SlotList::new();
     accounts_index.upsert(
         0,
         0,
@@ -5132,7 +5132,7 @@ fn test_filter_zero_lamport_clean_for_incremental_snapshots() {
         candidates[0].insert(
             pubkey,
             CleaningInfo {
-                slot_list: vec![(slot, account_info)],
+                slot_list: SlotList::from([(slot, account_info)]),
                 ref_count: 1,
                 ..Default::default()
             },
@@ -5781,7 +5781,7 @@ fn test_shrink_collect_simple() {
                                 db.accounts_index.purge_exact(
                                     pubkey,
                                     [slot5].into_iter().collect::<HashSet<_>>(),
-                                    &mut Vec::default(),
+                                    &mut SlotList::new(),
                                 );
                             });
 
@@ -5957,7 +5957,7 @@ fn test_shrink_collect_with_obsolete_accounts() {
             db.accounts_index.purge_exact(
                 pubkey,
                 [slot].into_iter().collect::<HashSet<_>>(),
-                &mut Vec::default(),
+                &mut SlotList::new(),
             );
             unref_pubkeys.push(*pubkey);
         }
@@ -6127,7 +6127,7 @@ fn populate_index(db: &AccountsDb, slots: Range<Slot>) {
                         &account,
                         &AccountSecondaryIndexes::default(),
                         info,
-                        &mut Vec::default(),
+                        &mut SlotList::new(),
                         UpsertReclaim::IgnoreReclaims,
                     );
                 })

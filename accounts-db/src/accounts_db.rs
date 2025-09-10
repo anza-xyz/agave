@@ -1531,7 +1531,7 @@ impl AccountsDb {
     ) -> SlotList<AccountInfo> {
         let one_epoch_old = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut clean_rooted = Measure::start("clean_old_root-ms");
-        let mut reclaims = Vec::new();
+        let mut reclaims = SlotList::new();
         let removed_from_index = self.accounts_index.clean_rooted_entries(
             pubkey,
             &mut reclaims,
@@ -1691,11 +1691,11 @@ impl AccountsDb {
     pub fn purge_keys_exact<C>(
         &self,
         pubkey_to_slot_set: impl IntoIterator<Item = (Pubkey, C)>,
-    ) -> (Vec<(Slot, AccountInfo)>, PubkeysRemovedFromAccountsIndex)
+    ) -> (SlotList<AccountInfo>, PubkeysRemovedFromAccountsIndex)
     where
         C: for<'a> Contains<'a, Slot>,
     {
-        let mut reclaims = Vec::new();
+        let mut reclaims = SlotList::new();
         let mut dead_keys = Vec::new();
 
         let mut purge_exact_count = 0;
@@ -2119,7 +2119,7 @@ impl AccountsDb {
         let not_found_on_fork_accum = AtomicU64::new(0);
         let missing_accum = AtomicU64::new(0);
         let useful_accum = AtomicU64::new(0);
-        let reclaims: SlotList<AccountInfo> = Vec::with_capacity(num_candidates as usize);
+        let reclaims: SlotList<AccountInfo> = SlotList::with_capacity(num_candidates as usize);
         let reclaims = Mutex::new(reclaims);
         let pubkeys_removed_from_accounts_index: PubkeysRemovedFromAccountsIndex = HashSet::new();
         let pubkeys_removed_from_accounts_index = Mutex::new(pubkeys_removed_from_accounts_index);
@@ -5481,7 +5481,7 @@ impl AccountsDb {
         }
 
         let update = |start, end| {
-            let mut reclaims = Vec::with_capacity((end - start) / 2);
+            let mut reclaims = SlotList::with_capacity((end - start) / 2);
 
             (start..end).for_each(|i| {
                 let info = infos[i];
