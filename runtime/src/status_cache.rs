@@ -1,4 +1,3 @@
-// Use shuttle's synchronization primitives when cfg(feature = "shuttle-test") is set, otherwise use std.
 #[cfg(feature = "shuttle-test")]
 use {
     crate::shuttle_map::{Entry, ReadGuard, ShuttleMap as DashMap},
@@ -21,9 +20,6 @@ use {
     solana_hash::Hash,
     std::{fmt, hash::BuildHasher, mem::MaybeUninit, ptr},
 };
-#[cfg(feature = "shuttle-test")]
-type DashmapIteratorItem<'a, K, V, S> = ReadGuard<'a, K, Arc<V>, S>;
-
 #[cfg(not(feature = "shuttle-test"))]
 use {
     dashmap::mapref::multiple::RefMulti,
@@ -34,6 +30,10 @@ use {
         Arc,
     },
 };
+
+#[cfg(feature = "shuttle-test")]
+type DashmapIteratorItem<'a, K, V, S> = ReadGuard<'a, K, Arc<V>, S>;
+
 #[cfg(not(feature = "shuttle-test"))]
 type DashmapIteratorItem<'a, K, V, S> = RefMulti<'a, K, Arc<V>, S>;
 
@@ -947,96 +947,123 @@ mod tests {
                 .is_some());
         }
     }
+}
 
-    #[cfg(feature = "shuttle-test")]
-    #[test]
-    fn test_shuttle_purge_nonce_overlap() {
-        shuttle::check_random(
+#[cfg(all(test, feature = "shuttle-test"))]
+mod shuttle_tests {
+    use super::*;
+
+    type BankStatusCache = StatusCache<()>;
+
+    // about 10s on EPYC 9275F 24c
+    const CLEAR_DFS_ITERATIONS: Option<usize> = Some(20000);
+    const CLEAR_RANDOM_ITERATIONS: usize = 20000;
+    // const PURGE_DFS_ITERATIONS: Option<usize> = Some(20000);
+    const PURGE_RANDOM_ITERATIONS: usize = 8000;
+
+    fn do_test_shuttle_clear_slots_blockhash_overlap() {
+        let status_cache = Arc::new(BankStatusCache::default());
+
+        let blockhash1 = Hash::new_from_array([1; 32]);
+
+        let key1 = Hash::new_from_array([3; 32]);
+        let key2 = Hash::new_from_array([4; 32]);
+
+        status_cache.insert(&blockhash1, key1, 1, ());
+        let th_clear = shuttle::thread::spawn({
+            let status_cache = status_cache.clone();
             move || {
-                let status_cache = Arc::new(BankStatusCache::default());
-                // fill the cache so that the next add_root() will purge the oldest root
-                for i in 0..MAX_CACHE_ENTRIES {
-                    status_cache.add_root(i as u64);
-                }
+                status_cache.clear_slot_entries(1);
+            }
+        });
 
-                let blockhash1 = Hash::new_from_array([1; 32]);
+        let th_insert = shuttle::thread::spawn({
+            let status_cache = status_cache.clone();
+            move || {
+                // insert an entry for slot 1 so clear_slot_entries will remove it
+                status_cache.insert(&blockhash1, key2, 2, ());
+            }
+        });
 
-                let key1 = Hash::new_from_array([3; 32]);
-                let key2 = Hash::new_from_array([4; 32]);
+        th_clear.join().unwrap();
+        th_insert.join().unwrap();
 
-                // this slot/key is going to get purged when the th_purge thread calls add_root()
-                status_cache.insert(&blockhash1, key1, 0, ());
+        let mut ancestors2 = Ancestors::default();
+        ancestors2.insert(2, 0);
 
-                let th_purge = shuttle::thread::spawn({
-                    let status_cache = status_cache.clone();
-                    move || {
-                        status_cache.add_root(MAX_CACHE_ENTRIES as Slot + 1);
-                    }
-                });
-
-                let th_insert = shuttle::thread::spawn({
-                    let status_cache = status_cache.clone();
-                    move || {
-                        // insert an entry for a blockhash that gets concurrently purged
-                        status_cache.insert(&blockhash1, key2, MAX_CACHE_ENTRIES as Slot + 2, ());
-                    }
-                });
-                th_purge.join().unwrap();
-                th_insert.join().unwrap();
-
-                let mut ancestors2 = Ancestors::default();
-                ancestors2.insert(MAX_CACHE_ENTRIES as Slot + 2, 0);
-
-                assert!(status_cache
-                    .get_status(key1, &blockhash1, &ancestors2)
-                    .is_none());
-                assert!(status_cache
-                    .get_status(key2, &blockhash1, &ancestors2)
-                    .is_some());
-            },
-            10000,
-        )
+        assert!(status_cache
+            .get_status(key2, &blockhash1, &ancestors2)
+            .is_some());
     }
-
-    #[cfg(feature = "shuttle-test")]
     #[test]
-    fn test_shuttle_clear_slots_blockhash_overlap() {
+    fn test_shuttle_clear_slots_blockhash_overlap_random() {
         shuttle::check_random(
-            move || {
-                let status_cache = Arc::new(BankStatusCache::default());
-
-                let blockhash1 = Hash::new_from_array([1; 32]);
-
-                let key1 = Hash::new_from_array([3; 32]);
-                let key2 = Hash::new_from_array([4; 32]);
-
-                status_cache.insert(&blockhash1, key1, 1, ());
-                let th_clear = shuttle::thread::spawn({
-                    let status_cache = status_cache.clone();
-                    move || {
-                        status_cache.clear_slot_entries(1);
-                    }
-                });
-
-                let th_insert = shuttle::thread::spawn({
-                    let status_cache = status_cache.clone();
-                    move || {
-                        // insert an entry for slot 1 so clear_slot_entries will remove it
-                        status_cache.insert(&blockhash1, key2, 2, ());
-                    }
-                });
-
-                th_clear.join().unwrap();
-                th_insert.join().unwrap();
-
-                let mut ancestors2 = Ancestors::default();
-                ancestors2.insert(2, 0);
-
-                assert!(status_cache
-                    .get_status(key2, &blockhash1, &ancestors2)
-                    .is_some());
-            },
-            10000,
+            do_test_shuttle_clear_slots_blockhash_overlap,
+            CLEAR_RANDOM_ITERATIONS,
         );
     }
+
+    #[test]
+    fn test_shuttle_clear_slots_blockhash_overlap_dfs() {
+        shuttle::check_dfs(
+            do_test_shuttle_clear_slots_blockhash_overlap,
+            CLEAR_DFS_ITERATIONS,
+        );
+    }
+
+    // unlike clear_slot_entries(), purge_slots() can't overlap with regular blockhashes since
+    // they'd have expired by the time roots are old enough to be purged. However, nonces don't
+    // expire, so they can overlap.
+    fn do_test_shuttle_purge_nonce_overlap() {
+        let status_cache = Arc::new(BankStatusCache::default());
+        // fill the cache so that the next add_root() will purge the oldest root
+        for i in 0..MAX_CACHE_ENTRIES {
+            status_cache.add_root(i as u64);
+        }
+
+        let blockhash1 = Hash::new_from_array([1; 32]);
+
+        let key1 = Hash::new_from_array([3; 32]);
+        let key2 = Hash::new_from_array([4; 32]);
+
+        // this slot/key is going to get purged when the th_purge thread calls add_root()
+        status_cache.insert(&blockhash1, key1, 0, ());
+
+        let th_purge = shuttle::thread::spawn({
+            let status_cache = status_cache.clone();
+            move || {
+                status_cache.add_root(MAX_CACHE_ENTRIES as Slot + 1);
+            }
+        });
+
+        let th_insert = shuttle::thread::spawn({
+            let status_cache = status_cache.clone();
+            move || {
+                // insert an entry for a blockhash that gets concurrently purged
+                status_cache.insert(&blockhash1, key2, MAX_CACHE_ENTRIES as Slot + 2, ());
+            }
+        });
+        th_purge.join().unwrap();
+        th_insert.join().unwrap();
+
+        let mut ancestors2 = Ancestors::default();
+        ancestors2.insert(MAX_CACHE_ENTRIES as Slot + 2, 0);
+
+        assert!(status_cache
+            .get_status(key1, &blockhash1, &ancestors2)
+            .is_none());
+        assert!(status_cache
+            .get_status(key2, &blockhash1, &ancestors2)
+            .is_some());
+    }
+
+    #[test]
+    fn test_shuttle_purge_nonce_overlap_random() {
+        shuttle::check_random(do_test_shuttle_purge_nonce_overlap, PURGE_RANDOM_ITERATIONS);
+    }
+
+    // #[test]
+    // fn test_shuttle_purge_nonce_overlap_dfs() {
+    //     shuttle::check_dfs(do_test_shuttle_purge_nonce_overlap, PURGE_DFS_ITERATIONS);
+    // }
 }
