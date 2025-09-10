@@ -864,9 +864,7 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    if vote_account.get_data().len() != VoteStateV3::size_of() {
-        return Err(InstructionError::InvalidAccountData);
-    }
+    VoteStateHandler::check_vote_account_length(vote_account, VoteStateTargetVersion::V3)?;
     let versioned = vote_account.get_state::<VoteStateVersions>()?;
 
     if !versioned.is_uninitialized() {

@@ -433,6 +433,21 @@ impl VoteStateHandler {
         vote_account.set_state(&state)
     }
 
+    pub fn check_vote_account_length(
+        vote_account: &mut BorrowedInstructionAccount,
+        target_version: VoteStateTargetVersion,
+    ) -> Result<(), InstructionError> {
+        let length = vote_account.get_data().len();
+        let expected = match target_version {
+            VoteStateTargetVersion::V3 => VoteStateV3::size_of(),
+        };
+        if length != expected {
+            Err(InstructionError::InvalidAccountData)
+        } else {
+            Ok(())
+        }
+    }
+
     #[cfg(test)]
     pub fn new_v3(vote_state: VoteStateV3) -> Self {
         Self {
