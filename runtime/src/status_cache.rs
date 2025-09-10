@@ -119,13 +119,19 @@ impl<T: Serialize + Clone> Default for StatusCache<T> {
 impl<T: Serialize + Clone> StatusCache<T> {
     /// Clear all entries for a slot.
     ///
-    /// This is used when a slot is purged from the bank, see
+    /// This is used when a slot is purged from the cache, see
     /// ReplayStage::purge_unconfirmed_duplicate_slot(). When this is called, it's guaranteed that
     /// there are no threads inserting new entries for this slot, so there are no races.
     pub fn clear_slot_entries(&self, slot: Slot) {
         // remove txs seen during this slot
-        let Some((_, slot_deltas)) = self.slot_deltas.remove(&slot) else {
-            return;
+        let slot_deltas = match self.slot_deltas.remove_if_not_accessed(&slot) {
+            Ok(Some(slot_deltas)) => slot_deltas,
+            Ok(None) => return,
+            Err(_) => {
+                panic!(
+                    "slot {slot} is being cleared while another thread is inserting new entries"
+                );
+            }
         };
 
         // loop over all the blockhashes referenced by txs inserted in the slot
@@ -138,18 +144,30 @@ impl<T: Serialize + Clone> StatusCache<T> {
 
             // any self.slot_deltas[slot][blockhash] must also exist as self.cache[blockhash] - the
             // two maps store the same blockhashes just in a different layout.
-            let Some(cache_guard) = self.cache.get(blockhash) else {
-                panic!("Blockhash must exist if it exists in self.slot_deltas, slot: {slot}")
+            //
+            // Safety:
+            // - we modify the inner dashmap contained in the return value using DashMap::entry()
+            // which takes a write lock to ensure exclusive access
+            // - when empty, we remove the outer entry from self.cache safely only if no other
+            // threads are accessing it
+            let Some(cache_txs) = (unsafe { self.cache.get(blockhash) }) else {
+                panic!(
+                    "Blockhash must exist if it exists in self.slot_deltas, slot: {slot}, \
+                     blockhash: {blockhash}"
+                )
             };
 
             // cache_txs is self.blockhash_cache[blockhash]
-            let (_, _, cache_txs) = &*cache_guard;
+            let (_, _, cache_txs_map) = &*cache_txs;
 
             // loop over the txs in slot_delta[slot][blockhash]
             for (_, (key_slice, _)) in slot_delta_txs {
                 // find the corresponding tx in self.cache[blockhash]
-                let Entry::Occupied(mut cache_tx_entry) = cache_txs.entry(*key_slice) else {
-                    panic!("Map for key must exist if key exists in self.slot_deltas, slot: {slot}")
+                let Entry::Occupied(mut cache_tx_entry) = cache_txs_map.entry(*key_slice) else {
+                    panic!(
+                        "Map for key must exist if key exists in self.slot_deltas, slot: {slot} \
+                         blockhash: {blockhash}, key: {key_slice:?}"
+                    )
                 };
                 // remove the slot from the list of forks this tx was inserted in
                 let forks = cache_tx_entry.get_mut();
@@ -162,9 +180,15 @@ impl<T: Serialize + Clone> StatusCache<T> {
             }
 
             // if this blockhash has no more txs, remove it from the cache
-            if cache_txs.is_empty() {
-                drop(cache_guard);
-                self.cache.remove(blockhash);
+            if cache_txs_map.is_empty() {
+                // Drop the Arc clone we got from self.cache.get() above so that
+                // we can check the strong_count().
+                drop(cache_txs);
+                let _ = self.cache.remove_if_not_accessed_and(blockhash, |value| {
+                    let (_, _, _cache_txs_map) = &**value;
+                    // cache_txs_map.is_empty()
+                    true
+                });
             }
         }
     }
@@ -177,7 +201,8 @@ impl<T: Serialize + Clone> StatusCache<T> {
         blockhash: &Hash,
         ancestors: &Ancestors,
     ) -> Option<(Slot, T)> {
-        let (_, key_index, txs) = &*self.cache.get(blockhash)?;
+        // Safety: we don't modify the returned value, reading is always safe.
+        let (_, key_index, txs) = unsafe { &*self.cache.get(blockhash)? };
         self.do_get_status(txs, *key_index, &key, ancestors)
     }
 
@@ -240,23 +265,38 @@ impl<T: Serialize + Clone> StatusCache<T> {
 
         // Get the cache entry for this blockhash.
         let key_index = {
-            let (max_slot, key_index, txs) = &*self.cache.get_or_insert_with(blockhash, || {
-                #[cfg(not(feature = "shuttle-test"))]
-                let key_index = thread_rng().gen_range(0..max_key_index + 1);
-                #[cfg(feature = "shuttle-test")]
-                let key_index = 0;
-                (
-                    AtomicU64::new(slot),
-                    key_index,
-                    DashMap::with_hasher_and_shard_amount(AHashRandomState::default(), KEY_SHARDS),
-                )
-            });
+            // Safety:
+            // - we modify the returned value, but the parts of the code that might concurrently
+            // remove it (clear_slot_entries() and purge_roots()) only do so after checking that no
+            // other threads are accessing the value.
+            let (max_slot, key_index, txs) = unsafe {
+                &*self.cache.get_or_insert_with(blockhash, || {
+                    #[cfg(not(feature = "shuttle-test"))]
+                    let key_index = thread_rng().gen_range(0..max_key_index + 1);
+
+                    #[cfg(feature = "shuttle-test")]
+                    let key_index = 0;
+                    (
+                        AtomicU64::new(slot),
+                        key_index,
+                        DashMap::with_hasher_and_shard_amount(
+                            AHashRandomState::default(),
+                            KEY_SHARDS,
+                        ),
+                    )
+                })
+            };
 
             // Update the max slot observed to contain txs using this blockhash.
             max_slot.fetch_max(slot, Ordering::Relaxed);
 
             // Grab the key slice.
             let key_index = (*key_index).min(max_key_index);
+            // Safety:
+            // - source pointer is guaranteed to be valid for CACHED_KEY_SIZE
+            //   bytes because we slice it
+            // - destination pointer is valid for CACHED_KEY_SIZE bytes because
+            //   we just allocated it with that size
             unsafe {
                 ptr::copy_nonoverlapping(
                     key.as_ref()[key_index..key_index + CACHED_KEY_SIZE].as_ptr(),
@@ -267,6 +307,8 @@ impl<T: Serialize + Clone> StatusCache<T> {
 
             // Insert the slot and tx result into the cache entry associated with
             // this blockhash and keyslice.
+            //
+            // Safety: we just initialized the whole key_slice above
             let mut forks = txs.entry(unsafe { key_slice.assume_init() }).or_default();
             forks.push((slot, res.clone()));
 
@@ -277,6 +319,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
             blockhash,
             slot,
             key_index,
+            // Safety: we just initialized the whole key_slice above
             unsafe { key_slice.assume_init() },
             res,
         );
@@ -286,11 +329,29 @@ impl<T: Serialize + Clone> StatusCache<T> {
         if self.roots.len() > MAX_CACHE_ENTRIES {
             if let Some(min) = self.roots().min() {
                 self.roots.remove(&min);
-                self.cache.retain(|_key, value| {
-                    let (max_slot, _, _) = &**value;
-                    max_slot.load(Ordering::Relaxed) > min
-                });
-                self.slot_deltas.retain(|slot, _| *slot > min);
+                // Safety:
+                // - these are roots, so by definition can't be getting mutated while we call
+                // retain.
+                // - we can and often do have concurrent reads of rooted slots while the
+                // snapshot service is generating a snapshot using the values returned by
+                // root_slot_deltas(), but that's fine only mutations are unsafe.
+                unsafe {
+                    self.slot_deltas.retain(|slot, _value| *slot > min);
+                }
+
+                // Safety:
+                // - we explicitly check that the blockhash isn't referenced by other threads.
+                // Checking Arc::strong_count() is safe because retain() holds a write lock on
+                // the shard and get_or_insert_with() calls Arc::clone() holding a read lock.
+                unsafe {
+                    self.cache.retain(|_key, value| {
+                        let (max_slot, _, _) = &**value;
+                        // If the key is in use it means that another thread is inserting a new
+                        // entry for this blockhash, so we must not remove.
+                        let key_in_use = Arc::strong_count(value) > 1;
+                        key_in_use || max_slot.load(Ordering::Relaxed) > min
+                    });
+                }
             }
         }
     }
@@ -314,7 +375,8 @@ impl<T: Serialize + Clone> StatusCache<T> {
                 (
                     root,
                     true, // <-- is_root
-                    self.slot_deltas.get(&root).unwrap_or_default(),
+                    // Safety: we don't modify the returned value, reading is always safe.
+                    unsafe { self.slot_deltas.get(&root).unwrap_or_default() },
                 )
             })
             .collect()
@@ -348,13 +410,22 @@ impl<T: Serialize + Clone> StatusCache<T> {
         res: T,
     ) {
         {
-            let (max_slot, _, hash_map) = &*self.cache.get_or_insert_with(blockhash, || {
-                (
-                    AtomicU64::new(slot),
-                    key_index,
-                    DashMap::with_hasher_and_shard_amount(AHashRandomState::default(), KEY_SHARDS),
-                )
-            });
+            // Safety:
+            // - we modify the returned value, but the parts of the code that might concurrently
+            // remove it (clear_slot_entries() and purge_roots()) only do so after checking that no
+            // other threads are accessing the value.
+            let (max_slot, _, hash_map) = unsafe {
+                &*self.cache.get_or_insert_with(blockhash, || {
+                    (
+                        AtomicU64::new(slot),
+                        key_index,
+                        DashMap::with_hasher_and_shard_amount(
+                            AHashRandomState::default(),
+                            KEY_SHARDS,
+                        ),
+                    )
+                })
+            };
             max_slot.fetch_max(slot, Ordering::Relaxed);
 
             let mut forks = hash_map.entry(key_slice).or_default();
@@ -373,9 +444,20 @@ impl<T: Serialize + Clone> StatusCache<T> {
         key_slice: [u8; CACHED_KEY_SIZE],
         res: T,
     ) {
-        let fork_entry = self.slot_deltas.get_or_insert_with(&slot, || {
-            DashMap::with_hasher_and_shard_amount(AHashRandomState::default(), KEY_SHARDS)
-        });
+        if slot != 0 {
+            // can't add keys to rooted slots
+            debug_assert!(!self.roots.contains(&slot));
+        }
+
+        // Safety:
+        // - we modify the returned value, but the parts of the code that might concurrently
+        // remove it (clear_slot_entries() and purge_roots()) only do so after checking that no
+        // other threads are accessing the value.
+        let fork_entry = unsafe {
+            self.slot_deltas.get_or_insert_with(&slot, || {
+                DashMap::with_hasher_and_shard_amount(AHashRandomState::default(), KEY_SHARDS)
+            })
+        };
 
         // In the vast majority of the cases, there will already be an entry for this blockhash, so
         // do a get() first so that we can avoid taking a write lock on the corresponding shard.
@@ -506,9 +588,14 @@ where
         Self { inner }
     }
 
-    // Alternative to entry(k).or_insert_with(default) that returns an Arc<V> instead of returning a
-    // guard that holds the underlying shard's write lock.
-    fn get_or_insert_with(&self, k: &K, default: impl FnOnce() -> V) -> Arc<V> {
+    /// Alternative to entry(k).or_insert_with(default) that returns an Arc<V> instead of returning a
+    /// guard that holds the underlying shard's write lock.
+    ///
+    /// # Safety
+    ///
+    /// This function is unsafe because if the returned value is modified while another thread
+    /// concurrently deletes it, the modifications may be lost.
+    unsafe fn get_or_insert_with(&self, k: &K, default: impl FnOnce() -> V) -> Arc<V> {
         match self.inner.get(k) {
             Some(v) => Arc::clone(&*v),
             None => Arc::clone(
@@ -520,7 +607,13 @@ where
         }
     }
 
-    fn get(&self, k: &K) -> Option<Arc<V>> {
+    #[allow(dead_code)]
+    fn entry(&self, k: K) -> Entry<'_, K, Arc<V>, S> {
+        self.inner.entry(k)
+    }
+    /// This function is unsafe because if the returned value is modified while another thread
+    /// concurrently deletes it, the modifications may be lost.
+    unsafe fn get(&self, k: &K) -> Option<Arc<V>> {
         self.inner.get(k).map(|v| Arc::clone(&v))
     }
 
@@ -528,11 +621,43 @@ where
         self.inner.iter()
     }
 
-    fn remove(&self, k: &K) -> Option<(K, Arc<V>)> {
-        self.inner.remove(k)
+    /// Removes the entry if it exists and is not being accessed by any other threads.
+    ///
+    /// Returns Ok(Some(value)) if the entry was removed, Ok(None) if the entry did not exist, and
+    /// Err(()) if the entry exists but is being accessed by another thread.
+    fn remove_if_not_accessed(&self, k: &K) -> Result<Option<Arc<V>>, ()> {
+        self.remove_if_not_accessed_and(k, |_| true)
     }
 
-    fn retain(&self, f: impl FnMut(&K, &mut Arc<V>) -> bool) {
+    /// Removes the entry if it exists, it is not being accessed by any other
+    /// threads and the predicate returns true.
+    ///
+    /// Returns Ok(Some(value)) if the entry was removed, Ok(None) if the entry did not exist, and
+    /// Err(()) if the entry exists but is being accessed by another thread.
+    fn remove_if_not_accessed_and<P: Fn(&Arc<V>) -> bool>(
+        &self,
+        k: &K,
+        pred: P,
+    ) -> Result<Option<Arc<V>>, ()> {
+        let entry = self.inner.entry(k.clone());
+        if let Entry::Occupied(e) = entry {
+            let v = e.get();
+            if pred(v) && Arc::strong_count(v) == 1 {
+                return Ok(Some(e.remove()));
+            } else {
+                return Err(());
+            }
+        }
+        Ok(None)
+    }
+
+    /// Retains only the elements specified by the predicate.
+    ///
+    /// # Safety
+    ///
+    /// This function is unsafe because if there are other threads holding and modifying clones of
+    /// the values that are removed, those modifications will be lost.
+    unsafe fn retain(&self, f: impl FnMut(&K, &mut Arc<V>) -> bool) {
         self.inner.retain(f)
     }
 
@@ -566,7 +691,7 @@ mod tests {
                 && self.cache.iter().all(|item| {
                     let (hash, value) = item.pair();
                     let (max_slot, key_index, hash_map) = &**value;
-                    if let Some(item) = other.cache.get(hash) {
+                    if let Some(item) = unsafe { other.cache.get(hash) } {
                         let (other_max_slot, other_key_index, other_hash_map) = &*item;
                         if max_slot.load(Ordering::Relaxed)
                             == other_max_slot.load(Ordering::Relaxed)
@@ -708,7 +833,7 @@ mod tests {
         let blockhash = hash(Hash::default().as_ref());
         status_cache.clear();
         status_cache.insert(&blockhash, sig, 0, ());
-        let (_, index, sig_map) = &*status_cache.cache.get(&blockhash).unwrap();
+        let (_, index, sig_map) = unsafe { &*status_cache.cache.get(&blockhash).unwrap() };
         let sig_slice: &[u8; CACHED_KEY_SIZE] =
             arrayref::array_ref![sig.as_ref(), *index, CACHED_KEY_SIZE];
         assert!(sig_map.get(sig_slice).is_some());
@@ -742,7 +867,7 @@ mod tests {
         for i in 0..(MAX_CACHE_ENTRIES + 1) {
             status_cache.add_root(i as u64);
         }
-        assert!(status_cache.slot_deltas.get(&1).is_some());
+        assert!(unsafe { status_cache.slot_deltas.get(&1).is_some() });
         let slot_deltas = status_cache.root_slot_deltas();
         let cache = StatusCache::from_slot_deltas(&slot_deltas);
         assert_eq!(cache, status_cache);
@@ -786,13 +911,13 @@ mod tests {
 
         // Check that the slot delta for slot 0 is gone, but slot 1 still
         // exists
-        assert!(status_cache.slot_deltas.get(&0).is_none());
-        assert!(status_cache.slot_deltas.get(&1).is_some());
+        assert!(unsafe { status_cache.slot_deltas.get(&0).is_none() });
+        assert!(unsafe { status_cache.slot_deltas.get(&1).is_some() });
 
         // Clear slot 1 related data
         status_cache.clear_slot_entries(1);
-        assert!(status_cache.slot_deltas.get(&0).is_none());
-        assert!(status_cache.slot_deltas.get(&1).is_none());
+        assert!(unsafe { status_cache.slot_deltas.get(&0).is_none() });
+        assert!(unsafe { status_cache.slot_deltas.get(&1).is_none() });
         assert!(status_cache
             .get_status(sig, &blockhash, &ancestors1)
             .is_none());
