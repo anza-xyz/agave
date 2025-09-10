@@ -118,15 +118,17 @@ pub mod tpu_message_flags {
 /// Agave passes leader status to the external pack process.
 #[repr(C)]
 pub struct ProgressMessage {
-    /// The slot the status is for.
-    pub slot: u64,
-    /// The current progress of the slot in percentage.
-    /// Negative values indicate approximate time until the first leader slot
-    /// begins.
-    pub progress: i16,
+    /// The current slot.
+    pub current_slot: u64,
+    /// Next known leader slot or u64::MAX if unknown.
+    /// If currently leader, this is equal to `current_slot`.
+    pub next_leader_slot: u64,
     /// The remaining cost units allowed to be packed in the block.
     /// i.e. block_limit - current_cost_units_used.
+    /// Only valid if currently leader, otherwise the value is undefined.
     pub remaining_cost_units: u64,
+    /// Progress through the current slot in percentage.
+    pub current_slot_progress: u8,
 }
 
 /// Message: [Pack -> Worker]
