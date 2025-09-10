@@ -210,12 +210,8 @@ impl PohService {
                         record_receiver.shutdown();
                     }
 
-                    // If there is a service message (channel is shut down), and there
-                    // still records to process, we must loop to call `read_record_receiver_and_process`
-                    // again.
-                    if service_message.is_some() && !record_receiver.is_empty() {
-                        continue;
-                    } else {
+                    // Check if we can break the inner loop to handle a service message.
+                    if Self::can_process_service_message(&service_message, &record_receiver) {
                         break;
                     }
                 }
@@ -317,12 +313,8 @@ impl PohService {
                     }
                 }
 
-                // If there is a service message (channel is shut down), and there
-                // still records to process, we must loop to call `record_or_hash`
-                // again.
-                if service_message.is_some() && !record_receiver.is_empty() {
-                    continue;
-                } else {
+                // Check if we can break the inner loop to handle a service message.
+                if Self::can_process_service_message(&service_message, &record_receiver) {
                     break;
                 }
             }
@@ -511,12 +503,8 @@ impl PohService {
                     timing.report(ticks_per_slot);
                 }
 
-                // If there is a service message (channel is shut down), and there
-                // still records to process, we must loop to call `record_or_hash`
-                // again.
-                if service_message.is_some() && !record_receiver.is_empty() {
-                    continue;
-                } else {
+                // Check if we can break the inner loop to handle a service message.
+                if Self::can_process_service_message(&service_message, &record_receiver) {
                     break;
                 }
             }
@@ -573,6 +561,18 @@ impl PohService {
                 }
             }
         }
+    }
+
+    /// If we have a service message and there are no more records to process,
+    /// we can break inner recording loops and handle the service message.
+    /// However, if there are still records to process, we must continue processing
+    /// records before handling the service message, to ensure we do not lose
+    /// any records.
+    fn can_process_service_message(
+        service_message: &Option<PohServiceMessageGuard>,
+        record_receiver: &RecordReceiver,
+    ) -> bool {
+        service_message.is_none() || record_receiver.is_empty()
     }
 
     pub fn join(self) -> thread::Result<()> {
