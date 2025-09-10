@@ -226,7 +226,7 @@ pub fn bank_from_snapshot_archives(
 
     verify_slot_deltas(slot_deltas.as_slice(), &bank)?;
 
-    bank.status_cache.write().unwrap().append(&slot_deltas);
+    bank.status_cache.append(&slot_deltas);
 
     let snapshot_archive_info = incremental_snapshot_archive_info.map_or_else(
         || full_snapshot_archive_info.snapshot_archive_info(),
@@ -407,7 +407,7 @@ pub fn bank_from_snapshot_dir(
 
     verify_slot_deltas(slot_deltas.as_slice(), &bank)?;
 
-    bank.status_cache.write().unwrap().append(&slot_deltas);
+    bank.status_cache.append(&slot_deltas);
 
     if !bank.verify_snapshot_bank(
         true,
@@ -674,7 +674,7 @@ pub fn bank_to_full_snapshot_archive(
         SnapshotKind::Archive(snapshot_archive_kind),
         bank,
         bank.get_snapshot_storages(None),
-        bank.status_cache.read().unwrap().root_slot_deltas(),
+        bank.status_cache.root_slot_deltas(),
     );
 
     let snapshot_config = SnapshotConfig {
@@ -745,7 +745,7 @@ pub fn bank_to_incremental_snapshot_archive(
         SnapshotKind::Archive(snapshot_archive_kind),
         bank,
         bank.get_snapshot_storages(Some(full_snapshot_slot)),
-        bank.status_cache.read().unwrap().root_slot_deltas(),
+        bank.status_cache.root_slot_deltas(),
     );
 
     // Note: Since the snapshot_storages above are *only* the incremental storages,

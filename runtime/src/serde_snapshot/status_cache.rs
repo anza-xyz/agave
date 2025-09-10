@@ -1,9 +1,5 @@
 //! Serialize and deserialize the status cache for snapshots
 
-#[cfg(feature = "shuttle-test")]
-use shuttle::sync::Mutex;
-#[cfg(not(feature = "shuttle-test"))]
-use std::sync::Mutex;
 use {
     crate::{bank::BankSlotDelta, snapshot_utils, status_cache::KeySlice},
     bincode::{self, Options as _},
@@ -34,10 +30,12 @@ pub fn serialize_status_cache(
         let snapshot_slot_deltas = slot_deltas
             .iter()
             .map(|slot_delta| {
-                let status_map = slot_delta.2.lock().unwrap();
+                let status_map = Arc::clone(&slot_delta.2);
                 let snapshot_status_map = status_map
                     .iter()
-                    .map(|(key, value)| {
+                    .map(|item| {
+                        let key = item.key();
+                        let value = item.value();
                         (
                             *key,
                             (
@@ -45,7 +43,7 @@ pub fn serialize_status_cache(
                                 value
                                     .1
                                     .iter()
-                                    .map(|(key_slice, result)| {
+                                    .map(|(_, (key_slice, result))| {
                                         (
                                             *key_slice,
                                             result.clone().map_err(SerdeTransactionError::from),
@@ -94,14 +92,14 @@ pub fn deserialize_status_cache(
                                     .map(|(key_slice, result)| {
                                         (*key_slice, result.clone().map_err(TransactionError::from))
                                     })
-                                    .collect::<Vec<_>>(),
+                                    .collect(),
                             ),
                         )
                     })
-                    .collect::<ahash::HashMap<_, _>>();
-                (slot_delta.0, slot_delta.1, Arc::new(Mutex::new(status_map)))
+                    .collect();
+                (slot_delta.0, slot_delta.1, Arc::new(status_map))
             })
-            .collect::<Vec<_>>();
+            .collect();
         Ok(slot_deltas)
     })
 }

@@ -1319,6 +1319,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "boxcar"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36f64beae40a84da1b4b26ff2761a5b895c12adc41dc25aaee1c4f2bbfe97a6e"
+
+[[package]]
 name = "brotli"
 version = "3.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8397,6 +8403,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "blake3",
+ "boxcar",
  "bv",
  "bytemuck",
  "crossbeam-channel",
