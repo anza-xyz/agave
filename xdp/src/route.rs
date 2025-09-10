@@ -31,8 +31,6 @@ pub struct NextHop {
     pub if_index: u32,
 }
 
-// Remove RouteUpdate enum - no longer needed with ArcSwap
-
 fn lookup_route(routes: &[RouteEntry], dest: IpAddr) -> Option<&RouteEntry> {
     let mut best_match = None;
 
@@ -117,41 +115,19 @@ fn is_ipv6_match(addr: Ipv6Addr, network: Ipv6Addr, prefix_len: u8) -> bool {
 
 #[derive(Clone)]
 pub struct Router {
-    routes: Arc<Vec<RouteEntry>>,
     arp_table: Arc<ArpTable>,
+    routes: Arc<Vec<RouteEntry>>,
 }
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
-        let mut routes = netlink_get_routes(AF_INET as u8)?;
-        filter_routes(&mut routes);
         let arp_table = ArpTable::new()?;
+        let routes = netlink_get_routes(AF_INET as u8)?;
 
         Ok(Self {
-            routes: Arc::new(routes),
             arp_table: Arc::new(arp_table),
+            routes: Arc::new(routes),
         })
-    }
-
-    pub fn update_routes(&mut self, mut new_routes: Vec<RouteEntry>) {
-        log::info!(
-            "greg: Updating routes pre filter: {} entries",
-            new_routes.len()
-        );
-        filter_routes(&mut new_routes); // Apply filtering
-        log::info!(
-            "greg: Filtered routes post filter: {} entries",
-            new_routes.len()
-        );
-        self.routes = Arc::new(new_routes);
-    }
-
-    pub fn update_arp(&mut self, new_neighbors: Vec<NeighborEntry>) {
-        self.arp_table = Arc::new(ArpTable::from_neighbors(new_neighbors));
-        log::info!(
-            "greg: Updated ARP table: {} entries",
-            self.arp_table.neighbors.len()
-        );
     }
 
     pub fn default(&self) -> Result<NextHop, RouteError> {
@@ -179,7 +155,6 @@ impl Router {
         })
     }
 
-    // Fast route lookup. no locks
     pub fn route(&self, dest_ip: IpAddr) -> Result<NextHop, RouteError> {
         let route = lookup_route(&self.routes, dest_ip).ok_or(RouteError::NoRouteFound(dest_ip))?;
 
@@ -202,63 +177,14 @@ impl Router {
     }
 }
 
-pub(crate) fn filter_routes(routes: &mut Vec<RouteEntry>) {
-    routes.retain(|route| {
-        // Keep only routes we care about
-        match route.destination {
-            Some(dest) => {
-                // Keep specific network routes (not host routes from MTU discovery)
-                // MTU discovery routes typically have /32 or /128 prefixes
-                match dest {
-                    IpAddr::V4(ipv4) => {
-                        // Keep routes with prefix length <= 24 (subnet routes)
-                        // Filter out /32 host routes (likely from MTU discovery)
-                        route.dst_len <= 24 && !ipv4.is_loopback()
-                    }
-                    IpAddr::V6(ipv6) => {
-                        // Keep routes with prefix length <= 64 (subnet routes)
-                        // Filter out /128 host routes
-                        route.dst_len <= 64 && !ipv6.is_loopback()
-                    }
-                }
-            }
-            None => {
-                // Keep default routes (destination = None)
-                true
-            }
-        }
-    });
-}
-
-pub(crate) fn filter_neighbors(neighbors: &mut Vec<NeighborEntry>) {
-    neighbors.retain(|neighbor| {
-        // Keep only valid neighbor entries
-        neighbor.is_valid()
-    });
-}
-
 struct ArpTable {
     neighbors: Vec<NeighborEntry>,
 }
 
 impl ArpTable {
     pub fn new() -> Result<Self, io::Error> {
-        let mut neighbors = netlink_get_neighbors(None, AF_INET as u8)?;
-        filter_neighbors(&mut neighbors);
+        let neighbors = netlink_get_neighbors(None, AF_INET as u8)?;
         Ok(Self { neighbors })
-    }
-
-    pub fn from_neighbors(mut neighbors: Vec<NeighborEntry>) -> Self {
-        log::info!(
-            "greg: Updating neighbors pre filter: {} entries",
-            neighbors.len()
-        );
-        filter_neighbors(&mut neighbors);
-        log::info!(
-            "greg: Filtered neighbors post filter: {} entries",
-            neighbors.len()
-        );
-        Self { neighbors }
     }
 
     pub fn lookup(&self, ip: IpAddr) -> Option<&MacAddress> {
@@ -285,18 +211,22 @@ impl AtomicRouter {
         self.router.load().clone()
     }
 
-    // Atomic update - store new router
-    pub fn update_routes(&self, new_routes: Vec<RouteEntry>) {
+    // update both routes and ARP table
+    pub fn update_routes_and_neighbors(&self) -> Result<(), io::Error> {
         let mut current_router = (**self.router.load()).clone();
-        current_router.update_routes(new_routes);
+        current_router.routes = Self::fetch_routes()?;
+        current_router.arp_table = Self::fetch_arp_table()?;
         self.router.store(Arc::new(current_router));
+        Ok(())
     }
 
-    // Atomic update - store new router
-    pub fn update_arp(&self, new_neighbors: Vec<NeighborEntry>) {
-        let mut current_router = (**self.router.load()).clone();
-        current_router.update_arp(new_neighbors);
-        self.router.store(Arc::new(current_router));
+    fn fetch_routes() -> Result<Arc<Vec<RouteEntry>>, io::Error> {
+        Ok(Arc::new(netlink_get_routes(AF_INET as u8)?))
+    }
+
+    fn fetch_arp_table() -> Result<Arc<ArpTable>, io::Error> {
+        let neighbors = netlink_get_neighbors(None, AF_INET as u8)?;
+        Ok(Arc::new(ArpTable { neighbors }))
     }
 }
 
@@ -354,15 +284,8 @@ mod tests {
         ));
     }
 
-    // #[test]
-    // fn test_router() {
-    //     let router = Router::new().unwrap();
-    //     let next_hop = router.route("1.1.1.1".parse().unwrap()).unwrap();
-    //     eprintln!("{next_hop:?}");
-    // }
-
     #[test]
-    fn test_route_cache() {
+    fn test_route() {
         let router = Router::new().unwrap();
         let next_hop = router.route("1.1.1.1".parse().unwrap()).unwrap();
         eprintln!("{next_hop:?}");

@@ -6,8 +6,10 @@ use {
         AF_INET, AF_INET6, AF_NETLINK, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE,
         NLA_ALIGNTO, NLA_TYPE_MASK, NLMSG_DONE, NLMSG_ERROR, NLM_F_DUMP, NLM_F_MULTI,
         NLM_F_REQUEST, NUD_PERMANENT, NUD_REACHABLE, NUD_STALE, RTA_DST, RTA_GATEWAY, RTA_IIF,
-        RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWNEIGH,
-        RTM_NEWROUTE, RT_TABLE_MAIN, SOCK_RAW, SOL_NETLINK,
+        RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_F_CLONED, RTM_GETNEIGH, RTM_GETROUTE,
+        RTM_NEWNEIGH, RTM_NEWROUTE, RTN_BLACKHOLE, RTN_BROADCAST, RTN_LOCAL, RTN_MULTICAST,
+        RTN_THROW, RTN_UNICAST, RT_TABLE_LOCAL, RT_TABLE_MAIN, RT_TABLE_UNSPEC, SOCK_RAW,
+        SOL_NETLINK,
     },
     std::{
         collections::HashMap,
@@ -20,6 +22,39 @@ use {
 };
 
 const NLA_HDR_LEN: usize = align_to(mem::size_of::<nlattr>(), NLA_ALIGNTO as usize);
+
+// Removes cloned routes, non-main/local table routes, and invalid route types
+// Many invisible routes are inserted when doing IPv4 MTU discovery or caching neighbor information
+fn is_valid_route(route: &RouteEntry) -> bool {
+    // Filter out cloned routes
+    if route.flags & RTM_F_CLONED != 0 {
+        return false;
+    }
+
+    // Filter by table ID - only keep main and local tables
+    if let Some(table) = route.table {
+        if table != RT_TABLE_UNSPEC as u32
+            && table != RT_TABLE_MAIN as u32
+            && table != RT_TABLE_LOCAL as u32
+        {
+            return false;
+        }
+    }
+
+    // Filter by route type
+    match route.type_ {
+        RTN_UNICAST => true,
+        RTN_LOCAL => true,
+        RTN_BROADCAST => true,
+        RTN_MULTICAST => true,
+        RTN_BLACKHOLE => true,
+        RTN_THROW => true,
+        _ => {
+            log::info!("greg: Unsupported route type: {}", route.type_);
+            false
+        }
+    }
+}
 
 pub struct NetlinkSocket {
     sock: OwnedFd,
@@ -375,7 +410,10 @@ pub fn netlink_get_neighbors(
             continue;
         };
 
-        neighbors.push(neighbor);
+        // Filter neighbors at the source for efficiency
+        if neighbor.is_valid() {
+            neighbors.push(neighbor);
+        }
     }
 
     Ok(neighbors)
@@ -424,6 +462,7 @@ pub struct RouteEntry {
     pub type_: u8,
     pub family: u8,
     pub dst_len: u8,
+    pub flags: u32,
 }
 
 #[repr(C)]
@@ -497,7 +536,9 @@ pub fn netlink_get_routes(family: u8) -> Result<Vec<RouteEntry>, io::Error> {
             continue;
         };
 
-        routes.push(route);
+        if is_valid_route(&route) {
+            routes.push(route);
+        }
     }
 
     Ok(routes)
@@ -521,6 +562,7 @@ pub fn parse_rtm_newroute(msg: NetlinkMessage) -> Option<RouteEntry> {
         type_: rt_msg.rtm_type,
         family: rt_msg.rtm_family,
         dst_len: rt_msg.rtm_dst_len,
+        flags: rt_msg.rtm_flags,
     };
     if let Some(dst_attr) = attrs.get(&RTA_DST) {
         route.destination = parse_ip_address(dst_attr.data, rt_msg.rtm_family);
