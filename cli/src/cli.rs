@@ -110,6 +110,7 @@ pub enum CliCommand {
     Rent {
         data_length: usize,
         use_lamports_unit: bool,
+        no_header: bool,
     },
     ShowBlockProduction {
         epoch: Option<Epoch>,
@@ -663,9 +664,11 @@ pub fn parse_command(
                 .unwrap()
                 .length();
             let use_lamports_unit = matches.is_present("lamports");
+            let no_header = matches.is_present("no-header");
             Ok(CliCommandInfo::without_signers(CliCommand::Rent {
                 data_length,
                 use_lamports_unit,
+                no_header,
             }))
         }
         ("slot", Some(matches)) => parse_get_slot(matches),
@@ -1008,7 +1011,14 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         CliCommand::Rent {
             data_length,
             use_lamports_unit,
-        } => process_calculate_rent(&rpc_client, config, *data_length, *use_lamports_unit),
+            no_header,
+        } => process_calculate_rent(
+            &rpc_client,
+            config,
+            *data_length,
+            *use_lamports_unit,
+            *no_header,
+        ),
         CliCommand::ShowBlockProduction { epoch, slot_limit } => {
             process_show_block_production(&rpc_client, config, *epoch, *slot_limit)
         }
