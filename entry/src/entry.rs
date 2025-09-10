@@ -131,6 +131,463 @@ pub struct Entry {
     pub transactions: Vec<VersionedTransaction>,
 }
 
+pub mod storage {
+    use {
+        serde::{
+            de::Deserializer,
+            ser::{SerializeSeq, SerializeStruct, Serializer},
+            Deserialize, Serialize,
+        },
+        serde_bytes::{ByteArray, Bytes},
+        solana_address::{Address, ADDRESS_BYTES},
+        solana_hash::{Hash, HASH_BYTES},
+        solana_message::{
+            legacy,
+            v0::{self, MessageAddressTableLookup},
+            MessageHeader, VersionedMessage,
+        },
+        solana_signature::{Signature, SIGNATURE_BYTES},
+        solana_transaction::{versioned::VersionedTransaction, CompiledInstruction},
+        std::{mem::transmute, result::Result},
+    };
+
+    #[repr(transparent)]
+    pub struct Entry(pub super::Entry);
+
+    struct VersionedTransactionsSer<'a>(&'a [VersionedTransaction]);
+    struct VersionedTransactionSer<'a>(&'a VersionedTransaction);
+    #[repr(transparent)]
+    struct VersionedTransactionDe(VersionedTransaction);
+    struct SignaturesSer<'a>(&'a [Signature]);
+    struct AddressesSer<'a>(&'a [Address]);
+    #[repr(transparent)]
+    struct MessageHeaderSer<'a>(&'a MessageHeader);
+    #[repr(transparent)]
+    struct MessageHeaderDe(MessageHeader);
+    struct CompiledInstructionSer<'a>(&'a CompiledInstruction);
+    #[repr(transparent)]
+    struct CompiledInstructionDe(CompiledInstruction);
+    struct CompiledInstructionsSer<'a>(&'a [CompiledInstruction]);
+    #[repr(transparent)]
+    struct CompiledInstructionsDe(Vec<CompiledInstruction>);
+    struct AddressTableLookupSer<'a>(&'a MessageAddressTableLookup);
+    #[repr(transparent)]
+    struct AddressTableLookupDe(MessageAddressTableLookup);
+    struct AddressTableLookupsSer<'a>(&'a [MessageAddressTableLookup]);
+    #[repr(transparent)]
+    struct AddressTableLookupsDe(Vec<MessageAddressTableLookup>);
+    struct V0MessageSer<'a>(&'a v0::Message);
+    #[repr(transparent)]
+    struct V0MessageDe(v0::Message);
+    struct LegacyMessageSer<'a>(&'a legacy::Message);
+    #[repr(transparent)]
+    struct LegacyMessageDe(legacy::Message);
+    struct VersionedMessageSer<'a>(&'a VersionedMessage);
+    #[repr(transparent)]
+    struct VersionedMessageDe(VersionedMessage);
+
+    impl Serialize for SignaturesSer<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut s = serializer.serialize_seq(Some(self.0.len()))?;
+            for signature in self.0 {
+                s.serialize_element(&Bytes::new(signature.as_ref()))?;
+            }
+            s.end()
+        }
+    }
+
+    impl Serialize for AddressesSer<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let mut s = serializer.serialize_seq(Some(self.0.len()))?;
+            for address in self.0 {
+                s.serialize_element(&Bytes::new(address.as_ref()))?;
+            }
+            s.end()
+        }
+    }
+
+    impl Serialize for MessageHeaderSer<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let bytes = [
+                self.0.num_required_signatures,
+                self.0.num_readonly_signed_accounts,
+                self.0.num_readonly_unsigned_accounts,
+            ];
+            serializer.serialize_bytes(&bytes)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for MessageHeaderDe {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let bytes = <ByteArray<3>>::deserialize(deserializer)?;
+            Ok(MessageHeaderDe(MessageHeader {
+                num_required_signatures: bytes[0],
+                num_readonly_signed_accounts: bytes[1],
+                num_readonly_unsigned_accounts: bytes[2],
+            }))
+        }
+    }
+
+    impl Serialize for CompiledInstructionSer<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut s = serializer.serialize_struct("CompiledInstruction", 3)?;
+            s.serialize_field("program_id_index", &self.0.program_id_index)?;
+            s.serialize_field("accounts", Bytes::new(&self.0.accounts))?;
+            s.serialize_field("data", Bytes::new(&self.0.data))?;
+            s.end()
+        }
+    }
+
+    impl<'de> Deserialize<'de> for CompiledInstructionDe {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            #[derive(Deserialize)]
+            struct Repr {
+                program_id_index: u8,
+                #[serde(with = "serde_bytes")]
+                accounts: Vec<u8>,
+                #[serde(with = "serde_bytes")]
+                data: Vec<u8>,
+            }
+            let bytes = <Repr>::deserialize(deserializer)?;
+            Ok(CompiledInstructionDe(CompiledInstruction {
+                program_id_index: bytes.program_id_index,
+                accounts: bytes.accounts,
+                data: bytes.data,
+            }))
+        }
+    }
+
+    impl Serialize for CompiledInstructionsSer<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut s = serializer.serialize_seq(Some(self.0.len()))?;
+            for instruction in self.0 {
+                s.serialize_element(&CompiledInstructionSer(instruction))?;
+            }
+            s.end()
+        }
+    }
+
+    impl<'de> Deserialize<'de> for CompiledInstructionsDe {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let ins = Vec::<CompiledInstruction>::deserialize(deserializer)?;
+            Ok(CompiledInstructionsDe(ins))
+        }
+    }
+
+    impl Serialize for LegacyMessageSer<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut s = serializer.serialize_struct("Message", 4)?;
+            s.serialize_field("header", &MessageHeaderSer(&self.0.header))?;
+            s.serialize_field("account_keys", &AddressesSer(&self.0.account_keys))?;
+            s.serialize_field(
+                "recent_blockhash",
+                &Bytes::new(self.0.recent_blockhash.as_bytes()),
+            )?;
+            s.serialize_field(
+                "instructions",
+                &CompiledInstructionsSer(&self.0.instructions),
+            )?;
+            s.end()
+        }
+    }
+
+    impl<'de> Deserialize<'de> for LegacyMessageDe {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            #[derive(Deserialize)]
+            struct Repr {
+                header: MessageHeaderDe,
+                account_keys: Vec<ByteArray<ADDRESS_BYTES>>,
+                #[serde(with = "serde_bytes")]
+                recent_blockhash: [u8; HASH_BYTES],
+                instructions: CompiledInstructionsDe,
+            }
+            let v = <Repr>::deserialize(deserializer)?;
+            Ok(LegacyMessageDe(legacy::Message {
+                header: v.header.0,
+                account_keys: unsafe {
+                    transmute::<Vec<ByteArray<ADDRESS_BYTES>>, Vec<Address>>(v.account_keys)
+                },
+                recent_blockhash: unsafe {
+                    transmute::<[u8; HASH_BYTES], Hash>(v.recent_blockhash)
+                },
+                instructions: v.instructions.0,
+            }))
+        }
+    }
+
+    impl Serialize for AddressTableLookupSer<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut s = serializer.serialize_struct("MessageAddressTableLookup", 3)?;
+            s.serialize_field("account_key", &Bytes::new(self.0.account_key.as_ref()))?;
+            s.serialize_field("writable_indexes", &Bytes::new(&self.0.writable_indexes))?;
+            s.serialize_field("readonly_indexes", &Bytes::new(&self.0.readonly_indexes))?;
+            s.end()
+        }
+    }
+
+    impl<'de> Deserialize<'de> for AddressTableLookupDe {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            #[derive(Deserialize)]
+            struct Repr {
+                account_key: ByteArray<ADDRESS_BYTES>,
+                #[serde(with = "serde_bytes")]
+                writable_indexes: Vec<u8>,
+                #[serde(with = "serde_bytes")]
+                readonly_indexes: Vec<u8>,
+            }
+            let v = <Repr>::deserialize(deserializer)?;
+            Ok(AddressTableLookupDe(MessageAddressTableLookup {
+                account_key: unsafe {
+                    transmute::<ByteArray<ADDRESS_BYTES>, Address>(v.account_key)
+                },
+                writable_indexes: v.writable_indexes,
+                readonly_indexes: v.readonly_indexes,
+            }))
+        }
+    }
+
+    impl Serialize for AddressTableLookupsSer<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut s = serializer.serialize_seq(Some(self.0.len()))?;
+            for lookup in self.0 {
+                s.serialize_element(&AddressTableLookupSer(lookup))?;
+            }
+            s.end()
+        }
+    }
+
+    impl<'de> Deserialize<'de> for AddressTableLookupsDe {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let lookups = Vec::<AddressTableLookupDe>::deserialize(deserializer)?;
+            Ok(AddressTableLookupsDe(unsafe {
+                transmute::<Vec<AddressTableLookupDe>, Vec<MessageAddressTableLookup>>(lookups)
+            }))
+        }
+    }
+
+    impl Serialize for V0MessageSer<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut s = serializer.serialize_struct("Message", 5)?;
+            s.serialize_field("header", &MessageHeaderSer(&self.0.header))?;
+            s.serialize_field("account_keys", &AddressesSer(&self.0.account_keys))?;
+            s.serialize_field(
+                "recent_blockhash",
+                &Bytes::new(self.0.recent_blockhash.as_bytes()),
+            )?;
+            s.serialize_field(
+                "instructions",
+                &CompiledInstructionsSer(&self.0.instructions),
+            )?;
+            s.serialize_field(
+                "address_table_lookups",
+                &AddressTableLookupsSer(&self.0.address_table_lookups),
+            )?;
+            s.end()
+        }
+    }
+
+    impl<'de> Deserialize<'de> for V0MessageDe {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            #[derive(Deserialize)]
+            struct Repr {
+                header: MessageHeaderDe,
+                account_keys: Vec<ByteArray<ADDRESS_BYTES>>,
+                #[serde(with = "serde_bytes")]
+                recent_blockhash: [u8; HASH_BYTES],
+                instructions: CompiledInstructionsDe,
+                address_table_lookups: AddressTableLookupsDe,
+            }
+            let v = <Repr>::deserialize(deserializer)?;
+            Ok(V0MessageDe(v0::Message {
+                header: v.header.0,
+                account_keys: unsafe {
+                    transmute::<Vec<ByteArray<ADDRESS_BYTES>>, Vec<Address>>(v.account_keys)
+                },
+                recent_blockhash: unsafe {
+                    transmute::<[u8; HASH_BYTES], Hash>(v.recent_blockhash)
+                },
+                instructions: v.instructions.0,
+                address_table_lookups: v.address_table_lookups.0,
+            }))
+        }
+    }
+
+    impl Serialize for VersionedMessageSer<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            match self.0 {
+                VersionedMessage::Legacy(message) => serializer.serialize_newtype_variant(
+                    "VersionedMessage",
+                    0,
+                    "Legacy",
+                    &LegacyMessageSer(message),
+                ),
+                VersionedMessage::V0(message) => serializer.serialize_newtype_variant(
+                    "VersionedMessage",
+                    1,
+                    "V0",
+                    &V0MessageSer(message),
+                ),
+            }
+        }
+    }
+
+    impl<'de> Deserialize<'de> for VersionedMessageDe {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            #[derive(Deserialize)]
+            enum Repr {
+                Legacy(LegacyMessageDe),
+                V0(V0MessageDe),
+            }
+            let v = <Repr>::deserialize(deserializer)?;
+            match v {
+                Repr::Legacy(v) => Ok(VersionedMessageDe(VersionedMessage::Legacy(v.0))),
+                Repr::V0(v) => Ok(VersionedMessageDe(VersionedMessage::V0(v.0))),
+            }
+        }
+    }
+
+    impl Serialize for VersionedTransactionSer<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut s = serializer.serialize_struct("VersionedTransaction", 2)?;
+            s.serialize_field("signatures", &SignaturesSer(&self.0.signatures))?;
+            s.serialize_field("message", &VersionedMessageSer(&self.0.message))?;
+            s.end()
+        }
+    }
+
+    impl<'de> Deserialize<'de> for VersionedTransactionDe {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            #[derive(Deserialize)]
+            struct Repr {
+                signatures: Vec<ByteArray<SIGNATURE_BYTES>>,
+                message: VersionedMessageDe,
+            }
+            let v = <Repr>::deserialize(deserializer)?;
+            Ok(VersionedTransactionDe(VersionedTransaction {
+                signatures: unsafe {
+                    transmute::<Vec<ByteArray<SIGNATURE_BYTES>>, Vec<Signature>>(v.signatures)
+                },
+                message: v.message.0,
+            }))
+        }
+    }
+
+    impl Serialize for VersionedTransactionsSer<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut s = serializer.serialize_seq(Some(self.0.len()))?;
+            for tx in self.0 {
+                s.serialize_element(&VersionedTransactionSer(tx))?;
+            }
+            s.end()
+        }
+    }
+
+    impl Serialize for Entry {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let entry = &self.0;
+            let mut s = serializer.serialize_struct("Entry", 3)?;
+            s.serialize_field("num_hashes", &entry.num_hashes)?;
+            s.serialize_field("hash", Bytes::new(entry.hash.as_bytes()))?;
+            s.serialize_field(
+                "transactions",
+                &VersionedTransactionsSer(&entry.transactions),
+            )?;
+            s.end()
+        }
+    }
+
+    impl<'de> Deserialize<'de> for Entry {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            #[derive(Deserialize)]
+            struct Repr {
+                num_hashes: u64,
+                #[serde(with = "serde_bytes")]
+                hash: [u8; HASH_BYTES],
+                transactions: Vec<VersionedTransactionDe>,
+            }
+            let v = <Repr>::deserialize(deserializer)?;
+            Ok(Entry(super::Entry {
+                num_hashes: v.num_hashes,
+                hash: unsafe { transmute::<[u8; HASH_BYTES], Hash>(v.hash) },
+                transactions: unsafe {
+                    transmute::<Vec<VersionedTransactionDe>, Vec<VersionedTransaction>>(
+                        v.transactions,
+                    )
+                },
+            }))
+        }
+    }
+}
+
 pub struct EntrySummary {
     pub num_hashes: u64,
     pub hash: Hash,

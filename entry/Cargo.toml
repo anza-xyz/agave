@@ -28,14 +28,18 @@ num_cpus = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
+serde_bytes = { workspace = true }
+solana-address = { workspace = true }
 solana-hash = { workspace = true }
 solana-measure = { workspace = true }
 solana-merkle-tree = { workspace = true }
+solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sha256-hasher = { workspace = true }
+solana-signature = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 
