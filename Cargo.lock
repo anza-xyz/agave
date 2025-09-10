@@ -10301,6 +10301,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_with",
+ "shuttle",
  "smallvec",
  "solana-account",
  "solana-account-info",

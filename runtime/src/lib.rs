@@ -21,6 +21,7 @@ pub mod prioritization_fee_cache;
 pub mod rent_collector;
 pub mod runtime_config;
 pub mod serde_snapshot;
+mod shuttle_map;
 pub mod snapshot_archive_info;
 pub mod snapshot_bank_utils;
 pub mod snapshot_config;

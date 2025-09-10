@@ -1,7 +1,15 @@
+// Use shuttle's synchronization primitives when cfg(feature = "shuttle-test") is set, otherwise use std.
+#[cfg(feature = "shuttle-test")]
+use {
+    crate::shuttle_map::{Entry, ReadGuard, ShuttleMap as DashMap},
+    shuttle::sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 use {
     ahash::random_state::RandomState as AHashRandomState,
-    dashmap::{mapref::entry::Entry, DashMap, DashSet},
-    rand::{thread_rng, Rng},
+    dashmap::DashSet,
     serde::{
         de::{SeqAccess, Visitor},
         ser::SerializeSeq as _,
@@ -11,17 +19,23 @@ use {
     solana_accounts_db::ancestors::Ancestors,
     solana_clock::{Slot, MAX_RECENT_BLOCKHASHES},
     solana_hash::Hash,
-    std::{
-        fmt,
-        hash::BuildHasher,
-        mem::MaybeUninit,
-        ptr,
-        sync::{
-            atomic::{AtomicU64, Ordering},
-            Arc,
-        },
+    std::{fmt, hash::BuildHasher, mem::MaybeUninit, ptr},
+};
+#[cfg(feature = "shuttle-test")]
+type DashmapIteratorItem<'a, K, V, S> = ReadGuard<'a, K, Arc<V>, S>;
+
+#[cfg(not(feature = "shuttle-test"))]
+use {
+    dashmap::mapref::multiple::RefMulti,
+    dashmap::{mapref::entry::Entry, DashMap},
+    rand::{thread_rng, Rng},
+    std::sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
     },
 };
+#[cfg(not(feature = "shuttle-test"))]
+type DashmapIteratorItem<'a, K, V, S> = RefMulti<'a, K, Arc<V>, S>;
 
 // The maximum number of entries to store in the cache. This is the same as the number of recent
 // blockhashes because we automatically reject txs that use older blockhashes so we don't need to
@@ -227,7 +241,10 @@ impl<T: Serialize + Clone> StatusCache<T> {
         // Get the cache entry for this blockhash.
         let key_index = {
             let (max_slot, key_index, txs) = &*self.cache.get_or_insert_with(blockhash, || {
+                #[cfg(not(feature = "shuttle-test"))]
                 let key_index = thread_rng().gen_range(0..max_key_index + 1);
+                #[cfg(feature = "shuttle-test")]
+                let key_index = 0;
                 (
                     AtomicU64::new(slot),
                     key_index,
@@ -507,7 +524,7 @@ where
         self.inner.get(k).map(|v| Arc::clone(&v))
     }
 
-    fn iter(&self) -> impl Iterator<Item = dashmap::mapref::multiple::RefMulti<'_, K, Arc<V>, S>> {
+    fn iter(&self) -> impl Iterator<Item = DashmapIteratorItem<K, V, S>> {
         self.inner.iter()
     }
 
@@ -804,5 +821,97 @@ mod tests {
                 .get_status(hash_key, &blockhash, &ancestors)
                 .is_some());
         }
+    }
+
+    #[cfg(feature = "shuttle-test")]
+    #[test]
+    fn test_shuttle_purge_nonce_overlap() {
+        shuttle::check_random(
+            move || {
+                let status_cache = Arc::new(BankStatusCache::default());
+                // fill the cache so that the next add_root() will purge the oldest root
+                for i in 0..MAX_CACHE_ENTRIES {
+                    status_cache.add_root(i as u64);
+                }
+
+                let blockhash1 = Hash::new_from_array([1; 32]);
+
+                let key1 = Hash::new_from_array([3; 32]);
+                let key2 = Hash::new_from_array([4; 32]);
+
+                // this slot/key is going to get purged when the th_purge thread calls add_root()
+                status_cache.insert(&blockhash1, key1, 0, ());
+
+                let th_purge = shuttle::thread::spawn({
+                    let status_cache = status_cache.clone();
+                    move || {
+                        status_cache.add_root(MAX_CACHE_ENTRIES as Slot + 1);
+                    }
+                });
+
+                let th_insert = shuttle::thread::spawn({
+                    let status_cache = status_cache.clone();
+                    move || {
+                        // insert an entry for a blockhash that gets concurrently purged
+                        status_cache.insert(&blockhash1, key2, MAX_CACHE_ENTRIES as Slot + 2, ());
+                    }
+                });
+                th_purge.join().unwrap();
+                th_insert.join().unwrap();
+
+                let mut ancestors2 = Ancestors::default();
+                ancestors2.insert(MAX_CACHE_ENTRIES as Slot + 2, 0);
+
+                assert!(status_cache
+                    .get_status(key1, &blockhash1, &ancestors2)
+                    .is_none());
+                assert!(status_cache
+                    .get_status(key2, &blockhash1, &ancestors2)
+                    .is_some());
+            },
+            10000,
+        )
+    }
+
+    #[cfg(feature = "shuttle-test")]
+    #[test]
+    fn test_shuttle_clear_slots_blockhash_overlap() {
+        shuttle::check_random(
+            move || {
+                let status_cache = Arc::new(BankStatusCache::default());
+
+                let blockhash1 = Hash::new_from_array([1; 32]);
+
+                let key1 = Hash::new_from_array([3; 32]);
+                let key2 = Hash::new_from_array([4; 32]);
+
+                status_cache.insert(&blockhash1, key1, 1, ());
+                let th_clear = shuttle::thread::spawn({
+                    let status_cache = status_cache.clone();
+                    move || {
+                        status_cache.clear_slot_entries(1);
+                    }
+                });
+
+                let th_insert = shuttle::thread::spawn({
+                    let status_cache = status_cache.clone();
+                    move || {
+                        // insert an entry for slot 1 so clear_slot_entries will remove it
+                        status_cache.insert(&blockhash1, key2, 2, ());
+                    }
+                });
+
+                th_clear.join().unwrap();
+                th_insert.join().unwrap();
+
+                let mut ancestors2 = Ancestors::default();
+                ancestors2.insert(2, 0);
+
+                assert!(status_cache
+                    .get_status(key2, &blockhash1, &ancestors2)
+                    .is_some());
+            },
+            10000,
+        );
     }
 }
