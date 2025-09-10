@@ -290,7 +290,7 @@ mod test {
         solana_sdk_ids::sysvar,
         solana_vote_interface::{
             instruction as vote_instruction,
-            state::{TowerSync, Vote, VoteAuthorize, VoteInit, VoteStateUpdate, VoteStateVersions},
+            state::{TowerSync, Vote, VoteAuthorize, VoteInit, VoteStateUpdate, VoteStateV3},
         },
     };
 
@@ -316,7 +316,7 @@ mod test {
             &vote_init,
             lamports,
             vote_instruction::CreateVoteAccountConfig {
-                space: VoteStateVersions::vote_state_size_of(true) as u64,
+                space: VoteStateV3::size_of() as u64,
                 ..vote_instruction::CreateVoteAccountConfig::default()
             },
         );

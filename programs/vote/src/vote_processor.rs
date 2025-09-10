@@ -357,18 +357,27 @@ mod tests {
         let vote_pubkey = solana_pubkey::new_rand();
         let authorized_voter = solana_pubkey::new_rand();
         let authorized_withdrawer = solana_pubkey::new_rand();
+        let account =
+            create_test_account_with_provided_authorized(&authorized_voter, &authorized_withdrawer);
 
         (
             vote_pubkey,
             authorized_voter,
             authorized_withdrawer,
-            vote_state::create_account_with_authorized(
-                &solana_pubkey::new_rand(),
-                &authorized_voter,
-                &authorized_withdrawer,
-                0,
-                100,
-            ),
+            account,
+        )
+    }
+
+    fn create_test_account_with_provided_authorized(
+        authorized_voter: &Pubkey,
+        authorized_withdrawer: &Pubkey,
+    ) -> AccountSharedData {
+        vote_state::create_account_with_authorized(
+            &solana_pubkey::new_rand(),
+            authorized_voter,
+            authorized_withdrawer,
+            0,
+            100,
         )
     }
 
@@ -463,6 +472,12 @@ mod tests {
                 ),
             ],
         )
+    }
+
+    fn deserialize_vote_state_v3(data: &[u8]) -> VoteStateV3 {
+        let mut vote_state = VoteStateV3::default();
+        VoteStateV3::deserialize_into(data, &mut vote_state).unwrap();
+        vote_state
     }
 
     #[test]
@@ -606,9 +621,7 @@ mod tests {
             Err(InstructionError::MissingRequiredSignature),
         );
         instruction_accounts[1].is_signer = true;
-        let vote_state: VoteStateV3 = StateMut::<VoteStateVersions>::state(&accounts[0])
-            .unwrap()
-            .convert_to_v3();
+        let vote_state = deserialize_vote_state_v3(accounts[0].data());
         assert_ne!(vote_state.node_pubkey, node_pubkey);
 
         // should fail, authorized_withdrawer didn't sign the transaction
@@ -620,9 +633,7 @@ mod tests {
             Err(InstructionError::MissingRequiredSignature),
         );
         instruction_accounts[2].is_signer = true;
-        let vote_state: VoteStateV3 = StateMut::<VoteStateVersions>::state(&accounts[0])
-            .unwrap()
-            .convert_to_v3();
+        let vote_state = deserialize_vote_state_v3(accounts[0].data());
         assert_ne!(vote_state.node_pubkey, node_pubkey);
 
         // should pass
@@ -632,9 +643,7 @@ mod tests {
             instruction_accounts,
             Ok(()),
         );
-        let vote_state: VoteStateV3 = StateMut::<VoteStateVersions>::state(&accounts[0])
-            .unwrap()
-            .convert_to_v3();
+        let vote_state = deserialize_vote_state_v3(accounts[0].data());
         assert_eq!(vote_state.node_pubkey, node_pubkey);
     }
 
@@ -676,9 +685,7 @@ mod tests {
             instruction_accounts.clone(),
             Ok(()),
         );
-        let vote_state: VoteStateV3 = StateMut::<VoteStateVersions>::state(&accounts[0])
-            .unwrap()
-            .convert_to_v3();
+        let vote_state = deserialize_vote_state_v3(accounts[0].data());
         assert_eq!(vote_state.commission, u8::MAX);
 
         // should pass
@@ -688,9 +695,7 @@ mod tests {
             instruction_accounts.clone(),
             Ok(()),
         );
-        let vote_state: VoteStateV3 = StateMut::<VoteStateVersions>::state(&accounts[0])
-            .unwrap()
-            .convert_to_v3();
+        let vote_state = deserialize_vote_state_v3(accounts[0].data());
         assert_eq!(vote_state.commission, 42);
 
         // should fail, authorized_withdrawer didn't sign the transaction
@@ -701,9 +706,7 @@ mod tests {
             instruction_accounts,
             Err(InstructionError::MissingRequiredSignature),
         );
-        let vote_state: VoteStateV3 = StateMut::<VoteStateVersions>::state(&accounts[0])
-            .unwrap()
-            .convert_to_v3();
+        let vote_state = deserialize_vote_state_v3(accounts[0].data());
         assert_eq!(vote_state.commission, 0);
     }
 
@@ -768,9 +771,7 @@ mod tests {
                 },
             );
             if is_tower_sync {
-                let vote_state: VoteStateV3 = StateMut::<VoteStateVersions>::state(&accounts[0])
-                    .unwrap()
-                    .convert_to_v3();
+                let vote_state = deserialize_vote_state_v3(accounts[0].data());
                 assert_eq!(
                     vote_state.votes,
                     vec![vote_state::LandedVote::from(Lockout::new(
@@ -1736,7 +1737,10 @@ mod tests {
                 commission: 0,
             },
             101,
-            CreateVoteAccountConfig::default(),
+            CreateVoteAccountConfig {
+                space: vote_state::VoteState1_14_11::size_of() as u64,
+                ..CreateVoteAccountConfig::default()
+            },
         );
         // grab the `space` value from SystemInstruction::CreateAccount by directly indexing, for
         // expediency
@@ -1963,10 +1967,13 @@ mod tests {
         );
 
         // Test with new_authorized_pubkey signer
-        let vote_account = AccountSharedData::new(100, VoteStateV3::size_of(), &id());
+        let default_authorized_pubkey = Pubkey::default();
+        let vote_account = create_test_account_with_provided_authorized(
+            &default_authorized_pubkey,
+            &default_authorized_pubkey,
+        );
         let clock_address = sysvar::clock::id();
         let clock_account = account::create_account_shared_data_for_test(&Clock::default());
-        let default_authorized_pubkey = Pubkey::default();
         let authorized_account = create_default_account();
         let new_authorized_account = create_default_account();
         let transaction_accounts = vec![

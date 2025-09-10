@@ -194,11 +194,10 @@ impl VoteStateHandle for VoteStateV3 {
     ) -> Result<(), InstructionError> {
         // If the account is not large enough to store the vote state, then attempt a realloc to make it large enough.
         // The realloc can only proceed if the vote account has balance sufficient for rent exemption at the new size.
-        if (vote_account.get_data().len() < VoteStateVersions::vote_state_size_of(true))
-            && (!vote_account
-                .is_rent_exempt_at_data_length(VoteStateVersions::vote_state_size_of(true))
+        if (vote_account.get_data().len() < VoteStateV3::size_of())
+            && (!vote_account.is_rent_exempt_at_data_length(VoteStateV3::size_of())
                 || vote_account
-                    .set_data_length(VoteStateVersions::vote_state_size_of(true))
+                    .set_data_length(VoteStateV3::size_of())
                     .is_err())
         {
             // Account cannot be resized to the size of a vote state as it will not be rent exempt, or failed to be
@@ -400,9 +399,12 @@ impl VoteStateHandler {
         vote_account: &BorrowedInstructionAccount,
         target_version: VoteStateTargetVersion,
     ) -> Result<Self, InstructionError> {
-        let state = vote_account.get_state::<VoteStateVersions>()?;
         let target_state = match target_version {
-            VoteStateTargetVersion::V3 => TargetVoteState::V3(state.convert_to_v3()),
+            VoteStateTargetVersion::V3 => {
+                let mut vote_state = VoteStateV3::default();
+                VoteStateV3::deserialize_into(vote_account.get_data(), &mut vote_state)?;
+                TargetVoteState::V3(vote_state)
+            }
         };
         Ok(Self { target_state })
     }

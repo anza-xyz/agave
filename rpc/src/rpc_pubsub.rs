@@ -650,7 +650,7 @@ mod tests {
         solana_vote_interface::{
             instruction::{self as vote_instruction, CreateVoteAccountConfig},
             program as vote_program,
-            state::{Vote, VoteInit, VoteStateVersions},
+            state::{Vote, VoteInit, VoteStateV3},
         },
         std::{
             sync::{
@@ -915,7 +915,7 @@ mod tests {
             let rent = &bank.rent_collector().rent;
             (
                 rent.minimum_balance(0),
-                rent.minimum_balance(VoteStateVersions::vote_state_size_of(true)),
+                rent.minimum_balance(VoteStateV3::size_of()),
             )
         };
         let balance = validator_balance + vote_balance;
@@ -940,7 +940,7 @@ mod tests {
             },
             vote_balance,
             CreateVoteAccountConfig {
-                space: VoteStateVersions::vote_state_size_of(true) as u64,
+                space: VoteStateV3::size_of() as u64,
                 ..CreateVoteAccountConfig::default()
             },
         ));
