@@ -50,12 +50,14 @@ use {
     solana_sysvar::SysvarSerialize,
     std::{
         alloc::Layout,
-        marker::PhantomData,
         mem::{align_of, size_of},
         slice::from_raw_parts_mut,
         str::{from_utf8, Utf8Error},
     },
     thiserror::Error as ThisError,
+};
+use {
+    solana_program_runtime::memory::TranslateSlice, solana_transaction_context::vm_slice::VmSlice,
 };
 
 mod cpi;
@@ -260,60 +262,6 @@ impl HasherImpl for Keccak256Hasher {
     }
     fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_max_slices
-    }
-}
-
-// The VmSlice class is used for cases when you need a slice that is stored in the BPF
-// interpreter's virtual address space. Because this source code can be compiled with
-// addresses of different bit depths, we cannot assume that the 64-bit BPF interpreter's
-// pointer sizes can be mapped to physical pointer sizes. In particular, if you need a
-// slice-of-slices in the virtual space, the inner slices will be different sizes in a
-// 32-bit app build than in the 64-bit virtual space. Therefore instead of a slice-of-slices,
-// you should implement a slice-of-VmSlices, which can then use VmSlice::translate() to
-// map to the physical address.
-// This class must consist only of 16 bytes: a u64 ptr and a u64 len, to match the 64-bit
-// implementation of a slice in Rust. The PhantomData entry takes up 0 bytes.
-
-#[repr(C)]
-pub struct VmSlice<T> {
-    ptr: u64,
-    len: u64,
-    resource_type: PhantomData<T>,
-}
-
-impl<T> VmSlice<T> {
-    pub fn new(ptr: u64, len: u64) -> Self {
-        VmSlice {
-            ptr,
-            len,
-            resource_type: PhantomData,
-        }
-    }
-
-    pub fn ptr(&self) -> u64 {
-        self.ptr
-    }
-    pub fn len(&self) -> u64 {
-        self.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// Adjust the length of the vector. This is unchecked, and it assumes that the pointer
-    /// points to valid memory of the correct length after vm-translation.
-    pub fn resize(&mut self, len: u64) {
-        self.len = len;
-    }
-
-    /// Returns a slice using a mapped physical address
-    pub fn translate<'a>(
-        &self,
-        memory_mapping: &'a MemoryMapping,
-        check_aligned: bool,
-    ) -> Result<&'a [T], Error> {
-        translate_slice::<T>(memory_mapping, self.ptr, self.len, check_aligned)
     }
 }
 

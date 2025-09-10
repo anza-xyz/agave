@@ -19,6 +19,7 @@ use {
 use {solana_account::WritableAccount, solana_rent::Rent};
 
 pub mod transaction_accounts;
+pub mod vm_slice;
 
 pub const MAX_ACCOUNTS_PER_TRANSACTION: usize = 256;
 // This is one less than MAX_ACCOUNTS_PER_TRANSACTION because
