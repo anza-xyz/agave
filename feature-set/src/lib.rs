@@ -751,7 +751,7 @@ pub mod apply_cost_tracker_during_replay {
 }
 
 pub mod stricter_abi_and_runtime_constraints {
-    solana_pubkey::declare_id!("C37iaPi6VE4CZDueU1vL8y6pGp5i8amAbEsF31xzz723");
+    solana_pubkey::declare_id!("CxeBn9PVeeXbmjbNwLv6U4C6svNxnC4JX6mfkvgeMocM");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
@@ -1698,7 +1698,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             stricter_abi_and_runtime_constraints::id(),
-            "use memory regions to map account data into the rbpf vm instead of copying the data",
+            "SIMD-0219: Stricter ABI and Runtime Constraints",
         ),
         (
             last_restart_slot_sysvar::id(),
