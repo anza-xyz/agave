@@ -195,6 +195,10 @@ impl PohService {
                 // If we are on the last tick, the channel is shutdown so no more
                 // records can be received - we will just process the ones that
                 // have already been received.
+                debug_assert!(
+                    !last_tick_of_slot || record_receiver.is_shutdown(),
+                    "channel should be shutdown if last tick of slot"
+                );
                 if remaining_tick_time.is_zero()
                     && (!last_tick_of_slot || record_receiver.is_empty())
                 {
@@ -298,6 +302,10 @@ impl PohService {
                 // If we are on the last tick, the channel is shutdown so no more
                 // records can be received - we will just process the ones that
                 // have already been received.
+                debug_assert!(
+                    !last_tick_of_slot || record_receiver.is_shutdown(),
+                    "channel should be shutdown if last tick of slot"
+                );
                 if remaining_tick_time.is_zero()
                     && (!last_tick_of_slot || record_receiver.is_empty())
                 {
