@@ -631,6 +631,60 @@ pub fn translate_signers_rust(
     }
 }
 
+pub fn translate_instruction_c(
+    addr: u64,
+    memory_mapping: &MemoryMapping,
+    invoke_context: &mut InvokeContext,
+    check_aligned: bool,
+) -> Result<Instruction, Error> {
+    let ix_c = translate_type::<SolInstruction>(memory_mapping, addr, check_aligned)?;
+
+    let program_id = translate_type::<Pubkey>(memory_mapping, ix_c.program_id_addr, check_aligned)?;
+    let account_metas = translate_slice::<SolAccountMeta>(
+        memory_mapping,
+        ix_c.accounts_addr,
+        ix_c.accounts_len,
+        check_aligned,
+    )?;
+    let data = translate_slice::<u8>(memory_mapping, ix_c.data_addr, ix_c.data_len, check_aligned)?
+        .to_vec();
+
+    check_instruction_size(ix_c.accounts_len as usize, data.len())?;
+
+    consume_compute_meter(
+        invoke_context,
+        (data.len() as u64)
+            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+            .unwrap_or(u64::MAX),
+    )?;
+
+    let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
+    #[allow(clippy::needless_range_loop)]
+    for account_index in 0..ix_c.accounts_len as usize {
+        #[allow(clippy::indexing_slicing)]
+        let account_meta = &account_metas[account_index];
+        if unsafe {
+            std::ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
+                || std::ptr::read_volatile(&account_meta.is_writable as *const _ as *const u8) > 1
+        } {
+            return Err(Box::new(InstructionError::InvalidArgument));
+        }
+        let pubkey =
+            translate_type::<Pubkey>(memory_mapping, account_meta.pubkey_addr, check_aligned)?;
+        accounts.push(AccountMeta {
+            pubkey: *pubkey,
+            is_signer: account_meta.is_signer,
+            is_writable: account_meta.is_writable,
+        });
+    }
+
+    Ok(Instruction {
+        accounts,
+        data,
+        program_id: *program_id,
+    })
+}
+
 /// Call process instruction, common to both Rust and C
 pub fn cpi_common<S: SyscallInvokeSigned>(
     invoke_context: &mut InvokeContext,

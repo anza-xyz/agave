@@ -3,12 +3,12 @@ use {
     solana_instruction::Instruction,
     solana_program_runtime::{
         cpi::{
-            check_instruction_size, cpi_common, translate_account_infos, translate_accounts_rust,
-            translate_and_update_accounts, translate_instruction_rust, translate_signers_rust,
-            CallerAccount, SolAccountInfo, SolAccountMeta, SolInstruction, SolSignerSeedC,
-            SolSignerSeedsC, SyscallInvokeSigned, TranslatedAccount,
+            cpi_common, translate_account_infos, translate_accounts_rust,
+            translate_and_update_accounts, translate_instruction_c, translate_instruction_rust,
+            translate_signers_rust, CallerAccount, SolAccountInfo, SolSignerSeedC, SolSignerSeedsC,
+            SyscallInvokeSigned, TranslatedAccount,
         },
-        memory::{translate_slice, translate_type},
+        memory::translate_slice,
     },
 };
 
@@ -110,55 +110,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         invoke_context: &mut InvokeContext,
         check_aligned: bool,
     ) -> Result<Instruction, Error> {
-        let ix_c = translate_type::<SolInstruction>(memory_mapping, addr, check_aligned)?;
-
-        let program_id =
-            translate_type::<Pubkey>(memory_mapping, ix_c.program_id_addr, check_aligned)?;
-        let account_metas = translate_slice::<SolAccountMeta>(
-            memory_mapping,
-            ix_c.accounts_addr,
-            ix_c.accounts_len,
-            check_aligned,
-        )?;
-        let data =
-            translate_slice::<u8>(memory_mapping, ix_c.data_addr, ix_c.data_len, check_aligned)?
-                .to_vec();
-
-        check_instruction_size(ix_c.accounts_len as usize, data.len())?;
-
-        consume_compute_meter(
-            invoke_context,
-            (data.len() as u64)
-                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                .unwrap_or(u64::MAX),
-        )?;
-
-        let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
-        #[allow(clippy::needless_range_loop)]
-        for account_index in 0..ix_c.accounts_len as usize {
-            #[allow(clippy::indexing_slicing)]
-            let account_meta = &account_metas[account_index];
-            if unsafe {
-                std::ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
-                    || std::ptr::read_volatile(&account_meta.is_writable as *const _ as *const u8)
-                        > 1
-            } {
-                return Err(Box::new(InstructionError::InvalidArgument));
-            }
-            let pubkey =
-                translate_type::<Pubkey>(memory_mapping, account_meta.pubkey_addr, check_aligned)?;
-            accounts.push(AccountMeta {
-                pubkey: *pubkey,
-                is_signer: account_meta.is_signer,
-                is_writable: account_meta.is_writable,
-            });
-        }
-
-        Ok(Instruction {
-            accounts,
-            data,
-            program_id: *program_id,
-        })
+        translate_instruction_c(addr, memory_mapping, invoke_context, check_aligned)
     }
 
     fn translate_accounts<'a>(
