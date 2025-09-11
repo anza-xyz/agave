@@ -691,7 +691,18 @@ impl VoteStateHandler {
     #[cfg(test)]
     pub fn nth_recent_lockout(&self, position: usize) -> Option<&Lockout> {
         match &self.target_state {
-            TargetVoteState::V3(v3) => v3.nth_recent_lockout(position),
+            TargetVoteState::V3(v3) => {
+                if position < v3.votes.len() {
+                    let pos = v3
+                        .votes
+                        .len()
+                        .checked_sub(position)
+                        .and_then(|pos| pos.checked_sub(1))?;
+                    v3.votes.get(pos).map(|vote| &vote.lockout)
+                } else {
+                    None
+                }
+            }
         }
     }
 }
