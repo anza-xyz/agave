@@ -107,7 +107,7 @@ const MAX_REPAIR_RETRY_LOOP_ATTEMPTS: usize = 10;
 const SLOT_TIMEOUT_TICK_FACTOR: f64 = 0.5;
 
 /// Amount of slots we are locked out from voting on a slow block
-const SLOW_SLOT_LOCKOUT: Slot = 3;
+const SLOW_SLOT_LOCKOUT: Slot = 4;
 
 #[cfg(test)]
 static_assertions::const_assert!(REFRESH_VOTE_BLOCKHEIGHT < solana_clock::MAX_PROCESSING_AGE);
