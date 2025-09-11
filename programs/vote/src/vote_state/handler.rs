@@ -225,7 +225,11 @@ impl VoteStateHandle for VoteStateV3 {
     }
 
     fn current_epoch(&self) -> Epoch {
-        self.current_epoch()
+        if self.epoch_credits.is_empty() {
+            0
+        } else {
+            self.epoch_credits.last().unwrap().0
+        }
     }
 
     fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)> {
