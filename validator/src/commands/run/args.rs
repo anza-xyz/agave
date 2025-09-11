@@ -1452,10 +1452,17 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("PATH")
             .takes_value(true)
             .multiple(true)
+            .requires("enable_accounts_disk_index")
             .help(
                 "Persistent accounts-index location. May be specified multiple times. [default: \
                  <LEDGER>/accounts_index]",
             ),
+    )
+    .arg(
+        Arg::with_name("enable_accounts_disk_index")
+            .long("enable-accounts-disk-index")
+            .help("Enables the disk-based accounts index")
+            .hidden(hidden_unless_forced()),
     )
     .arg(
         Arg::with_name("accounts_shrink_optimize_total_space")

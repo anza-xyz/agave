@@ -42,6 +42,7 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .value_name("PATH")
             .takes_value(true)
             .multiple(true)
+            .requires("enable_accounts_disk_index")
             .help(
                 "Persistent accounts-index location. May be specified multiple times. [default: \
                  <LEDGER>/accounts_index]",
@@ -52,12 +53,10 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .validator(is_pow2)
             .takes_value(true)
             .help("Number of bins to divide the accounts index into"),
-        Arg::with_name("disable_accounts_disk_index")
-            .long("disable-accounts-disk-index")
-            .help(
-                "Disable the disk-based accounts index. It is enabled by default. The entire \
-                 accounts index will be kept in memory.",
-            ),
+        Arg::with_name("enable_accounts_disk_index")
+            .long("enable-accounts-disk-index")
+            .help("Enables the disk-based accounts index")
+            .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_skip_shrink")
             .long("accounts-db-skip-shrink")
             .help(
@@ -241,10 +240,10 @@ pub fn get_accounts_db_config(
     let ledger_tool_ledger_path = ledger_path.join(LEDGER_TOOL_DIRECTORY);
 
     let accounts_index_bins = value_t!(arg_matches, "accounts_index_bins", usize).ok();
-    let accounts_index_index_limit_mb = if arg_matches.is_present("disable_accounts_disk_index") {
-        IndexLimitMb::InMemOnly
-    } else {
+    let accounts_index_index_limit_mb = if arg_matches.is_present("enable_accounts_disk_index") {
         IndexLimitMb::Minimal
+    } else {
+        IndexLimitMb::InMemOnly
     };
     let accounts_index_drives = values_t!(arg_matches, "accounts_index_path", String)
         .ok()
