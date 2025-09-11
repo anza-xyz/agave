@@ -99,6 +99,10 @@ const CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD: usize = 100_000;
 /// peer, and is canceled when we get a Handshake packet from them.
 const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// How many connections to admit per unstaked IP address
+/// Allowing at most 1 disables NAT'ed clients, anything larger allows NAT clients
+const MAX_CONNECTIONS_PER_UNSTAKED_IP: usize = 1;
+
 // A struct to accumulate the bytes making up
 // a packet, along with their offsets, and the
 // packet metadata. We use this accumulator to avoid
@@ -736,7 +740,7 @@ async fn setup_connection(
                 let params = get_connection_stake(&new_connection, &staked_nodes).map_or(
                     NewConnectionHandlerParams::new_unstaked(
                         packet_sender.clone(),
-                        max_connections_per_peer,
+                        MAX_CONNECTIONS_PER_UNSTAKED_IP,
                         stats.clone(),
                     ),
                     |(pubkey, stake, total_stake, max_stake, min_stake)| {
