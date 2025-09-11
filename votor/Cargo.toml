@@ -62,6 +62,7 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true }
+solana-votor-messages = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

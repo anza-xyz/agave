@@ -579,6 +579,7 @@ dependencies = [
  "solana-signer",
  "solana-time-utils",
  "solana-transaction",
+ "solana-votor-messages",
  "test-case",
  "thiserror 2.0.16",
 ]
