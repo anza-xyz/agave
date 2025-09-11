@@ -502,7 +502,6 @@ pub(crate) fn mock_encoded_account(pubkey: &Pubkey) -> UiAccount {
         data: UiAccountData::Binary("".to_string(), UiAccountEncoding::Base64),
         owner: pubkey.to_string(),
         executable: false,
-        rent_epoch: 0,
         space: Some(0),
     }
 }

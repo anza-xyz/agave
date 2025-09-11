@@ -2159,7 +2159,6 @@ mod tests {
                 "lamports": 50,
                 "owner": "11111111111111111111111111111111",
                 "executable": false,
-                "rentEpoch": 1,
             }),
         });
         let mut mocks = HashMap::new();
@@ -2199,7 +2198,6 @@ mod tests {
                 "lamports": 42,
                 "owner": "Vote111111111111111111111111111111111111111",
                 "executable": false,
-                "rentEpoch": 1,
             }),
         });
         let mut mocks = HashMap::new();
@@ -2262,7 +2260,6 @@ mod tests {
                 "lamports": 50,
                 "owner": "11111111111111111111111111111111",
                 "executable": false,
-                "rentEpoch": 1,
             }),
         });
         let mut mocks = HashMap::new();
