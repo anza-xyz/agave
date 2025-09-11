@@ -89,7 +89,7 @@ pub trait VoteStateHandle {
 
 impl VoteStateHandle for VoteStateV3 {
     fn is_uninitialized(&self) -> bool {
-        self.is_uninitialized()
+        self.authorized_voters.is_empty()
     }
 
     fn authorized_withdrawer(&self) -> &Pubkey {
