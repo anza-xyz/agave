@@ -1463,16 +1463,12 @@ fn execute<'a, 'b: 'a>(
     let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
         .stricter_abi_and_runtime_constraints;
-    let mask_out_rent_epoch_in_vm_serialization = invoke_context
-        .get_feature_set()
-        .mask_out_rent_epoch_in_vm_serialization;
 
     let mut serialize_time = Measure::start("serialize");
     let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(
         &instruction_context,
         stricter_abi_and_runtime_constraints,
         invoke_context.account_data_direct_mapping,
-        mask_out_rent_epoch_in_vm_serialization,
     )?;
     serialize_time.stop();
 
