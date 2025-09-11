@@ -29,7 +29,7 @@ use {
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         num::Saturating,
-        sync::{atomic::Ordering, Arc},
+        sync::Arc,
         time::Duration,
     },
     tokio::{
@@ -196,10 +196,10 @@ fn spawn_tx_sender(
 async fn test_basic_transactions_sending() {
     let SpawnTestServerResult {
         join_handle: server_handle,
-        exit,
         receiver,
         server_address,
         stats: _stats,
+        cancel,
     } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
     // Setup sending txs
@@ -255,7 +255,7 @@ async fn test_basic_transactions_sending() {
     assert_eq!(stats.successfully_sent, expected_num_txs as u64,);
 
     // Stop server
-    exit.store(true, Ordering::Relaxed);
+    cancel.cancel();
     server_handle.await.unwrap();
 }
 
@@ -286,10 +286,10 @@ async fn count_received_packets_for(
 async fn test_connection_denied_until_allowed() {
     let SpawnTestServerResult {
         join_handle: server_handle,
-        exit,
         receiver,
         server_address,
         stats: _stats,
+        cancel,
     } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
     // To prevent server from accepting a new connection, we use the following observation.
@@ -336,7 +336,7 @@ async fn test_connection_denied_until_allowed() {
     drop(throttling_connection);
 
     // Exit server
-    exit.store(true, Ordering::Relaxed);
+    cancel.cancel();
     server_handle.await.unwrap();
 }
 
@@ -347,10 +347,10 @@ async fn test_connection_denied_until_allowed() {
 async fn test_connection_pruned_and_reopened() {
     let SpawnTestServerResult {
         join_handle: server_handle,
-        exit,
         receiver,
         server_address,
         stats: _stats,
+        cancel,
     } = setup_quic_server(
         None,
         QuicServerParams {
@@ -389,7 +389,7 @@ async fn test_connection_pruned_and_reopened() {
     );
 
     // Exit server
-    exit.store(true, Ordering::Relaxed);
+    cancel.cancel();
     server_handle.await.unwrap();
 }
 
@@ -403,10 +403,10 @@ async fn test_staked_connection() {
 
     let SpawnTestServerResult {
         join_handle: server_handle,
-        exit,
         receiver,
         server_address,
         stats: _stats,
+        cancel,
     } = setup_quic_server(
         Some(staked_nodes),
         QuicServerParams {
@@ -447,7 +447,7 @@ async fn test_staked_connection() {
     );
 
     // Exit server
-    exit.store(true, Ordering::Relaxed);
+    cancel.cancel();
     server_handle.await.unwrap();
 }
 
@@ -458,10 +458,10 @@ async fn test_staked_connection() {
 async fn test_connection_throttling() {
     let SpawnTestServerResult {
         join_handle: server_handle,
-        exit,
         receiver,
         server_address,
         stats: _stats,
+        cancel,
     } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
     // Setup sending txs
@@ -494,7 +494,7 @@ async fn test_connection_throttling() {
     );
 
     // Exit server
-    exit.store(true, Ordering::Relaxed);
+    cancel.cancel();
     server_handle.await.unwrap();
 }
 
@@ -549,10 +549,10 @@ async fn test_no_host() {
 async fn test_rate_limiting() {
     let SpawnTestServerResult {
         join_handle: server_handle,
-        exit,
         receiver,
         server_address,
         stats: _stats,
+        cancel,
     } = setup_quic_server(
         None,
         QuicServerParams {
@@ -600,7 +600,7 @@ async fn test_rate_limiting() {
     );
 
     // Stop the server.
-    exit.store(true, Ordering::Relaxed);
+    cancel.cancel();
     server_handle.await.unwrap();
 }
 
@@ -613,10 +613,10 @@ async fn test_rate_limiting() {
 async fn test_rate_limiting_establish_connection() {
     let SpawnTestServerResult {
         join_handle: server_handle,
-        exit,
         receiver,
         server_address,
         stats: _stats,
+        cancel,
     } = setup_quic_server(
         None,
         QuicServerParams {
@@ -675,7 +675,7 @@ async fn test_rate_limiting_establish_connection() {
     assert_eq!(stats, SendTransactionStatsNonAtomic::default());
 
     // Stop the server.
-    exit.store(true, Ordering::Relaxed);
+    cancel.cancel();
     server_handle.await.unwrap();
 }
 
@@ -694,10 +694,10 @@ async fn test_update_identity() {
 
     let SpawnTestServerResult {
         join_handle: server_handle,
-        exit,
         receiver,
         server_address,
         stats: _stats,
+        cancel,
     } = setup_quic_server(
         Some(staked_nodes),
         QuicServerParams {
@@ -746,20 +746,20 @@ async fn test_update_identity() {
     assert!(stats.successfully_sent > 0);
 
     // Exit server
-    exit.store(true, Ordering::Relaxed);
+    cancel.cancel();
     server_handle.await.unwrap();
 }
 
-// Test that connection close events are detected immediately via connection.closed()
-// monitoring, not only when send operations fail.
+// Test that connection close events are detected immediately via
+// connection.closed() monitoring, not only when send operations fail.
 #[tokio::test]
 async fn test_proactive_connection_close_detection() {
     let SpawnTestServerResult {
         join_handle: server_handle,
-        exit,
         receiver,
         server_address,
         stats: _stats,
+        cancel,
     } = setup_quic_server(
         None,
         QuicServerParams {
@@ -773,22 +773,14 @@ async fn test_proactive_connection_close_detection() {
     let tx_size = 1;
     let (tx_sender, tx_receiver) = channel(10);
 
-    let sender_task = tokio::spawn(async move {
-        // Send first transaction to establish connection
-        tx_sender
-            .send(TransactionBatch::new(vec![vec![1u8; tx_size]]))
-            .await
-            .expect("Send first batch");
-
-        // Idle period where connection might be closed
-        sleep(Duration::from_millis(500)).await;
-
-        // Attempt another send
-        drop(tx_sender.send(TransactionBatch::new(vec![vec![2u8; tx_size]])));
-    });
-
     let (scheduler_handle, _update_identity_sender, scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
+
+    // Send first transaction to establish connection
+    tx_sender
+        .send(TransactionBatch::new(vec![vec![1u8; tx_size]]))
+        .await
+        .expect("Send first batch");
 
     // Verify first packet received
     let mut first_packet_received = false;
@@ -804,15 +796,21 @@ async fn test_proactive_connection_close_detection() {
     }
     assert!(first_packet_received, "First packet should be received");
 
-    // Force connection close by exceeding max_connections_per_peer
-    let _pruning_connection = make_client_endpoint(&server_address, None).await;
+    // Exit server
+    cancel.cancel();
+    server_handle.await.unwrap();
 
-    // Allow time for proactive detection
-    sleep(Duration::from_millis(200)).await;
+    tx_sender
+        .send(TransactionBatch::new(vec![vec![2u8; tx_size]]))
+        .await
+        .expect("Send second batch");
+    tx_sender
+        .send(TransactionBatch::new(vec![vec![3u8; tx_size]]))
+        .await
+        .expect("Send third batch");
 
     // Clean up
     scheduler_cancel.cancel();
-    let _ = sender_task.await;
     let stats = join_scheduler(scheduler_handle).await;
 
     // Verify proactive close detection
@@ -820,8 +818,4 @@ async fn test_proactive_connection_close_detection() {
         stats.connection_error_application_closed > 0 || stats.write_error_connection_lost > 0,
         "Should detect connection close proactively. Stats: {stats:?}"
     );
-
-    // Exit server
-    exit.store(true, Ordering::Relaxed);
-    server_handle.await.unwrap();
 }

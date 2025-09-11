@@ -33,6 +33,7 @@ use {
         },
         time::Duration,
     },
+    tokio_util::sync::CancellationToken,
     url::Url,
 };
 
@@ -42,7 +43,7 @@ async fn test_vortexor() {
 
     let bind_address = solana_net_utils::parse_host("127.0.0.1").expect("invalid bind_address");
     let keypair = Keypair::new();
-    let exit = Arc::new(AtomicBool::new(false));
+    let cancel = CancellationToken::new();
 
     let (tpu_sender, tpu_receiver) = unbounded();
     let (tpu_fwd_sender, tpu_fwd_receiver) = unbounded();
@@ -77,13 +78,13 @@ async fn test_vortexor() {
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
         DEFAULT_TPU_COALESCE,
         &keypair,
-        exit.clone(),
+        cancel.clone(),
     );
 
     check_multiple_streams(tpu_receiver, tpu_address, Some(&keypair)).await;
     check_multiple_streams(tpu_fwd_receiver, tpu_fwd_address, Some(&keypair)).await;
 
-    exit.store(true, Ordering::Relaxed);
+    cancel.cancel();
     vortexor.join().unwrap();
 }
 

@@ -18,7 +18,7 @@ use {
     solana_streamer::{
         packet::PacketBatchRecycler,
         quic::{
-            spawn_server, QuicServerParams, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
+            spawn_server_with_cancel, QuicServerParams, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
             DEFAULT_MAX_STAKED_CONNECTIONS,
         },
         streamer::{receiver, PacketBatchReceiver, StakedNodes, StreamerReceiveStats},
@@ -36,6 +36,7 @@ use {
         thread::{self, spawn, JoinHandle, Result},
         time::{Duration, Instant, SystemTime},
     },
+    tokio_util::sync::CancellationToken,
 };
 
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
@@ -244,8 +245,9 @@ fn main() -> Result<()> {
         }
     });
 
-    let (exit, read_threads, sink_threads, destination) = if !client_only {
+    let (exit, cancel, read_threads, sink_threads, destination) = if !client_only {
         let exit = Arc::new(AtomicBool::new(false));
+        let cancel = CancellationToken::new();
 
         let mut read_channels = Vec::new();
         let mut read_threads = Vec::new();
@@ -273,15 +275,15 @@ fn main() -> Result<()> {
             let (s_reader, r_reader) = unbounded();
             read_channels.push(r_reader);
 
-            let server = spawn_server(
+            let server = spawn_server_with_cancel(
                 "solRcvrBenVote",
                 "bench_vote_metrics",
                 read_sockets,
                 &quic_params.identity_keypair,
                 s_reader,
-                exit.clone(),
                 quic_params.staked_nodes.clone(),
                 quic_server_params,
+                cancel.clone(),
             )
             .unwrap();
             read_threads.push(server.thread);
@@ -316,12 +318,13 @@ fn main() -> Result<()> {
         println!("Running server at {destination:?}");
         (
             Some(exit),
+            Some(cancel),
             Some(read_threads),
             Some(sink_threads),
             destination,
         )
     } else {
-        (None, None, None, destination.unwrap())
+        (None, None, None, None, destination.unwrap())
     };
 
     let start = SystemTime::now();
@@ -344,6 +347,7 @@ fn main() -> Result<()> {
     if !server_only {
         if let Some(exit) = exit {
             exit.store(true, Ordering::Relaxed);
+            cancel.unwrap().cancel();
         }
     } else {
         println!("To stop the server, please press ^C");

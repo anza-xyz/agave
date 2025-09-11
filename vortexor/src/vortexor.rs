@@ -12,15 +12,16 @@ use {
     solana_quic_definitions::NotifyKeyUpdate,
     solana_streamer::{
         nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-        quic::{spawn_server, EndpointKeyUpdater, QuicServerParams},
+        quic::{spawn_server_with_cancel, EndpointKeyUpdater, QuicServerParams},
         streamer::StakedNodes,
     },
     std::{
         net::{SocketAddr, UdpSocket},
-        sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
+        sync::{Arc, Mutex, RwLock},
         thread::{self, JoinHandle},
         time::Duration,
     },
+    tokio_util::sync::CancellationToken,
 };
 
 pub struct TpuSockets {
@@ -115,7 +116,7 @@ impl Vortexor {
         max_connections_per_ipaddr_per_min: u64,
         tpu_coalesce: Duration,
         identity_keypair: &Keypair,
-        exit: Arc<AtomicBool>,
+        cancel: CancellationToken,
     ) -> Self {
         let mut quic_server_params = QuicServerParams {
             max_connections_per_peer,
@@ -133,15 +134,15 @@ impl Vortexor {
             tpu_quic_fwd,
         } = tpu_sockets;
 
-        let tpu_result = spawn_server(
+        let tpu_result = spawn_server_with_cancel(
             "solVtxTpu",
             "quic_vortexor_tpu",
             tpu_quic,
             identity_keypair,
             tpu_sender.clone(),
-            exit.clone(),
             staked_nodes.clone(),
             quic_server_params.clone(),
+            cancel.clone(),
         )
         .unwrap();
 
@@ -149,15 +150,15 @@ impl Vortexor {
         // for staked connections:
         quic_server_params.max_staked_connections = max_fwd_staked_connections;
         quic_server_params.max_unstaked_connections = max_fwd_unstaked_connections;
-        let tpu_fwd_result = spawn_server(
+        let tpu_fwd_result = spawn_server_with_cancel(
             "solVtxTpuFwd",
             "quic_vortexor_tpu_forwards",
             tpu_quic_fwd,
             identity_keypair,
             tpu_fwd_sender,
-            exit.clone(),
             staked_nodes.clone(),
             quic_server_params,
+            cancel.clone(),
         )
         .unwrap();
 
