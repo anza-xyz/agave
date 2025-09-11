@@ -134,21 +134,16 @@ impl ConnectionWorker {
     pub async fn run(&mut self) {
         let cancel = self.cancel.clone();
 
-        let mut i = 0;
         let main_loop = async move {
             loop {
-                debug!("LOOP {i}");
-                i += 1;
                 match &self.connection {
                     ConnectionState::Closing => {
                         break;
                     }
                     ConnectionState::NotSetup => {
-                        debug!("NotSetup");
                         self.create_connection(0).await;
                     }
                     ConnectionState::Active(connection) => {
-                        debug!("Active");
                         tokio::select! {
                             // Process incoming transactions
                             transactions = self.transactions_receiver.recv() => {
