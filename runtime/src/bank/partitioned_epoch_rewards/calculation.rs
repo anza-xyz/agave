@@ -579,6 +579,7 @@ mod tests {
         agave_feature_set::FeatureSet,
         rayon::ThreadPoolBuilder,
         solana_account::{accounts_equal, state_traits::StateMut, ReadableAccount},
+        solana_genesis_config::GenesisConfig,
         solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
         solana_reward_info::RewardType,
         solana_stake_interface::state::{Delegation, StakeStateV2},
@@ -1159,7 +1160,9 @@ mod tests {
         // Run post snapshot restore initialization which should first apply
         // active features and then recalculate rewards
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        bank.initialize_after_snapshot_restore(|| &thread_pool);
+        bank.initialize_after_snapshot_restore(&GenesisConfig::default(), None, false, || {
+            &thread_pool
+        });
 
         let EpochRewardStatus::Active(EpochRewardPhase::Distribution(distribution_status)) =
             bank.epoch_reward_status.clone()
