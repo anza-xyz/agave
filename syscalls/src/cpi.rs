@@ -3,7 +3,7 @@ use {
     solana_instruction::Instruction,
     solana_program_runtime::{
         cpi::{
-            check_instruction_size, cpi_common, translate_account_infos,
+            check_instruction_size, cpi_common, translate_account_infos, translate_accounts_rust,
             translate_and_update_accounts, translate_instruction_rust, CallerAccount,
             SolAccountInfo, SolAccountMeta, SolInstruction, SolSignerSeedC, SolSignerSeedsC,
             SyscallInvokeSigned, TranslatedAccount,
@@ -53,23 +53,12 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         invoke_context: &mut InvokeContext,
         check_aligned: bool,
     ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
-        let (account_infos, account_info_keys) = translate_account_infos(
+        translate_accounts_rust(
             account_infos_addr,
             account_infos_len,
-            |account_info: &AccountInfo| account_info.key as *const _ as u64,
             memory_mapping,
             invoke_context,
             check_aligned,
-        )?;
-
-        translate_and_update_accounts(
-            &account_info_keys,
-            account_infos,
-            account_infos_addr,
-            invoke_context,
-            memory_mapping,
-            check_aligned,
-            CallerAccount::from_account_info,
         )
     }
 
@@ -284,6 +273,7 @@ mod tests {
     use {
         super::*,
         solana_account::{Account, AccountSharedData, ReadableAccount},
+        solana_account_info::AccountInfo,
         solana_instruction::Instruction,
         solana_program_runtime::{
             invoke_context::{BpfAllocator, SerializedAccountMetadata, SyscallContext},

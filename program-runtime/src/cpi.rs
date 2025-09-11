@@ -6,6 +6,7 @@ use {
         memory::{translate_slice, translate_type, translate_type_mut_for_cpi},
         serialization::{create_memory_region_of_account, modify_memory_region_of_account},
     },
+    solana_account_info::AccountInfo,
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
@@ -555,6 +556,33 @@ pub fn translate_instruction_rust(
         data,
         program_id: ix.program_id,
     })
+}
+
+pub fn translate_accounts_rust<'a>(
+    account_infos_addr: u64,
+    account_infos_len: u64,
+    memory_mapping: &MemoryMapping<'_>,
+    invoke_context: &mut InvokeContext,
+    check_aligned: bool,
+) -> Result<Vec<TranslatedAccount<'a>>, Error> {
+    let (account_infos, account_info_keys) = translate_account_infos(
+        account_infos_addr,
+        account_infos_len,
+        |account_info: &AccountInfo| account_info.key as *const _ as u64,
+        memory_mapping,
+        invoke_context,
+        check_aligned,
+    )?;
+
+    translate_and_update_accounts(
+        &account_info_keys,
+        account_infos,
+        account_infos_addr,
+        invoke_context,
+        memory_mapping,
+        check_aligned,
+        CallerAccount::from_account_info,
+    )
 }
 
 /// Call process instruction, common to both Rust and C
