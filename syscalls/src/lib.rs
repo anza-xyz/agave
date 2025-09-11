@@ -63,9 +63,6 @@ mod logging;
 mod mem_ops;
 mod sysvar;
 
-/// Maximum signers
-const MAX_SIGNERS: usize = 16;
-
 /// Error definitions
 #[derive(Debug, ThisError, PartialEq, Eq)]
 pub enum SyscallError {

@@ -1,13 +1,10 @@
 use {
     super::*,
     solana_instruction::Instruction,
-    solana_program_runtime::{
-        cpi::{
-            cpi_common, translate_accounts_c, translate_accounts_rust, translate_instruction_c,
-            translate_instruction_rust, translate_signers_rust, SolSignerSeedC, SolSignerSeedsC,
-            SyscallInvokeSigned, TranslatedAccount,
-        },
-        memory::translate_slice,
+    solana_program_runtime::cpi::{
+        cpi_common, translate_accounts_c, translate_accounts_rust, translate_instruction_c,
+        translate_instruction_rust, translate_signers_c, translate_signers_rust,
+        SyscallInvokeSigned, TranslatedAccount,
     },
 };
 
@@ -135,46 +132,13 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         memory_mapping: &MemoryMapping,
         check_aligned: bool,
     ) -> Result<Vec<Pubkey>, Error> {
-        if signers_seeds_len > 0 {
-            let signers_seeds = translate_slice::<SolSignerSeedsC>(
-                memory_mapping,
-                signers_seeds_addr,
-                signers_seeds_len,
-                check_aligned,
-            )?;
-            if signers_seeds.len() > MAX_SIGNERS {
-                return Err(Box::new(SyscallError::TooManySigners));
-            }
-            Ok(signers_seeds
-                .iter()
-                .map(|signer_seeds| {
-                    let seeds = translate_slice::<SolSignerSeedC>(
-                        memory_mapping,
-                        signer_seeds.addr,
-                        signer_seeds.len,
-                        check_aligned,
-                    )?;
-                    if seeds.len() > MAX_SEEDS {
-                        return Err(Box::new(InstructionError::MaxSeedLengthExceeded) as Error);
-                    }
-                    let seeds_bytes = seeds
-                        .iter()
-                        .map(|seed| {
-                            translate_slice::<u8>(
-                                memory_mapping,
-                                seed.addr,
-                                seed.len,
-                                check_aligned,
-                            )
-                        })
-                        .collect::<Result<Vec<_>, Error>>()?;
-                    Pubkey::create_program_address(&seeds_bytes, program_id)
-                        .map_err(|err| Box::new(SyscallError::BadSeeds(err)) as Error)
-                })
-                .collect::<Result<Vec<_>, Error>>()?)
-        } else {
-            Ok(vec![])
-        }
+        translate_signers_c(
+            program_id,
+            signers_seeds_addr,
+            signers_seeds_len,
+            memory_mapping,
+            check_aligned,
+        )
     }
 }
 
