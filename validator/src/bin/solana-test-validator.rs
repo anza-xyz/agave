@@ -1,7 +1,7 @@
 use {
     agave_validator::{
         admin_rpc_service, cli, dashboard::Dashboard, ledger_lockfile, lock_ledger,
-        println_name_value,
+        println_name_value, commands::FromClapArgMatches,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t_or_exit},
     crossbeam_channel::unbounded,
@@ -36,7 +36,6 @@ use {
         collections::{HashMap, HashSet},
         fs, io,
         net::{IpAddr, Ipv4Addr, SocketAddr},
-        num::NonZeroUsize,
         path::{Path, PathBuf},
         process::exit,
         sync::{Arc, RwLock},
@@ -155,19 +154,11 @@ fn main() {
         });
 
     let rpc_port = value_t_or_exit!(matches, "rpc_port", u16);
-    let enable_vote_subscription = matches.is_present("rpc_pubsub_enable_vote_subscription");
-    let enable_block_subscription = matches.is_present("rpc_pubsub_enable_block_subscription");
-    let max_active_subscriptions = value_of(&matches, "rpc_pubsub_max_active_subscriptions")
-        .unwrap_or(PubSubConfig::default().max_active_subscriptions);
-    let queue_capacity_items = value_of(&matches, "rpc_pubsub_queue_capacity_items")
-        .unwrap_or(PubSubConfig::default().queue_capacity_items);
-    let queue_capacity_bytes = value_of(&matches, "rpc_pubsub_queue_capacity_bytes")
-        .unwrap_or(PubSubConfig::default().queue_capacity_bytes);
-    let worker_threads = value_of(&matches, "rpc_pubsub_worker_threads")
-        .unwrap_or(PubSubConfig::default().worker_threads);
-    let notification_threads = value_of(&matches, "rpc_pubsub_notification_threads")
-        .map(NonZeroUsize::new)
-        .unwrap_or(PubSubConfig::default().notification_threads);
+    let pub_sub_config = PubSubConfig {
+        enable_vote_subscription: matches.is_present("rpc_pubsub_enable_vote_subscription"),
+        enable_block_subscription: matches.is_present("rpc_pubsub_enable_block_subscription"),
+        ..PubSubConfig::from_clap_arg_match(&matches).unwrap_or_default()
+    };
     let faucet_port = value_t_or_exit!(matches, "faucet_port", u16);
     let ticks_per_slot = value_t!(matches, "ticks_per_slot", u64).ok();
     let slots_per_epoch = value_t!(matches, "slots_per_epoch", Slot).ok();
@@ -480,15 +471,7 @@ fn main() {
             faucet_pubkey,
             AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
         )
-        .pubsub_config(PubSubConfig {
-            enable_vote_subscription,
-            enable_block_subscription,
-            max_active_subscriptions,
-            queue_capacity_items,
-            queue_capacity_bytes,
-            worker_threads,
-            notification_threads,
-        })
+        .pubsub_config(pub_sub_config)
         .rpc_port(rpc_port)
         .add_upgradeable_programs_with_path(&upgradeable_programs_to_load)
         .add_accounts_from_json_files(&accounts_to_load)
