@@ -10,8 +10,6 @@
 //! getter and setter API around vote state, for all operations required by the
 //! vote program.
 
-#[cfg(test)]
-use solana_vote_interface::state::Lockout;
 use {
     solana_clock::{Clock, Epoch, Slot},
     solana_instruction::error::InstructionError,
@@ -19,7 +17,7 @@ use {
     solana_transaction_context::BorrowedInstructionAccount,
     solana_vote_interface::{
         error::VoteError,
-        state::{LandedVote, VoteInit, VoteState1_14_11, VoteStateV3, VoteStateVersions},
+        state::{LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3, VoteStateVersions},
     },
     std::collections::VecDeque,
 };
@@ -63,6 +61,8 @@ pub trait VoteStateHandle {
 
     /// Returns if the vote state contains a slot `candidate_slot`
     fn contains_slot(&self, candidate_slot: Slot) -> bool;
+
+    fn last_lockout(&self) -> Option<&Lockout>;
 
     fn last_voted_slot(&self) -> Option<Slot>;
 
@@ -208,8 +208,12 @@ impl VoteStateHandle for VoteStateV3 {
             .is_ok()
     }
 
+    fn last_lockout(&self) -> Option<&Lockout> {
+        self.votes.back().map(|vote| &vote.lockout)
+    }
+
     fn last_voted_slot(&self) -> Option<Slot> {
-        self.last_voted_slot()
+        self.last_lockout().map(|v| v.slot())
     }
 
     fn root_slot(&self) -> Option<Slot> {
@@ -382,6 +386,12 @@ impl VoteStateHandle for VoteStateHandler {
         }
     }
 
+    fn last_lockout(&self) -> Option<&Lockout> {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.last_lockout(),
+        }
+    }
+
     fn last_voted_slot(&self) -> Option<Slot> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.last_voted_slot(),
@@ -513,13 +523,6 @@ impl VoteStateHandler {
     #[cfg(test)]
     pub fn default_v3() -> Self {
         Self::new_v3(VoteStateV3::default())
-    }
-
-    #[cfg(test)]
-    pub fn last_lockout(&self) -> Option<&Lockout> {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.last_lockout(),
-        }
     }
 
     #[cfg(test)]
