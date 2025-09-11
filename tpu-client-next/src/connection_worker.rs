@@ -163,7 +163,7 @@ impl ConnectionWorker {
 
                             // Monitor connection health proactively
                             close_reason = connection.closed() => {
-                                self.handle_connection_closed(close_reason).await;
+                                self.handle_connection_closed(close_reason);
                                 continue;
                             }
                         }
@@ -189,6 +189,9 @@ impl ConnectionWorker {
             () = main_loop => (),
             () = cancel.cancelled() => (),
         }
+        // Cancel it additionally here so that in WorkerInfo we can check if
+        // this worker is active.
+        cancel.cancel();
     }
 
     /// Handles connection closure events detected by the connection monitor.
@@ -196,7 +199,7 @@ impl ConnectionWorker {
     /// This method logs the close reason with appropriate severity based on
     /// the type of closure, records statistics, and determines whether to
     /// attempt reconnection based on the error type.
-    async fn handle_connection_closed(&mut self, close_reason: ConnectionError) {
+    fn handle_connection_closed(&mut self, close_reason: ConnectionError) {
         match &close_reason {
             ConnectionError::ConnectionClosed(close) => {
                 debug!(
@@ -355,7 +358,10 @@ impl ConnectionWorker {
                         self.connection = ConnectionState::Closing;
                     }
                     ConnectError::InvalidRemoteAddress(_) => {
-                        warn!("Invalid remote address for peer: {}", self.peer);
+                        warn!(
+                            "Invalid remote address for peer: {}, attempt: {}",
+                            self.peer, retries_attempt
+                        );
                         self.connection = ConnectionState::Closing;
                     }
                     e => {
