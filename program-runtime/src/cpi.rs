@@ -3,14 +3,14 @@
 use {
     crate::{
         invoke_context::{InvokeContext, SerializedAccountMetadata},
-        memory::{translate_slice, translate_type, translate_type_mut_for_cpi},
+        memory::{translate_slice, translate_type, translate_type_mut_for_cpi, translate_vm_slice},
         serialization::{create_memory_region_of_account, modify_memory_region_of_account},
     },
     solana_account_info::AccountInfo,
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
-    solana_pubkey::{Pubkey, PubkeyError},
+    solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS},
     solana_sbpf::{ebpf, memory_region::MemoryMapping},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, native_loader},
     solana_stable_layout::stable_instruction::StableInstruction,
@@ -18,8 +18,8 @@ use {
     solana_svm_measure::measure::Measure,
     solana_svm_timings::ExecuteTimings,
     solana_transaction_context::{
-        BorrowedInstructionAccount, IndexOfAccount, MAX_ACCOUNTS_PER_INSTRUCTION,
-        MAX_INSTRUCTION_DATA_LEN,
+        vm_slice::VmSlice, BorrowedInstructionAccount, IndexOfAccount,
+        MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
     },
     std::mem,
     thiserror::Error,
@@ -58,6 +58,8 @@ pub enum CpiError {
 type Error = Box<dyn std::error::Error>;
 
 const SUCCESS: u64 = 0;
+/// Maximum signers
+const MAX_SIGNERS: usize = 16;
 
 /// Rust representation of C's SolInstruction
 #[derive(Debug)]
@@ -583,6 +585,50 @@ pub fn translate_accounts_rust<'a>(
         check_aligned,
         CallerAccount::from_account_info,
     )
+}
+
+pub fn translate_signers_rust(
+    program_id: &Pubkey,
+    signers_seeds_addr: u64,
+    signers_seeds_len: u64,
+    memory_mapping: &MemoryMapping,
+    check_aligned: bool,
+) -> Result<Vec<Pubkey>, Error> {
+    let mut signers = Vec::new();
+    if signers_seeds_len > 0 {
+        let signers_seeds = translate_slice::<VmSlice<VmSlice<u8>>>(
+            memory_mapping,
+            signers_seeds_addr,
+            signers_seeds_len,
+            check_aligned,
+        )?;
+        if signers_seeds.len() > MAX_SIGNERS {
+            return Err(Box::new(CpiError::TooManySigners));
+        }
+        for signer_seeds in signers_seeds.iter() {
+            let untranslated_seeds = translate_slice::<VmSlice<u8>>(
+                memory_mapping,
+                signer_seeds.ptr(),
+                signer_seeds.len(),
+                check_aligned,
+            )?;
+            if untranslated_seeds.len() > MAX_SEEDS {
+                return Err(Box::new(InstructionError::MaxSeedLengthExceeded));
+            }
+            let seeds = untranslated_seeds
+                .iter()
+                .map(|untranslated_seed| {
+                    translate_vm_slice(untranslated_seed, memory_mapping, check_aligned)
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+            let signer =
+                Pubkey::create_program_address(&seeds, program_id).map_err(CpiError::BadSeeds)?;
+            signers.push(signer);
+        }
+        Ok(signers)
+    } else {
+        Ok(vec![])
+    }
 }
 
 /// Call process instruction, common to both Rust and C

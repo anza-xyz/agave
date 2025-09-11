@@ -4,11 +4,11 @@ use {
     solana_program_runtime::{
         cpi::{
             check_instruction_size, cpi_common, translate_account_infos, translate_accounts_rust,
-            translate_and_update_accounts, translate_instruction_rust, CallerAccount,
-            SolAccountInfo, SolAccountMeta, SolInstruction, SolSignerSeedC, SolSignerSeedsC,
-            SyscallInvokeSigned, TranslatedAccount,
+            translate_and_update_accounts, translate_instruction_rust, translate_signers_rust,
+            CallerAccount, SolAccountInfo, SolAccountMeta, SolInstruction, SolSignerSeedC,
+            SolSignerSeedsC, SyscallInvokeSigned, TranslatedAccount,
         },
-        memory::{translate_slice, translate_type, translate_vm_slice},
+        memory::{translate_slice, translate_type},
     },
 };
 
@@ -69,41 +69,13 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         memory_mapping: &MemoryMapping,
         check_aligned: bool,
     ) -> Result<Vec<Pubkey>, Error> {
-        let mut signers = Vec::new();
-        if signers_seeds_len > 0 {
-            let signers_seeds = translate_slice::<VmSlice<VmSlice<u8>>>(
-                memory_mapping,
-                signers_seeds_addr,
-                signers_seeds_len,
-                check_aligned,
-            )?;
-            if signers_seeds.len() > MAX_SIGNERS {
-                return Err(Box::new(SyscallError::TooManySigners));
-            }
-            for signer_seeds in signers_seeds.iter() {
-                let untranslated_seeds = translate_slice::<VmSlice<u8>>(
-                    memory_mapping,
-                    signer_seeds.ptr(),
-                    signer_seeds.len(),
-                    check_aligned,
-                )?;
-                if untranslated_seeds.len() > MAX_SEEDS {
-                    return Err(Box::new(InstructionError::MaxSeedLengthExceeded));
-                }
-                let seeds = untranslated_seeds
-                    .iter()
-                    .map(|untranslated_seed| {
-                        translate_vm_slice(untranslated_seed, memory_mapping, check_aligned)
-                    })
-                    .collect::<Result<Vec<_>, Error>>()?;
-                let signer = Pubkey::create_program_address(&seeds, program_id)
-                    .map_err(SyscallError::BadSeeds)?;
-                signers.push(signer);
-            }
-            Ok(signers)
-        } else {
-            Ok(vec![])
-        }
+        translate_signers_rust(
+            program_id,
+            signers_seeds_addr,
+            signers_seeds_len,
+            memory_mapping,
+            check_aligned,
+        )
     }
 }
 
