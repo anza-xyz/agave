@@ -643,6 +643,7 @@ impl QuicServerParams {
         Self {
             coalesce_channel_size: 100_000,
             num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
+            max_unstaked_connections_per_ipaddr: 1,
             ..Self::default()
         }
     }
