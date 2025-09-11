@@ -82,14 +82,14 @@ pub trait VoteStateHandle {
     fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot);
 
     fn set_vote_account_state(
-        &self,
+        self,
         vote_account: &mut BorrowedInstructionAccount,
     ) -> Result<(), InstructionError>;
 }
 
 impl VoteStateHandle for VoteStateV3 {
     fn is_uninitialized(&self) -> bool {
-        self.node_pubkey == Pubkey::default()
+        self.is_uninitialized()
     }
 
     fn authorized_withdrawer(&self) -> &Pubkey {
@@ -189,7 +189,7 @@ impl VoteStateHandle for VoteStateV3 {
     }
 
     fn set_vote_account_state(
-        &self,
+        self,
         vote_account: &mut BorrowedInstructionAccount,
     ) -> Result<(), InstructionError> {
         // If the account is not large enough to store the vote state, then attempt a realloc to make it large enough.
@@ -203,11 +203,11 @@ impl VoteStateHandle for VoteStateV3 {
             // Account cannot be resized to the size of a vote state as it will not be rent exempt, or failed to be
             // resized for other reasons.  So store the V1_14_11 version.
             return vote_account.set_state(&VoteStateVersions::V1_14_11(Box::new(
-                VoteState1_14_11::from(self.clone()),
+                VoteState1_14_11::from(self),
             )));
         }
         // Vote account is large enough to store the newest version of vote state
-        vote_account.set_state(&VoteStateVersions::V3(Box::new(self.clone())))
+        vote_account.set_state(&VoteStateVersions::V3(Box::new(self)))
     }
 }
 
@@ -383,10 +383,10 @@ impl VoteStateHandle for VoteStateHandler {
     }
 
     fn set_vote_account_state(
-        &self,
+        self,
         vote_account: &mut BorrowedInstructionAccount,
     ) -> Result<(), InstructionError> {
-        match &self.target_state {
+        match self.target_state {
             TargetVoteState::V3(v3) => v3.set_vote_account_state(vote_account),
         }
     }
@@ -401,8 +401,7 @@ impl VoteStateHandler {
     ) -> Result<Self, InstructionError> {
         let target_state = match target_version {
             VoteStateTargetVersion::V3 => {
-                let mut vote_state = VoteStateV3::default();
-                VoteStateV3::deserialize_into(vote_account.get_data(), &mut vote_state)?;
+                let vote_state = VoteStateV3::deserialize(vote_account.get_data())?;
                 TargetVoteState::V3(vote_state)
             }
         };
@@ -428,7 +427,7 @@ impl VoteStateHandler {
         target_version: VoteStateTargetVersion,
     ) -> Result<(), InstructionError> {
         let state = match target_version {
-            VoteStateTargetVersion::V3 => VoteStateVersions::V3(Box::default()),
+            VoteStateTargetVersion::V3 => VoteStateVersions::V3(Box::<VoteStateV3>::default()),
         };
         vote_account.set_state(&state)
     }

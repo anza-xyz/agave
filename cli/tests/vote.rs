@@ -19,12 +19,6 @@ use {
     test_case::test_case,
 };
 
-fn deserialize_vote_state_v3(data: &[u8]) -> VoteStateV3 {
-    let mut vote_state = VoteStateV3::default();
-    VoteStateV3::deserialize_into(data, &mut vote_state).unwrap();
-    vote_state
-}
-
 #[test_case(None; "base")]
 #[test_case(Some(1_000_000); "with_compute_unit_price")]
 fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
@@ -69,7 +63,7 @@ fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let vote_account = rpc_client
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
-    let vote_state = deserialize_vote_state_v3(vote_account.data());
+    let vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
     let authorized_withdrawer = vote_state.authorized_withdrawer;
     assert_eq!(authorized_withdrawer, config.signers[0].pubkey());
     let expected_balance = rpc_client
@@ -123,7 +117,7 @@ fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let vote_account = rpc_client
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
-    let vote_state = deserialize_vote_state_v3(vote_account.data());
+    let vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
     let authorized_withdrawer = vote_state.authorized_withdrawer;
     assert_eq!(authorized_withdrawer, first_withdraw_authority.pubkey());
 
@@ -170,7 +164,7 @@ fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let vote_account = rpc_client
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
-    let vote_state = deserialize_vote_state_v3(vote_account.data());
+    let vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
     let authorized_withdrawer = vote_state.authorized_withdrawer;
     assert_eq!(authorized_withdrawer, withdraw_authority.pubkey());
 
@@ -297,7 +291,7 @@ fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let vote_account = rpc_client
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
-    let vote_state = deserialize_vote_state_v3(vote_account.data());
+    let vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
     let authorized_withdrawer = vote_state.authorized_withdrawer;
     assert_eq!(authorized_withdrawer, offline_keypair.pubkey());
     let expected_balance = rpc_client
@@ -374,7 +368,7 @@ fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     let vote_account = rpc_client
         .get_account(&vote_account_keypair.pubkey())
         .unwrap();
-    let vote_state = deserialize_vote_state_v3(vote_account.data());
+    let vote_state = VoteStateV3::deserialize(vote_account.data()).unwrap();
     let authorized_withdrawer = vote_state.authorized_withdrawer;
     assert_eq!(authorized_withdrawer, withdraw_authority.pubkey());
 

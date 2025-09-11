@@ -474,12 +474,6 @@ mod tests {
         )
     }
 
-    fn deserialize_vote_state_v3(data: &[u8]) -> VoteStateV3 {
-        let mut vote_state = VoteStateV3::default();
-        VoteStateV3::deserialize_into(data, &mut vote_state).unwrap();
-        vote_state
-    }
-
     #[test]
     fn test_vote_process_instruction_decode_bail() {
         process_instruction(
@@ -621,7 +615,7 @@ mod tests {
             Err(InstructionError::MissingRequiredSignature),
         );
         instruction_accounts[1].is_signer = true;
-        let vote_state = deserialize_vote_state_v3(accounts[0].data());
+        let vote_state = VoteStateV3::deserialize(accounts[0].data()).unwrap();
         assert_ne!(vote_state.node_pubkey, node_pubkey);
 
         // should fail, authorized_withdrawer didn't sign the transaction
@@ -633,7 +627,7 @@ mod tests {
             Err(InstructionError::MissingRequiredSignature),
         );
         instruction_accounts[2].is_signer = true;
-        let vote_state = deserialize_vote_state_v3(accounts[0].data());
+        let vote_state = VoteStateV3::deserialize(accounts[0].data()).unwrap();
         assert_ne!(vote_state.node_pubkey, node_pubkey);
 
         // should pass
@@ -643,7 +637,7 @@ mod tests {
             instruction_accounts,
             Ok(()),
         );
-        let vote_state = deserialize_vote_state_v3(accounts[0].data());
+        let vote_state = VoteStateV3::deserialize(accounts[0].data()).unwrap();
         assert_eq!(vote_state.node_pubkey, node_pubkey);
     }
 
@@ -685,7 +679,7 @@ mod tests {
             instruction_accounts.clone(),
             Ok(()),
         );
-        let vote_state = deserialize_vote_state_v3(accounts[0].data());
+        let vote_state = VoteStateV3::deserialize(accounts[0].data()).unwrap();
         assert_eq!(vote_state.commission, u8::MAX);
 
         // should pass
@@ -695,7 +689,7 @@ mod tests {
             instruction_accounts.clone(),
             Ok(()),
         );
-        let vote_state = deserialize_vote_state_v3(accounts[0].data());
+        let vote_state = VoteStateV3::deserialize(accounts[0].data()).unwrap();
         assert_eq!(vote_state.commission, 42);
 
         // should fail, authorized_withdrawer didn't sign the transaction
@@ -706,7 +700,7 @@ mod tests {
             instruction_accounts,
             Err(InstructionError::MissingRequiredSignature),
         );
-        let vote_state = deserialize_vote_state_v3(accounts[0].data());
+        let vote_state = VoteStateV3::deserialize(accounts[0].data()).unwrap();
         assert_eq!(vote_state.commission, 0);
     }
 
@@ -771,7 +765,7 @@ mod tests {
                 },
             );
             if is_tower_sync {
-                let vote_state = deserialize_vote_state_v3(accounts[0].data());
+                let vote_state = VoteStateV3::deserialize(accounts[0].data()).unwrap();
                 assert_eq!(
                     vote_state.votes,
                     vec![vote_state::LandedVote::from(Lockout::new(

@@ -1070,12 +1070,6 @@ mod tests {
 
     const MAX_RECENT_VOTES: usize = 16;
 
-    fn deserialize_vote_state_v3(data: &[u8]) -> VoteStateV3 {
-        let mut vote_state = VoteStateV3::default();
-        VoteStateV3::deserialize_into(data, &mut vote_state).unwrap();
-        vote_state
-    }
-
     fn vote_state_new_for_test(auth_pubkey: &Pubkey) -> VoteStateHandler {
         VoteStateHandler::new_v3(VoteStateV3::new(
             &VoteInit {
@@ -1183,7 +1177,7 @@ mod tests {
         assert_matches!(vote_state_version, VoteStateVersions::V1_14_11(_));
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state = deserialize_vote_state_v3(borrowed_account.get_data());
+        let converted_vote_state = VoteStateV3::deserialize(borrowed_account.get_data()).unwrap();
 
         // Check to make sure that the vote_state is unchanged
         assert!(vote_state == converted_vote_state);
@@ -1201,7 +1195,7 @@ mod tests {
         assert_matches!(vote_state_version, VoteStateVersions::V1_14_11(_));
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state = deserialize_vote_state_v3(borrowed_account.get_data());
+        let converted_vote_state = VoteStateV3::deserialize(borrowed_account.get_data()).unwrap();
 
         // Check to make sure that the vote_state is unchanged
         assert_eq!(vote_state, converted_vote_state);
@@ -1219,7 +1213,7 @@ mod tests {
         assert_matches!(vote_state_version, VoteStateVersions::V1_14_11(_));
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state = deserialize_vote_state_v3(borrowed_account.get_data());
+        let converted_vote_state = VoteStateV3::deserialize(borrowed_account.get_data()).unwrap();
 
         // Check to make sure that the vote_state is unchanged
         assert_eq!(vote_state, converted_vote_state);
@@ -1241,7 +1235,7 @@ mod tests {
         assert_matches!(vote_state_version, VoteStateVersions::V3(_));
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state = deserialize_vote_state_v3(borrowed_account.get_data());
+        let converted_vote_state = VoteStateV3::deserialize(borrowed_account.get_data()).unwrap();
 
         // Check to make sure that the vote_state is unchanged
         assert_eq!(vote_state, converted_vote_state);
@@ -1251,7 +1245,7 @@ mod tests {
     fn test_vote_lockout() {
         let (_vote_pubkey, vote_account) = create_test_account();
 
-        let vote_state_v3 = deserialize_vote_state_v3(vote_account.borrow().data());
+        let vote_state_v3 = VoteStateV3::deserialize(vote_account.borrow().data()).unwrap();
         let mut vote_state = VoteStateHandler::new_v3(vote_state_v3);
 
         for i in 0..(MAX_LOCKOUT_HISTORY + 1) {
@@ -1346,7 +1340,9 @@ mod tests {
 
         // Increase commission in first half of epoch -- allowed
         assert_eq!(
-            deserialize_vote_state_v3(borrowed_account.get_data()).commission,
+            VoteStateV3::deserialize(borrowed_account.get_data())
+                .unwrap()
+                .commission,
             10
         );
         assert_matches!(
@@ -1360,7 +1356,9 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            deserialize_vote_state_v3(borrowed_account.get_data()).commission,
+            VoteStateV3::deserialize(borrowed_account.get_data())
+                .unwrap()
+                .commission,
             11
         );
 
@@ -1376,7 +1374,9 @@ mod tests {
             Err(_)
         );
         assert_eq!(
-            deserialize_vote_state_v3(borrowed_account.get_data()).commission,
+            VoteStateV3::deserialize(borrowed_account.get_data())
+                .unwrap()
+                .commission,
             11
         );
 
@@ -1392,12 +1392,16 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            deserialize_vote_state_v3(borrowed_account.get_data()).commission,
+            VoteStateV3::deserialize(borrowed_account.get_data())
+                .unwrap()
+                .commission,
             10
         );
 
         assert_eq!(
-            deserialize_vote_state_v3(borrowed_account.get_data()).commission,
+            VoteStateV3::deserialize(borrowed_account.get_data())
+                .unwrap()
+                .commission,
             10
         );
 
@@ -1412,7 +1416,9 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            deserialize_vote_state_v3(borrowed_account.get_data()).commission,
+            VoteStateV3::deserialize(borrowed_account.get_data())
+                .unwrap()
+                .commission,
             9
         );
     }
