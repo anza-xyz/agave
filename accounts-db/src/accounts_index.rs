@@ -24,6 +24,7 @@ use {
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     roots_tracker::RootsTracker,
     secondary::{RwLockSecondaryIndexEntry, SecondaryIndex, SecondaryIndexEntry},
+    smallvec::SmallVec,
     solana_account::ReadableAccount,
     solana_clock::{BankId, Slot},
     solana_measure::measure::Measure,
@@ -70,7 +71,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
     scan_results_limit_bytes: None,
 };
 pub type ScanResult<T> = Result<T, ScanError>;
-pub type SlotList<T> = Vec<(Slot, T)>;
+pub type SlotList<T> = SmallVec<[(Slot, T); 1]>;
 
 // The ref count cannot be higher than the total number of storages, and we should never have more
 // than 1 million storages. A 32-bit ref count should be *significantly* more than enough.

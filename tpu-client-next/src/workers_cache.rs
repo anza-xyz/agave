@@ -6,7 +6,9 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        connection_worker::ConnectionWorker, logging::debug, transaction_batch::TransactionBatch,
+        connection_worker::ConnectionWorker,
+        logging::{debug, trace},
+        transaction_batch::TransactionBatch,
         SendTransactionStats,
     },
     lru::LruCache,
@@ -69,6 +71,12 @@ impl WorkerInfo {
             .await
             .map_err(|_| WorkersCacheError::TaskJoinFailure)?;
         Ok(())
+    }
+
+    /// Returns `true` if the worker is still active and able to send
+    /// transactions.
+    fn is_active(&self) -> bool {
+        !(self.cancel.is_cancelled() || self.sender.is_closed())
     }
 }
 
@@ -185,9 +193,14 @@ impl WorkersCache {
         handshake_timeout: Duration,
         stats: Arc<SendTransactionStats>,
     ) -> Option<ShutdownWorker> {
-        if self.contains(&peer) {
-            return None;
+        if let Some(worker) = self.workers.peek(&peer) {
+            // if worker is active, we will reuse it. Otherwise, we will spawn
+            // the new one and the existing will be popped out.
+            if worker.is_active() {
+                return None;
+            }
         }
+        trace!("No active worker for peer {peer}, respawning.");
 
         let worker = spawn_worker(
             endpoint,
@@ -486,6 +499,8 @@ mod tests {
             }
             sleep(Duration::from_millis(500)).await;
         }
+
+        assert!(!worker_info.is_active(), "Worker should be inactive");
 
         // try to send to this worker — should fail and remove the worker
         let result = cache
