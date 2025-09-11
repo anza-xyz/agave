@@ -640,6 +640,11 @@ impl QuicServerParams {
             ..Self::default()
         }
     }
+
+    pub(crate) fn max_concurrent_connections(&self) -> usize {
+        let conns = self.max_staked_connections + self.max_unstaked_connections;
+        conns + conns / 4
+    }
 }
 
 /// Spawns a tokio runtime and a streamer instance inside it.
