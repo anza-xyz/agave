@@ -6,12 +6,13 @@ use {
         memory::{translate_slice, translate_type, translate_type_mut_for_cpi},
         serialization::{create_memory_region_of_account, modify_memory_region_of_account},
     },
-    solana_instruction::{error::InstructionError, Instruction},
+    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
     solana_pubkey::{Pubkey, PubkeyError},
     solana_sbpf::{ebpf, memory_region::MemoryMapping},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, native_loader},
+    solana_stable_layout::stable_instruction::StableInstruction,
     solana_svm_log_collector::ic_msg,
     solana_svm_measure::measure::Measure,
     solana_svm_timings::ExecuteTimings,
@@ -503,6 +504,57 @@ pub trait SyscallInvokeSigned {
         memory_mapping: &MemoryMapping,
         check_aligned: bool,
     ) -> Result<Vec<Pubkey>, Error>;
+}
+
+pub fn translate_instruction_rust(
+    addr: u64,
+    memory_mapping: &MemoryMapping,
+    invoke_context: &mut InvokeContext,
+    check_aligned: bool,
+) -> Result<Instruction, Error> {
+    let ix = translate_type::<StableInstruction>(memory_mapping, addr, check_aligned)?;
+    let account_metas = translate_slice::<AccountMeta>(
+        memory_mapping,
+        ix.accounts.as_vaddr(),
+        ix.accounts.len(),
+        check_aligned,
+    )?;
+    let data = translate_slice::<u8>(
+        memory_mapping,
+        ix.data.as_vaddr(),
+        ix.data.len(),
+        check_aligned,
+    )?
+    .to_vec();
+
+    check_instruction_size(account_metas.len(), data.len())?;
+
+    consume_compute_meter(
+        invoke_context,
+        (data.len() as u64)
+            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+            .unwrap_or(u64::MAX),
+    )?;
+
+    let mut accounts = Vec::with_capacity(account_metas.len());
+    #[allow(clippy::needless_range_loop)]
+    for account_index in 0..account_metas.len() {
+        #[allow(clippy::indexing_slicing)]
+        let account_meta = &account_metas[account_index];
+        if unsafe {
+            std::ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
+                || std::ptr::read_volatile(&account_meta.is_writable as *const _ as *const u8) > 1
+        } {
+            return Err(Box::new(InstructionError::InvalidArgument));
+        }
+        accounts.push(account_meta.clone());
+    }
+
+    Ok(Instruction {
+        accounts,
+        data,
+        program_id: ix.program_id,
+    })
 }
 
 /// Call process instruction, common to both Rust and C

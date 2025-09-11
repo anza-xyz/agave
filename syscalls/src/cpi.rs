@@ -4,13 +4,12 @@ use {
     solana_program_runtime::{
         cpi::{
             check_instruction_size, cpi_common, translate_account_infos,
-            translate_and_update_accounts, CallerAccount, SolAccountInfo, SolAccountMeta,
-            SolInstruction, SolSignerSeedC, SolSignerSeedsC, SyscallInvokeSigned,
-            TranslatedAccount,
+            translate_and_update_accounts, translate_instruction_rust, CallerAccount,
+            SolAccountInfo, SolAccountMeta, SolInstruction, SolSignerSeedC, SolSignerSeedsC,
+            SyscallInvokeSigned, TranslatedAccount,
         },
         memory::{translate_slice, translate_type, translate_vm_slice},
     },
-    solana_stable_layout::stable_instruction::StableInstruction,
 };
 
 declare_builtin_function!(
@@ -44,50 +43,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         invoke_context: &mut InvokeContext,
         check_aligned: bool,
     ) -> Result<Instruction, Error> {
-        let ix = translate_type::<StableInstruction>(memory_mapping, addr, check_aligned)?;
-        let account_metas = translate_slice::<AccountMeta>(
-            memory_mapping,
-            ix.accounts.as_vaddr(),
-            ix.accounts.len(),
-            check_aligned,
-        )?;
-        let data = translate_slice::<u8>(
-            memory_mapping,
-            ix.data.as_vaddr(),
-            ix.data.len(),
-            check_aligned,
-        )?
-        .to_vec();
-
-        check_instruction_size(account_metas.len(), data.len())?;
-
-        consume_compute_meter(
-            invoke_context,
-            (data.len() as u64)
-                .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-                .unwrap_or(u64::MAX),
-        )?;
-
-        let mut accounts = Vec::with_capacity(account_metas.len());
-        #[allow(clippy::needless_range_loop)]
-        for account_index in 0..account_metas.len() {
-            #[allow(clippy::indexing_slicing)]
-            let account_meta = &account_metas[account_index];
-            if unsafe {
-                std::ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
-                    || std::ptr::read_volatile(&account_meta.is_writable as *const _ as *const u8)
-                        > 1
-            } {
-                return Err(Box::new(InstructionError::InvalidArgument));
-            }
-            accounts.push(account_meta.clone());
-        }
-
-        Ok(Instruction {
-            accounts,
-            data,
-            program_id: ix.program_id,
-        })
+        translate_instruction_rust(addr, memory_mapping, invoke_context, check_aligned)
     }
 
     fn translate_accounts<'a>(
@@ -337,6 +293,7 @@ mod tests {
             ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
         solana_sdk_ids::bpf_loader,
+        solana_stable_layout::stable_instruction::StableInstruction,
         solana_transaction_context::{
             transaction_accounts::TransactionAccount, IndexOfAccount, InstructionAccount,
         },
