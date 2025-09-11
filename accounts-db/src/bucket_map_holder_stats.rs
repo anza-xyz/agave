@@ -235,14 +235,20 @@ impl BucketMapHolderStats {
                 );
             }
             let count_in_mem = self.count_in_mem.load(Ordering::Relaxed);
+            let held_in_mem_ref_count = self.held_in_mem.ref_count.swap(0, Ordering::Relaxed);
             let held_in_mem_slot_list_len =
                 self.held_in_mem.slot_list_len.swap(0, Ordering::Relaxed);
-            // If an entry is held in-mem due to slot list length then it has (at least) two slot
-            // list entries.  Since `approx_size_of_one_entry()` already includes the ref count &
-            // metadata sizes, only add in a second slot list entry.
+            // If an entry is held in-mem due to ref count or slot list length,
+            // then assume it has two slot list entries.
+            // Since `approx_size_of_one_entry()` assumes 'regular' entries
+            // (aka ref count == 1 and slot list len == 1), and the single slot list entry is
+            // stored inline in the slot list itself, then when we have larger slot lists,
+            // account for them here.
             let estimate_mem_bytes = count_in_mem
                 * InMemAccountsIndex::<T, U>::approx_size_of_one_entry()
-                + held_in_mem_slot_list_len as usize * size_of::<(Slot, T)>();
+                + (held_in_mem_ref_count + held_in_mem_slot_list_len) as usize
+                    * size_of::<(Slot, T)>() // <-- size of one slot list entry
+                    * 2; // <-- and assume there are two entries
             datapoint_info!(
                 if startup || was_startup {
                     thread_time_elapsed_ms *= 2; // more threads are allocated during startup
@@ -275,11 +281,7 @@ impl BucketMapHolderStats {
                     f64
                 ),
                 ("slot_list_len", held_in_mem_slot_list_len, i64),
-                (
-                    "ref_count",
-                    self.held_in_mem.ref_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
+                ("ref_count", held_in_mem_ref_count, i64),
                 (
                     "slot_list_cached",
                     self.held_in_mem.slot_list_cached.swap(0, Ordering::Relaxed),

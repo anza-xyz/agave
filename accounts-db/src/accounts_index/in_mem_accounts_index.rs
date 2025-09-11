@@ -913,7 +913,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// assumes 1 entry in the slot list. Ignores overhead of the HashMap and such
     pub const fn approx_size_of_one_entry() -> usize {
-        size_of::<(Slot, T)>() + size_of::<Pubkey>() + size_of::<AccountMapEntry<T>>()
+        // with only one entry in the slot list, it is stored inline in the SmallVec
+        size_of::<Pubkey>() + size_of::<AccountMapEntry<T>>()
     }
 
     fn should_evict_based_on_age(
