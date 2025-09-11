@@ -67,7 +67,7 @@ use {
     dashmap::DashMap,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
-    rayon::ThreadPoolBuilder,
+    rayon::{ThreadPool, ThreadPoolBuilder},
     serde::Serialize,
     solana_account::{
         create_account_shared_data_with_fields as create_account, from_account, Account,
@@ -1823,6 +1823,7 @@ impl Bank {
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
         };
 
+<<<<<<< HEAD
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
 
@@ -1847,6 +1848,8 @@ impl Bank {
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
 
+=======
+>>>>>>> 5e4d5f51b (refactor: bank initialization after snapshot restore (#7997))
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
         // (BankFieldsToSerialize/BankFieldsToDeserialize) and initializing
@@ -1873,6 +1876,13 @@ impl Bank {
         );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
         assert_eq!(bank.epoch, bank.epoch_schedule.get_epoch(bank.slot));
+
+        bank.initialize_after_snapshot_restore(|| {
+            ThreadPoolBuilder::new()
+                .thread_name(|i| format!("solBnkClcRwds{i:02}"))
+                .build()
+                .expect("new rayon threadpool")
+        });
 
         datapoint_info!(
             "bank-new-from-fields",
@@ -5327,6 +5337,7 @@ impl Bank {
         &self.reserved_account_keys.active
     }
 
+<<<<<<< HEAD
     // This is called from snapshot restore AND for each epoch boundary
     // The entire code path herein must be idempotent
     fn apply_feature_activations(
@@ -5340,6 +5351,55 @@ impl Bank {
             Caller::NewFromParent => true,
             Caller::WarpFromParent => false,
         };
+=======
+    /// Compute and apply all activated features, initialize the transaction
+    /// processor, and recalculate partitioned rewards if needed
+    fn initialize_after_snapshot_restore<F, TP>(&mut self, rewards_thread_pool_builder: F)
+    where
+        F: FnOnce() -> TP,
+        TP: std::borrow::Borrow<ThreadPool>,
+    {
+        self.transaction_processor =
+            TransactionBatchProcessor::new_uninitialized(self.slot, self.epoch);
+        if let Some(compute_budget) = &self.compute_budget {
+            self.transaction_processor
+                .set_execution_cost(compute_budget.to_cost());
+        }
+
+        self.compute_and_apply_features_after_snapshot_restore();
+
+        self.recalculate_partitioned_rewards_if_active(rewards_thread_pool_builder);
+
+        self.transaction_processor
+            .fill_missing_sysvar_cache_entries(self);
+    }
+
+    /// Compute and apply all activated features and also add accounts for builtins
+    fn compute_and_apply_genesis_features(&mut self) {
+        // Update the feature set to include all features active at this slot
+        let feature_set = self.compute_active_feature_set(false).0;
+        self.feature_set = Arc::new(feature_set);
+
+        // Add built-in program accounts to the bank if they don't already exist
+        self.add_builtin_program_accounts();
+
+        self.apply_activated_features();
+    }
+
+    /// Compute and apply all activated features but do not add built-in
+    /// accounts because we shouldn't modify accounts db for a completed bank
+    fn compute_and_apply_features_after_snapshot_restore(&mut self) {
+        // Update the feature set to include all features active at this slot
+        let feature_set = self.compute_active_feature_set(false).0;
+        self.feature_set = Arc::new(feature_set);
+
+        self.apply_activated_features();
+    }
+
+    /// This is called from each epoch boundary
+    fn compute_and_apply_new_feature_activations(&mut self) {
+        let include_pending = true;
+>>>>>>> 5e4d5f51b (refactor: bank initialization after snapshot restore (#7997))
         let (feature_set, new_feature_activations) =
             self.compute_active_feature_set(allow_new_activations);
         self.feature_set = Arc::new(feature_set);
