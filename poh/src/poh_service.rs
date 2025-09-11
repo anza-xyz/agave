@@ -192,6 +192,9 @@ impl PohService {
                 // Only perform the last tick of the slot if there are no records.
                 // This ensures we don't tick, ending the slot, and cause recording
                 // to fail, unless all records have been processed.
+                // If we are on the last tick, the channel is shutdown so no more
+                // records can be received - we will just process the ones that
+                // have already been received.
                 if remaining_tick_time.is_zero()
                     && (!last_tick_of_slot || record_receiver.is_empty())
                 {
@@ -217,6 +220,7 @@ impl PohService {
 
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
+                last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
             }
         }
 
@@ -291,6 +295,9 @@ impl PohService {
                 // Only perform the last tick of the slot if there are no records.
                 // This ensures we don't tick, ending the slot, and cause recording
                 // to fail, unless all records have been processed.
+                // If we are on the last tick, the channel is shutdown so no more
+                // records can be received - we will just process the ones that
+                // have already been received.
                 if remaining_tick_time.is_zero()
                     && (!last_tick_of_slot || record_receiver.is_empty())
                 {
@@ -321,6 +328,7 @@ impl PohService {
             }
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
+                last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
             }
         }
 
