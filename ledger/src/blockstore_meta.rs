@@ -143,11 +143,9 @@ pub struct SlotMetaBase<T> {
     pub first_shred_timestamp: u64,
     /// The index of the shred that is flagged as the last shred for this slot.
     /// None until the shred with LAST_SHRED_IN_SLOT flag is received.
-    #[serde(with = "serde_compat")]
     pub last_index: Option<u64>,
     /// The slot height of the block this one derives from.
     /// The parent slot of the head of a detached chain of slots is None.
-    #[serde(with = "serde_compat")]
     pub parent_slot: Option<Slot>,
     /// The list of slots, each of which contains a block that derives
     /// from this one.
@@ -218,27 +216,6 @@ impl From<SlotMetaV2> for SlotMetaV1 {
 pub type SlotMeta = SlotMetaV1;
 pub type CompletedDataIndexes = CompletedDataIndexesV1;
 pub type SlotMetaFallback = SlotMetaV2;
-
-// Serde implementation of serialize and deserialize for Option<u64>
-// where None is represented as u64::MAX; for backward compatibility.
-mod serde_compat {
-    use super::*;
-
-    pub(super) fn serialize<S>(val: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        val.unwrap_or(u64::MAX).serialize(serializer)
-    }
-
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let val = u64::deserialize(deserializer)?;
-        Ok((val != u64::MAX).then_some(val))
-    }
-}
 
 pub type Index = IndexV2;
 pub type ShredIndex = ShredIndexV2;
