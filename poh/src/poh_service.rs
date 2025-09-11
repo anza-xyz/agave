@@ -175,6 +175,9 @@ impl PohService {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut last_tick = Instant::now();
         let mut last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
+        if last_tick_of_slot {
+            record_receiver.shutdown();
+        }
         while !poh_exit.load(Ordering::Relaxed) {
             let service_message =
                 Self::check_for_service_message(&poh_service_receiver, &mut record_receiver);
@@ -225,6 +228,9 @@ impl PohService {
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
                 last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
+                if last_tick_of_slot {
+                    record_receiver.shutdown();
+                }
             }
         }
 
@@ -280,6 +286,9 @@ impl PohService {
         let num_ticks = poh_config.target_tick_count.unwrap();
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
+        if last_tick_of_slot {
+            record_receiver.shutdown();
+        }
 
         while elapsed_ticks < num_ticks {
             let service_message =
@@ -337,6 +346,9 @@ impl PohService {
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
                 last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
+                if last_tick_of_slot {
+                    record_receiver.shutdown();
+                }
             }
         }
 
