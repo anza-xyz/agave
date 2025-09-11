@@ -1895,12 +1895,10 @@ pub mod test {
             .expect("Failed in connecting")
             .await
             .expect("Failed in waiting");
+        let s1 = conn1.open_uni().await.unwrap();
+        let s2 = conn2.open_uni().await.unwrap();
 
-        let mut s1 = conn1.open_uni().await.unwrap();
-        s1.write_all(&[0u8]).await.unwrap();
-        s1.finish().unwrap();
-
-        let mut s2 = conn2.open_uni().await.unwrap();
+        drop(s1);
         conn1.close(
             CONNECTION_CLOSE_CODE_DROPPED_ENTRY.into(),
             CONNECTION_CLOSE_REASON_DROPPED_ENTRY,
@@ -1913,9 +1911,7 @@ pub mod test {
         }
         assert!(start.elapsed().as_secs() < 1);
 
-        s2.write_all(&[0u8]).await.unwrap();
-        s2.finish().unwrap();
-
+        drop(s2);
         conn2.close(
             CONNECTION_CLOSE_CODE_DROPPED_ENTRY.into(),
             CONNECTION_CLOSE_REASON_DROPPED_ENTRY,
@@ -2116,7 +2112,9 @@ pub mod test {
         solana_logger::setup();
         let cancel = CancellationToken::new();
         let mut table = ConnectionTable::new(false, cancel);
-        let num_entries = PRUNE_OLD_MAX_SAMPLE_SIZE as u8 * 2;
+        let num_entries: u8 = PRUNE_OLD_MAX_SAMPLE_SIZE
+            .try_into()
+            .expect("Should fit into a byte");
         let max_connections_per_peer = 10;
         let (sockets_old, sockets_fresh) = {
             let mut sockets: Vec<_> = (0..num_entries)
@@ -2138,7 +2136,10 @@ pub mod test {
                 )
                 .unwrap();
         }
-        std::thread::sleep(Duration::from_millis(UNSTAKED_CONNECTION_LIFETIME_MS.end));
+        thread::sleep(
+            Duration::from_millis(UNSTAKED_CONNECTION_LIFETIME_MS.end)
+                .saturating_add(Duration::from_millis(100)),
+        );
         for socket in sockets_fresh.iter() {
             table
                 .try_add_connection(
@@ -2151,7 +2152,7 @@ pub mod test {
                 )
                 .unwrap();
         }
-        std::thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(10));
         assert_eq!(table.total_size, num_entries as usize);
 
         let min_prune = sockets_old.len();
