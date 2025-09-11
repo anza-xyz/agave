@@ -527,11 +527,15 @@ async fn test_no_host() {
     // Wait for the generator to finish.
     tx_sender_shutdown.await;
 
-    // While attempting to establish a connection with a nonexistent host, we fill the worker's
-    // channel.
+    // For each transaction, we will check if worker exists and active. In this
+    // case, worker will never be active because when failed creating
+    // connection, we stop it. So scheduler will `max_send_attempts` try to
+    // create worker and fail each time.
     let stats = join_scheduler(scheduler_handle).await;
-    // `5` because `config.max_reconnect_attempts` is 4
-    assert_eq!(stats.connect_error_invalid_remote_address, 5);
+    assert_eq!(
+        stats.connect_error_invalid_remote_address,
+        max_send_attempts as u64
+    );
 }
 
 // Check that when the client is rate-limited by server, we update counters

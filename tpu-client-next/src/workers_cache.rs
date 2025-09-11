@@ -6,7 +6,9 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        connection_worker::ConnectionWorker, logging::debug, transaction_batch::TransactionBatch,
+        connection_worker::ConnectionWorker,
+        logging::{debug, trace},
+        transaction_batch::TransactionBatch,
         SendTransactionStats,
     },
     lru::LruCache,
@@ -198,6 +200,7 @@ impl WorkersCache {
                 return None;
             }
         }
+        trace!("No active worker for peer {peer}, respawning.");
 
         let worker = spawn_worker(
             endpoint,

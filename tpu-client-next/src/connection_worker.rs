@@ -358,7 +358,10 @@ impl ConnectionWorker {
                         self.connection = ConnectionState::Closing;
                     }
                     ConnectError::InvalidRemoteAddress(_) => {
-                        warn!("Invalid remote address for peer: {}", self.peer);
+                        warn!(
+                            "Invalid remote address for peer: {}, attempt: {}",
+                            self.peer, retries_attempt
+                        );
                         self.connection = ConnectionState::Closing;
                     }
                     e => {
