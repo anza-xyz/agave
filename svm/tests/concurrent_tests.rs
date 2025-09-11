@@ -111,7 +111,7 @@ fn test_program_cache_with_probabilistic_scheduler() {
         move || {
             program_cache_execution(4);
         },
-        300,
+        10_000,
         5,
     );
 }
@@ -119,7 +119,7 @@ fn test_program_cache_with_probabilistic_scheduler() {
 // In this case, the scheduler is random and may preempt threads at any point and any time.
 #[test]
 fn test_program_cache_with_random_scheduler() {
-    shuttle::check_random(move || program_cache_execution(4), 300);
+    shuttle::check_random(move || program_cache_execution(4), 10_000);
 }
 
 // This test explores all the possible thread scheduling patterns that might affect the program
@@ -130,7 +130,7 @@ fn test_program_cache_with_exhaustive_scheduler() {
     // values in a thread.
     // Since this is not the case for the execution of jitted program, we can still run the test
     // but with decreased accuracy.
-    let scheduler = shuttle::scheduler::DfsScheduler::new(Some(500), true);
+    let scheduler = shuttle::scheduler::DfsScheduler::new(Some(10_000), true);
     let runner = Runner::new(scheduler, Default::default());
     runner.run(move || program_cache_execution(4));
 }
@@ -300,7 +300,7 @@ fn test_svm_with_probabilistic_scheduler() {
         move || {
             svm_concurrent();
         },
-        300,
+        10_000,
         5,
     );
 }
