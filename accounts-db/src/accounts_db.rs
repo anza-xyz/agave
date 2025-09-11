@@ -6761,7 +6761,7 @@ impl AccountsDb {
         }
         let accounts_data_len = AtomicU64::new(0);
 
-        let zero_lamport_pubkeys = Mutex::new(HashSet::new());
+        let zero_lamport_pubkeys = Mutex::new(Vec::new());
         let mut outer_duplicates_lt_hash = None;
 
         // pass == 0 always runs and generates the index
@@ -7026,7 +7026,7 @@ impl AccountsDb {
                     std::mem::take(&mut *zero_lamport_pubkeys.lock().unwrap());
                 let (num_zero_lamport_single_refs, visit_zero_lamports_us) =
                     measure_us!(self
-                        .visit_zero_lamport_pubkeys_during_startup(&zero_lamport_pubkeys_to_visit));
+                        .visit_zero_lamport_pubkeys_during_startup(zero_lamport_pubkeys_to_visit));
                 timings.visit_zero_lamports_us = visit_zero_lamports_us;
                 timings.num_zero_lamport_single_refs = num_zero_lamport_single_refs;
 
@@ -7214,10 +7214,6 @@ impl AccountsDb {
     /// Visit zero lamport pubkeys and populate zero_lamport_single_ref info on
     /// storage.
     /// Returns the number of zero lamport single ref accounts found.
-<<<<<<< HEAD
-    fn visit_zero_lamport_pubkeys_during_startup(&self, pubkeys: &HashSet<Pubkey>) -> u64 {
-        let mut count = 0;
-=======
     fn visit_zero_lamport_pubkeys_during_startup(&self, mut pubkeys: Vec<Pubkey>) -> u64 {
         let mut slot_offsets = HashMap::<_, Vec<_>>::default();
         // sort the pubkeys first so that in scan, the pubkeys are visited in
@@ -7231,7 +7227,6 @@ impl AccountsDb {
             "visit_zero_lamport_pubkeys_during_startup: {orig_len} pubkeys, {uniq_len} after dedup",
         );
 
->>>>>>> 2d7662138 (Redo visit_zero_lamports optimization at startup with tests (#7994))
         self.accounts_index.scan(
             pubkeys.iter(),
             |_pubkey, slots_refs, _entry| {

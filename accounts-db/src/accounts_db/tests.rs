@@ -6642,7 +6642,6 @@ fn test_mark_obsolete_accounts_at_startup_multiple_bins() {
     assert_eq!(obsolete_stats.slots_removed, 1);
 }
 
-<<<<<<< HEAD
 // This test verifies that when obsolete accounts are marked, the duplicates lt hash is set to the
 // default value. When they are not marked, it is populated. The second case ensures test validity.
 #[test_case(true; "mark_obsolete_accounts")]
@@ -6693,7 +6692,8 @@ fn test_obsolete_accounts_empty_default_duplicate_hash(mark_obsolete_accounts: b
             DuplicatesLtHash::default()
         );
     }
-=======
+}
+
 #[test]
 fn test_batch_insert_zero_lamport_single_ref_account_offsets() {
     let accounts = AccountsDb::new_single_for_tests();
@@ -6728,5 +6728,4 @@ fn test_batch_insert_zero_lamport_single_ref_account_offsets() {
     let count5 = storage.batch_insert_zero_lamport_single_ref_account_offsets(&offsets5);
     assert_eq!(count5, 3, "Should insert only 3 new offsets (60, 70, 80)");
     assert_eq!(storage.num_zero_lamport_single_ref_accounts(), 8);
->>>>>>> 2d7662138 (Redo visit_zero_lamports optimization at startup with tests (#7994))
 }
