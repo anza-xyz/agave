@@ -164,7 +164,13 @@ impl VoteStateHandle for VoteStateV3 {
         &mut self,
         current_epoch: Epoch,
     ) -> Result<Pubkey, InstructionError> {
-        self.get_and_update_authorized_voter(current_epoch)
+        let pubkey = self
+            .authorized_voters
+            .get_and_cache_authorized_voter_for_epoch(current_epoch)
+            .ok_or(InstructionError::InvalidAccountData)?;
+        self.authorized_voters
+            .purge_authorized_voters(current_epoch);
+        Ok(pubkey)
     }
 
     fn commission(&self) -> u8 {
@@ -702,6 +708,72 @@ mod tests {
             vote_state.authorized_voters.get_authorized_voter(3),
             Some(new_voter)
         );
+    }
+
+    #[test]
+    fn test_get_and_update_authorized_voter() {
+        let original_voter = Pubkey::new_unique();
+        let mut vote_state = VoteStateV3::new(
+            &VoteInit {
+                node_pubkey: original_voter,
+                authorized_voter: original_voter,
+                authorized_withdrawer: original_voter,
+                commission: 0,
+            },
+            &Clock::default(),
+        );
+
+        assert_eq!(vote_state.authorized_voters.len(), 1);
+        assert_eq!(
+            *vote_state.authorized_voters.first().unwrap().1,
+            original_voter
+        );
+
+        // If no new authorized voter was set, the same authorized voter
+        // is locked into the next epoch
+        assert_eq!(
+            vote_state.get_and_update_authorized_voter(1).unwrap(),
+            original_voter
+        );
+
+        // Try to get the authorized voter for epoch 5, implies
+        // the authorized voter for epochs 1-4 were unchanged
+        assert_eq!(
+            vote_state.get_and_update_authorized_voter(5).unwrap(),
+            original_voter
+        );
+
+        // Authorized voter for expired epoch 0..5 should have been
+        // purged and no longer queryable
+        assert_eq!(vote_state.authorized_voters.len(), 1);
+        for i in 0..5 {
+            assert!(vote_state
+                .authorized_voters
+                .get_authorized_voter(i)
+                .is_none());
+        }
+
+        // Set an authorized voter change at slot 7
+        let new_authorized_voter = Pubkey::new_unique();
+        vote_state
+            .set_new_authorized_voter(&new_authorized_voter, 5, 7, |_| Ok(()))
+            .unwrap();
+
+        // Try to get the authorized voter for epoch 6, unchanged
+        assert_eq!(
+            vote_state.get_and_update_authorized_voter(6).unwrap(),
+            original_voter
+        );
+
+        // Try to get the authorized voter for epoch 7 and onwards, should
+        // be the new authorized voter
+        for i in 7..10 {
+            assert_eq!(
+                vote_state.get_and_update_authorized_voter(i).unwrap(),
+                new_authorized_voter
+            );
+        }
+        assert_eq!(vote_state.authorized_voters.len(), 1);
     }
 
     #[test]
