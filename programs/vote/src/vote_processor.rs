@@ -345,7 +345,7 @@ mod tests {
 
     fn create_test_account() -> (Pubkey, AccountSharedData) {
         let rent = Rent::default();
-        let balance = VoteStateV3::get_rent_exempt_reserve(&rent);
+        let balance = rent.minimum_balance(VoteStateV3::size_of());
         let vote_pubkey = solana_pubkey::new_rand();
         (
             vote_pubkey,
