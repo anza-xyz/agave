@@ -320,6 +320,7 @@ dependencies = [
  "solana-signer",
  "solana-time-utils",
  "solana-transaction",
+ "solana-votor-messages",
  "thiserror 2.0.16",
 ]
 
@@ -6017,6 +6018,7 @@ dependencies = [
  "base64 0.22.1",
  "blst",
  "blstrs",
+ "bytemuck",
  "cfg_eval",
  "ff",
  "group",
@@ -6025,6 +6027,9 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
+ "solana-signature",
+ "solana-signer",
+ "subtle",
  "thiserror 2.0.16",
 ]
 
@@ -10015,6 +10020,17 @@ dependencies = [
  "solana-transaction-context",
  "solana-vote-interface",
  "thiserror 2.0.16",
+]
+
+[[package]]
+name = "solana-votor-messages"
+version = "3.1.0"
+dependencies = [
+ "serde",
+ "solana-bls-signatures",
+ "solana-clock",
+ "solana-hash",
+ "solana-logger",
 ]
 
 [[package]]
