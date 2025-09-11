@@ -11,15 +11,16 @@
 //! vote program.
 
 use {
-    solana_clock::{Clock, Epoch, Slot},
+    solana_clock::{Clock, Epoch, Slot, UnixTimestamp},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
     solana_transaction_context::BorrowedInstructionAccount,
     solana_vote_interface::{
         error::VoteError,
         state::{
-            LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3, VoteStateVersions,
-            MAX_EPOCH_CREDITS_HISTORY, VOTE_CREDITS_GRACE_SLOTS, VOTE_CREDITS_MAXIMUM_PER_SLOT,
+            BlockTimestamp, LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3,
+            VoteStateVersions, MAX_EPOCH_CREDITS_HISTORY, VOTE_CREDITS_GRACE_SLOTS,
+            VOTE_CREDITS_MAXIMUM_PER_SLOT,
         },
     },
     std::collections::VecDeque,
@@ -311,8 +312,16 @@ impl VoteStateHandle for VoteStateV3 {
             self.epoch_credits.last().unwrap().1.saturating_add(credits);
     }
 
-    fn process_timestamp(&mut self, slot: Slot, timestamp: i64) -> Result<(), VoteError> {
-        self.process_timestamp(slot, timestamp)
+    fn process_timestamp(&mut self, slot: Slot, timestamp: UnixTimestamp) -> Result<(), VoteError> {
+        if (slot < self.last_timestamp.slot || timestamp < self.last_timestamp.timestamp)
+            || (slot == self.last_timestamp.slot
+                && BlockTimestamp { slot, timestamp } != self.last_timestamp
+                && self.last_timestamp.slot != 0)
+        {
+            return Err(VoteError::TimestampTooOld);
+        }
+        self.last_timestamp = BlockTimestamp { slot, timestamp };
+        Ok(())
     }
 
     fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot) {
@@ -626,7 +635,7 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
-            state::{VoteInit, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
+            state::{BlockTimestamp, VoteInit, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
         },
     };
 
@@ -928,5 +937,59 @@ mod tests {
         }
         assert_eq!(vote_state.credits(), credits);
         assert!(vote_state.epoch_credits.len() <= MAX_EPOCH_CREDITS_HISTORY);
+    }
+
+    #[test]
+    fn test_vote_process_timestamp() {
+        let (slot, timestamp) = (15, 1_575_412_285);
+        let mut vote_state = VoteStateV3 {
+            last_timestamp: BlockTimestamp { slot, timestamp },
+            ..VoteStateV3::default()
+        };
+
+        assert_eq!(
+            vote_state.process_timestamp(slot - 1, timestamp + 1),
+            Err(VoteError::TimestampTooOld)
+        );
+        assert_eq!(
+            vote_state.last_timestamp,
+            BlockTimestamp { slot, timestamp }
+        );
+        assert_eq!(
+            vote_state.process_timestamp(slot + 1, timestamp - 1),
+            Err(VoteError::TimestampTooOld)
+        );
+        assert_eq!(
+            vote_state.process_timestamp(slot, timestamp + 1),
+            Err(VoteError::TimestampTooOld)
+        );
+        assert_eq!(vote_state.process_timestamp(slot, timestamp), Ok(()));
+        assert_eq!(
+            vote_state.last_timestamp,
+            BlockTimestamp { slot, timestamp }
+        );
+        assert_eq!(vote_state.process_timestamp(slot + 1, timestamp), Ok(()));
+        assert_eq!(
+            vote_state.last_timestamp,
+            BlockTimestamp {
+                slot: slot + 1,
+                timestamp
+            }
+        );
+        assert_eq!(
+            vote_state.process_timestamp(slot + 2, timestamp + 1),
+            Ok(())
+        );
+        assert_eq!(
+            vote_state.last_timestamp,
+            BlockTimestamp {
+                slot: slot + 2,
+                timestamp: timestamp + 1
+            }
+        );
+
+        // Test initial vote
+        vote_state.last_timestamp = BlockTimestamp::default();
+        assert_eq!(vote_state.process_timestamp(0, timestamp), Ok(()));
     }
 }
