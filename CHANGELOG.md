@@ -17,6 +17,12 @@ Release channels have their own copy of this changelog:
 ### RPC
 #### Breaking
 #### Changes
+* solana-banks-client: Add ergonomic accessors on `BanksClientError`:
+  * `transaction_error()` returns the contained `TransactionError` when available
+  * `simulation_logs()` returns simulation logs for preflight failures
+  * `simulation_units_consumed()` returns consumed CUs for simulations
+  * `simulation_return_data()` returns simulated return data when present
+  These helpers simplify error handling for `process_transaction_with_preflight` results.
 ### Validator
 #### Breaking
 #### Deprecations
