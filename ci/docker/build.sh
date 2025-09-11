@@ -19,7 +19,6 @@ docker build "${platform[@]}" \
   --build-arg "BASE_IMAGE=${CI_DOCKER_ARG_BASE_IMAGE}" \
   --build-arg "RUST_VERSION=${CI_DOCKER_ARG_RUST_VERSION}" \
   --build-arg "RUST_NIGHTLY_VERSION=${CI_DOCKER_ARG_RUST_NIGHTLY_VERSION}" \
-  --build-arg "NODE_MAJOR=${CI_DOCKER_ARG_NODE_MAJOR}" \
   --build-arg "SCCACHE_VERSION=${CI_DOCKER_ARG_SCCACHE_VERSION}" \
   --build-arg "GRCOV_VERSION=${CI_DOCKER_ARG_GRCOV_VERSION}" \
   -t "$CI_DOCKER_IMAGE" .

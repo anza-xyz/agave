@@ -87,7 +87,12 @@ jobs:
       - name: Build
         working-directory: docs
         run: |
+          sudo apt update
+          sudo apt install -y mscgen
+
           npm install
+          cargo install svgbob_cli
+
           ./build.sh
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
