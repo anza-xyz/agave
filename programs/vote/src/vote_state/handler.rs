@@ -61,7 +61,8 @@ pub trait VoteStateHandle {
 
     fn set_votes(&mut self, votes: VecDeque<LandedVote>);
 
-    fn contains_slot(&self, slot: Slot) -> bool;
+    /// Returns if the vote state contains a slot `candidate_slot`
+    fn contains_slot(&self, candidate_slot: Slot) -> bool;
 
     fn last_voted_slot(&self) -> Option<Slot>;
 
@@ -201,8 +202,10 @@ impl VoteStateHandle for VoteStateV3 {
         self.votes = votes;
     }
 
-    fn contains_slot(&self, slot: Slot) -> bool {
-        self.contains_slot(slot)
+    fn contains_slot(&self, candidate_slot: Slot) -> bool {
+        self.votes
+            .binary_search_by(|vote| vote.slot().cmp(&candidate_slot))
+            .is_ok()
     }
 
     fn last_voted_slot(&self) -> Option<Slot> {
@@ -373,9 +376,9 @@ impl VoteStateHandle for VoteStateHandler {
         }
     }
 
-    fn contains_slot(&self, slot: Slot) -> bool {
+    fn contains_slot(&self, candidate_slot: Slot) -> bool {
         match &self.target_state {
-            TargetVoteState::V3(v3) => v3.contains_slot(slot),
+            TargetVoteState::V3(v3) => v3.contains_slot(candidate_slot),
         }
     }
 
