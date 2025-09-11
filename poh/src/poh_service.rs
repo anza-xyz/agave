@@ -174,6 +174,7 @@ impl PohService {
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut last_tick = Instant::now();
+        let mut last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
         while !poh_exit.load(Ordering::Relaxed) {
             let service_message =
                 Self::check_for_service_message(&poh_service_receiver, &mut record_receiver);
@@ -187,21 +188,18 @@ impl PohService {
                     remaining_tick_time,
                     ticks_per_slot,
                 );
-                if remaining_tick_time.is_zero() {
+
+                // Only perform the last tick of the slot if there are no records.
+                // This ensures we don't tick, ending the slot, and cause recording
+                // to fail, unless all records have been processed.
+                if remaining_tick_time.is_zero()
+                    && (!last_tick_of_slot || record_receiver.is_empty())
+                {
                     last_tick = Instant::now();
                     poh_recorder.write().unwrap().tick();
 
-                    let last_tick = {
-                        let poh_recorder = poh_recorder.read().unwrap();
-                        poh_recorder
-                            .bank()
-                            .map(|bank| {
-                                bank.max_tick_height().wrapping_sub(1) == poh_recorder.tick_height()
-                            })
-                            .unwrap_or(false)
-                    };
-
-                    if last_tick
+                    last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
+                    if last_tick_of_slot
                         || record_receiver.should_shutdown(
                             poh.lock().unwrap().remaining_hashes_in_slot(ticks_per_slot),
                             ticks_per_slot,
@@ -273,6 +271,7 @@ impl PohService {
         let mut last_tick = Instant::now();
         let num_ticks = poh_config.target_tick_count.unwrap();
         let poh = poh_recorder.read().unwrap().poh.clone();
+        let mut last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
 
         while elapsed_ticks < num_ticks {
             let service_message =
@@ -288,22 +287,19 @@ impl PohService {
                     Duration::from_millis(0),
                     ticks_per_slot,
                 );
-                if remaining_tick_time.is_zero() {
+
+                // Only perform the last tick of the slot if there are no records.
+                // This ensures we don't tick, ending the slot, and cause recording
+                // to fail, unless all records have been processed.
+                if remaining_tick_time.is_zero()
+                    && (!last_tick_of_slot || record_receiver.is_empty())
+                {
                     last_tick = Instant::now();
                     poh_recorder.write().unwrap().tick();
                     elapsed_ticks += 1;
 
-                    let last_tick = {
-                        let poh_recorder = poh_recorder.read().unwrap();
-                        poh_recorder
-                            .bank()
-                            .map(|bank| {
-                                bank.max_tick_height().wrapping_sub(1) == poh_recorder.tick_height()
-                            })
-                            .unwrap_or(false)
-                    };
-
-                    if last_tick
+                    last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
+                    if last_tick_of_slot
                         || record_receiver.should_shutdown(
                             poh.lock().unwrap().remaining_hashes_in_slot(ticks_per_slot),
                             ticks_per_slot,
@@ -337,6 +333,15 @@ impl PohService {
                 ticks_per_slot,
             );
         }
+    }
+
+    /// Returns true if this is the last tick of the current slot.
+    fn last_tick_of_slot(poh_recorder: &RwLock<PohRecorder>) -> bool {
+        let poh_recorder = poh_recorder.read().unwrap();
+        poh_recorder
+            .bank()
+            .map(|bank| bank.max_tick_height().wrapping_sub(1) == poh_recorder.tick_height())
+            .unwrap_or(false)
     }
 
     // returns true if we need to tick
