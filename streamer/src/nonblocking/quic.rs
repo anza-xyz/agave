@@ -2068,7 +2068,9 @@ pub mod test {
         use std::net::Ipv4Addr;
         solana_logger::setup();
         let mut table = ConnectionTable::new();
-        let num_entries = 100;
+        let num_entries: u8 = PRUNE_OLD_MAX_SAMPLE_SIZE
+            .try_into()
+            .expect("Should fit into a byte");
         let max_connections_per_peer = 10;
         let (sockets_old, sockets_fresh) = {
             let mut sockets: Vec<_> = (0..num_entries)
@@ -2090,7 +2092,7 @@ pub mod test {
                 )
                 .unwrap();
         }
-        std::thread::sleep(UNSTAKED_CONNECTION_LIFETIME);
+        std::thread::sleep(UNSTAKED_CONNECTION_LIFETIME.saturating_add(Duration::from_millis(100)));
         for socket in sockets_fresh.iter() {
             table
                 .try_add_connection(
