@@ -589,8 +589,12 @@ impl PohService {
                 }
                 PohServiceMessage::SetBank { bank } => {
                     let slot = bank.slot();
+                    let bank_on_last_tick =
+                        bank.tick_height() >= bank.max_tick_height().saturating_sub(1);
                     recorder.set_bank(bank);
-                    record_receiver.restart(slot);
+                    if !bank_on_last_tick {
+                        record_receiver.restart(slot);
+                    }
                 }
             }
         }
