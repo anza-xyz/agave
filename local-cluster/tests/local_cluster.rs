@@ -2662,6 +2662,27 @@ fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
     );
 
     let on_partition_start = |cluster: &mut LocalCluster, _: &mut ()| {
+        info!("run_test_load_program_accounts_partition: starting network partition");
+
+        // Log pre-partition state
+        let node_pubkeys = cluster.get_node_pubkeys();
+        for (i, node_pubkey) in node_pubkeys.iter().enumerate() {
+            if let Ok(client) = cluster.build_validator_tpu_quic_client(*node_pubkey) {
+                let processed_slot = client
+                    .rpc_client()
+                    .get_slot_with_commitment(CommitmentConfig::processed())
+                    .unwrap_or(0);
+                let finalized_slot = client
+                    .rpc_client()
+                    .get_slot_with_commitment(CommitmentConfig::finalized())
+                    .unwrap_or(0);
+                info!(
+                    "run_test_load_program_accounts_partition: Node {} ({}): pre-partition processed_slot={}, finalized_slot={}",
+                    i, node_pubkey, processed_slot, finalized_slot
+                );
+            }
+        }
+
         let update_client = cluster
             .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
             .unwrap();
@@ -2670,19 +2691,52 @@ fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
             .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
             .unwrap();
         scan_client_sender.send(scan_client).unwrap();
+
+        info!("run_test_load_program_accounts_partition: partition initiated, transfer threads started");
     };
 
     let on_partition_before_resolved = |_: &mut LocalCluster, _: &mut ()| {};
 
     let on_partition_resolved = |cluster: &mut LocalCluster, _: &mut ()| {
+        info!("run_test_load_program_accounts_partition: partition resolved, starting root recovery check");
+
+        // Log cluster state before checking for new roots
+        let node_pubkeys = cluster.get_node_pubkeys();
+        info!(
+            "run_test_load_program_accounts_partition: cluster has {} nodes: {:?}",
+            node_pubkeys.len(),
+            node_pubkeys
+        );
+
+        // Check initial root state across all nodes
+        for (i, node_pubkey) in node_pubkeys.iter().enumerate() {
+            if let Ok(client) = cluster.build_validator_tpu_quic_client(*node_pubkey) {
+                let processed_slot = client
+                    .rpc_client()
+                    .get_slot_with_commitment(CommitmentConfig::processed())
+                    .unwrap_or(0);
+                let finalized_slot = client
+                    .rpc_client()
+                    .get_slot_with_commitment(CommitmentConfig::finalized())
+                    .unwrap_or(0);
+                info!(
+                    "run_test_load_program_accounts_partition: Node {} ({}): initial processed_slot={}, finalized_slot={}",
+                    i, node_pubkey, processed_slot, finalized_slot
+                );
+            }
+        }
+
         cluster.check_for_new_roots(
             20,
             "run_test_load_program_accounts_partition",
             SocketAddrSpace::Unspecified,
         );
+
+        info!("run_test_load_program_accounts_partition: root recovery completed, stopping transfer threads");
         exit.store(true, Ordering::Relaxed);
         t_update.join().unwrap();
         t_scan.join().unwrap();
+        info!("run_test_load_program_accounts_partition: test completed successfully");
     };
 
     run_cluster_partition(
