@@ -17,7 +17,10 @@ use {
     solana_transaction_context::BorrowedInstructionAccount,
     solana_vote_interface::{
         error::VoteError,
-        state::{LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3, VoteStateVersions},
+        state::{
+            LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3, VoteStateVersions,
+            VOTE_CREDITS_GRACE_SLOTS, VOTE_CREDITS_MAXIMUM_PER_SLOT,
+        },
     },
     std::collections::VecDeque,
 };
@@ -74,6 +77,7 @@ pub trait VoteStateHandle {
 
     fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)>;
 
+    /// Returns the credits to award for a vote at the given lockout slot index
     fn credits_for_vote_at_index(&self, index: usize) -> u64;
 
     fn increment_credits(&mut self, epoch: Epoch, credits: u64);
@@ -237,7 +241,34 @@ impl VoteStateHandle for VoteStateV3 {
     }
 
     fn credits_for_vote_at_index(&self, index: usize) -> u64 {
-        self.credits_for_vote_at_index(index)
+        let latency = self
+            .votes
+            .get(index)
+            .map_or(0, |landed_vote| landed_vote.latency);
+
+        // If latency is 0, this means that the Lockout was created and stored from a software version that did not
+        // store vote latencies; in this case, 1 credit is awarded
+        if latency == 0 {
+            1
+        } else {
+            match latency.checked_sub(VOTE_CREDITS_GRACE_SLOTS) {
+                None | Some(0) => {
+                    // latency was <= VOTE_CREDITS_GRACE_SLOTS, so maximum credits are awarded
+                    VOTE_CREDITS_MAXIMUM_PER_SLOT as u64
+                }
+
+                Some(diff) => {
+                    // diff = latency - VOTE_CREDITS_GRACE_SLOTS, and diff > 0
+                    // Subtract diff from VOTE_CREDITS_MAXIMUM_PER_SLOT which is the number of credits to award
+                    match VOTE_CREDITS_MAXIMUM_PER_SLOT.checked_sub(diff) {
+                        // If diff >= VOTE_CREDITS_MAXIMUM_PER_SLOT, 1 credit is awarded
+                        None | Some(0) => 1,
+
+                        Some(credits) => credits as u64,
+                    }
+                }
+            }
+        }
     }
 
     fn increment_credits(&mut self, epoch: Epoch, credits: u64) {
