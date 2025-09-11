@@ -186,9 +186,6 @@ pub fn execute<'a, 'b: 'a>(
         .get_feature_set()
         .stricter_abi_and_runtime_constraints;
     let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
-    let mask_out_rent_epoch_in_vm_serialization = invoke_context
-        .get_feature_set()
-        .mask_out_rent_epoch_in_vm_serialization;
     let provide_instruction_data_offset_in_vm_r2 = invoke_context
         .get_feature_set()
         .provide_instruction_data_offset_in_vm_r2;
@@ -199,7 +196,6 @@ pub fn execute<'a, 'b: 'a>(
             &instruction_context,
             stricter_abi_and_runtime_constraints,
             account_data_direct_mapping,
-            mask_out_rent_epoch_in_vm_serialization,
         )?;
     serialize_time.stop();
 

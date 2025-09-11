@@ -143,8 +143,6 @@ impl FeatureSet {
             stake_raise_minimum_delegation_to_1_sol: self
                 .is_active(&stake_raise_minimum_delegation_to_1_sol::id()),
             deprecate_legacy_vote_ixs: self.is_active(&deprecate_legacy_vote_ixs::id()),
-            mask_out_rent_epoch_in_vm_serialization: self
-                .is_active(&mask_out_rent_epoch_in_vm_serialization::id()),
             simplify_alt_bn128_syscall_error_codes: self
                 .is_active(&simplify_alt_bn128_syscall_error_codes::id()),
             fix_alt_bn128_multiplication_input_length: self
