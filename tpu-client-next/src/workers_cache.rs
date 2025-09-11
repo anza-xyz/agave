@@ -497,6 +497,8 @@ mod tests {
             sleep(Duration::from_millis(500)).await;
         }
 
+        assert!(!worker_info.is_active(), "Worker should be inactive");
+
         // try to send to this worker — should fail and remove the worker
         let result = cache
             .try_send_transactions_to_address(&peer, TransactionBatch::new(vec![vec![0u8; 1]]));
