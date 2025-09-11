@@ -685,6 +685,33 @@ pub fn translate_instruction_c(
     })
 }
 
+pub fn translate_accounts_c<'a>(
+    account_infos_addr: u64,
+    account_infos_len: u64,
+    memory_mapping: &MemoryMapping<'_>,
+    invoke_context: &mut InvokeContext,
+    check_aligned: bool,
+) -> Result<Vec<TranslatedAccount<'a>>, Error> {
+    let (account_infos, account_info_keys) = translate_account_infos(
+        account_infos_addr,
+        account_infos_len,
+        |account_info: &SolAccountInfo| account_info.key_addr,
+        memory_mapping,
+        invoke_context,
+        check_aligned,
+    )?;
+
+    translate_and_update_accounts(
+        &account_info_keys,
+        account_infos,
+        account_infos_addr,
+        invoke_context,
+        memory_mapping,
+        check_aligned,
+        CallerAccount::from_sol_account_info,
+    )
+}
+
 /// Call process instruction, common to both Rust and C
 pub fn cpi_common<S: SyscallInvokeSigned>(
     invoke_context: &mut InvokeContext,

@@ -3,9 +3,8 @@ use {
     solana_instruction::Instruction,
     solana_program_runtime::{
         cpi::{
-            cpi_common, translate_account_infos, translate_accounts_rust,
-            translate_and_update_accounts, translate_instruction_c, translate_instruction_rust,
-            translate_signers_rust, CallerAccount, SolAccountInfo, SolSignerSeedC, SolSignerSeedsC,
+            cpi_common, translate_accounts_c, translate_accounts_rust, translate_instruction_c,
+            translate_instruction_rust, translate_signers_rust, SolSignerSeedC, SolSignerSeedsC,
             SyscallInvokeSigned, TranslatedAccount,
         },
         memory::translate_slice,
@@ -120,23 +119,12 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         invoke_context: &mut InvokeContext,
         check_aligned: bool,
     ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
-        let (account_infos, account_info_keys) = translate_account_infos(
+        translate_accounts_c(
             account_infos_addr,
             account_infos_len,
-            |account_info: &SolAccountInfo| account_info.key_addr,
             memory_mapping,
             invoke_context,
             check_aligned,
-        )?;
-
-        translate_and_update_accounts(
-            &account_info_keys,
-            account_infos,
-            account_infos_addr,
-            invoke_context,
-            memory_mapping,
-            check_aligned,
-            CallerAccount::from_sol_account_info,
         )
     }
 
