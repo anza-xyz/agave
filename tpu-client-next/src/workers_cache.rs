@@ -70,6 +70,12 @@ impl WorkerInfo {
             .map_err(|_| WorkersCacheError::TaskJoinFailure)?;
         Ok(())
     }
+
+    /// Returns `true` if the worker is still active and able to send
+    /// transactions.
+    fn is_active(&self) -> bool {
+        !(self.cancel.is_cancelled() || self.sender.is_closed())
+    }
 }
 
 /// Spawns a worker to handle communication with a given peer.
@@ -185,8 +191,12 @@ impl WorkersCache {
         handshake_timeout: Duration,
         stats: Arc<SendTransactionStats>,
     ) -> Option<ShutdownWorker> {
-        if self.contains(&peer) {
-            return None;
+        if let Some(worker) = self.workers.peek(&peer) {
+            // if worker is active, we will reuse it. Otherwise, we will spawn
+            // the new one and the existing will be popped out.
+            if worker.is_active() {
+                return None;
+            }
         }
 
         let worker = spawn_worker(
