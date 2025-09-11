@@ -19,8 +19,8 @@ use {
         error::VoteError,
         state::{
             BlockTimestamp, LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3,
-            VoteStateVersions, MAX_EPOCH_CREDITS_HISTORY, VOTE_CREDITS_GRACE_SLOTS,
-            VOTE_CREDITS_MAXIMUM_PER_SLOT,
+            VoteStateVersions, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
+            VOTE_CREDITS_GRACE_SLOTS, VOTE_CREDITS_MAXIMUM_PER_SLOT,
         },
     },
     std::collections::VecDeque,
@@ -359,7 +359,31 @@ impl VoteStateHandle for VoteStateV3 {
     }
 
     fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot) {
-        self.process_next_vote_slot(next_vote_slot, epoch, current_slot)
+        // Ignore votes for slots earlier than we already have votes for
+        if self
+            .last_voted_slot()
+            .is_some_and(|last_voted_slot| next_vote_slot <= last_voted_slot)
+        {
+            return;
+        }
+
+        self.pop_expired_votes(next_vote_slot);
+
+        let landed_vote = LandedVote {
+            latency: compute_vote_latency(next_vote_slot, current_slot),
+            lockout: Lockout::new(next_vote_slot),
+        };
+
+        // Once the stack is full, pop the oldest lockout and distribute rewards
+        if self.votes.len() == MAX_LOCKOUT_HISTORY {
+            let credits = self.credits_for_vote_at_index(0);
+            let landed_vote = self.votes.pop_front().unwrap();
+            self.root_slot = Some(landed_vote.slot());
+
+            self.increment_credits(epoch, credits);
+        }
+        self.votes.push_back(landed_vote);
+        self.double_lockouts();
     }
 
     fn set_vote_account_state(
@@ -670,6 +694,11 @@ impl VoteStateHandler {
             TargetVoteState::V3(v3) => v3.nth_recent_lockout(position),
         }
     }
+}
+
+// Computes the vote latency for vote on voted_for_slot where the vote itself landed in current_slot
+pub(crate) fn compute_vote_latency(voted_for_slot: Slot, current_slot: Slot) -> u8 {
+    std::cmp::min(current_slot.saturating_sub(voted_for_slot), u8::MAX as u64) as u8
 }
 
 #[cfg(test)]
