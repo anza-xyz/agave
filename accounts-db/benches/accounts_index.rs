@@ -8,7 +8,7 @@ use {
     solana_accounts_db::{
         account_info::AccountInfo,
         accounts_index::{
-            AccountSecondaryIndexes, AccountsIndex, SlotList, UpsertReclaim,
+            AccountSecondaryIndexes, AccountsIndex, ReclaimsSlotList, UpsertReclaim,
             ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS,
         },
     },
@@ -29,7 +29,7 @@ fn bench_accounts_index(bencher: &mut Bencher) {
 
     const NUM_FORKS: u64 = 16;
 
-    let mut reclaims = SlotList::new();
+    let mut reclaims = ReclaimsSlotList::new();
     let index = AccountsIndex::<AccountInfo, AccountInfo>::new(
         &ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS,
         Arc::default(),

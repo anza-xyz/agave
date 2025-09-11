@@ -43,8 +43,8 @@ use {
         accounts_index::{
             in_mem_accounts_index::StartupStats, AccountSecondaryIndexes, AccountsIndex,
             AccountsIndexConfig, AccountsIndexRootsStats, AccountsIndexScanResult, IndexKey,
-            IsCached, RefCount, ScanConfig, ScanFilter, ScanResult, SlotList, UpsertReclaim,
-            ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
+            IsCached, ReclaimsSlotList, RefCount, ScanConfig, ScanFilter, ScanResult, SlotList,
+            UpsertReclaim, ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
         },
         accounts_index_storage::Startup,
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
@@ -1527,10 +1527,10 @@ impl AccountsDb {
         ancient_account_cleans: &AtomicU64,
         epoch_schedule: &EpochSchedule,
         pubkeys_removed_from_accounts_index: &Mutex<PubkeysRemovedFromAccountsIndex>,
-    ) -> SlotList<AccountInfo> {
+    ) -> ReclaimsSlotList<AccountInfo> {
         let one_epoch_old = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut clean_rooted = Measure::start("clean_old_root-ms");
-        let mut reclaims = SlotList::new();
+        let mut reclaims = ReclaimsSlotList::new();
         let removed_from_index = self.accounts_index.clean_rooted_entries(
             pubkey,
             &mut reclaims,
@@ -1690,11 +1690,14 @@ impl AccountsDb {
     pub fn purge_keys_exact<C>(
         &self,
         pubkey_to_slot_set: impl IntoIterator<Item = (Pubkey, C)>,
-    ) -> (SlotList<AccountInfo>, PubkeysRemovedFromAccountsIndex)
+    ) -> (
+        ReclaimsSlotList<AccountInfo>,
+        PubkeysRemovedFromAccountsIndex,
+    )
     where
         C: for<'a> Contains<'a, Slot>,
     {
-        let mut reclaims = SlotList::new();
+        let mut reclaims = ReclaimsSlotList::new();
         let mut dead_keys = Vec::new();
 
         let mut purge_exact_count = 0;
@@ -5467,7 +5470,7 @@ impl AccountsDb {
         reclaim: UpsertReclaim,
         update_index_thread_selection: UpdateIndexThreadSelection,
         thread_pool: &ThreadPool,
-    ) -> SlotList<AccountInfo> {
+    ) -> ReclaimsSlotList<AccountInfo> {
         let target_slot = accounts.target_slot();
         let len = std::cmp::min(accounts.len(), infos.len());
 
@@ -5480,7 +5483,7 @@ impl AccountsDb {
         }
 
         let update = |start, end| {
-            let mut reclaims = SlotList::with_capacity((end - start) / 2);
+            let mut reclaims = ReclaimsSlotList::with_capacity((end - start) / 2);
 
             (start..end).for_each(|i| {
                 let info = infos[i];
@@ -5498,7 +5501,7 @@ impl AccountsDb {
                     );
                 });
             });
-            reclaims.to_vec()
+            reclaims
         };
 
         let threshold = 1;
@@ -5518,12 +5521,11 @@ impl AccountsDb {
                         update(start, end)
                     })
                     .flatten()
-                    .collect::<Vec<_>>()
+                    .collect()
             })
         } else {
             update(0, len)
         }
-        .into()
     }
 
     fn should_not_shrink(alive_bytes: u64, total_bytes: u64) -> bool {
