@@ -179,15 +179,16 @@ impl<T: Serialize + Clone> StatusCache<T> {
                 }
             }
 
-            // if this blockhash has no more txs, remove it from the cache
+            // If this blockhash has no more txs, remove it from the cache. Do a
+            // first check without taking the write lock to avoid contention. If
+            // empty, take the write lock and check again.
             if cache_txs_map.is_empty() {
                 // Drop the Arc clone we got from self.cache.get() above so that
                 // we can check the strong_count().
                 drop(cache_txs);
                 let _ = self.cache.remove_if_not_accessed_and(blockhash, |value| {
-                    let (_, _, _cache_txs_map) = &**value;
-                    // cache_txs_map.is_empty()
-                    true
+                    let (_, _, cache_txs_map) = &**value;
+                    cache_txs_map.is_empty()
                 });
             }
         }
@@ -341,8 +342,9 @@ impl<T: Serialize + Clone> StatusCache<T> {
 
                 // Safety:
                 // - we explicitly check that the blockhash isn't referenced by other threads.
-                // Checking Arc::strong_count() is safe because retain() holds a write lock on
-                // the shard and get_or_insert_with() calls Arc::clone() holding a read lock.
+                // Checking Arc::strong_count() is safe because retain() holds a write lock on the
+                // shard and get_or_insert_with() calls Arc::clone() holding a read lock. We never
+                // create weak refs.
                 unsafe {
                     self.cache.retain(|_key, value| {
                         let (max_slot, _, _) = &**value;
@@ -593,8 +595,8 @@ where
     ///
     /// # Safety
     ///
-    /// This function is unsafe because if the returned value is modified while another thread
-    /// concurrently deletes it, the modifications may be lost.
+    /// - Care must be taken when mutating the returned value. If modifications are applied while
+    ///   another thread concurrently deletes the key, the changes may be lost.
     unsafe fn get_or_insert_with(&self, k: &K, default: impl FnOnce() -> V) -> Arc<V> {
         match self.inner.get(k) {
             Some(v) => Arc::clone(&*v),
@@ -611,8 +613,13 @@ where
     fn entry(&self, k: K) -> Entry<'_, K, Arc<V>, S> {
         self.inner.entry(k)
     }
-    /// This function is unsafe because if the returned value is modified while another thread
-    /// concurrently deletes it, the modifications may be lost.
+
+    /// Returns an Arc clone of the value corresponding to the key.
+    ///
+    /// # Safety
+    ///
+    /// - Care must be taken when mutating the returned value. If modifications are applied while
+    ///   another thread concurrently deletes the key, the changes may be lost.
     unsafe fn get(&self, k: &K) -> Option<Arc<V>> {
         self.inner.get(k).map(|v| Arc::clone(&v))
     }
@@ -642,6 +649,7 @@ where
         let entry = self.inner.entry(k.clone());
         if let Entry::Occupied(e) = entry {
             let v = e.get();
+            // the entry guard holds a write lock, so checking for strong_count is safe
             if pred(v) && Arc::strong_count(v) == 1 {
                 return Ok(Some(e.remove()));
             } else {
@@ -655,8 +663,8 @@ where
     ///
     /// # Safety
     ///
-    /// This function is unsafe because if there are other threads holding and modifying clones of
-    /// the values that are removed, those modifications will be lost.
+    /// - If called concurrently with other methods that mutate values that are
+    ///   not retained, the modifications may be lost.
     unsafe fn retain(&self, f: impl FnMut(&K, &mut Arc<V>) -> bool) {
         self.inner.retain(f)
     }
