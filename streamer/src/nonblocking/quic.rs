@@ -180,7 +180,7 @@ pub fn spawn_server(
                     cancel.cancel();
                     break;
                 }
-                sleep(Duration::from_millis(10)).await;
+                sleep(Duration::from_millis(100)).await;
             }
         }
     });
