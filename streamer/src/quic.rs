@@ -681,7 +681,7 @@ pub fn spawn_server(
                 cancel.cancel();
                 break;
             }
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(100));
         }
     });
     spawn_server_with_cancel(
