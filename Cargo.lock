@@ -464,6 +464,7 @@ dependencies = [
  "num_cpus",
  "predicates",
  "pretty_assertions",
+ "qualifier_attr",
  "rand 0.8.5",
  "rayon",
  "serde",

@@ -216,6 +216,7 @@ dependencies = [
  "libloading",
  "log",
  "num_cpus",
+ "qualifier_attr",
  "rand 0.8.5",
  "rayon",
  "serde",
