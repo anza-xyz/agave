@@ -3,14 +3,10 @@
 //! [`KeyedRateLimiter`] allows to rate-limit multiple keyed items, such
 //! as connections.
 use {
+    cfg_if::cfg_if,
     dashmap::{mapref::entry::Entry, DashMap},
-    std::{
-        borrow::Borrow,
-        cmp::Reverse,
-        hash::Hash,
-        sync::atomic::{AtomicU64, AtomicUsize, Ordering},
-        time::Instant,
-    },
+    solana_svm_type_overrides::sync::atomic::{AtomicU64, AtomicUsize, Ordering},
+    std::{borrow::Borrow, cmp::Reverse, hash::Hash, time::Instant},
 };
 
 /// Enforces a rate limit on the volume of requests per unit time.
@@ -29,6 +25,9 @@ pub struct TokenBucket {
     /// time unused in last token creation round
     credit_time_us: AtomicU64,
 }
+
+#[cfg(feature = "shuttle-test")]
+static TIME_US: AtomicU64 = AtomicU64::new(0); //used to override Instant::now()
 
 // If changing this impl, make sure to run benches and ensure they do not panic.
 // much of the testing is impossible outside of real multithreading in release mode.
@@ -91,9 +90,15 @@ impl TokenBucket {
 
     /// Retrieves monotonic time since bucket creation.
     fn time_us(&self) -> u64 {
-        let now = Instant::now();
-        let elapsed = now.saturating_duration_since(self.base_time);
-        elapsed.as_micros() as u64
+        cfg_if! {
+            if #[cfg(feature="shuttle-test")] {
+                TIME_US.load(Ordering::Relaxed)
+            } else {
+                let now = Instant::now();
+                let elapsed = now.saturating_duration_since(self.base_time);
+                elapsed.as_micros() as u64
+            }
+        }
     }
 
     /// Updates internal state of the bucket by
@@ -335,6 +340,7 @@ where
 pub mod test {
     use {
         super::*,
+        solana_svm_type_overrides::thread,
         std::{
             net::{IpAddr, Ipv4Addr},
             time::Duration,
@@ -350,7 +356,7 @@ pub mod test {
             .expect("We should still have >50 tokens left");
         tb.consume_tokens(50)
             .expect_err("There should not be enough tokens now");
-        std::thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(50));
         assert!(
             tb.current_tokens() > 40,
             "We should be refilling at ~1 token per millisecond"
@@ -361,7 +367,7 @@ pub mod test {
         );
         tb.consume_tokens(40)
             .expect("Bucket should have enough for another request now");
-        std::thread::sleep(Duration::from_millis(120));
+        thread::sleep(Duration::from_millis(120));
         assert_eq!(tb.current_tokens(), 100, "Bucket should not overfill");
     }
     #[test]
@@ -394,7 +400,7 @@ pub mod test {
         );
         rl.consume_tokens(ip1, 40)
             .expect("Bucket should have enough for another request now");
-        std::thread::sleep(Duration::from_millis(120));
+        thread::sleep(Duration::from_millis(120));
         assert_eq!(
             rl.current_tokens(ip1),
             Some(100),
@@ -420,5 +426,55 @@ pub mod test {
         );
         rl.consume_tokens(ip2, 100)
             .expect("New bucket should have been made for ip2");
+    }
+
+    #[cfg(feature = "shuttle-test")]
+    #[test]
+    fn shuttle_test_token_bucket_race() {
+        use shuttle::sync::atomic::AtomicBool;
+        shuttle::check_random(
+            || {
+                TIME_US.store(0, Ordering::SeqCst);
+                let test_duration_us = 2500;
+                let run: &AtomicBool = Box::leak(Box::new(AtomicBool::new(true)));
+                let tb: &TokenBucket = Box::leak(Box::new(TokenBucket::new(10, 20, 5000.0)));
+
+                // time advancement thread
+                let time_advancer = thread::spawn(move || {
+                    let mut current_time = 0;
+                    while current_time < test_duration_us && run.load(Ordering::SeqCst) {
+                        let increment = 100; // microseconds
+                        current_time += increment;
+                        TIME_US.store(current_time, Ordering::SeqCst);
+                        shuttle::thread::yield_now();
+                    }
+                    run.store(false, Ordering::SeqCst);
+                });
+
+                let threads: Vec<_> = (0..2)
+                    .map(|_| {
+                        thread::spawn(move || {
+                            let mut total = 0;
+                            while run.load(Ordering::SeqCst) {
+                                if tb.consume_tokens(5).is_ok() {
+                                    total += 1;
+                                }
+                                shuttle::thread::yield_now();
+                            }
+                            total
+                        })
+                    })
+                    .collect();
+
+                time_advancer.join().unwrap();
+                let received = threads.into_iter().map(|t| t.join().unwrap()).sum();
+
+                // Initial tokens: 10, refill rate: 5000 tokens/sec (5 tokens/ms)
+                // In 2ms: 10 + (5 * 2) = 20 tokens total
+                // Each consumption: 5 tokens → 4 total consumptions expected
+                assert_eq!(4, received);
+            },
+            100,
+        );
     }
 }
