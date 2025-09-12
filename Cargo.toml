@@ -103,6 +103,7 @@ members = [
     "svm",
     "svm-callback",
     "svm-feature-set",
+    "svm-fuzz-harness/fixture",
     "svm-log-collector",
     "svm-measure",
     "svm-timings",
@@ -525,6 +526,7 @@ solana-streamer = { path = "streamer", version = "=3.1.0" }
 solana-svm = { path = "svm", version = "=3.1.0" }
 solana-svm-callback = { path = "svm-callback", version = "=3.1.0" }
 solana-svm-feature-set = { path = "svm-feature-set", version = "=3.1.0" }
+solana-svm-fuzz-harness-fixture = { path = "svm-fuzz-harness/fixture", version = "=3.1.0" }
 solana-svm-log-collector = { path = "svm-log-collector", version = "=3.1.0" }
 solana-svm-measure = { path = "svm-measure", version = "=3.1.0" }
 solana-svm-timings = { path = "svm-timings", version = "=3.1.0" }
