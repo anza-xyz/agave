@@ -110,14 +110,18 @@ impl CaterpillarEntry {
 
     fn from_unsafe_holder(holder: UnsafeCaterpillarHolder) -> Self {
         Self {
-            raw_atomic: AtomicU64::new(unsafe { holder.raw }),
+            raw_atomic: AtomicU64::new(holder.raw()),
         }
     }
 }
 
 impl Drop for CaterpillarEntry {
     fn drop(&mut self) {
-        self.make_unsafe_holder().deallocate_irregular();
+        let zero_holder = UnsafeCaterpillarHolder::zero();
+        let previous_raw = self.raw_atomic.swap(zero_holder.raw(), Ordering::Relaxed);
+        if previous_raw != 0 {
+            UnsafeCaterpillarHolder::from_raw(previous_raw).deallocate_irregular();
+        }
     }
 }
 
@@ -180,6 +184,11 @@ union UnsafeCaterpillarHolder {
 
 impl UnsafeCaterpillarHolder {
     const ALIGNED_PTR_SHIFT: u64 = 3;
+
+    /// Creates an invalid (null) entry, can be used as a placeholder for value after deletion.
+    fn zero() -> Self {
+        Self::from_raw(0)
+    }
 
     fn from_raw(raw: u64) -> Self {
         Self { raw }
