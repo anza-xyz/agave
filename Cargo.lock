@@ -11054,6 +11054,23 @@ name = "solana-svm-feature-set"
 version = "3.1.0"
 
 [[package]]
+name = "solana-svm-fuzz-harness-fixture"
+version = "3.1.0"
+dependencies = [
+ "agave-feature-set",
+ "bincode",
+ "prost",
+ "prost-build",
+ "solana-account",
+ "solana-hash",
+ "solana-instruction",
+ "solana-instruction-error",
+ "solana-pubkey",
+ "solana-stable-layout",
+ "thiserror 2.0.16",
+]
+
+[[package]]
 name = "solana-svm-log-collector"
 version = "3.1.0"
 dependencies = [
