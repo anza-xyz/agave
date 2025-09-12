@@ -21,17 +21,20 @@ struct CalculatedStakeRewards {
     new_credits_observed: u64,
 }
 
-// utility function
-// returns a tuple of (stakers_reward,voters_reward)
+/// Redeems rewards for the given epoch, stake state and vote state.
+/// Returns a tuple of:
+/// * Stakers reward
+/// * Voters reward
+/// * Updated stake information
 pub fn redeem_rewards(
     rewarded_epoch: Epoch,
-    stake_state: &mut StakeStateV2,
+    stake_state: &StakeStateV2,
     vote_state: &VoteStateView,
     point_value: &PointValue,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
-) -> Result<(u64, u64), InstructionError> {
+) -> Result<(u64, u64, Stake), InstructionError> {
     if let StakeStateV2::Stake(meta, stake, _stake_flags) = stake_state {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
             inflation_point_calc_tracer(
@@ -49,16 +52,17 @@ pub fn redeem_rewards(
             ));
         }
 
+        let mut stake = *stake;
         if let Some((stakers_reward, voters_reward)) = redeem_stake_rewards(
             rewarded_epoch,
-            stake,
+            &mut stake,
             point_value,
             vote_state,
             stake_history,
             inflation_point_calc_tracer,
             new_rate_activation_epoch,
         ) {
-            Ok((stakers_reward, voters_reward))
+            Ok((stakers_reward, voters_reward, stake))
         } else {
             Err(StakeError::NoCreditsToRedeem.into())
         }
