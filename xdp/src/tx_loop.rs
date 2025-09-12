@@ -5,8 +5,8 @@ use {
         device::{NetworkDevice, QueueId, RingSizes},
         netlink::MacAddress,
         packet::{
-            write_eth_header, write_ip_header, write_udp_header, ETH_HEADER_SIZE, IP_HEADER_SIZE,
-            UDP_HEADER_SIZE,
+            wrap_packet_with_gre, write_eth_header, write_ip_header_for_udp, write_udp_header,
+            ETH_HEADER_SIZE, GRE_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE,
         },
         route::AtomicRouter,
         set_cpu_affinity,
@@ -198,6 +198,8 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                     panic!("IPv6 not supported");
                 };
 
+                let len = payload.as_ref().len();
+
                 let dest_mac = if let Some(mac) = dest_mac {
                     mac
                 } else {
@@ -234,11 +236,66 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                         continue;
                     }
 
-                    // Just logging gre info for testing
+                    // Handle GRE wrapping if required
                     if requires_gre {
                         log::info!("greg: Packet to {} requires GRE wrapping", addr.ip());
-                        // TODO: implement gre packet wrapping
-                        // not sure if need to do here or somewhere else
+                        // For now, use placeholder GRE tunnel endpoints
+                        // TODO: Get actual GRE tunnel config from interface info
+                        let gre_src_ip = Ipv4Addr::new(192, 168, 1, 1); // Placeholder
+                        let gre_dst_ip = Ipv4Addr::new(192, 168, 1, 2); // Placeholder
+
+                        // Build the inner packet (IP + UDP + payload) - no Ethernet
+                        const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
+                        let inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
+
+                        // Reserve space for GRE packet: [Ethernet] [Outer IP] [GRE] [Inner IP] [UDP] [Payload]
+                        let gre_packet_size =
+                            ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_SIZE + inner_packet_len;
+                        frame.set_len(gre_packet_size);
+                        let packet = umem.map_frame_mut(&frame);
+
+                        // Write the inner packet (IP + UDP + payload) at the GRE payload position
+                        let inner_start = ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_SIZE;
+                        packet[inner_start + INNER_PACKET_HEADER_SIZE..][..len]
+                            .copy_from_slice(payload.as_ref());
+                        write_ip_header_for_udp(
+                            &mut packet[inner_start..inner_start + IP_HEADER_SIZE],
+                            &src_ip,
+                            &dst_ip,
+                            (UDP_HEADER_SIZE + len) as u16,
+                        );
+                        write_udp_header(
+                            &mut packet[inner_start + IP_HEADER_SIZE
+                                ..inner_start + INNER_PACKET_HEADER_SIZE],
+                            &src_ip,
+                            src_port,
+                            &dst_ip,
+                            addr.port(),
+                            len as u16,
+                            false, // no checksums
+                        );
+
+                        // Now wrap with GRE headers
+                        let gre_packet_len = wrap_packet_with_gre(
+                            packet,
+                            gre_src_ip,
+                            gre_dst_ip,
+                            &src_mac.0, // Use same MACs for GRE tunnel
+                            &next_hop.mac_addr.unwrap().0,
+                            inner_packet_len, // Length of IP + UDP + payload (no Ethernet)
+                        );
+
+                        // Update frame length and submit packet
+                        frame.set_len(gre_packet_len);
+                        submit_packet_to_ring(
+                            frame,
+                            &mut ring,
+                            &mut batched_packets,
+                            &mut chunk_remaining,
+                            BATCH_SIZE,
+                        );
+
+                        continue;
                     }
 
                     next_hop.mac_addr.unwrap()
@@ -246,7 +303,6 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
 
                 const PACKET_HEADER_SIZE: usize =
                     ETH_HEADER_SIZE + IP_HEADER_SIZE + UDP_HEADER_SIZE;
-                let len = payload.as_ref().len();
                 frame.set_len(PACKET_HEADER_SIZE + len);
                 let packet = umem.map_frame_mut(&frame);
 
@@ -255,7 +311,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
 
                 write_eth_header(packet, &src_mac.0, &dest_mac.0);
 
-                write_ip_header(
+                write_ip_header_for_udp(
                     &mut packet[ETH_HEADER_SIZE..],
                     &src_ip,
                     &dst_ip,
@@ -273,23 +329,14 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                     false,
                 );
 
-                // write the packet into the ring
-                ring.write(frame, 0)
-                    .map_err(|_| "ring full")
-                    // this should never happen as we check for available slots above
-                    .expect("failed to write to ring");
-
-                batched_packets -= 1;
-                chunk_remaining -= 1;
-
-                // check if it's time to commit the ring and kick the driver
-                if chunk_remaining == 0 {
-                    chunk_remaining = BATCH_SIZE.min(batched_packets);
-
-                    // commit new frames
-                    ring.commit();
-                    kick(&ring);
-                }
+                // Submit packet to ring
+                submit_packet_to_ring(
+                    frame,
+                    &mut ring,
+                    &mut batched_packets,
+                    &mut chunk_remaining,
+                    BATCH_SIZE,
+                );
             }
             let _ = drop_sender.try_send((addrs, payload));
         }
@@ -344,5 +391,29 @@ fn kick_error(e: std::io::Error) {
         _ => {
             log::error!("network interface driver error: {e:?}");
         }
+    }
+}
+
+/// Common packet submission logic - handles ring writing, batching, and driver kicking
+fn submit_packet_to_ring<'a>(
+    frame: SliceUmemFrame<'a>,
+    ring: &mut TxRing<SliceUmemFrame<'a>>,
+    batched_packets: &mut usize,
+    chunk_remaining: &mut usize,
+    batch_size: usize,
+) {
+    // Write the packet into the ring
+    ring.write(frame, 0)
+        .map_err(|_| "ring full")
+        .expect("failed to write to ring");
+
+    *batched_packets -= 1;
+    *chunk_remaining -= 1;
+
+    // Check if it's time to commit the ring and kick the driver
+    if *chunk_remaining == 0 {
+        *chunk_remaining = batch_size.min(*batched_packets);
+        ring.commit();
+        kick(ring);
     }
 }
