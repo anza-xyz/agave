@@ -1,18 +1,18 @@
 use {
     serde::{
-        de::{self, DeserializeSeed, Deserializer, Error, SeqAccess, Visitor},
-        ser::{SerializeSeq, SerializeTuple, Serializer},
+        de::{self, DeserializeSeed, Deserializer, Error, SeqAccess, VariantAccess, Visitor},
+        ser::{SerializeSeq, SerializeTuple},
         Deserialize, Serialize,
     },
     serde_bytes::{ByteArray, ByteBuf, Bytes},
-    solana_address::{Address, ADDRESS_BYTES},
-    solana_hash::{Hash, HASH_BYTES},
+    solana_address::ADDRESS_BYTES,
+    solana_hash::HASH_BYTES,
     solana_message::{
         legacy,
         v0::{self, MessageAddressTableLookup},
         MessageHeader, VersionedMessage,
     },
-    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_signature::SIGNATURE_BYTES,
     solana_transaction::{versioned::VersionedTransaction, CompiledInstruction},
     std::{
         fmt,
@@ -23,29 +23,19 @@ use {
     },
 };
 
-struct SignaturesSer<'a>(&'a [Signature]);
-impl Serialize for SignaturesSer<'_> {
+struct SeqBytesAsRefSer<'a, T>(&'a [T]);
+
+impl<T> Serialize for SeqBytesAsRefSer<'_, T>
+where
+    T: AsRef<[u8]>,
+{
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         let mut s = serializer.serialize_seq(Some(self.0.len()))?;
-        for signature in self.0 {
-            s.serialize_element(&Bytes::new(signature.as_ref()))?;
-        }
-        s.end()
-    }
-}
-
-struct AddressesSer<'a>(&'a [Address]);
-impl Serialize for AddressesSer<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut s = serializer.serialize_seq(Some(self.0.len()))?;
-        for address in self.0 {
-            s.serialize_element(&Bytes::new(address.as_ref()))?;
+        for item in self.0 {
+            s.serialize_element(&Bytes::new(item.as_ref()))?;
         }
         s.end()
     }
@@ -67,19 +57,22 @@ impl Serialize for MessageHeaderSer<'_> {
 }
 
 #[repr(transparent)]
-struct MessageHeaderDe(MessageHeader);
-impl<'de> Deserialize<'de> for MessageHeaderDe {
+struct MessageHeaderSeed(*mut MessageHeader);
+impl<'de> DeserializeSeed<'de> for MessageHeaderSeed {
+    type Value = ();
+
     #[inline(always)]
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
         let bytes = ByteArray::<3>::deserialize(deserializer)?;
-        Ok(MessageHeaderDe(MessageHeader {
-            num_required_signatures: bytes[0],
-            num_readonly_signed_accounts: bytes[1],
-            num_readonly_unsigned_accounts: bytes[2],
-        }))
+        unsafe {
+            (&raw mut ((*self.0).num_required_signatures)).write(bytes[0]);
+            (&raw mut ((*self.0).num_readonly_signed_accounts)).write(bytes[1]);
+            (&raw mut ((*self.0).num_readonly_unsigned_accounts)).write(bytes[2]);
+        }
+        Ok(())
     }
 }
 
@@ -142,7 +135,7 @@ impl<'de> DeserializeSeed<'de> for CompiledInstructionSeed {
             }
         }
 
-        deserializer.deserialize_seq(VisitCompiledInstruction { dst: self.0 })
+        deserializer.deserialize_tuple(3, VisitCompiledInstruction { dst: self.0 })
     }
 }
 
@@ -168,10 +161,62 @@ impl Serialize for LegacyMessageSer<'_> {
     {
         let mut s = serializer.serialize_tuple(4)?;
         s.serialize_element(&MessageHeaderSer(&self.0.header))?;
-        s.serialize_element(&AddressesSer(&self.0.account_keys))?;
+        s.serialize_element(&SeqBytesAsRefSer(&self.0.account_keys))?;
         s.serialize_element(&Bytes::new(self.0.recent_blockhash.as_bytes()))?;
         s.serialize_element(&CompiledInstructionsSer(&self.0.instructions))?;
         s.end()
+    }
+}
+
+struct LegacyMessageSeed(*mut legacy::Message);
+impl<'de> DeserializeSeed<'de> for LegacyMessageSeed {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct VisitLegacyMessage {
+            dst: *mut legacy::Message,
+        }
+
+        impl<'de> Visitor<'de> for VisitLegacyMessage {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a LegacyMessage")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let (header_ptr, account_keys_ptr, recent_blockhash_ptr, instructions_ptr) = unsafe {
+                    (
+                        &raw mut (*self.dst).header,
+                        &raw mut (*self.dst).account_keys as *mut Vec<[u8; ADDRESS_BYTES]>,
+                        &raw mut (*self.dst).recent_blockhash as *mut [u8; HASH_BYTES],
+                        &raw mut (*self.dst).instructions,
+                    )
+                };
+
+                seq.next_element_seed(MessageHeaderSeed(header_ptr))?
+                    .ok_or_else(|| A::Error::invalid_length(0, &self))?;
+
+                seq.next_element_seed(VecSeqSeed::new(account_keys_ptr, FixedByteSeed))?
+                    .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+
+                seq.next_element_seed(FixedByteSeed(recent_blockhash_ptr))?
+                    .ok_or_else(|| A::Error::invalid_length(2, &self))?;
+
+                seq.next_element_seed(VecSeqSeed::new(instructions_ptr, CompiledInstructionSeed))?
+                    .ok_or_else(|| A::Error::invalid_length(3, &self))?;
+
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_tuple(4, VisitLegacyMessage { dst: self.0 })
     }
 }
 
@@ -216,7 +261,7 @@ impl<'de> DeserializeSeed<'de> for AddressTableLookupSeed {
                 let account_key_ptr =
                     unsafe { &raw mut (*self.dst).account_key as *mut [u8; ADDRESS_BYTES] };
 
-                seq.next_element_seed(ByteSeed(account_key_ptr))?
+                seq.next_element_seed(FixedByteSeed(account_key_ptr))?
                     .ok_or_else(|| A::Error::invalid_length(0, &self))?;
 
                 let writeable_indexes = seq
@@ -236,7 +281,7 @@ impl<'de> DeserializeSeed<'de> for AddressTableLookupSeed {
             }
         }
 
-        deserializer.deserialize_seq(VisitAddressTableLookup { dst: self.0 })
+        deserializer.deserialize_tuple(3, VisitAddressTableLookup { dst: self.0 })
     }
 }
 
@@ -262,7 +307,7 @@ impl Serialize for V0MessageSer<'_> {
     {
         let mut s = serializer.serialize_tuple(5)?;
         s.serialize_element(&MessageHeaderSer(&self.0.header))?;
-        s.serialize_element(&AddressesSer(&self.0.account_keys))?;
+        s.serialize_element(&SeqBytesAsRefSer(&self.0.account_keys))?;
         s.serialize_element(&Bytes::new(self.0.recent_blockhash.as_bytes()))?;
         s.serialize_element(&CompiledInstructionsSer(&self.0.instructions))?;
         s.serialize_element(&AddressTableLookupsSer(&self.0.address_table_lookups))?;
@@ -270,10 +315,34 @@ impl Serialize for V0MessageSer<'_> {
     }
 }
 
+struct V0MessageSeed(*mut v0::Message);
+impl<'de> DeserializeSeed<'de> for V0MessageSeed {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(())
+    }
+}
+
 #[repr(u32)]
 enum VersionedMessageVariant {
-    Legacy,
-    V0,
+    Legacy = 0,
+    V0 = 1,
+}
+
+impl TryFrom<u32> for VersionedMessageVariant {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(VersionedMessageVariant::Legacy),
+            1 => Ok(VersionedMessageVariant::V0),
+            _ => Err(()),
+        }
+    }
 }
 
 struct VersionedMessageSer<'a>(&'a VersionedMessage);
@@ -299,16 +368,61 @@ impl Serialize for VersionedMessageSer<'_> {
     }
 }
 
-struct VersionedTransactionSer<'a>(&'a VersionedTransaction);
-impl Serialize for VersionedTransactionSer<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+struct VersionedMessageSeed(*mut VersionedMessage);
+impl<'de> DeserializeSeed<'de> for VersionedMessageSeed {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
-        S: serde::Serializer,
+        D: Deserializer<'de>,
     {
-        let mut s = serializer.serialize_tuple(2)?;
-        s.serialize_element(&SignaturesSer(&self.0.signatures))?;
-        s.serialize_element(&VersionedMessageSer(&self.0.message))?;
-        s.end()
+        struct VisitVersionedMessage {
+            dst: *mut VersionedMessage,
+        }
+
+        impl<'de> Visitor<'de> for VisitVersionedMessage {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a VersionedMessage")
+            }
+
+            fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::EnumAccess<'de>,
+            {
+                let (variant, access) = data.variant::<u32>()?;
+                let variant = VersionedMessageVariant::try_from(variant).map_err(|_| {
+                    A::Error::unknown_variant(&variant.to_string(), &["Legacy", "V0"])
+                })?;
+
+                match variant {
+                    VersionedMessageVariant::Legacy => {
+                        let mut msg = MaybeUninit::<legacy::Message>::uninit();
+                        access.newtype_variant_seed(LegacyMessageSeed(msg.as_mut_ptr()))?;
+                        let msg = unsafe { msg.assume_init() };
+                        unsafe {
+                            ptr::write(self.dst, VersionedMessage::Legacy(msg));
+                        }
+                    }
+                    VersionedMessageVariant::V0 => {
+                        let mut msg = MaybeUninit::<v0::Message>::uninit();
+                        access.newtype_variant_seed(V0MessageSeed(msg.as_mut_ptr()))?;
+                        let msg = unsafe { msg.assume_init() };
+                        unsafe {
+                            ptr::write(self.dst, VersionedMessage::V0(msg));
+                        }
+                    }
+                }
+
+                Ok(())
+            }
+        }
+        deserializer.deserialize_enum(
+            "VersionedMessage",
+            &["Legacy", "V0"],
+            VisitVersionedMessage { dst: self.0 },
+        )
     }
 }
 
@@ -322,6 +436,19 @@ impl Serialize for VersionedTransactionsSer<'_> {
         for tx in self.0 {
             s.serialize_element(&VersionedTransactionSer(tx))?;
         }
+        s.end()
+    }
+}
+
+struct VersionedTransactionSer<'a>(&'a VersionedTransaction);
+impl Serialize for VersionedTransactionSer<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut s = serializer.serialize_tuple(2)?;
+        s.serialize_element(&SeqBytesAsRefSer(&self.0.signatures))?;
+        s.serialize_element(&VersionedMessageSer(&self.0.message))?;
         s.end()
     }
 }
@@ -350,17 +477,24 @@ impl<'de> DeserializeSeed<'de> for VersionedTransactionSeed {
             where
                 A: SeqAccess<'de>,
             {
-                let sig_ptr =
-                    unsafe { &raw mut (*self.dst).signatures } as *mut Vec<[u8; SIGNATURE_BYTES]>;
+                let (sig_ptr, msg_ptr) = unsafe {
+                    (
+                        &raw mut (*self.dst).signatures as *mut Vec<[u8; SIGNATURE_BYTES]>,
+                        &raw mut (*self.dst).message,
+                    )
+                };
 
-                seq.next_element_seed(VecSeqSeed::new(sig_ptr, ByteSeed))?
+                seq.next_element_seed(VecSeqSeed::new(sig_ptr, FixedByteSeed))?
                     .ok_or_else(|| A::Error::invalid_length(0, &self))?;
+
+                seq.next_element_seed(VersionedMessageSeed(msg_ptr))?
+                    .ok_or_else(|| A::Error::invalid_length(1, &self))?;
 
                 Ok(())
             }
         }
 
-        deserializer.deserialize_seq(VisitVersionedTransaction { dst: self.0 })
+        deserializer.deserialize_tuple(2, VisitVersionedTransaction { dst: self.0 })
     }
 }
 
@@ -427,7 +561,7 @@ impl<'de> Deserialize<'de> for Entry {
                     num_hashes_ptr.write(num_hashes);
                 }
 
-                seq.next_element_seed(ByteSeed(hash_ptr))?
+                seq.next_element_seed(FixedByteSeed(hash_ptr))?
                     .ok_or_else(|| A::Error::invalid_length(1, &self))?;
 
                 seq.next_element_seed(VecSeqSeed::new(txs_ptr, VersionedTransactionSeed))?
@@ -449,14 +583,98 @@ impl<'de> Deserialize<'de> for Entry {
 /// that is passed each uninitialized "slot" in the allocated memory.
 /// This generator has the signature `Fn(&mut MaybeUninit<T>) -> Seed`, where `Seed`
 /// is a [`DeserializeSeed`] for the item type.
-struct VecSeqSeed<T, Seed, GenSeed> {
+///
+/// # Example
+/// ```
+/// # use solana_entry::storage::{FixedByteSeed, VecSeqSeed};
+/// # use serde::{Serialize, Deserialize, Deserializer, ser::{SerializeSeq, SerializeTuple}, de::{Visitor, SeqAccess, Error}};
+/// # use serde_bytes::Bytes;
+/// # use std::{fmt, mem::MaybeUninit};
+/// # use rand::prelude::*;
+/// # use core::array;
+/// #[derive(Debug, PartialEq)]
+/// #[repr(transparent)]
+/// struct Hash(pub [u8; 32]);
+///
+/// #[derive(Debug, PartialEq)]
+/// struct Message {
+///     hashes: Vec<Hash>,
+/// }
+///
+/// struct HashSer<'a>(&'a [Hash]);
+/// impl Serialize for HashSer<'_> {
+///     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+///     where
+///         S: serde::Serializer,
+///     {
+///         let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+///         for hash in self.0 {
+///             seq.serialize_element(&Bytes::new(&hash.0))?;
+///         }
+///         seq.end()
+///     }
+/// }
+///
+/// impl Serialize for Message {
+///     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+///     where
+///         S: serde::Serializer,
+///     {
+///         let mut seq = serializer.serialize_tuple(1)?;
+///         seq.serialize_element(&HashSer(&self.hashes))?;
+///         seq.end()
+///     }
+/// }
+///
+/// impl<'de> Deserialize<'de> for Message {
+///     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+///     where
+///         D: Deserializer<'de>,
+///     {
+///         struct VisitMessage;
+///
+///         impl<'de> Visitor<'de> for VisitMessage {
+///             type Value = Message;
+///
+///             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+///                 formatter.write_str("a Message")
+///             }
+///
+///             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+///             where
+///                 A: SeqAccess<'de>,
+///             {
+///                 let mut msg = MaybeUninit::<Message>::uninit();
+///                 let msg_ptr = msg.as_mut_ptr();
+///                 let hashes_ptr = unsafe { &raw mut (*msg_ptr).hashes } as *mut Vec<[u8; 32]>;
+///                 // Write the hashes directly into a Vec
+///                 seq.next_element_seed(VecSeqSeed::new(hashes_ptr, FixedByteSeed))?
+///                     .ok_or_else(|| A::Error::invalid_length(0, &self))?;
+///
+///                 Ok(unsafe { msg.assume_init() })
+///             }
+///         }
+///
+///         deserializer.deserialize_tuple(1, VisitMessage)
+///     }
+/// }
+///
+/// fn main() {
+///     let hashes = (0..10).map(|_| Hash(array::from_fn(|_| rand::random()))).collect();
+///     let msg = Message { hashes };
+///     let serialized = bincode::serialize(&msg).unwrap();
+///     let deserialized = bincode::deserialize(&serialized).unwrap();
+///     assert_eq!(msg, deserialized);
+/// }
+/// ```
+pub struct VecSeqSeed<T, Seed, GenSeed> {
     dst: *mut Vec<T>,
     gen_seed: GenSeed,
     _marker: PhantomData<Seed>,
 }
 
 impl<T, Seed, GenSeed> VecSeqSeed<T, Seed, GenSeed> {
-    fn new(dst: *mut Vec<T>, gen_seed: GenSeed) -> Self {
+    pub fn new(dst: *mut Vec<T>, gen_seed: GenSeed) -> Self {
         Self {
             dst,
             gen_seed,
@@ -531,7 +749,7 @@ where
                 }
 
                 unsafe {
-                    *self.dst = vec;
+                    ptr::write(self.dst, vec);
                 }
 
                 Ok(())
@@ -549,9 +767,75 @@ where
 /// [`DeserializeSeed`] for a byte array of length `N`.
 ///
 /// Allows initializing a fixed length byte array in place (i.e., without intermediate copy).
-struct ByteSeed<const N: usize>(*mut [u8; N]);
+///
+/// # Example
+/// ```
+/// # use solana_entry::storage::FixedByteSeed;
+/// # use serde::{Serialize, Deserialize, Deserializer, ser::SerializeTuple, de::{Visitor, SeqAccess, Error}};
+/// # use serde_bytes::Bytes;
+/// # use std::{fmt, mem::MaybeUninit};
+/// # use rand::prelude::*;
+/// # use core::array;
+/// #[derive(Debug, PartialEq)]
+/// struct Message {
+///     hash: [u8; 32],
+/// }
+///
+/// impl Serialize for Message {
+///     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+///     where
+///         S: serde::Serializer,
+///     {
+///         let mut seq = serializer.serialize_tuple(1)?;
+///         seq.serialize_element(&Bytes::new(&self.hash))?;
+///         seq.end()
+///     }
+/// }
+///
+/// impl<'de> Deserialize<'de> for Message {
+///     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+///     where
+///         D: Deserializer<'de>,
+///     {
+///         struct VisitMessage;
+///
+///         impl<'de> Visitor<'de> for VisitMessage {
+///             type Value = Message;
+///
+///             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+///                 formatter.write_str("a Message")
+///             }
+///
+///             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+///             where
+///                 A: SeqAccess<'de>,
+///             {
+///                 let mut msg = MaybeUninit::<Message>::uninit();
+///                 let msg_ptr = msg.as_mut_ptr();
+///                 let hash_ptr = unsafe { &raw mut (*msg_ptr).hash };
+///                 // Write the hash directly into the struct
+///                 seq.next_element_seed(FixedByteSeed(hash_ptr))?
+///                     .ok_or_else(|| A::Error::invalid_length(0, &self))?;
+///
+///                 Ok(unsafe { msg.assume_init() })
+///             }
+///         }
+///
+///         deserializer.deserialize_tuple(1, VisitMessage)
+///     }
+/// }
+///
+/// fn main() {
+///     let hash = array::from_fn(|_| rand::random());
+///     let msg = Message { hash };
+///     let serialized = bincode::serialize(&msg).unwrap();
+///     let deserialized = bincode::deserialize(&serialized).unwrap();
+///     assert_eq!(msg, deserialized);
+/// }
+/// ```
+pub struct FixedByteSeed<const N: usize>(pub *mut [u8; N]);
 
-impl<'de, const N: usize> DeserializeSeed<'de> for ByteSeed<N> {
+impl<'de, const N: usize> DeserializeSeed<'de> for FixedByteSeed<N> {
     type Value = ();
 
     #[inline(always)]
