@@ -765,21 +765,25 @@ mod tests {
             committer::Committer,
             qos_service::QosService,
             scheduler_messages::{MaxAge, TransactionBatchId},
-            tests::{create_slow_genesis_config, sanitize_transactions},
+            tests::{create_slow_genesis_config, sanitize_transactions, simulate_poh},
         },
         crossbeam_channel::unbounded,
         solana_clock::{Slot, MAX_PROCESSING_AGE},
         solana_genesis_config::GenesisConfig,
         solana_keypair::Keypair,
-        solana_ledger::genesis_utils::GenesisConfigInfo,
+        solana_ledger::{
+            blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
+            get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
+        },
         solana_message::{
             v0::{self, LoadedAddresses},
             AddressLookupTableAccount, SimpleAddressLoader, VersionedMessage,
         },
         solana_poh::{
-            record_channels::{record_channels, RecordReceiver},
+            poh_recorder::{PohRecorder, WorkingBankEntry},
             transaction_recorder::TransactionRecorder,
         },
+        solana_poh_config::PohConfig,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
@@ -798,7 +802,9 @@ mod tests {
         std::{
             collections::HashSet,
             sync::{atomic::AtomicBool, RwLock},
+            thread::JoinHandle,
         },
+        tempfile::TempDir,
         test_case::test_case,
     };
 
@@ -809,9 +815,11 @@ mod tests {
         genesis_config: GenesisConfig,
         bank: Arc<Bank>,
         _bank_forks: Arc<RwLock<BankForks>>,
+        _ledger_path: TempDir,
+        _entry_receiver: Receiver<WorkingBankEntry>,
+        poh_recorder: Arc<RwLock<PohRecorder>>,
+        _poh_simulator: JoinHandle<()>,
         _replay_vote_receiver: ReplayVoteReceiver,
-        record_receiver: RecordReceiver,
-        shared_working_bank: SharedWorkingBank,
 
         consume_sender: Sender<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
         consumed_receiver: Receiver<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
@@ -840,8 +848,24 @@ mod tests {
         }
         let bank = Arc::new(bank);
 
-        let (record_sender, record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path())
+            .expect("Expected to be able to open database ledger");
+        let (poh_recorder, entry_receiver) = PohRecorder::new(
+            bank.tick_height(),
+            bank.last_blockhash(),
+            bank.clone(),
+            Some((4, 4)),
+            bank.ticks_per_slot(),
+            Arc::new(blockstore),
+            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
+        let (record_sender, record_receiver) = unbounded();
+        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+        let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
         let committer = Committer::new(
@@ -850,7 +874,6 @@ mod tests {
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
-        let shared_working_bank = SharedWorkingBank::empty();
 
         let (consume_sender, consume_receiver) = unbounded();
         let (consumed_sender, consumed_receiver) = unbounded();
@@ -860,7 +883,7 @@ mod tests {
             consume_receiver,
             consumer,
             consumed_sender,
-            shared_working_bank.clone(),
+            poh_recorder.read().unwrap().shared_working_bank(),
         );
 
         (
@@ -869,9 +892,11 @@ mod tests {
                 genesis_config,
                 bank,
                 _bank_forks: bank_forks,
+                _ledger_path: ledger_path,
+                _entry_receiver: entry_receiver,
+                poh_recorder,
+                _poh_simulator: poh_simulator,
                 _replay_vote_receiver: replay_vote_receiver,
-                record_receiver,
-                shared_working_bank,
                 consume_sender,
                 consumed_receiver,
             },
@@ -925,20 +950,21 @@ mod tests {
 
     #[test]
     fn test_worker_consume_simple() {
-        let (mut test_frame, worker) = setup_test_frame(true);
+        let (test_frame, worker) = setup_test_frame(true);
         let TestFrame {
             mint_keypair,
             genesis_config,
             bank,
-            ref mut record_receiver,
-            ref mut shared_working_bank,
+            poh_recorder,
             consume_sender,
             consumed_receiver,
             ..
-        } = &mut test_frame;
+        } = &test_frame;
         let worker_thread = std::thread::spawn(move || worker.run());
-        shared_working_bank.store(bank.clone());
-        record_receiver.restart(bank.slot());
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank_for_test(bank.clone());
 
         let pubkey1 = Pubkey::new_unique();
 
@@ -974,20 +1000,21 @@ mod tests {
     #[test_case(false; "old")]
     #[test_case(true; "simd83")]
     fn test_worker_consume_self_conflicting(relax_intrabatch_account_locks: bool) {
-        let (mut test_frame, worker) = setup_test_frame(relax_intrabatch_account_locks);
+        let (test_frame, worker) = setup_test_frame(relax_intrabatch_account_locks);
         let TestFrame {
             mint_keypair,
             genesis_config,
             bank,
-            ref mut record_receiver,
-            ref mut shared_working_bank,
+            poh_recorder,
             consume_sender,
             consumed_receiver,
             ..
-        } = &mut test_frame;
+        } = &test_frame;
         let worker_thread = std::thread::spawn(move || worker.run());
-        shared_working_bank.store(bank.clone());
-        record_receiver.restart(bank.slot());
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank_for_test(bank.clone());
 
         let pubkey1 = Pubkey::new_unique();
         let pubkey2 = Pubkey::new_unique();
@@ -1034,20 +1061,21 @@ mod tests {
 
     #[test]
     fn test_worker_consume_multiple_messages() {
-        let (mut test_frame, worker) = setup_test_frame(true);
+        let (test_frame, worker) = setup_test_frame(true);
         let TestFrame {
             mint_keypair,
             genesis_config,
             bank,
-            ref mut record_receiver,
-            ref mut shared_working_bank,
+            poh_recorder,
             consume_sender,
             consumed_receiver,
             ..
-        } = &mut test_frame;
+        } = &test_frame;
         let worker_thread = std::thread::spawn(move || worker.run());
-        shared_working_bank.store(bank.clone());
-        record_receiver.restart(bank.slot());
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank_for_test(bank.clone());
 
         let pubkey1 = Pubkey::new_unique();
         let pubkey2 = Pubkey::new_unique();
@@ -1108,20 +1136,21 @@ mod tests {
 
     #[test]
     fn test_worker_ttl() {
-        let (mut test_frame, worker) = setup_test_frame(true);
+        let (test_frame, worker) = setup_test_frame(true);
         let TestFrame {
             mint_keypair,
             genesis_config,
             bank,
-            ref mut record_receiver,
-            ref mut shared_working_bank,
+            poh_recorder,
             consume_sender,
             consumed_receiver,
             ..
-        } = &mut test_frame;
+        } = &test_frame;
         let worker_thread = std::thread::spawn(move || worker.run());
-        shared_working_bank.store(bank.clone());
-        record_receiver.restart(bank.slot());
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank_for_test(bank.clone());
         assert!(bank.slot() > 0);
         assert!(bank.epoch() > 0);
 

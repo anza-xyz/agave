@@ -2725,8 +2725,13 @@ mod tests {
         solana_clock::{Slot, MAX_PROCESSING_AGE},
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
-        solana_poh::record_channels::record_channels,
+        solana_ledger::{
+            blockstore::Blockstore,
+            blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
+            create_new_tmp_ledger_auto_delete,
+            leader_schedule_cache::LeaderScheduleCache,
+        },
+        solana_poh::poh_recorder::create_test_recorder_with_index_tracking,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
@@ -2742,7 +2747,7 @@ mod tests {
         solana_unified_scheduler_logic::NO_CONSUMED_BLOCK_SIZE,
         std::{
             num::Saturating,
-            sync::{Arc, RwLock},
+            sync::{atomic::Ordering, Arc, RwLock},
             thread::JoinHandle,
         },
         test_case::test_matrix,
@@ -3873,11 +3878,31 @@ mod tests {
             None,
             ignored_prioritization_fee_cache,
         );
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = {
+            // Create a dummy bank to prevent it from being frozen; otherwise, the following panic
+            // will happen:
+            //    thread 'solPohTickProd' panicked at runtime/src/bank.rs:LL:CC:
+            //    register_tick() working on a bank that is already frozen or is undergoing freezing!
+            let dummy_bank = Bank::new_for_tests(&genesis_config);
+            let (dummy_bank, _bank_forks) = setup_dummy_fork_graph(dummy_bank);
+            create_test_recorder_with_index_tracking(
+                dummy_bank,
+                blockstore.clone(),
+                None,
+                Some(leader_schedule_cache),
+            )
+        };
 
         if matches!(scheduling_mode, BlockProduction) {
             pool.register_banking_stage(
@@ -3947,6 +3972,9 @@ mod tests {
             expected_transaction_count += 1;
         }
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
     }
 
     #[test]
@@ -3988,10 +4016,28 @@ mod tests {
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
-
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
+        let (
+            exit,
+            _poh_recorder,
+            mut poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = {
+            create_test_recorder_with_index_tracking(
+                bank.clone(),
+                blockstore.clone(),
+                None,
+                Some(leader_schedule_cache),
+            )
+        };
+        poh_controller
+            .reset_sync(bank.clone(), Some((bank.slot(), bank.slot() + 1)))
+            .unwrap();
 
         pool.register_banking_stage(
             None,
@@ -4013,7 +4059,9 @@ mod tests {
         let scheduler = pool.take_scheduler(context);
         let old_scheduler_id = scheduler.id();
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        record_receiver.restart(bank.slot());
+        poh_controller
+            .set_bank_sync(bank.clone_with_scheduler())
+            .unwrap();
         bank.schedule_transaction_executions([(tx, ORIGINAL_TRANSACTION_INDEX)].into_iter())
             .unwrap();
         bank.unpause_new_block_production_scheduler();
@@ -4026,8 +4074,10 @@ mod tests {
         // There should be no executed transaction yet.
         assert_eq!(bank.transaction_count(), 0);
 
-        // Shutdown channel to observe behavior difference around session ending
-        record_receiver.shutdown();
+        // Create new bank to observe behavior difference around session ending
+        poh_controller
+            .reset_sync(bank.clone(), Some((bank.slot(), bank.slot() + 1)))
+            .unwrap();
         let bank = Arc::new(Bank::new_from_parent(
             bank.clone_without_scheduler(),
             &Pubkey::default(),
@@ -4043,7 +4093,9 @@ mod tests {
         // Make sure the same scheduler is used to test its internal cross-session behavior
         assert_eq!(scheduler.id(), old_scheduler_id);
         let bank = BankWithScheduler::new(bank, Some(scheduler));
-        record_receiver.restart(bank.slot());
+        poh_controller
+            .set_bank_sync(bank.clone_with_scheduler())
+            .unwrap();
         bank.unpause_new_block_production_scheduler();
 
         // Calling wait_for_completed_scheduler() for block production scheduler causes it to be
@@ -4053,6 +4105,9 @@ mod tests {
         // Block production scheduler should carry over the temporarily-failed transaction itself
         // and the transaction should now have been executed.
         assert_eq!(bank.transaction_count(), 1);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
     }
 
     #[test]
@@ -4480,10 +4535,22 @@ mod tests {
         let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let scheduling_context = &SchedulingContext::for_production(bank.clone());
         let (sender, receiver) = crossbeam_channel::unbounded();
-
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (
+            exit,
+            poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
         let handler_context = &HandlerContext {
             thread_count: 0,
             log_messages_bytes_limit: None,
@@ -4502,10 +4569,13 @@ mod tests {
         let task =
             SchedulingStateMachine::create_task(tx.clone(), 0, &mut |_| UsageQueue::default());
 
-        // Recording will succeed based upon if the channel is shutdown or not.
-        if should_succeed_to_record_to_poh {
-            // If we should succeed, we reset the channel to accept records.
-            record_receiver.restart(bank.slot());
+        // wait until the poh's working bank is cleared.
+        // also flush signal_receiver after that.
+        if !should_succeed_to_record_to_poh {
+            while poh_recorder.read().unwrap().bank().is_some() {
+                sleep(Duration::from_millis(100));
+            }
+            while signal_receiver.try_recv().is_ok() {}
         }
 
         assert_eq!(bank.transaction_count(), 0);
@@ -4528,15 +4598,17 @@ mod tests {
                         None, // no work id
                     )))
                 );
-                // check that the `Record` is correctly sent through the channel;
-                // in reality this would then be picked up by PoH service.
-                assert!(record_receiver.try_recv().is_ok());
+                assert_matches!(
+                    signal_receiver.try_recv(),
+                    Ok((_, (solana_entry::entry::Entry {transactions, ..} , _)))
+                        if transactions == vec![tx.to_versioned_transaction()]
+                );
             } else {
                 assert_eq!(result, &expected_tx_result);
                 assert_eq!(bank.transaction_count(), 0);
                 assert_eq!(bank.transaction_error_count(), 0);
                 assert_matches!(receiver.try_recv(), Err(_));
-                assert!(record_receiver.try_recv().is_err());
+                assert_matches!(signal_receiver.try_recv(), Err(_));
             }
         } else {
             if expected_tx_result.is_ok() {
@@ -4547,8 +4619,11 @@ mod tests {
 
             assert_eq!(bank.transaction_count(), 0);
             assert_matches!(receiver.try_recv(), Err(_));
-            assert!(record_receiver.try_recv().is_err());
+            assert_matches!(signal_receiver.try_recv(), Err(_));
         }
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
     }
 
     #[derive(Debug)]
@@ -4578,10 +4653,22 @@ mod tests {
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
-
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
@@ -4605,6 +4692,9 @@ mod tests {
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         assert_eq!(bank.transaction_count(), 1);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
     }
 
     impl BankingStageHelper {
@@ -4638,9 +4728,22 @@ mod tests {
         let pool =
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
 
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
 
         // send fake packet batch to trigger banking_packet_handler
         let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
@@ -4679,6 +4782,9 @@ mod tests {
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         assert_eq!(bank.transaction_count(), 1);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
     }
 
     #[test]
@@ -4702,9 +4808,22 @@ mod tests {
         let pool =
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
 
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
 
         // Create a dummy handler which unconditionally sends tx0 back to the scheduler thread
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -4751,6 +4870,9 @@ mod tests {
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
         assert_eq!(bank.transaction_count(), 1);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
     }
 
     #[test]
@@ -4781,10 +4903,22 @@ mod tests {
         let pool =
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
 
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
-
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
             None,
@@ -4800,6 +4934,9 @@ mod tests {
 
         Box::new(scheduler1.into_inner().1).return_to_pool();
         Box::new(scheduler2.into_inner().1).return_to_pool();
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
     }
 
     #[test]
@@ -4832,9 +4969,22 @@ mod tests {
             DEFAULT_TIMEOUT_DURATION,
         );
 
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
@@ -4865,6 +5015,9 @@ mod tests {
 
         // id should be different
         assert_ne!(trashed_old_scheduler_id, respawned_new_scheduler_id);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
 
         // Ensure the actual async trashing by solScCleaner
         sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
@@ -4908,9 +5061,22 @@ mod tests {
             DEFAULT_TIMEOUT_DURATION,
         );
 
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         pool.register_banking_stage(
@@ -4939,6 +5105,9 @@ mod tests {
 
         // id should be different
         assert_ne!(trashed_old_scheduler_id, respawned_new_scheduler_id);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
     }
 
     #[test]
@@ -4955,10 +5124,22 @@ mod tests {
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
 
         let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
-
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
@@ -4973,6 +5154,9 @@ mod tests {
         let scheduler = pool.take_scheduler(context);
         let bank_tmp = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank_tmp.wait_for_completed_scheduler(), Some((Ok(()), _)));
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
     }
 
     #[test]
@@ -5040,10 +5224,22 @@ mod tests {
         banking_packet_sender
             .send(BankingPacketBatch::default())
             .unwrap();
-        let (record_sender, mut record_receiver) = record_channels(true);
-        let transaction_recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
-
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (
+            exit,
+            _poh_recorder,
+            _poh_controller,
+            transaction_recorder,
+            poh_service,
+            _signal_receiver,
+        ) = create_test_recorder_with_index_tracking(
+            bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
@@ -5056,5 +5252,8 @@ mod tests {
         *START_DISCARD.lock().unwrap() = true;
 
         sleepless_testing::at(TestCheckPoint::AfterDiscarded);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
     }
 }
