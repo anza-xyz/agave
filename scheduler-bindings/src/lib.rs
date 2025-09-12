@@ -96,9 +96,6 @@ pub struct SharableTransactionBatchRegion {
 pub struct TransactionResponseRegion {
     /// Tag indicating the type of message.
     /// See [`worker_message_types`] for details.
-    /// If the tag is [`worker_message_types::INVALID_MESSAGE`],
-    /// no inner messages will be present and `num_transaction_responses`
-    /// and `transaction_responses_offset` will be 0.
     /// All inner messages/responses per trasaction will be of the same type.
     pub tag: u8,
     /// The number of transactions in the original message.
@@ -186,6 +183,8 @@ pub mod pack_message_flags {
     //! Flags for [`crate::PackToWorkerMessage::flags`].
     //! These flags can be ORed together so must be unique bits, with
     //! the exception of [`NONE`].
+    //! The *default* behavior, [`NONE`], is to attempt execution and
+    //! inclusion in the specified `max_execution_slot`.
 
     /// No special handling - execute the transactions normally.
     pub const NONE: u16 = 0;
@@ -211,7 +210,13 @@ pub struct WorkerToPackMessage {
     /// and is safe to do so - agave will hold no references to this memory
     /// after sending this message.
     pub batch: SharableTransactionBatchRegion,
-    /// Tag for type of response messages with number and offset.
+    /// `true` if the message was processed.
+    /// `false` if the message could not be processed. This will occur
+    /// if the passed message was invalid, and could indicate an issue
+    /// with the external pack process.
+    /// If `false`, the value of [`Self::responses`] is undefined.
+    pub processed: bool,
+    /// Response per transaction in the batch.
     /// See [`TransactionResponseRegion`] for details.
     pub responses: TransactionResponseRegion,
 }
@@ -219,12 +224,8 @@ pub struct WorkerToPackMessage {
 pub mod worker_message_types {
     use crate::SharablePubkeys;
 
-    /// Tag indicating the sent message was invalid.
-    /// No inner messages will be present.
-    pub const INVALID_MESSAGE: u8 = 0;
-
     /// Tag indicating [`ExecutionResonse`] inner message.
-    pub const EXECUTION_RESPONSE: u8 = 1;
+    pub const EXECUTION_RESPONSE: u8 = 0;
 
     /// Response to pack for a transaction that attempted execution.
     /// This response will only be sent if the original message flags
@@ -269,7 +270,7 @@ pub mod worker_message_types {
     }
 
     /// Tag indicating [`Resolved`] inner message.
-    pub const RESOLVED: u8 = 2;
+    pub const RESOLVED: u8 = 1;
 
     #[repr(C)]
     pub struct Resolved {
