@@ -19,21 +19,24 @@ use {
 /// be constantly polled to refill. Uses atomics internally so should be
 /// relatively cheap to access from many threads
 pub struct TokenBucket {
-    tokens_per_second: f64,
+    new_tokens_per_us: f64,
     max_tokens: u64,
+    /// bucket creation
     base_time: Instant,
     tokens: AtomicU64,
+    /// time of last update in us since base_time
     last_update: AtomicU64,
-    spare_time_us: AtomicU64,
+    /// time unused in last token creation round
+    credit_time_us: AtomicU64,
 }
 
 // If changing this impl, make sure to run benches and ensure they do not panic.
 // much of the testing is impossible outside of real multithreading in release mode.
 impl TokenBucket {
     /// Allocate a new TokenBucket
-    pub fn new(initial_tokens: u64, max_tokens: u64, tokens_per_second: f64) -> Self {
+    pub fn new(initial_tokens: u64, max_tokens: u64, new_tokens_per_second: f64) -> Self {
         assert!(
-            tokens_per_second > 0.0,
+            new_tokens_per_second > 0.0,
             "Token bucket can not have zero influx rate"
         );
         assert!(
@@ -42,12 +45,13 @@ impl TokenBucket {
         );
         let base_time = Instant::now();
         TokenBucket {
-            tokens_per_second,
+            // recompute into us to avoid FP division on every update
+            new_tokens_per_us: new_tokens_per_second / 1e6,
             max_tokens,
             tokens: AtomicU64::new(initial_tokens),
             last_update: AtomicU64::new(0),
             base_time,
-            spare_time_us: AtomicU64::new(0),
+            credit_time_us: AtomicU64::new(0),
         }
     }
 
@@ -104,9 +108,10 @@ impl TokenBucket {
         }
 
         // Try to claim the interval [last, now].
-        // If we can not claim it, someone else will claim [last..some later time] when they
+        // If we can not claim it, someone else will claim [last..some other time] when they
         // touch the bucket.
-        // If we can claim this interval, no other thread can credit tokens for it anymore.
+        // If we can claim interval [last, now], no other thread can credit tokens for it anymore.
+        // If [last, now] is too short to mint any tokens, spare time will be preserved in credit_time_us.
         match self.last_update.compare_exchange(
             last,
             now,
@@ -119,34 +124,34 @@ impl TokenBucket {
 
                 // also add leftovers from previous conversion attempts.
                 // we do not care about who uses the spare_time_us, so relaxed is ok here.
-                let elapsed = elapsed.saturating_add(self.spare_time_us.swap(0, Ordering::Relaxed));
+                let elapsed =
+                    elapsed.saturating_add(self.credit_time_us.swap(0, Ordering::Relaxed));
 
-                let tokens_per_us = self.tokens_per_second / 1e6;
-                let new_tokens_f64 = elapsed as f64 * tokens_per_us;
+                let new_tokens_f64 = elapsed as f64 * self.new_tokens_per_us;
 
-                // Fractional remainder of elapsed time (not enough to mint a whole token)
-                let mut time_to_return = (new_tokens_f64.fract() / tokens_per_us) as u64;
-
+                // amount of full tokens to be minted
                 let new_tokens = new_tokens_f64.floor() as u64;
 
-                if new_tokens >= 1 {
+                let time_to_return = if new_tokens >= 1 {
                     // Credit tokens, saturating at max_tokens
                     let _ = self.tokens.fetch_update(
                         Ordering::AcqRel,  // writer publishes new amount
                         Ordering::Acquire, //we fetch the correct amount
                         |tokens| Some(tokens.saturating_add(new_tokens).min(self.max_tokens)),
                     );
+                    // Fractional remainder of elapsed time (not enough to mint a whole token)
+                    // that will be credited to other minters
+                    (new_tokens_f64.fract() / self.new_tokens_per_us) as u64
                 } else {
-                    // No whole tokens minted → return all elapsed
-                    time_to_return = elapsed;
-                }
-
-                // Save unused "fractional" elapsed time
-                self.spare_time_us
+                    // No whole tokens minted → return whole interval
+                    elapsed
+                };
+                // Save unused elapsed time for other threads
+                self.credit_time_us
                     .fetch_add(time_to_return, Ordering::Relaxed);
             }
             Err(_) => {
-                // Another thread advanced last_update first → retry.
+                // Another thread advanced last_update first → nothing we can do now.
             }
         }
     }
@@ -154,16 +159,16 @@ impl TokenBucket {
 
 impl Clone for TokenBucket {
     /// Clones the TokenBucket with approximate state
-    /// of the original. While this will never return an object in
-    /// invalid state, using this in a contended environment is unwise.
+    /// of the original. While this will never return an object in an
+    /// invalid state, using this in a contended environment is not recommended.
     fn clone(&self) -> Self {
         Self {
-            tokens_per_second: self.tokens_per_second,
+            new_tokens_per_us: self.new_tokens_per_us,
             max_tokens: self.max_tokens,
             base_time: self.base_time,
             tokens: AtomicU64::new(self.tokens.load(Ordering::Relaxed)),
             last_update: AtomicU64::new(self.last_update.load(Ordering::Relaxed)),
-            spare_time_us: AtomicU64::new(self.spare_time_us.load(Ordering::Relaxed)),
+            credit_time_us: AtomicU64::new(self.credit_time_us.load(Ordering::Relaxed)),
         }
     }
 }
