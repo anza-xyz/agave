@@ -219,7 +219,13 @@ impl RecordReceiver {
 
     /// Channel is empty and there are no active threads attempting to send.
     pub fn is_empty(&self) -> bool {
-        // Checking active senders is important - otherwise the race condition is possible.
+        // The order here is important. active_senders must be checked first.
+        // If checked after is_empty, we could have a race:
+        // 1) sender has not sent yet, active_senders = 1. is_empty = true.
+        // 2) sender sends, decrements active_senders = 0.
+        // 3) receiver checks active_senders == 0 && is_empty == true,
+        //    thinks the channel is empty with no active senders, but there is
+        //    actually a record in the channel now!
         self.active_senders.load(Ordering::Acquire) == 0 && self.receiver.is_empty()
     }
 
