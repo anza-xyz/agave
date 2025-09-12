@@ -56,8 +56,15 @@ impl CaterpillarEntry {
         Self::from_unsafe_holder(UnsafeCaterpillarHolder::from_expanded(expanded))
     }
 
+    fn from_unsafe_holder(holder: UnsafeCaterpillarHolder) -> Self {
+        Self {
+            raw_atomic: AtomicU64::new(holder.raw()),
+        }
+    }
+
     pub fn as_fixed_entry(&self) -> FixedKindEntry {
-        self.make_unsafe_holder().into_fixed_entry()
+        UnsafeCaterpillarHolder::from_raw(self.raw_atomic.load(Ordering::Relaxed))
+            .into_fixed_entry()
     }
 
     pub fn turn_to_expanded(&self) -> FixedKindEntry {
@@ -102,16 +109,6 @@ impl CaterpillarEntry {
         // the raw atomic. This means we can just store new value without conflict.
         self.raw_atomic.store(new_holder.raw(), Ordering::Release);
         new_holder.into_fixed_entry()
-    }
-
-    fn make_unsafe_holder(&self) -> UnsafeCaterpillarHolder {
-        UnsafeCaterpillarHolder::from_raw(self.raw_atomic.load(Ordering::Relaxed))
-    }
-
-    fn from_unsafe_holder(holder: UnsafeCaterpillarHolder) -> Self {
-        Self {
-            raw_atomic: AtomicU64::new(holder.raw()),
-        }
     }
 }
 
@@ -180,7 +177,7 @@ pub struct HeapEntryUnsafeAddress {
 
 union UnsafeCaterpillarHolder {
     raw: u64,
-    regular: InlinedEntry,
+    inlined: InlinedEntry,
     expanded: HeapEntryUnsafeAddress,
 }
 
@@ -195,9 +192,9 @@ impl UnsafeCaterpillarHolder {
         Self { raw }
     }
 
-    fn from_inlined(regular: InlinedEntry) -> Self {
-        assert!(regular.common_info().is_inlined());
-        Self { regular }
+    fn from_inlined(inlined: InlinedEntry) -> Self {
+        assert!(inlined.common_info().is_inlined());
+        Self { inlined: inlined }
     }
 
     fn from_expanded(expanded: ExpandedEntry) -> Self {
@@ -213,13 +210,13 @@ impl UnsafeCaterpillarHolder {
     }
 
     fn is_inlined(&self) -> bool {
-        unsafe { self.regular.common_info().is_inlined() }
+        unsafe { self.inlined.common_info().is_inlined() }
     }
 
     fn into_fixed_entry<'a>(self) -> FixedKindEntry<'a> {
         unsafe {
             if self.is_inlined() {
-                FixedKindEntry::Inlined(self.regular)
+                FixedKindEntry::Inlined(self.inlined)
             } else {
                 let ptr = self.get_expanded_ptr();
                 FixedKindEntry::Heap(ptr.as_ref().unwrap())
@@ -268,17 +265,17 @@ mod tests {
 
     #[test]
     fn test_entry_turning() {
-        let regular = InlinedEntry::new()
+        let inlined = InlinedEntry::new()
             .with_common_info(CommonEntryInfo::new().with_is_inlined(true))
             .with_file_id(4534)
             .with_offset_reduced(99)
             .with_is_zero_lamports(true);
-        let regular_centry = CaterpillarEntry::from_inlined(regular);
-        let FixedKindEntry::Inlined(regular) = regular_centry.as_fixed_entry() else {
+        let inlined_centry = CaterpillarEntry::from_inlined(inlined);
+        let FixedKindEntry::Inlined(inlined) = inlined_centry.as_fixed_entry() else {
             panic!("Unexpected entry type")
         };
-        assert_eq!(regular.file_id(), 4534);
-        assert_eq!(regular.offset_reduced(), 99);
+        assert_eq!(inlined.file_id(), 4534);
+        assert_eq!(inlined.offset_reduced(), 99);
 
         let expanded = ExpandedEntry {
             foo: 42,
@@ -293,7 +290,7 @@ mod tests {
         assert_eq!(expanded.foo, 42);
         assert_eq!(expanded.baz, 13);
 
-        let turning_centry = regular_centry;
+        let turning_centry = inlined_centry;
         let FixedKindEntry::Heap(expanded) = turning_centry.turn_to_expanded() else {
             panic!("Unexpected entry type")
         };
@@ -303,10 +300,10 @@ mod tests {
 
         let mut mut_turning_centry = turning_centry;
         mut_turning_centry.turn_to_inlined();
-        let FixedKindEntry::Inlined(regular) = mut_turning_centry.as_fixed_entry() else {
+        let FixedKindEntry::Inlined(inlined) = mut_turning_centry.as_fixed_entry() else {
             panic!("Unexpected entry type")
         };
-        assert_eq!(regular.file_id(), 4534);
-        assert_eq!(regular.offset_reduced(), 99);
+        assert_eq!(inlined.file_id(), 4534);
+        assert_eq!(inlined.offset_reduced(), 99);
     }
 }
