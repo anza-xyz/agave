@@ -46,6 +46,7 @@ solana-transaction-error = { workspace = true }
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
+proptest = { workspace = true }
 solana-entry = { path = ".", features = ["dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }

@@ -8455,6 +8455,7 @@ dependencies = [
  "dlopen2",
  "log",
  "num_cpus",
+ "proptest",
  "rand 0.8.5",
  "rayon",
  "serde",

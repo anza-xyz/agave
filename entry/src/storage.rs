@@ -114,6 +114,14 @@ impl<'de> DeserializeSeed<'de> for CompiledInstructionSeed {
             where
                 A: SeqAccess<'de>,
             {
+                let (program_id_index_ptr, accounts_ptr, data_ptr) = unsafe {
+                    (
+                        &raw mut ((*self.dst).program_id_index),
+                        &raw mut ((*self.dst).accounts),
+                        &raw mut ((*self.dst).data),
+                    )
+                };
+
                 let program_id_index = seq
                     .next_element::<u8>()?
                     .ok_or_else(|| A::Error::invalid_length(0, &self))?;
@@ -127,9 +135,9 @@ impl<'de> DeserializeSeed<'de> for CompiledInstructionSeed {
                     .into_vec();
 
                 unsafe {
-                    (&raw mut ((*self.dst).program_id_index)).write(program_id_index);
-                    (&raw mut ((*self.dst).accounts)).write(accounts);
-                    (&raw mut ((*self.dst).data)).write(data);
+                    program_id_index_ptr.write(program_id_index);
+                    accounts_ptr.write(accounts);
+                    data_ptr.write(data);
                 }
                 Ok(())
             }
@@ -239,6 +247,7 @@ struct AddressTableLookupSeed(*mut MessageAddressTableLookup);
 impl<'de> DeserializeSeed<'de> for AddressTableLookupSeed {
     type Value = ();
 
+    #[inline(always)]
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
@@ -258,8 +267,13 @@ impl<'de> DeserializeSeed<'de> for AddressTableLookupSeed {
             where
                 A: SeqAccess<'de>,
             {
-                let account_key_ptr =
-                    unsafe { &raw mut (*self.dst).account_key as *mut [u8; ADDRESS_BYTES] };
+                let (account_key_ptr, writable_indexes_ptr, readonly_indexes_ptr) = unsafe {
+                    (
+                        &raw mut (*self.dst).account_key as *mut [u8; ADDRESS_BYTES],
+                        &raw mut (*self.dst).writable_indexes,
+                        &raw mut (*self.dst).readonly_indexes,
+                    )
+                };
 
                 seq.next_element_seed(FixedByteSeed(account_key_ptr))?
                     .ok_or_else(|| A::Error::invalid_length(0, &self))?;
@@ -272,9 +286,10 @@ impl<'de> DeserializeSeed<'de> for AddressTableLookupSeed {
                     .next_element::<ByteBuf>()?
                     .ok_or_else(|| A::Error::invalid_length(2, &self))?
                     .into_vec();
+
                 unsafe {
-                    (&raw mut ((*self.dst).writable_indexes)).write(writeable_indexes);
-                    (&raw mut ((*self.dst).readonly_indexes)).write(readonly_indexes);
+                    writable_indexes_ptr.write(writeable_indexes);
+                    readonly_indexes_ptr.write(readonly_indexes);
                 }
 
                 Ok(())
@@ -319,11 +334,65 @@ struct V0MessageSeed(*mut v0::Message);
 impl<'de> DeserializeSeed<'de> for V0MessageSeed {
     type Value = ();
 
+    #[inline(always)]
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
-        Ok(())
+        struct VisitV0Message {
+            dst: *mut v0::Message,
+        }
+
+        impl<'de> Visitor<'de> for VisitV0Message {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a V0Message")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let (
+                    header_ptr,
+                    account_keys_ptr,
+                    recent_blockhash_ptr,
+                    instructions_ptr,
+                    address_table_lookups_ptr,
+                ) = unsafe {
+                    (
+                        &raw mut (*self.dst).header,
+                        &raw mut (*self.dst).account_keys as *mut Vec<[u8; ADDRESS_BYTES]>,
+                        &raw mut (*self.dst).recent_blockhash as *mut [u8; HASH_BYTES],
+                        &raw mut (*self.dst).instructions,
+                        &raw mut (*self.dst).address_table_lookups,
+                    )
+                };
+
+                seq.next_element_seed(MessageHeaderSeed(header_ptr))?
+                    .ok_or_else(|| A::Error::invalid_length(0, &self))?;
+
+                seq.next_element_seed(VecSeqSeed::new(account_keys_ptr, FixedByteSeed))?
+                    .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+
+                seq.next_element_seed(FixedByteSeed(recent_blockhash_ptr))?
+                    .ok_or_else(|| A::Error::invalid_length(2, &self))?;
+
+                seq.next_element_seed(VecSeqSeed::new(instructions_ptr, CompiledInstructionSeed))?
+                    .ok_or_else(|| A::Error::invalid_length(3, &self))?;
+
+                seq.next_element_seed(VecSeqSeed::new(
+                    address_table_lookups_ptr,
+                    AddressTableLookupSeed,
+                ))?
+                .ok_or_else(|| A::Error::invalid_length(4, &self))?;
+
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_tuple(5, VisitV0Message { dst: self.0 })
     }
 }
 
@@ -336,6 +405,7 @@ enum VersionedMessageVariant {
 impl TryFrom<u32> for VersionedMessageVariant {
     type Error = ();
 
+    #[inline(always)]
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(VersionedMessageVariant::Legacy),
@@ -372,6 +442,7 @@ struct VersionedMessageSeed(*mut VersionedMessage);
 impl<'de> DeserializeSeed<'de> for VersionedMessageSeed {
     type Value = ();
 
+    #[inline(always)]
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
@@ -402,7 +473,7 @@ impl<'de> DeserializeSeed<'de> for VersionedMessageSeed {
                         access.newtype_variant_seed(LegacyMessageSeed(msg.as_mut_ptr()))?;
                         let msg = unsafe { msg.assume_init() };
                         unsafe {
-                            ptr::write(self.dst, VersionedMessage::Legacy(msg));
+                            self.dst.write(VersionedMessage::Legacy(msg));
                         }
                     }
                     VersionedMessageVariant::V0 => {
@@ -410,7 +481,7 @@ impl<'de> DeserializeSeed<'de> for VersionedMessageSeed {
                         access.newtype_variant_seed(V0MessageSeed(msg.as_mut_ptr()))?;
                         let msg = unsafe { msg.assume_init() };
                         unsafe {
-                            ptr::write(self.dst, VersionedMessage::V0(msg));
+                            self.dst.write(VersionedMessage::V0(msg));
                         }
                     }
                 }
@@ -418,6 +489,7 @@ impl<'de> DeserializeSeed<'de> for VersionedMessageSeed {
                 Ok(())
             }
         }
+
         deserializer.deserialize_enum(
             "VersionedMessage",
             &["Legacy", "V0"],
@@ -458,6 +530,7 @@ struct VersionedTransactionSeed(*mut VersionedTransaction);
 impl<'de> DeserializeSeed<'de> for VersionedTransactionSeed {
     type Value = ();
 
+    #[inline(always)]
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
@@ -499,6 +572,7 @@ impl<'de> DeserializeSeed<'de> for VersionedTransactionSeed {
 }
 
 #[repr(transparent)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Entry(pub crate::entry::Entry);
 
 impl Entry {
@@ -527,6 +601,7 @@ impl Serialize for Entry {
     }
 }
 impl<'de> Deserialize<'de> for Entry {
+    #[inline(always)]
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -723,7 +798,7 @@ where
 
                 if seq_len == 0 {
                     unsafe {
-                        *self.dst = Vec::new();
+                        self.dst.write(Vec::new());
                     }
                     return Ok(());
                 }
@@ -749,7 +824,7 @@ where
                 }
 
                 unsafe {
-                    ptr::write(self.dst, vec);
+                    self.dst.write(vec);
                 }
 
                 Ok(())
@@ -871,5 +946,158 @@ impl<'de, const N: usize> DeserializeSeed<'de> for FixedByteSeed<N> {
         }
 
         deserializer.deserialize_bytes(VisitByteSeed { dst: self.0 })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*, crate::entry::Entry as EntryRef, proptest::prelude::*, solana_address::Address,
+        solana_hash::Hash, solana_signature::Signature,
+    };
+
+    fn strat_byte_vec(max_len: usize) -> impl Strategy<Value = Vec<u8>> {
+        proptest::collection::vec(any::<u8>(), 0..=max_len)
+    }
+
+    fn strat_signature() -> impl Strategy<Value = Signature> {
+        any::<[u8; SIGNATURE_BYTES]>().prop_map(Signature::from)
+    }
+
+    fn strat_address() -> impl Strategy<Value = Address> {
+        any::<[u8; ADDRESS_BYTES]>().prop_map(Address::new_from_array)
+    }
+
+    fn strat_hash() -> impl Strategy<Value = Hash> {
+        any::<[u8; HASH_BYTES]>().prop_map(Hash::new_from_array)
+    }
+
+    fn strat_message_header() -> impl Strategy<Value = MessageHeader> {
+        (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(a, b, c)| MessageHeader {
+            num_required_signatures: a,
+            num_readonly_signed_accounts: b,
+            num_readonly_unsigned_accounts: c,
+        })
+    }
+
+    fn strat_compiled_instruction() -> impl Strategy<Value = CompiledInstruction> {
+        (any::<u8>(), strat_byte_vec(256), strat_byte_vec(256)).prop_map(
+            |(program_id_index, accounts, data)| {
+                CompiledInstruction::new_from_raw_parts(program_id_index, accounts, data)
+            },
+        )
+    }
+
+    fn strat_address_table_lookup() -> impl Strategy<Value = MessageAddressTableLookup> {
+        (strat_address(), strat_byte_vec(256), strat_byte_vec(256)).prop_map(
+            |(account_key, writable_indexes, readonly_indexes)| MessageAddressTableLookup {
+                account_key,
+                writable_indexes,
+                readonly_indexes,
+            },
+        )
+    }
+
+    fn strat_legacy_message() -> impl Strategy<Value = legacy::Message> {
+        (
+            strat_message_header(),
+            proptest::collection::vec(strat_address(), 0..=16),
+            strat_hash(),
+            proptest::collection::vec(strat_compiled_instruction(), 0..=16),
+        )
+            .prop_map(|(header, account_keys, recent_blockhash, instructions)| {
+                legacy::Message {
+                    header,
+                    account_keys,
+                    recent_blockhash,
+                    instructions,
+                }
+            })
+    }
+
+    fn strat_v0_message() -> impl Strategy<Value = v0::Message> {
+        (
+            strat_message_header(),
+            proptest::collection::vec(strat_address(), 0..=16),
+            strat_hash(),
+            proptest::collection::vec(strat_compiled_instruction(), 0..=16),
+            proptest::collection::vec(strat_address_table_lookup(), 0..=8),
+        )
+            .prop_map(
+                |(header, account_keys, recent_blockhash, instructions, address_table_lookups)| {
+                    v0::Message {
+                        header,
+                        account_keys,
+                        recent_blockhash,
+                        instructions,
+                        address_table_lookups,
+                    }
+                },
+            )
+    }
+
+    fn strat_versioned_message() -> impl Strategy<Value = VersionedMessage> {
+        prop_oneof![
+            strat_legacy_message().prop_map(VersionedMessage::Legacy),
+            strat_v0_message().prop_map(VersionedMessage::V0),
+        ]
+    }
+
+    fn strat_versioned_transaction() -> impl Strategy<Value = VersionedTransaction> {
+        (
+            proptest::collection::vec(strat_signature(), 0..=16),
+            strat_versioned_message(),
+        )
+            .prop_map(|(signatures, message)| VersionedTransaction {
+                signatures,
+                message,
+            })
+    }
+
+    fn strat_entry_inner() -> impl Strategy<Value = EntryRef> {
+        (
+            any::<u64>(),
+            strat_hash(),
+            proptest::collection::vec(strat_versioned_transaction(), 0..=8),
+        )
+            .prop_map(|(num_hashes, hash, transactions)| EntryRef {
+                num_hashes,
+                hash,
+                transactions,
+            })
+    }
+
+    fn strat_entry() -> impl Strategy<Value = Entry> {
+        strat_entry_inner().prop_map(Entry::from_inner)
+    }
+
+    proptest! {
+        #[test]
+        fn serde_roundtrip(entry in strat_entry()) {
+            let serialized = bincode::serialize(&entry).unwrap();
+            let deserialized: Entry = bincode::deserialize(&serialized).unwrap();
+            prop_assert_eq!(entry, deserialized);
+        }
+
+        #[test]
+        fn serialization_is_deterministic(entry in strat_entry()) {
+            let a = bincode::serialize(&entry).unwrap();
+            let b = bincode::serialize(&entry).unwrap();
+            prop_assert_eq!(a, b);
+        }
+
+        #[test]
+        fn ref_does_not_roundtrip(entry in strat_entry_inner()) {
+            let bytes = bincode::serialize(&entry).unwrap();
+            let res: Result<Entry, _> = bincode::deserialize(&bytes);
+            prop_assert!(res.is_err());
+        }
+
+        #[test]
+        fn outer_does_not_roundtrip(entry in strat_entry()) {
+            let bytes = bincode::serialize(&entry).unwrap();
+            let res: Result<EntryRef, _> = bincode::deserialize(&bytes);
+            prop_assert!(res.is_err());
+        }
     }
 }
