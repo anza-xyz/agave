@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Defines reusable lists of Agave binary names for use across scripts.
+
+# Source this file to access the arrays
+# Example:
+#   source "scripts/agave-build-lists.sh"
+#   printf '%s\n' "${AGAVE_BINS_DEV[@]}"
+
+
+# Groups with binary names to be built, based on their intended audience
+# Keep names in sync with build/install scripts that consume these lists.
+
+# shellcheck disable=SC2034
+AGAVE_BINS_DEV=(
+  cargo-build-sbf
+  cargo-test-sbf
+  solana-test-validator
+)
+
+AGAVE_BINS_END_USER=(
+  agave-install
+  solana
+  solana-keygen
+  solana-tokens
+)
+
+AGAVE_BINS_VAL_OP=(
+  agave-validator
+  agave-watchtower
+  solana-gossip
+  solana-genesis
+)
+
+AGAVE_BINS_DCOU=(
+  agave-ledger-tool
+)
+
+# Speed up net.sh deploys by excluding unused binaries
+AGAVE_BINS_NET_SH=(
+  cargo-build-sbf
+  cargo-test-sbf
+  agave-install-init
+  solana-stake-accounts
+  solana-test-validator
+)
