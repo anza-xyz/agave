@@ -29,6 +29,7 @@ solana-streamer = { workspace = true }
 solana-transaction = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
+tokio-util = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
