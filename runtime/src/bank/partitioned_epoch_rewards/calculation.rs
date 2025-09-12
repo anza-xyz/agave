@@ -576,8 +576,10 @@ mod tests {
             stake_account::StakeAccount,
             stakes::Stakes,
         },
+        agave_feature_set::FeatureSet,
         rayon::ThreadPoolBuilder,
         solana_account::{accounts_equal, state_traits::StateMut, ReadableAccount},
+        solana_genesis_config::GenesisConfig,
         solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
         solana_reward_info::RewardType,
         solana_stake_interface::state::{Delegation, StakeStateV2},
@@ -1123,5 +1125,62 @@ mod tests {
 
         bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
         assert_eq!(bank.epoch_reward_status, EpochRewardStatus::Inactive);
+    }
+
+    #[test]
+    fn test_initialize_after_snapshot_restore() {
+        let expected_num_stake_rewards = 3;
+        let num_rewards_per_block = 2;
+        // Distribute 4 rewards over 2 blocks
+        let stakes = vec![
+            100_000_000,   // under min delegation
+            2_000_000_000, // valid delegation
+            3_000_000_000, // valid delegation
+            4_000_000_000, // valid delegation
+        ];
+        let (RewardBank { bank, .. }, _) = create_reward_bank_with_specific_stakes(
+            stakes,
+            num_rewards_per_block,
+            SLOTS_PER_EPOCH - 1,
+        );
+
+        // Advance to next epoch boundary
+        let new_slot = bank.slot() + 1;
+        let mut bank = Bank::new_from_parent(bank, &Pubkey::default(), new_slot);
+
+        let EpochRewardStatus::Active(EpochRewardPhase::Calculation(calculation_status)) =
+            bank.epoch_reward_status.clone()
+        else {
+            panic!("{:?} not active calculation", bank.epoch_reward_status);
+        };
+
+        // Reset feature set to default, to simulate snapshot restore
+        bank.feature_set = Arc::new(FeatureSet::default());
+
+        // Run post snapshot restore initialization which should first apply
+        // active features and then recalculate rewards
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        bank.initialize_after_snapshot_restore(&GenesisConfig::default(), None, false, || {
+            &thread_pool
+        });
+
+        let EpochRewardStatus::Active(EpochRewardPhase::Distribution(distribution_status)) =
+            bank.epoch_reward_status.clone()
+        else {
+            panic!("{:?} not active distribution", bank.epoch_reward_status);
+        };
+
+        assert_eq!(
+            calculation_status.all_stake_rewards,
+            distribution_status.all_stake_rewards
+        );
+        assert_eq!(
+            calculation_status.distribution_starting_block_height,
+            distribution_status.distribution_starting_block_height
+        );
+        assert_eq!(
+            calculation_status.all_stake_rewards.len(),
+            expected_num_stake_rewards
+        );
     }
 }

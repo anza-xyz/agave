@@ -67,7 +67,7 @@ use {
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
     rayon::{
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
-        ThreadPoolBuilder,
+        ThreadPool, ThreadPoolBuilder,
     },
     serde::Serialize,
     solana_account::{
@@ -1886,23 +1886,16 @@ impl Bank {
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
         };
 
-        bank.transaction_processor =
-            TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
-
         let thread_pool = ThreadPoolBuilder::new()
             .thread_name(|i| format!("solBnkNewFlds{i:02}"))
             .build()
             .expect("new rayon threadpool");
-        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
-
-        bank.finish_init(
+        bank.initialize_after_snapshot_restore(
             genesis_config,
             additional_builtins,
             debug_do_not_add_builtins,
+            || &thread_pool,
         );
-        bank.transaction_processor
-            .fill_missing_sysvar_cache_entries(&bank);
-        bank.rebuild_skipped_rewrites();
 
         let mut calculate_accounts_lt_hash_duration = None;
         if let Some(accounts_lt_hash) = fields.accounts_lt_hash {
@@ -6493,6 +6486,36 @@ impl Bank {
     /// be write-locked during transaction processing.
     pub fn get_reserved_account_keys(&self) -> &HashSet<Pubkey> {
         &self.reserved_account_keys.active
+    }
+
+    /// Compute and apply all activated features, initialize the transaction
+    /// processor, and recalculate partitioned rewards if needed
+    fn initialize_after_snapshot_restore<F, TP>(
+        &mut self,
+        genesis_config: &GenesisConfig,
+        additional_builtins: Option<&[BuiltinPrototype]>,
+        debug_do_not_add_builtins: bool,
+        thread_pool_builder: F,
+    ) where
+        F: FnOnce() -> TP,
+        TP: std::borrow::Borrow<ThreadPool>,
+    {
+        self.transaction_processor =
+            TransactionBatchProcessor::new_uninitialized(self.slot, self.epoch);
+
+        self.finish_init(
+            genesis_config,
+            additional_builtins,
+            debug_do_not_add_builtins,
+        );
+
+        let thread_pool = thread_pool_builder();
+        self.recalculate_partitioned_rewards(null_tracer(), thread_pool.borrow());
+
+        self.transaction_processor
+            .fill_missing_sysvar_cache_entries(self);
+
+        self.rebuild_skipped_rewrites();
     }
 
     // This is called from snapshot restore AND for each epoch boundary
