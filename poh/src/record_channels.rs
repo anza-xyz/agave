@@ -175,6 +175,15 @@ impl RecordReceiver {
         remaining_hashes_in_slot.saturating_sub(ticks_per_slot) <= self.capacity
     }
 
+    pub fn slot_allowed_insertions(&self) -> (Slot, u64) {
+        let current_slot_allowed_insertions =
+            self.slot_allowed_insertions.0.load(Ordering::Acquire);
+        (
+            SlotAllowedInsertions::slot(current_slot_allowed_insertions),
+            SlotAllowedInsertions::allowed_insertions(current_slot_allowed_insertions),
+        )
+    }
+
     /// Shutdown the channel immediately.
     pub fn shutdown(&mut self) {
         self.slot_allowed_insertions.shutdown();

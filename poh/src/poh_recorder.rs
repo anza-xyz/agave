@@ -399,6 +399,14 @@ impl PohRecorder {
             trace!("tick_height {}", self.tick_height());
 
             if self.leader_first_tick_height.load().is_none() {
+                if self.tick_height()
+                    >= self.bank().map(|r| r.max_tick_height()).unwrap_or(u64::MAX)
+                {
+                    error!(
+                        "[{:?}] I've ticked but leader_first_tick_height is None, so breaking.",
+                        std::thread::current().id(),
+                    );
+                }
                 return;
             }
 
@@ -571,10 +579,13 @@ impl PohRecorder {
             }
         }
         if self.tick_height() >= working_bank.max_tick_height {
-            info!(
-                "poh_record: max_tick_height {} reached, clearing working_bank {}",
+            error!(
+                "[{:?}] poh_record: max_tick_height {} reached, clearing working_bank {} - is \
+                 tick {}",
+                std::thread::current().id(),
                 working_bank.max_tick_height,
-                working_bank.bank.slot()
+                working_bank.bank.slot(),
+                tick,
             );
             self.start_bank = working_bank.bank.clone();
             let working_slot = self.start_slot();
@@ -582,7 +593,10 @@ impl PohRecorder {
             self.clear_bank();
         }
         if send_result.is_err() {
-            info!("WorkingBank::sender disconnected {send_result:?}");
+            error!(
+                "[{:?}] WorkingBank::sender disconnected {send_result:?}",
+                std::thread::current().id()
+            );
             // revert the cache, but clear the working bank
             self.clear_bank();
         } else {

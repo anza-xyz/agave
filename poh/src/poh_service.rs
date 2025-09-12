@@ -174,8 +174,25 @@ impl PohService {
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut last_tick = Instant::now();
+        let bank = {
+            let poh_recorder = poh_recorder.read().unwrap();
+            poh_recorder.bank()
+        };
+        let cur_max_tick_height = bank
+            .as_ref()
+            .map(|b| (b.tick_height(), b.max_tick_height()));
+        error!(
+            "[{:?}] starting with {:?} ([{:?}])",
+            std::thread::current().id(),
+            bank.map(|b| b.slot()),
+            cur_max_tick_height
+        );
         let mut last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
         if last_tick_of_slot {
+            error!(
+                "[{:?}] starting on last tick of slot",
+                std::thread::current().id(),
+            );
             record_receiver.shutdown();
         }
         while !poh_exit.load(Ordering::Relaxed) {
@@ -207,7 +224,6 @@ impl PohService {
                 {
                     last_tick = Instant::now();
                     poh_recorder.write().unwrap().tick();
-
                     last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
                     if last_tick_of_slot
                         || record_receiver.should_shutdown(
@@ -215,11 +231,18 @@ impl PohService {
                             ticks_per_slot,
                         )
                     {
+                        error!("[{:?}] shtudown for last tick", std::thread::current().id(),);
                         record_receiver.shutdown();
                     }
 
                     // Check if we can break the inner loop to handle a service message.
                     if Self::can_process_service_message(&service_message, &record_receiver) {
+                        if service_message.is_some() {
+                            error!(
+                                "[{:?}] breaking to handle service message",
+                                std::thread::current().id(),
+                            );
+                        }
                         break;
                     }
                 }
@@ -229,6 +252,10 @@ impl PohService {
                 Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
                 last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
                 if last_tick_of_slot {
+                    error!(
+                        "[{:?}] shtudown for last tick2",
+                        std::thread::current().id(),
+                    );
                     record_receiver.shutdown();
                 }
             }
@@ -253,6 +280,17 @@ impl PohService {
     ) {
         let record = record_receiver.recv_timeout(timeout);
         if let Ok(record) = record {
+            if poh_recorder.write().unwrap().bank().is_none() {
+                let thread_id = std::thread::current().id();
+                error!("[{thread_id:?}] record received with no bank!");
+                error!("[{thread_id:?}] slot: {}", record.slot);
+                let (slot, allowed_insertions) = record_receiver.slot_allowed_insertions();
+                error!(
+                    "[{thread_id:?}] record_receiver slot: {slot} allowed_insertions: \
+                     {allowed_insertions}",
+                );
+            }
+
             match poh_recorder.write().unwrap().record(
                 record.slot,
                 record.mixins,
@@ -566,6 +604,10 @@ impl PohService {
     ) -> Option<PohServiceMessageGuard<'a>> {
         match service_message_receiver.try_recv() {
             Ok(bank_message) => {
+                error!(
+                    "[{:?}] service message detected. shutting down",
+                    std::thread::current().id(),
+                );
                 record_receiver.shutdown();
                 Some(bank_message)
             }
@@ -585,9 +627,19 @@ impl PohService {
                     reset_bank,
                     next_leader_slot,
                 } => {
+                    error!(
+                        "[{:?}] resetting to slot {}",
+                        std::thread::current().id(),
+                        reset_bank.slot()
+                    );
                     recorder.reset(reset_bank, next_leader_slot);
                 }
                 PohServiceMessage::SetBank { bank } => {
+                    error!(
+                        "[{:?}] setting to slot {}",
+                        std::thread::current().id(),
+                        bank.slot()
+                    );
                     let slot = bank.slot();
                     let bank_on_last_tick =
                         bank.tick_height() >= bank.max_tick_height().saturating_sub(1);
