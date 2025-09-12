@@ -365,7 +365,7 @@ pub(crate) fn append_single_account_with_default_hash(
             account,
             &AccountSecondaryIndexes::default(),
             account_info,
-            &mut SlotList::new(),
+            &mut ReclaimsSlotList::new(),
             UpsertReclaim::IgnoreReclaims,
         );
     }
@@ -2783,7 +2783,7 @@ fn test_delete_dependencies() {
     let info1 = AccountInfo::new(StorageLocation::AppendVec(1, 0), true);
     let info2 = AccountInfo::new(StorageLocation::AppendVec(2, 0), true);
     let info3 = AccountInfo::new(StorageLocation::AppendVec(3, 0), true);
-    let mut reclaims = SlotList::new();
+    let mut reclaims = ReclaimsSlotList::new();
     accounts_index.upsert(
         0,
         0,
@@ -5302,7 +5302,7 @@ fn test_unref_pubkeys_removed_from_accounts_index() {
         let db = AccountsDb::new_single_for_tests();
         let mut purged_slot_pubkeys = HashSet::default();
         purged_slot_pubkeys.insert((slot1, pk1));
-        let mut reclaims = SlotList::default();
+        let mut reclaims = ReclaimsSlotList::default();
         db.accounts_index.upsert(
             slot1,
             slot1,
@@ -5356,7 +5356,7 @@ fn test_unref_accounts() {
             let db = AccountsDb::new_single_for_tests();
             let mut purged_slot_pubkeys = HashSet::default();
             purged_slot_pubkeys.insert((slot1, pk1));
-            let mut reclaims = SlotList::default();
+            let mut reclaims = ReclaimsSlotList::default();
             db.accounts_index.upsert(
                 slot1,
                 slot1,
@@ -5385,7 +5385,7 @@ fn test_unref_accounts() {
             let db = AccountsDb::new_single_for_tests();
             let mut purged_stored_account_slots = AccountSlots::default();
             let mut purged_slot_pubkeys = HashSet::default();
-            let mut reclaims = SlotList::default();
+            let mut reclaims = ReclaimsSlotList::default();
             // pk1 and pk2 both in slot1 and slot2, so each has refcount of 2
             for slot in [slot1, slot2] {
                 for pk in [pk1, pk2] {
@@ -5425,7 +5425,7 @@ fn test_unref_accounts() {
 
 define_accounts_db_test!(test_many_unrefs, |db| {
     let mut purged_stored_account_slots = AccountSlots::default();
-    let mut reclaims = SlotList::default();
+    let mut reclaims = ReclaimsSlotList::default();
     let pk1 = Pubkey::from([1; 32]);
     // make sure we have > 1 batch. Bigger numbers cost more in test time here.
     let n = (UNREF_ACCOUNTS_BATCH_SIZE + 1) as Slot;
@@ -5801,7 +5801,7 @@ fn test_shrink_collect_simple() {
                                 db.accounts_index.purge_exact(
                                     pubkey,
                                     [slot5].into_iter().collect::<HashSet<_>>(),
-                                    &mut SlotList::new(),
+                                    &mut ReclaimsSlotList::new(),
                                 );
                             });
 
@@ -5977,7 +5977,7 @@ fn test_shrink_collect_with_obsolete_accounts() {
             db.accounts_index.purge_exact(
                 pubkey,
                 [slot].into_iter().collect::<HashSet<_>>(),
-                &mut SlotList::new(),
+                &mut ReclaimsSlotList::new(),
             );
             unref_pubkeys.push(*pubkey);
         }
@@ -6147,7 +6147,7 @@ fn populate_index(db: &AccountsDb, slots: Range<Slot>) {
                         &account,
                         &AccountSecondaryIndexes::default(),
                         info,
-                        &mut SlotList::new(),
+                        &mut ReclaimsSlotList::new(),
                         UpsertReclaim::IgnoreReclaims,
                     );
                 })

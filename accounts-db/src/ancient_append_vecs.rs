@@ -1123,7 +1123,7 @@ pub mod tests {
             },
             accounts_file::StorageAccess,
             accounts_index::{
-                AccountsIndexScanResult, RefCount, ScanFilter, SlotList, UpsertReclaim,
+                AccountsIndexScanResult, ReclaimsSlotList, RefCount, ScanFilter, UpsertReclaim,
             },
             append_vec::{self, aligned_stored_size},
             storable_accounts::StorableAccountsBySlot,
@@ -1793,7 +1793,7 @@ pub mod tests {
                                             [storage.slot()]
                                                 .into_iter()
                                                 .collect::<std::collections::HashSet<Slot>>(),
-                                            &mut SlotList::new()
+                                            &mut ReclaimsSlotList::new()
                                         ));
                                     });
                                 }
@@ -3754,7 +3754,7 @@ pub mod tests {
                         &empty_account,
                         &crate::accounts_index::AccountSecondaryIndexes::default(),
                         AccountInfo::default(),
-                        &mut SlotList::new(),
+                        &mut ReclaimsSlotList::new(),
                         UpsertReclaim::IgnoreReclaims,
                     );
                 }

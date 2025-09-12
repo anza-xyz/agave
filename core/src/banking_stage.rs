@@ -672,7 +672,7 @@ mod tests {
         super::*,
         crate::banking_trace::{BankingTracer, Channels},
         agave_banking_stage_ingress_types::BankingPacketBatch,
-        crossbeam_channel::unbounded,
+        crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_entry::entry::{self, EntrySlice},
         solana_hash::Hash,
@@ -683,11 +683,12 @@ mod tests {
                 create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
             },
             get_tmp_ledger_path_auto_delete,
+            leader_schedule_cache::LeaderScheduleCache,
         },
         solana_perf::packet::to_packet_batches,
         solana_poh::{
-            poh_recorder::{create_test_recorder, PohRecorderError},
-            record_channels::record_channels,
+            poh_recorder::{create_test_recorder, PohRecorderError, Record},
+            poh_service::PohService,
             transaction_recorder::RecordTransactionsSummary,
         },
         solana_poh_config::PohConfig,
@@ -699,7 +700,11 @@ mod tests {
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
-        std::{sync::atomic::Ordering, thread::sleep, time::Instant},
+        std::{
+            sync::atomic::{AtomicBool, Ordering},
+            thread::sleep,
+            time::Instant,
+        },
         test_case::test_case,
     };
 
@@ -1093,11 +1098,31 @@ mod tests {
             ..
         } = create_genesis_config(10_000);
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path())
+            .expect("Expected to be able to open database ledger");
+        let (poh_recorder, entry_receiver) = PohRecorder::new(
+            // TODO use record_receiver
+            bank.tick_height(),
+            bank.last_blockhash(),
+            bank.clone(),
+            None,
+            bank.ticks_per_slot(),
+            Arc::new(blockstore),
+            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
+        let (record_sender, record_receiver) = unbounded();
+        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
-        let (record_sender, mut record_receiver) = record_channels(false);
-        let recorder = TransactionRecorder::new(record_sender);
-        record_receiver.restart(bank.slot());
+        let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
 
+        poh_recorder
+            .write()
+            .unwrap()
+            .set_bank_for_test(bank.clone());
         let pubkey = solana_pubkey::new_rand();
         let keypair2 = Keypair::new();
         let pubkey2 = solana_pubkey::new_rand();
@@ -1107,13 +1132,9 @@ mod tests {
             system_transaction::transfer(&keypair2, &pubkey2, 1, genesis_config.hash()).into(),
         ];
 
-        let summary = recorder.record_transactions(bank.slot(), txs.clone());
-        assert!(summary.result.is_ok());
-        assert_eq!(
-            record_receiver.try_recv().unwrap().transaction_batches,
-            vec![txs.clone()]
-        );
-        assert!(record_receiver.try_recv().is_err());
+        let _ = recorder.record_transactions(bank.slot(), txs.clone());
+        let (_bank, (entry, _tick_height)) = entry_receiver.recv().unwrap();
+        assert_eq!(entry.transactions, txs);
 
         // Once bank is set to a new bank (setting bank.slot() + 1 in record_transactions),
         // record_transactions should throw MaxHeightReached
@@ -1121,7 +1142,14 @@ mod tests {
         let RecordTransactionsSummary { result, .. } = recorder.record_transactions(next_slot, txs);
         assert_matches!(result, Err(PohRecorderError::MaxHeightReached));
         // Should receive nothing from PohRecorder b/c record failed
-        assert!(record_receiver.try_recv().is_err());
+        assert!(entry_receiver.try_recv().is_err());
+
+        poh_recorder
+            .read()
+            .unwrap()
+            .is_exited
+            .store(true, Ordering::Relaxed);
+        let _ = poh_simulator.join();
     }
 
     pub(crate) fn create_slow_genesis_config(lamports: u64) -> GenesisConfigInfo {
@@ -1142,6 +1170,27 @@ mod tests {
         // For these tests there's only 1 slot, don't want to run out of ticks
         config_info.genesis_config.ticks_per_slot *= 1024;
         config_info
+    }
+
+    pub(crate) fn simulate_poh(
+        record_receiver: Receiver<Record>,
+        poh_recorder: &Arc<RwLock<PohRecorder>>,
+    ) -> JoinHandle<()> {
+        let poh_recorder = poh_recorder.clone();
+        let is_exited = poh_recorder.read().unwrap().is_exited.clone();
+        let tick_producer = Builder::new()
+            .name("solana-simulate_poh".to_string())
+            .spawn(move || loop {
+                PohService::read_record_receiver_and_process(
+                    &poh_recorder,
+                    &record_receiver,
+                    Duration::from_millis(10),
+                );
+                if is_exited.load(Ordering::Relaxed) {
+                    break;
+                }
+            });
+        tick_producer.unwrap()
     }
 
     #[test_case(TransactionStructure::Sdk)]

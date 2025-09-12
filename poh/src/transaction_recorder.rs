@@ -1,14 +1,19 @@
 use {
-    crate::{
-        poh_recorder::{PohRecorderError, Record},
-        record_channels::{RecordSender, RecordSenderError},
-    },
+    crate::poh_recorder::{PohRecorderError, Record, Result},
+    crossbeam_channel::{bounded, RecvTimeoutError, Sender},
     solana_clock::Slot,
     solana_entry::entry::hash_transactions,
     solana_hash::Hash,
     solana_measure::measure_us,
     solana_transaction::versioned::VersionedTransaction,
-    std::num::Saturating,
+    std::{
+        num::Saturating,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+        time::Duration,
+    },
 };
 
 #[derive(Default, Debug)]
@@ -30,7 +35,7 @@ pub struct RecordTransactionsSummary {
     // Metrics describing how time was spent recording transactions
     pub record_transactions_timings: RecordTransactionsTimings,
     // Result of trying to record the transactions into the PoH stream
-    pub result: Result<(), PohRecorderError>,
+    pub result: Result<()>,
     // Index in the slot of the first transaction recorded
     pub starting_transaction_index: Option<usize>,
 }
@@ -39,12 +44,16 @@ pub struct RecordTransactionsSummary {
 #[derive(Clone, Debug)]
 pub struct TransactionRecorder {
     // shared by all users of PohRecorder
-    pub record_sender: RecordSender,
+    pub record_sender: Sender<Record>,
+    pub is_exited: Arc<AtomicBool>,
 }
 
 impl TransactionRecorder {
-    pub fn new(record_sender: RecordSender) -> Self {
-        Self { record_sender }
+    pub fn new(record_sender: Sender<Record>, is_exited: Arc<AtomicBool>) -> Self {
+        Self {
+            record_sender,
+            is_exited,
+        }
     }
 
     /// Hashes `transactions` and sends to PoH service for recording. Waits for response up to 1s.
@@ -69,27 +78,21 @@ impl TransactionRecorder {
                 Ok(starting_index) => {
                     starting_transaction_index = starting_index;
                 }
-                Err(RecordSenderError::InactiveSlot | RecordSenderError::Shutdown) => {
+                Err(PohRecorderError::MaxHeightReached) => {
                     return RecordTransactionsSummary {
                         record_transactions_timings,
                         result: Err(PohRecorderError::MaxHeightReached),
                         starting_transaction_index: None,
-                    }
+                    };
                 }
-                Err(RecordSenderError::Full(_)) => {
+                Err(PohRecorderError::SendError(e)) => {
                     return RecordTransactionsSummary {
                         record_transactions_timings,
-                        result: Err(PohRecorderError::ChannelFull),
+                        result: Err(PohRecorderError::SendError(e)),
                         starting_transaction_index: None,
                     };
                 }
-                Err(RecordSenderError::Disconnected) => {
-                    return RecordTransactionsSummary {
-                        record_transactions_timings,
-                        result: Err(PohRecorderError::ChannelDisconnected),
-                        starting_transaction_index: None,
-                    };
-                }
+                Err(e) => panic!("Poh recorder returned unexpected error: {e:?}"),
             }
         }
 
@@ -106,8 +109,41 @@ impl TransactionRecorder {
         bank_slot: Slot,
         mixins: Vec<Hash>,
         transaction_batches: Vec<Vec<VersionedTransaction>>,
-    ) -> Result<Option<usize>, RecordSenderError> {
-        self.record_sender
-            .try_send(Record::new(mixins, transaction_batches, bank_slot))
+    ) -> Result<Option<usize>> {
+        // create a new channel so that there is only 1 sender and when it goes out of scope, the receiver fails
+        let (result_sender, result_receiver) = bounded(1);
+        let res = self.record_sender.send(Record::new(
+            mixins,
+            transaction_batches,
+            bank_slot,
+            result_sender,
+        ));
+        if res.is_err() {
+            // If the channel is dropped, then the validator is shutting down so return that we are hitting
+            //  the max tick height to stop transaction processing and flush any transactions in the pipeline.
+            return Err(PohRecorderError::MaxHeightReached);
+        }
+        // Besides validator exit, this timeout should primarily be seen to affect test execution environments where the various pieces can be shutdown abruptly
+        let mut is_exited = false;
+        loop {
+            let res = result_receiver.recv_timeout(Duration::from_millis(1000));
+            match res {
+                Err(RecvTimeoutError::Timeout) => {
+                    if is_exited {
+                        return Err(PohRecorderError::MaxHeightReached);
+                    } else {
+                        // A result may have come in between when we timed out checking this
+                        // bool, so check the channel again, even if is_exited == true
+                        is_exited = self.is_exited.load(Ordering::SeqCst);
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(PohRecorderError::MaxHeightReached);
+                }
+                Ok(result) => {
+                    return result;
+                }
+            }
+        }
     }
 }

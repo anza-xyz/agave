@@ -1,4 +1,5 @@
 use {
+    ahash::{HashMap, HashMapExt as _},
     log::*,
     rand::{thread_rng, Rng},
     serde::Serialize,
@@ -6,7 +7,7 @@ use {
     solana_clock::{Slot, MAX_RECENT_BLOCKHASHES},
     solana_hash::Hash,
     std::{
-        collections::{hash_map::Entry, HashMap, HashSet},
+        collections::{hash_map::Entry, HashSet},
         sync::{Arc, Mutex},
     },
 };
