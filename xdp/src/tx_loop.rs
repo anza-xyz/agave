@@ -18,7 +18,7 @@ use {
         Capability::{CAP_NET_ADMIN, CAP_NET_RAW},
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
-    libc::{sysconf, _SC_PAGESIZE},
+    libc::{sysconf, ARPHRD_IPGRE, _SC_PAGESIZE},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::Arc,
@@ -205,7 +205,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                 } else {
                     // lock free route lookup - get both next hop and GRE info
                     let router = atomic_router.load();
-                    let (next_hop, requires_gre) = router.route(addr.ip()).unwrap();
+                    let (next_hop, interface_info) = router.route(addr.ip()).unwrap();
 
                     let mut skip = false;
 
@@ -237,12 +237,22 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                     }
 
                     // Handle GRE wrapping if required
+                    let requires_gre = interface_info.dev_type == ARPHRD_IPGRE;
                     if requires_gre {
                         log::info!("greg: Packet to {} requires GRE wrapping", addr.ip());
-                        // For now, use placeholder GRE tunnel endpoints
-                        // TODO: Get actual GRE tunnel config from interface info
-                        let gre_src_ip = Ipv4Addr::new(192, 168, 1, 1); // Placeholder
-                        let gre_dst_ip = Ipv4Addr::new(192, 168, 1, 2); // Placeholder
+
+                        // Get GRE tunnel endpoints from interface info
+                        let Some(gre_tunnel) = interface_info.gre_tunnel else {
+                            log::warn!(
+                                "greg: dropping packet: GRE interface {} has no tunnel configuration (missing src/dst IPs)",
+                                interface_info.if_name
+                            );
+                            batched_packets -= 1;
+                            umem.release(frame.offset());
+                            continue;
+                        };
+                        let gre_src_ip = gre_tunnel.src_ip;
+                        let gre_dst_ip = gre_tunnel.dst_ip;
 
                         // Build the inner packet (IP + UDP + payload) - no Ethernet
                         const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;

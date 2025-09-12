@@ -4,7 +4,7 @@ use {
         MacAddress, NeighborEntry, RouteEntry,
     },
     arc_swap::ArcSwap,
-    libc::{AF_INET, AF_INET6, ARPHRD_IPGRE},
+    libc::{AF_INET, AF_INET6},
     std::{
         collections::HashMap,
         io,
@@ -119,13 +119,13 @@ fn is_ipv6_match(addr: Ipv6Addr, network: Ipv6Addr, prefix_len: u8) -> bool {
 pub struct Router {
     arp_table: Arc<ArpTable>,
     routes: Arc<Vec<RouteEntry>>,
-    interfaces: Arc<HashMap<i32, InterfaceInfo>>, // if_index (on host) -> InterfaceInfo map
+    interfaces: Arc<HashMap<u32, InterfaceInfo>>, // if_index (on host) -> InterfaceInfo map
 }
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
         let interfaces = netlink_get_interfaces()?;
-        let interface_map: HashMap<i32, InterfaceInfo> = interfaces
+        let interface_map: HashMap<u32, InterfaceInfo> = interfaces
             .into_iter()
             .map(|if_info| (if_info.if_index, if_info))
             .collect();
@@ -163,9 +163,9 @@ impl Router {
     }
 
     // greg: todo: not sure if we should return is_gre here?
-    // when we start wrapping gre packets. we may want to return the entire InterfaceInfo
+    // we may want to return the entire InterfaceInfo
     // InterfaceInfo will have to be expanded to include the src_ip/dst_ip for gre
-    pub fn route(&self, dest_ip: IpAddr) -> Result<(NextHop, bool), RouteError> {
+    pub fn route(&self, dest_ip: IpAddr) -> Result<(NextHop, InterfaceInfo), RouteError> {
         let route = lookup_route(&self.routes, dest_ip).ok_or(RouteError::NoRouteFound(dest_ip))?;
 
         let if_index = route
@@ -185,13 +185,14 @@ impl Router {
             if_index,
         };
 
-        // Check if route uses is on gre interface
-        let is_gre = route.out_if_index.is_some_and(|if_index| {
-            self.interfaces
-                .get(&if_index)
-                .is_some_and(|if_info| if_info.dev_type == ARPHRD_IPGRE)
-        });
-        Ok((next_hop, is_gre))
+        // Get the interface info for this route
+        let interface_info = self
+            .interfaces
+            .get(&(if_index))
+            .ok_or(RouteError::MissingOutputInterface)?
+            .clone();
+
+        Ok((next_hop, interface_info))
     }
 }
 
@@ -305,7 +306,8 @@ mod tests {
     #[test]
     fn test_route() {
         let router = Router::new().unwrap();
-        let (next_hop, requires_gre) = router.route("1.1.1.1".parse().unwrap()).unwrap();
+        let (next_hop, interface_info) = router.route("1.1.1.1".parse().unwrap()).unwrap();
+        let requires_gre = interface_info.gre_tunnel.is_some();
         eprintln!("NextHop: {next_hop:?}, Requires GRE: {requires_gre}");
     }
 }

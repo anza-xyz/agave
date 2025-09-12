@@ -4,13 +4,13 @@ use {
     libc::{
         getsockname, nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
         AF_INET, AF_INET6, AF_NETLINK, ARPHRD_ETHER, ARPHRD_IPGRE, ARPHRD_LOOPBACK, ARPHRD_NETROM,
-        IFLA_IFNAME, IFNAMSIZ, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE, NLA_ALIGNTO,
-        NLA_TYPE_MASK, NLMSG_DONE, NLMSG_ERROR, NLM_F_DUMP, NLM_F_MULTI, NLM_F_REQUEST,
-        NUD_PERMANENT, NUD_REACHABLE, NUD_STALE, RTA_DST, RTA_GATEWAY, RTA_IIF, RTA_OIF,
-        RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_F_CLONED, RTM_GETLINK, RTM_GETNEIGH,
-        RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, RTN_BLACKHOLE, RTN_BROADCAST,
-        RTN_LOCAL, RTN_MULTICAST, RTN_THROW, RTN_UNICAST, RT_TABLE_LOCAL, RT_TABLE_MAIN,
-        RT_TABLE_UNSPEC, SOCK_RAW, SOL_NETLINK,
+        IFLA_IFNAME, IFLA_INFO_DATA, IFLA_LINKINFO, IFNAMSIZ, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK,
+        NETLINK_ROUTE, NLA_ALIGNTO, NLA_TYPE_MASK, NLMSG_DONE, NLMSG_ERROR, NLM_F_DUMP,
+        NLM_F_MULTI, NLM_F_REQUEST, NUD_PERMANENT, NUD_REACHABLE, NUD_STALE, RTA_DST, RTA_GATEWAY,
+        RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_F_CLONED, RTM_GETLINK,
+        RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, RTN_BLACKHOLE,
+        RTN_BROADCAST, RTN_LOCAL, RTN_MULTICAST, RTN_THROW, RTN_UNICAST, RT_TABLE_LOCAL,
+        RT_TABLE_MAIN, RT_TABLE_UNSPEC, SOCK_RAW, SOL_NETLINK,
     },
     std::{
         collections::HashMap,
@@ -23,6 +23,8 @@ use {
 };
 
 const NLA_HDR_LEN: usize = align_to(mem::size_of::<nlattr>(), NLA_ALIGNTO as usize);
+const IFLA_GRE_LOCAL: u16 = 6;
+const IFLA_GRE_REMOTE: u16 = 7;
 
 // Interface info message struct
 #[repr(C)]
@@ -30,7 +32,7 @@ const NLA_HDR_LEN: usize = align_to(mem::size_of::<nlattr>(), NLA_ALIGNTO as usi
 struct ifinfomsg {
     ifi_family: u8,
     ifi_type: u16,
-    ifi_index: i32,
+    ifi_index: u32,
     ifi_flags: u32,
     ifi_change: u32,
 }
@@ -332,11 +334,20 @@ const NLMSG_ALIGNTO: u32 = 4;
 
 // Interface information structure
 // greg: todo: add more here once we need to build the headers
+// fd has a few other things here like:
+// oper_status, master_idx, slave_tbl_idx, mac_addr, mtu...
 #[derive(Debug, Clone)]
 pub struct InterfaceInfo {
-    pub if_index: i32,
+    pub if_index: u32,
     pub if_name: String,
     pub dev_type: u16,
+    pub gre_tunnel: Option<GreTunnelInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GreTunnelInfo {
+    pub src_ip: Ipv4Addr,
+    pub dst_ip: Ipv4Addr,
 }
 
 // Get all interfaces via netlink (based off of FD: fd_netdev_netlink_load_table)
@@ -397,12 +408,68 @@ pub fn netlink_get_interfaces() -> Result<Vec<InterfaceInfo>, io::Error> {
     Ok(interfaces)
 }
 
+// Parse GRE tunnel information from netlink
+fn parse_gre_tunnel_info(attrs: &HashMap<u16, NlAttr<'_>>) -> Option<GreTunnelInfo> {
+    // Look for IFLA_LINKINFO attribute
+    let linkinfo_attr = attrs.get(&IFLA_LINKINFO)?;
+
+    // Parse nested attributes within IFLA_LINKINFO
+    let Ok(linkinfo_attrs) = parse_attrs(linkinfo_attr.data) else {
+        return None;
+    };
+
+    // Look for IFLA_INFO_DATA attribute
+    let info_data_attr = linkinfo_attrs.get(&IFLA_INFO_DATA)?;
+
+    // Parse GRE-specific attributes within IFLA_INFO_DATA
+    let Ok(gre_attrs) = parse_attrs(info_data_attr.data) else {
+        return None;
+    };
+
+    // Extract GRE local and remote IPs
+    let mut src_ip = None;
+    let mut dst_ip = None;
+
+    if let Some(local_attr) = gre_attrs.get(&IFLA_GRE_LOCAL) {
+        if local_attr.data.len() == 4 {
+            let ip_bytes = [
+                local_attr.data[0],
+                local_attr.data[1],
+                local_attr.data[2],
+                local_attr.data[3],
+            ];
+            src_ip = Some(Ipv4Addr::from(ip_bytes));
+        }
+    }
+
+    if let Some(remote_attr) = gre_attrs.get(&IFLA_GRE_REMOTE) {
+        if remote_attr.data.len() == 4 {
+            let ip_bytes = [
+                remote_attr.data[0],
+                remote_attr.data[1],
+                remote_attr.data[2],
+                remote_attr.data[3],
+            ];
+            dst_ip = Some(Ipv4Addr::from(ip_bytes));
+        }
+    }
+
+    // Return GRE tunnel info if we have both IPs
+    match (src_ip, dst_ip) {
+        (Some(src), Some(dst)) => Some(GreTunnelInfo {
+            src_ip: src,
+            dst_ip: dst,
+        }),
+        _ => None,
+    }
+}
+
 // Interface info parsing (modeled after the FD impl: fd_netdev_netlink_load_table)
 // Just parsing the interface info for:
 // - if_index
 // - if_name
 // - dev_type
-// greg: todo: add more here once we need to build the headers
+// greg: todo: may need to add more here...see fd code for creating fd_netdev (same as our InterfaceInfo)
 fn parse_ifinfomsg(msg: NetlinkMessage) -> Option<InterfaceInfo> {
     if msg.data.len() < mem::size_of::<ifinfomsg>() {
         return None;
@@ -432,11 +499,18 @@ fn parse_ifinfomsg(msg: NetlinkMessage) -> Option<InterfaceInfo> {
         }
     }
 
-    // For gre interfaces, we just need to verify the type
+    // Parse GRE tunnel information if this is a GRE interface
+    let gre_tunnel = if ifi_type == ARPHRD_IPGRE {
+        parse_gre_tunnel_info(&attrs)
+    } else {
+        None
+    };
+
     Some(InterfaceInfo {
         if_index: ifi.ifi_index,
         if_name,
         dev_type: ifi_type,
+        gre_tunnel,
     })
 }
 
