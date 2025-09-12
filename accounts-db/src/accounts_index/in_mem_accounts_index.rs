@@ -387,8 +387,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 }
                 let disk_entry = disk_entry.unwrap();
                 let mut map = self.map_internal.write().unwrap();
+                let capacity_pre = map.capacity();
                 let entry = map.entry(*pubkey);
-                match entry {
+                let retval = match entry {
                     Entry::Occupied(occupied) => callback(Some(occupied.get())).1,
                     Entry::Vacant(vacant) => {
                         debug_assert!(!disk_entry.dirty());
@@ -402,7 +403,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         }
                         rt
                     }
-                }
+                };
+                let capacity_post = map.capacity();
+                drop(map);
+                stats.update_in_mem_capacity(capacity_pre, capacity_post);
+                retval
             }
         })
     }
@@ -472,12 +477,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     pub fn remove_if_slot_list_empty(&self, pubkey: Pubkey) -> bool {
         let mut m = Measure::start("entry");
         let mut map = self.map_internal.write().unwrap();
+        let capacity_pre = map.capacity();
         let entry = map.entry(pubkey);
         m.stop();
         let found = matches!(entry, Entry::Occupied(_));
         let result = self.remove_if_slot_list_empty_entry(entry);
+        let capacity_post = map.capacity();
         drop(map);
-
+        self.stats()
+            .update_in_mem_capacity(capacity_pre, capacity_post);
         self.update_entry_stats(m, found);
         result
     }
@@ -559,8 +567,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             if let Some(entry) = entry {
                 callback(entry);
             } else {
+                let stats = self.stats();
                 let mut m = Measure::start("entry");
                 let mut map = self.map_internal.write().unwrap();
+                let capacity_pre = map.capacity();
                 let entry = map.entry(*pubkey);
                 m.stop();
                 let found = matches!(entry, Entry::Occupied(_));
@@ -597,11 +607,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         );
                         assert!(new_value.dirty());
                         vacant.insert(new_value);
-                        self.stats().inc_mem_count();
+                        stats.inc_mem_count();
                     }
                 };
-
+                let capacity_post = map.capacity();
                 drop(map);
+                stats.update_in_mem_capacity(capacity_pre, capacity_post);
                 self.update_entry_stats(m, found);
             };
         });
@@ -1319,12 +1330,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             return;
         }
 
+        let stats = self.stats();
         let next_age_on_failure = self.storage.future_age_to_flush(false);
         let mut failed = 0;
         let mut evicted = 0;
         // chunk these so we don't hold the write lock too long
         for evictions in evictions.chunks(50) {
             let mut map = self.map_internal.write().unwrap();
+            let capacity_pre = map.capacity();
             for k in evictions {
                 if let Entry::Occupied(occupied) = map.entry(*k) {
                     let v = occupied.get();
@@ -1359,10 +1372,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             if map.is_empty() {
                 map.shrink_to_fit();
             }
+            let capacity_post = map.capacity();
+            drop(map);
+            stats.update_in_mem_capacity(capacity_pre, capacity_post);
         }
-        self.stats().sub_mem_count(evicted);
-        Self::update_stat(&self.stats().flush_entries_evicted_from_mem, evicted as u64);
-        Self::update_stat(&self.stats().failed_to_evict, failed as u64);
+        stats.sub_mem_count(evicted);
+        Self::update_stat(&stats.flush_entries_evicted_from_mem, evicted as u64);
+        Self::update_stat(&stats.failed_to_evict, failed as u64);
     }
 
     pub fn stats(&self) -> &BucketMapHolderStats {
@@ -1379,6 +1395,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         m.stop();
         let value = m.as_us();
         Self::update_stat(stat, value);
+    }
+
+    /// Returns the capacity for this bin's map
+    ///
+    /// Only intended to be called at startup, since it grabs the map's read lock.
+    pub(crate) fn capacity_for_startup(&self) -> usize {
+        self.map_internal.read().unwrap().capacity()
     }
 }
 

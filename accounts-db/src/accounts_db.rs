@@ -6869,6 +6869,21 @@ impl AccountsDb {
 
         self.accounts_index.log_secondary_indexes();
 
+        // Now that the index is generated, get the total capacity of the in-mem maps
+        // across all the bins and set the initial value for the stat.
+        // We do this all at once, at the end, since getting the capacity requries iterating all
+        // the bins and grabbing a read lock, which we try to avoid whenever possible.
+        let index_capacity = self
+            .accounts_index
+            .account_maps
+            .iter()
+            .map(|bin| bin.capacity_for_startup())
+            .sum();
+        self.accounts_index
+            .bucket_map_holder_stats()
+            .capacity_in_mem
+            .store(index_capacity, Ordering::Relaxed);
+
         IndexGenerationInfo {
             accounts_data_len: total_accum.accounts_data_len,
             calculated_accounts_lt_hash: AccountsLtHash(total_accum.lt_hash),
