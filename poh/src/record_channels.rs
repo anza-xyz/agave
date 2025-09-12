@@ -311,7 +311,7 @@ impl SlotAllowedInsertions {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_transaction::versioned::VersionedTransaction};
+    use {super::*, solana_hash::Hash, solana_transaction::versioned::VersionedTransaction};
 
     #[test]
     fn test_record_channels() {
@@ -441,5 +441,48 @@ mod tests {
         ));
 
         assert!(*sender.transaction_indexes.as_ref().unwrap().lock().unwrap() == 4);
+    }
+
+    #[test]
+    fn test_race_condition() {
+        let (sender, mut receiver) = record_channels(false);
+
+        std::thread::spawn(move || {
+            let mut successful_sends = 0;
+            let mut slot = 0;
+            let mut had_successful_send = false;
+            while successful_sends < 10_000_000 {
+                if sender
+                    .try_send(Record {
+                        mixins: vec![Hash::default()],
+                        transaction_batches: vec![vec![]],
+                        slot,
+                    })
+                    .is_ok()
+                {
+                    had_successful_send = true;
+                    successful_sends += 1;
+                } else if had_successful_send {
+                    slot += 1;
+                    had_successful_send = false;
+                }
+            }
+        });
+
+        let mut current_slot = 0;
+        receiver.restart(current_slot);
+        let mut receives = 0;
+        while receives < 10_000_000 {
+            if receiver.is_shutdown() && receiver.is_empty() {
+                current_slot += 1;
+                receiver.restart(current_slot);
+            }
+
+            if let Ok(record) = receiver.try_recv() {
+                assert!(record.slot == current_slot);
+                receives += 1;
+                receiver.shutdown();
+            }
+        }
     }
 }
