@@ -36,13 +36,16 @@ pub fn record_channels(track_transaction_indexes: bool) -> (RecordSender, Record
         None
     };
 
+    let active_senders = Arc::new(AtomicU64::new(0));
     (
         RecordSender {
+            active_senders: active_senders.clone(),
             slot_allowed_insertions: slot_allowed_insertions.clone(),
             sender,
             transaction_indexes: transaction_indexes.clone(),
         },
         RecordReceiver {
+            active_senders,
             slot_allowed_insertions,
             receiver,
             capacity: CAPACITY as u64,
@@ -68,6 +71,9 @@ pub enum RecordSenderError {
 /// immediately if the channel is full, shutdown, or if the slot has changed.
 #[derive(Clone, Debug)]
 pub struct RecordSender {
+    /// Used to track active senders for the current slot. Used so that the receiver
+    /// side can determine that no more sends are in-flight while shutting down.
+    active_senders: Arc<AtomicU64>,
     slot_allowed_insertions: SlotAllowedInsertions,
     sender: Sender<Record>,
     transaction_indexes: Option<Arc<Mutex<usize>>>,
@@ -115,6 +121,9 @@ impl RecordSender {
                 allowed_insertions.wrapping_sub(record.transaction_batches.len() as u64),
             );
 
+            // Increment this before CAS so the receiver can see this send is in-flight.
+            self.active_senders.fetch_add(1, Ordering::AcqRel);
+
             if self
                 .slot_allowed_insertions
                 .0
@@ -129,13 +138,17 @@ impl RecordSender {
                 // Send the record over the channel, space has been reserved successfully.
                 if let Err(err) = self.sender.try_send(record) {
                     assert!(err.is_disconnected());
+                    self.active_senders.fetch_sub(1, Ordering::AcqRel);
                     return Err(RecordSenderError::Disconnected);
                 }
+                self.active_senders.fetch_sub(1, Ordering::AcqRel);
                 return Ok(transaction_indexes.map(|mut transaction_indexes| {
                     let transaction_starting_index = *transaction_indexes;
                     *transaction_indexes += num_transactions;
                     transaction_starting_index
                 }));
+            } else {
+                self.active_senders.fetch_sub(1, Ordering::AcqRel);
             }
         }
     }
@@ -146,6 +159,7 @@ impl RecordSender {
 /// and can restart the channel for a new slot, re-enabling sends.
 pub struct RecordReceiver {
     capacity: u64,
+    active_senders: Arc<AtomicU64>,
     slot_allowed_insertions: SlotAllowedInsertions,
     receiver: Receiver<Record>,
     transaction_indexes: Option<Arc<Mutex<usize>>>,
@@ -203,8 +217,16 @@ impl RecordReceiver {
         core::iter::from_fn(|| self.try_recv().ok())
     }
 
+    /// Channel is empty and there are no active threads attempting to send.
     pub fn is_empty(&self) -> bool {
-        self.receiver.is_empty()
+        // The order here is important. active_senders must be checked first.
+        // If checked after is_empty, we could have a race:
+        // 1) sender has not sent yet, active_senders = 1. is_empty = true.
+        // 2) sender sends, decrements active_senders = 0.
+        // 3) receiver checks active_senders == 0 && is_empty == true,
+        //    thinks the channel is empty with no active senders, but there is
+        //    actually a record in the channel now!
+        self.active_senders.load(Ordering::Acquire) == 0 && self.receiver.is_empty()
     }
 
     /// Try to receive a record from the channel.
