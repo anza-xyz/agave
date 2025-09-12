@@ -10,6 +10,7 @@ pub use self::{
         SyscallGetSysvar,
     },
 };
+use solana_program_runtime::memory::translate_vm_slice;
 #[allow(deprecated)]
 use {
     crate::mem_ops::is_nonoverlapping,
@@ -48,6 +49,7 @@ use {
     solana_svm_log_collector::{ic_logger_msg, ic_msg},
     solana_svm_type_overrides::sync::Arc,
     solana_sysvar::SysvarSerialize,
+    solana_transaction_context::vm_slice::VmSlice,
     std::{
         alloc::Layout,
         mem::{align_of, size_of},
@@ -55,9 +57,6 @@ use {
         str::{from_utf8, Utf8Error},
     },
     thiserror::Error as ThisError,
-};
-use {
-    solana_program_runtime::memory::TranslateSlice, solana_transaction_context::vm_slice::VmSlice,
 };
 
 mod cpi;
@@ -789,7 +788,7 @@ fn translate_and_check_program_address_inputs<'a>(
             if untranslated_seed.len() > MAX_SEED_LEN as u64 {
                 return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
             }
-            untranslated_seed.translate(memory_mapping, check_aligned)
+            translate_vm_slice(untranslated_seed, memory_mapping, check_aligned)
         })
         .collect::<Result<Vec<_>, Error>>()?;
     let program_id = translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned)?;
@@ -1752,7 +1751,9 @@ declare_builtin_function!(
         )?;
         let inputs = inputs
             .iter()
-            .map(|input| input.translate(memory_mapping, invoke_context.get_check_aligned()))
+            .map(|input| {
+                translate_vm_slice(input, memory_mapping, invoke_context.get_check_aligned())
+            })
             .collect::<Result<Vec<_>, Error>>()?;
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
@@ -1959,7 +1960,7 @@ declare_builtin_function!(
             )?;
 
             for val in vals.iter() {
-                let bytes = val.translate(memory_mapping, invoke_context.get_check_aligned())?;
+                let bytes = translate_vm_slice(val, memory_mapping, invoke_context.get_check_aligned())?;
                 let cost = compute_cost.mem_op_base_cost.max(
                     hash_byte_cost.saturating_mul(
                         val.len()

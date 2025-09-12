@@ -8,7 +8,7 @@ use {
             SolInstruction, SolSignerSeedC, SolSignerSeedsC, SyscallInvokeSigned,
             TranslatedAccount,
         },
-        memory::{translate_slice, translate_type},
+        memory::{translate_slice, translate_type, translate_vm_slice},
     },
     solana_stable_layout::stable_instruction::StableInstruction,
 };
@@ -148,7 +148,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
                 let seeds = untranslated_seeds
                     .iter()
                     .map(|untranslated_seed| {
-                        untranslated_seed.translate(memory_mapping, check_aligned)
+                        translate_vm_slice(untranslated_seed, memory_mapping, check_aligned)
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
                 let signer = Pubkey::create_program_address(&seeds, program_id)

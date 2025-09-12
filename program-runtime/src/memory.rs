@@ -129,23 +129,10 @@ pub fn translate_slice_mut_for_cpi<'a, T>(
     )
 }
 
-pub trait TranslateSlice {
-    type Data;
-    /// Returns a slice using a mapped physical address
-    fn translate<'a>(
-        &self,
-        memory_mapping: &'a MemoryMapping,
-        check_aligned: bool,
-    ) -> Result<&'a [Self::Data], Box<dyn std::error::Error>>;
-}
-
-impl<T> TranslateSlice for VmSlice<T> {
-    type Data = T;
-    fn translate<'a>(
-        &self,
-        memory_mapping: &'a MemoryMapping,
-        check_aligned: bool,
-    ) -> Result<&'a [T], Box<dyn std::error::Error>> {
-        translate_slice::<T>(memory_mapping, self.ptr(), self.len(), check_aligned)
-    }
+pub fn translate_vm_slice<'a, T>(
+    slice: &VmSlice<T>,
+    memory_mapping: &'a MemoryMapping,
+    check_aligned: bool,
+) -> Result<&'a [T], Box<dyn std::error::Error>> {
+    translate_slice::<T>(memory_mapping, slice.ptr(), slice.len(), check_aligned)
 }
