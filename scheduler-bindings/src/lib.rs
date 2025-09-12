@@ -242,7 +242,7 @@ pub mod worker_message_types {
     }
 
     pub mod not_included_reasons {
-        /// The transaction was included in the block - i.e. no reason it was not included.
+        /// The transaction was included in the block.
         pub const NONE: u8 = 0;
         /// The transaction could not attempt processing because the
         /// working bank was unavailable.
