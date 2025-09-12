@@ -174,7 +174,6 @@ impl PohService {
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut last_tick = Instant::now();
-        let mut last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
         while !poh_exit.load(Ordering::Relaxed) {
             let service_message =
                 Self::check_for_service_message(&poh_service_receiver, &mut record_receiver);
@@ -188,25 +187,21 @@ impl PohService {
                     remaining_tick_time,
                     ticks_per_slot,
                 );
-
-                // Only perform the last tick of the slot if there are no records.
-                // This ensures we don't tick, ending the slot, and cause recording
-                // to fail, unless all records have been processed.
-                // If we are on the last tick, the channel is shutdown so no more
-                // records can be received - we will just process the ones that
-                // have already been received.
-                debug_assert!(
-                    !last_tick_of_slot || record_receiver.is_shutdown(),
-                    "channel should be shutdown if last tick of slot"
-                );
-                if remaining_tick_time.is_zero()
-                    && (!last_tick_of_slot || record_receiver.is_empty())
-                {
+                if remaining_tick_time.is_zero() {
                     last_tick = Instant::now();
                     poh_recorder.write().unwrap().tick();
 
-                    last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
-                    if last_tick_of_slot
+                    let last_tick = {
+                        let poh_recorder = poh_recorder.read().unwrap();
+                        poh_recorder
+                            .bank()
+                            .map(|bank| {
+                                bank.max_tick_height().wrapping_sub(1) == poh_recorder.tick_height()
+                            })
+                            .unwrap_or(false)
+                    };
+
+                    if last_tick
                         || record_receiver.should_shutdown(
                             poh.lock().unwrap().remaining_hashes_in_slot(ticks_per_slot),
                             ticks_per_slot,
@@ -224,7 +219,6 @@ impl PohService {
 
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
-                last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
             }
         }
 
@@ -279,7 +273,6 @@ impl PohService {
         let mut last_tick = Instant::now();
         let num_ticks = poh_config.target_tick_count.unwrap();
         let poh = poh_recorder.read().unwrap().poh.clone();
-        let mut last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
 
         while elapsed_ticks < num_ticks {
             let service_message =
@@ -295,26 +288,22 @@ impl PohService {
                     Duration::from_millis(0),
                     ticks_per_slot,
                 );
-
-                // Only perform the last tick of the slot if there are no records.
-                // This ensures we don't tick, ending the slot, and cause recording
-                // to fail, unless all records have been processed.
-                // If we are on the last tick, the channel is shutdown so no more
-                // records can be received - we will just process the ones that
-                // have already been received.
-                debug_assert!(
-                    !last_tick_of_slot || record_receiver.is_shutdown(),
-                    "channel should be shutdown if last tick of slot"
-                );
-                if remaining_tick_time.is_zero()
-                    && (!last_tick_of_slot || record_receiver.is_empty())
-                {
+                if remaining_tick_time.is_zero() {
                     last_tick = Instant::now();
                     poh_recorder.write().unwrap().tick();
                     elapsed_ticks += 1;
 
-                    last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
-                    if last_tick_of_slot
+                    let last_tick = {
+                        let poh_recorder = poh_recorder.read().unwrap();
+                        poh_recorder
+                            .bank()
+                            .map(|bank| {
+                                bank.max_tick_height().wrapping_sub(1) == poh_recorder.tick_height()
+                            })
+                            .unwrap_or(false)
+                    };
+
+                    if last_tick
                         || record_receiver.should_shutdown(
                             poh.lock().unwrap().remaining_hashes_in_slot(ticks_per_slot),
                             ticks_per_slot,
@@ -336,7 +325,6 @@ impl PohService {
             }
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
-                last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
             }
         }
 
@@ -349,15 +337,6 @@ impl PohService {
                 ticks_per_slot,
             );
         }
-    }
-
-    /// Returns true if this is the last tick of the current slot.
-    fn last_tick_of_slot(poh_recorder: &RwLock<PohRecorder>) -> bool {
-        let poh_recorder = poh_recorder.read().unwrap();
-        poh_recorder
-            .bank()
-            .map(|bank| bank.max_tick_height().wrapping_sub(1) == poh_recorder.tick_height())
-            .unwrap_or(false)
     }
 
     // returns true if we need to tick

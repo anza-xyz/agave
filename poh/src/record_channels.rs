@@ -166,12 +166,6 @@ impl RecordReceiver {
         self.slot_allowed_insertions.shutdown();
     }
 
-    /// Check if the channel is shutdown.
-    pub(crate) fn is_shutdown(&self) -> bool {
-        SlotAllowedInsertions::slot(self.slot_allowed_insertions.0.load(Ordering::Acquire))
-            == SlotAllowedInsertions::DISABLED_SLOT
-    }
-
     /// Re-enable the channel after a shutdown.
     pub fn restart(&mut self, slot: Slot) {
         assert!(slot <= SlotAllowedInsertions::MAX_SLOT);
