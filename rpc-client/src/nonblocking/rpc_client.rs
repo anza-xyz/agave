@@ -137,6 +137,21 @@ use {
 /// [`is_timeout`](solana_rpc_client_api::client_error::reqwest::Error::is_timeout) method
 /// returns `true`. The default timeout is 30 seconds, and may be changed by
 /// calling an appropriate constructor with a `timeout` parameter.
+///
+/// Account information with context for JsonParsed accounts
+///
+/// This struct provides access to both the decoded Account (when possible) and the original
+/// UiAccount data, along with information about whether the account was JsonParsed.
+#[derive(Debug, Clone)]
+pub struct AccountWithContext {
+    /// The decoded Account. For JsonParsed accounts, this will have empty data.
+    pub account: Account,
+    /// The original UiAccount data from the RPC response
+    pub ui_account: UiAccount,
+    /// Whether this account was returned with JsonParsed encoding
+    pub is_json_parsed: bool,
+}
+
 pub struct RpcClient {
     sender: Box<dyn RpcSender + Send + Sync + 'static>,
     config: RpcClientConfig,
@@ -3531,6 +3546,10 @@ impl RpcClient {
     ///
     /// If the account does not exist, this method returns `Ok(None)`.
     ///
+    /// **Important**: This method returns `None` for accounts when using `JsonParsed` encoding,
+    /// since parsed accounts cannot be converted back to raw binary data. If you need to handle
+    /// JsonParsed accounts, use `get_account_with_config_and_context()` instead.
+    ///
     /// To get multiple accounts at once, use the [`get_multiple_accounts_with_config`] method.
     ///
     /// [`get_multiple_accounts_with_config`]: RpcClient::get_multiple_accounts_with_config
@@ -3603,6 +3622,108 @@ impl RpcClient {
                 Ok(Response {
                     context,
                     value: account,
+                })
+            })
+            .map_err(|err| {
+                Into::<ClientError>::into(RpcError::ForUser(format!(
+                    "AccountNotFound: pubkey={pubkey}: {err}"
+                )))
+            })?
+    }
+
+    /// Returns the account information for a pubkey with full context and JsonParsed support.
+    ///
+    /// This method properly handles accounts with JsonParsed encoding by returning both the decoded
+    /// Account (when possible) and preserving the original UiAccount data for parsed accounts.
+    ///
+    /// # Returns
+    ///
+    /// A response containing an `AccountWithContext` (if the account exists) which includes:
+    /// - `account`: The decoded `Account` if binary data is available, or a fallback account with empty data for JsonParsed accounts
+    /// - `ui_account`: The original `UiAccount` data from the RPC response
+    /// - `is_json_parsed`: Whether this account was returned with JsonParsed encoding
+    ///
+    /// # RPC Reference
+    ///
+    /// This method is built on the [`getAccountInfo`] RPC method.
+    ///
+    /// [`getAccountInfo`]: https://solana.com/docs/rpc/http/getaccountinfo
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::{
+    /// #     config::RpcAccountInfoConfig,
+    /// #     client_error::Error,
+    /// # };
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # use solana_account_decoder_client_types::UiAccountEncoding;
+    /// # use solana_keypair::Keypair;
+    /// # use solana_signer::Signer;
+    /// # futures::executor::block_on(async {
+    /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// #     let pubkey = Keypair::new().pubkey();
+    /// let config = RpcAccountInfoConfig {
+    ///     encoding: Some(UiAccountEncoding::JsonParsed),
+    ///     ..Default::default()
+    /// };
+    /// let response = rpc_client.get_account_with_config_and_context(&pubkey, config).await?;
+    /// if let Some(account_ctx) = response.value {
+    ///     if account_ctx.is_json_parsed {
+    ///         // Access the parsed data
+    ///         if let Some(parsed) = account_ctx.ui_account.parsed_data() {
+    ///             println!("Program: {}", parsed.program);
+    ///         }
+    ///     } else {
+    ///         // Use regular account data
+    ///         println!("Data length: {}", account_ctx.account.data.len());
+    ///     }
+    /// }
+    /// #     Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub async fn get_account_with_config_and_context(
+        &self,
+        pubkey: &Pubkey,
+        config: RpcAccountInfoConfig,
+    ) -> RpcResult<Option<AccountWithContext>> {
+        let response = self
+            .send(
+                RpcRequest::GetAccountInfo,
+                json!([pubkey.to_string(), config]),
+            )
+            .await;
+
+        response
+            .map(|result_json: Value| {
+                if result_json.is_null() {
+                    return Err(
+                        RpcError::ForUser(format!("AccountNotFound: pubkey={pubkey}")).into(),
+                    );
+                }
+                let Response {
+                    context,
+                    value: rpc_account,
+                } = serde_json::from_value::<Response<Option<UiAccount>>>(result_json)?;
+                trace!("Response account {pubkey:?} {rpc_account:?}");
+
+                let account_with_context = rpc_account.map(|ui| {
+                    let (account, is_json_parsed) =
+                        ui.try_decode_with_fallback().unwrap_or_else(|| {
+                            // Fallback: create an empty account if decode completely fails
+                            (Account::default(), false)
+                        });
+                    AccountWithContext {
+                        account,
+                        ui_account: ui,
+                        is_json_parsed,
+                    }
+                });
+
+                Ok(Response {
+                    context,
+                    value: account_with_context,
                 })
             })
             .map_err(|err| {
@@ -3750,6 +3871,10 @@ impl RpcClient {
 
     /// Returns the account information for a list of pubkeys.
     ///
+    /// **Important**: This method returns `None` for accounts when using `JsonParsed` encoding,
+    /// since parsed accounts cannot be converted back to raw binary data. If you need to handle
+    /// JsonParsed accounts, use `get_multiple_accounts_with_config_and_context()` instead.
+    ///
     /// # RPC Reference
     ///
     /// This method is built on the [`getMultipleAccounts`] RPC method.
@@ -3808,6 +3933,101 @@ impl RpcClient {
             .into_iter()
             .map(|rpc_account| rpc_account.and_then(|a| a.decode()))
             .collect();
+        Ok(Response {
+            context,
+            value: accounts,
+        })
+    }
+
+    /// Returns the account information for a list of pubkeys with full context and JsonParsed support.
+    ///
+    /// This method properly handles accounts with JsonParsed encoding by returning both the decoded
+    /// Account (when possible) and preserving the original UiAccount data for parsed accounts.
+    ///
+    /// # Returns
+    ///
+    /// A response containing a vector of `AccountWithContext` which includes:
+    /// - `account`: The decoded `Account` if binary data is available, or a fallback account with empty data for JsonParsed accounts
+    /// - `ui_account`: The original `UiAccount` data from the RPC response
+    /// - `is_json_parsed`: Whether this account was returned with JsonParsed encoding
+    ///
+    /// # RPC Reference
+    ///
+    /// This method is built on the [`getMultipleAccounts`] RPC method.
+    ///
+    /// [`getMultipleAccounts`]: https://solana.com/docs/rpc/http/getmultipleaccounts
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::{
+    /// #     config::RpcAccountInfoConfig,
+    /// #     client_error::Error,
+    /// # };
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # use solana_commitment_config::CommitmentConfig;
+    /// # use solana_account_decoder_client_types::UiAccountEncoding;
+    /// # use solana_keypair::Keypair;
+    /// # use solana_signer::Signer;
+    /// # futures::executor::block_on(async {
+    /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// #     let pubkey = Keypair::new().pubkey();
+    /// let config = RpcAccountInfoConfig {
+    ///     encoding: Some(UiAccountEncoding::JsonParsed),
+    ///     ..Default::default()
+    /// };
+    /// let accounts = rpc_client.get_multiple_accounts_with_config_and_context(&[pubkey], config).await?;
+    /// for account_ctx in accounts.value.iter().flatten() {
+    ///     if account_ctx.is_json_parsed {
+    ///         // Access the parsed data
+    ///         if let Some(parsed) = account_ctx.ui_account.parsed_data() {
+    ///             println!("Program: {}", parsed.program);
+    ///         }
+    ///     } else {
+    ///         // Use regular account data
+    ///         println!("Data length: {}", account_ctx.account.data.len());
+    ///     }
+    /// }
+    /// #     Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub async fn get_multiple_accounts_with_config_and_context(
+        &self,
+        pubkeys: &[Pubkey],
+        config: RpcAccountInfoConfig,
+    ) -> RpcResult<Vec<Option<AccountWithContext>>> {
+        let config = RpcAccountInfoConfig {
+            commitment: config.commitment.or_else(|| Some(self.commitment())),
+            ..config
+        };
+        let pubkeys: Vec<_> = pubkeys.iter().map(|pubkey| pubkey.to_string()).collect();
+        let response = self
+            .send(RpcRequest::GetMultipleAccounts, json!([pubkeys, config]))
+            .await?;
+        let Response {
+            context,
+            value: accounts,
+        } = serde_json::from_value::<Response<Vec<Option<UiAccount>>>>(response)?;
+
+        let accounts: Vec<Option<AccountWithContext>> = accounts
+            .into_iter()
+            .map(|ui_account| {
+                ui_account.map(|ui| {
+                    let (account, is_json_parsed) =
+                        ui.try_decode_with_fallback().unwrap_or_else(|| {
+                            // Fallback: create an empty account if decode completely fails
+                            (Account::default(), false)
+                        });
+                    AccountWithContext {
+                        account,
+                        ui_account: ui,
+                        is_json_parsed,
+                    }
+                })
+            })
+            .collect();
+
         Ok(Response {
             context,
             value: accounts,
