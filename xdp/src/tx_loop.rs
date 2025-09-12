@@ -201,9 +201,9 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                 let dest_mac = if let Some(mac) = dest_mac {
                     mac
                 } else {
-                    // lock free route lookup
+                    // lock free route lookup - get both next hop and GRE info
                     let router = atomic_router.load();
-                    let next_hop = router.route(addr.ip()).unwrap();
+                    let (next_hop, requires_gre) = router.route(addr.ip()).unwrap();
 
                     let mut skip = false;
 
@@ -232,6 +232,13 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                         batched_packets -= 1;
                         umem.release(frame.offset());
                         continue;
+                    }
+
+                    // Just logging gre info for testing
+                    if requires_gre {
+                        log::info!("greg: Packet to {} requires GRE wrapping", addr.ip());
+                        // TODO: implement gre packet wrapping
+                        // not sure if need to do here or somewhere else
                     }
 
                     next_hop.mac_addr.unwrap()

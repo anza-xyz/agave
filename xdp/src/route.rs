@@ -1,10 +1,12 @@
 use {
     crate::netlink::{
-        netlink_get_neighbors, netlink_get_routes, MacAddress, NeighborEntry, RouteEntry,
+        netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes, InterfaceInfo,
+        MacAddress, NeighborEntry, RouteEntry,
     },
     arc_swap::ArcSwap,
-    libc::{AF_INET, AF_INET6},
+    libc::{AF_INET, AF_INET6, ARPHRD_IPGRE},
     std::{
+        collections::HashMap,
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
         sync::Arc,
@@ -117,13 +119,21 @@ fn is_ipv6_match(addr: Ipv6Addr, network: Ipv6Addr, prefix_len: u8) -> bool {
 pub struct Router {
     arp_table: Arc<ArpTable>,
     routes: Arc<Vec<RouteEntry>>,
+    interfaces: Arc<HashMap<i32, InterfaceInfo>>, // if_index (on host) -> InterfaceInfo map
 }
 
 impl Router {
     pub fn new() -> Result<Self, io::Error> {
+        let interfaces = netlink_get_interfaces()?;
+        let interface_map: HashMap<i32, InterfaceInfo> = interfaces
+            .into_iter()
+            .map(|if_info| (if_info.if_index, if_info))
+            .collect();
+
         Ok(Self {
             arp_table: Arc::new(ArpTable::new()?),
             routes: Arc::new(netlink_get_routes(AF_INET as u8)?),
+            interfaces: Arc::new(interface_map),
         })
     }
 
@@ -152,7 +162,10 @@ impl Router {
         })
     }
 
-    pub fn route(&self, dest_ip: IpAddr) -> Result<NextHop, RouteError> {
+    // greg: todo: not sure if we should return is_gre here?
+    // when we start wrapping gre packets. we may want to return the entire InterfaceInfo
+    // InterfaceInfo will have to be expanded to include the src_ip/dst_ip for gre
+    pub fn route(&self, dest_ip: IpAddr) -> Result<(NextHop, bool), RouteError> {
         let route = lookup_route(&self.routes, dest_ip).ok_or(RouteError::NoRouteFound(dest_ip))?;
 
         let if_index = route
@@ -166,11 +179,19 @@ impl Router {
 
         let mac_addr = self.arp_table.lookup(next_hop_ip).cloned();
 
-        Ok(NextHop {
+        let next_hop = NextHop {
             ip_addr: next_hop_ip,
             mac_addr,
             if_index,
-        })
+        };
+
+        // Check if route uses is on gre interface
+        let is_gre = route.out_if_index.is_some_and(|if_index| {
+            self.interfaces
+                .get(&if_index)
+                .is_some_and(|if_info| if_info.dev_type == ARPHRD_IPGRE)
+        });
+        Ok((next_hop, is_gre))
     }
 }
 
@@ -207,7 +228,8 @@ impl AtomicRouter {
         self.router.load().clone()
     }
 
-    // update both routes and ARP table
+    // update routes and ARP table
+    // interfaces are static, so we don't update them after startup
     pub fn update_routes_and_neighbors(&self) -> Result<(), io::Error> {
         let mut current_router = (**self.router.load()).clone();
         current_router.routes = Self::fetch_routes()?;
@@ -283,7 +305,7 @@ mod tests {
     #[test]
     fn test_route() {
         let router = Router::new().unwrap();
-        let next_hop = router.route("1.1.1.1".parse().unwrap()).unwrap();
-        eprintln!("{next_hop:?}");
+        let (next_hop, requires_gre) = router.route("1.1.1.1".parse().unwrap()).unwrap();
+        eprintln!("NextHop: {next_hop:?}, Requires GRE: {requires_gre}");
     }
 }
