@@ -86,6 +86,34 @@ pub struct SharableTransactionBatchRegion {
     /// [`SharableTransactionRegion`] with size `num_transactions`.
     pub transactions_offset: u32,
 }
+/// Reference to an array of response messages.
+/// General flow:
+/// 1. agave allocates memory for `num_transaction_responses` inner messages.
+/// 2. agave sends a [`WorkerToPackMessage`] with `responses`.
+/// 3. External pack process processes the inner messages. Potentially freeing
+///    any memory within each inner message (see [`worker_message_types`] for details).
+#[repr(C)]
+pub struct TransactionResponseRegion {
+    /// Tag indicating the type of message.
+    /// See [`worker_message_types`] for details.
+    /// If the tag is [`worker_message_types::INVALID_MESSAGE`],
+    /// no inner messages will be present and `num_transaction_responses`
+    /// and `transaction_responses_offset` will be 0.
+    /// All inner messages/responses per trasaction will be of the same type.
+    pub tag: u8,
+    /// The number of transactions in the original message.
+    /// This corresponds to the number of inner response
+    /// messages that will be pointed to by `response_offset`.
+    /// This MUST be the same as `batch.num_transactions`.
+    pub num_transaction_responses: u8,
+    /// Offset within the shared memory allocator for the array of
+    /// inner messages.
+    /// The inner messages are laid out back-to-back in memory starting at
+    /// this offset. The type of each inner message is indicated by `tag`.
+    /// There are `num_transaction_responses` inner messages.
+    /// See [`worker_message_types`] for details on the inner message types.
+    pub transaction_responses_offset: u32,
+}
 
 /// Message: [TPU -> Pack]
 /// TPU passes transactions to the external pack process.
@@ -183,90 +211,65 @@ pub struct WorkerToPackMessage {
     /// and is safe to do so - agave will hold no references to this memory
     /// after sending this message.
     pub batch: SharableTransactionBatchRegion,
-
-    /// Tag indicating the type of message.
-    /// See [`worker_message_types`] for details.
-    pub tag: u8,
-
-    /// The number of transactions in the original message.
-    /// This corresponds to the number of inner response
-    /// messages that will be pointed to by `response_offset`.
-    /// This MUST be the same as `batch.num_transactions`.
-    pub num_transaction_responses: u8,
-    /// Offset within the shared memory allocator for the array of
-    /// inner messages.
-    /// The inner messages are laid out back-to-back in memory starting at
-    /// this offset. The type of each inner message is indicated by `tag`.
-    /// There are `num_transaction_responses` inner messages.
-    /// See [`worker_message_types`] for details on the inner message types.
-    pub transaction_responses_offset: u32,
+    /// Tag for type of response messages with number and offset.
+    /// See [`TransactionResponseRegion`] for details.
+    pub responses: TransactionResponseRegion,
 }
 
 pub mod worker_message_types {
     use crate::SharablePubkeys;
 
-    /// Tag indicating [`InvalidMessage`] inner message.
+    /// Tag indicating the sent message was invalid.
+    /// No inner messages will be present.
     pub const INVALID_MESSAGE: u8 = 0;
 
-    /// Response to pack that a message was invalid.
-    #[repr(C)]
-    pub struct InvalidMessage;
+    /// Tag indicating [`ExecutionResonse`] inner message.
+    pub const EXECUTION_RESPONSE: u8 = 1;
 
-    /// Tag indicating [`NotIncluded`] inner message.
-    pub const NOT_INCLUDED: u8 = 1;
-
-    /// Response to pack that a transaction was not included in the block.
-    /// This response will only be sent if the original message tags
+    /// Response to pack for a transaction that attempted execution.
+    /// This response will only be sent if the original message flags
     /// requested execution i.e. not [`super::pack_message_flags::RESOLVE`].
     #[repr(C)]
-    pub struct NotIncluded {
-        /// The reason the transaction was not included.
-        /// See [`not_included_reasons`] for details.
-        pub reason: u8,
-    }
-
-    pub mod not_included_reasons {
-        /// The transaction could not attempt processing because the
-        /// working bank was unavailable.
-        pub const BANK_NOT_AVAILABLE: u8 = 0;
-        /// The transaction could not be processed because the `slot`
-        /// in the passed message did not match the working bank's slot.
-        pub const SLOT_MISMATCH: u8 = 1;
-
-        // The following reasons are mapped from `TransactionError` in
-        // `solana-sdk` crate. See that crate for details.
-        pub const PARSING_OR_SANITIZATION_FAILURE: u8 = 2;
-        pub const ALT_RESOLUTION_FAILURE: u8 = 3;
-        pub const BLOCKHASH_NOT_FOUND: u8 = 4;
-        pub const ALREADY_PROCESSED: u8 = 5;
-        pub const WOULD_EXCEED_VOTE_MAX_LIMIT: u8 = 6;
-        pub const WOULD_EXCEED_BLOCK_MAX_LIMIT: u8 = 7;
-        pub const WOULD_EXCEED_ACCOUNT_MAX_LIMIT: u8 = 8;
-        pub const WOULD_EXCEED_ACCOUNT_DATA_BLOCK_LIMIT: u8 = 9;
-        pub const TOO_MANY_ACCOUNT_LOCKS: u8 = 10;
-        pub const ACCOUNT_LOADED_TWICE: u8 = 11;
-        pub const ACCOUNT_IN_USE: u8 = 12;
-        pub const INVALID_ACCOUNT_FOR_FEE: u8 = 13;
-        pub const INSUFFICIENT_FUNDS_FOR_FEE: u8 = 14;
-        pub const INSUFFICIENT_FUNDS_FOR_RENT: u8 = 15;
-    }
-
-    /// Tag indicating [`Included`] inner message.
-    pub const INCLUDED: u8 = 2;
-
-    /// Response to pack that a transaction was included in the block.
-    /// This response will only be sent if the original message tags
-    /// requested execution i.e. not [`super::pack_message_flags::RESOLVE`].
-    #[repr(C)]
-    pub struct Included {
-        /// cost units used by the transaction.
+    pub struct ExecutionResponse {
+        /// Indicates if the transaction was included in the block or not.
+        /// If [`not_included_reasons::NONE`], the transaction was included.
+        not_included_reason: u8,
+        /// If included, cost units used by the transaction.
         pub cost_units: u64,
-        /// The fee-payer balance after execution.
+        /// If included, the fee-payer balance after execution.
         pub fee_payer_balance: u64,
     }
 
+    pub mod not_included_reasons {
+        /// The transaction was included in the block - i.e. no reason it was not included.
+        pub const NONE: u8 = 0;
+        /// The transaction could not attempt processing because the
+        /// working bank was unavailable.
+        pub const BANK_NOT_AVAILABLE: u8 = 1;
+        /// The transaction could not be processed because the `slot`
+        /// in the passed message did not match the working bank's slot.
+        pub const SLOT_MISMATCH: u8 = 2;
+
+        // The following reasons are mapped from `TransactionError` in
+        // `solana-sdk` crate. See that crate for details.
+        pub const PARSING_OR_SANITIZATION_FAILURE: u8 = 3;
+        pub const ALT_RESOLUTION_FAILURE: u8 = 4;
+        pub const BLOCKHASH_NOT_FOUND: u8 = 5;
+        pub const ALREADY_PROCESSED: u8 = 6;
+        pub const WOULD_EXCEED_VOTE_MAX_LIMIT: u8 = 7;
+        pub const WOULD_EXCEED_BLOCK_MAX_LIMIT: u8 = 8;
+        pub const WOULD_EXCEED_ACCOUNT_MAX_LIMIT: u8 = 9;
+        pub const WOULD_EXCEED_ACCOUNT_DATA_BLOCK_LIMIT: u8 = 10;
+        pub const TOO_MANY_ACCOUNT_LOCKS: u8 = 11;
+        pub const ACCOUNT_LOADED_TWICE: u8 = 12;
+        pub const ACCOUNT_IN_USE: u8 = 13;
+        pub const INVALID_ACCOUNT_FOR_FEE: u8 = 14;
+        pub const INSUFFICIENT_FUNDS_FOR_FEE: u8 = 15;
+        pub const INSUFFICIENT_FUNDS_FOR_RENT: u8 = 16;
+    }
+
     /// Tag indicating [`Resolved`] inner message.
-    pub const RESOLVED: u8 = 3;
+    pub const RESOLVED: u8 = 2;
 
     #[repr(C)]
     pub struct Resolved {
