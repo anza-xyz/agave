@@ -4,7 +4,7 @@ use {
         ser::{SerializeSeq, SerializeTuple},
         Deserialize, Serialize,
     },
-    serde_bytes::{ByteArray, ByteBuf, Bytes},
+    serde_bytes::{ByteBuf, Bytes},
     solana_address::ADDRESS_BYTES,
     solana_hash::HASH_BYTES,
     solana_message::{
@@ -51,21 +51,6 @@ where
     }
 }
 
-struct MessageHeaderSer<'a>(&'a MessageHeader);
-impl Serialize for MessageHeaderSer<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let bytes = [
-            self.0.num_required_signatures,
-            self.0.num_readonly_signed_accounts,
-            self.0.num_readonly_unsigned_accounts,
-        ];
-        serializer.serialize_bytes(&bytes)
-    }
-}
-
 #[repr(transparent)]
 struct MessageHeaderSeed(*mut MessageHeader);
 impl<'de> DeserializeSeed<'de> for MessageHeaderSeed {
@@ -76,12 +61,10 @@ impl<'de> DeserializeSeed<'de> for MessageHeaderSeed {
     where
         D: Deserializer<'de>,
     {
-        let bytes = ByteArray::<3>::deserialize(deserializer)?;
         unsafe {
-            (&raw mut ((*self.0).num_required_signatures)).write(bytes[0]);
-            (&raw mut ((*self.0).num_readonly_signed_accounts)).write(bytes[1]);
-            (&raw mut ((*self.0).num_readonly_unsigned_accounts)).write(bytes[2]);
+            ptr::write(self.0, <MessageHeader>::deserialize(deserializer)?);
         }
+
         Ok(())
     }
 }
@@ -178,7 +161,7 @@ impl Serialize for LegacyMessageSer<'_> {
         S: serde::Serializer,
     {
         let mut s = serializer.serialize_tuple(4)?;
-        s.serialize_element(&MessageHeaderSer(&self.0.header))?;
+        s.serialize_element(&self.0.header)?;
         s.serialize_element(&FixedByteVecSer(&self.0.account_keys))?;
         s.serialize_element(&Bytes::new(self.0.recent_blockhash.as_bytes()))?;
         s.serialize_element(&CompiledInstructionsSer(&self.0.instructions))?;
@@ -331,7 +314,7 @@ impl Serialize for V0MessageSer<'_> {
         S: serde::Serializer,
     {
         let mut s = serializer.serialize_tuple(5)?;
-        s.serialize_element(&MessageHeaderSer(&self.0.header))?;
+        s.serialize_element(&self.0.header)?;
         s.serialize_element(&FixedByteVecSer(&self.0.account_keys))?;
         s.serialize_element(&Bytes::new(self.0.recent_blockhash.as_bytes()))?;
         s.serialize_element(&CompiledInstructionsSer(&self.0.instructions))?;
