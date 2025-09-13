@@ -546,6 +546,7 @@ version = "3.1.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "bitvec",
  "bs58",
  "crossbeam-channel",
  "dashmap",
@@ -560,6 +561,7 @@ dependencies = [
  "serde_derive",
  "solana-accounts-db",
  "solana-bloom",
+ "solana-bls-signatures",
  "solana-clock",
  "solana-entry",
  "solana-epoch-schedule",
@@ -577,6 +579,7 @@ dependencies = [
  "solana-runtime",
  "solana-signature",
  "solana-signer",
+ "solana-signer-store",
  "solana-time-utils",
  "solana-transaction",
  "solana-votor-messages",
@@ -1349,6 +1352,7 @@ checksum = "1bc2832c24239b0141d5674bb9174f9d68a8b5b3f2753311927c172ca46f7e9c"
 dependencies = [
  "funty",
  "radium",
+ "serde",
  "tap",
  "wyz",
 ]
@@ -7428,9 +7432,9 @@ dependencies = [
 
 [[package]]
 name = "solana-bls-signatures"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "210bb2fc7efc40b34d4e506759c3b1f21360b53d02c2e5ca3601feca7a9fd269"
+checksum = "a40ce56d14f58c3ebe9275c3739c4052748ec5c4922854c12dc823dbf450ebd1"
 dependencies = [
  "base64 0.22.1",
  "blst",
@@ -10660,6 +10664,17 @@ dependencies = [
  "solana-pubkey",
  "solana-signature",
  "solana-transaction-error",
+]
+
+[[package]]
+name = "solana-signer-store"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36329bba208f0e41954389ae4ad5d973fe15952672cfd71a9b49deb7d2ecbc2f"
+dependencies = [
+ "bitvec",
+ "num-derive",
+ "num-traits",
 ]
 
 [[package]]
