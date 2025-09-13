@@ -942,7 +942,7 @@ fn main() {
 
     let rent = Rent::default();
     let default_bootstrap_validator_lamports = &(500 * LAMPORTS_PER_SOL)
-        .max(VoteStateV3::get_rent_exempt_reserve(&rent))
+        .max(rent.minimum_balance(VoteStateV3::size_of()))
         .to_string();
     let default_bootstrap_validator_stake_lamports = &(LAMPORTS_PER_SOL / 2)
         .max(rent.minimum_balance(StakeStateV2::size_of()))
@@ -2330,7 +2330,7 @@ fn main() {
                                 identity_pubkey,
                                 identity_pubkey,
                                 100,
-                                VoteStateV3::get_rent_exempt_reserve(&rent).max(1),
+                                rent.minimum_balance(VoteStateV3::size_of()).max(1),
                             );
 
                             bank.store_account(
