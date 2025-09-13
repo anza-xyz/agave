@@ -10,11 +10,16 @@ license = { workspace = true }
 edition = { workspace = true }
 publish = false
 
+[[bin]]
+name = "test_exec_instr"
+path = "bin/test_exec_instr.rs"
+
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-precompiles = { workspace = true }
 agave-syscalls = { workspace = true }
 bincode = { workspace = true }
+clap = { version = "4.5.2", features = ["derive"] }
 prost = { workspace = true }
 solana-account = { workspace = true }
 solana-builtins = { workspace = true }

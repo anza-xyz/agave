@@ -11078,6 +11078,7 @@ dependencies = [
  "agave-precompiles",
  "agave-syscalls",
  "bincode",
+ "clap 4.5.31",
  "prost",
  "solana-account",
  "solana-builtins",
