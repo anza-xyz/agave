@@ -64,7 +64,7 @@ const MAX_SIGNERS: usize = 16;
 /// Rust representation of C's SolInstruction
 #[derive(Debug)]
 #[repr(C)]
-pub struct SolInstruction {
+struct SolInstruction {
     pub program_id_addr: u64,
     pub accounts_addr: u64,
     pub accounts_len: u64,
@@ -75,7 +75,7 @@ pub struct SolInstruction {
 /// Rust representation of C's SolAccountMeta
 #[derive(Debug)]
 #[repr(C)]
-pub struct SolAccountMeta {
+struct SolAccountMeta {
     pub pubkey_addr: u64,
     pub is_writable: bool,
     pub is_signer: bool,
@@ -84,7 +84,7 @@ pub struct SolAccountMeta {
 /// Rust representation of C's SolAccountInfo
 #[derive(Debug)]
 #[repr(C)]
-pub struct SolAccountInfo {
+struct SolAccountInfo {
     pub key_addr: u64,
     pub lamports_addr: u64,
     pub data_len: u64,
@@ -99,7 +99,7 @@ pub struct SolAccountInfo {
 /// Rust representation of C's SolSignerSeed
 #[derive(Debug)]
 #[repr(C)]
-pub struct SolSignerSeedC {
+struct SolSignerSeedC {
     pub addr: u64,
     pub len: u64,
 }
@@ -107,7 +107,7 @@ pub struct SolSignerSeedC {
 /// Rust representation of C's SolSignerSeeds
 #[derive(Debug)]
 #[repr(C)]
-pub struct SolSignerSeedsC {
+struct SolSignerSeedsC {
     pub addr: u64,
     pub len: u64,
 }
@@ -136,7 +136,7 @@ fn check_account_info_pointer(
 }
 
 /// Check that an instruction's account and data lengths are within limits
-pub fn check_instruction_size(num_accounts: usize, data_len: usize) -> Result<(), Error> {
+fn check_instruction_size(num_accounts: usize, data_len: usize) -> Result<(), Error> {
     if num_accounts > MAX_ACCOUNTS_PER_INSTRUCTION {
         return Err(Box::new(CpiError::MaxInstructionAccountsExceeded {
             num_accounts: num_accounts as u64,
@@ -153,7 +153,7 @@ pub fn check_instruction_size(num_accounts: usize, data_len: usize) -> Result<()
 }
 
 /// Check that the number of account infos is within the CPI limit
-pub fn check_account_infos(
+fn check_account_infos(
     num_account_infos: usize,
     invoke_context: &mut InvokeContext,
 ) -> Result<(), Error> {
@@ -177,7 +177,7 @@ pub fn check_account_infos(
 }
 
 /// Check whether a program is authorized for CPI
-pub fn check_authorized_program(
+fn check_authorized_program(
     program_id: &Pubkey,
     instruction_data: &[u8],
     invoke_context: &InvokeContext,
@@ -392,7 +392,7 @@ impl<'a> CallerAccount<'a> {
     }
 
     // Create a CallerAccount given a SolAccountInfo.
-    pub fn from_sol_account_info(
+    fn from_sol_account_info(
         invoke_context: &InvokeContext,
         memory_mapping: &solana_sbpf::memory_region::MemoryMapping<'_>,
         check_aligned: bool,
@@ -867,7 +867,7 @@ pub struct TranslatedAccount<'a> {
     pub update_caller_account_info: bool,
 }
 
-pub fn translate_account_infos<'a, T, F>(
+fn translate_account_infos<'a, T, F>(
     account_infos_addr: u64,
     account_infos_len: u64,
     key_addr: F,
@@ -916,7 +916,7 @@ where
 
 // Finish translating accounts, build CallerAccount values and update callee
 // accounts in preparation of executing the callee.
-pub fn translate_and_update_accounts<'a, T, F>(
+fn translate_and_update_accounts<'a, T, F>(
     account_info_keys: &[&Pubkey],
     account_infos: &[T],
     account_infos_addr: u64,
@@ -1057,7 +1057,7 @@ fn consume_compute_meter(invoke_context: &InvokeContext, amount: u64) -> Result<
 //
 // When true is returned, the caller account must be updated after CPI. This
 // is only set for stricter_abi_and_runtime_constraints when the pointer may have changed.
-pub fn update_callee_account(
+fn update_callee_account(
     check_aligned: bool,
     caller_account: &CallerAccount,
     mut callee_account: BorrowedInstructionAccount<'_>,
@@ -1113,7 +1113,7 @@ pub fn update_callee_account(
     Ok(must_update_caller)
 }
 
-pub fn update_caller_account_region(
+fn update_caller_account_region(
     memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
     caller_account: &CallerAccount,
@@ -1162,7 +1162,7 @@ pub fn update_caller_account_region(
 // Safety: Once `stricter_abi_and_runtime_constraints` is enabled all fields of [CallerAccount] used
 // in this function should never point inside the address space reserved for
 // accounts (regardless of the current size of an account).
-pub fn update_caller_account(
+fn update_caller_account(
     invoke_context: &InvokeContext,
     memory_mapping: &MemoryMapping<'_>,
     check_aligned: bool,
