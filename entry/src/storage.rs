@@ -20,24 +20,34 @@ use {
         mem::{transmute, MaybeUninit},
         ptr::{self},
         result::Result,
+        slice,
     },
 };
 
-struct SeqBytesAsRefSer<'a, T>(&'a [T]);
-
-impl<T> Serialize for SeqBytesAsRefSer<'_, T>
+/// Serialize a sequence of fixed length byte arrays as a single byte slice.
+///
+/// This avoids encoding a sequence of byte arrays individually, and instead
+/// encodes the entire sequence in one pass.
+///
+/// Should be coupled with [`FixedByteVecSeed`] for deserialization.
+///
+/// Note: we're using the `From<[u8; N]>` constraint as a convenience
+/// because `Hash`, `Signature`, and `Address` all implement it.
+struct FixedByteVecSer<'a, const N: usize, T: From<[u8; N]>>(&'a [T]);
+impl<T, const N: usize> Serialize for FixedByteVecSer<'_, N, T>
 where
-    T: AsRef<[u8]>,
+    T: From<[u8; N]>,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let mut s = serializer.serialize_seq(Some(self.0.len()))?;
-        for item in self.0 {
-            s.serialize_element(&Bytes::new(item.as_ref()))?;
-        }
-        s.end()
+        debug_assert_eq!(size_of::<T>(), N);
+        debug_assert_eq!(align_of::<T>(), align_of::<[u8; N]>());
+
+        let ptr = self.0.as_ptr() as *const u8;
+        let slice = unsafe { slice::from_raw_parts(ptr, self.0.len() * N) };
+        serializer.serialize_bytes(slice)
     }
 }
 
@@ -135,9 +145,9 @@ impl<'de> DeserializeSeed<'de> for CompiledInstructionSeed {
                     .into_vec();
 
                 unsafe {
-                    program_id_index_ptr.write(program_id_index);
-                    accounts_ptr.write(accounts);
-                    data_ptr.write(data);
+                    ptr::write(program_id_index_ptr, program_id_index);
+                    ptr::write(accounts_ptr, accounts);
+                    ptr::write(data_ptr, data);
                 }
                 Ok(())
             }
@@ -169,7 +179,7 @@ impl Serialize for LegacyMessageSer<'_> {
     {
         let mut s = serializer.serialize_tuple(4)?;
         s.serialize_element(&MessageHeaderSer(&self.0.header))?;
-        s.serialize_element(&SeqBytesAsRefSer(&self.0.account_keys))?;
+        s.serialize_element(&FixedByteVecSer(&self.0.account_keys))?;
         s.serialize_element(&Bytes::new(self.0.recent_blockhash.as_bytes()))?;
         s.serialize_element(&CompiledInstructionsSer(&self.0.instructions))?;
         s.end()
@@ -211,7 +221,7 @@ impl<'de> DeserializeSeed<'de> for LegacyMessageSeed {
                 seq.next_element_seed(MessageHeaderSeed(header_ptr))?
                     .ok_or_else(|| A::Error::invalid_length(0, &self))?;
 
-                seq.next_element_seed(VecSeqSeed::new(account_keys_ptr, FixedByteSeed))?
+                seq.next_element_seed(FixedByteVecSeed(account_keys_ptr))?
                     .ok_or_else(|| A::Error::invalid_length(1, &self))?;
 
                 seq.next_element_seed(FixedByteSeed(recent_blockhash_ptr))?
@@ -288,8 +298,8 @@ impl<'de> DeserializeSeed<'de> for AddressTableLookupSeed {
                     .into_vec();
 
                 unsafe {
-                    writable_indexes_ptr.write(writeable_indexes);
-                    readonly_indexes_ptr.write(readonly_indexes);
+                    ptr::write(writable_indexes_ptr, writeable_indexes);
+                    ptr::write(readonly_indexes_ptr, readonly_indexes);
                 }
 
                 Ok(())
@@ -322,7 +332,7 @@ impl Serialize for V0MessageSer<'_> {
     {
         let mut s = serializer.serialize_tuple(5)?;
         s.serialize_element(&MessageHeaderSer(&self.0.header))?;
-        s.serialize_element(&SeqBytesAsRefSer(&self.0.account_keys))?;
+        s.serialize_element(&FixedByteVecSer(&self.0.account_keys))?;
         s.serialize_element(&Bytes::new(self.0.recent_blockhash.as_bytes()))?;
         s.serialize_element(&CompiledInstructionsSer(&self.0.instructions))?;
         s.serialize_element(&AddressTableLookupsSer(&self.0.address_table_lookups))?;
@@ -373,7 +383,7 @@ impl<'de> DeserializeSeed<'de> for V0MessageSeed {
                 seq.next_element_seed(MessageHeaderSeed(header_ptr))?
                     .ok_or_else(|| A::Error::invalid_length(0, &self))?;
 
-                seq.next_element_seed(VecSeqSeed::new(account_keys_ptr, FixedByteSeed))?
+                seq.next_element_seed(FixedByteVecSeed(account_keys_ptr))?
                     .ok_or_else(|| A::Error::invalid_length(1, &self))?;
 
                 seq.next_element_seed(FixedByteSeed(recent_blockhash_ptr))?
@@ -473,7 +483,7 @@ impl<'de> DeserializeSeed<'de> for VersionedMessageSeed {
                         access.newtype_variant_seed(LegacyMessageSeed(msg.as_mut_ptr()))?;
                         let msg = unsafe { msg.assume_init() };
                         unsafe {
-                            self.dst.write(VersionedMessage::Legacy(msg));
+                            ptr::write(self.dst, VersionedMessage::Legacy(msg));
                         }
                     }
                     VersionedMessageVariant::V0 => {
@@ -481,7 +491,7 @@ impl<'de> DeserializeSeed<'de> for VersionedMessageSeed {
                         access.newtype_variant_seed(V0MessageSeed(msg.as_mut_ptr()))?;
                         let msg = unsafe { msg.assume_init() };
                         unsafe {
-                            self.dst.write(VersionedMessage::V0(msg));
+                            ptr::write(self.dst, VersionedMessage::V0(msg));
                         }
                     }
                 }
@@ -519,7 +529,7 @@ impl Serialize for VersionedTransactionSer<'_> {
         S: serde::Serializer,
     {
         let mut s = serializer.serialize_tuple(2)?;
-        s.serialize_element(&SeqBytesAsRefSer(&self.0.signatures))?;
+        s.serialize_element(&FixedByteVecSer(&self.0.signatures))?;
         s.serialize_element(&VersionedMessageSer(&self.0.message))?;
         s.end()
     }
@@ -557,7 +567,7 @@ impl<'de> DeserializeSeed<'de> for VersionedTransactionSeed {
                     )
                 };
 
-                seq.next_element_seed(VecSeqSeed::new(sig_ptr, FixedByteSeed))?
+                seq.next_element_seed(FixedByteVecSeed(sig_ptr))?
                     .ok_or_else(|| A::Error::invalid_length(0, &self))?;
 
                 seq.next_element_seed(VersionedMessageSeed(msg_ptr))?
@@ -633,7 +643,7 @@ impl<'de> Deserialize<'de> for Entry {
                     .next_element::<u64>()?
                     .ok_or_else(|| A::Error::invalid_length(0, &self))?;
                 unsafe {
-                    num_hashes_ptr.write(num_hashes);
+                    ptr::write(num_hashes_ptr, num_hashes);
                 }
 
                 seq.next_element_seed(FixedByteSeed(hash_ptr))?
@@ -652,7 +662,7 @@ impl<'de> Deserialize<'de> for Entry {
 
 /// [`DeserializeSeed`] for a `Vec` of items.
 ///
-/// Facilitates initializing a `Vec` in place (i.e., without intermediate copy).
+/// Facilitates initializing a `Vec` in place.
 ///
 /// This works by accepting a "`DeserializeSeed` generator" function
 /// that is passed each uninitialized "slot" in the allocated memory.
@@ -798,7 +808,7 @@ where
 
                 if seq_len == 0 {
                     unsafe {
-                        self.dst.write(Vec::new());
+                        ptr::write(self.dst, Vec::new());
                     }
                     return Ok(());
                 }
@@ -824,7 +834,7 @@ where
                 }
 
                 unsafe {
-                    self.dst.write(vec);
+                    ptr::write(self.dst, vec);
                 }
 
                 Ok(())
@@ -839,9 +849,60 @@ where
     }
 }
 
+/// [`DeserializeSeed`] for a sequence of fixed length byte arrays.
+///
+/// If your data is of the form `Vec<[u8; N]>`, prefer this over [`VecSeqSeed`],
+/// as [`VecSeqSeed`] will iterate item-wise instead of copying the entire sequence
+/// at once.
+///
+/// Should be coupled with [`FixedByteVecSer`] for serialization.
+pub struct FixedByteVecSeed<const N: usize>(pub *mut Vec<[u8; N]>);
+
+impl<'de, const N: usize> DeserializeSeed<'de> for FixedByteVecSeed<N> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct VisitFixedByteVecSeed<const N: usize> {
+            dst: *mut Vec<[u8; N]>,
+        }
+
+        impl<const N: usize> Visitor<'_> for VisitFixedByteVecSeed<N> {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                write!(formatter, "a sequence of byte arrays of length {N}")
+            }
+
+            fn visit_bytes<E>(self, bytes: &[u8]) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                if bytes.len() % N != 0 {
+                    return Err(E::invalid_length(bytes.len(), &self));
+                }
+                let mut vec = Vec::with_capacity(bytes.len() / N);
+                let ptr = vec.spare_capacity_mut().as_mut_ptr();
+
+                unsafe {
+                    ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, bytes.len());
+                    vec.set_len(bytes.len() / N);
+                    ptr::write(self.dst, vec);
+                }
+
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_bytes(VisitFixedByteVecSeed { dst: self.0 })
+    }
+}
+
 /// [`DeserializeSeed`] for a byte array of length `N`.
 ///
-/// Allows initializing a fixed length byte array in place (i.e., without intermediate copy).
+/// Allows initializing a fixed length byte array in place.
 ///
 /// # Example
 /// ```
@@ -930,16 +991,15 @@ impl<'de, const N: usize> DeserializeSeed<'de> for FixedByteSeed<N> {
             }
 
             #[inline(always)]
-            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            fn visit_bytes<E>(self, bytes: &[u8]) -> Result<Self::Value, E>
             where
                 E: de::Error,
             {
-                if v.len() != N {
-                    return Err(E::invalid_length(v.len(), &self));
+                if bytes.len() != N {
+                    return Err(E::invalid_length(bytes.len(), &self));
                 }
-                // SAFETY: Length is guaranteed to be `N` and slice from `serde` is non-overlapping with `self.dst`.
                 unsafe {
-                    ptr::copy_nonoverlapping(v.as_ptr(), self.dst as *mut u8, N);
+                    ptr::copy_nonoverlapping(bytes.as_ptr(), self.dst as *mut u8, N);
                 }
                 Ok(())
             }
