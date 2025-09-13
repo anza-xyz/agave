@@ -3,11 +3,14 @@
 use {
     libc::{
         getsockname, nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl, socket,
-        AF_INET, AF_INET6, AF_NETLINK, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_ROUTE,
-        NLA_ALIGNTO, NLA_TYPE_MASK, NLMSG_DONE, NLMSG_ERROR, NLM_F_DUMP, NLM_F_MULTI,
-        NLM_F_REQUEST, NUD_PERMANENT, NUD_REACHABLE, NUD_STALE, RTA_DST, RTA_GATEWAY, RTA_IIF,
-        RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWNEIGH,
-        RTM_NEWROUTE, RT_TABLE_MAIN, SOCK_RAW, SOL_NETLINK,
+        AF_INET, AF_INET6, AF_NETLINK, ARPHRD_ETHER, ARPHRD_IPGRE, ARPHRD_LOOPBACK, ARPHRD_NETROM,
+        IFLA_IFNAME, IFLA_INFO_DATA, IFLA_LINKINFO, IFNAMSIZ, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK,
+        NETLINK_ROUTE, NLA_ALIGNTO, NLA_TYPE_MASK, NLMSG_DONE, NLMSG_ERROR, NLM_F_DUMP,
+        NLM_F_MULTI, NLM_F_REQUEST, NUD_PERMANENT, NUD_REACHABLE, NUD_STALE, RTA_DST, RTA_GATEWAY,
+        RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_F_CLONED, RTM_GETLINK,
+        RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, RTN_BLACKHOLE,
+        RTN_BROADCAST, RTN_LOCAL, RTN_MULTICAST, RTN_THROW, RTN_UNICAST, RT_TABLE_LOCAL,
+        RT_TABLE_MAIN, RT_TABLE_UNSPEC, SOCK_RAW, SOL_NETLINK,
     },
     std::{
         collections::HashMap,
@@ -20,6 +23,62 @@ use {
 };
 
 const NLA_HDR_LEN: usize = align_to(mem::size_of::<nlattr>(), NLA_ALIGNTO as usize);
+const IFLA_GRE_LOCAL: u16 = 6;
+const IFLA_GRE_REMOTE: u16 = 7;
+
+// Interface info message struct
+#[repr(C)]
+#[allow(non_camel_case_types)]
+struct ifinfomsg {
+    ifi_family: u8,
+    ifi_type: u16,
+    ifi_index: u32,
+    ifi_flags: u32,
+    ifi_change: u32,
+}
+
+// Removes cloned routes, non-main/local table routes, and invalid route types
+// Many invisible routes are inserted when doing IPv4 MTU discovery or caching neighbor information
+fn is_valid_route(route: &RouteEntry) -> bool {
+    // Filter out cloned routes
+    if route.flags & RTM_F_CLONED != 0 {
+        log::info!("greg: Filtered out cloned route: {:?}", route.destination);
+        return false;
+    }
+
+    // Filter by table ID - only keep main and local tables
+    if let Some(table) = route.table {
+        if table != RT_TABLE_UNSPEC as u32
+            && table != RT_TABLE_MAIN as u32
+            && table != RT_TABLE_LOCAL as u32
+        {
+            log::info!(
+                "greg: Filtered out route from table {}: {:?}",
+                table,
+                route.destination
+            );
+            return false;
+        }
+    }
+
+    // Filter by route type
+    match route.type_ {
+        RTN_UNICAST => true,
+        RTN_LOCAL => true,
+        RTN_BROADCAST => true,
+        RTN_MULTICAST => true,
+        RTN_BLACKHOLE => true,
+        RTN_THROW => true,
+        _ => {
+            log::info!(
+                "greg: Filtered out unsupported route type {}: {:?}",
+                route.type_,
+                route.destination
+            );
+            false
+        }
+    }
+}
 
 pub struct NetlinkSocket {
     sock: OwnedFd,
@@ -273,6 +332,188 @@ fn bytes_of<T>(val: &T) -> &[u8] {
 
 const NLMSG_ALIGNTO: u32 = 4;
 
+// Interface information structure
+// greg: todo: add more here once we need to build the headers
+// fd has a few other things here like:
+// oper_status, master_idx, slave_tbl_idx, mac_addr, mtu...
+#[derive(Debug, Clone)]
+pub struct InterfaceInfo {
+    pub if_index: u32,
+    pub if_name: String,
+    pub dev_type: u16,
+    pub gre_tunnel: Option<GreTunnelInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GreTunnelInfo {
+    pub src_ip: Ipv4Addr,
+    pub dst_ip: Ipv4Addr,
+}
+
+// Get all interfaces via netlink (based off of FD: fd_netdev_netlink_load_table)
+pub fn netlink_get_interfaces() -> Result<Vec<InterfaceInfo>, io::Error> {
+    let socket = NetlinkSocket::open()?;
+
+    // Create request struct
+    #[repr(C)]
+    struct Request {
+        nlh: nlmsghdr,
+        ifi: ifinfomsg,
+    }
+
+    let request = Request {
+        nlh: nlmsghdr {
+            nlmsg_type: RTM_GETLINK,
+            nlmsg_flags: (NLM_F_REQUEST | NLM_F_DUMP) as u16,
+            nlmsg_len: mem::size_of::<Request>() as u32,
+            nlmsg_seq: 1,
+            nlmsg_pid: 0,
+        },
+        ifi: ifinfomsg {
+            ifi_family: AF_INET as u8,
+            ifi_type: ARPHRD_NETROM,
+            ifi_index: 0,
+            ifi_flags: 0,
+            ifi_change: 0,
+        },
+    };
+
+    // Send request
+    let request_bytes = bytes_of(&request);
+    socket.send(request_bytes)?;
+
+    // Receive and parse messages
+    let messages = socket.recv()?;
+    let mut interfaces = Vec::new();
+
+    for msg in messages {
+        // Check for netlink errors
+        if msg.header.nlmsg_type == NLMSG_ERROR as u16 {
+            let err = msg.error.unwrap();
+            if err.error != 0 {
+                return Err(io::Error::from_raw_os_error(-err.error));
+            }
+            continue;
+        }
+
+        if msg.header.nlmsg_type != RTM_NEWLINK {
+            continue;
+        }
+
+        if let Some(if_info) = parse_ifinfomsg(msg) {
+            interfaces.push(if_info);
+        }
+    }
+
+    Ok(interfaces)
+}
+
+// Parse GRE tunnel information from netlink
+fn parse_gre_tunnel_info(attrs: &HashMap<u16, NlAttr<'_>>) -> Option<GreTunnelInfo> {
+    // Look for IFLA_LINKINFO attribute
+    let linkinfo_attr = attrs.get(&IFLA_LINKINFO)?;
+
+    // Parse nested attributes within IFLA_LINKINFO
+    let Ok(linkinfo_attrs) = parse_attrs(linkinfo_attr.data) else {
+        return None;
+    };
+
+    // Look for IFLA_INFO_DATA attribute
+    let info_data_attr = linkinfo_attrs.get(&IFLA_INFO_DATA)?;
+
+    // Parse GRE-specific attributes within IFLA_INFO_DATA
+    let Ok(gre_attrs) = parse_attrs(info_data_attr.data) else {
+        return None;
+    };
+
+    // Extract GRE local and remote IPs
+    let mut src_ip = None;
+    let mut dst_ip = None;
+
+    if let Some(local_attr) = gre_attrs.get(&IFLA_GRE_LOCAL) {
+        if local_attr.data.len() == 4 {
+            let ip_bytes = [
+                local_attr.data[0],
+                local_attr.data[1],
+                local_attr.data[2],
+                local_attr.data[3],
+            ];
+            src_ip = Some(Ipv4Addr::from(ip_bytes));
+        }
+    }
+
+    if let Some(remote_attr) = gre_attrs.get(&IFLA_GRE_REMOTE) {
+        if remote_attr.data.len() == 4 {
+            let ip_bytes = [
+                remote_attr.data[0],
+                remote_attr.data[1],
+                remote_attr.data[2],
+                remote_attr.data[3],
+            ];
+            dst_ip = Some(Ipv4Addr::from(ip_bytes));
+        }
+    }
+
+    // Return GRE tunnel info if we have both IPs
+    match (src_ip, dst_ip) {
+        (Some(src), Some(dst)) => Some(GreTunnelInfo {
+            src_ip: src,
+            dst_ip: dst,
+        }),
+        _ => None,
+    }
+}
+
+// Interface info parsing (modeled after the FD impl: fd_netdev_netlink_load_table)
+// Just parsing the interface info for:
+// - if_index
+// - if_name
+// - dev_type
+// greg: todo: may need to add more here...see fd code for creating fd_netdev (same as our InterfaceInfo)
+fn parse_ifinfomsg(msg: NetlinkMessage) -> Option<InterfaceInfo> {
+    if msg.data.len() < mem::size_of::<ifinfomsg>() {
+        return None;
+    }
+
+    let ifi = unsafe { ptr::read_unaligned(msg.data.as_ptr() as *const ifinfomsg) };
+
+    // Filter interface types
+    let ifi_type = ifi.ifi_type;
+    if ifi_type != ARPHRD_ETHER && ifi_type != ARPHRD_LOOPBACK && ifi_type != ARPHRD_IPGRE {
+        return None;
+    }
+
+    // Parse attributes
+    let Ok(attrs) = parse_attrs(&msg.data[mem::size_of::<ifinfomsg>()..]) else {
+        return None;
+    };
+
+    let mut if_name = format!("if{}", ifi.ifi_index);
+
+    // Parse IFLA_IFNAME
+    if let Some(attr) = attrs.get(&IFLA_IFNAME) {
+        if !attr.data.is_empty() && attr.data.len() <= IFNAMSIZ {
+            if let Ok(name) = String::from_utf8(attr.data.to_vec()) {
+                if_name = name.trim_end_matches('\0').to_string();
+            }
+        }
+    }
+
+    // Parse GRE tunnel information if this is a GRE interface
+    let gre_tunnel = if ifi_type == ARPHRD_IPGRE {
+        parse_gre_tunnel_info(&attrs)
+    } else {
+        None
+    };
+
+    Some(InterfaceInfo {
+        if_index: ifi.ifi_index,
+        if_name,
+        dev_type: ifi_type,
+        gre_tunnel,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MacAddress(pub [u8; 6]);
 
@@ -375,7 +616,10 @@ pub fn netlink_get_neighbors(
             continue;
         };
 
-        neighbors.push(neighbor);
+        // Filter neighbors at the source for efficiency
+        if neighbor.is_valid() {
+            neighbors.push(neighbor);
+        }
     }
 
     Ok(neighbors)
@@ -424,6 +668,7 @@ pub struct RouteEntry {
     pub type_: u8,
     pub family: u8,
     pub dst_len: u8,
+    pub flags: u32,
 }
 
 #[repr(C)]
@@ -483,6 +728,8 @@ pub fn netlink_get_routes(family: u8) -> Result<Vec<RouteEntry>, io::Error> {
     sock.send(&bytes_of(&req)[..req.header.nlmsg_len as usize])?;
 
     let mut routes = Vec::new();
+    let mut total_routes = 0;
+    let mut filtered_routes = 0;
 
     for msg in sock.recv()? {
         if msg.header.nlmsg_type != RTM_NEWROUTE {
@@ -497,8 +744,20 @@ pub fn netlink_get_routes(family: u8) -> Result<Vec<RouteEntry>, io::Error> {
             continue;
         };
 
-        routes.push(route);
+        total_routes += 1;
+        if is_valid_route(&route) {
+            routes.push(route);
+        } else {
+            filtered_routes += 1;
+        }
     }
+
+    log::info!(
+        "greg: Route filtering: {} total routes, {} filtered out, {} kept",
+        total_routes,
+        filtered_routes,
+        routes.len()
+    );
 
     Ok(routes)
 }
@@ -521,6 +780,7 @@ pub fn parse_rtm_newroute(msg: NetlinkMessage) -> Option<RouteEntry> {
         type_: rt_msg.rtm_type,
         family: rt_msg.rtm_family,
         dst_len: rt_msg.rtm_dst_len,
+        flags: rt_msg.rtm_flags,
     };
     if let Some(dst_attr) = attrs.get(&RTA_DST) {
         route.destination = parse_ip_address(dst_attr.data, rt_msg.rtm_family);
