@@ -3452,7 +3452,9 @@ pub mod rpc_full {
     use {
         super::*,
         solana_message::{SanitizedVersionedMessage, VersionedMessage},
-        solana_transaction_status::{parse_ui_inner_instructions, UiLoadedAddresses},
+        solana_transaction_status::{
+            parse_ui_inner_instructions, MaxSupportedTransactionVersionConfig, UiLoadedAddresses,
+        },
     };
     #[rpc]
     pub trait Full {
@@ -7406,7 +7408,8 @@ pub mod tests {
                     transaction_details: Some(TransactionDetails::Signatures),
                     rewards: Some(false),
                     commitment: None,
-                    max_supported_transaction_version: None,
+                    max_supported_transaction_version:
+                        MaxSupportedTransactionVersionConfig::default(),
                 },
             ])),
         );
@@ -7429,7 +7432,8 @@ pub mod tests {
                     transaction_details: Some(TransactionDetails::None),
                     rewards: Some(true),
                     commitment: None,
-                    max_supported_transaction_version: None,
+                    max_supported_transaction_version:
+                        MaxSupportedTransactionVersionConfig::default(),
                 },
             ])),
         );

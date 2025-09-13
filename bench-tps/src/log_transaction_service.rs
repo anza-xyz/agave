@@ -14,8 +14,9 @@ use {
     solana_signature::Signature,
     solana_tps_client::TpsClient,
     solana_transaction_status::{
-        option_serializer::OptionSerializer, EncodedTransactionWithStatusMeta, RewardType,
-        TransactionDetails, UiConfirmedBlock, UiTransactionEncoding, UiTransactionStatusMeta,
+        option_serializer::OptionSerializer, EncodedTransactionWithStatusMeta,
+        MaxSupportedTransactionVersionConfig, RewardType, TransactionDetails, UiConfirmedBlock,
+        UiTransactionEncoding, UiTransactionStatusMeta,
     },
     std::{
         collections::HashMap,
@@ -209,7 +210,7 @@ impl LogTransactionService {
             transaction_details: Some(TransactionDetails::Full),
             rewards: Some(true),
             commitment: Some(commitment),
-            max_supported_transaction_version: Some(0),
+            max_supported_transaction_version: MaxSupportedTransactionVersionConfig::new(0),
         };
         let mut measure_process_blocks = Measure::start("measure_process_blocks");
         let blocks = block_slots

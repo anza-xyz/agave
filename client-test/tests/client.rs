@@ -34,7 +34,8 @@ use {
     solana_system_transaction as system_transaction,
     solana_test_validator::TestValidator,
     solana_transaction_status::{
-        BlockEncodingOptions, ConfirmedBlock, TransactionDetails, UiTransactionEncoding,
+        BlockEncodingOptions, ConfirmedBlock, MaxSupportedTransactionVersionConfig,
+        TransactionDetails, UiTransactionEncoding,
     },
     std::{
         collections::HashSet,
@@ -280,7 +281,7 @@ fn test_block_subscription() {
             encoding: Some(UiTransactionEncoding::Json),
             transaction_details: Some(TransactionDetails::Signatures),
             show_rewards: None,
-            max_supported_transaction_version: None,
+            max_supported_transaction_version: MaxSupportedTransactionVersionConfig::new(0),
         }),
     )
     .unwrap();
@@ -299,7 +300,8 @@ fn test_block_subscription() {
                     BlockEncodingOptions {
                         transaction_details: TransactionDetails::Signatures,
                         show_rewards: false,
-                        max_supported_transaction_version: None,
+                        max_supported_transaction_version:
+                            MaxSupportedTransactionVersionConfig::new(0),
                     },
                 )
                 .unwrap();
