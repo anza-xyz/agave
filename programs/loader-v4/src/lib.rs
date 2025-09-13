@@ -618,7 +618,7 @@ mod tests {
             &instruction,
             transaction_accounts.clone(),
             &[],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Error: Missing authority account
@@ -627,7 +627,7 @@ mod tests {
             &instruction,
             transaction_accounts.clone(),
             &[(0, false, true)],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Error: Program not owned by loader
@@ -1428,7 +1428,7 @@ mod tests {
             &bincode::serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (3, true, false)],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Error: Program is uninitialized

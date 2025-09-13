@@ -278,9 +278,15 @@ impl TransactionContext {
         &self,
         index_in_transaction: IndexOfAccount,
     ) -> Result<&Pubkey, InstructionError> {
+<<<<<<< HEAD
         self.account_keys
             .get(index_in_transaction as usize)
             .ok_or(InstructionError::NotEnoughAccountKeys)
+=======
+        self.accounts
+            .account_key(index_in_transaction)
+            .ok_or(InstructionError::MissingAccount)
+>>>>>>> c1e41d43c (Unify `InstructionError::NotEnoughAccountKeys` and `InstructionError::MissingAccount` (#8001))
     }
 
     /// Searches for an account by its key
@@ -635,7 +641,7 @@ impl<'a> InstructionContext<'a> {
         expected_at_least: IndexOfAccount,
     ) -> Result<(), InstructionError> {
         if self.get_number_of_instruction_accounts() < expected_at_least {
-            Err(InstructionError::NotEnoughAccountKeys)
+            Err(InstructionError::MissingAccount)
         } else {
             Ok(())
         }
@@ -668,7 +674,7 @@ impl<'a> InstructionContext<'a> {
         &self,
     ) -> Result<IndexOfAccount, InstructionError> {
         if self.program_account_index_in_tx == u16::MAX {
-            Err(InstructionError::NotEnoughAccountKeys)
+            Err(InstructionError::MissingAccount)
         } else {
             Ok(self.program_account_index_in_tx)
         }
@@ -682,7 +688,7 @@ impl<'a> InstructionContext<'a> {
         Ok(self
             .instruction_accounts
             .get(instruction_account_index as usize)
-            .ok_or(InstructionError::NotEnoughAccountKeys)?
+            .ok_or(InstructionError::MissingAccount)?
             .index_in_transaction as IndexOfAccount)
     }
 
@@ -751,7 +757,7 @@ impl<'a> InstructionContext<'a> {
         let instruction_account = *self
             .instruction_accounts
             .get(index_in_instruction as usize)
-            .ok_or(InstructionError::NotEnoughAccountKeys)?;
+            .ok_or(InstructionError::MissingAccount)?;
 
         let account = self
             .transaction_context
@@ -1273,12 +1279,12 @@ mod tests {
         let instruction_context = transaction_context.get_next_instruction_context().unwrap();
 
         let result = instruction_context.get_index_of_program_account_in_transaction();
-        assert_eq!(result, Err(InstructionError::NotEnoughAccountKeys));
+        assert_eq!(result, Err(InstructionError::MissingAccount));
 
         let result = instruction_context.get_program_key();
-        assert_eq!(result, Err(InstructionError::NotEnoughAccountKeys));
+        assert_eq!(result, Err(InstructionError::MissingAccount));
 
         let result = instruction_context.get_program_owner();
-        assert_eq!(result.err(), Some(InstructionError::NotEnoughAccountKeys));
+        assert_eq!(result.err(), Some(InstructionError::MissingAccount));
     }
 }

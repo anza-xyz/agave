@@ -6217,7 +6217,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len(formalize_loaded_transaction_
         Some(&mint_keypair.pubkey()),
     );
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::NotEnoughAccountKeys),
+        TransactionError::InstructionError(0, InstructionError::MissingAccount),
         bank_client
             .send_and_confirm_message(&[&mint_keypair], message)
             .unwrap_err()
@@ -11853,10 +11853,7 @@ fn test_loader_v3_to_v4_migration(formalize_loaded_transaction_data_size: bool) 
         AccountMeta::new_readonly(upgrade_authority_keypair.pubkey(), true),
     ];
     for (instruction_accounts, expected_error) in [
-        (
-            case_too_few_accounts,
-            InstructionError::NotEnoughAccountKeys,
-        ),
+        (case_too_few_accounts, InstructionError::MissingAccount),
         (case_readonly_programdata, InstructionError::InvalidArgument),
         (
             case_incorrect_authority,
