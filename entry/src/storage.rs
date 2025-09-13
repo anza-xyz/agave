@@ -83,7 +83,6 @@ impl Serialize for CompiledInstructionSer<'_> {
 }
 
 struct CompiledInstructionSeed(*mut CompiledInstruction);
-
 impl<'de> DeserializeSeed<'de> for CompiledInstructionSeed {
     type Value = ();
 
@@ -235,7 +234,6 @@ impl Serialize for AddressTableLookupSer<'_> {
 }
 
 struct AddressTableLookupSeed(*mut MessageAddressTableLookup);
-
 impl<'de> DeserializeSeed<'de> for AddressTableLookupSeed {
     type Value = ();
 
@@ -518,7 +516,6 @@ impl Serialize for VersionedTransactionSer<'_> {
 }
 
 struct VersionedTransactionSeed(*mut VersionedTransaction);
-
 impl<'de> DeserializeSeed<'de> for VersionedTransactionSeed {
     type Value = ();
 
