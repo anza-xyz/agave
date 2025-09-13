@@ -51,7 +51,6 @@ where
     }
 }
 
-#[repr(transparent)]
 struct MessageHeaderSeed(*mut MessageHeader);
 impl<'de> DeserializeSeed<'de> for MessageHeaderSeed {
     type Value = ();
