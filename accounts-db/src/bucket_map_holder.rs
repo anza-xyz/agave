@@ -477,7 +477,10 @@ pub mod tests {
     #[test]
     fn test_disk_index_enabled() {
         let bins = 1;
-        let config = AccountsIndexConfig::default();
+        let config = AccountsIndexConfig {
+            index_limit_mb: IndexLimitMb::Minimal,
+            ..Default::default()
+        };
         let test = BucketMapHolder::<u64, u64>::new(bins, &config, 1);
         assert!(test.is_disk_index_enabled());
     }
