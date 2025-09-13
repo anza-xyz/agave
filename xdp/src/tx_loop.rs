@@ -5,7 +5,7 @@ use {
         device::{NetworkDevice, QueueId, RingSizes},
         netlink::MacAddress,
         packet::{
-            wrap_packet_with_gre, write_eth_header, write_ip_header_for_udp, write_udp_header,
+            construct_gre_packet, write_eth_header, write_ip_header_for_udp, write_udp_header,
             ETH_HEADER_SIZE, GRE_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE,
         },
         route::AtomicRouter,
@@ -244,7 +244,8 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                         // Get GRE tunnel endpoints from interface info
                         let Some(gre_tunnel) = interface_info.gre_tunnel else {
                             log::warn!(
-                                "greg: dropping packet: GRE interface {} has no tunnel configuration (missing src/dst IPs)",
+                                "greg: dropping packet: GRE interface {} has no tunnel \
+                                 configuration (missing src/dst IPs)",
                                 interface_info.if_name
                             );
                             batched_packets -= 1;
@@ -254,45 +255,28 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                         let gre_src_ip = gre_tunnel.src_ip;
                         let gre_dst_ip = gre_tunnel.dst_ip;
 
-                        // Build the inner packet (IP + UDP + payload) - no Ethernet
+                        // Calculate GRE packet size
                         const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
                         let inner_packet_len = INNER_PACKET_HEADER_SIZE + len;
-
-                        // Reserve space for GRE packet: [Ethernet] [Outer IP] [GRE] [Inner IP] [UDP] [Payload]
                         let gre_packet_size =
                             ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_SIZE + inner_packet_len;
+
+                        // Reserve space for GRE packet
                         frame.set_len(gre_packet_size);
                         let packet = umem.map_frame_mut(&frame);
 
-                        // Write the inner packet (IP + UDP + payload) at the GRE payload position
-                        let inner_start = ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_SIZE;
-                        packet[inner_start + INNER_PACKET_HEADER_SIZE..][..len]
-                            .copy_from_slice(payload.as_ref());
-                        write_ip_header_for_udp(
-                            &mut packet[inner_start..inner_start + IP_HEADER_SIZE],
-                            &src_ip,
-                            &dst_ip,
-                            (UDP_HEADER_SIZE + len) as u16,
-                        );
-                        write_udp_header(
-                            &mut packet[inner_start + IP_HEADER_SIZE
-                                ..inner_start + INNER_PACKET_HEADER_SIZE],
-                            &src_ip,
-                            src_port,
-                            &dst_ip,
-                            addr.port(),
-                            len as u16,
-                            false, // no checksums
-                        );
-
-                        // Now wrap with GRE headers
-                        let gre_packet_len = wrap_packet_with_gre(
+                        // Construct the GRE packet
+                        let gre_packet_len = construct_gre_packet(
                             packet,
+                            &src_ip,
+                            &dst_ip,
+                            src_port,
+                            addr.port(),
+                            payload.as_ref(),
                             gre_src_ip,
                             gre_dst_ip,
-                            &src_mac.0, // Use same MACs for GRE tunnel
+                            &src_mac.0,
                             &next_hop.mac_addr.unwrap().0,
-                            inner_packet_len, // Length of IP + UDP + payload (no Ethernet)
                         );
 
                         // Update frame length and submit packet

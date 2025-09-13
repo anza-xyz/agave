@@ -4,7 +4,7 @@ use {
         MacAddress, NeighborEntry, RouteEntry,
     },
     arc_swap::ArcSwap,
-    libc::{AF_INET, AF_INET6},
+    libc::{AF_INET, AF_INET6, ARPHRD_IPGRE},
     std::{
         collections::HashMap,
         io,
@@ -194,6 +194,147 @@ impl Router {
 
         Ok((next_hop, interface_info))
     }
+
+    /// Check if an interface is a GRE interface
+    pub fn is_gre_interface(&self, if_index: u32) -> bool {
+        self.interfaces
+            .get(&if_index)
+            .is_some_and(|if_info| if_info.dev_type == ARPHRD_IPGRE)
+    }
+
+    /// Get interface information by index
+    pub fn get_interface(&self, if_index: u32) -> Option<&InterfaceInfo> {
+        self.interfaces.get(&if_index)
+    }
+
+    /// Test-only method to create a Router with mock data for testing GRE functionality
+    pub fn new_with_mock_data() -> Self {
+        use {
+            crate::netlink::{GreTunnelInfo, MacAddress, NeighborEntry},
+            std::collections::HashMap,
+        };
+
+        // Create mock interfaces
+        let mut interfaces = HashMap::new();
+
+        // Regular Ethernet interface
+        interfaces.insert(
+            1,
+            InterfaceInfo {
+                if_index: 1,
+                if_name: "eth0".to_string(),
+                dev_type: 1, // ARPHRD_ETHER
+                gre_tunnel: None,
+            },
+        );
+
+        // GRE tunnel interface
+        interfaces.insert(
+            2,
+            InterfaceInfo {
+                if_index: 2,
+                if_name: "gre0".to_string(),
+                dev_type: ARPHRD_IPGRE,
+                gre_tunnel: Some(GreTunnelInfo {
+                    src_ip: Ipv4Addr::new(192, 168, 1, 1),
+                    dst_ip: Ipv4Addr::new(192, 168, 1, 2),
+                }),
+            },
+        );
+
+        // Another regular interface
+        interfaces.insert(
+            3,
+            InterfaceInfo {
+                if_index: 3,
+                if_name: "eth1".to_string(),
+                dev_type: 1, // ARPHRD_ETHER
+                gre_tunnel: None,
+            },
+        );
+
+        // Create mock routes
+        let routes = vec![
+            // Route to 10.0.0.1 via regular interface (eth0)
+            RouteEntry {
+                destination: Some(Ipv4Addr::new(10, 0, 0, 1).into()),
+                dst_len: 32,
+                pref_src: None,
+                out_if_index: Some(1),
+                in_if_index: None,
+                gateway: Some(Ipv4Addr::new(10, 0, 0, 1).into()),
+                priority: Some(0),
+                table: Some(254),
+                protocol: 2, // RTPROT_KERNEL
+                scope: 0,    // RT_SCOPE_UNIVERSE
+                type_: 1,    // RTN_UNICAST
+                family: 2,   // AF_INET
+                flags: 0,
+            },
+            // Route to 10.0.0.2 via GRE interface (gre0)
+            RouteEntry {
+                destination: Some(Ipv4Addr::new(10, 0, 0, 2).into()),
+                dst_len: 32,
+                pref_src: None,
+                out_if_index: Some(2),
+                in_if_index: None,
+                gateway: Some(Ipv4Addr::new(10, 0, 0, 2).into()),
+                priority: Some(0),
+                table: Some(254),
+                protocol: 2, // RTPROT_KERNEL
+                scope: 0,    // RT_SCOPE_UNIVERSE
+                type_: 1,    // RTN_UNICAST
+                family: 2,   // AF_INET
+                flags: 0,
+            },
+            // Route to 10.0.0.3 via another regular interface (eth1)
+            RouteEntry {
+                destination: Some(Ipv4Addr::new(10, 0, 0, 3).into()),
+                dst_len: 32,
+                pref_src: None,
+                out_if_index: Some(3),
+                in_if_index: None,
+                gateway: Some(Ipv4Addr::new(10, 0, 0, 3).into()),
+                priority: Some(0),
+                table: Some(254),
+                protocol: 2, // RTPROT_KERNEL
+                scope: 0,    // RT_SCOPE_UNIVERSE
+                type_: 1,    // RTN_UNICAST
+                family: 2,   // AF_INET
+                flags: 0,
+            },
+        ];
+
+        // Create mock ARP table
+        let neighbors = vec![
+            NeighborEntry {
+                destination: Some(Ipv4Addr::new(10, 0, 0, 1).into()),
+                lladdr: Some(MacAddress([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x01])),
+                ifindex: 1,
+                state: 2, // NUD_REACHABLE
+            },
+            NeighborEntry {
+                destination: Some(Ipv4Addr::new(10, 0, 0, 2).into()),
+                lladdr: Some(MacAddress([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x02])),
+                ifindex: 2,
+                state: 2, // NUD_REACHABLE
+            },
+            NeighborEntry {
+                destination: Some(Ipv4Addr::new(10, 0, 0, 3).into()),
+                lladdr: Some(MacAddress([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x03])),
+                ifindex: 3,
+                state: 2, // NUD_REACHABLE
+            },
+        ];
+
+        let arp_table = ArpTable { neighbors };
+
+        Self {
+            arp_table: Arc::new(arp_table),
+            routes: Arc::new(routes),
+            interfaces: Arc::new(interfaces),
+        }
+    }
 }
 
 struct ArpTable {
@@ -246,6 +387,11 @@ impl AtomicRouter {
     fn fetch_arp_table() -> Result<Arc<ArpTable>, io::Error> {
         let neighbors = netlink_get_neighbors(None, AF_INET as u8)?;
         Ok(Arc::new(ArpTable { neighbors }))
+    }
+
+    /// Test-only method to set a mock router for testing
+    pub fn set_mock_router(&self, router: Router) {
+        self.router.store(Arc::new(router));
     }
 }
 

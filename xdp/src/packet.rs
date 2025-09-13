@@ -212,3 +212,85 @@ pub fn wrap_packet_with_gre(
 
     gre_packet_size
 }
+
+/// Construct a GRE packet from a UDP payload
+///
+/// This function takes a UDP payload and constructs a complete GRE packet
+/// with the structure: [Ethernet] [Outer IP] [GRE] [Inner IP] [UDP] [Payload]
+///
+/// # Arguments
+/// * `packet` - Buffer to write the GRE packet into
+/// * `src_ip` - Source IP for the inner packet
+/// * `dst_ip` - Destination IP for the inner packet  
+/// * `src_port` - Source port for the inner UDP packet
+/// * `dst_port` - Destination port for the inner UDP packet
+/// * `payload` - The UDP payload data
+/// * `gre_src_ip` - GRE tunnel source IP
+/// * `gre_dst_ip` - GRE tunnel destination IP
+/// * `src_mac` - Source MAC address
+/// * `dst_mac` - Destination MAC address
+///
+/// # Returns
+/// The total length of the constructed GRE packet
+#[allow(clippy::too_many_arguments)]
+pub fn construct_gre_packet(
+    packet: &mut [u8],
+    src_ip: &Ipv4Addr,
+    dst_ip: &Ipv4Addr,
+    src_port: u16,
+    dst_port: u16,
+    payload: &[u8],
+    gre_src_ip: Ipv4Addr,
+    gre_dst_ip: Ipv4Addr,
+    src_mac: &[u8; 6],
+    dst_mac: &[u8; 6],
+) -> usize {
+    let payload_len = payload.len();
+
+    // Calculate sizes
+    const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
+    let inner_packet_len = INNER_PACKET_HEADER_SIZE + payload_len;
+    let gre_packet_size = ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_SIZE + inner_packet_len;
+
+    // Ensure packet buffer is large enough
+    if packet.len() < gre_packet_size {
+        panic!("Packet buffer too small for GRE packet");
+    }
+
+    // Write the inner packet (IP + UDP + payload) at the GRE payload position
+    let inner_start = ETH_HEADER_SIZE + IP_HEADER_SIZE + GRE_HEADER_SIZE;
+
+    // Write inner IP header
+    write_ip_header_for_udp(
+        &mut packet[inner_start..inner_start + IP_HEADER_SIZE],
+        src_ip,
+        dst_ip,
+        (UDP_HEADER_SIZE + payload_len) as u16,
+    );
+
+    // Write UDP header
+    write_udp_header(
+        &mut packet[inner_start + IP_HEADER_SIZE..inner_start + INNER_PACKET_HEADER_SIZE],
+        src_ip,
+        src_port,
+        dst_ip,
+        dst_port,
+        payload_len as u16,
+        false, // no checksums
+    );
+
+    // Write payload
+    packet[inner_start + INNER_PACKET_HEADER_SIZE
+        ..inner_start + INNER_PACKET_HEADER_SIZE + payload_len]
+        .copy_from_slice(payload);
+
+    // Wrap with GRE headers
+    wrap_packet_with_gre(
+        packet,
+        gre_src_ip,
+        gre_dst_ip,
+        src_mac,
+        dst_mac,
+        inner_packet_len,
+    )
+}
