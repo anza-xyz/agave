@@ -117,13 +117,14 @@ impl AccountStorageEntry {
 ///     define_accounts_db_test!(TEST_NAME, panic = "PANIC_MSG", |accounts_db| { TEST_BODY });
 macro_rules! define_accounts_db_test {
     (@testfn $name:ident, $accounts_file_provider: ident, |$accounts_db:ident| $inner: tt) => {
-            fn run_test($accounts_db: AccountsDb) {
-                $inner
-            }
-            let accounts_db =
-                AccountsDb::new_single_for_tests_with_provider($accounts_file_provider);
-            run_test(accounts_db);
-
+        fn run_test($accounts_db: AccountsDb) {
+            $inner
+        }
+        let accounts_db = AccountsDb::new_single_for_tests_with_provider_and_config(
+            $accounts_file_provider,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        );
+        run_test(accounts_db);
     };
     ($name:ident, |$accounts_db:ident| $inner: tt) => {
         #[test_case(AccountsFileProvider::AppendVec; "append_vec")]

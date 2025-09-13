@@ -7204,24 +7204,31 @@ impl AccountsDb {
         AccountsDb::new_for_tests(Vec::new())
     }
 
-    pub fn new_single_for_tests_with_provider(file_provider: AccountsFileProvider) -> Self {
-        AccountsDb::new_for_tests_with_provider(Vec::new(), file_provider)
+    pub fn new_single_for_tests_with_provider_and_config(
+        file_provider: AccountsFileProvider,
+        accounts_db_config: AccountsDbConfig,
+    ) -> Self {
+        AccountsDb::new_for_tests_with_provider_and_config(
+            Vec::new(),
+            file_provider,
+            accounts_db_config,
+        )
     }
 
     pub fn new_for_tests(paths: Vec<PathBuf>) -> Self {
-        Self::new_for_tests_with_provider(paths, AccountsFileProvider::default())
+        Self::new_for_tests_with_provider_and_config(
+            paths,
+            AccountsFileProvider::default(),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        )
     }
 
-    fn new_for_tests_with_provider(
+    fn new_for_tests_with_provider_and_config(
         paths: Vec<PathBuf>,
         accounts_file_provider: AccountsFileProvider,
+        accounts_db_config: AccountsDbConfig,
     ) -> Self {
-        let mut db = AccountsDb::new_with_config(
-            paths,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            None,
-            Arc::default(),
-        );
+        let mut db = AccountsDb::new_with_config(paths, accounts_db_config, None, Arc::default());
         db.accounts_file_provider = accounts_file_provider;
         db
     }
