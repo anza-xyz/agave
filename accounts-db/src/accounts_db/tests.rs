@@ -4267,8 +4267,8 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     // Make account_key1 in slot 0 outdated by updating in rooted slot 1 with a zero lamport account
     db.store_for_tests((1, &[(&account_key1, &account0)][..]));
     db.add_root(1);
-    // Flushes all roots
-    db.flush_accounts_cache(true, None);
+    // Flushes all roots without clean
+    db.flush_rooted_accounts_cache(None, false);
 
     // Clean to remove outdated entry from slot 0
     db.clean_accounts(Some(1), false, &EpochSchedule::default());
@@ -4301,8 +4301,7 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     // Flushes all roots
     db.flush_accounts_cache(true, None);
 
-    // Should be one store before clean for slot 0 and slot 1
-    db.get_and_assert_single_storage(0);
+    // Should be one store before clean for slot 1
     db.get_and_assert_single_storage(1);
     db.clean_accounts(Some(2), false, &EpochSchedule::default());
 
