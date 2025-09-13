@@ -14,7 +14,6 @@ use solana_program_runtime::memory::translate_vm_slice;
 #[allow(deprecated)]
 use {
     crate::mem_ops::is_nonoverlapping,
-    solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
     solana_bn254::prelude::{
@@ -63,9 +62,6 @@ mod cpi;
 mod logging;
 mod mem_ops;
 mod sysvar;
-
-/// Maximum signers
-const MAX_SIGNERS: usize = 16;
 
 /// Error definitions
 #[derive(Debug, ThisError, PartialEq, Eq)]
@@ -2056,6 +2052,7 @@ mod tests {
         assert_matches::assert_matches,
         core::slice,
         solana_account::{create_account_shared_data_for_test, AccountSharedData},
+        solana_account_info::AccountInfo,
         solana_clock::Clock,
         solana_epoch_rewards::EpochRewards,
         solana_epoch_schedule::EpochSchedule,

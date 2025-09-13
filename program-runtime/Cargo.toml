@@ -53,6 +53,7 @@ solana-rent = { workspace = true }
 solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
+solana-stable-layout = { workspace = true }
 solana-stake-interface = { workspace = true, features = ["bincode", "sysvar"] }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }

@@ -3,21 +3,23 @@
 use {
     crate::{
         invoke_context::{InvokeContext, SerializedAccountMetadata},
-        memory::{translate_slice, translate_type, translate_type_mut_for_cpi},
+        memory::{translate_slice, translate_type, translate_type_mut_for_cpi, translate_vm_slice},
         serialization::{create_memory_region_of_account, modify_memory_region_of_account},
     },
-    solana_instruction::{error::InstructionError, Instruction},
+    solana_account_info::AccountInfo,
+    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
-    solana_pubkey::{Pubkey, PubkeyError},
+    solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS},
     solana_sbpf::{ebpf, memory_region::MemoryMapping},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, native_loader},
+    solana_stable_layout::stable_instruction::StableInstruction,
     solana_svm_log_collector::ic_msg,
     solana_svm_measure::measure::Measure,
     solana_svm_timings::ExecuteTimings,
     solana_transaction_context::{
-        BorrowedInstructionAccount, IndexOfAccount, MAX_ACCOUNTS_PER_INSTRUCTION,
-        MAX_INSTRUCTION_DATA_LEN,
+        vm_slice::VmSlice, BorrowedInstructionAccount, IndexOfAccount,
+        MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_DATA_LEN,
     },
     std::mem,
     thiserror::Error,
@@ -56,11 +58,13 @@ pub enum CpiError {
 type Error = Box<dyn std::error::Error>;
 
 const SUCCESS: u64 = 0;
+/// Maximum signers
+const MAX_SIGNERS: usize = 16;
 
 /// Rust representation of C's SolInstruction
 #[derive(Debug)]
 #[repr(C)]
-pub struct SolInstruction {
+struct SolInstruction {
     pub program_id_addr: u64,
     pub accounts_addr: u64,
     pub accounts_len: u64,
@@ -71,7 +75,7 @@ pub struct SolInstruction {
 /// Rust representation of C's SolAccountMeta
 #[derive(Debug)]
 #[repr(C)]
-pub struct SolAccountMeta {
+struct SolAccountMeta {
     pub pubkey_addr: u64,
     pub is_writable: bool,
     pub is_signer: bool,
@@ -80,7 +84,7 @@ pub struct SolAccountMeta {
 /// Rust representation of C's SolAccountInfo
 #[derive(Debug)]
 #[repr(C)]
-pub struct SolAccountInfo {
+struct SolAccountInfo {
     pub key_addr: u64,
     pub lamports_addr: u64,
     pub data_len: u64,
@@ -95,7 +99,7 @@ pub struct SolAccountInfo {
 /// Rust representation of C's SolSignerSeed
 #[derive(Debug)]
 #[repr(C)]
-pub struct SolSignerSeedC {
+struct SolSignerSeedC {
     pub addr: u64,
     pub len: u64,
 }
@@ -103,7 +107,7 @@ pub struct SolSignerSeedC {
 /// Rust representation of C's SolSignerSeeds
 #[derive(Debug)]
 #[repr(C)]
-pub struct SolSignerSeedsC {
+struct SolSignerSeedsC {
     pub addr: u64,
     pub len: u64,
 }
@@ -132,7 +136,7 @@ fn check_account_info_pointer(
 }
 
 /// Check that an instruction's account and data lengths are within limits
-pub fn check_instruction_size(num_accounts: usize, data_len: usize) -> Result<(), Error> {
+fn check_instruction_size(num_accounts: usize, data_len: usize) -> Result<(), Error> {
     if num_accounts > MAX_ACCOUNTS_PER_INSTRUCTION {
         return Err(Box::new(CpiError::MaxInstructionAccountsExceeded {
             num_accounts: num_accounts as u64,
@@ -149,7 +153,7 @@ pub fn check_instruction_size(num_accounts: usize, data_len: usize) -> Result<()
 }
 
 /// Check that the number of account infos is within the CPI limit
-pub fn check_account_infos(
+fn check_account_infos(
     num_account_infos: usize,
     invoke_context: &mut InvokeContext,
 ) -> Result<(), Error> {
@@ -173,7 +177,7 @@ pub fn check_account_infos(
 }
 
 /// Check whether a program is authorized for CPI
-pub fn check_authorized_program(
+fn check_authorized_program(
     program_id: &Pubkey,
     instruction_data: &[u8],
     invoke_context: &InvokeContext,
@@ -388,7 +392,7 @@ impl<'a> CallerAccount<'a> {
     }
 
     // Create a CallerAccount given a SolAccountInfo.
-    pub fn from_sol_account_info(
+    fn from_sol_account_info(
         invoke_context: &InvokeContext,
         memory_mapping: &solana_sbpf::memory_region::MemoryMapping<'_>,
         check_aligned: bool,
@@ -505,6 +509,253 @@ pub trait SyscallInvokeSigned {
     ) -> Result<Vec<Pubkey>, Error>;
 }
 
+pub fn translate_instruction_rust(
+    addr: u64,
+    memory_mapping: &MemoryMapping,
+    invoke_context: &mut InvokeContext,
+    check_aligned: bool,
+) -> Result<Instruction, Error> {
+    let ix = translate_type::<StableInstruction>(memory_mapping, addr, check_aligned)?;
+    let account_metas = translate_slice::<AccountMeta>(
+        memory_mapping,
+        ix.accounts.as_vaddr(),
+        ix.accounts.len(),
+        check_aligned,
+    )?;
+    let data = translate_slice::<u8>(
+        memory_mapping,
+        ix.data.as_vaddr(),
+        ix.data.len(),
+        check_aligned,
+    )?
+    .to_vec();
+
+    check_instruction_size(account_metas.len(), data.len())?;
+
+    consume_compute_meter(
+        invoke_context,
+        (data.len() as u64)
+            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+            .unwrap_or(u64::MAX),
+    )?;
+
+    let mut accounts = Vec::with_capacity(account_metas.len());
+    #[allow(clippy::needless_range_loop)]
+    for account_index in 0..account_metas.len() {
+        #[allow(clippy::indexing_slicing)]
+        let account_meta = &account_metas[account_index];
+        if unsafe {
+            std::ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
+                || std::ptr::read_volatile(&account_meta.is_writable as *const _ as *const u8) > 1
+        } {
+            return Err(Box::new(InstructionError::InvalidArgument));
+        }
+        accounts.push(account_meta.clone());
+    }
+
+    Ok(Instruction {
+        accounts,
+        data,
+        program_id: ix.program_id,
+    })
+}
+
+pub fn translate_accounts_rust<'a>(
+    account_infos_addr: u64,
+    account_infos_len: u64,
+    memory_mapping: &MemoryMapping<'_>,
+    invoke_context: &mut InvokeContext,
+    check_aligned: bool,
+) -> Result<Vec<TranslatedAccount<'a>>, Error> {
+    let (account_infos, account_info_keys) = translate_account_infos(
+        account_infos_addr,
+        account_infos_len,
+        |account_info: &AccountInfo| account_info.key as *const _ as u64,
+        memory_mapping,
+        invoke_context,
+        check_aligned,
+    )?;
+
+    translate_and_update_accounts(
+        &account_info_keys,
+        account_infos,
+        account_infos_addr,
+        invoke_context,
+        memory_mapping,
+        check_aligned,
+        CallerAccount::from_account_info,
+    )
+}
+
+pub fn translate_signers_rust(
+    program_id: &Pubkey,
+    signers_seeds_addr: u64,
+    signers_seeds_len: u64,
+    memory_mapping: &MemoryMapping,
+    check_aligned: bool,
+) -> Result<Vec<Pubkey>, Error> {
+    let mut signers = Vec::new();
+    if signers_seeds_len > 0 {
+        let signers_seeds = translate_slice::<VmSlice<VmSlice<u8>>>(
+            memory_mapping,
+            signers_seeds_addr,
+            signers_seeds_len,
+            check_aligned,
+        )?;
+        if signers_seeds.len() > MAX_SIGNERS {
+            return Err(Box::new(CpiError::TooManySigners));
+        }
+        for signer_seeds in signers_seeds.iter() {
+            let untranslated_seeds = translate_slice::<VmSlice<u8>>(
+                memory_mapping,
+                signer_seeds.ptr(),
+                signer_seeds.len(),
+                check_aligned,
+            )?;
+            if untranslated_seeds.len() > MAX_SEEDS {
+                return Err(Box::new(InstructionError::MaxSeedLengthExceeded));
+            }
+            let seeds = untranslated_seeds
+                .iter()
+                .map(|untranslated_seed| {
+                    translate_vm_slice(untranslated_seed, memory_mapping, check_aligned)
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+            let signer =
+                Pubkey::create_program_address(&seeds, program_id).map_err(CpiError::BadSeeds)?;
+            signers.push(signer);
+        }
+        Ok(signers)
+    } else {
+        Ok(vec![])
+    }
+}
+
+pub fn translate_instruction_c(
+    addr: u64,
+    memory_mapping: &MemoryMapping,
+    invoke_context: &mut InvokeContext,
+    check_aligned: bool,
+) -> Result<Instruction, Error> {
+    let ix_c = translate_type::<SolInstruction>(memory_mapping, addr, check_aligned)?;
+
+    let program_id = translate_type::<Pubkey>(memory_mapping, ix_c.program_id_addr, check_aligned)?;
+    let account_metas = translate_slice::<SolAccountMeta>(
+        memory_mapping,
+        ix_c.accounts_addr,
+        ix_c.accounts_len,
+        check_aligned,
+    )?;
+    let data = translate_slice::<u8>(memory_mapping, ix_c.data_addr, ix_c.data_len, check_aligned)?
+        .to_vec();
+
+    check_instruction_size(ix_c.accounts_len as usize, data.len())?;
+
+    consume_compute_meter(
+        invoke_context,
+        (data.len() as u64)
+            .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
+            .unwrap_or(u64::MAX),
+    )?;
+
+    let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
+    #[allow(clippy::needless_range_loop)]
+    for account_index in 0..ix_c.accounts_len as usize {
+        #[allow(clippy::indexing_slicing)]
+        let account_meta = &account_metas[account_index];
+        if unsafe {
+            std::ptr::read_volatile(&account_meta.is_signer as *const _ as *const u8) > 1
+                || std::ptr::read_volatile(&account_meta.is_writable as *const _ as *const u8) > 1
+        } {
+            return Err(Box::new(InstructionError::InvalidArgument));
+        }
+        let pubkey =
+            translate_type::<Pubkey>(memory_mapping, account_meta.pubkey_addr, check_aligned)?;
+        accounts.push(AccountMeta {
+            pubkey: *pubkey,
+            is_signer: account_meta.is_signer,
+            is_writable: account_meta.is_writable,
+        });
+    }
+
+    Ok(Instruction {
+        accounts,
+        data,
+        program_id: *program_id,
+    })
+}
+
+pub fn translate_accounts_c<'a>(
+    account_infos_addr: u64,
+    account_infos_len: u64,
+    memory_mapping: &MemoryMapping<'_>,
+    invoke_context: &mut InvokeContext,
+    check_aligned: bool,
+) -> Result<Vec<TranslatedAccount<'a>>, Error> {
+    let (account_infos, account_info_keys) = translate_account_infos(
+        account_infos_addr,
+        account_infos_len,
+        |account_info: &SolAccountInfo| account_info.key_addr,
+        memory_mapping,
+        invoke_context,
+        check_aligned,
+    )?;
+
+    translate_and_update_accounts(
+        &account_info_keys,
+        account_infos,
+        account_infos_addr,
+        invoke_context,
+        memory_mapping,
+        check_aligned,
+        CallerAccount::from_sol_account_info,
+    )
+}
+
+pub fn translate_signers_c(
+    program_id: &Pubkey,
+    signers_seeds_addr: u64,
+    signers_seeds_len: u64,
+    memory_mapping: &MemoryMapping,
+    check_aligned: bool,
+) -> Result<Vec<Pubkey>, Error> {
+    if signers_seeds_len > 0 {
+        let signers_seeds = translate_slice::<SolSignerSeedsC>(
+            memory_mapping,
+            signers_seeds_addr,
+            signers_seeds_len,
+            check_aligned,
+        )?;
+        if signers_seeds.len() > MAX_SIGNERS {
+            return Err(Box::new(CpiError::TooManySigners));
+        }
+        Ok(signers_seeds
+            .iter()
+            .map(|signer_seeds| {
+                let seeds = translate_slice::<SolSignerSeedC>(
+                    memory_mapping,
+                    signer_seeds.addr,
+                    signer_seeds.len,
+                    check_aligned,
+                )?;
+                if seeds.len() > MAX_SEEDS {
+                    return Err(Box::new(InstructionError::MaxSeedLengthExceeded) as Error);
+                }
+                let seeds_bytes = seeds
+                    .iter()
+                    .map(|seed| {
+                        translate_slice::<u8>(memory_mapping, seed.addr, seed.len, check_aligned)
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                Pubkey::create_program_address(&seeds_bytes, program_id)
+                    .map_err(|err| Box::new(CpiError::BadSeeds(err)) as Error)
+            })
+            .collect::<Result<Vec<_>, Error>>()?)
+    } else {
+        Ok(vec![])
+    }
+}
+
 /// Call process instruction, common to both Rust and C
 pub fn cpi_common<S: SyscallInvokeSigned>(
     invoke_context: &mut InvokeContext,
@@ -616,7 +867,7 @@ pub struct TranslatedAccount<'a> {
     pub update_caller_account_info: bool,
 }
 
-pub fn translate_account_infos<'a, T, F>(
+fn translate_account_infos<'a, T, F>(
     account_infos_addr: u64,
     account_infos_len: u64,
     key_addr: F,
@@ -665,7 +916,7 @@ where
 
 // Finish translating accounts, build CallerAccount values and update callee
 // accounts in preparation of executing the callee.
-pub fn translate_and_update_accounts<'a, T, F>(
+fn translate_and_update_accounts<'a, T, F>(
     account_info_keys: &[&Pubkey],
     account_infos: &[T],
     account_infos_addr: u64,
@@ -806,7 +1057,7 @@ fn consume_compute_meter(invoke_context: &InvokeContext, amount: u64) -> Result<
 //
 // When true is returned, the caller account must be updated after CPI. This
 // is only set for stricter_abi_and_runtime_constraints when the pointer may have changed.
-pub fn update_callee_account(
+fn update_callee_account(
     check_aligned: bool,
     caller_account: &CallerAccount,
     mut callee_account: BorrowedInstructionAccount<'_>,
@@ -862,7 +1113,7 @@ pub fn update_callee_account(
     Ok(must_update_caller)
 }
 
-pub fn update_caller_account_region(
+fn update_caller_account_region(
     memory_mapping: &mut MemoryMapping,
     check_aligned: bool,
     caller_account: &CallerAccount,
@@ -911,7 +1162,7 @@ pub fn update_caller_account_region(
 // Safety: Once `stricter_abi_and_runtime_constraints` is enabled all fields of [CallerAccount] used
 // in this function should never point inside the address space reserved for
 // accounts (regardless of the current size of an account).
-pub fn update_caller_account(
+fn update_caller_account(
     invoke_context: &InvokeContext,
     memory_mapping: &MemoryMapping<'_>,
     check_aligned: bool,
@@ -1005,7 +1256,8 @@ mod tests {
     use {
         super::*,
         crate::{
-            invoke_context::SerializedAccountMetadata, memory::translate_type,
+            invoke_context::{BpfAllocator, SerializedAccountMetadata, SyscallContext},
+            memory::translate_type,
             with_mock_invoke_context_with_feature_set,
         },
         assert_matches::assert_matches,
@@ -1282,6 +1534,52 @@ mod tests {
         }
     }
 
+    struct MockInstruction {
+        program_id: Pubkey,
+        accounts: Vec<AccountMeta>,
+        data: Vec<u8>,
+    }
+
+    impl MockInstruction {
+        fn into_region(self, vm_addr: u64) -> (Vec<u8>, MemoryRegion) {
+            let accounts_len = mem::size_of::<AccountMeta>() * self.accounts.len();
+
+            let size = mem::size_of::<StableInstruction>() + accounts_len + self.data.len();
+
+            let mut data = vec![0; size];
+
+            let vm_addr = vm_addr as usize;
+            let accounts_addr = vm_addr + mem::size_of::<StableInstruction>();
+            let data_addr = accounts_addr + accounts_len;
+
+            let ins = Instruction {
+                program_id: self.program_id,
+                accounts: unsafe {
+                    Vec::from_raw_parts(
+                        accounts_addr as *mut _,
+                        self.accounts.len(),
+                        self.accounts.len(),
+                    )
+                },
+                data: unsafe {
+                    Vec::from_raw_parts(data_addr as *mut _, self.data.len(), self.data.len())
+                },
+            };
+            let ins = StableInstruction::from(ins);
+
+            unsafe {
+                ptr::write_unaligned(data.as_mut_ptr().cast(), ins);
+                data[accounts_addr - vm_addr..][..accounts_len].copy_from_slice(
+                    slice::from_raw_parts(self.accounts.as_ptr().cast(), accounts_len),
+                );
+                data[data_addr - vm_addr..].copy_from_slice(&self.data);
+            }
+
+            let region = MemoryRegion::new_writable(data.as_mut_slice(), vm_addr as u64);
+            (data, region)
+        }
+    }
+
     #[repr(C)]
     struct RcBox<T> {
         strong: Cell<usize>,
@@ -1355,6 +1653,202 @@ mod tests {
             ),
             (Pubkey::new_unique(), account, true),
         ]
+    }
+
+    fn mock_signers(signers: &[&[u8]], vm_addr: u64) -> (Vec<u8>, MemoryRegion) {
+        let vm_addr = vm_addr as usize;
+
+        // calculate size
+        let fat_ptr_size_of_slice = mem::size_of::<&[()]>(); // pointer size + length size
+        let singers_length = signers.len();
+        let sum_signers_data_length: usize = signers.iter().map(|s| s.len()).sum();
+
+        // init data vec
+        let total_size = fat_ptr_size_of_slice
+            + singers_length * fat_ptr_size_of_slice
+            + sum_signers_data_length;
+        let mut data = vec![0; total_size];
+
+        // data is composed by 3 parts
+        // A.
+        // [ singers address, singers length, ...,
+        // B.                                      |
+        //                                         signer1 address, signer1 length, signer2 address ...,
+        //                                         ^ p1 --->
+        // C.                                                                                           |
+        //                                                                                              signer1 data, signer2 data, ... ]
+        //                                                                                              ^ p2 --->
+
+        // A.
+        data[..fat_ptr_size_of_slice / 2]
+            .clone_from_slice(&(fat_ptr_size_of_slice + vm_addr).to_le_bytes());
+        data[fat_ptr_size_of_slice / 2..fat_ptr_size_of_slice]
+            .clone_from_slice(&(singers_length).to_le_bytes());
+
+        // B. + C.
+        let (mut p1, mut p2) = (
+            fat_ptr_size_of_slice,
+            fat_ptr_size_of_slice + singers_length * fat_ptr_size_of_slice,
+        );
+        for signer in signers.iter() {
+            let signer_length = signer.len();
+
+            // B.
+            data[p1..p1 + fat_ptr_size_of_slice / 2]
+                .clone_from_slice(&(p2 + vm_addr).to_le_bytes());
+            data[p1 + fat_ptr_size_of_slice / 2..p1 + fat_ptr_size_of_slice]
+                .clone_from_slice(&(signer_length).to_le_bytes());
+            p1 += fat_ptr_size_of_slice;
+
+            // C.
+            data[p2..p2 + signer_length].clone_from_slice(signer);
+            p2 += signer_length;
+        }
+
+        let region = MemoryRegion::new_writable(data.as_mut_slice(), vm_addr as u64);
+        (data, region)
+    }
+
+    #[test]
+    fn test_translate_instruction() {
+        let transaction_accounts =
+            transaction_with_one_writable_instruction_account(b"foo".to_vec());
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1]
+        );
+
+        let program_id = Pubkey::new_unique();
+        let accounts = vec![AccountMeta {
+            pubkey: Pubkey::new_unique(),
+            is_signer: true,
+            is_writable: false,
+        }];
+        let data = b"ins data".to_vec();
+        let vm_addr = MM_INPUT_START;
+        let (_mem, region) = MockInstruction {
+            program_id,
+            accounts: accounts.clone(),
+            data: data.clone(),
+        }
+        .into_region(vm_addr);
+
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
+
+        let ins = translate_instruction_rust(
+            vm_addr,
+            &memory_mapping,
+            &mut invoke_context,
+            true, // check_aligned
+        )
+        .unwrap();
+        assert_eq!(ins.program_id, program_id);
+        assert_eq!(ins.accounts, accounts);
+        assert_eq!(ins.data, data);
+    }
+
+    #[test]
+    fn test_translate_signers() {
+        let transaction_accounts =
+            transaction_with_one_writable_instruction_account(b"foo".to_vec());
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1]
+        );
+
+        let program_id = Pubkey::new_unique();
+        let (derived_key, bump_seed) = Pubkey::find_program_address(&[b"foo"], &program_id);
+
+        let vm_addr = MM_INPUT_START;
+        let (_mem, region) = mock_signers(&[b"foo", &[bump_seed]], vm_addr);
+
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
+
+        let signers = translate_signers_rust(
+            &program_id,
+            vm_addr,
+            1,
+            &memory_mapping,
+            true, // check_aligned
+        )
+        .unwrap();
+        assert_eq!(signers[0], derived_key);
+    }
+
+    #[test]
+    fn test_translate_accounts_rust() {
+        let transaction_accounts =
+            transaction_with_one_writable_instruction_account(b"foobar".to_vec());
+        let account = transaction_accounts[1].1.clone();
+        let key = transaction_accounts[1].0;
+        let original_data_len = account.data().len();
+
+        let vm_addr = MM_INPUT_START;
+        let (_mem, region, account_metadata) =
+            MockAccountInfo::new(key, &account).into_region(vm_addr);
+
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
+
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1, 1]
+        );
+
+        invoke_context
+            .set_syscall_context(SyscallContext {
+                allocator: BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
+                accounts_metadata: vec![account_metadata],
+                trace_log: Vec::new(),
+            })
+            .unwrap();
+
+        invoke_context
+            .transaction_context
+            .configure_next_instruction_for_tests(
+                0,
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(1, false, true),
+                ],
+                &[],
+            )
+            .unwrap();
+        let accounts = translate_accounts_rust(
+            vm_addr,
+            1,
+            &memory_mapping,
+            &mut invoke_context,
+            true, // check_aligned
+        )
+        .unwrap();
+        assert_eq!(accounts.len(), 1);
+        let caller_account = &accounts[0].caller_account;
+        assert_eq!(caller_account.serialized_data, account.data());
+        assert_eq!(caller_account.original_data_len, original_data_len);
     }
 
     #[test]
