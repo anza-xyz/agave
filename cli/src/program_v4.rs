@@ -1151,15 +1151,15 @@ fn send_messages(
 
     let mut fee = Saturating(0);
     for message in initial_messages.iter() {
-        fee += rpc_client.get_fee_for_message(message)?;
+        fee += rpc_client.get_fee_for_message_with_legacy(message)?;
     }
     for message in final_messages.iter() {
-        fee += rpc_client.get_fee_for_message(message)?;
+        fee += rpc_client.get_fee_for_message_with_legacy(message)?;
     }
     // Assume all write messages cost the same
     if let Some(message) = write_messages.first() {
         fee += rpc_client
-            .get_fee_for_message(message)?
+            .get_fee_for_message_with_legacy(message)?
             .saturating_mul(write_messages.len() as u64);
     }
     check_account_for_spend_and_fee_with_commitment(
