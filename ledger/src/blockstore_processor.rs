@@ -1850,8 +1850,9 @@ pub fn set_alpenglow_ticks(bank: &Bank) {
         return;
     };
 
-    info!(
-        "Alpenglow: Setting tick height for slot {} to {}",
+    error!(
+        "[{:?}] Alpenglow: Setting tick height for slot {} to {}",
+        std::thread::current().name(),
         bank.slot(),
         bank.max_tick_height() - alpenglow_ticks
     );
