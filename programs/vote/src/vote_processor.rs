@@ -480,7 +480,7 @@ mod tests {
             &[],
             Vec::new(),
             Vec::new(),
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
     }
 
@@ -1924,7 +1924,7 @@ mod tests {
             VoteAuthorize::Voter,
         );
         instruction.accounts = instruction.accounts[0..2].to_vec();
-        process_instruction_as_one_arg(&instruction, Err(InstructionError::NotEnoughAccountKeys));
+        process_instruction_as_one_arg(&instruction, Err(InstructionError::MissingAccount));
 
         let mut instruction = authorize_checked(
             &vote_pubkey,
@@ -1933,7 +1933,7 @@ mod tests {
             VoteAuthorize::Withdrawer,
         );
         instruction.accounts = instruction.accounts[0..2].to_vec();
-        process_instruction_as_one_arg(&instruction, Err(InstructionError::NotEnoughAccountKeys));
+        process_instruction_as_one_arg(&instruction, Err(InstructionError::MissingAccount));
 
         // Test with non-signing new_authorized_pubkey
         let mut instruction = authorize_checked(

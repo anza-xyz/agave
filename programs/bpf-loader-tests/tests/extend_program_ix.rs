@@ -522,7 +522,7 @@ async fn test_extend_program_without_payer() {
         &mut context,
         extend_program_checked(&program_address, &upgrade_authority.pubkey(), None, 1024),
         Some(&upgrade_authority),
-        InstructionError::NotEnoughAccountKeys,
+        InstructionError::MissingAccount,
         "should fail because program data has insufficient funds to cover rent",
     )
     .await;

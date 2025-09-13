@@ -3070,7 +3070,7 @@ mod tests {
                 ),
             ],
             vec![programdata_meta.clone(), new_upgrade_authority_meta.clone()],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Case: new authority not in instruction
@@ -3087,7 +3087,7 @@ mod tests {
                 ),
             ],
             vec![programdata_meta.clone(), upgrade_authority_meta.clone()],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Case: present authority did not sign
@@ -3470,7 +3470,7 @@ mod tests {
             &instruction,
             transaction_accounts.clone(),
             vec![buffer_meta.clone(), new_authority_meta.clone()],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Case: Missing new authority
@@ -3480,7 +3480,7 @@ mod tests {
             &instruction,
             transaction_accounts.clone(),
             vec![buffer_meta.clone(), authority_meta.clone()],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Case: wrong present authority

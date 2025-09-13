@@ -348,7 +348,7 @@ impl<'a> InvokeContext<'a> {
                     let cloned_account = {
                         let instruction_account = instruction_accounts
                             .get_mut(*index_in_callee as usize)
-                            .ok_or(InstructionError::NotEnoughAccountKeys)?;
+                            .ok_or(InstructionError::MissingAccount)?;
                         instruction_account.set_is_signer(
                             instruction_account.is_signer() || account_meta.is_signer,
                         );
@@ -378,7 +378,7 @@ impl<'a> InvokeContext<'a> {
                     let (is_signer, is_writable) = {
                         let reference_account = instruction_accounts
                             .get(index_in_callee)
-                            .ok_or(InstructionError::NotEnoughAccountKeys)?;
+                            .ok_or(InstructionError::MissingAccount)?;
                         (
                             reference_account.is_signer(),
                             reference_account.is_writable(),
