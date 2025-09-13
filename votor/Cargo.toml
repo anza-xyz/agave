@@ -25,6 +25,7 @@ frozen-abi = [
 [dependencies]
 anyhow = { workspace = true }
 bincode = { workspace = true }
+bitvec = { workspace = true }
 bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
@@ -39,6 +40,7 @@ serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-bloom = { workspace = true }
+solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
@@ -60,6 +62,7 @@ solana-rpc = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
+solana-signer-store = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true }
 solana-votor-messages = { workspace = true }
