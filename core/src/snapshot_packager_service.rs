@@ -211,6 +211,11 @@ impl SnapshotPackagerService {
             start.elapsed(),
         );
 
+        let result = snapshot_utils::write_snapshot_state_complete_file(&bank_snapshot_dir);
+        if let Err(err) = result {
+            warn!("Failed to mark snapshot 'complete': {err}");
+        }
+
         let result = snapshot_utils::write_storages_flushed_file(&bank_snapshot_dir);
         if let Err(err) = result {
             warn!("Failed to mark snapshot storages 'flushed': {err}");
