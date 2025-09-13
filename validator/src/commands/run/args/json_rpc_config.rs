@@ -52,7 +52,8 @@ mod tests {
     use {
         super::*,
         crate::commands::run::args::{
-            tests::verify_args_struct_by_command_run_with_identity_setup, DefaultArgs, RunArgs,
+            pub_sub_config::DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS,
+            tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
         },
         solana_rpc::rpc_pubsub_service::PubSubConfig,
         std::{
@@ -249,7 +250,6 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_run_with_full_api() {
         {
-            let default_args = DefaultArgs::new();
             let default_run_args = crate::commands::run::args::RunArgs::default();
             let expected_args = RunArgs {
                 json_rpc_config: JsonRpcConfig {
@@ -259,8 +259,7 @@ mod tests {
                 pub_sub_config: PubSubConfig {
                     notification_threads: Some(
                         NonZeroUsize::new(
-                            default_args
-                                .rpc_pubsub_notification_threads
+                            DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS
                                 .parse::<usize>()
                                 .unwrap(),
                         )

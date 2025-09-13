@@ -1,9 +1,94 @@
+#[cfg(test)]
+use qualifier_attr::qualifiers;
 use {
     crate::commands::{FromClapArgMatches, Result},
-    clap::{value_t, ArgMatches},
+    clap::{value_t, Arg, ArgMatches},
+    solana_clap_utils::input_validators::is_parsable,
+    solana_rayon_threadlimit::get_thread_count,
     solana_rpc::rpc_pubsub_service::PubSubConfig,
-    std::num::NonZeroUsize,
+    std::{num::NonZeroUsize, sync::LazyLock},
 };
+
+static DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS: LazyLock<String> =
+    LazyLock::new(|| PubSubConfig::default().max_active_subscriptions.to_string());
+
+static DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS: LazyLock<String> =
+    LazyLock::new(|| PubSubConfig::default().queue_capacity_items.to_string());
+
+static DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES: LazyLock<String> =
+    LazyLock::new(|| PubSubConfig::default().queue_capacity_bytes.to_string());
+
+const DEFAULT_RPC_PUBSUB_WORKER_THREADS: &str = "4";
+
+#[cfg_attr(test, qualifiers(pub(crate)))]
+static DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS: LazyLock<String> =
+    LazyLock::new(|| get_thread_count().to_string());
+
+pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+    vec![
+        Arg::with_name("rpc_pubsub_enable_block_subscription")
+            .long("rpc-pubsub-enable-block-subscription")
+            .requires("enable_rpc_transaction_history")
+            .takes_value(false)
+            .help("Enable the unstable RPC PubSub `blockSubscribe` subscription"),
+        Arg::with_name("rpc_pubsub_enable_vote_subscription")
+            .long("rpc-pubsub-enable-vote-subscription")
+            .takes_value(false)
+            .help("Enable the unstable RPC PubSub `voteSubscribe` subscription"),
+        Arg::with_name("rpc_pubsub_max_active_subscriptions")
+            .long("rpc-pubsub-max-active-subscriptions")
+            .takes_value(true)
+            .value_name("NUMBER")
+            .validator(is_parsable::<usize>)
+            .default_value(&DEFAULT_RPC_PUBSUB_MAX_ACTIVE_SUBSCRIPTIONS)
+            .help(
+                "The maximum number of active subscriptions that RPC PubSub will accept across \
+                 all connections.",
+            ),
+        Arg::with_name("rpc_pubsub_queue_capacity_items")
+            .long("rpc-pubsub-queue-capacity-items")
+            .takes_value(true)
+            .value_name("NUMBER")
+            .validator(is_parsable::<usize>)
+            .default_value(&DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_ITEMS)
+            .help(
+                "The maximum number of notifications that RPC PubSub will store across all \
+                 connections.",
+            ),
+        Arg::with_name("rpc_pubsub_queue_capacity_bytes")
+            .long("rpc-pubsub-queue-capacity-bytes")
+            .takes_value(true)
+            .value_name("BYTES")
+            .validator(is_parsable::<usize>)
+            .default_value(&DEFAULT_RPC_PUBSUB_QUEUE_CAPACITY_BYTES)
+            .help(
+                "The maximum total size of notifications that RPC PubSub will store across all \
+                 connections.",
+            ),
+        Arg::with_name("rpc_pubsub_worker_threads")
+            .long("rpc-pubsub-worker-threads")
+            .takes_value(true)
+            .value_name("NUMBER")
+            .validator(is_parsable::<usize>)
+            .default_value(DEFAULT_RPC_PUBSUB_WORKER_THREADS)
+            .help("PubSub worker threads"),
+        Arg::with_name("rpc_pubsub_notification_threads")
+            .long("rpc-pubsub-notification-threads")
+            .requires("full_rpc_api")
+            .takes_value(true)
+            .value_name("NUM_THREADS")
+            .validator(is_parsable::<usize>)
+            .default_value_if(
+                "full_rpc_api",
+                None,
+                &DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS,
+            )
+            .help(
+                "The maximum number of threads that RPC PubSub will use for generating \
+                 notifications. 0 will disable RPC PubSub notifications",
+            ),
+    ]
+}
 
 impl FromClapArgMatches for PubSubConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {

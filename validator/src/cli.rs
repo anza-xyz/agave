@@ -20,8 +20,7 @@ use {
     solana_hash::Hash,
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_quic_definitions::QUIC_PORT_OFFSET,
-    solana_rayon_threadlimit::get_thread_count,
-    solana_rpc::{rpc::MAX_REQUEST_BODY_SIZE, rpc_pubsub_service::PubSubConfig},
+    solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
     solana_rpc_client_api::request::{DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_MULTIPLE_ACCOUNTS},
     solana_runtime::snapshot_utils::{
         SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION, DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
@@ -260,9 +259,6 @@ pub struct DefaultArgs {
     pub send_transaction_service_config: send_transaction_service::Config,
 
     pub rpc_max_multiple_accounts: String,
-    pub rpc_pubsub_max_active_subscriptions: String,
-    pub rpc_pubsub_queue_capacity_items: String,
-    pub rpc_pubsub_queue_capacity_bytes: String,
     pub rpc_send_transaction_retry_ms: String,
     pub rpc_send_transaction_batch_ms: String,
     pub rpc_send_transaction_leader_forward_count: String,
@@ -277,8 +273,6 @@ pub struct DefaultArgs {
     pub rpc_bigtable_app_profile_id: String,
     pub rpc_bigtable_max_message_size: String,
     pub rpc_max_request_body_size: String,
-    pub rpc_pubsub_worker_threads: String,
-    pub rpc_pubsub_notification_threads: String,
 
     pub maximum_local_snapshot_age: String,
     pub maximum_full_snapshot_archives_to_retain: String,
@@ -335,15 +329,6 @@ impl DefaultArgs {
             health_check_slot_distance: DELINQUENT_VALIDATOR_SLOT_DISTANCE.to_string(),
             tower_storage: "file".to_string(),
             etcd_domain_name: "localhost".to_string(),
-            rpc_pubsub_max_active_subscriptions: PubSubConfig::default()
-                .max_active_subscriptions
-                .to_string(),
-            rpc_pubsub_queue_capacity_items: PubSubConfig::default()
-                .queue_capacity_items
-                .to_string(),
-            rpc_pubsub_queue_capacity_bytes: PubSubConfig::default()
-                .queue_capacity_bytes
-                .to_string(),
             send_transaction_service_config: send_transaction_service::Config::default(),
             rpc_send_transaction_retry_ms: default_send_transaction_service_config
                 .retry_rate_ms
@@ -372,8 +357,6 @@ impl DefaultArgs {
                 .to_string(),
             rpc_bigtable_max_message_size: solana_storage_bigtable::DEFAULT_MAX_MESSAGE_SIZE
                 .to_string(),
-            rpc_pubsub_worker_threads: "4".to_string(),
-            rpc_pubsub_notification_threads: get_thread_count().to_string(),
             maximum_full_snapshot_archives_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN
                 .to_string(),
             maximum_incremental_snapshot_archives_to_retain:
