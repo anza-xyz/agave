@@ -41,7 +41,6 @@ fn program_account(program_data: &[u8]) -> AccountSharedData {
 }
 
 fn test_bench_tps_local_cluster(config: Config) {
-    let native_instruction_processors = vec![];
     let additional_accounts = vec![(
         spl_instruction_padding_interface::ID,
         program_account(include_bytes!("fixtures/spl_instruction_padding.so")),
@@ -72,7 +71,6 @@ fn test_bench_tps_local_cluster(config: Config) {
                 },
                 NUM_NODES,
             ),
-            native_instruction_processors,
             additional_accounts,
             ..ClusterConfig::default()
         },

@@ -124,7 +124,7 @@ use {
     },
     spl_generic_token::token,
     std::{
-        collections::{HashMap, HashSet},
+        collections::{BTreeMap, HashMap, HashSet},
         convert::TryInto,
         fs::File,
         io::Read,
@@ -5296,11 +5296,16 @@ fn test_fuzz_instructions() {
 // added feature.
 #[test]
 fn test_bank_hash_consistency() {
-    let account = AccountSharedData::new(1_000_000_000_000, 0, &system_program::id());
-    let mut genesis_config = GenesisConfig::new(&[(Pubkey::from([42; 32]), account)], &[]);
-    // Override the creation time to ensure bank hash consistency
-    genesis_config.creation_time = 0;
-    genesis_config.cluster_type = ClusterType::MainnetBeta;
+    let genesis_config = GenesisConfig {
+        // Override the creation time to ensure bank hash consistency
+        creation_time: 0,
+        accounts: BTreeMap::from([(
+            Pubkey::from([42; 32]),
+            Account::new(1_000_000_000_000, 0, &system_program::id()),
+        )]),
+        cluster_type: ClusterType::MainnetBeta,
+        ..GenesisConfig::default()
+    };
 
     // Set the feature set to all enabled so that we detect any inconsistencies
     // in the hash computation that may arise from feature set changes
