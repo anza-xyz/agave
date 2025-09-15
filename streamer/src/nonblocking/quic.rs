@@ -97,7 +97,7 @@ const CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD: usize = 100_000;
 
 /// Timeout for connection handshake. Timer starts once we get Initial from the
 /// peer, and is canceled when we get a Handshake packet from them.
-const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
+const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(6);
 
 // A struct to accumulate the bytes making up
 // a packet, along with their offsets, and the
