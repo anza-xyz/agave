@@ -55,6 +55,8 @@ jobs:
           apk add bash git
 
       - uses: actions/checkout@v5
+        with:
+          submodules: recursive
 
       - uses: mozilla-actions/sccache-action@v0.0.9
         with:
