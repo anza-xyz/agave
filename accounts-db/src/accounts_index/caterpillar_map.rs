@@ -1,61 +1,29 @@
-use std::{
-    collections::HashMap,
-    hash::Hash,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        RwLock, RwLockReadGuard,
-    },
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
 
 use modular_bitfield::{bitfield, prelude::*};
-
-/// Map that can transition entries without locking between small inlined payload into (boxed) values
-#[derive(Default)]
-pub struct CaterpillarMap<K> {
-    map: HashMap<K, CaterpillarEntry>,
-}
-
-impl<K> CaterpillarMap<K>
-where
-    K: Eq + Hash,
-{
-    pub fn get_fixed(&self, pubkey: &K) -> Option<FixedKindEntry> {
-        self.map.get(pubkey).map(|entry| entry.as_fixed_entry())
-    }
-
-    pub fn get(&self, pubkey: &K) -> Option<&CaterpillarEntry> {
-        self.map.get(pubkey)
-    }
-
-    pub fn insert_inlined(&mut self, pubkey: K, inlined: InlinedEntry) {
-        self.map
-            .insert(pubkey, CaterpillarEntry::from_inlined(inlined));
-    }
-
-    pub fn insert_expanded(&mut self, pubkey: K, expanded: ExpandedEntry) {
-        self.map
-            .insert(pubkey, CaterpillarEntry::from_expanded(expanded));
-    }
-}
 
 #[derive(Debug)]
 pub enum FixedKindEntry<'a> {
     Inlined(InlinedEntry),
     Heap(RwLockReadGuard<'a, ExpandedEntry>),
+    HeapMut(RwLockWriteGuard<'a, ExpandedEntry>),
 }
 
-/// Entry in the caterpillar map that can turn its payload between inlined and expanded states.
+/// Entry that can turn its payload between inlined and expanded states.
 pub struct CaterpillarEntry {
     /// Raw value - either an inline (small) payload or address of a boxed full value
     raw_atomic: AtomicU64,
 }
 
 impl CaterpillarEntry {
-    fn from_inlined(inlined: InlinedEntry) -> Self {
+    pub fn from_inlined(inlined: InlinedEntry) -> Self {
         Self::from_unsafe_holder(UnsafeCaterpillarHolder::from_inlined(inlined))
     }
 
-    fn from_expanded(expanded: ExpandedEntry) -> Self {
+    pub fn from_expanded(expanded: ExpandedEntry) -> Self {
         Self::from_unsafe_holder(UnsafeCaterpillarHolder::from_expanded(expanded))
     }
 
@@ -68,6 +36,15 @@ impl CaterpillarEntry {
     pub fn as_fixed_entry(&self) -> FixedKindEntry {
         UnsafeCaterpillarHolder::from_raw(self.raw_atomic.load(Ordering::Relaxed))
             .into_fixed_entry()
+    }
+
+    pub fn as_x_entry(&self) -> CaterpillarCocoon {
+        let x = UnsafeCaterpillarHolder::from_raw(self.raw_atomic.load(Ordering::Relaxed))
+            .into_fixed_entry();
+        CaterpillarCocoon {
+            entry: self,
+            kind: x,
+        }
     }
 
     pub fn turn_to_expanded(&self) -> FixedKindEntry {
@@ -94,6 +71,7 @@ impl CaterpillarEntry {
                     }
                 }
                 e @ FixedKindEntry::Heap(_) => return e,
+                e @ FixedKindEntry::HeapMut(_) => return e,
             }
         }
     }
@@ -124,19 +102,45 @@ impl Drop for CaterpillarEntry {
     }
 }
 
+pub struct CaterpillarCocoon<'a> {
+    pub entry: &'a CaterpillarEntry,
+    pub kind: FixedKindEntry<'a>,
+}
+
+impl Drop for CaterpillarCocoon<'_> {
+    fn drop(&mut self) {
+        match std::mem::replace(
+            &mut self.kind,
+            FixedKindEntry::Inlined(InlinedEntry::default()),
+        ) {
+            FixedKindEntry::Inlined(_) => {}
+            FixedKindEntry::Heap(_) => {}
+            FixedKindEntry::HeapMut(mut write) => {
+                if write.ref_count == 1 && write.slot_list.len() == 1 {
+                    self.entry.raw_atomic.store(
+                        UnsafeCaterpillarHolder::from_inlined(
+                            write.slot_list.drain(..).next().unwrap(),
+                        )
+                        .raw(),
+                        Ordering::Release,
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ExpandedEntry {
-    pub foo: u64,
-    pub bar: u32,
-    pub baz: u64,
+    pub ref_count: u32,
+    pub slot_list: Vec<InlinedEntry>,
 }
 
 impl From<InlinedEntry> for ExpandedEntry {
     fn from(inlined: InlinedEntry) -> Self {
         Self {
-            foo: inlined.file_id() as u64,
-            bar: inlined.offset_reduced() as u32,
-            baz: 1,
+            ref_count: 1,
+            slot_list: vec![inlined],
         }
     }
 }
@@ -145,8 +149,8 @@ impl Into<InlinedEntry> for ExpandedEntry {
     fn into(self) -> InlinedEntry {
         InlinedEntry::new()
             .with_common_info(CommonEntryInfo::new().with_is_inlined(true))
-            .with_file_id(self.foo as u32)
-            .with_offset_reduced(self.bar as u32)
+            .with_file_id(self.slot_list[0].file_id())
+            .with_offset_reduced(self.slot_list[0].offset_reduced())
     }
 }
 
@@ -281,25 +285,24 @@ mod tests {
         assert_eq!(inlined.offset_reduced(), 99);
 
         let expanded = ExpandedEntry {
-            foo: 42,
-            bar: 45,
-            baz: 13,
+            ref_count: 2,
+            slot_list: vec![inlined],
         };
         let expanded_centry = CaterpillarEntry::from_expanded(expanded);
         let FixedKindEntry::Heap(expanded) = expanded_centry.as_fixed_entry() else {
             panic!("Unexpected entry type")
         };
-        assert_eq!(expanded.bar, 45);
-        assert_eq!(expanded.foo, 42);
-        assert_eq!(expanded.baz, 13);
+        assert_eq!(expanded.ref_count, 2);
+        assert_eq!(expanded.slot_list[0].file_id(), 4534);
+        assert_eq!(expanded.slot_list[0].offset_reduced(), 99);
 
         let turning_centry = inlined_centry;
         let FixedKindEntry::Heap(expanded) = turning_centry.turn_to_expanded() else {
             panic!("Unexpected entry type")
         };
-        assert_eq!(expanded.bar, 99);
-        assert_eq!(expanded.foo, 4534);
-        assert_eq!(expanded.baz, 1);
+        assert_eq!(expanded.ref_count, 1);
+        assert_eq!(expanded.slot_list[0].file_id(), 4534);
+        assert_eq!(expanded.slot_list[0].offset_reduced(), 99);
         drop(expanded);
 
         let mut mut_turning_centry = turning_centry;
