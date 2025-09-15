@@ -5,10 +5,10 @@ set -ex
 
 
 if [ "$LOG_PATH" == "" ]; then
-  LOG_PATH="`mktemp -d`"
+  LOG_PATH="$(mktemp -d)"
 else
-  rm    -rf $LOG_PATH
-  mkdir -pv $LOG_PATH
+  rm    -rf "$LOG_PATH"
+  mkdir -pv "$LOG_PATH"
 fi
 
 
@@ -33,12 +33,12 @@ find dump/test-vectors/instr/fixtures -type f -name '*.fix' | \
   grep -v '/stake/' | \
   grep -v '/config/' | \
   grep -v '/address-lookup-table/' | \
-  xargs -P 32 -I {} ../target/release/test_exec_instr {} > $LOG_PATH/test_exec_instr.log 2>&1
+  xargs -P 32 -I {} ../target/release/test_exec_instr {} > "$LOG_PATH/test_exec_instr.log" 2>&1
 # Other tests will be included here...
 
 
-failed=`grep -wR FAIL $LOG_PATH | wc -l`
-passed=`grep -wR OK $LOG_PATH | wc -l`
+failed=$(grep -wR FAIL "$LOG_PATH" | wc -l)
+passed=$(grep -wR OK "$LOG_PATH" | wc -l)
 
 
 echo "PASSED: $passed"
