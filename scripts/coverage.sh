@@ -46,6 +46,7 @@ rm -rf "$here/../target/cov/$COMMIT_HASH"
 
 # https://doc.rust-lang.org/rustc/instrument-coverage.html
 export RUSTFLAGS="-C instrument-coverage $RUSTFLAGS"
+export RUSTFLAGS="--cfg curve25519_dalek_backend=\"serial\" $RUSTFLAGS"
 export LLVM_PROFILE_FILE="$here/../target/cov/${COMMIT_HASH}/profraw/default-%p-%m.profraw"
 
 if [[ -z $1 ]]; then
