@@ -469,7 +469,7 @@ impl<'a> WriteOp {
         let written = match res {
             Ok(0) => return Err(io::ErrorKind::WriteZero.into()), // likely a full disk
             Ok(res) => res as usize,
-            Err(err) if err.kind() == io::ErrorKind::ResourceBusy => 0, // treat as a kind of short write
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => 0, // treat as a kind of short write
             Err(err) => return Err(err),
         };
 
