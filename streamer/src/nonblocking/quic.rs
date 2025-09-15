@@ -7,7 +7,7 @@ use {
                 STREAM_THROTTLING_INTERVAL_MS,
             },
         },
-        quic::{configure_server, QuicServerError, QuicServerParams, StreamerStats},
+        quic::{configure_server, QosMode, QuicServerError, QuicServerParams, StreamerStats},
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
@@ -251,6 +251,12 @@ impl ClientConnectionTracker {
     }
 }
 
+#[derive(Clone)]
+enum QosTracker {
+    StakedStreamLoadEMA(Arc<StakedStreamLoadEMA>),
+    SimpleStreamsPerSecond { max_streams_per_second: u64 },
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_server(
     name: &'static str,
@@ -273,11 +279,22 @@ async fn run_server(
     let mut last_datapoint = Instant::now();
     let unstaked_connection_table: Arc<Mutex<ConnectionTable>> =
         Arc::new(Mutex::new(ConnectionTable::new()));
-    let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
-        stats.clone(),
-        quic_server_params.max_unstaked_connections,
-        quic_server_params.max_streams_per_ms,
-    ));
+
+    let qos_tracker = match quic_server_params.qos_mode {
+        QosMode::StakeWeighted { max_streams_per_ms } => {
+            QosTracker::StakedStreamLoadEMA(Arc::new(StakedStreamLoadEMA::new(
+                stats.clone(),
+                quic_server_params.max_unstaked_connections,
+                max_streams_per_ms,
+            )))
+        }
+        QosMode::SimpleStreamsPerSecond {
+            max_streams_per_second,
+        } => QosTracker::SimpleStreamsPerSecond {
+            max_streams_per_second,
+        },
+    };
+
     stats
         .quic_endpoints_count
         .store(endpoints.len(), Ordering::Relaxed);
@@ -378,7 +395,7 @@ async fn run_server(
                         sender.clone(),
                         staked_nodes.clone(),
                         stats.clone(),
-                        stream_load_ema.clone(),
+                        qos_tracker.clone(),
                         quic_server_params.clone(),
                     ));
                 }
@@ -512,7 +529,7 @@ fn handle_and_cache_new_connection(
     mut connection_table_l: MutexGuard<ConnectionTable>,
     connection_table: Arc<Mutex<ConnectionTable>>,
     params: &NewConnectionHandlerParams,
-    stream_load_ema: Arc<StakedStreamLoadEMA>,
+    qos_tracker: QosTracker,
 ) -> Result<(), ConnectionHandlerError> {
     if let Ok(max_uni_streams) = VarInt::from_u64(compute_max_allowed_uni_streams(
         params.peer_type,
@@ -557,7 +574,7 @@ fn handle_and_cache_new_connection(
                 connection_table,
                 cancel_connection,
                 params.clone(),
-                stream_load_ema,
+                qos_tracker,
                 stream_counter,
             ));
             Ok(())
@@ -586,7 +603,7 @@ async fn prune_unstaked_connections_and_add_new_connection(
     connection: Connection,
     connection_table: Arc<Mutex<ConnectionTable>>,
     params: &NewConnectionHandlerParams,
-    stream_load_ema: Arc<StakedStreamLoadEMA>,
+    qos_tracker: QosTracker,
 ) -> Result<(), ConnectionHandlerError> {
     let stats = params.stats.clone();
     if params.max_connections > 0 {
@@ -599,7 +616,7 @@ async fn prune_unstaked_connections_and_add_new_connection(
             connection_table,
             connection_table_clone,
             params,
-            stream_load_ema,
+            qos_tracker,
         )
     } else {
         connection.close(
@@ -664,7 +681,7 @@ async fn setup_connection(
     packet_sender: Sender<PacketAccumulator>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     stats: Arc<StreamerStats>,
-    stream_load_ema: Arc<StakedStreamLoadEMA>,
+    qos_tracker: QosTracker,
     quic_server_params: QuicServerParams,
 ) {
     const PRUNE_RANDOM_SAMPLE_SIZE: usize = 2;
@@ -716,16 +733,23 @@ async fn setup_connection(
                     |(pubkey, stake, total_stake, max_stake, min_stake)| {
                         // The heuristic is that the stake should be large engouh to have 1 stream pass throuh within one throttle
                         // interval during which we allow max (MAX_STREAMS_PER_MS * STREAM_THROTTLING_INTERVAL_MS) streams.
-                        let min_stake_ratio = 1_f64
-                            / (quic_server_params.max_streams_per_ms
-                                * STREAM_THROTTLING_INTERVAL_MS)
-                                as f64;
-                        let stake_ratio = stake as f64 / total_stake as f64;
-                        let peer_type = if stake_ratio < min_stake_ratio {
-                            // If it is a staked connection with ultra low stake ratio, treat it as unstaked.
-                            ConnectionPeerType::Unstaked
-                        } else {
-                            ConnectionPeerType::Staked(stake)
+
+                        let peer_type = match qos_tracker {
+                            QosTracker::StakedStreamLoadEMA(ref stream_load_ema) => {
+                                let max_streams_per_ms = stream_load_ema.max_streams_per_ms();
+                                let min_stake_ratio = 1_f64
+                                    / (max_streams_per_ms * STREAM_THROTTLING_INTERVAL_MS) as f64;
+                                let stake_ratio = stake as f64 / total_stake as f64;
+                                if stake_ratio < min_stake_ratio {
+                                    // If it is a staked connection with ultra low stake ratio, treat it as unstaked.
+                                    ConnectionPeerType::Unstaked
+                                } else {
+                                    ConnectionPeerType::Staked(stake)
+                                }
+                            }
+                            QosTracker::SimpleStreamsPerSecond { .. } => {
+                                ConnectionPeerType::Staked(stake)
+                            }
                         };
                         NewConnectionHandlerParams {
                             packet_sender,
@@ -762,7 +786,7 @@ async fn setup_connection(
                                 connection_table_l,
                                 staked_connection_table.clone(),
                                 &params,
-                                stream_load_ema.clone(),
+                                qos_tracker,
                             ) {
                                 stats
                                     .connection_added_from_staked_peer
@@ -777,7 +801,7 @@ async fn setup_connection(
                                 new_connection,
                                 unstaked_connection_table.clone(),
                                 &params,
-                                stream_load_ema.clone(),
+                                qos_tracker,
                             )
                             .await
                             {
@@ -800,7 +824,7 @@ async fn setup_connection(
                             new_connection,
                             unstaked_connection_table.clone(),
                             &params,
-                            stream_load_ema.clone(),
+                            qos_tracker,
                         )
                         .await
                         {
@@ -1022,7 +1046,7 @@ async fn handle_connection(
     connection_table: Arc<Mutex<ConnectionTable>>,
     cancel: CancellationToken,
     params: NewConnectionHandlerParams,
-    stream_load_ema: Arc<StakedStreamLoadEMA>,
+    qos_tracker: QosTracker,
     stream_counter: Arc<ConnectionStreamCounter>,
 ) {
     let NewConnectionHandlerParams {
@@ -1056,8 +1080,16 @@ async fn handle_connection(
             _ = cancel.cancelled() => break,
         };
 
-        let max_streams_per_throttling_interval =
-            stream_load_ema.available_load_capacity_in_throttling_duration(peer_type, total_stake);
+        let max_streams_per_throttling_interval = match qos_tracker {
+            QosTracker::StakedStreamLoadEMA(ref stream_load_ema) => stream_load_ema
+                .available_load_capacity_in_throttling_duration(peer_type, total_stake),
+            QosTracker::SimpleStreamsPerSecond {
+                max_streams_per_second,
+            } => {
+                let interval_ms = STREAM_THROTTLING_INTERVAL.as_millis() as u64;
+                max_streams_per_second * interval_ms / 1000
+            }
+        };
 
         let throttle_interval_start = stream_counter.reset_throttling_params_if_needed();
         let streams_read_in_throttle_interval = stream_counter.stream_count.load(Ordering::Relaxed);
@@ -1090,7 +1122,9 @@ async fn handle_connection(
                 sleep(throttle_duration).await;
             }
         }
-        stream_load_ema.increment_load(peer_type);
+        if let QosTracker::StakedStreamLoadEMA(ref stream_load_ema) = qos_tracker {
+            stream_load_ema.increment_load(peer_type);
+        }
         stream_counter.stream_count.fetch_add(1, Ordering::Relaxed);
         stats.active_streams.fetch_add(1, Ordering::Relaxed);
         stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
@@ -1164,14 +1198,18 @@ async fn handle_connection(
                         CONNECTION_CLOSE_REASON_INVALID_STREAM,
                     );
                     stats.active_streams.fetch_sub(1, Ordering::Relaxed);
-                    stream_load_ema.update_ema_if_needed();
+                    if let QosTracker::StakedStreamLoadEMA(ref stream_load_ema) = qos_tracker {
+                        stream_load_ema.update_ema_if_needed();
+                    }
                     break 'conn;
                 }
             }
         }
 
         stats.active_streams.fetch_sub(1, Ordering::Relaxed);
-        stream_load_ema.update_ema_if_needed();
+        if let QosTracker::StakedStreamLoadEMA(ref stream_load_ema) = qos_tracker {
+            stream_load_ema.update_ema_if_needed();
+        }
     }
 
     let stable_id = connection.stable_id();
