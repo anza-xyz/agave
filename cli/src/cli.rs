@@ -466,6 +466,7 @@ pub enum CliCommand {
         signature: Signature,
         message: OffchainMessage,
     },
+    GetLatestBlockhash
 }
 
 #[derive(Debug, PartialEq)]
@@ -841,6 +842,7 @@ pub fn parse_command(
         ("verify-offchain-signature", Some(matches)) => {
             parse_verify_offchain_signature(matches, default_signer, wallet_manager)
         }
+        ("latest-blockhash", Some(matches)) => parse_get_latest_blockhash(matches),
         //
         ("", None) => {
             eprintln!("{}", matches.usage());
@@ -926,6 +928,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         CliCommand::GetGenesisHash => process_get_genesis_hash(&rpc_client),
         CliCommand::GetSlot => process_get_slot(&rpc_client, config),
         CliCommand::GetBlockHeight => process_get_block_height(&rpc_client, config),
+        CliCommand::GetLatestBlockhash => process_get_latest_blockhash(&rpc_client, config),
         CliCommand::LargestAccounts { filter } => {
             process_largest_accounts(&rpc_client, config, filter.clone())
         }
