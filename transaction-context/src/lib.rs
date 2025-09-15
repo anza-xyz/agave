@@ -141,7 +141,7 @@ impl TransactionContext {
         }
     }
 
-    #[cfg(not(target_os = "solana"))]
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn set_top_level_instruction_index(&mut self, top_level_instruction_index: usize) {
         self.top_level_instruction_index = top_level_instruction_index;
     }
