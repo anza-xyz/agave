@@ -369,4 +369,11 @@ impl RxRing {
     pub fn sync(&mut self, commit: bool) {
         self.consumer.sync(commit);
     }
+
+    pub fn read(&mut self) -> Option<XdpDesc> {
+        let index = self.consumer.consume()? & self.size.saturating_sub(1);
+        let base = self.mmap.desc.cast::<XdpDesc>();
+        let desc = unsafe { base.offset(index as isize).read() };
+        Some(desc)
+    }
 }
