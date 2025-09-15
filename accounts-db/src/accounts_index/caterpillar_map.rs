@@ -1,7 +1,10 @@
 use std::{
     collections::HashMap,
     hash::Hash,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        RwLock, RwLockReadGuard,
+    },
 };
 
 use modular_bitfield::{bitfield, prelude::*};
@@ -38,7 +41,7 @@ where
 #[derive(Debug)]
 pub enum FixedKindEntry<'a> {
     Inlined(InlinedEntry),
-    Heap(&'a ExpandedEntry),
+    Heap(RwLockReadGuard<'a, ExpandedEntry>),
 }
 
 /// Entry in the caterpillar map that can turn its payload between inlined and expanded states.
@@ -198,7 +201,7 @@ impl UnsafeCaterpillarHolder {
     }
 
     fn from_expanded(expanded: ExpandedEntry) -> Self {
-        let expanded_ptr = Box::into_raw(Box::new(expanded));
+        let expanded_ptr = Box::into_raw(Box::new(RwLock::new(expanded)));
         let expanded = HeapEntryUnsafeAddress::new()
             .with_common_info(CommonEntryInfo::new().with_is_inlined(false))
             .with_shifted_address(Self::make_ptr_shifted_address(expanded_ptr));
@@ -219,7 +222,7 @@ impl UnsafeCaterpillarHolder {
                 FixedKindEntry::Inlined(self.inlined)
             } else {
                 let ptr = self.get_expanded_ptr();
-                FixedKindEntry::Heap(ptr.as_ref().unwrap())
+                FixedKindEntry::Heap(ptr.as_ref().unwrap().read().unwrap())
             }
         }
     }
@@ -231,30 +234,30 @@ impl UnsafeCaterpillarHolder {
         if !self.is_inlined() {
             unsafe {
                 let ptr = self.get_expanded_mut_ptr();
-                Some(*Box::from_raw(ptr))
+                Some(Box::from_raw(ptr).into_inner().unwrap())
             }
         } else {
             None
         }
     }
 
-    fn make_ptr_shifted_address(ptr: *mut ExpandedEntry) -> u64 {
+    fn make_ptr_shifted_address(ptr: *mut RwLock<ExpandedEntry>) -> u64 {
         (ptr as u64) >> Self::ALIGNED_PTR_SHIFT
     }
 
-    fn get_expanded_ptr(&self) -> *const ExpandedEntry {
+    fn get_expanded_ptr(&self) -> *const RwLock<ExpandedEntry> {
         unsafe {
             assert!(!self.is_inlined());
             let addr = self.expanded.shifted_address() << Self::ALIGNED_PTR_SHIFT;
-            addr as *const ExpandedEntry
+            addr as *const RwLock<ExpandedEntry>
         }
     }
 
-    fn get_expanded_mut_ptr(&self) -> *mut ExpandedEntry {
+    fn get_expanded_mut_ptr(&self) -> *mut RwLock<ExpandedEntry> {
         unsafe {
             assert!(!self.is_inlined());
             let addr = self.expanded.shifted_address() << Self::ALIGNED_PTR_SHIFT;
-            addr as *mut ExpandedEntry
+            addr as *mut RwLock<ExpandedEntry>
         }
     }
 }
@@ -297,6 +300,7 @@ mod tests {
         assert_eq!(expanded.bar, 99);
         assert_eq!(expanded.foo, 4534);
         assert_eq!(expanded.baz, 1);
+        drop(expanded);
 
         let mut mut_turning_centry = turning_centry;
         mut_turning_centry.turn_to_inlined();
