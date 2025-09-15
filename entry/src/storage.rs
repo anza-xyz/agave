@@ -33,7 +33,7 @@ use {
 ///
 /// Note: we're using the `From<[u8; N]>` constraint as a convenience
 /// because `Hash`, `Signature`, and `Address` all implement it.
-struct FixedByteVecSer<'a, const N: usize, T: From<[u8; N]>>(&'a [T]);
+pub struct FixedByteVecSer<'a, const N: usize, T: From<[u8; N]>>(pub &'a [T]);
 impl<T, const N: usize> Serialize for FixedByteVecSer<'_, N, T>
 where
     T: From<[u8; N]>,
@@ -86,6 +86,7 @@ struct CompiledInstructionSeed(*mut CompiledInstruction);
 impl<'de> DeserializeSeed<'de> for CompiledInstructionSeed {
     type Value = ();
 
+    #[inline(always)]
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
@@ -171,6 +172,7 @@ struct LegacyMessageSeed(*mut legacy::Message);
 impl<'de> DeserializeSeed<'de> for LegacyMessageSeed {
     type Value = ();
 
+    #[inline(always)]
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
@@ -387,6 +389,7 @@ impl<'de> DeserializeSeed<'de> for V0MessageSeed {
 }
 
 #[repr(u32)]
+#[derive(Clone, Copy, Deserialize)]
 enum VersionedMessageVariant {
     Legacy = 0,
     V0 = 1,
@@ -452,10 +455,7 @@ impl<'de> DeserializeSeed<'de> for VersionedMessageSeed {
             where
                 A: de::EnumAccess<'de>,
             {
-                let (variant, access) = data.variant::<u32>()?;
-                let variant = VersionedMessageVariant::try_from(variant).map_err(|_| {
-                    A::Error::unknown_variant(&variant.to_string(), &["Legacy", "V0"])
-                })?;
+                let (variant, access) = data.variant::<VersionedMessageVariant>()?;
 
                 match variant {
                     VersionedMessageVariant::Legacy => {
@@ -576,6 +576,20 @@ impl Entry {
     }
 }
 
+impl From<crate::entry::Entry> for Entry {
+    #[inline(always)]
+    fn from(value: crate::entry::Entry) -> Self {
+        Entry::from_inner(value)
+    }
+}
+
+impl From<Entry> for crate::entry::Entry {
+    #[inline(always)]
+    fn from(value: Entry) -> Self {
+        value.into_inner()
+    }
+}
+
 impl Serialize for Entry {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -589,6 +603,7 @@ impl Serialize for Entry {
         s.end()
     }
 }
+
 impl<'de> Deserialize<'de> for Entry {
     #[inline(always)]
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -754,6 +769,7 @@ where
 {
     type Value = ();
 
+    #[inline(always)]
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
@@ -772,7 +788,7 @@ where
             type Value = ();
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a Vec")
+                formatter.write_str("a sequence of items")
             }
 
             fn visit_seq<A>(mut self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -835,11 +851,79 @@ where
 /// at once.
 ///
 /// Should be coupled with [`FixedByteVecSer`] for serialization.
+///
+/// # Example
+/// ```
+/// # use solana_entry::storage::{FixedByteVecSeed, FixedByteVecSer};
+/// # use serde::{Serialize, Deserialize, Deserializer, ser::{SerializeSeq, SerializeTuple}, de::{Visitor, SeqAccess, Error}};
+/// # use serde_bytes::Bytes;
+/// # use std::{fmt, mem::MaybeUninit};
+/// # use rand::prelude::*;
+/// # use core::array;
+///
+/// #[derive(Debug, PartialEq)]
+/// struct Message {
+///     hashes: Vec<solana_hash::Hash>,
+/// }
+///
+/// impl Serialize for Message {
+///     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+///     where
+///         S: serde::Serializer,
+///     {
+///         let mut seq = serializer.serialize_tuple(1)?;
+///         seq.serialize_element(&FixedByteVecSer(&self.hashes))?;
+///         seq.end()
+///     }
+/// }
+///
+/// impl<'de> Deserialize<'de> for Message {
+///     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+///     where
+///         D: Deserializer<'de>,
+///     {
+///         struct VisitMessage;
+///
+///         impl<'de> Visitor<'de> for VisitMessage {
+///             type Value = Message;
+///
+///             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+///                 formatter.write_str("a Message")
+///             }
+///
+///             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+///             where
+///                 A: SeqAccess<'de>,
+///             {
+///                 let mut msg = MaybeUninit::<Message>::uninit();
+///                 let msg_ptr = msg.as_mut_ptr();
+///                 let hashes_ptr = unsafe { &raw mut (*msg_ptr).hashes } as *mut Vec<[u8; 32]>;
+///                 // Write the hashes directly into a Vec
+///                 seq.next_element_seed(FixedByteVecSeed(hashes_ptr))?
+///                     .ok_or_else(|| A::Error::invalid_length(0, &self))?;
+///
+///                 Ok(unsafe { msg.assume_init() })
+///             }
+///         }
+///
+///         deserializer.deserialize_tuple(1, VisitMessage)
+///     }
+/// }
+///
+/// fn main() {
+///     let hashes = (0..10).map(|_| solana_hash::Hash::from(array::from_fn(|_| rand::random()))).collect();
+///     let msg = Message { hashes };
+///     let serialized = bincode::serialize(&msg).unwrap();
+///     let deserialized = bincode::deserialize(&serialized).unwrap();
+///     assert_eq!(msg, deserialized);
+/// }
+/// ```
 pub struct FixedByteVecSeed<const N: usize>(pub *mut Vec<[u8; N]>);
 
 impl<'de, const N: usize> DeserializeSeed<'de> for FixedByteVecSeed<N> {
     type Value = ();
 
+    #[inline(always)]
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
@@ -852,7 +936,10 @@ impl<'de, const N: usize> DeserializeSeed<'de> for FixedByteVecSeed<N> {
             type Value = ();
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                write!(formatter, "a sequence of byte arrays of length {N}")
+                write!(
+                    formatter,
+                    "a sequence of {N} length byte arrays Vec<[u8; {N}]>"
+                )
             }
 
             fn visit_bytes<E>(self, bytes: &[u8]) -> Result<Self::Value, E>
@@ -966,7 +1053,7 @@ impl<'de, const N: usize> DeserializeSeed<'de> for FixedByteSeed<N> {
             type Value = ();
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                write!(formatter, "a byte array of length {N}")
+                write!(formatter, "a {N} length byte array [u8; {N}]")
             }
 
             #[inline(always)]
