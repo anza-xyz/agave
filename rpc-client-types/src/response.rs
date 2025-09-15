@@ -13,7 +13,7 @@ pub use {
     },
     solana_fee_calculator::{FeeCalculator, FeeRateGovernor},
     solana_reward_info::RewardType,
-    solana_transaction as transaction,
+    solana_transaction,
     solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status_client_types::{
         option_serializer::OptionSerializer, EncodedTransaction, EncodedTransactionWithStatusMeta,
