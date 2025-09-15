@@ -7,7 +7,7 @@ use {
     thiserror::Error,
 };
 pub use {
-    serde_json::Value as JsonValue,
+    serde_json::Value,
     solana_account_decoder_client_types::{
         token::UiTokenAmount, ParsedAccount, UiAccount, UiAccountData, UiAccountEncoding,
     },
