@@ -294,7 +294,6 @@ dependencies = [
  "bs58",
  "crossbeam-channel",
  "dashmap",
- "etcd-client",
  "itertools 0.12.1",
  "log",
  "parking_lot 0.12.2",
@@ -2075,22 +2074,6 @@ checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "etcd-client"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4b0ea5ef6dc2388a4b1669fa32097249bc03a15417b97cb75e38afb309e4a89"
-dependencies = [
- "http 0.2.12",
- "prost",
- "tokio",
- "tokio-stream",
- "tonic",
- "tonic-build",
- "tower 0.4.13",
- "tower-service",
 ]
 
 [[package]]
@@ -6430,7 +6413,6 @@ dependencies = [
  "crossbeam-channel",
  "dashmap",
  "derive_more 1.0.0",
- "etcd-client",
  "futures 0.3.31",
  "histogram",
  "itertools 0.12.1",
