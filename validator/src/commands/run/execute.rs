@@ -282,8 +282,6 @@ pub fn execute(
         accounts_index_config.drives = Some(vec![ledger_path.join("accounts_index")]);
     }
 
-    const MB: usize = 1_024 * 1_024;
-
     let storage_access = matches
         .value_of("accounts_db_access_storages_method")
         .map(|method| match method {
@@ -322,9 +320,7 @@ pub fn execute(
         shrink_paths: run_args.accounts_db_config.shrink_paths.clone(),
         shrink_ratio: run_args.accounts_db_config.shrink_ratio.clone(),
         read_cache_limit_bytes: run_args.accounts_db_config.read_cache_limit_bytes.clone(),
-        write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
-            .ok()
-            .map(|mb| mb * MB as u64),
+        write_cache_limit_bytes: run_args.accounts_db_config.write_cache_limit_bytes.clone(),
         ancient_append_vec_offset: value_t!(matches, "accounts_db_ancient_append_vecs", i64).ok(),
         ancient_storage_ideal_size: value_t!(
             matches,
