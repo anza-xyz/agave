@@ -13,7 +13,7 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
-        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, ScanFilter},
+        accounts_index::{AccountsIndexConfig, ScanFilter},
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
@@ -237,8 +237,6 @@ pub fn execute(
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
 
-    let account_indexes = AccountSecondaryIndexes::from_clap_arg_match(matches)?;
-
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
     let accounts_shrink_optimize_total_space =
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
@@ -382,7 +380,7 @@ pub fn execute(
 
     let accounts_db_config = AccountsDbConfig {
         index: run_args.accounts_db_config.index.clone(),
-        account_indexes: Some(account_indexes.clone()),
+        account_indexes: run_args.accounts_db_config.account_indexes.clone(),
         base_working_path: Some(ledger_path.clone()),
         shrink_paths: account_shrink_run_paths,
         shrink_ratio,

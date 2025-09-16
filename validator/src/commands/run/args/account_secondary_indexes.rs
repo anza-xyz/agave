@@ -66,6 +66,7 @@ mod tests {
         crate::commands::run::args::{
             tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
         },
+        solana_accounts_db::accounts_db::AccountsDbConfig,
         solana_rpc::rpc::JsonRpcConfig,
         test_case::test_case,
     };
@@ -78,13 +79,18 @@ mod tests {
         expected_index: AccountIndex,
     ) {
         let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_account_indexes = AccountSecondaryIndexes {
+            keys: None,
+            indexes: HashSet::from([expected_index]),
+        };
         let expected_args = RunArgs {
             json_rpc_config: JsonRpcConfig {
-                account_indexes: AccountSecondaryIndexes {
-                    keys: None,
-                    indexes: HashSet::from([expected_index]),
-                },
+                account_indexes: expected_account_indexes.clone(),
                 ..default_run_args.json_rpc_config.clone()
+            },
+            accounts_db_config: AccountsDbConfig {
+                account_indexes: Some(expected_account_indexes.clone()),
+                ..default_run_args.accounts_db_config.clone()
             },
             ..default_run_args.clone()
         };
@@ -98,17 +104,22 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_run_with_account_indexes_multiple() {
         let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_account_indexes = AccountSecondaryIndexes {
+            keys: None,
+            indexes: HashSet::from([
+                AccountIndex::ProgramId,
+                AccountIndex::SplTokenMint,
+                AccountIndex::SplTokenOwner,
+            ]),
+        };
         let expected_args = RunArgs {
             json_rpc_config: JsonRpcConfig {
-                account_indexes: AccountSecondaryIndexes {
-                    keys: None,
-                    indexes: HashSet::from([
-                        AccountIndex::ProgramId,
-                        AccountIndex::SplTokenMint,
-                        AccountIndex::SplTokenOwner,
-                    ]),
-                },
+                account_indexes: expected_account_indexes.clone(),
                 ..default_run_args.json_rpc_config.clone()
+            },
+            accounts_db_config: AccountsDbConfig {
+                account_indexes: Some(expected_account_indexes.clone()),
+                ..default_run_args.accounts_db_config.clone()
             },
             ..default_run_args.clone()
         };
@@ -132,16 +143,21 @@ mod tests {
         {
             let default_run_args = crate::commands::run::args::RunArgs::default();
             let account_pubkey_1 = Pubkey::new_unique();
+            let expected_account_indexes = AccountSecondaryIndexes {
+                keys: Some(AccountSecondaryIndexesIncludeExclude {
+                    exclude: false,
+                    keys: HashSet::from([account_pubkey_1]),
+                }),
+                indexes: HashSet::from([AccountIndex::ProgramId]),
+            };
             let expected_args = RunArgs {
                 json_rpc_config: JsonRpcConfig {
-                    account_indexes: AccountSecondaryIndexes {
-                        keys: Some(AccountSecondaryIndexesIncludeExclude {
-                            exclude: false,
-                            keys: HashSet::from([account_pubkey_1]),
-                        }),
-                        indexes: HashSet::from([AccountIndex::ProgramId]),
-                    },
+                    account_indexes: expected_account_indexes.clone(),
                     ..default_run_args.json_rpc_config.clone()
+                },
+                accounts_db_config: AccountsDbConfig {
+                    account_indexes: Some(expected_account_indexes.clone()),
+                    ..default_run_args.accounts_db_config.clone()
                 },
                 ..default_run_args.clone()
             };
@@ -163,20 +179,21 @@ mod tests {
             let account_pubkey_1 = Pubkey::new_unique();
             let account_pubkey_2 = Pubkey::new_unique();
             let account_pubkey_3 = Pubkey::new_unique();
+            let expected_account_indexes = AccountSecondaryIndexes {
+                keys: Some(AccountSecondaryIndexesIncludeExclude {
+                    exclude: false,
+                    keys: HashSet::from([account_pubkey_1, account_pubkey_2, account_pubkey_3]),
+                }),
+                indexes: HashSet::from([AccountIndex::ProgramId]),
+            };
             let expected_args = RunArgs {
                 json_rpc_config: JsonRpcConfig {
-                    account_indexes: AccountSecondaryIndexes {
-                        keys: Some(AccountSecondaryIndexesIncludeExclude {
-                            exclude: false,
-                            keys: HashSet::from([
-                                account_pubkey_1,
-                                account_pubkey_2,
-                                account_pubkey_3,
-                            ]),
-                        }),
-                        indexes: HashSet::from([AccountIndex::ProgramId]),
-                    },
+                    account_indexes: expected_account_indexes.clone(),
                     ..default_run_args.json_rpc_config.clone()
+                },
+                accounts_db_config: AccountsDbConfig {
+                    account_indexes: Some(expected_account_indexes.clone()),
+                    ..default_run_args.accounts_db_config.clone()
                 },
                 ..default_run_args.clone()
             };
@@ -203,16 +220,21 @@ mod tests {
         {
             let default_run_args = crate::commands::run::args::RunArgs::default();
             let account_pubkey_1 = Pubkey::new_unique();
+            let expected_account_indexes = AccountSecondaryIndexes {
+                keys: Some(AccountSecondaryIndexesIncludeExclude {
+                    exclude: true,
+                    keys: HashSet::from([account_pubkey_1]),
+                }),
+                indexes: HashSet::from([AccountIndex::ProgramId]),
+            };
             let expected_args = RunArgs {
                 json_rpc_config: JsonRpcConfig {
-                    account_indexes: AccountSecondaryIndexes {
-                        keys: Some(AccountSecondaryIndexesIncludeExclude {
-                            exclude: true,
-                            keys: HashSet::from([account_pubkey_1]),
-                        }),
-                        indexes: HashSet::from([AccountIndex::ProgramId]),
-                    },
+                    account_indexes: expected_account_indexes.clone(),
                     ..default_run_args.json_rpc_config.clone()
+                },
+                accounts_db_config: AccountsDbConfig {
+                    account_indexes: Some(expected_account_indexes.clone()),
+                    ..default_run_args.accounts_db_config.clone()
                 },
                 ..default_run_args.clone()
             };
@@ -234,20 +256,21 @@ mod tests {
             let account_pubkey_1 = Pubkey::new_unique();
             let account_pubkey_2 = Pubkey::new_unique();
             let account_pubkey_3 = Pubkey::new_unique();
+            let expected_account_indexes = AccountSecondaryIndexes {
+                keys: Some(AccountSecondaryIndexesIncludeExclude {
+                    exclude: true,
+                    keys: HashSet::from([account_pubkey_1, account_pubkey_2, account_pubkey_3]),
+                }),
+                indexes: HashSet::from([AccountIndex::ProgramId]),
+            };
             let expected_args = RunArgs {
                 json_rpc_config: JsonRpcConfig {
-                    account_indexes: AccountSecondaryIndexes {
-                        keys: Some(AccountSecondaryIndexesIncludeExclude {
-                            exclude: true,
-                            keys: HashSet::from([
-                                account_pubkey_1,
-                                account_pubkey_2,
-                                account_pubkey_3,
-                            ]),
-                        }),
-                        indexes: HashSet::from([AccountIndex::ProgramId]),
-                    },
+                    account_indexes: expected_account_indexes.clone(),
                     ..default_run_args.json_rpc_config.clone()
+                },
+                accounts_db_config: AccountsDbConfig {
+                    account_indexes: Some(expected_account_indexes.clone()),
+                    ..default_run_args.accounts_db_config.clone()
                 },
                 ..default_run_args.clone()
             };
