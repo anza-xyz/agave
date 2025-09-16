@@ -2101,6 +2101,10 @@ pub mod test {
         assert_eq!(stats.total_new_connections.load(Ordering::Relaxed), 2);
         cancel.cancel();
         t.await.unwrap();
+        // handle of the streamer doesn't wait for the child task to finish, so
+        // it is not deterministic if the tasks handling connections exit before
+        // the assertion below or after.
+        sleep(Duration::from_millis(100)).await;
         assert_eq!(stats.total_connections.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_new_connections.load(Ordering::Relaxed), 2);
     }
