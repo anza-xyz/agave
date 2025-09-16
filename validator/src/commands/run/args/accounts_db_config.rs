@@ -76,6 +76,9 @@ impl FromClapArgMatches for AccountsDbConfig {
         let ancient_append_vec_offset =
             value_t!(matches, "accounts_db_ancient_append_vecs", i64).ok();
 
+        let ancient_storage_ideal_size =
+            value_t!(matches, "accounts_db_ancient_storage_ideal_size", u64).ok();
+
         Ok(AccountsDbConfig {
             index: Some(accounts_index_config),
             account_indexes: Some(account_indexes),
@@ -84,6 +87,7 @@ impl FromClapArgMatches for AccountsDbConfig {
             read_cache_limit_bytes,
             write_cache_limit_bytes,
             ancient_append_vec_offset,
+            ancient_storage_ideal_size,
             ..Default::default()
         })
     }
@@ -253,6 +257,23 @@ mod tests {
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
             vec!["--accounts-db-ancient-append-vecs", "999999"],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_accounts_db_ancient_storage_ideal_size() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            accounts_db_config: AccountsDbConfig {
+                ancient_storage_ideal_size: Some(999_999),
+                ..default_run_args.accounts_db_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--accounts-db-ancient-storage-ideal-size", "999999"],
             expected_args,
         );
     }
