@@ -1,10 +1,12 @@
+
+pub mod fixture;
+pub mod instr;
 pub mod program_cache;
 pub mod sysvar_cache;
 
 use {
+    fixture::proto::InstrContext as ProtoInstrContext,
     prost::Message,
-    solana_svm_fuzz_harness_fixture::proto::InstrContext as ProtoInstrContext,
-    solana_svm_fuzz_harness_instr::execute_instr_proto,
     std::{env, ffi::c_int},
 };
 
@@ -32,7 +34,7 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
     let Ok(instr_context) = ProtoInstrContext::decode(in_slice) else {
         return 0;
     };
-    let Some(instr_effects) = execute_instr_proto(instr_context) else {
+    let Some(instr_effects) = instr::execute_instr_proto(instr_context) else {
         return 0;
     };
     let out_slice = std::slice::from_raw_parts_mut(out_ptr, (*out_psz) as usize);

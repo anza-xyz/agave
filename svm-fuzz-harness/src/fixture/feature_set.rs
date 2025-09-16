@@ -1,5 +1,5 @@
 use {
-    crate::proto::FeatureSet as ProtoFeatureSet,
+    super::proto::FeatureSet as ProtoFeatureSet,
     agave_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_pubkey::Pubkey,
     std::{collections::HashMap, sync::LazyLock},
