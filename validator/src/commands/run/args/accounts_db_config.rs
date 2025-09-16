@@ -3,6 +3,7 @@ use {
     clap::{value_t, values_t, ArgMatches},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
+        accounts_file::StorageAccess,
         accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig},
         utils::{create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories},
     },
@@ -84,6 +85,18 @@ impl FromClapArgMatches for AccountsDbConfig {
 
         let exhaustively_verify_refcounts = matches.is_present("accounts_db_verify_refcounts");
 
+        let storage_access = matches
+            .value_of("accounts_db_access_storages_method")
+            .map(|method| match method {
+                "mmap" => StorageAccess::Mmap,
+                "file" => StorageAccess::File,
+                _ => {
+                    // clap will enforce one of the above values is given
+                    unreachable!("invalid value given to accounts-db-access-storages-method")
+                }
+            })
+            .unwrap_or_default();
+
         Ok(AccountsDbConfig {
             index: Some(accounts_index_config),
             account_indexes: Some(account_indexes),
@@ -95,6 +108,7 @@ impl FromClapArgMatches for AccountsDbConfig {
             ancient_storage_ideal_size,
             max_ancient_storages,
             exhaustively_verify_refcounts,
+            storage_access,
             ..Default::default()
         })
     }
@@ -315,6 +329,30 @@ mod tests {
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
             vec!["--accounts-db-verify-refcounts"],
+            expected_args,
+        );
+    }
+
+    #[test_case("mmap", StorageAccess::Mmap)]
+    #[test_case("file", StorageAccess::File)]
+    fn verify_args_struct_by_command_run_with_accounts_db_access_storages_method(
+        accounts_db_access_storages_method: &str,
+        expected_storage_access: StorageAccess,
+    ) {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            accounts_db_config: AccountsDbConfig {
+                storage_access: expected_storage_access,
+                ..default_run_args.accounts_db_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![
+                "--accounts-db-access-storages-method",
+                accounts_db_access_storages_method,
+            ],
             expected_args,
         );
     }
