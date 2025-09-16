@@ -1695,7 +1695,7 @@ mod tests {
         super::*,
         crate::cli::{get_deprecated_arguments, thread_args::thread_args},
         scopeguard::defer,
-        solana_accounts_db::accounts_index::AccountsIndexConfig,
+        solana_accounts_db::accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig},
         solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
         std::{
             fs,
@@ -1745,6 +1745,7 @@ mod tests {
                         drives: Some(vec![]),
                         ..AccountsIndexConfig::default()
                     }),
+                    account_indexes: Some(AccountSecondaryIndexes::default()),
                     ..AccountsDbConfig::default()
                 },
             }
