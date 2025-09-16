@@ -1,6 +1,6 @@
 //! Instruction effects (output).
 use {
-    crate::proto::InstrEffects as ProtoInstrEffects, solana_account::Account,
+    super::proto::InstrEffects as ProtoInstrEffects, solana_account::Account,
     solana_instruction_error::InstructionError, solana_pubkey::Pubkey,
 };
 

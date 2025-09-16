@@ -1,5 +1,5 @@
 use {
-    crate::{error::FixtureError, proto::AcctState as ProtoAccount},
+    super::{error::FixtureError, proto::AcctState as ProtoAccount},
     solana_account::Account,
     solana_pubkey::Pubkey,
 };

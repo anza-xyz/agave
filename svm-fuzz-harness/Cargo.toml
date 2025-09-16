@@ -11,7 +11,7 @@ edition = { workspace = true }
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "test_exec_instr"
@@ -31,7 +31,7 @@ solana-compute-budget = { workspace = true }
 solana-epoch-schedule = { workspace = true, features = ["sysvar"] }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
-solana-instruction-error = { workspace = true }
+solana-instruction-error = { workspace = true, features = ["serde"] }
 solana-last-restart-slot = { workspace = true, features = ["sysvar"] }
 solana-logger = { workspace = true }
 solana-precompile-error = { workspace = true }
