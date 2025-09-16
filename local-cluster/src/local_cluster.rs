@@ -95,7 +95,6 @@ pub struct ClusterConfig {
     pub slots_per_epoch: u64,
     pub stakers_slot_offset: u64,
     pub skip_warmup_slots: bool,
-    pub native_instruction_processors: Vec<(String, Pubkey)>,
     pub cluster_type: ClusterType,
     pub poh_config: PohConfig,
     pub additional_accounts: Vec<(Pubkey, AccountSharedData)>,
@@ -134,7 +133,6 @@ impl Default for ClusterConfig {
             ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
             slots_per_epoch: DEFAULT_DEV_SLOTS_PER_EPOCH,
             stakers_slot_offset: DEFAULT_DEV_SLOTS_PER_EPOCH,
-            native_instruction_processors: vec![],
             cluster_type: ClusterType::Development,
             poh_config: PohConfig::default(),
             skip_warmup_slots: false,
@@ -328,9 +326,6 @@ impl LocalCluster {
             !config.skip_warmup_slots,
         );
         genesis_config.poh_config = config.poh_config.clone();
-        genesis_config
-            .native_instruction_processors
-            .extend_from_slice(&config.native_instruction_processors);
 
         let mut leader_config = safe_clone_config(&config.validator_configs[0]);
         let (leader_ledger_path, _blockhash) = create_new_tmp_ledger_with_size!(

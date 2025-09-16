@@ -124,7 +124,7 @@ use {
     },
     spl_generic_token::token,
     std::{
-        collections::{HashMap, HashSet},
+        collections::{BTreeMap, HashMap, HashSet},
         convert::TryInto,
         fs::File,
         io::Read,
@@ -5296,11 +5296,16 @@ fn test_fuzz_instructions() {
 // added feature.
 #[test]
 fn test_bank_hash_consistency() {
-    let account = AccountSharedData::new(1_000_000_000_000, 0, &system_program::id());
-    let mut genesis_config = GenesisConfig::new(&[(Pubkey::from([42; 32]), account)], &[]);
-    // Override the creation time to ensure bank hash consistency
-    genesis_config.creation_time = 0;
-    genesis_config.cluster_type = ClusterType::MainnetBeta;
+    let genesis_config = GenesisConfig {
+        // Override the creation time to ensure bank hash consistency
+        creation_time: 0,
+        accounts: BTreeMap::from([(
+            Pubkey::from([42; 32]),
+            Account::new(1_000_000_000_000, 0, &system_program::id()),
+        )]),
+        cluster_type: ClusterType::MainnetBeta,
+        ..GenesisConfig::default()
+    };
 
     // Set the feature set to all enabled so that we detect any inconsistencies
     // in the hash computation that may arise from feature set changes
@@ -6364,7 +6369,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len(formalize_loaded_transaction_
         Some(&mint_keypair.pubkey()),
     );
     assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::NotEnoughAccountKeys),
+        TransactionError::InstructionError(0, InstructionError::MissingAccount),
         bank_client
             .send_and_confirm_message(&[&mint_keypair], message)
             .unwrap_err()
@@ -11955,10 +11960,7 @@ fn test_loader_v3_to_v4_migration(formalize_loaded_transaction_data_size: bool) 
         AccountMeta::new_readonly(upgrade_authority_keypair.pubkey(), true),
     ];
     for (instruction_accounts, expected_error) in [
-        (
-            case_too_few_accounts,
-            InstructionError::NotEnoughAccountKeys,
-        ),
+        (case_too_few_accounts, InstructionError::MissingAccount),
         (case_readonly_programdata, InstructionError::InvalidArgument),
         (
             case_incorrect_authority,

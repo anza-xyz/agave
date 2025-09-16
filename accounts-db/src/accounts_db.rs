@@ -71,7 +71,7 @@ use {
     solana_clock::{BankId, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_lattice_hash::lt_hash::LtHash,
-    solana_measure::{meas_dur, measure::Measure, measure_us},
+    solana_measure::{measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
@@ -556,7 +556,6 @@ struct GenerateIndexTimings {
     pub num_duplicate_accounts: u64,
     pub populate_duplicate_keys_us: u64,
     pub total_slots: u64,
-    pub par_duplicates_lt_hash_us: AtomicU64,
     pub visit_zero_lamports_us: u64,
     pub num_zero_lamport_single_refs: u64,
     pub all_accounts_are_zero_lamports_slots: u64,
@@ -620,11 +619,6 @@ impl GenerateIndexTimings {
             (
                 "copy_data_us",
                 startup_stats.copy_data_us.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "par_duplicates_lt_hash_us",
-                self.par_duplicates_lt_hash_us.load(Ordering::Relaxed),
                 i64
             ),
             (
@@ -6810,7 +6804,7 @@ impl AccountsDb {
                                 accounts_data_len_from_duplicates,
                                 accounts_duplicates_num,
                                 duplicates_lt_hash,
-                            ) = self.visit_duplicate_pubkeys_during_startup(pubkeys, &timings);
+                            ) = self.visit_duplicate_pubkeys_during_startup(pubkeys);
                             let intermediate = DuplicatePubkeysVisitedInfo {
                                 accounts_data_len_from_duplicates,
                                 num_duplicate_accounts: accounts_duplicates_num,
@@ -7034,12 +7028,10 @@ impl AccountsDb {
     fn visit_duplicate_pubkeys_during_startup(
         &self,
         pubkeys: &[Pubkey],
-        timings: &GenerateIndexTimings,
     ) -> (u64, u64, Box<DuplicatesLtHash>) {
         let mut accounts_data_len_from_duplicates = 0;
         let mut num_duplicate_accounts = 0_u64;
         let mut duplicates_lt_hash = Box::new(DuplicatesLtHash::default());
-        let mut lt_hash_time = Duration::default();
         self.accounts_index.scan(
             pubkeys.iter(),
             |pubkey, slots_refs, _entry| {
@@ -7068,12 +7060,9 @@ impl AccountsDb {
                                     accounts_data_len_from_duplicates += data_len;
                                 }
                                 num_duplicate_accounts += 1;
-                                let (_, duration) = meas_dur!({
-                                    let account_lt_hash =
-                                        Self::lt_hash_account(&loaded_account, pubkey);
-                                    duplicates_lt_hash.0.mix_in(&account_lt_hash.0);
-                                });
-                                lt_hash_time += duration;
+                                let account_lt_hash =
+                                    Self::lt_hash_account(&loaded_account, pubkey);
+                                duplicates_lt_hash.0.mix_in(&account_lt_hash.0);
                             });
                         });
                     }
@@ -7084,9 +7073,6 @@ impl AccountsDb {
             false,
             ScanFilter::All,
         );
-        timings
-            .par_duplicates_lt_hash_us
-            .fetch_add(lt_hash_time.as_micros() as u64, Ordering::Relaxed);
         (
             accounts_data_len_from_duplicates as u64,
             num_duplicate_accounts,

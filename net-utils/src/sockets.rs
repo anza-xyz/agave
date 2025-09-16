@@ -652,6 +652,9 @@ mod tests {
         assert!(verify_all_reachable_udp(&ip_echo_server_addr, &socket_refs));
     }
 
+    // This test is gated for non-macOS platforms because it requires binding to 127.0.0.2,
+    // which is not supported on macOS by default.
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn test_verify_udp_multiple_ips_reachable() {
         solana_logger::setup();

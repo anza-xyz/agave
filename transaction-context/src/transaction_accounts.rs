@@ -52,7 +52,7 @@ impl TransactionAccounts {
     pub fn touch(&self, index: IndexOfAccount) -> Result<(), InstructionError> {
         self.touched_flags
             .get(index as usize)
-            .ok_or(InstructionError::NotEnoughAccountKeys)?
+            .ok_or(InstructionError::MissingAccount)?
             .set(true);
         Ok(())
     }

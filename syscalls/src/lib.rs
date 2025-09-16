@@ -10,10 +10,10 @@ pub use self::{
         SyscallGetSysvar,
     },
 };
+use solana_program_runtime::memory::translate_vm_slice;
 #[allow(deprecated)]
 use {
     crate::mem_ops::is_nonoverlapping,
-    solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
     solana_bn254::prelude::{
@@ -48,9 +48,9 @@ use {
     solana_svm_log_collector::{ic_logger_msg, ic_msg},
     solana_svm_type_overrides::sync::Arc,
     solana_sysvar::SysvarSerialize,
+    solana_transaction_context::vm_slice::VmSlice,
     std::{
         alloc::Layout,
-        marker::PhantomData,
         mem::{align_of, size_of},
         slice::from_raw_parts_mut,
         str::{from_utf8, Utf8Error},
@@ -62,9 +62,6 @@ mod cpi;
 mod logging;
 mod mem_ops;
 mod sysvar;
-
-/// Maximum signers
-const MAX_SIGNERS: usize = 16;
 
 /// Error definitions
 #[derive(Debug, ThisError, PartialEq, Eq)]
@@ -260,60 +257,6 @@ impl HasherImpl for Keccak256Hasher {
     }
     fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_max_slices
-    }
-}
-
-// The VmSlice class is used for cases when you need a slice that is stored in the BPF
-// interpreter's virtual address space. Because this source code can be compiled with
-// addresses of different bit depths, we cannot assume that the 64-bit BPF interpreter's
-// pointer sizes can be mapped to physical pointer sizes. In particular, if you need a
-// slice-of-slices in the virtual space, the inner slices will be different sizes in a
-// 32-bit app build than in the 64-bit virtual space. Therefore instead of a slice-of-slices,
-// you should implement a slice-of-VmSlices, which can then use VmSlice::translate() to
-// map to the physical address.
-// This class must consist only of 16 bytes: a u64 ptr and a u64 len, to match the 64-bit
-// implementation of a slice in Rust. The PhantomData entry takes up 0 bytes.
-
-#[repr(C)]
-pub struct VmSlice<T> {
-    ptr: u64,
-    len: u64,
-    resource_type: PhantomData<T>,
-}
-
-impl<T> VmSlice<T> {
-    pub fn new(ptr: u64, len: u64) -> Self {
-        VmSlice {
-            ptr,
-            len,
-            resource_type: PhantomData,
-        }
-    }
-
-    pub fn ptr(&self) -> u64 {
-        self.ptr
-    }
-    pub fn len(&self) -> u64 {
-        self.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// Adjust the length of the vector. This is unchecked, and it assumes that the pointer
-    /// points to valid memory of the correct length after vm-translation.
-    pub fn resize(&mut self, len: u64) {
-        self.len = len;
-    }
-
-    /// Returns a slice using a mapped physical address
-    pub fn translate<'a>(
-        &self,
-        memory_mapping: &'a MemoryMapping,
-        check_aligned: bool,
-    ) -> Result<&'a [T], Error> {
-        translate_slice::<T>(memory_mapping, self.ptr, self.len, check_aligned)
     }
 }
 
@@ -841,7 +784,7 @@ fn translate_and_check_program_address_inputs<'a>(
             if untranslated_seed.len() > MAX_SEED_LEN as u64 {
                 return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
             }
-            untranslated_seed.translate(memory_mapping, check_aligned)
+            translate_vm_slice(untranslated_seed, memory_mapping, check_aligned)
         })
         .collect::<Result<Vec<_>, Error>>()?;
     let program_id = translate_type::<Pubkey>(memory_mapping, program_id_addr, check_aligned)?;
@@ -1804,7 +1747,9 @@ declare_builtin_function!(
         )?;
         let inputs = inputs
             .iter()
-            .map(|input| input.translate(memory_mapping, invoke_context.get_check_aligned()))
+            .map(|input| {
+                translate_vm_slice(input, memory_mapping, invoke_context.get_check_aligned())
+            })
             .collect::<Result<Vec<_>, Error>>()?;
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
@@ -2011,7 +1956,7 @@ declare_builtin_function!(
             )?;
 
             for val in vals.iter() {
-                let bytes = val.translate(memory_mapping, invoke_context.get_check_aligned())?;
+                let bytes = translate_vm_slice(val, memory_mapping, invoke_context.get_check_aligned())?;
                 let cost = compute_cost.mem_op_base_cost.max(
                     hash_byte_cost.saturating_mul(
                         val.len()
@@ -2107,6 +2052,7 @@ mod tests {
         assert_matches::assert_matches,
         core::slice,
         solana_account::{create_account_shared_data_for_test, AccountSharedData},
+        solana_account_info::AccountInfo,
         solana_clock::Clock,
         solana_epoch_rewards::EpochRewards,
         solana_epoch_schedule::EpochSchedule,

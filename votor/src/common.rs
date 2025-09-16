@@ -16,6 +16,16 @@ pub enum VoteType {
 }
 
 impl VoteType {
+    pub fn get_type(vote: &Vote) -> VoteType {
+        match vote {
+            Vote::Notarize(_) => VoteType::Notarize,
+            Vote::NotarizeFallback(_) => VoteType::NotarizeFallback,
+            Vote::Skip(_) => VoteType::Skip,
+            Vote::SkipFallback(_) => VoteType::SkipFallback,
+            Vote::Finalize(_) => VoteType::Finalize,
+        }
+    }
+
     #[allow(dead_code)]
     pub fn is_notarize_type(&self) -> bool {
         matches!(self, Self::Notarize | Self::NotarizeFallback)

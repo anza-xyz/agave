@@ -628,10 +628,11 @@ impl Default for QuicServerParams {
     }
 }
 
-#[cfg(feature = "dev-context-only-utils")]
 impl QuicServerParams {
+    #[cfg(feature = "dev-context-only-utils")]
     pub const DEFAULT_NUM_SERVER_THREADS_FOR_TEST: NonZeroUsize = NonZeroUsize::new(8).unwrap();
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn default_for_tests() -> Self {
         // Shrink the channel size to avoid a massive allocation for tests
         Self {
@@ -639,6 +640,11 @@ impl QuicServerParams {
             num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
             ..Self::default()
         }
+    }
+
+    pub(crate) fn max_concurrent_connections(&self) -> usize {
+        let conns = self.max_staked_connections + self.max_unstaked_connections;
+        conns + conns / 4
     }
 }
 

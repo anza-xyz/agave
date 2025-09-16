@@ -2,6 +2,7 @@
 
 use {
     solana_sbpf::memory_region::{AccessType, MemoryMapping},
+    solana_transaction_context::vm_slice::VmSlice,
     std::{mem::align_of, slice::from_raw_parts_mut},
 };
 
@@ -126,4 +127,12 @@ pub fn translate_slice_mut_for_cpi<'a, T>(
         T,
         check_aligned,
     )
+}
+
+pub fn translate_vm_slice<'a, T>(
+    slice: &VmSlice<T>,
+    memory_mapping: &'a MemoryMapping,
+    check_aligned: bool,
+) -> Result<&'a [T], Box<dyn std::error::Error>> {
+    translate_slice::<T>(memory_mapping, slice.ptr(), slice.len(), check_aligned)
 }

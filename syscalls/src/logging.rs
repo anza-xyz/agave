@@ -1,4 +1,6 @@
-use {super::*, solana_sbpf::vm::ContextObject};
+use {
+    super::*, solana_program_runtime::memory::translate_vm_slice, solana_sbpf::vm::ContextObject,
+};
 
 declare_builtin_function!(
     /// Log a user's info message
@@ -143,7 +145,7 @@ declare_builtin_function!(
         let mut fields = Vec::with_capacity(untranslated_fields.len());
 
         for untranslated_field in untranslated_fields {
-            fields.push(untranslated_field.translate(memory_mapping, invoke_context.get_check_aligned())?);
+            fields.push(translate_vm_slice(untranslated_field, memory_mapping, invoke_context.get_check_aligned())?);
         }
 
         let log_collector = invoke_context.get_log_collector();

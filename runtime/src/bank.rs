@@ -2604,11 +2604,6 @@ impl Bank {
             self.slots_per_year,
             genesis_config.rent.clone(),
         );
-
-        // Add additional builtin programs specified in the genesis config
-        for (name, program_id) in &genesis_config.native_instruction_processors {
-            self.add_builtin_account(name, program_id);
-        }
     }
 
     fn burn_and_purge_account(&self, program_id: &Pubkey, mut account: AccountSharedData) {

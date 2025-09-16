@@ -1095,7 +1095,6 @@ pub mod test {
 
         // 2. Create a local cluster which is aware of faucet
         let num_nodes = 1;
-        let native_instruction_processors = vec![];
         let cluster = LocalCluster::new(
             &mut ClusterConfig {
                 node_stakes: vec![999_990; num_nodes],
@@ -1110,7 +1109,6 @@ pub mod test {
                     },
                     num_nodes,
                 ),
-                native_instruction_processors,
                 ..ClusterConfig::default()
             },
             SocketAddrSpace::Unspecified,
