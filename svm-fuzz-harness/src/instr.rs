@@ -6,6 +6,11 @@
 #![allow(clippy::missing_safety_doc)]
 
 use {
+    crate::fixture::{
+        instr_context::InstrContext,
+        instr_effects::InstrEffects,
+        proto::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
+    },
     agave_precompiles::{get_precompile, is_precompile},
     solana_account::AccountSharedData,
     solana_compute_budget::compute_budget::{ComputeBudget, SVMTransactionExecutionCost},
@@ -21,11 +26,6 @@ use {
     solana_pubkey::Pubkey,
     solana_stable_layout::stable_vec::StableVec,
     solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
-    crate::fixture::{
-        instr_context::InstrContext,
-        instr_effects::InstrEffects,
-        proto::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
-    },
     solana_svm_log_collector::LogCollector,
     solana_svm_timings::ExecuteTimings,
     solana_transaction_context::{
@@ -324,9 +324,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
 mod tests {
     use {
         super::*,
-        crate::fixture::proto::{
-            AcctState as ProtoAcctState, InstrAcct as ProtoInstrAcct,
-        },
+        crate::fixture::proto::{AcctState as ProtoAcctState, InstrAcct as ProtoInstrAcct},
     };
 
     #[test]
