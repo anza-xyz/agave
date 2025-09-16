@@ -143,6 +143,7 @@ use {
         borrow::Cow,
         collections::{HashMap, HashSet},
         fmt,
+        future::Future,
         net::SocketAddr,
         num::NonZeroUsize,
         path::{Path, PathBuf},
@@ -156,7 +157,10 @@ use {
     strum::VariantNames,
     strum_macros::{Display, EnumCount, EnumIter, EnumString, EnumVariantNames, IntoStaticStr},
     thiserror::Error,
-    tokio::runtime::{Handle as TokioRuntimeHandle, Runtime as TokioRuntime},
+    tokio::{
+        runtime::{Handle as TokioRuntimeHandle, Runtime as TokioRuntime},
+        task::JoinError,
+    },
     tokio_util::sync::CancellationToken,
 };
 
@@ -1152,9 +1156,9 @@ impl Validator {
             };
 
             let client_option = if config.use_tpu_client_next {
-                runtimes.insert_runtime(RuntimeId::TpuClientNextRuntime, 2);
+                runtimes.insert_runtime(RuntimeId::TpuClientNext, 2);
 
-                let runtime_handle = runtimes.get_runtime_handle(RuntimeId::TpuClientNextRuntime);
+                let runtime_handle = runtimes.get_runtime_handle(RuntimeId::TpuClientNext);
                 ClientOption::TpuClientNext(
                     Arc::as_ref(&identity_keypair),
                     node.sockets.rpc_sts_client,
@@ -1384,8 +1388,8 @@ impl Validator {
             let (sender, _receiver) = tokio::sync::mpsc::channel(1);
             (None, sender, None)
         } else {
-            runtimes.insert_runtime(RuntimeId::TurbineQuicEndpointRuntime, 4);
-            let runtime_handle = runtimes.get_runtime_handle(RuntimeId::TurbineQuicEndpointRuntime);
+            runtimes.insert_runtime(RuntimeId::TurbineQuicEndpoint, 4);
+            let runtime_handle = runtimes.get_runtime_handle(RuntimeId::TurbineQuicEndpoint);
             solana_turbine::quic_endpoint::new_quic_endpoint(
                 &runtime_handle,
                 &identity_keypair,
@@ -1412,9 +1416,8 @@ impl Validator {
                     repair_response_quic_sender,
                     ancestor_hashes_response_quic_sender,
                 };
-                runtimes.insert_runtime(RuntimeId::RepairQuicEndpointsRuntime, 4);
-                let runtime_handle =
-                    runtimes.get_runtime_handle(RuntimeId::RepairQuicEndpointsRuntime);
+                runtimes.insert_runtime(RuntimeId::RepairQuicEndpoints, 4);
+                let runtime_handle = runtimes.get_runtime_handle(RuntimeId::RepairQuicEndpoints);
                 repair::quic_endpoint::new_quic_endpoints(
                     &runtime_handle,
                     &identity_keypair,
@@ -1587,7 +1590,7 @@ impl Validator {
         let forwarding_tpu_client = if let Some(connection_cache) = &connection_cache {
             ForwardingClientOption::ConnectionCache(connection_cache.clone())
         } else {
-            let runtime_handle = runtimes.get_runtime_handle(RuntimeId::TpuClientNextRuntime);
+            let runtime_handle = runtimes.get_runtime_handle(RuntimeId::TpuClientNext);
             ForwardingClientOption::TpuClientNext((
                 Arc::as_ref(&identity_keypair),
                 tpu_transactions_forwards_client_sockets.take().unwrap(),
@@ -1825,12 +1828,11 @@ impl Validator {
             .join()
             .expect("serve_repair_service");
         if let Some(repair_quic_endpoints_join_handle) = self.repair_quic_endpoints_join_handle {
-            let repair_quic_endpoints_runtime = self
-                .runtimes
-                .get_runtime(RuntimeId::RepairQuicEndpointsRuntime);
-            repair_quic_endpoints_runtime
-                .map(|runtime| runtime.block_on(repair_quic_endpoints_join_handle))
-                .transpose()
+            self.runtimes
+                .block_on_runtime(
+                    RuntimeId::RepairQuicEndpoints,
+                    repair_quic_endpoints_join_handle,
+                )
                 .unwrap();
         }
         self.stats_reporter_service
@@ -1851,12 +1853,11 @@ impl Validator {
         self.tpu.join().expect("tpu");
         self.tvu.join().expect("tvu");
         if let Some(turbine_quic_endpoint_join_handle) = self.turbine_quic_endpoint_join_handle {
-            let turbine_quic_endpoint_runtime = self
-                .runtimes
-                .get_runtime(RuntimeId::TurbineQuicEndpointRuntime);
-            turbine_quic_endpoint_runtime
-                .map(|runtime| runtime.block_on(turbine_quic_endpoint_join_handle))
-                .transpose()
+            self.runtimes
+                .block_on_runtime(
+                    RuntimeId::TurbineQuicEndpoint,
+                    turbine_quic_endpoint_join_handle,
+                )
                 .unwrap();
         }
         if let Some(completed_data_sets_service) = self.completed_data_sets_service {
@@ -2796,32 +2797,39 @@ pub fn is_snapshot_config_valid(snapshot_config: &SnapshotConfig) -> bool {
     }
 }
 
-/// [`RuntimeRegistry`] structured holds runtimes for different components of the
+/// [`RuntimeRegistry`] structure holds runtimes for different components of the
 /// validator.
+///
+/// This structure might be used when the validator is started inside the tokio
+/// runtime context or outside. Test-validator crate and tests may start the
+/// validator in a tokio runtime context which forces us to use the same runtime
+/// because a nested runtime will cause panic at drop. Outside test-validator
+/// crate, we always need a tokio runtime (and the respective handle) to
+/// initialize the turbine QUIC endpoint.
 struct RuntimeRegistry {
-    runtimes: HashMap<RuntimeId, RuntimeOption>,
+    runtimes: RuntimeOption,
 }
 
 /// [`RuntimeOption`] represents the current runtime if available or a dedicated
 /// runtime.
 enum RuntimeOption {
     Current,
-    Runtime(TokioRuntime),
+    Dedicated(HashMap<RuntimeId, TokioRuntime>),
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 enum RuntimeId {
-    TpuClientNextRuntime,
-    TurbineQuicEndpointRuntime,
-    RepairQuicEndpointsRuntime,
+    TpuClientNext,
+    TurbineQuicEndpoint,
+    RepairQuicEndpoints,
 }
 
 impl fmt::Display for RuntimeId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            RuntimeId::TpuClientNextRuntime => "solTpuClientRt",
-            RuntimeId::TurbineQuicEndpointRuntime => "solTurbineQuic",
-            RuntimeId::RepairQuicEndpointsRuntime => "solRepairQuic",
+            RuntimeId::TpuClientNext => "solTpuClientRt",
+            RuntimeId::TurbineQuicEndpoint => "solTurbineQuic",
+            RuntimeId::RepairQuicEndpoints => "solRepairQuic",
         };
         f.write_str(s)
     }
@@ -2829,65 +2837,77 @@ impl fmt::Display for RuntimeId {
 
 impl RuntimeRegistry {
     fn new() -> Self {
-        Self {
-            runtimes: HashMap::new(),
+        match tokio::runtime::Handle::try_current() {
+            Ok(_) => Self {
+                runtimes: RuntimeOption::Current,
+            },
+            Err(_) => Self {
+                runtimes: RuntimeOption::Dedicated(HashMap::new()),
+            },
         }
     }
 
-    /// Create a new runtime with the given name and number of worker threads.
+    /// Create a new runtime with the given name and number of worker threads
+    /// and insert it into the registry.
     ///
     /// If a runtime with the same name already exists, this function will
     /// panic.
     fn insert_runtime(&mut self, id: RuntimeId, num_threads: usize) {
-        assert!(
-            !self.runtimes.contains_key(&id),
-            "runtime with id {:?} already exists",
-            id
-        );
-
-        // test-validator crate may start the validator in a tokio runtime
-        // context which forces us to use the same runtime because a nested
-        // runtime will cause panic at drop. Outside test-validator crate, we
-        // always need a tokio runtime (and the respective handle) to initialize
-        // the turbine QUIC endpoint.
-        match tokio::runtime::Handle::try_current() {
-            Ok(_) => {
-                self.runtimes.insert(id, RuntimeOption::Current);
+        if let RuntimeOption::Dedicated(runtimes) = &mut self.runtimes {
+            if !runtimes.contains_key(&id) {
+                assert!(
+                    !runtimes.contains_key(&id),
+                    "runtime with id {id} already exists",
+                );
+                let thread_name = id.to_string();
+                runtimes.insert(
+                    id,
+                    tokio::runtime::Builder::new_multi_thread()
+                        .enable_all()
+                        .worker_threads(num_threads)
+                        .thread_name(thread_name)
+                        .build()
+                        .unwrap(),
+                );
             }
-            Err(_) => {
-                let runtime = tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .worker_threads(num_threads)
-                    .thread_name(id.to_string())
-                    .build()
-                    .unwrap();
-                self.runtimes.insert(id, RuntimeOption::Runtime(runtime));
+        }
+    }
+
+    /// Block on the given future using the runtime with the given id.
+    ///
+    /// If it is called within the current runtime context, it will do nothing.
+    /// Otherwise, it will block_on the given future.
+    ///
+    /// If the runtime does not exist and are not in the current runtime, this
+    /// function will panic.
+    fn block_on_runtime<F, T>(&self, id: RuntimeId, f: F) -> Result<T, JoinError>
+    where
+        T: Default,
+        F: Future<Output = Result<T, JoinError>>,
+    {
+        match self.runtimes {
+            RuntimeOption::Current => Ok(T::default()),
+            RuntimeOption::Dedicated(ref runtimes) => {
+                let runtime = runtimes.get(&id).unwrap();
+                runtime.block_on(f)
             }
         }
     }
 
     /// Get a reference to the runtime with the given id.
-    fn get_runtime(&self, id: RuntimeId) -> Option<&TokioRuntime> {
-        let runtime = self.runtimes.get(&id)?;
-        match runtime {
-            RuntimeOption::Current => None,
-            RuntimeOption::Runtime(runtime) => Some(runtime),
-        }
-    }
-
-    /// Get a reference to the runtime with the given id.
+    ///
+    /// If the runtime does not exist and are not in the current runtime, this
+    /// function will panic.
     fn get_runtime_handle(&self, id: RuntimeId) -> TokioRuntimeHandle {
-        let runtime = self.runtimes.get(&id).unwrap_or_else(|| {
-            panic!(
-                "runtime with id {:?} does not exist. Available runtimes: {:?}",
-                id,
-                self.runtimes.keys().collect::<Vec<_>>()
-            )
-        });
-        match runtime {
+        match &self.runtimes {
             RuntimeOption::Current => tokio::runtime::Handle::try_current()
                 .expect("Current runtime should exist because it was created"),
-            RuntimeOption::Runtime(runtime) => runtime.handle().clone(),
+            RuntimeOption::Dedicated(runtimes) => {
+                let runtime = runtimes
+                    .get(&id)
+                    .unwrap_or_else(|| panic!("runtime with id {id} does not exist.",));
+                runtime.handle().clone()
+            }
         }
     }
 }
