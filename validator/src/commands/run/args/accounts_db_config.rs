@@ -69,12 +69,17 @@ impl FromClapArgMatches for AccountsDbConfig {
         // clap will enforce only one cli arg is provided, so pick whichever is Some
         let read_cache_limit_bytes = read_cache_limit_bytes.or(read_cache_limit_mb);
 
+        let write_cache_limit_bytes = value_t!(matches, "accounts_db_cache_limit_mb", u64)
+            .ok()
+            .map(|mb| mb * MIB as u64);
+
         Ok(AccountsDbConfig {
             index: Some(accounts_index_config),
             account_indexes: Some(account_indexes),
             shrink_paths: account_shrink_run_paths,
             shrink_ratio,
             read_cache_limit_bytes,
+            write_cache_limit_bytes,
             ..Default::default()
         })
     }
@@ -210,6 +215,23 @@ mod tests {
                 "--accounts-db-read-cache-limit-mb",
                 accounts_db_read_cache_limit_mb,
             ],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_accounts_db_cache_limit_mb() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            accounts_db_config: AccountsDbConfig {
+                write_cache_limit_bytes: Some(10 * 1024 * 1024),
+                ..default_run_args.accounts_db_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--accounts-db-cache-limit-mb", "10"],
             expected_args,
         );
     }
