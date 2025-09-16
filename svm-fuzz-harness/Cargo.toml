@@ -1,0 +1,23 @@
+[package]
+name = "solana-svm-fuzz-harness"
+description = "Solana SVM fuzzing harnesses."
+documentation = "https://docs.rs/solana-svm-fuzz-harness"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+prost = { workspace = true }
+solana-logger = { workspace = true }
+solana-svm-fuzz-harness-fixture = { workspace = true }
+solana-svm-fuzz-harness-instr = { workspace = true }
+
+[lints]
+workspace = true

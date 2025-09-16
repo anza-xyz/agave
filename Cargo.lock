@@ -11054,6 +11054,16 @@ name = "solana-svm-feature-set"
 version = "3.1.0"
 
 [[package]]
+name = "solana-svm-fuzz-harness"
+version = "3.1.0"
+dependencies = [
+ "prost",
+ "solana-logger",
+ "solana-svm-fuzz-harness-fixture",
+ "solana-svm-fuzz-harness-instr",
+]
+
+[[package]]
 name = "solana-svm-fuzz-harness-fixture"
 version = "3.1.0"
 dependencies = [
