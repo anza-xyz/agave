@@ -82,6 +82,8 @@ impl FromClapArgMatches for AccountsDbConfig {
         let max_ancient_storages =
             value_t!(matches, "accounts_db_max_ancient_storages", usize).ok();
 
+        let exhaustively_verify_refcounts = matches.is_present("accounts_db_verify_refcounts");
+
         Ok(AccountsDbConfig {
             index: Some(accounts_index_config),
             account_indexes: Some(account_indexes),
@@ -92,6 +94,7 @@ impl FromClapArgMatches for AccountsDbConfig {
             ancient_append_vec_offset,
             ancient_storage_ideal_size,
             max_ancient_storages,
+            exhaustively_verify_refcounts,
             ..Default::default()
         })
     }
@@ -295,6 +298,23 @@ mod tests {
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
             vec!["--accounts-db-max-ancient-storages", "999999"],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_accounts_db_verify_refcounts() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            accounts_db_config: AccountsDbConfig {
+                exhaustively_verify_refcounts: true,
+                ..default_run_args.accounts_db_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--accounts-db-verify-refcounts"],
             expected_args,
         );
     }

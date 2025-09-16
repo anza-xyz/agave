@@ -323,7 +323,7 @@ pub fn execute(
         ancient_append_vec_offset: run_args.accounts_db_config.ancient_append_vec_offset.clone(),
         ancient_storage_ideal_size: run_args.accounts_db_config.ancient_storage_ideal_size.clone(),
         max_ancient_storages: run_args.accounts_db_config.max_ancient_storages.clone(),
-        exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
+        exhaustively_verify_refcounts: run_args.accounts_db_config.exhaustively_verify_refcounts.clone(),
         storage_access,
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
