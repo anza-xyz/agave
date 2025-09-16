@@ -12,7 +12,6 @@ use {
     rand::{seq::SliceRandom, thread_rng},
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, MarkObsoleteAccounts},
-        accounts_file::StorageAccess,
         accounts_index::{AccountsIndexConfig, ScanFilter},
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::{
@@ -282,18 +281,6 @@ pub fn execute(
         accounts_index_config.drives = Some(vec![ledger_path.join("accounts_index")]);
     }
 
-    let storage_access = matches
-        .value_of("accounts_db_access_storages_method")
-        .map(|method| match method {
-            "mmap" => StorageAccess::Mmap,
-            "file" => StorageAccess::File,
-            _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts-db-access-storages-method")
-            }
-        })
-        .unwrap_or_default();
-
     let scan_filter_for_shrinking = matches
         .value_of("accounts_db_scan_filter_for_shrinking")
         .map(|filter| match filter {
@@ -325,7 +312,7 @@ pub fn execute(
         ancient_storage_ideal_size: run_args.accounts_db_config.ancient_storage_ideal_size.clone(),
         max_ancient_storages: run_args.accounts_db_config.max_ancient_storages.clone(),
         exhaustively_verify_refcounts: run_args.accounts_db_config.exhaustively_verify_refcounts.clone(),
-        storage_access,
+        storage_access: run_args.accounts_db_config.storage_access.clone(),
         scan_filter_for_shrinking,
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
