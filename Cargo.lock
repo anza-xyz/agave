@@ -11057,39 +11057,13 @@ version = "3.1.0"
 name = "solana-svm-fuzz-harness"
 version = "3.1.0"
 dependencies = [
- "prost",
- "solana-logger",
- "solana-svm-fuzz-harness-fixture",
- "solana-svm-fuzz-harness-instr",
-]
-
-[[package]]
-name = "solana-svm-fuzz-harness-fixture"
-version = "3.1.0"
-dependencies = [
- "agave-feature-set",
- "bincode",
- "prost",
- "prost-build",
- "solana-account",
- "solana-hash",
- "solana-instruction",
- "solana-instruction-error",
- "solana-pubkey",
- "solana-stable-layout",
- "thiserror 2.0.16",
-]
-
-[[package]]
-name = "solana-svm-fuzz-harness-instr"
-version = "3.1.0"
-dependencies = [
  "agave-feature-set",
  "agave-precompiles",
  "agave-syscalls",
  "bincode",
  "clap 4.5.31",
  "prost",
+ "prost-build",
  "solana-account",
  "solana-builtins",
  "solana-clock",
@@ -11099,6 +11073,7 @@ dependencies = [
  "solana-instruction",
  "solana-instruction-error",
  "solana-last-restart-slot",
+ "solana-logger",
  "solana-precompile-error",
  "solana-program-runtime",
  "solana-pubkey",
@@ -11107,11 +11082,11 @@ dependencies = [
  "solana-stable-layout",
  "solana-svm",
  "solana-svm-callback",
- "solana-svm-fuzz-harness-fixture",
  "solana-svm-log-collector",
  "solana-svm-timings",
  "solana-sysvar-id",
  "solana-transaction-context",
+ "thiserror 2.0.16",
 ]
 
 [[package]]
