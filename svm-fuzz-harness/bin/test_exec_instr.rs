@@ -1,6 +1,7 @@
 use {
-    clap::Parser, prost::Message,
-    solana_svm_fuzz_harness_fixture::proto::InstrFixture as ProtoInstrFixture, std::path::PathBuf,
+    clap::Parser,
+    prost::Message,
+    solana_svm_fuzz_harness::{fixture::proto::InstrFixture as ProtoInstrFixture, instr::execute_instr_proto}, std::path::PathBuf,
 };
 
 #[derive(Parser)]
@@ -21,7 +22,7 @@ fn exec(input: &PathBuf) -> bool {
         println!("No fixture found.");
         return false;
     };
-    let Some(effects) = solana_svm_fuzz_harness_instr::execute_instr_proto(context) else {
+    let Some(effects) = execute_instr_proto(context) else {
         println!("FAIL: No instruction effects returned for input: {input:?}",);
         return false;
     };

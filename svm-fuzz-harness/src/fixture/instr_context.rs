@@ -1,7 +1,7 @@
 //! Instruction context (input).
 
 use {
-    crate::{error::FixtureError, proto::InstrContext as ProtoInstrContext},
+    super::{error::FixtureError, proto::InstrContext as ProtoInstrContext},
     agave_feature_set::FeatureSet,
     solana_account::Account,
     solana_hash::Hash,

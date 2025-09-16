@@ -21,7 +21,7 @@ use {
     solana_pubkey::Pubkey,
     solana_stable_layout::stable_vec::StableVec,
     solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
-    solana_svm_fuzz_harness_fixture::{
+    crate::fixture::{
         instr_context::InstrContext,
         instr_effects::InstrEffects,
         proto::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
@@ -324,7 +324,7 @@ pub fn execute_instr_proto(input: ProtoInstrContext) -> Option<ProtoInstrEffects
 mod tests {
     use {
         super::*,
-        solana_svm_fuzz_harness_fixture::proto::{
+        crate::fixture::proto::{
             AcctState as ProtoAcctState, InstrAcct as ProtoInstrAcct,
         },
     };
