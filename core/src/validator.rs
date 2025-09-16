@@ -1129,6 +1129,9 @@ impl Validator {
         };
 
         let mut runtimes = RuntimeRegistry::new();
+        if config.use_tpu_client_next {
+            runtimes.insert_runtime(RuntimeId::TpuClientNext, 2);
+        }
 
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
@@ -1156,8 +1159,6 @@ impl Validator {
             };
 
             let client_option = if config.use_tpu_client_next {
-                runtimes.insert_runtime(RuntimeId::TpuClientNext, 2);
-
                 let runtime_handle = runtimes.get_runtime_handle(RuntimeId::TpuClientNext);
                 ClientOption::TpuClientNext(
                     Arc::as_ref(&identity_keypair),
