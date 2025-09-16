@@ -39,6 +39,7 @@ solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sha256-hasher = { workspace = true }
+solana-short-vec = { workspace = true }
 solana-signature = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }

@@ -8474,6 +8474,7 @@ dependencies = [
  "solana-pubkey",
  "solana-runtime-transaction",
  "solana-sha256-hasher",
+ "solana-short-vec",
  "solana-signature",
  "solana-signer",
  "solana-system-transaction",
