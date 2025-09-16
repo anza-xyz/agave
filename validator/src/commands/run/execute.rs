@@ -298,26 +298,6 @@ pub fn execute(
 
     const MB: usize = 1_024 * 1_024;
 
-    let account_shrink_paths: Option<Vec<PathBuf>> =
-        values_t!(matches, "account_shrink_path", String)
-            .map(|shrink_paths| shrink_paths.into_iter().map(PathBuf::from).collect())
-            .ok();
-    let account_shrink_paths = account_shrink_paths
-        .as_ref()
-        .map(|paths| {
-            create_and_canonicalize_directories(paths)
-                .map_err(|err| format!("unable to access account shrink path: {err}"))
-        })
-        .transpose()?;
-
-    let (account_shrink_run_paths, account_shrink_snapshot_paths) = account_shrink_paths
-        .map(|paths| {
-            create_all_accounts_run_and_snapshot_dirs(&paths)
-                .map_err(|err| format!("unable to create account subdirectories: {err}"))
-        })
-        .transpose()?
-        .unzip();
-
     let read_cache_limit_bytes =
         values_of::<usize>(matches, "accounts_db_read_cache_limit").map(|limits| {
             match limits.len() {
@@ -382,7 +362,7 @@ pub fn execute(
         index: run_args.accounts_db_config.index.clone(),
         account_indexes: run_args.accounts_db_config.account_indexes.clone(),
         base_working_path: Some(ledger_path.clone()),
-        shrink_paths: account_shrink_run_paths,
+        shrink_paths: run_args.accounts_db_config.shrink_paths.clone(),
         shrink_ratio,
         read_cache_limit_bytes,
         write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
@@ -446,6 +426,9 @@ pub fn execute(
     let (account_run_paths, account_snapshot_paths) =
         create_all_accounts_run_and_snapshot_dirs(&account_paths)
             .map_err(|err| format!("unable to create account directories: {err}"))?;
+
+    let (_, account_shrink_snapshot_paths) =
+        crate::commands::run::args::accounts_db_config::parse_account_shrink_paths(matches)?;
 
     // These snapshot paths are only used for initial clean up, add in shrink paths if they exist.
     let account_snapshot_paths =
