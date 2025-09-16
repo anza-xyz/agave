@@ -321,7 +321,7 @@ pub fn execute(
         shrink_ratio: run_args.accounts_db_config.shrink_ratio.clone(),
         read_cache_limit_bytes: run_args.accounts_db_config.read_cache_limit_bytes.clone(),
         write_cache_limit_bytes: run_args.accounts_db_config.write_cache_limit_bytes.clone(),
-        ancient_append_vec_offset: value_t!(matches, "accounts_db_ancient_append_vecs", i64).ok(),
+        ancient_append_vec_offset: run_args.accounts_db_config.ancient_append_vec_offset.clone(),
         ancient_storage_ideal_size: value_t!(
             matches,
             "accounts_db_ancient_storage_ideal_size",
