@@ -6,6 +6,7 @@ use {
         accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig},
         utils::{create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories},
     },
+    solana_clap_utils::input_parsers::values_of,
     std::path::PathBuf,
 };
 
@@ -35,11 +36,45 @@ impl FromClapArgMatches for AccountsDbConfig {
             AccountShrinkThreshold::IndividualStore { shrink_ratio }
         };
 
+        const MIB: usize = 1_024 * 1_024;
+
+        let read_cache_limit_bytes = values_of::<usize>(matches, "accounts_db_read_cache_limit")
+            .map(|limits| {
+                match limits.len() {
+                    2 => (limits[0], limits[1]),
+                    _ => {
+                        // clap will enforce two values are given
+                        unreachable!(
+                            "invalid number of values given to accounts-db-read-cache-limit"
+                        )
+                    }
+                }
+            });
+        // accounts-db-read-cache-limit-mb was deprecated in v3.0.0
+        let read_cache_limit_mb = values_of::<usize>(matches, "accounts_db_read_cache_limit_mb")
+            .map(|limits| {
+                match limits.len() {
+                    // we were given explicit low and high watermark values, so use them
+                    2 => (limits[0] * MIB, limits[1] * MIB),
+                    // we were given a single value, so use it for both low and high watermarks
+                    1 => (limits[0] * MIB, limits[0] * MIB),
+                    _ => {
+                        // clap will enforce either one or two values is given
+                        unreachable!(
+                            "invalid number of values given to accounts-db-read-cache-limit-mb"
+                        )
+                    }
+                }
+            });
+        // clap will enforce only one cli arg is provided, so pick whichever is Some
+        let read_cache_limit_bytes = read_cache_limit_bytes.or(read_cache_limit_mb);
+
         Ok(AccountsDbConfig {
             index: Some(accounts_index_config),
             account_indexes: Some(account_indexes),
             shrink_paths: account_shrink_run_paths,
             shrink_ratio,
+            read_cache_limit_bytes,
             ..Default::default()
         })
     }
@@ -133,6 +168,47 @@ mod tests {
                 accounts_shrink_optimize_total_space,
                 "--accounts-shrink-ratio",
                 accounts_shrink_ratio,
+            ],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_accounts_db_read_cache_limit() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            accounts_db_config: AccountsDbConfig {
+                read_cache_limit_bytes: Some((1_000_000, 10_000_000)),
+                ..default_run_args.accounts_db_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--accounts-db-read-cache-limit", "1000000,10000000"],
+            expected_args,
+        );
+    }
+
+    #[test_case("1,10", (1 * 1024 * 1024, 10 * 1024 * 1024))]
+    #[test_case("1", (1 * 1024 * 1024, 1 * 1024 * 1024))]
+    fn verify_args_struct_by_command_run_with_accounts_db_read_cache_limit_mb(
+        accounts_db_read_cache_limit_mb: &str,
+        expected_read_cache_limit_bytes: (usize, usize),
+    ) {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            accounts_db_config: AccountsDbConfig {
+                read_cache_limit_bytes: Some(expected_read_cache_limit_bytes),
+                ..default_run_args.accounts_db_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![
+                "--accounts-db-read-cache-limit-mb",
+                accounts_db_read_cache_limit_mb,
             ],
             expected_args,
         );
