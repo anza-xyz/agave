@@ -22,7 +22,7 @@ use {
         },
     },
     solana_clap_utils::input_parsers::{
-        keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of, values_of,
+        keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of,
     },
     solana_clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
     solana_core::{
@@ -283,35 +283,6 @@ pub fn execute(
 
     const MB: usize = 1_024 * 1_024;
 
-    let read_cache_limit_bytes =
-        values_of::<usize>(matches, "accounts_db_read_cache_limit").map(|limits| {
-            match limits.len() {
-                2 => (limits[0], limits[1]),
-                _ => {
-                    // clap will enforce two values are given
-                    unreachable!("invalid number of values given to accounts-db-read-cache-limit")
-                }
-            }
-        });
-    // accounts-db-read-cache-limit-mb was deprecated in v3.0.0
-    let read_cache_limit_mb =
-        values_of::<usize>(matches, "accounts_db_read_cache_limit_mb").map(|limits| {
-            match limits.len() {
-                // we were given explicit low and high watermark values, so use them
-                2 => (limits[0] * MB, limits[1] * MB),
-                // we were given a single value, so use it for both low and high watermarks
-                1 => (limits[0] * MB, limits[0] * MB),
-                _ => {
-                    // clap will enforce either one or two values is given
-                    unreachable!(
-                        "invalid number of values given to accounts-db-read-cache-limit-mb"
-                    )
-                }
-            }
-        });
-    // clap will enforce only one cli arg is provided, so pick whichever is Some
-    let read_cache_limit_bytes = read_cache_limit_bytes.or(read_cache_limit_mb);
-
     let storage_access = matches
         .value_of("accounts_db_access_storages_method")
         .map(|method| match method {
@@ -349,7 +320,7 @@ pub fn execute(
         base_working_path: Some(ledger_path.clone()),
         shrink_paths: run_args.accounts_db_config.shrink_paths.clone(),
         shrink_ratio: run_args.accounts_db_config.shrink_ratio.clone(),
-        read_cache_limit_bytes,
+        read_cache_limit_bytes: run_args.accounts_db_config.read_cache_limit_bytes.clone(),
         write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
             .ok()
             .map(|mb| mb * MB as u64),
