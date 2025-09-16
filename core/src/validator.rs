@@ -125,6 +125,7 @@ use {
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
+    solana_streamer::quic::StreamerConfig,
     solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{
@@ -1639,9 +1640,18 @@ impl Validator {
             banking_tracer_channels,
             tracer_thread,
             tpu_enable_udp,
-            tpu_quic_server_config,
-            tpu_fwd_quic_server_config,
-            vote_quic_server_config,
+            StreamerConfig {
+                params: tpu_quic_server_config,
+                runtime_handle: runtimes.get_runtime_handle(RuntimeId::TpuStreamerRuntime),
+            },
+            StreamerConfig {
+                params: tpu_fwd_quic_server_config,
+                runtime_handle: runtimes.get_runtime_handle(RuntimeId::FwdStreamerRuntime),
+            },
+            StreamerConfig {
+                params: vote_quic_server_config,
+                runtime_handle: runtimes.get_runtime_handle(RuntimeId::VoteStreamerRuntime),
+            },
             &prioritization_fee_cache,
             config.block_production_method.clone(),
             config.block_production_num_workers,
@@ -2814,6 +2824,9 @@ enum RuntimeId {
     TpuClientNextRuntime,
     TurbineQuicEndpointRuntime,
     RepairQuicEndpointsRuntime,
+    TpuStreamerRuntime,
+    FwdStreamerRuntime,
+    VoteStreamerRuntime,
 }
 
 impl fmt::Display for RuntimeId {
@@ -2822,6 +2835,9 @@ impl fmt::Display for RuntimeId {
             RuntimeId::TpuClientNextRuntime => "solTpuClientRt",
             RuntimeId::TurbineQuicEndpointRuntime => "solTurbineQuic",
             RuntimeId::RepairQuicEndpointsRuntime => "solRepairQuic",
+            RuntimeId::TpuStreamerRuntime => "solTpuStreamerRt",
+            RuntimeId::FwdStreamerRuntime => "solQuicTpuFwdRt",
+            RuntimeId::VoteStreamerRuntime => "solQuicTVoteRt",
         };
         f.write_str(s)
     }
