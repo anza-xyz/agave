@@ -11,7 +11,7 @@ use {
     log::*,
     rand::{seq::SliceRandom, thread_rng},
     solana_accounts_db::{
-        accounts_db::{AccountShrinkThreshold, AccountsDbConfig, MarkObsoleteAccounts},
+        accounts_db::{AccountsDbConfig, MarkObsoleteAccounts},
         accounts_file::StorageAccess,
         accounts_index::{AccountsIndexConfig, ScanFilter},
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -239,8 +239,6 @@ pub fn execute(
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
 
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
-    let accounts_shrink_optimize_total_space =
-        value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let tpu_use_quic = !matches.is_present("tpu_disable_quic");
     if !tpu_use_quic {
         warn!(
@@ -259,19 +257,6 @@ pub fn execute(
 
     let tpu_connection_pool_size = value_t_or_exit!(matches, "tpu_connection_pool_size", usize);
 
-    let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
-    if !(0.0..=1.0).contains(&shrink_ratio) {
-        Err(format!(
-            "the specified account-shrink-ratio is invalid, it must be between 0. and 1.0 \
-             inclusive: {shrink_ratio}"
-        ))?;
-    }
-
-    let shrink_ratio = if accounts_shrink_optimize_total_space {
-        AccountShrinkThreshold::TotalSpace { shrink_ratio }
-    } else {
-        AccountShrinkThreshold::IndividualStore { shrink_ratio }
-    };
     let entrypoint_addrs = run_args.entrypoints;
     for addr in &entrypoint_addrs {
         if !run_args.socket_addr_space.check(addr) {
@@ -364,7 +349,7 @@ pub fn execute(
         account_indexes: run_args.accounts_db_config.account_indexes.clone(),
         base_working_path: Some(ledger_path.clone()),
         shrink_paths: run_args.accounts_db_config.shrink_paths.clone(),
-        shrink_ratio,
+        shrink_ratio: run_args.accounts_db_config.shrink_ratio.clone(),
         read_cache_limit_bytes,
         write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
             .ok()
