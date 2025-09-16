@@ -322,12 +322,7 @@ pub fn execute(
         read_cache_limit_bytes: run_args.accounts_db_config.read_cache_limit_bytes.clone(),
         write_cache_limit_bytes: run_args.accounts_db_config.write_cache_limit_bytes.clone(),
         ancient_append_vec_offset: run_args.accounts_db_config.ancient_append_vec_offset.clone(),
-        ancient_storage_ideal_size: value_t!(
-            matches,
-            "accounts_db_ancient_storage_ideal_size",
-            u64
-        )
-        .ok(),
+        ancient_storage_ideal_size: run_args.accounts_db_config.ancient_storage_ideal_size.clone(),
         max_ancient_storages: value_t!(matches, "accounts_db_max_ancient_storages", usize).ok(),
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         storage_access,
