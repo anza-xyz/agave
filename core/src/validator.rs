@@ -142,6 +142,7 @@ use {
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
+        fmt,
         net::SocketAddr,
         num::NonZeroUsize,
         path::{Path, PathBuf},
@@ -155,7 +156,7 @@ use {
     strum::VariantNames,
     strum_macros::{Display, EnumCount, EnumIter, EnumString, EnumVariantNames, IntoStaticStr},
     thiserror::Error,
-    tokio::runtime::Runtime as TokioRuntime,
+    tokio::runtime::{Handle as TokioRuntimeHandle, Runtime as TokioRuntime},
     tokio_util::sync::CancellationToken,
 };
 
@@ -581,16 +582,11 @@ pub struct Validator {
     blockstore_metric_report_service: BlockstoreMetricReportService,
     accounts_background_service: AccountsBackgroundService,
     turbine_quic_endpoint: Option<Endpoint>,
-    turbine_quic_endpoint_runtime: Option<TokioRuntime>,
     turbine_quic_endpoint_join_handle: Option<solana_turbine::quic_endpoint::AsyncTryJoinHandle>,
     repair_quic_endpoints: Option<[Endpoint; 3]>,
-    repair_quic_endpoints_runtime: Option<TokioRuntime>,
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
     xdp_retransmitter: Option<XdpRetransmitter>,
-    // This runtime is used to run the client owned by SendTransactionService.
-    // We don't wait for its JoinHandle here because ownership and shutdown
-    // are managed elsewhere. This variable is intentionally unused.
-    _tpu_client_next_runtime: Option<TokioRuntime>,
+    runtimes: RuntimeRegistry,
 }
 
 impl Validator {
@@ -1128,21 +1124,7 @@ impl Validator {
             ))
         };
 
-        // test-validator crate may start the validator in a tokio runtime
-        // context which forces us to use the same runtime because a nested
-        // runtime will cause panic at drop. Outside test-validator crate, we
-        // always need a tokio runtime (and the respective handle) to initialize
-        // the turbine QUIC endpoint.
-        let current_runtime_handle = tokio::runtime::Handle::try_current();
-        let tpu_client_next_runtime =
-            (current_runtime_handle.is_err() && config.use_tpu_client_next).then(|| {
-                tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .worker_threads(2)
-                    .thread_name("solTpuClientRt")
-                    .build()
-                    .unwrap()
-            });
+        let mut runtimes = RuntimeRegistry::new();
 
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
@@ -1170,10 +1152,9 @@ impl Validator {
             };
 
             let client_option = if config.use_tpu_client_next {
-                let runtime_handle = tpu_client_next_runtime
-                    .as_ref()
-                    .map(TokioRuntime::handle)
-                    .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+                runtimes.insert_runtime(RuntimeId::TpuClientNextRuntime, 2);
+
+                let runtime_handle = runtimes.get_runtime_handle(RuntimeId::TpuClientNextRuntime);
                 ClientOption::TpuClientNext(
                     Arc::as_ref(&identity_keypair),
                     node.sockets.rpc_sts_client,
@@ -1394,15 +1375,6 @@ impl Validator {
             .as_ref()
             .map(|service| service.sender_cloned());
 
-        let turbine_quic_endpoint_runtime = (current_runtime_handle.is_err()
-            && genesis_config.cluster_type != ClusterType::MainnetBeta)
-            .then(|| {
-                tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .thread_name("solTurbineQuic")
-                    .build()
-                    .unwrap()
-            });
         let (turbine_quic_endpoint_sender, turbine_quic_endpoint_receiver) = unbounded();
         let (
             turbine_quic_endpoint,
@@ -1412,11 +1384,10 @@ impl Validator {
             let (sender, _receiver) = tokio::sync::mpsc::channel(1);
             (None, sender, None)
         } else {
+            runtimes.insert_runtime(RuntimeId::TurbineQuicEndpointRuntime, 4);
+            let runtime_handle = runtimes.get_runtime_handle(RuntimeId::TurbineQuicEndpointRuntime);
             solana_turbine::quic_endpoint::new_quic_endpoint(
-                turbine_quic_endpoint_runtime
-                    .as_ref()
-                    .map(TokioRuntime::handle)
-                    .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap()),
+                &runtime_handle,
                 &identity_keypair,
                 node.sockets.tvu_quic,
                 turbine_quic_endpoint_sender,
@@ -1427,15 +1398,6 @@ impl Validator {
         };
 
         // Repair quic endpoint.
-        let repair_quic_endpoints_runtime = (current_runtime_handle.is_err()
-            && genesis_config.cluster_type != ClusterType::MainnetBeta)
-            .then(|| {
-                tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .thread_name("solRepairQuic")
-                    .build()
-                    .unwrap()
-            });
         let (repair_quic_endpoints, repair_quic_async_senders, repair_quic_endpoints_join_handle) =
             if genesis_config.cluster_type == ClusterType::MainnetBeta {
                 (None, RepairQuicAsyncSenders::new_dummy(), None)
@@ -1450,11 +1412,11 @@ impl Validator {
                     repair_response_quic_sender,
                     ancestor_hashes_response_quic_sender,
                 };
+                runtimes.insert_runtime(RuntimeId::RepairQuicEndpointsRuntime, 4);
+                let runtime_handle =
+                    runtimes.get_runtime_handle(RuntimeId::RepairQuicEndpointsRuntime);
                 repair::quic_endpoint::new_quic_endpoints(
-                    repair_quic_endpoints_runtime
-                        .as_ref()
-                        .map(TokioRuntime::handle)
-                        .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap()),
+                    &runtime_handle,
                     &identity_keypair,
                     repair_quic_sockets,
                     repair_quic_senders,
@@ -1625,10 +1587,7 @@ impl Validator {
         let forwarding_tpu_client = if let Some(connection_cache) = &connection_cache {
             ForwardingClientOption::ConnectionCache(connection_cache.clone())
         } else {
-            let runtime_handle = tpu_client_next_runtime
-                .as_ref()
-                .map(TokioRuntime::handle)
-                .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+            let runtime_handle = runtimes.get_runtime_handle(RuntimeId::TpuClientNextRuntime);
             ForwardingClientOption::TpuClientNext((
                 Arc::as_ref(&identity_keypair),
                 tpu_transactions_forwards_client_sockets.take().unwrap(),
@@ -1754,13 +1713,11 @@ impl Validator {
             blockstore_metric_report_service,
             accounts_background_service,
             turbine_quic_endpoint,
-            turbine_quic_endpoint_runtime,
             turbine_quic_endpoint_join_handle,
             repair_quic_endpoints,
-            repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
             xdp_retransmitter,
-            _tpu_client_next_runtime: tpu_client_next_runtime,
+            runtimes,
         })
     }
 
@@ -1868,7 +1825,10 @@ impl Validator {
             .join()
             .expect("serve_repair_service");
         if let Some(repair_quic_endpoints_join_handle) = self.repair_quic_endpoints_join_handle {
-            self.repair_quic_endpoints_runtime
+            let repair_quic_endpoints_runtime = self
+                .runtimes
+                .get_runtime(RuntimeId::RepairQuicEndpointsRuntime);
+            repair_quic_endpoints_runtime
                 .map(|runtime| runtime.block_on(repair_quic_endpoints_join_handle))
                 .transpose()
                 .unwrap();
@@ -1891,7 +1851,10 @@ impl Validator {
         self.tpu.join().expect("tpu");
         self.tvu.join().expect("tvu");
         if let Some(turbine_quic_endpoint_join_handle) = self.turbine_quic_endpoint_join_handle {
-            self.turbine_quic_endpoint_runtime
+            let turbine_quic_endpoint_runtime = self
+                .runtimes
+                .get_runtime(RuntimeId::TurbineQuicEndpointRuntime);
+            turbine_quic_endpoint_runtime
                 .map(|runtime| runtime.block_on(turbine_quic_endpoint_join_handle))
                 .transpose()
                 .unwrap();
@@ -2829,6 +2792,102 @@ pub fn is_snapshot_config_valid(snapshot_config: &SnapshotConfig) -> bool {
         SnapshotInterval::Disabled => true,
         SnapshotInterval::Slots(incremental_snapshot_interval_slots) => {
             full_snapshot_interval_slots > incremental_snapshot_interval_slots
+        }
+    }
+}
+
+/// [`RuntimeRegistry`] structured holds runtimes for different components of the
+/// validator.
+struct RuntimeRegistry {
+    runtimes: HashMap<RuntimeId, RuntimeOption>,
+}
+
+/// [`RuntimeOption`] represents the current runtime if available or a dedicated
+/// runtime.
+enum RuntimeOption {
+    Current,
+    Runtime(TokioRuntime),
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+enum RuntimeId {
+    TpuClientNextRuntime,
+    TurbineQuicEndpointRuntime,
+    RepairQuicEndpointsRuntime,
+}
+
+impl fmt::Display for RuntimeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            RuntimeId::TpuClientNextRuntime => "solTpuClientRt",
+            RuntimeId::TurbineQuicEndpointRuntime => "solTurbineQuic",
+            RuntimeId::RepairQuicEndpointsRuntime => "solRepairQuic",
+        };
+        f.write_str(s)
+    }
+}
+
+impl RuntimeRegistry {
+    fn new() -> Self {
+        Self {
+            runtimes: HashMap::new(),
+        }
+    }
+
+    /// Create a new runtime with the given name and number of worker threads.
+    ///
+    /// If a runtime with the same name already exists, this function will
+    /// panic.
+    fn insert_runtime(&mut self, id: RuntimeId, num_threads: usize) {
+        assert!(
+            !self.runtimes.contains_key(&id),
+            "runtime with id {:?} already exists",
+            id
+        );
+
+        // test-validator crate may start the validator in a tokio runtime
+        // context which forces us to use the same runtime because a nested
+        // runtime will cause panic at drop. Outside test-validator crate, we
+        // always need a tokio runtime (and the respective handle) to initialize
+        // the turbine QUIC endpoint.
+        match tokio::runtime::Handle::try_current() {
+            Ok(_) => {
+                self.runtimes.insert(id, RuntimeOption::Current);
+            }
+            Err(_) => {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .worker_threads(num_threads)
+                    .thread_name(id.to_string())
+                    .build()
+                    .unwrap();
+                self.runtimes.insert(id, RuntimeOption::Runtime(runtime));
+            }
+        }
+    }
+
+    /// Get a reference to the runtime with the given id.
+    fn get_runtime(&self, id: RuntimeId) -> Option<&TokioRuntime> {
+        let runtime = self.runtimes.get(&id)?;
+        match runtime {
+            RuntimeOption::Current => None,
+            RuntimeOption::Runtime(runtime) => Some(runtime),
+        }
+    }
+
+    /// Get a reference to the runtime with the given id.
+    fn get_runtime_handle(&self, id: RuntimeId) -> TokioRuntimeHandle {
+        let runtime = self.runtimes.get(&id).unwrap_or_else(|| {
+            panic!(
+                "runtime with id {:?} does not exist. Available runtimes: {:?}",
+                id,
+                self.runtimes.keys().collect::<Vec<_>>()
+            )
+        });
+        match runtime {
+            RuntimeOption::Current => tokio::runtime::Handle::try_current()
+                .expect("Current runtime should exist because it was created"),
+            RuntimeOption::Runtime(runtime) => runtime.handle().clone(),
         }
     }
 }
