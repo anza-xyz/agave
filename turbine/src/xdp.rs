@@ -188,6 +188,20 @@ impl XdpRetransmitter {
             let dev = Arc::clone(&dev);
             let drop_sender = drop_sender.clone();
             let atomic_router = Arc::clone(&atomic_router);
+            
+            // For GRE tunnel interfaces, only use queue 0
+            // Physical interfaces can use multiple queues
+            let queue_id = if dev.name().starts_with("gre") || 
+                              dev.name().starts_with("gretap") || 
+                              dev.name().starts_with("erspan") ||
+                              dev.name().starts_with("doublezero") {
+                log::info!("greg: Using queue 0 for GRE tunnel interface {}", dev.name());
+                QueueId(0)
+            } else {
+                log::info!("greg: Using queue {} for physical interface {}", i, dev.name());
+                QueueId(i as u64)
+            };
+            
             threads.push(
                 Builder::new()
                     .name(format!("solRetransmIO{i:02}"))
@@ -195,7 +209,7 @@ impl XdpRetransmitter {
                         tx_loop(
                             cpu_id,
                             &dev,
-                            QueueId(i as u64),
+                            queue_id,
                             config.zero_copy,
                             None,
                             None,
