@@ -10,16 +10,18 @@
 //! getter and setter API around vote state, for all operations required by the
 //! vote program.
 
-#[cfg(test)]
-use solana_vote_interface::state::Lockout;
 use {
-    solana_clock::{Clock, Epoch, Slot},
+    solana_clock::{Clock, Epoch, Slot, UnixTimestamp},
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
     solana_transaction_context::BorrowedInstructionAccount,
     solana_vote_interface::{
         error::VoteError,
-        state::{LandedVote, VoteInit, VoteState1_14_11, VoteStateV3, VoteStateVersions},
+        state::{
+            BlockTimestamp, LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3,
+            VoteStateVersions, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
+            VOTE_CREDITS_GRACE_SLOTS, VOTE_CREDITS_MAXIMUM_PER_SLOT,
+        },
     },
     std::collections::VecDeque,
 };
@@ -61,7 +63,10 @@ pub trait VoteStateHandle {
 
     fn set_votes(&mut self, votes: VecDeque<LandedVote>);
 
-    fn contains_slot(&self, slot: Slot) -> bool;
+    /// Returns if the vote state contains a vote for the slot `candidate_slot`
+    fn contains_slot(&self, candidate_slot: Slot) -> bool;
+
+    fn last_lockout(&self) -> Option<&Lockout>;
 
     fn last_voted_slot(&self) -> Option<Slot>;
 
@@ -73,11 +78,21 @@ pub trait VoteStateHandle {
 
     fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)>;
 
+    /// Returns the credits to award for a vote at the given lockout slot index
     fn credits_for_vote_at_index(&self, index: usize) -> u64;
 
+    /// increment credits, record credits for last epoch if new epoch
     fn increment_credits(&mut self, epoch: Epoch, credits: u64);
 
     fn process_timestamp(&mut self, slot: Slot, timestamp: i64) -> Result<(), VoteError>;
+
+    // Pop all recent votes that are not locked out at the next vote slot.  This
+    // allows validators to switch forks once their votes for another fork have
+    // expired. This also allows validators continue voting on recent blocks in
+    // the same fork without increasing lockouts.
+    fn pop_expired_votes(&mut self, next_vote_slot: Slot);
+
+    fn double_lockouts(&mut self);
 
     fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot);
 
@@ -89,7 +104,7 @@ pub trait VoteStateHandle {
 
 impl VoteStateHandle for VoteStateV3 {
     fn is_uninitialized(&self) -> bool {
-        self.is_uninitialized()
+        self.authorized_voters.is_empty()
     }
 
     fn authorized_withdrawer(&self) -> &Pubkey {
@@ -110,14 +125,67 @@ impl VoteStateHandle for VoteStateV3 {
     where
         F: Fn(Pubkey) -> Result<(), InstructionError>,
     {
-        self.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
+        let epoch_authorized_voter = self.get_and_update_authorized_voter(current_epoch)?;
+        verify(epoch_authorized_voter)?;
+
+        // The offset in slots `n` on which the target_epoch
+        // (default value `DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET`) is
+        // calculated is the number of slots available from the
+        // first slot `S` of an epoch in which to set a new voter for
+        // the epoch at `S` + `n`
+        if self.authorized_voters.contains(target_epoch) {
+            return Err(VoteError::TooSoonToReauthorize.into());
+        }
+
+        // Get the latest authorized_voter
+        let (latest_epoch, latest_authorized_pubkey) = self
+            .authorized_voters
+            .last()
+            .ok_or(InstructionError::InvalidAccountData)?;
+
+        // If we're not setting the same pubkey as authorized pubkey again,
+        // then update the list of prior voters to mark the expiration
+        // of the old authorized pubkey
+        if latest_authorized_pubkey != authorized_pubkey {
+            // Update the epoch ranges of authorized pubkeys that will be expired
+            let epoch_of_last_authorized_switch =
+                self.prior_voters.last().map(|range| range.2).unwrap_or(0);
+
+            // target_epoch must:
+            // 1) Be monotonically increasing due to the clock always
+            //    moving forward
+            // 2) not be equal to latest epoch otherwise this
+            //    function would have returned TooSoonToReauthorize error
+            //    above
+            if target_epoch <= *latest_epoch {
+                return Err(InstructionError::InvalidAccountData);
+            }
+
+            // Commit the new state
+            self.prior_voters.append((
+                *latest_authorized_pubkey,
+                epoch_of_last_authorized_switch,
+                target_epoch,
+            ));
+        }
+
+        self.authorized_voters
+            .insert(target_epoch, *authorized_pubkey);
+
+        Ok(())
     }
 
     fn get_and_update_authorized_voter(
         &mut self,
         current_epoch: Epoch,
     ) -> Result<Pubkey, InstructionError> {
-        self.get_and_update_authorized_voter(current_epoch)
+        let pubkey = self
+            .authorized_voters
+            .get_and_cache_authorized_voter_for_epoch(current_epoch)
+            .ok_or(InstructionError::InvalidAccountData)?;
+        self.authorized_voters
+            .purge_authorized_voters(current_epoch);
+        Ok(pubkey)
     }
 
     fn commission(&self) -> u8 {
@@ -148,12 +216,18 @@ impl VoteStateHandle for VoteStateV3 {
         self.votes = votes;
     }
 
-    fn contains_slot(&self, slot: Slot) -> bool {
-        self.contains_slot(slot)
+    fn contains_slot(&self, candidate_slot: Slot) -> bool {
+        self.votes
+            .binary_search_by(|vote| vote.slot().cmp(&candidate_slot))
+            .is_ok()
+    }
+
+    fn last_lockout(&self) -> Option<&Lockout> {
+        self.votes.back().map(|vote| &vote.lockout)
     }
 
     fn last_voted_slot(&self) -> Option<Slot> {
-        self.last_voted_slot()
+        self.last_lockout().map(|v| v.slot())
     }
 
     fn root_slot(&self) -> Option<Slot> {
@@ -165,7 +239,11 @@ impl VoteStateHandle for VoteStateV3 {
     }
 
     fn current_epoch(&self) -> Epoch {
-        self.current_epoch()
+        if self.epoch_credits.is_empty() {
+            0
+        } else {
+            self.epoch_credits.last().unwrap().0
+        }
     }
 
     fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)> {
@@ -173,19 +251,128 @@ impl VoteStateHandle for VoteStateV3 {
     }
 
     fn credits_for_vote_at_index(&self, index: usize) -> u64 {
-        self.credits_for_vote_at_index(index)
+        let latency = self
+            .votes
+            .get(index)
+            .map_or(0, |landed_vote| landed_vote.latency);
+
+        // If latency is 0, this means that the Lockout was created and stored from a software version that did not
+        // store vote latencies; in this case, 1 credit is awarded
+        if latency == 0 {
+            1
+        } else {
+            match latency.checked_sub(VOTE_CREDITS_GRACE_SLOTS) {
+                None | Some(0) => {
+                    // latency was <= VOTE_CREDITS_GRACE_SLOTS, so maximum credits are awarded
+                    VOTE_CREDITS_MAXIMUM_PER_SLOT as u64
+                }
+
+                Some(diff) => {
+                    // diff = latency - VOTE_CREDITS_GRACE_SLOTS, and diff > 0
+                    // Subtract diff from VOTE_CREDITS_MAXIMUM_PER_SLOT which is the number of credits to award
+                    match VOTE_CREDITS_MAXIMUM_PER_SLOT.checked_sub(diff) {
+                        // If diff >= VOTE_CREDITS_MAXIMUM_PER_SLOT, 1 credit is awarded
+                        None | Some(0) => 1,
+
+                        Some(credits) => credits as u64,
+                    }
+                }
+            }
+        }
     }
 
     fn increment_credits(&mut self, epoch: Epoch, credits: u64) {
-        self.increment_credits(epoch, credits)
+        // increment credits, record by epoch
+
+        // never seen a credit
+        if self.epoch_credits.is_empty() {
+            self.epoch_credits.push((epoch, 0, 0));
+        } else if epoch != self.epoch_credits.last().unwrap().0 {
+            let (_, credits, prev_credits) = *self.epoch_credits.last().unwrap();
+
+            if credits != prev_credits {
+                // if credits were earned previous epoch
+                // append entry at end of list for the new epoch
+                self.epoch_credits.push((epoch, credits, credits));
+            } else {
+                // else just move the current epoch
+                self.epoch_credits.last_mut().unwrap().0 = epoch;
+            }
+
+            // Remove too old epoch_credits
+            if self.epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY {
+                self.epoch_credits.remove(0);
+            }
+        }
+
+        self.epoch_credits.last_mut().unwrap().1 =
+            self.epoch_credits.last().unwrap().1.saturating_add(credits);
     }
 
-    fn process_timestamp(&mut self, slot: Slot, timestamp: i64) -> Result<(), VoteError> {
-        self.process_timestamp(slot, timestamp)
+    fn process_timestamp(&mut self, slot: Slot, timestamp: UnixTimestamp) -> Result<(), VoteError> {
+        if (slot < self.last_timestamp.slot || timestamp < self.last_timestamp.timestamp)
+            || (slot == self.last_timestamp.slot
+                && BlockTimestamp { slot, timestamp } != self.last_timestamp
+                && self.last_timestamp.slot != 0)
+        {
+            return Err(VoteError::TimestampTooOld);
+        }
+        self.last_timestamp = BlockTimestamp { slot, timestamp };
+        Ok(())
+    }
+
+    fn pop_expired_votes(&mut self, next_vote_slot: Slot) {
+        while let Some(vote) = self.last_lockout() {
+            if !vote.is_locked_out_at_slot(next_vote_slot) {
+                self.votes.pop_back();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn double_lockouts(&mut self) {
+        let stack_depth = self.votes.len();
+        for (i, v) in self.votes.iter_mut().enumerate() {
+            // Don't increase the lockout for this vote until we get more confirmations
+            // than the max number of confirmations this vote has seen
+            if stack_depth
+                > i.checked_add(v.confirmation_count() as usize).expect(
+                    "`confirmation_count` and tower_size should be bounded by \
+                     `MAX_LOCKOUT_HISTORY`",
+                )
+            {
+                v.lockout.increase_confirmation_count(1);
+            }
+        }
     }
 
     fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot) {
-        self.process_next_vote_slot(next_vote_slot, epoch, current_slot)
+        // Ignore votes for slots earlier than we already have votes for
+        if self
+            .last_voted_slot()
+            .is_some_and(|last_voted_slot| next_vote_slot <= last_voted_slot)
+        {
+            return;
+        }
+
+        self.pop_expired_votes(next_vote_slot);
+
+        let landed_vote = LandedVote {
+            latency: compute_vote_latency(next_vote_slot, current_slot),
+            lockout: Lockout::new(next_vote_slot),
+        };
+
+        // Once the stack is full, pop the oldest lockout and distribute rewards
+        if self.votes.len() == MAX_LOCKOUT_HISTORY {
+            let credits = self.credits_for_vote_at_index(0);
+            let landed_vote = self.votes.pop_front().unwrap();
+            self.root_slot = Some(landed_vote.slot());
+
+            self.increment_credits(epoch, credits);
+        }
+        self.votes.push_back(landed_vote);
+        self.double_lockouts();
     }
 
     fn set_vote_account_state(
@@ -320,9 +507,15 @@ impl VoteStateHandle for VoteStateHandler {
         }
     }
 
-    fn contains_slot(&self, slot: Slot) -> bool {
+    fn contains_slot(&self, candidate_slot: Slot) -> bool {
         match &self.target_state {
-            TargetVoteState::V3(v3) => v3.contains_slot(slot),
+            TargetVoteState::V3(v3) => v3.contains_slot(candidate_slot),
+        }
+    }
+
+    fn last_lockout(&self) -> Option<&Lockout> {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.last_lockout(),
         }
     }
 
@@ -371,6 +564,18 @@ impl VoteStateHandle for VoteStateHandler {
     fn process_timestamp(&mut self, slot: Slot, timestamp: i64) -> Result<(), VoteError> {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.process_timestamp(slot, timestamp),
+        }
+    }
+
+    fn pop_expired_votes(&mut self, next_vote_slot: Slot) {
+        match &mut self.target_state {
+            TargetVoteState::V3(v3) => v3.pop_expired_votes(next_vote_slot),
+        }
+    }
+
+    fn double_lockouts(&mut self) {
+        match &mut self.target_state {
+            TargetVoteState::V3(v3) => v3.double_lockouts(),
         }
     }
 
@@ -460,20 +665,6 @@ impl VoteStateHandler {
     }
 
     #[cfg(test)]
-    pub fn last_lockout(&self) -> Option<&Lockout> {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.last_lockout(),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn credits(&self) -> u64 {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.credits(),
-        }
-    }
-
-    #[cfg(test)]
     pub fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
         match &self.target_state {
             TargetVoteState::V3(v3) => &v3.epoch_credits,
@@ -481,9 +672,403 @@ impl VoteStateHandler {
     }
 
     #[cfg(test)]
+    pub fn credits(&self) -> u64 {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => {
+                if v3.epoch_credits.is_empty() {
+                    0
+                } else {
+                    v3.epoch_credits.last().unwrap().1
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
     pub fn nth_recent_lockout(&self, position: usize) -> Option<&Lockout> {
         match &self.target_state {
-            TargetVoteState::V3(v3) => v3.nth_recent_lockout(position),
+            TargetVoteState::V3(v3) => {
+                if position < v3.votes.len() {
+                    let pos = v3
+                        .votes
+                        .len()
+                        .checked_sub(position)
+                        .and_then(|pos| pos.checked_sub(1))?;
+                    v3.votes.get(pos).map(|vote| &vote.lockout)
+                } else {
+                    None
+                }
+            }
         }
+    }
+}
+
+// Computes the vote latency for vote on voted_for_slot where the vote itself landed in current_slot
+pub(crate) fn compute_vote_latency(voted_for_slot: Slot, current_slot: Slot) -> u8 {
+    std::cmp::min(current_slot.saturating_sub(voted_for_slot), u8::MAX as u64) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        solana_clock::Clock,
+        solana_epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
+        solana_pubkey::Pubkey,
+        solana_vote_interface::{
+            authorized_voters::AuthorizedVoters,
+            state::{BlockTimestamp, VoteInit, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
+        },
+    };
+
+    fn get_max_sized_vote_state() -> VoteStateV3 {
+        let mut authorized_voters = AuthorizedVoters::default();
+        for i in 0..=MAX_LEADER_SCHEDULE_EPOCH_OFFSET {
+            authorized_voters.insert(i, Pubkey::new_unique());
+        }
+
+        VoteStateV3 {
+            votes: VecDeque::from(vec![LandedVote::default(); MAX_LOCKOUT_HISTORY]),
+            root_slot: Some(u64::MAX),
+            epoch_credits: vec![(0, 0, 0); MAX_EPOCH_CREDITS_HISTORY],
+            authorized_voters,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_set_new_authorized_voter() {
+        let original_voter = Pubkey::new_unique();
+        let epoch_offset = 15;
+        let mut vote_state = VoteStateV3::new(
+            &VoteInit {
+                node_pubkey: original_voter,
+                authorized_voter: original_voter,
+                authorized_withdrawer: original_voter,
+                commission: 0,
+            },
+            &Clock::default(),
+        );
+
+        assert!(vote_state.prior_voters.last().is_none());
+
+        let new_voter = Pubkey::new_unique();
+        // Set a new authorized voter
+        vote_state
+            .set_new_authorized_voter(&new_voter, 0, epoch_offset, |_| Ok(()))
+            .unwrap();
+
+        assert_eq!(
+            vote_state.prior_voters.last(),
+            Some(&(original_voter, 0, epoch_offset))
+        );
+
+        // Trying to set authorized voter for same epoch again should fail
+        assert_eq!(
+            vote_state.set_new_authorized_voter(&new_voter, 0, epoch_offset, |_| Ok(())),
+            Err(VoteError::TooSoonToReauthorize.into())
+        );
+
+        // Setting the same authorized voter again should succeed
+        vote_state
+            .set_new_authorized_voter(&new_voter, 2, 2 + epoch_offset, |_| Ok(()))
+            .unwrap();
+
+        // Set a third and fourth authorized voter
+        let new_voter2 = Pubkey::new_unique();
+        vote_state
+            .set_new_authorized_voter(&new_voter2, 3, 3 + epoch_offset, |_| Ok(()))
+            .unwrap();
+        assert_eq!(
+            vote_state.prior_voters.last(),
+            Some(&(new_voter, epoch_offset, 3 + epoch_offset))
+        );
+
+        let new_voter3 = Pubkey::new_unique();
+        vote_state
+            .set_new_authorized_voter(&new_voter3, 6, 6 + epoch_offset, |_| Ok(()))
+            .unwrap();
+        assert_eq!(
+            vote_state.prior_voters.last(),
+            Some(&(new_voter2, 3 + epoch_offset, 6 + epoch_offset))
+        );
+
+        // Check can set back to original voter
+        vote_state
+            .set_new_authorized_voter(&original_voter, 9, 9 + epoch_offset, |_| Ok(()))
+            .unwrap();
+
+        // Run with these voters for a while, check the ranges of authorized
+        // voters is correct
+        for i in 9..epoch_offset {
+            assert_eq!(
+                vote_state.get_and_update_authorized_voter(i).unwrap(),
+                original_voter
+            );
+        }
+        for i in epoch_offset..3 + epoch_offset {
+            assert_eq!(
+                vote_state.get_and_update_authorized_voter(i).unwrap(),
+                new_voter
+            );
+        }
+        for i in 3 + epoch_offset..6 + epoch_offset {
+            assert_eq!(
+                vote_state.get_and_update_authorized_voter(i).unwrap(),
+                new_voter2
+            );
+        }
+        for i in 6 + epoch_offset..9 + epoch_offset {
+            assert_eq!(
+                vote_state.get_and_update_authorized_voter(i).unwrap(),
+                new_voter3
+            );
+        }
+        for i in 9 + epoch_offset..=10 + epoch_offset {
+            assert_eq!(
+                vote_state.get_and_update_authorized_voter(i).unwrap(),
+                original_voter
+            );
+        }
+    }
+
+    #[test]
+    fn test_authorized_voter_is_locked_within_epoch() {
+        let original_voter = Pubkey::new_unique();
+        let mut vote_state = VoteStateV3::new(
+            &VoteInit {
+                node_pubkey: original_voter,
+                authorized_voter: original_voter,
+                authorized_withdrawer: original_voter,
+                commission: 0,
+            },
+            &Clock::default(),
+        );
+        // Test that it's not possible to set a new authorized
+        // voter within the same epoch, even if none has been
+        // explicitly set before
+        let new_voter = Pubkey::new_unique();
+        assert_eq!(
+            vote_state.set_new_authorized_voter(&new_voter, 1, 1, |_| Ok(())),
+            Err(VoteError::TooSoonToReauthorize.into())
+        );
+        assert_eq!(
+            vote_state.authorized_voters.get_authorized_voter(1),
+            Some(original_voter)
+        );
+        // Set a new authorized voter for a future epoch
+        assert_eq!(
+            vote_state.set_new_authorized_voter(&new_voter, 1, 2, |_| Ok(())),
+            Ok(())
+        );
+        // Test that it's not possible to set a new authorized
+        // voter within the same epoch, even if none has been
+        // explicitly set before
+        assert_eq!(
+            vote_state.set_new_authorized_voter(&original_voter, 3, 3, |_| Ok(())),
+            Err(VoteError::TooSoonToReauthorize.into())
+        );
+        assert_eq!(
+            vote_state.authorized_voters.get_authorized_voter(3),
+            Some(new_voter)
+        );
+    }
+
+    #[test]
+    fn test_get_and_update_authorized_voter() {
+        let original_voter = Pubkey::new_unique();
+        let mut vote_state = VoteStateV3::new(
+            &VoteInit {
+                node_pubkey: original_voter,
+                authorized_voter: original_voter,
+                authorized_withdrawer: original_voter,
+                commission: 0,
+            },
+            &Clock::default(),
+        );
+
+        assert_eq!(vote_state.authorized_voters.len(), 1);
+        assert_eq!(
+            *vote_state.authorized_voters.first().unwrap().1,
+            original_voter
+        );
+
+        // If no new authorized voter was set, the same authorized voter
+        // is locked into the next epoch
+        assert_eq!(
+            vote_state.get_and_update_authorized_voter(1).unwrap(),
+            original_voter
+        );
+
+        // Try to get the authorized voter for epoch 5, implies
+        // the authorized voter for epochs 1-4 were unchanged
+        assert_eq!(
+            vote_state.get_and_update_authorized_voter(5).unwrap(),
+            original_voter
+        );
+
+        // Authorized voter for expired epoch 0..5 should have been
+        // purged and no longer queryable
+        assert_eq!(vote_state.authorized_voters.len(), 1);
+        for i in 0..5 {
+            assert!(vote_state
+                .authorized_voters
+                .get_authorized_voter(i)
+                .is_none());
+        }
+
+        // Set an authorized voter change at slot 7
+        let new_authorized_voter = Pubkey::new_unique();
+        vote_state
+            .set_new_authorized_voter(&new_authorized_voter, 5, 7, |_| Ok(()))
+            .unwrap();
+
+        // Try to get the authorized voter for epoch 6, unchanged
+        assert_eq!(
+            vote_state.get_and_update_authorized_voter(6).unwrap(),
+            original_voter
+        );
+
+        // Try to get the authorized voter for epoch 7 and onwards, should
+        // be the new authorized voter
+        for i in 7..10 {
+            assert_eq!(
+                vote_state.get_and_update_authorized_voter(i).unwrap(),
+                new_authorized_voter
+            );
+        }
+        assert_eq!(vote_state.authorized_voters.len(), 1);
+    }
+
+    #[test]
+    fn test_vote_state_max_size() {
+        let mut max_sized_data = vec![0; VoteStateV3::size_of()];
+        let vote_state = get_max_sized_vote_state();
+        let (start_leader_schedule_epoch, _) = vote_state.authorized_voters.last().unwrap();
+        let start_current_epoch =
+            start_leader_schedule_epoch - MAX_LEADER_SCHEDULE_EPOCH_OFFSET + 1;
+
+        let mut vote_state = Some(vote_state);
+        for i in start_current_epoch..start_current_epoch + 2 * MAX_LEADER_SCHEDULE_EPOCH_OFFSET {
+            vote_state.as_mut().map(|vote_state| {
+                vote_state.set_new_authorized_voter(
+                    &Pubkey::new_unique(),
+                    i,
+                    i + MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
+                    |_| Ok(()),
+                )
+            });
+
+            let versioned = VoteStateVersions::new_v3(vote_state.take().unwrap());
+            VoteStateV3::serialize(&versioned, &mut max_sized_data).unwrap();
+            vote_state = match versioned {
+                VoteStateVersions::V3(v3) => Some(*v3),
+                _ => panic!("should be v3"),
+            };
+        }
+    }
+
+    #[test]
+    fn test_vote_state_epoch_credits() {
+        let mut vote_state = VoteStateV3::default();
+
+        assert_eq!(vote_state.credits(), 0);
+        assert_eq!(vote_state.epoch_credits.clone(), vec![]);
+
+        let mut expected = vec![];
+        let mut credits = 0;
+        let epochs = (MAX_EPOCH_CREDITS_HISTORY + 2) as u64;
+        for epoch in 0..epochs {
+            for _j in 0..epoch {
+                vote_state.increment_credits(epoch, 1);
+                credits += 1;
+            }
+            expected.push((epoch, credits, credits - epoch));
+        }
+
+        while expected.len() > MAX_EPOCH_CREDITS_HISTORY {
+            expected.remove(0);
+        }
+
+        assert_eq!(vote_state.credits(), credits);
+        assert_eq!(vote_state.epoch_credits.clone(), expected);
+    }
+
+    #[test]
+    fn test_vote_state_epoch0_no_credits() {
+        let mut vote_state = VoteStateV3::default();
+
+        assert_eq!(vote_state.epoch_credits.len(), 0);
+        vote_state.increment_credits(1, 1);
+        assert_eq!(vote_state.epoch_credits.len(), 1);
+
+        vote_state.increment_credits(2, 1);
+        assert_eq!(vote_state.epoch_credits.len(), 2);
+    }
+
+    #[test]
+    fn test_vote_state_increment_credits() {
+        let mut vote_state = VoteStateV3::default();
+
+        let credits = (MAX_EPOCH_CREDITS_HISTORY + 2) as u64;
+        for i in 0..credits {
+            vote_state.increment_credits(i, 1);
+        }
+        assert_eq!(vote_state.credits(), credits);
+        assert!(vote_state.epoch_credits.len() <= MAX_EPOCH_CREDITS_HISTORY);
+    }
+
+    #[test]
+    fn test_vote_process_timestamp() {
+        let (slot, timestamp) = (15, 1_575_412_285);
+        let mut vote_state = VoteStateV3 {
+            last_timestamp: BlockTimestamp { slot, timestamp },
+            ..VoteStateV3::default()
+        };
+
+        assert_eq!(
+            vote_state.process_timestamp(slot - 1, timestamp + 1),
+            Err(VoteError::TimestampTooOld)
+        );
+        assert_eq!(
+            vote_state.last_timestamp,
+            BlockTimestamp { slot, timestamp }
+        );
+        assert_eq!(
+            vote_state.process_timestamp(slot + 1, timestamp - 1),
+            Err(VoteError::TimestampTooOld)
+        );
+        assert_eq!(
+            vote_state.process_timestamp(slot, timestamp + 1),
+            Err(VoteError::TimestampTooOld)
+        );
+        assert_eq!(vote_state.process_timestamp(slot, timestamp), Ok(()));
+        assert_eq!(
+            vote_state.last_timestamp,
+            BlockTimestamp { slot, timestamp }
+        );
+        assert_eq!(vote_state.process_timestamp(slot + 1, timestamp), Ok(()));
+        assert_eq!(
+            vote_state.last_timestamp,
+            BlockTimestamp {
+                slot: slot + 1,
+                timestamp
+            }
+        );
+        assert_eq!(
+            vote_state.process_timestamp(slot + 2, timestamp + 1),
+            Ok(())
+        );
+        assert_eq!(
+            vote_state.last_timestamp,
+            BlockTimestamp {
+                slot: slot + 2,
+                timestamp: timestamp + 1
+            }
+        );
+
+        // Test initial vote
+        vote_state.last_timestamp = BlockTimestamp::default();
+        assert_eq!(vote_state.process_timestamp(0, timestamp), Ok(()));
     }
 }

@@ -1,9 +1,9 @@
 [package]
-description = "Blockchain, Rebuilt for Scale"
 name = "proto"
 publish = false
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }

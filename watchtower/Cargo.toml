@@ -1,9 +1,9 @@
 [package]
 name = "agave-watchtower"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/agave-watchtower"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }

@@ -25,7 +25,7 @@ use {
         sync::{atomic::AtomicBool, RwLock},
         thread::{self, Builder, JoinHandle},
     },
-    test_case::test_case,
+    test_case::{test_case, test_matrix},
 };
 
 fn linear_ancestors(end_slot: u64) -> Ancestors {
@@ -116,28 +116,36 @@ impl AccountStorageEntry {
 ///   For test that should panic, use the following syntax.
 ///     define_accounts_db_test!(TEST_NAME, panic = "PANIC_MSG", |accounts_db| { TEST_BODY });
 macro_rules! define_accounts_db_test {
-    (@testfn $name:ident, $accounts_file_provider: ident, |$accounts_db:ident| $inner: tt) => {
-            fn run_test($accounts_db: AccountsDb) {
-                $inner
-            }
-            let accounts_db =
-                AccountsDb::new_single_for_tests_with_provider($accounts_file_provider);
-            run_test(accounts_db);
-
+    (@testfn $name:ident, $accounts_file_provider: ident, $mark_obsolete_accounts: ident, |$accounts_db:ident| $inner: tt) => {
+        fn run_test($accounts_db: AccountsDb) {
+            $inner
+        }
+        let accounts_db = AccountsDb::new_single_for_tests_with_provider_and_config(
+            $accounts_file_provider,
+            AccountsDbConfig {
+                mark_obsolete_accounts: $mark_obsolete_accounts,
+                ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+            },
+        );
+        run_test(accounts_db);
     };
     ($name:ident, |$accounts_db:ident| $inner: tt) => {
-        #[test_case(AccountsFileProvider::AppendVec; "append_vec")]
-        #[test_case(AccountsFileProvider::HotStorage; "hot_storage")]
-        fn $name(accounts_file_provider: AccountsFileProvider) {
-            define_accounts_db_test!(@testfn $name, accounts_file_provider, |$accounts_db| $inner);
+        #[test_matrix(
+            [AccountsFileProvider::AppendVec, AccountsFileProvider::HotStorage],
+            [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled]
+        )]
+        fn $name(accounts_file_provider: AccountsFileProvider, mark_obsolete_accounts: MarkObsoleteAccounts) {
+            define_accounts_db_test!(@testfn $name, accounts_file_provider, mark_obsolete_accounts, |$accounts_db| $inner);
         }
     };
     ($name:ident, panic = $panic_message:literal, |$accounts_db:ident| $inner: tt) => {
-        #[test_case(AccountsFileProvider::AppendVec; "append_vec")]
-        #[test_case(AccountsFileProvider::HotStorage; "hot_storage")]
+        #[test_matrix(
+            [AccountsFileProvider::AppendVec, AccountsFileProvider::HotStorage],
+            [MarkObsoleteAccounts::Enabled, MarkObsoleteAccounts::Disabled]
+        )]
         #[should_panic(expected = $panic_message)]
-        fn $name(accounts_file_provider: AccountsFileProvider) {
-            define_accounts_db_test!(@testfn $name, accounts_file_provider, |$accounts_db| $inner);
+        fn $name(accounts_file_provider: AccountsFileProvider, mark_obsolete_accounts: MarkObsoleteAccounts) {
+            define_accounts_db_test!(@testfn $name, accounts_file_provider, mark_obsolete_accounts, |$accounts_db| $inner);
         }
     };
 }
@@ -615,7 +623,14 @@ define_accounts_db_test!(test_accountsdb_count_stores, |db| {
     {
         let slot_0_store = &db.storage.get_slot_storage_entry(0).unwrap();
         let slot_1_store = &db.storage.get_slot_storage_entry(1).unwrap();
-        assert_eq!(slot_0_store.count(), 2);
+
+        // With obsolete accounts enabled, flush_write_cache will clean pubkeys in slot0
+        // when flushing slot1
+        if db.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
+            assert_eq!(slot_0_store.count(), 1);
+        } else {
+            assert_eq!(slot_0_store.count(), 2);
+        }
         assert_eq!(slot_1_store.count(), 2);
         assert_eq!(slot_0_store.accounts_count(), 2);
         assert_eq!(slot_1_store.accounts_count(), 2);
@@ -4250,6 +4265,9 @@ fn test_clean_drop_dead_storage_handle_zero_lamport_single_ref_accounts() {
     assert!(db.shrink_candidate_slots.lock().unwrap().contains(&1));
 }
 
+/// Tests that shrink correctly marks newly single ref zero lamport accounts and sends them to clean
+/// This test is still relevant with obsolete accounts enabled, but can be removed if all
+/// scenarios where flush_write_cache doesn't clean are eliminated.
 #[test]
 fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     let db = AccountsDb::new_single_for_tests();
@@ -4267,8 +4285,8 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     // Make account_key1 in slot 0 outdated by updating in rooted slot 1 with a zero lamport account
     db.store_for_tests((1, &[(&account_key1, &account0)][..]));
     db.add_root(1);
-    // Flushes all roots
-    db.flush_accounts_cache(true, None);
+    // Flushes all roots without clean
+    db.flush_rooted_accounts_cache(None, false);
 
     // Clean to remove outdated entry from slot 0
     db.clean_accounts(Some(1), false, &EpochSchedule::default());
@@ -4301,12 +4319,13 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     // Flushes all roots
     db.flush_accounts_cache(true, None);
 
-    // Should be one store before clean for slot 0 and slot 1
-    db.get_and_assert_single_storage(0);
+    // Should be one store before clean for slot 1
     db.get_and_assert_single_storage(1);
     db.clean_accounts(Some(2), false, &EpochSchedule::default());
 
-    // No stores should exist for slot 0 after clean
+    // No stores should exist for slot 0. If obsolete accounts are enabled, slot 0 stores are
+    // cleaned when slot 2 is flushed. If obsolete accounts are disabled, slot 0 stores are
+    // cleaned during the clean_accounts function call.
     assert_no_storages_at_slot(&db, 0);
     // No store should exit for slot 1 too as it has only a zero lamport single ref account.
     assert_no_storages_at_slot(&db, 1);

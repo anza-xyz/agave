@@ -211,6 +211,16 @@ impl SnapshotPackagerService {
             start.elapsed(),
         );
 
+        // Mark this directory complete. Used in older versions to check if the snapshot is complete
+        // Never read in v3.1, can be removed in v3.2
+        let result = snapshot_utils::write_snapshot_state_complete_file(&bank_snapshot_dir);
+        if let Err(err) = result {
+            warn!("Failed to mark snapshot 'complete': {err}");
+            // If writing the "state complete" file failed, we do *NOT* want to write
+            // the "storages flushed" file, so return early.
+            return;
+        }
+
         let result = snapshot_utils::write_storages_flushed_file(&bank_snapshot_dir);
         if let Err(err) = result {
             warn!("Failed to mark snapshot storages 'flushed': {err}");
