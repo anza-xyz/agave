@@ -1,5 +1,8 @@
 use {
-    crate::commands::{FromClapArgMatches, Result},
+    crate::{
+        cli::thread_args::{AccountsDbBackgroundThreadsArg, ThreadArg},
+        commands::{FromClapArgMatches, Result},
+    },
     clap::{value_t, values_t, ArgMatches},
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
@@ -8,7 +11,7 @@ use {
         utils::{create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories},
     },
     solana_clap_utils::input_parsers::values_of,
-    std::path::PathBuf,
+    std::{num::NonZeroUsize, path::PathBuf},
 };
 
 impl FromClapArgMatches for AccountsDbConfig {
@@ -110,6 +113,14 @@ impl FromClapArgMatches for AccountsDbConfig {
             })
             .unwrap_or_default();
 
+        let accounts_db_background_threads = {
+            if matches.is_present("accounts_db_clean_threads") {
+                value_t!(matches, "accounts_db_clean_threads", NonZeroUsize)?
+            } else {
+                value_t!(matches, AccountsDbBackgroundThreadsArg::NAME, NonZeroUsize)?
+            }
+        };
+
         Ok(AccountsDbConfig {
             index: Some(accounts_index_config),
             account_indexes: Some(account_indexes),
@@ -123,6 +134,7 @@ impl FromClapArgMatches for AccountsDbConfig {
             exhaustively_verify_refcounts,
             storage_access,
             scan_filter_for_shrinking,
+            num_background_threads: Some(accounts_db_background_threads),
             ..Default::default()
         })
     }
@@ -391,6 +403,31 @@ mod tests {
             vec![
                 "--accounts-db-scan-filter-for-shrinking",
                 accounts_db_scan_filter_for_shrinking,
+            ],
+            expected_args,
+        );
+    }
+
+    #[test_case("--accounts-db-clean-threads", "2", NonZeroUsize::new(2).unwrap())]
+    #[test_case("--accounts-db-background-threads", "2", NonZeroUsize::new(2).unwrap())]
+    fn verify_args_struct_by_command_run_with_accounts_db_background_threads(
+        accounts_db_background_threads: &str,
+        accounts_db_background_threads_value: &str,
+        expected_num_background_threads: NonZeroUsize,
+    ) {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            accounts_db_config: AccountsDbConfig {
+                num_background_threads: Some(expected_num_background_threads),
+                ..default_run_args.accounts_db_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![
+                accounts_db_background_threads,
+                accounts_db_background_threads_value,
             ],
             expected_args,
         );
