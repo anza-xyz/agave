@@ -23,7 +23,10 @@ pub fn new_accounts_db_config(
     matches: &ArgMatches,
     ledger_path: &Path,
 ) -> Result<AccountsDbConfig> {
-    let accounts_index_config = AccountsIndexConfig::from_clap_arg_match(matches)?;
+    let mut accounts_index_config = AccountsIndexConfig::from_clap_arg_match(matches)?;
+    if accounts_index_config.drives.as_ref().unwrap().is_empty() {
+        accounts_index_config.drives = Some(vec![ledger_path.join("accounts_index")]);
+    }
 
     let account_indexes = AccountSecondaryIndexes::from_clap_arg_match(matches)?;
 

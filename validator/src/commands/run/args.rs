@@ -1733,7 +1733,7 @@ mod tests {
                         num_flush_threads: Some(
                             solana_accounts_db::accounts_index::default_num_flush_threads(),
                         ),
-                        drives: Some(vec![]),
+                        drives: Some(vec![ledger_path.join("accounts_index")]),
                         ..AccountsIndexConfig::default()
                     }),
                     account_indexes: Some(AccountSecondaryIndexes::default()),
