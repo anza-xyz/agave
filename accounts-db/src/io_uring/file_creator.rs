@@ -226,6 +226,7 @@ impl<B> IoUringFileCreator<'_, B> {
                     buf,
                     buf_offset: 0,
                     write_len: len,
+                    use_async: false,
                 };
                 state.submitted_writes_size += len;
                 self.ring.push(FileCreatorOp::Write(op))?;
@@ -388,6 +389,7 @@ impl OpenOp {
                 buf,
                 buf_offset: 0,
                 write_len: len,
+                use_async: false,
             };
             ring.context_mut().submitted_writes_size += len;
             ring.push(FileCreatorOp::Write(op));
@@ -432,6 +434,7 @@ struct WriteOp {
     buf: FixedIoBuffer,
     buf_offset: usize,
     write_len: usize,
+    use_async: bool,
 }
 
 impl<'a> WriteOp {
@@ -442,6 +445,7 @@ impl<'a> WriteOp {
             buf,
             buf_offset,
             write_len,
+            use_async,
         } = self;
 
         // Safety: buf is owned by `WriteOp` during the operation handling by the kernel and
@@ -456,6 +460,11 @@ impl<'a> WriteOp {
         .offset(*offset as u64)
         .ioprio(IO_PRIO_BE_HIGHEST)
         .build()
+        .flags(
+            use_async
+                .then_some(squeue::Flags::ASYNC)
+                .unwrap_or_else(squeue::Flags::empty),
+        )
     }
 
     fn complete(
@@ -479,6 +488,7 @@ impl<'a> WriteOp {
             ref mut buf,
             buf_offset,
             write_len,
+            use_async: _,
         } = self;
 
         let buf = mem::replace(buf, FixedIoBuffer::empty());
@@ -493,6 +503,7 @@ impl<'a> WriteOp {
                 buf,
                 buf_offset: total_written,
                 write_len: *write_len - written,
+                use_async: written == 0,
             }));
             return Ok(());
         }
