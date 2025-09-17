@@ -301,9 +301,9 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
         &entrypoint_addrs,
         num_nodes,
         discover_timeout,
-        pubkeys.as_deref(), // find_nodes_by_pubkey
-        &[],                // find_node_by_gossip_addr
-        Some(&gossip_addr), // my_gossip_addr
+        pubkeys.as_deref(),
+        &[],
+        Some(&gossip_addr),
         shred_version,
         socket_addr_space,
     )?;
@@ -348,13 +348,13 @@ fn process_rpc_url(
 
     #[allow(deprecated)]
     let (_all_peers, validators) = discover_peers(
-        None, // keypair
+        None,
         &entrypoint_addrs,
-        Some(1), // num_nodes
+        Some(1),
         Duration::from_secs(timeout),
-        None,               // find_nodes_by_pubkey
-        &entrypoint_addrs,  // find_node_by_gossip_addr
-        Some(&gossip_addr), // my_gossip_addr
+        None,
+        &entrypoint_addrs,
+        Some(&gossip_addr),
         shred_version,
         socket_addr_space,
     )?;

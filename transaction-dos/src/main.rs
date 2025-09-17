@@ -622,14 +622,14 @@ fn main() {
     let rpc_addr = if !skip_gossip {
         info!("Finding cluster entry: {entrypoint_addr:?}");
         let (gossip_nodes, _validators) = discover_peers(
-            None, // keypair
+            None,
             &vec![entrypoint_addr],
-            None,                    // num_nodes
-            Duration::from_secs(60), // timeout
-            None,                    // find_node_by_pubkey
-            &[entrypoint_addr],      // find_node_by_gossip_addr
-            None,                    // my_gossip_addr
-            shred_version.unwrap(),  // my_shred_version
+            None,
+            Duration::from_secs(60),
+            None,
+            &[entrypoint_addr],
+            None,
+            shred_version.unwrap(),
             SocketAddrSpace::Unspecified,
         )
         .unwrap_or_else(|err| {

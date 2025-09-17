@@ -777,14 +777,14 @@ fn main() {
         info!("Finding cluster entry: {:?}", cmd_params.entrypoint_addr);
         let socket_addr_space = SocketAddrSpace::new(cmd_params.allow_private_addr);
         let (gossip_nodes, validators) = discover_peers(
-            None, // keypair
+            None,
             &vec![cmd_params.entrypoint_addr],
-            None,                              // num_nodes
-            Duration::from_secs(60),           // timeout
-            None,                              // find_nodes_by_pubkey
-            &[cmd_params.entrypoint_addr],     // find_node_by_gossip_addr
-            None,                              // my_gossip_addr
-            cmd_params.shred_version.unwrap(), // my_shred_version
+            None,
+            Duration::from_secs(60),
+            None,
+            &[cmd_params.entrypoint_addr],
+            None,
+            cmd_params.shred_version.unwrap(),
             socket_addr_space,
         )
         .unwrap_or_else(|err| {
