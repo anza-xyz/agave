@@ -10145,7 +10145,7 @@ pub mod tests {
             parent_slot,
             num_entries,
             fec_set_index,
-            chained_merkle_root,
+            Some(chained_merkle_root),
             true,
         )
     }
