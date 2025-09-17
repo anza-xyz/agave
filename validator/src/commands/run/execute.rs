@@ -1,12 +1,12 @@
 use {
     crate::{
-        admin_rpc_service::{self, StakedNodesOverrides, load_staked_nodes_overrides},
+        admin_rpc_service::{self, load_staked_nodes_overrides, StakedNodesOverrides},
         bootstrap,
         cli::{self},
-        commands::{FromClapArgMatches, run::args::RunArgs},
+        commands::{run::args::RunArgs, FromClapArgMatches},
         ledger_lockfile, lock_ledger,
     },
-    clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
+    clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     crossbeam_channel::unbounded,
     log::*,
     rand::{seq::SliceRandom, thread_rng},
@@ -22,7 +22,7 @@ use {
     solana_clap_utils::input_parsers::{
         keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of,
     },
-    solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
+    solana_clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
     solana_core::{
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
@@ -30,13 +30,13 @@ use {
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
         validator::{
-            BlockProductionMethod, BlockVerificationMethod, TransactionStructure, Validator,
-            ValidatorConfig, ValidatorError, ValidatorStartProgress, ValidatorTpuConfig,
-            is_snapshot_config_valid,
+            is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
+            TransactionStructure, Validator, ValidatorConfig, ValidatorError,
+            ValidatorStartProgress, ValidatorTpuConfig,
         },
     },
     solana_gossip::{
-        cluster_info::{DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS, NodeConfig},
+        cluster_info::{NodeConfig, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS},
         contact_info::ContactInfo,
         node::Node,
     },
@@ -55,15 +55,15 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_utils::{
-            self, ArchiveFormat, BANK_SNAPSHOTS_DIR, SnapshotInterval, SnapshotVersion,
+            self, ArchiveFormat, SnapshotInterval, SnapshotVersion, BANK_SNAPSHOTS_DIR,
         },
     },
     solana_signer::Signer,
-    solana_streamer::quic::{DEFAULT_TPU_COALESCE, QuicServerParams},
+    solana_streamer::quic::{QuicServerParams, DEFAULT_TPU_COALESCE},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
-        xdp::{XdpConfig, set_cpu_affinity},
+        xdp::{set_cpu_affinity, XdpConfig},
     },
     solana_validator_exit::Exit,
     std::{
@@ -74,7 +74,7 @@ use {
         path::{Path, PathBuf},
         process::exit,
         str::FromStr,
-        sync::{Arc, RwLock, atomic::AtomicBool},
+        sync::{atomic::AtomicBool, Arc, RwLock},
         time::Duration,
     },
 };
@@ -93,7 +93,6 @@ pub fn execute(
     let run_args = RunArgs::from_clap_arg_match(matches)?;
 
     let cli::thread_args::NumThreadConfig {
-        accounts_db_foreground_threads,
         block_production_num_workers,
         ip_echo_server_threads,
         rayon_global_threads,
@@ -312,7 +311,7 @@ pub fn execute(
             .scan_filter_for_shrinking
             .clone(),
         num_background_threads: run_args.accounts_db_config.num_background_threads.clone(),
-        num_foreground_threads: Some(accounts_db_foreground_threads),
+        num_foreground_threads: run_args.accounts_db_config.num_foreground_threads.clone(),
         mark_obsolete_accounts,
         memlock_budget_size: solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
         ..AccountsDbConfig::default()

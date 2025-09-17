@@ -96,7 +96,6 @@ fn new_thread_arg<'a, T: ThreadArg>(default: &str) -> Arg<'_, 'a> {
 }
 
 pub struct NumThreadConfig {
-    pub accounts_db_foreground_threads: NonZeroUsize,
     pub block_production_num_workers: NonZeroUsize,
     pub ip_echo_server_threads: NonZeroUsize,
     pub rayon_global_threads: NonZeroUsize,
@@ -112,11 +111,6 @@ pub struct NumThreadConfig {
 
 pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
     NumThreadConfig {
-        accounts_db_foreground_threads: value_t_or_exit!(
-            matches,
-            AccountsDbForegroundThreadsArg::NAME,
-            NonZeroUsize
-        ),
         block_production_num_workers: value_t_or_exit!(
             matches,
             BlockProductionNumWorkersArg::NAME,
@@ -206,7 +200,7 @@ impl ThreadArg for AccountsDbBackgroundThreadsArg {
     }
 }
 
-struct AccountsDbForegroundThreadsArg;
+pub struct AccountsDbForegroundThreadsArg;
 impl ThreadArg for AccountsDbForegroundThreadsArg {
     const NAME: &'static str = "accounts_db_foreground_threads";
     const LONG_NAME: &'static str = "accounts-db-foreground-threads";

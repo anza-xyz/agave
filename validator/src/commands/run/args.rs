@@ -1739,6 +1739,12 @@ mod tests {
                         NonZeroUsize::new(solana_accounts_db::accounts_db::quarter_thread_count())
                             .unwrap(),
                     ),
+                    num_foreground_threads: Some(
+                        NonZeroUsize::new(
+                            solana_accounts_db::accounts_db::default_num_foreground_threads(),
+                        )
+                        .unwrap(),
+                    ),
                     ..AccountsDbConfig::default()
                 },
             }
