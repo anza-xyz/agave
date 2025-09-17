@@ -308,7 +308,7 @@ pub fn execute(
         num_background_threads: run_args.accounts_db_config.num_background_threads.clone(),
         num_foreground_threads: run_args.accounts_db_config.num_foreground_threads.clone(),
         mark_obsolete_accounts: run_args.accounts_db_config.mark_obsolete_accounts.clone(),
-        memlock_budget_size: solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
+        memlock_budget_size: run_args.accounts_db_config.memlock_budget_size.clone(),
         ..AccountsDbConfig::default()
     };
 
