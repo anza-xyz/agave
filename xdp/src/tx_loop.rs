@@ -1,6 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
+    log::info,
     crate::{
         device::{NetworkDevice, QueueId, RingSizes},
         netlink::MacAddress,
@@ -54,11 +55,11 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
         dev.mac_addr()
             .expect("no src_mac provided, device must have a MAC address")
     });
-    let src_ip = src_ip.unwrap_or_else(|| {
-        // if no source IP is provided, use the device's IPv4 address
-        dev.ipv4_addr()
-            .expect("no src_ip provided, device must have an IPv4 address")
-    });
+    // let src_ip = src_ip.unwrap_or_else(|| {
+    //     // if no source IP is provided, use the device's IPv4 address
+    //     dev.ipv4_addr()
+    //         .expect("no src_ip provided, device must have an IPv4 address")
+    // });
 
     // some drivers require frame_size=page_size
     let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
@@ -108,7 +109,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
         None => "UNKNOWN",
     };
     
-    log::info!(
+    info!(
         "greg: Creating XDP socket for interface {} (if_index: {}, type: {}) queue {queue_id:?} zero_copy: {}",
         dev.name(),
         dev.if_index(),
@@ -121,17 +122,28 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
         log::info!("greg: Checking GRE interface state before XDP socket creation");
         // We could add interface state checking here if needed
     }
-    
+
     // Show GRE tunnel info if available
-    if let Some(info) = interface_info {
-        if let Some(gre_tunnel) = &info.gre_tunnel {
-            log::info!(
-                "greg: GRE tunnel endpoints: {} -> {}",
-                gre_tunnel.src_ip,
-                gre_tunnel.dst_ip
-            );
-        }
-    }
+    let src_ip = {
+        let mut ip = None;
+        if let Some(info) = interface_info {
+            if let Some(gre_tunnel) = &info.gre_tunnel {
+                log::info!(
+                    "greg: GRE tunnel endpoints: {} -> {}",
+                    gre_tunnel.src_ip,
+                    gre_tunnel.dst_ip
+                );
+                ip = Some(gre_tunnel.src_ip);
+            } 
+        } 
+        ip.unwrap_or_else(|| {
+            // if no source IP is provided, use the device's IPv4 address
+            dev.ipv4_addr()
+                .expect("no src_ip provided, device must have an IPv4 address")
+        })
+    };
+
+    info!("greg: src_ip: {src_ip}",);
     
     let (mut socket, tx) = match Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) {
         Ok((socket, tx)) => {
@@ -316,6 +328,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                         };
                         let gre_src_ip = gre_tunnel.src_ip;
                         let gre_dst_ip = gre_tunnel.dst_ip;
+                        info!("greg: gre_src_ip: {gre_src_ip}, gre_dst_ip: {gre_dst_ip}");
 
                         // Calculate GRE packet size
                         const INNER_PACKET_HEADER_SIZE: usize = IP_HEADER_SIZE + UDP_HEADER_SIZE;
