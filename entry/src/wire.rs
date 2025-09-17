@@ -149,27 +149,41 @@ impl<O> SeqLen<O> for ShortU16Len<O> {
 
     #[inline(always)]
     fn encode_len(writer: &mut Writer<O>, len: usize) -> bincode::Result<()> {
-        let mut buf = [0; 3];
-        let mut rem_val: u16 = len
-            .try_into()
-            .map_err(|_| Box::new(bincode::ErrorKind::Custom("Invalid short u16".to_string())))?;
-        let mut buf_index = 0;
+        if len > u16::MAX as usize {
+            return Err(Box::new(bincode::ErrorKind::Custom(
+                "Invalid short u16".to_string(),
+            )));
+        }
 
-        loop {
-            let mut elem = (rem_val & 0x7f) as u8;
-            rem_val >>= 7;
-            if rem_val == 0 {
-                buf[buf_index] = elem;
-                buf_index += 1;
-                break;
-            } else {
-                elem |= 0x80;
-                buf[buf_index] = elem;
-                buf_index += 1;
+        let rem = len as u16;
+
+        let needed = 1 + (rem >= 0x80) as usize + (rem >= 0x4000) as usize;
+        let cap = writer.buffer.capacity();
+        let free = cap.wrapping_sub(writer.pos);
+        if free < needed {
+            return Err(bincode::ErrorKind::SizeLimit.into());
+        }
+
+        unsafe {
+            let dst = writer.buffer.as_mut_ptr().add(writer.pos);
+
+            match needed {
+                1 => std::ptr::write(dst, rem as u8),
+                2 => {
+                    std::ptr::write(dst, ((rem & 0x7f) as u8) | 0x80);
+                    std::ptr::write(dst.add(1), (rem >> 7) as u8);
+                }
+                3 => {
+                    std::ptr::write(dst, ((rem & 0x7f) as u8) | 0x80);
+                    std::ptr::write(dst.add(1), (((rem >> 7) & 0x7f) as u8) | 0x80);
+                    std::ptr::write(dst.add(2), (rem >> 14) as u8);
+                }
+                _ => unreachable!(),
             }
         }
 
-        writer.write_bytes(&buf[..buf_index])?;
+        writer.set_pos(writer.pos + needed);
+
         Ok(())
     }
 }
@@ -542,6 +556,14 @@ impl<'a, O> Writer<'a, O> {
         }
     }
 
+    #[inline(always)]
+    fn set_pos(&mut self, pos: usize) {
+        self.pos = pos;
+        unsafe {
+            self.buffer.set_len(pos);
+        }
+    }
+
     /// Write exactly `len` bytes from `buf` into the internal buffer.
     #[inline(always)]
     fn write(&mut self, buf: *const u8, len: usize) -> bincode::Result<()> {
@@ -551,10 +573,7 @@ impl<'a, O> Writer<'a, O> {
         unsafe {
             ptr::copy_nonoverlapping(buf, self.buffer.as_mut_ptr().add(self.pos), len);
         }
-        self.pos += len;
-        unsafe {
-            self.buffer.set_len(self.pos);
-        }
+        self.set_pos(self.pos + len);
         Ok(())
     }
 
