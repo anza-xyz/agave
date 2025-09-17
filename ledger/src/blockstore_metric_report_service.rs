@@ -36,7 +36,6 @@ impl BlockstoreMetricReportService {
 
                     if last_report_time.elapsed() > BLOCKSTORE_METRICS_REPORT_INTERVAL {
                         blockstore.submit_rocksdb_cf_metrics_for_all_cfs();
-                        blockstore.report_rpc_api_metrics();
 
                         last_report_time = Instant::now();
                     }
