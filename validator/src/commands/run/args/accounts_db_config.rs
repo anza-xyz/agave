@@ -13,12 +13,15 @@ use {
         utils::{create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories},
     },
     solana_clap_utils::input_parsers::values_of,
-    std::{num::NonZeroUsize, path::PathBuf},
+    std::{
+        num::NonZeroUsize,
+        path::{Path, PathBuf},
+    },
 };
 
 pub fn new_accounts_db_config(
     matches: &ArgMatches,
-    ledger_path: &PathBuf,
+    ledger_path: &Path,
 ) -> Result<AccountsDbConfig> {
     let accounts_index_config = AccountsIndexConfig::from_clap_arg_match(matches)?;
 
@@ -33,7 +36,7 @@ pub fn new_accounts_db_config(
         return Err(crate::commands::Error::Dynamic(
             Box::<dyn std::error::Error>::from(format!(
                 "the specified account-shrink-ratio is invalid, it must be between 0. and 1.0 \
-             inclusive: {shrink_ratio}"
+                 inclusive: {shrink_ratio}"
             )),
         ));
     }
@@ -133,7 +136,7 @@ pub fn new_accounts_db_config(
     Ok(AccountsDbConfig {
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes),
-        base_working_path: Some(ledger_path.clone()),
+        base_working_path: Some(ledger_path.to_path_buf()),
         shrink_paths: account_shrink_run_paths,
         shrink_ratio,
         read_cache_limit_bytes,
@@ -152,6 +155,7 @@ pub fn new_accounts_db_config(
     })
 }
 
+#[allow(clippy::type_complexity)]
 pub fn parse_account_shrink_paths(
     matches: &ArgMatches,
 ) -> Result<(Option<Vec<PathBuf>>, Option<Vec<PathBuf>>)> {
@@ -262,8 +266,8 @@ mod tests {
         );
     }
 
-    #[test_case("1,10", (1 * 1024 * 1024, 10 * 1024 * 1024))]
-    #[test_case("1", (1 * 1024 * 1024, 1 * 1024 * 1024))]
+    #[test_case("1,10", (1024 * 1024, 10 * 1024 * 1024))]
+    #[test_case("1", (1024 * 1024, 1024 * 1024))]
     fn verify_args_struct_by_command_run_with_accounts_db_read_cache_limit_mb(
         accounts_db_read_cache_limit_mb: &str,
         expected_read_cache_limit_bytes: (usize, usize),

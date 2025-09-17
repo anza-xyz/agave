@@ -284,31 +284,19 @@ pub fn execute(
         account_indexes: run_args.accounts_db_config.account_indexes.clone(),
         base_working_path: Some(ledger_path.clone()),
         shrink_paths: run_args.accounts_db_config.shrink_paths.clone(),
-        shrink_ratio: run_args.accounts_db_config.shrink_ratio.clone(),
-        read_cache_limit_bytes: run_args.accounts_db_config.read_cache_limit_bytes.clone(),
-        write_cache_limit_bytes: run_args.accounts_db_config.write_cache_limit_bytes.clone(),
-        ancient_append_vec_offset: run_args
-            .accounts_db_config
-            .ancient_append_vec_offset
-            .clone(),
-        ancient_storage_ideal_size: run_args
-            .accounts_db_config
-            .ancient_storage_ideal_size
-            .clone(),
-        max_ancient_storages: run_args.accounts_db_config.max_ancient_storages.clone(),
-        exhaustively_verify_refcounts: run_args
-            .accounts_db_config
-            .exhaustively_verify_refcounts
-            .clone(),
-        storage_access: run_args.accounts_db_config.storage_access.clone(),
-        scan_filter_for_shrinking: run_args
-            .accounts_db_config
-            .scan_filter_for_shrinking
-            .clone(),
-        num_background_threads: run_args.accounts_db_config.num_background_threads.clone(),
-        num_foreground_threads: run_args.accounts_db_config.num_foreground_threads.clone(),
-        mark_obsolete_accounts: run_args.accounts_db_config.mark_obsolete_accounts.clone(),
-        memlock_budget_size: run_args.accounts_db_config.memlock_budget_size.clone(),
+        shrink_ratio: run_args.accounts_db_config.shrink_ratio,
+        read_cache_limit_bytes: run_args.accounts_db_config.read_cache_limit_bytes,
+        write_cache_limit_bytes: run_args.accounts_db_config.write_cache_limit_bytes,
+        ancient_append_vec_offset: run_args.accounts_db_config.ancient_append_vec_offset,
+        ancient_storage_ideal_size: run_args.accounts_db_config.ancient_storage_ideal_size,
+        max_ancient_storages: run_args.accounts_db_config.max_ancient_storages,
+        exhaustively_verify_refcounts: run_args.accounts_db_config.exhaustively_verify_refcounts,
+        storage_access: run_args.accounts_db_config.storage_access,
+        scan_filter_for_shrinking: run_args.accounts_db_config.scan_filter_for_shrinking,
+        num_background_threads: run_args.accounts_db_config.num_background_threads,
+        num_foreground_threads: run_args.accounts_db_config.num_foreground_threads,
+        mark_obsolete_accounts: run_args.accounts_db_config.mark_obsolete_accounts,
+        memlock_budget_size: run_args.accounts_db_config.memlock_budget_size,
         ..AccountsDbConfig::default()
     };
 
