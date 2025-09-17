@@ -270,6 +270,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                     let router = atomic_router.load();
                     let (next_hop, interface_info) = router.route(addr.ip()).unwrap();
 
+                    info!("greg: next_hop: {next_hop:?}");
                     let mut skip = false;
 
                     // sanity check that the address is routable through our NIC
@@ -288,14 +289,17 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
 
                     // we need the MAC address to send the packet
                     // For GRE routes, we use the physical interface's MAC address
-                    let mac_addr = if is_gre_route {
-                        // For GRE tunnels, use the physical interface's MAC address
-                        Some(src_mac)
-                    } else {
-                        next_hop.mac_addr
-                    };
+                    // let mac_addr = if is_gre_route {
+                    //     // For GRE tunnels, use the physical interface's MAC address
+                    //     Some(src_mac) // should this be the next_hop.mac_addr? 
+                    // } else {
+                    //     next_hop.mac_addr
+                    // };
+
+                    let destination_mac_addr = next_hop.mac_addr;
+                    info!("greg: mac_addr: {destination_mac_addr:?}");
                     
-                    if mac_addr.is_none() {
+                    if destination_mac_addr.is_none() {
                         log::warn!(
                             "dropping packet: turbine peer {addr} must be routed through {} which \
                              has no known MAC address",
@@ -351,7 +355,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                             gre_src_ip,
                             gre_dst_ip,
                             &src_mac.0,
-                            &mac_addr.unwrap().0,
+                            &destination_mac_addr.unwrap().0, // i think this should be the next_hop.mac_addr?
                         );
 
                         // Update frame length and submit packet
@@ -367,7 +371,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                         continue;
                     }
 
-                    mac_addr.unwrap()
+                    destination_mac_addr.unwrap()
                 };
 
                 const PACKET_HEADER_SIZE: usize =
