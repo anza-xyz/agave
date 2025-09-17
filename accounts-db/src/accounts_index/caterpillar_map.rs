@@ -6,10 +6,14 @@ use std::sync::{
 use modular_bitfield::{bitfield, prelude::*};
 
 #[derive(Debug)]
-pub enum FixedKindEntry<'a> {
+pub enum CaterpillarEntryView<'a> {
     Inlined(InlinedEntry),
-    Heap(RwLockReadGuard<'a, ExpandedEntry>),
-    HeapMut(RwLockWriteGuard<'a, ExpandedEntry>),
+    HeapRead(RwLockReadGuard<'a, ExpandedEntry>),
+    HeapWrite(RwLockWriteGuard<'a, ExpandedEntry>),
+}
+
+pub struct X {
+    pub foo: std::sync::Arc<u64>,
 }
 
 /// Entry that can turn its payload between inlined and expanded states.
@@ -33,12 +37,12 @@ impl CaterpillarEntry {
         }
     }
 
-    pub fn as_fixed_entry(&self) -> FixedKindEntry {
+    pub fn as_view(&self) -> CaterpillarEntryView {
         UnsafeCaterpillarHolder::from_raw(self.raw_atomic.load(Ordering::Relaxed))
             .into_fixed_entry()
     }
 
-    pub fn as_x_entry(&self) -> CaterpillarCocoon {
+    pub fn as_cocoon(&self) -> CaterpillarCocoon {
         let x = UnsafeCaterpillarHolder::from_raw(self.raw_atomic.load(Ordering::Relaxed))
             .into_fixed_entry();
         CaterpillarCocoon {
@@ -47,12 +51,12 @@ impl CaterpillarEntry {
         }
     }
 
-    pub fn turn_to_expanded(&self) -> FixedKindEntry {
+    pub fn turn_to_expanded(&self) -> CaterpillarEntryView {
         let mut current_raw = self.raw_atomic.load(Ordering::Acquire);
         loop {
             let current_holder = UnsafeCaterpillarHolder::from_raw(current_raw);
             match current_holder.into_fixed_entry() {
-                FixedKindEntry::Inlined(inlined) => {
+                CaterpillarEntryView::Inlined(inlined) => {
                     let new_holder =
                         UnsafeCaterpillarHolder::from_expanded(ExpandedEntry::from(inlined));
                     match self.raw_atomic.compare_exchange(
@@ -70,13 +74,13 @@ impl CaterpillarEntry {
                         }
                     }
                 }
-                e @ FixedKindEntry::Heap(_) => return e,
-                e @ FixedKindEntry::HeapMut(_) => return e,
+                e @ CaterpillarEntryView::HeapRead(_) => return e,
+                e @ CaterpillarEntryView::HeapWrite(_) => return e,
             }
         }
     }
 
-    pub fn turn_to_inlined(&mut self) -> FixedKindEntry {
+    pub fn turn_to_inlined(&mut self) -> CaterpillarEntryView {
         let current_raw = self.raw_atomic.load(Ordering::Acquire);
         let current_holder = UnsafeCaterpillarHolder::from_raw(current_raw);
         if current_holder.is_inlined() {
@@ -104,18 +108,18 @@ impl Drop for CaterpillarEntry {
 
 pub struct CaterpillarCocoon<'a> {
     pub entry: &'a CaterpillarEntry,
-    pub kind: FixedKindEntry<'a>,
+    pub kind: CaterpillarEntryView<'a>,
 }
 
 impl Drop for CaterpillarCocoon<'_> {
     fn drop(&mut self) {
         match std::mem::replace(
             &mut self.kind,
-            FixedKindEntry::Inlined(InlinedEntry::default()),
+            CaterpillarEntryView::Inlined(InlinedEntry::default()),
         ) {
-            FixedKindEntry::Inlined(_) => {}
-            FixedKindEntry::Heap(_) => {}
-            FixedKindEntry::HeapMut(mut write) => {
+            CaterpillarEntryView::Inlined(_) => {}
+            CaterpillarEntryView::HeapRead(_) => {}
+            CaterpillarEntryView::HeapWrite(mut write) => {
                 if write.ref_count == 1 && write.slot_list.len() == 1 {
                     self.entry.raw_atomic.store(
                         UnsafeCaterpillarHolder::from_inlined(
@@ -220,13 +224,13 @@ impl UnsafeCaterpillarHolder {
         unsafe { self.inlined.common_info().is_inlined() }
     }
 
-    fn into_fixed_entry<'a>(self) -> FixedKindEntry<'a> {
+    fn into_fixed_entry<'a>(self) -> CaterpillarEntryView<'a> {
         unsafe {
             if self.is_inlined() {
-                FixedKindEntry::Inlined(self.inlined)
+                CaterpillarEntryView::Inlined(self.inlined)
             } else {
                 let ptr = self.get_expanded_ptr();
-                FixedKindEntry::Heap(ptr.as_ref().unwrap().read().unwrap())
+                CaterpillarEntryView::HeapRead(ptr.as_ref().unwrap().read().unwrap())
             }
         }
     }
@@ -272,13 +276,14 @@ mod tests {
 
     #[test]
     fn test_entry_turning() {
+        assert_eq!(size_of::<X>(), 8);
         let inlined = InlinedEntry::new()
             .with_common_info(CommonEntryInfo::new().with_is_inlined(true))
             .with_file_id(4534)
             .with_offset_reduced(99)
             .with_is_zero_lamports(true);
         let inlined_centry = CaterpillarEntry::from_inlined(inlined);
-        let FixedKindEntry::Inlined(inlined) = inlined_centry.as_fixed_entry() else {
+        let CaterpillarEntryView::Inlined(inlined) = inlined_centry.as_view() else {
             panic!("Unexpected entry type")
         };
         assert_eq!(inlined.file_id(), 4534);
@@ -289,7 +294,7 @@ mod tests {
             slot_list: vec![inlined],
         };
         let expanded_centry = CaterpillarEntry::from_expanded(expanded);
-        let FixedKindEntry::Heap(expanded) = expanded_centry.as_fixed_entry() else {
+        let CaterpillarEntryView::HeapRead(expanded) = expanded_centry.as_view() else {
             panic!("Unexpected entry type")
         };
         assert_eq!(expanded.ref_count, 2);
@@ -297,7 +302,7 @@ mod tests {
         assert_eq!(expanded.slot_list[0].offset_reduced(), 99);
 
         let turning_centry = inlined_centry;
-        let FixedKindEntry::Heap(expanded) = turning_centry.turn_to_expanded() else {
+        let CaterpillarEntryView::HeapRead(expanded) = turning_centry.turn_to_expanded() else {
             panic!("Unexpected entry type")
         };
         assert_eq!(expanded.ref_count, 1);
@@ -307,7 +312,7 @@ mod tests {
 
         let mut mut_turning_centry = turning_centry;
         mut_turning_centry.turn_to_inlined();
-        let FixedKindEntry::Inlined(inlined) = mut_turning_centry.as_fixed_entry() else {
+        let CaterpillarEntryView::Inlined(inlined) = mut_turning_centry.as_view() else {
             panic!("Unexpected entry type")
         };
         assert_eq!(inlined.file_id(), 4534);
