@@ -12,7 +12,6 @@ use {
     rand::{seq::SliceRandom, thread_rng},
     solana_accounts_db::{
         accounts_db::MarkObsoleteAccounts,
-        accounts_index::AccountsIndexConfig,
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
@@ -273,11 +272,6 @@ pub fn execute(
         .unwrap_or_else(|| ledger_path.clone());
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
         Arc::new(tower_storage::FileTowerStorage::new(tower_path));
-
-    let mut accounts_index_config = AccountsIndexConfig::from_clap_arg_match(matches)?;
-    if accounts_index_config.drives.as_ref().unwrap().is_empty() {
-        accounts_index_config.drives = Some(vec![ledger_path.join("accounts_index")]);
-    }
 
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
         Some(
