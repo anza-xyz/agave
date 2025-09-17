@@ -60,8 +60,12 @@ use {
 /// This trait abstracts over these two different encoding schemes, which simpifies
 /// serialization / deserialization over sequences.
 pub trait SeqLen {
+    /// Read the length of a sequence from the reader.
     fn get_len(reader: &mut Reader) -> bincode::Result<usize>;
+    /// Write the length of a sequence to the writer.
     fn encode_len(writer: &mut Writer, len: usize) -> bincode::Result<()>;
+    /// Calculate the number of bytes needed to encode the given length.
+    fn bytes_needed(len: usize) -> bincode::Result<usize>;
 }
 
 struct BincodeLen;
@@ -75,6 +79,11 @@ impl SeqLen for BincodeLen {
     #[inline(always)]
     fn encode_len(writer: &mut Writer, len: usize) -> bincode::Result<()> {
         writer.write_u64(len as u64)
+    }
+
+    #[inline(always)]
+    fn bytes_needed(_len: usize) -> bincode::Result<usize> {
+        Ok(size_of::<u64>())
     }
 }
 
@@ -159,6 +168,11 @@ impl SeqLen for ShortU16Len {
         writer.pos += needed;
 
         Ok(())
+    }
+
+    #[inline(always)]
+    fn bytes_needed(len: usize) -> bincode::Result<usize> {
+        try_short_u16_bytes_needed(len)
     }
 }
 
@@ -683,52 +697,60 @@ where
     }
 }
 
+#[inline(always)]
+fn size_of_seq<T, Len, F>(seq: &[T], _len: Len, size_of_t: F) -> bincode::Result<usize>
+where
+    Len: SeqLen,
+    F: Fn(&T) -> bincode::Result<usize>,
+{
+    Ok(Len::bytes_needed(seq.len())? + seq.iter().map(size_of_t).try_sum()?)
+}
+
+#[inline(always)]
+fn size_of_seq_fixed<T, Len>(seq: &[T], _len: Len, fixed_size: usize) -> bincode::Result<usize>
+where
+    Len: SeqLen,
+{
+    Ok(Len::bytes_needed(seq.len())? + seq.len() * fixed_size)
+}
+
+#[inline(always)]
+fn size_of_seq_bytes<T, Len>(seq: &[T], _len: Len) -> bincode::Result<usize>
+where
+    Len: SeqLen,
+{
+    size_of_seq_fixed(seq, _len, 1)
+}
+
 fn size_of_instruction(instruction: &CompiledInstruction) -> bincode::Result<usize> {
     Ok(size_of::<u8>()
-        + try_short_u16_bytes_needed(instruction.accounts.len())?
-        + instruction.accounts.len()
-        + try_short_u16_bytes_needed(instruction.data.len())?
-        + instruction.data.len())
+        + size_of_seq_bytes(&instruction.accounts, ShortU16Len)?
+        + size_of_seq_bytes(&instruction.data, ShortU16Len)?)
 }
 
 fn size_of_legacy_message(message: &LegacyMessage) -> bincode::Result<usize> {
     Ok(size_of::<MessageHeader>()
-        + try_short_u16_bytes_needed(message.account_keys.len())?
-        + message.account_keys.len() * ADDRESS_BYTES
+        + size_of_seq_fixed(&message.account_keys, ShortU16Len, ADDRESS_BYTES)?
         + HASH_BYTES
-        + try_short_u16_bytes_needed(message.instructions.len())?
-        + message
-            .instructions
-            .iter()
-            .map(size_of_instruction)
-            .try_sum()?)
+        + size_of_seq(&message.instructions, ShortU16Len, size_of_instruction)?)
 }
 
 fn size_of_address_table_lookup(lookup: &MessageAddressTableLookup) -> bincode::Result<usize> {
     Ok(ADDRESS_BYTES
-        + try_short_u16_bytes_needed(lookup.writable_indexes.len())?
-        + lookup.writable_indexes.len()
-        + try_short_u16_bytes_needed(lookup.readonly_indexes.len())?
-        + lookup.readonly_indexes.len())
+        + size_of_seq_bytes(&lookup.writable_indexes, ShortU16Len)?
+        + size_of_seq_bytes(&lookup.readonly_indexes, ShortU16Len)?)
 }
 
 fn size_of_v0_message(message: &V0Message) -> bincode::Result<usize> {
     Ok(size_of::<MessageHeader>()
-        + try_short_u16_bytes_needed(message.account_keys.len())?
-        + message.account_keys.len() * ADDRESS_BYTES
+        + size_of_seq_fixed(&message.account_keys, ShortU16Len, ADDRESS_BYTES)?
         + HASH_BYTES
-        + try_short_u16_bytes_needed(message.instructions.len())?
-        + message
-            .instructions
-            .iter()
-            .map(size_of_instruction)
-            .try_sum()?
-        + try_short_u16_bytes_needed(message.address_table_lookups.len())?
-        + message
-            .address_table_lookups
-            .iter()
-            .map(size_of_address_table_lookup)
-            .try_sum()?)
+        + size_of_seq(&message.instructions, ShortU16Len, size_of_instruction)?
+        + size_of_seq(
+            &message.address_table_lookups,
+            ShortU16Len,
+            size_of_address_table_lookup,
+        )?)
 }
 
 pub fn serialized_size(value: &Entry) -> bincode::Result<u64> {
@@ -736,12 +758,9 @@ pub fn serialized_size(value: &Entry) -> bincode::Result<u64> {
     let mut size = size_of::<u64>();
     // hash
     size += HASH_BYTES;
-    // bincode encoded length of transactions
-    size += size_of::<u64>();
+    size += BincodeLen::bytes_needed(value.transactions.len())?;
     for tx in &value.transactions {
-        // short_len encoded length of signatures
-        size += try_short_u16_bytes_needed(tx.signatures.len())?;
-        size += tx.signatures.len() * SIGNATURE_BYTES;
+        size += size_of_seq_fixed(&tx.signatures, ShortU16Len, SIGNATURE_BYTES)?;
         match &tx.message {
             VersionedMessage::Legacy(message) => {
                 size += size_of_legacy_message(message)?;
@@ -756,8 +775,9 @@ pub fn serialized_size(value: &Entry) -> bincode::Result<u64> {
     Ok(size as u64)
 }
 
+#[inline]
 pub fn serialized_size_multi(entries: &[Entry]) -> bincode::Result<u64> {
-    let mut size = size_of::<u64>() as u64;
+    let mut size = BincodeLen::bytes_needed(entries.len())? as u64;
     for entry in entries {
         size += serialized_size(entry)?;
     }
