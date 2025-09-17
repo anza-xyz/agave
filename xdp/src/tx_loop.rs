@@ -98,7 +98,11 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
 
     // Get interface info to show device type
     let router = atomic_router.load();
-    let interface_info = router.get_interface(dev.if_index());
+    // let interface_info = router.get_interface(dev.if_index());
+    let gre_interface_index = router.get_gre_interface_index().unwrap();
+    // todo: greg: this will fail if no gre interface is found. so make sure to fix
+    // the problem is the interface index we are using here is technically enp65s0f0, not the gre doublezero0
+    let interface_info = router.get_interface(gre_interface_index); 
     let dev_type_str = match interface_info {
         Some(info) => match info.dev_type {
             libc::ARPHRD_ETHER => "ETHERNET",
@@ -118,29 +122,41 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
     );
     
     // Check interface state for GRE interfaces
-    if dev.if_index() == 31 { // doublezero0
-        log::info!("greg: Checking GRE interface state before XDP socket creation");
-        // We could add interface state checking here if needed
-    }
+    // if dev.if_index() == 31 { // doublezero0
+    //     log::info!("greg: Checking GRE interface state before XDP socket creation");
+    //     // We could add interface state checking here if needed
+    // }
 
     // Show GRE tunnel info if available
-    let src_ip = {
-        let mut ip = None;
-        if let Some(info) = interface_info {
-            if let Some(gre_tunnel) = &info.gre_tunnel {
-                log::info!(
-                    "greg: GRE tunnel endpoints: {} -> {}",
-                    gre_tunnel.src_ip,
-                    gre_tunnel.dst_ip
-                );
-                ip = Some(gre_tunnel.src_ip);
-            } 
-        } 
-        ip.unwrap_or_else(|| {
-            // if no source IP is provided, use the device's IPv4 address
+    // let src_ip = {
+    //     let mut ip = None;
+    //     if let Some(info) = interface_info {
+    //         if let Some(gre_tunnel) = &info.gre_tunnel {
+    //             log::info!(
+    //                 "greg: GRE tunnel endpoints: {} -> {}",
+    //                 gre_tunnel.src_ip,
+    //                 gre_tunnel.dst_ip
+    //             );
+    //             ip = Some(gre_tunnel.src_ip);
+    //         } 
+    //     } 
+    //     ip.unwrap_or_else(|| {
+    //         // if no source IP is provided, use the device's IPv4 address
+    //         dev.ipv4_addr()
+    //             .expect("no src_ip provided, device must have an IPv4 address")
+    //     })
+    // };
+
+    let src_ip = if let Some(info) = interface_info {
+        if let Some(gre_tunnel) = &info.gre_tunnel {
+            gre_tunnel.src_ip
+        } else {
             dev.ipv4_addr()
-                .expect("no src_ip provided, device must have an IPv4 address")
-        })
+                .expect("device must have an IPv4 address if not tunneling")
+        }
+    } else {
+        dev.ipv4_addr()
+            .expect("device must have an IPv4 address if not tunneling")
     };
 
     info!("greg: src_ip: {src_ip}",);

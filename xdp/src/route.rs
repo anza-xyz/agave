@@ -120,6 +120,7 @@ pub struct Router {
     arp_table: Arc<ArpTable>,
     routes: Arc<Vec<RouteEntry>>,
     interfaces: Arc<HashMap<u32, InterfaceInfo>>, // if_index (on host) -> InterfaceInfo map
+
 }
 
 impl Router {
@@ -205,6 +206,19 @@ impl Router {
     /// Get interface information by index
     pub fn get_interface(&self, if_index: u32) -> Option<&InterfaceInfo> {
         self.interfaces.get(&if_index)
+    }
+
+    pub fn get_gre_interface_index(&self) -> Option<u32> {
+        log::info!("greg: getting gre interface index");
+        for interface in self.interfaces.iter() {
+            log::info!("greg: interface: {interface:?}");
+        }
+        for (i, interface) in self.interfaces.iter() {
+            if interface.dev_type == ARPHRD_IPGRE {
+                return Some(*i);
+            }
+        }
+        None
     }
 
     /// Test-only method to create a Router with mock data for testing GRE functionality
