@@ -226,6 +226,7 @@ impl<B> IoUringFileCreator<'_, B> {
                     buf,
                     buf_offset: 0,
                     write_len: len,
+                    // don't use async by default to avoid kernel scheduling on unbounded worker pool
                     use_async: false,
                 };
                 state.submitted_writes_size += len;
@@ -448,6 +449,12 @@ impl<'a> WriteOp {
             use_async,
         } = self;
 
+        let flags = if *use_async {
+            squeue::Flags::ASYNC
+        } else {
+            squeue::Flags::empty()
+        };
+
         // Safety: buf is owned by `WriteOp` during the operation handling by the kernel and
         // reclaimed after completion passed in a call to `mark_write_completed`.
         opcode::WriteFixed::new(
@@ -460,11 +467,7 @@ impl<'a> WriteOp {
         .offset(*offset as u64)
         .ioprio(IO_PRIO_BE_HIGHEST)
         .build()
-        .flags(
-            use_async
-                .then_some(squeue::Flags::ASYNC)
-                .unwrap_or_else(squeue::Flags::empty),
-        )
+        .flags(flags)
     }
 
     fn complete(
@@ -478,7 +481,7 @@ impl<'a> WriteOp {
         let written = match res {
             Ok(0) => return Err(io::ErrorKind::WriteZero.into()), // likely a full disk
             Ok(res) => res as usize,
-            Err(err) if err.kind() == io::ErrorKind::WouldBlock => 0, // treat as a kind of short write
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => 0, // retry with async flag
             Err(err) => return Err(err),
         };
 
