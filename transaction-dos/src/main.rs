@@ -11,21 +11,19 @@ use {
         program::ProgramCliCommand,
     },
     solana_client::transaction_executor::TransactionExecutor,
+    solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::{request_airdrop_transaction, FAUCET_PORT},
     solana_gossip::gossip_service::discover,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::{read_keypair_file, Keypair},
+    solana_message::Message,
+    solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{
-        commitment_config::CommitmentConfig,
-        instruction::{AccountMeta, Instruction},
-        message::Message,
-        packet::PACKET_DATA_SIZE,
-        pubkey::Pubkey,
-        rpc_port::DEFAULT_RPC_PORT,
-        signature::{read_keypair_file, Keypair, Signer},
-        system_instruction,
-        transaction::Transaction,
-    },
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_interface::instruction as system_instruction,
+    solana_transaction::Transaction,
     std::{
         net::{Ipv4Addr, SocketAddr},
         process::exit,
@@ -45,7 +43,7 @@ pub fn airdrop_lamports(
     desired_balance: u64,
 ) -> bool {
     let starting_balance = client.get_balance(&id.pubkey()).unwrap_or(0);
-    info!("starting balance {}", starting_balance);
+    info!("starting balance {starting_balance}");
 
     if starting_balance < desired_balance {
         let airdrop_amount = desired_balance - starting_balance;
@@ -69,14 +67,16 @@ pub fn airdrop_lamports(
                     }
                     if tries >= 5 {
                         panic!(
-                            "Error requesting airdrop: to addr: {faucet_addr:?} amount: {airdrop_amount} {result:?}"
+                            "Error requesting airdrop: to addr: {faucet_addr:?} amount: \
+                             {airdrop_amount} {result:?}"
                         )
                     }
                 }
             }
             Err(err) => {
                 panic!(
-                    "Error requesting airdrop: {err:?} to addr: {faucet_addr:?} amount: {airdrop_amount}"
+                    "Error requesting airdrop: {err:?} to addr: {faucet_addr:?} amount: \
+                     {airdrop_amount}"
                 );
             }
         };
@@ -84,7 +84,7 @@ pub fn airdrop_lamports(
         let current_balance = client.get_balance(&id.pubkey()).unwrap_or_else(|e| {
             panic!("airdrop error {e}");
         });
-        info!("current balance {}...", current_balance);
+        info!("current balance {current_balance}...");
 
         if current_balance - starting_balance != airdrop_amount {
             info!(
@@ -161,7 +161,7 @@ fn run_transactions_dos(
         CommitmentConfig::confirmed(),
     ));
 
-    info!("Targeting {}", entrypoint_addr);
+    info!("Targeting {entrypoint_addr}");
 
     let space = maybe_space.unwrap_or(1000);
 
@@ -268,7 +268,7 @@ fn run_transactions_dos(
         .collect();
     let mut last_balance = Instant::now();
 
-    info!("Starting balance(s): {:?}", balances);
+    info!("Starting balance(s): {balances:?}");
 
     let executor = TransactionExecutor::new(entrypoint_addr);
 
@@ -299,10 +299,7 @@ fn run_transactions_dos(
                 }
                 last_balance = Instant::now();
                 if *balance < lamports * 2 {
-                    info!(
-                        "Balance {} is less than needed: {}, doing aidrop...",
-                        balance, lamports
-                    );
+                    info!("Balance {balance} is less than needed: {lamports}, doing aidrop...");
                     if !airdrop_lamports(
                         &client,
                         &faucet_addr,
@@ -377,7 +374,7 @@ fn run_transactions_dos(
             accounts_created = true;
         } else {
             // Create dos transactions
-            info!("creating new batch of size: {}", batch_size);
+            info!("creating new batch of size: {batch_size}");
             let chunk_size = batch_size / payer_keypairs.len();
             for (i, keypair) in payer_keypairs.iter().enumerate() {
                 let txs: Vec<_> = (0..chunk_size)
@@ -414,8 +411,8 @@ fn run_transactions_dos(
         count += 1;
         if last_log.elapsed().as_secs() > 3 {
             info!(
-                "total_dos_messages_sent: {} tx_sent_count: {} loop_count: {} balance(s): {:?}",
-                total_dos_messages_sent, tx_sent_count, count, balances
+                "total_dos_messages_sent: {total_dos_messages_sent} tx_sent_count: \
+                 {tx_sent_count} loop_count: {count} balance(s): {balances:?}"
             );
             last_log = Instant::now();
         }
@@ -476,14 +473,17 @@ fn main() {
                 .takes_value(true)
                 .multiple(true)
                 .value_name("FILE")
-                .help("One or more keypairs to create accounts owned by the program and which the program will write to."),
+                .help(
+                    "One or more keypairs to create accounts owned by the program and which the \
+                     program will write to.",
+                ),
         )
         .arg(
             Arg::with_name("account_groups")
-            .long("account_groups")
-            .takes_value(true)
-            .value_name("NUM")
-            .help("Number of groups of accounts to split the accounts into")
+                .long("account_groups")
+                .takes_value(true)
+                .value_name("NUM")
+                .help("Number of groups of accounts to split the accounts into"),
         )
         .arg(
             Arg::with_name("batch_size")
@@ -518,12 +518,23 @@ fn main() {
                 .long("batch-sleep-ms")
                 .takes_value(true)
                 .value_name("NUM")
-                .help("Sleep for this long the num outstanding transactions is greater than the batch size."),
+                .help(
+                    "Sleep for this long the num outstanding transactions is greater than the \
+                     batch size.",
+                ),
         )
         .arg(
             Arg::with_name("check_gossip")
                 .long("check-gossip")
                 .help("Just use entrypoint address directly"),
+        )
+        .arg(
+            Arg::with_name("shred_version")
+                .long("shred-version")
+                .takes_value(true)
+                .value_name("VERSION")
+                .requires("check_gossip")
+                .help("The shred version to use for node discovery"),
         )
         .arg(
             Arg::with_name("just_calculate_fees")
@@ -540,9 +551,7 @@ fn main() {
         .get_matches();
 
     let skip_gossip = !matches.is_present("check_gossip");
-    let just_calculate_fees = matches.is_present("just_calculate_fees");
-
-    let port = if skip_gossip { DEFAULT_RPC_PORT } else { 8001 };
+    let port = if skip_gossip { 8899 } else { 8001 };
     let mut entrypoint_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     if let Some(addr) = matches.value_of("entrypoint") {
         entrypoint_addr = solana_net_utils::parse_host_port(addr).unwrap_or_else(|e| {
@@ -550,6 +559,24 @@ fn main() {
             exit(1)
         });
     }
+    let shred_version: Option<u16> = if !skip_gossip {
+        if let Ok(version) = value_t!(matches, "shred_version", u16) {
+            Some(version)
+        } else {
+            Some(
+                solana_net_utils::get_cluster_shred_version(&entrypoint_addr).unwrap_or_else(
+                    |err| {
+                        eprintln!("Failed to get shred version: {err}");
+                        exit(1);
+                    },
+                ),
+            )
+        }
+    } else {
+        None
+    };
+
+    let just_calculate_fees = matches.is_present("just_calculate_fees");
     let mut faucet_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, FAUCET_PORT));
     if let Some(addr) = matches.value_of("faucet_addr") {
         faucet_addr = solana_net_utils::parse_host_port(addr).unwrap_or_else(|e| {
@@ -593,7 +620,7 @@ fn main() {
     let account_keypair_refs: Vec<&Keypair> = account_keypairs.iter().collect();
 
     let rpc_addr = if !skip_gossip {
-        info!("Finding cluster entry: {:?}", entrypoint_addr);
+        info!("Finding cluster entry: {entrypoint_addr:?}");
         let (gossip_nodes, _validators) = discover(
             None, // keypair
             Some(&entrypoint_addr),
@@ -602,7 +629,7 @@ fn main() {
             None,                    // find_node_by_pubkey
             Some(&entrypoint_addr),  // find_node_by_gossip_addr
             None,                    // my_gossip_addr
-            0,                       // my_shred_version
+            shred_version.unwrap(),  // my_shred_version
             SocketAddrSpace::Unspecified,
         )
         .unwrap_or_else(|err| {
@@ -613,7 +640,7 @@ fn main() {
         info!("done found {} nodes", gossip_nodes.len());
         gossip_nodes[0].rpc().unwrap()
     } else {
-        info!("Using {:?} as the RPC address", entrypoint_addr);
+        info!("Using {entrypoint_addr:?} as the RPC address");
         entrypoint_addr
     };
 
@@ -646,7 +673,7 @@ pub mod test {
             validator_configs::make_identical_validator_configs,
         },
         solana_measure::measure::Measure,
-        solana_sdk::poh_config::PohConfig,
+        solana_poh_config::PohConfig,
     };
 
     #[test]
@@ -669,10 +696,10 @@ pub mod test {
             &account_metas,
         );
         let signers: Vec<&Keypair> = vec![&keypair];
-        let blockhash = solana_sdk::hash::Hash::default();
+        let blockhash = solana_hash::Hash::default();
         let tx = Transaction::new(&signers, message, blockhash);
         let size = bincode::serialized_size(&tx).unwrap();
-        info!("size:{}", size);
+        info!("size:{size}");
         assert!(size < PACKET_DATA_SIZE as u64);
     }
 
@@ -684,7 +711,7 @@ pub mod test {
         let validator_config = ValidatorConfig::default_for_test();
         let num_nodes = 1;
         let mut config = ClusterConfig {
-            cluster_lamports: 10_000_000,
+            mint_lamports: 10_000_000,
             poh_config: PohConfig::new_sleep(Duration::from_millis(50)),
             node_stakes: vec![100; num_nodes],
             validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
@@ -736,6 +763,6 @@ pub mod test {
             100,
         );
         start.stop();
-        info!("{}", start);
+        info!("{start}");
     }
 }

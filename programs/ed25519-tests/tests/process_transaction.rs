@@ -1,14 +1,9 @@
 use {
-    assert_matches::assert_matches,
-    solana_program_test::*,
-    solana_sdk::{
-        ed25519_instruction::new_ed25519_instruction,
-        feature_set,
-        instruction::InstructionError,
-        precompiles::PrecompileError,
-        signature::Signer,
-        transaction::{Transaction, TransactionError},
-    },
+    assert_matches::assert_matches, ed25519_dalek::ed25519::signature::Signer as EdSigner,
+    solana_ed25519_program::new_ed25519_instruction_with_signature,
+    solana_instruction::error::InstructionError, solana_precompile_error::PrecompileError,
+    solana_program_test::*, solana_signer::Signer, solana_transaction::Transaction,
+    solana_transaction_error::TransactionError,
 };
 
 // Since ed25519_dalek is still using the old version of rand, this test
@@ -35,7 +30,9 @@ async fn test_success() {
 
     let privkey = generate_keypair();
     let message_arr = b"hello";
-    let instruction = new_ed25519_instruction(&privkey, message_arr);
+    let signature = privkey.sign(message_arr).to_bytes();
+    let pubkey = privkey.public.to_bytes();
+    let instruction = new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
 
     let transaction = Transaction::new_signed_with_payer(
         &[instruction],
@@ -48,37 +45,6 @@ async fn test_success() {
 }
 
 #[tokio::test]
-async fn test_failure_without_move_precompiles_feature() {
-    let mut program_test = ProgramTest::default();
-    program_test.deactivate_feature(feature_set::move_precompile_verification_to_svm::id());
-    let mut context = program_test.start_with_context().await;
-
-    let client = &mut context.banks_client;
-    let payer = &context.payer;
-    let recent_blockhash = context.last_blockhash;
-
-    let privkey = generate_keypair();
-    let message_arr = b"hello";
-    let mut instruction = new_ed25519_instruction(&privkey, message_arr);
-
-    instruction.data[0] += 1;
-
-    let transaction = Transaction::new_signed_with_payer(
-        &[instruction],
-        Some(&payer.pubkey()),
-        &[payer],
-        recent_blockhash,
-    );
-
-    assert_matches!(
-        client.process_transaction(transaction).await,
-        Err(BanksClientError::TransactionError(
-            TransactionError::InstructionError(0, InstructionError::Custom(3))
-        ))
-    );
-}
-
-#[tokio::test]
 async fn test_failure() {
     let mut context = ProgramTest::default().start_with_context().await;
 
@@ -88,7 +54,9 @@ async fn test_failure() {
 
     let privkey = generate_keypair();
     let message_arr = b"hello";
-    let mut instruction = new_ed25519_instruction(&privkey, message_arr);
+    let signature = privkey.sign(message_arr).to_bytes();
+    let pubkey = privkey.public.to_bytes();
+    let mut instruction = new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
 
     instruction.data[0] += 1;
 

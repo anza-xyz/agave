@@ -13,10 +13,12 @@ use {
         pki_types::{CertificateDer, PrivateKeyDer},
         CertificateError, KeyLogFile,
     },
+    solana_keypair::Keypair,
+    solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::{pubkey::Pubkey, signature::Keypair},
     solana_tls_utils::{
-        new_dummy_x509_certificate, SkipClientVerification, SkipServerVerification,
+        new_dummy_x509_certificate, socket_addr_to_quic_server_name, tls_client_config_builder,
+        tls_server_config_builder,
     },
     std::{
         cmp::Reverse,
@@ -43,7 +45,6 @@ const CLIENT_CHANNEL_BUFFER: usize = 1 << 14;
 const ROUTER_CHANNEL_BUFFER: usize = 64;
 const CONNECTION_CACHE_CAPACITY: usize = 3072;
 const ALPN_TURBINE_PROTOCOL_ID: &[u8] = b"solana-turbine";
-const CONNECT_SERVER_NAME: &str = "solana-turbine";
 
 // Transport config.
 const DATAGRAM_RECEIVE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
@@ -157,9 +158,7 @@ fn new_server_config(
     cert: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
 ) -> Result<ServerConfig, rustls::Error> {
-    let mut config = rustls::ServerConfig::builder()
-        .with_client_cert_verifier(SkipClientVerification::new())
-        .with_single_cert(vec![cert], key)?;
+    let mut config = tls_server_config_builder().with_single_cert(vec![cert], key)?;
     config.alpn_protocols = vec![ALPN_TURBINE_PROTOCOL_ID.to_vec()];
     config.key_log = Arc::new(KeyLogFile::new());
     let quic_server_config = QuicServerConfig::try_from(config)
@@ -176,10 +175,7 @@ fn new_client_config(
     cert: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
 ) -> Result<ClientConfig, rustls::Error> {
-    let mut config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
-        .with_client_auth_cert(vec![cert], key)?;
+    let mut config = tls_client_config_builder().with_client_auth_cert(vec![cert], key)?;
     config.enable_early_data = true;
     config.alpn_protocols = vec![ALPN_TURBINE_PROTOCOL_ID.to_vec()];
     let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(config).unwrap()));
@@ -231,10 +227,7 @@ async fn run_server(
                 ));
             }
             Err(error) => {
-                debug!(
-                    "Error while accepting incoming connection: {error:?} from {}",
-                    remote_addr
-                );
+                debug!("Error while accepting incoming connection: {error:?} from {remote_addr}");
             }
         }
     }
@@ -511,9 +504,8 @@ async fn make_connection(
     cache: Arc<Mutex<HashMap<Pubkey, Connection>>>,
     stats: Arc<TurbineQuicStats>,
 ) -> Result<(), Error> {
-    let connection = endpoint
-        .connect(remote_address, CONNECT_SERVER_NAME)?
-        .await?;
+    let server_name = socket_addr_to_quic_server_name(remote_address);
+    let connection = endpoint.connect(remote_address, &server_name)?.await?;
     handle_connection(
         endpoint,
         connection.remote_address(),
@@ -827,10 +819,14 @@ mod tests {
         super::*,
         itertools::{izip, multiunzip},
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
-        solana_net_utils::bind_to_localhost,
+        solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
         solana_runtime::bank::Bank,
-        solana_sdk::signature::Signer,
-        std::{iter::repeat_with, time::Duration},
+        solana_signer::Signer,
+        std::{
+            iter::repeat_with,
+            net::{IpAddr, Ipv4Addr},
+            time::Duration,
+        },
     };
 
     #[test]
@@ -843,10 +839,12 @@ mod tests {
             .build()
             .unwrap();
         let keypairs: Vec<Keypair> = repeat_with(Keypair::new).take(NUM_ENDPOINTS).collect();
-        let sockets: Vec<UdpSocket> = repeat_with(bind_to_localhost)
+        let port_range = localhost_port_range_for_tests();
+        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let sockets: Vec<UdpSocket> = (port_range.0..port_range.1)
+            .map(|port| bind_to(ip_addr, port).unwrap())
             .take(NUM_ENDPOINTS)
-            .collect::<Result<_, _>>()
-            .unwrap();
+            .collect();
         let addresses: Vec<SocketAddr> = sockets
             .iter()
             .map(UdpSocket::local_addr)

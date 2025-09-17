@@ -8,29 +8,30 @@ use {
         fail_entry_verification_broadcast_run::FailEntryVerificationBroadcastRun,
         standard_broadcast_run::StandardBroadcastRun,
     },
-    crate::cluster_nodes::{self, ClusterNodes, ClusterNodesCache},
+    crate::{
+        cluster_nodes::{self, ClusterNodes, ClusterNodesCache},
+        xdp::XdpSender,
+    },
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvError, RecvTimeoutError, Sender},
     itertools::{Either, Itertools},
+    solana_clock::Slot,
     solana_gossip::{
         cluster_info::{ClusterInfo, ClusterInfoError},
         contact_info::Protocol,
     },
+    solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, shred::Shred},
     solana_measure::measure::Measure,
     solana_metrics::{inc_new_counter_error, inc_new_counter_info},
     solana_poh::poh_recorder::WorkingBankEntry,
+    solana_pubkey::Pubkey,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
-    solana_sdk::{
-        clock::Slot,
-        pubkey::Pubkey,
-        signature::Keypair,
-        timing::{timestamp, AtomicInterval},
-    },
     solana_streamer::{
         sendmmsg::{batch_send, SendPktsError},
         socket::SocketAddrSpace,
     },
+    solana_time_utils::{timestamp, AtomicInterval},
     static_assertions::const_assert_eq,
     std::{
         collections::{HashMap, HashSet},
@@ -51,7 +52,7 @@ mod broadcast_fake_shreds_run;
 pub mod broadcast_metrics;
 pub(crate) mod broadcast_utils;
 mod fail_entry_verification_broadcast_run;
-mod standard_broadcast_run;
+pub(crate) mod standard_broadcast_run;
 
 const_assert_eq!(CLUSTER_NODES_CACHE_NUM_EPOCH_CAP, 5);
 const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = MAX_LEADER_SCHEDULE_STAKES as usize;
@@ -76,6 +77,8 @@ pub enum Error {
     Recv(#[from] crossbeam_channel::RecvError),
     #[error(transparent)]
     RecvTimeout(#[from] crossbeam_channel::RecvTimeoutError),
+    #[error("Xdp channel full")]
+    XdpChannelFull,
     #[error("Send")]
     Send,
     #[error(transparent)]
@@ -83,7 +86,7 @@ pub enum Error {
     #[error("Shred not found, slot: {slot}, index: {index}")]
     ShredNotFound { slot: Slot, index: u64 },
     #[error(transparent)]
-    TransportError(#[from] solana_sdk::transport::TransportError),
+    TransportError(#[from] solana_transaction_error::TransportError),
     #[error("Unknown last index, slot: {0}")]
     UnknownLastIndex(Slot),
     #[error("Unknown slot meta, slot: {0}")]
@@ -118,6 +121,7 @@ impl BroadcastStageType {
         bank_forks: Arc<RwLock<BankForks>>,
         shred_version: u16,
         quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
+        xdp_sender: Option<XdpSender>,
     ) -> BroadcastStage {
         match self {
             BroadcastStageType::Standard => BroadcastStage::new(
@@ -130,6 +134,7 @@ impl BroadcastStageType {
                 bank_forks,
                 quic_endpoint_sender,
                 StandardBroadcastRun::new(shred_version),
+                xdp_sender,
             ),
 
             BroadcastStageType::FailEntryVerification => BroadcastStage::new(
@@ -142,6 +147,7 @@ impl BroadcastStageType {
                 bank_forks,
                 quic_endpoint_sender,
                 FailEntryVerificationBroadcastRun::new(shred_version),
+                xdp_sender,
             ),
 
             BroadcastStageType::BroadcastFakeShreds => BroadcastStage::new(
@@ -154,6 +160,7 @@ impl BroadcastStageType {
                 bank_forks,
                 quic_endpoint_sender,
                 BroadcastFakeShredsRun::new(0, shred_version),
+                xdp_sender,
             ),
 
             BroadcastStageType::BroadcastDuplicates(config) => BroadcastStage::new(
@@ -166,6 +173,7 @@ impl BroadcastStageType {
                 bank_forks,
                 quic_endpoint_sender,
                 BroadcastDuplicatesRun::new(shred_version, config.clone()),
+                xdp_sender,
             ),
         }
     }
@@ -184,7 +192,7 @@ trait BroadcastRun {
         &mut self,
         receiver: &TransmitReceiver,
         cluster_info: &ClusterInfo,
-        sock: &UdpSocket,
+        sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
         quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()>;
@@ -249,7 +257,7 @@ impl BroadcastStage {
                 | Error::ClusterInfo(ClusterInfoError::NoPeers) => (), // TODO: Why are the unit-tests throwing hundreds of these?
                 _ => {
                     inc_new_counter_error!("streamer-broadcaster-error", 1, 1);
-                    error!("{} broadcaster error: {:?}", name, e);
+                    error!("{name} broadcaster error: {e:?}");
                 }
             }
         }
@@ -283,6 +291,7 @@ impl BroadcastStage {
         bank_forks: Arc<RwLock<BankForks>>,
         quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         mut broadcast_stage_run: impl BroadcastRun + Send + 'static + Clone,
+        xdp_sender: Option<XdpSender>,
     ) -> Self {
         let (socket_sender, socket_receiver) = unbounded();
         let (blockstore_sender, blockstore_receiver) = unbounded();
@@ -308,22 +317,57 @@ impl BroadcastStage {
                 .unwrap()
         };
         let mut thread_hdls = vec![thread_hdl];
-        thread_hdls.extend(socks.into_iter().map(|sock| {
+        let num_broadcast_sockets_per_interface = socks.len() / cluster_info.bind_ip_addrs().len();
+        let num_interfaces: usize = cluster_info.bind_ip_addrs().len();
+
+        // Partition by interface
+        // With 2 interfaces and the default of 4 sockets per interface, `sockets_by_interface` is:
+        // sockets_by_interface = [[s0, s1, s2, s3], [s4, s5, s6, s7]]
+        let mut it = socks.into_iter();
+        let sockets_by_interface: Vec<Vec<UdpSocket>> = (0..num_interfaces)
+            .map(|_| {
+                it.by_ref()
+                    .take(num_broadcast_sockets_per_interface)
+                    .collect()
+            })
+            .collect();
+
+        let mut iters: Vec<_> = sockets_by_interface
+            .into_iter()
+            .map(|sockets| sockets.into_iter())
+            .collect();
+
+        // Spawn `num_broadcast_sockets_per_interface` threads
+        // Each thread gets a socket from each interface (i.e. 2 sockets per thread if multihomed w/ 2 interfaces)
+        thread_hdls.extend((0..num_broadcast_sockets_per_interface).map(|_| {
+            let mut group = Vec::with_capacity(num_interfaces);
+            for it in &mut iters {
+                group.push(it.next().expect("aligned lengths"));
+            }
+
             let socket_receiver = socket_receiver.clone();
             let mut bs_transmit = broadcast_stage_run.clone();
             let cluster_info = cluster_info.clone();
             let bank_forks = bank_forks.clone();
             let quic_endpoint_sender = quic_endpoint_sender.clone();
+            let xdp_sender = xdp_sender.clone();
             let run_transmit = move || loop {
+                let sock_variant = match xdp_sender.as_ref() {
+                    Some(xdp) => BroadcastSocket::Xdp(xdp),
+                    None => {
+                        let active_index = cluster_info.bind_ip_addrs().active_index();
+                        let active_socket = &group[active_index];
+                        BroadcastSocket::Udp(active_socket)
+                    }
+                };
                 let res = bs_transmit.transmit(
                     &socket_receiver,
                     &cluster_info,
-                    &sock,
+                    sock_variant,
                     &bank_forks,
                     &quic_endpoint_sender,
                 );
-                let res = Self::handle_error(res, "solana-broadcaster-transmit");
-                if let Some(res) = res {
+                if let Some(res) = Self::handle_error(res, "solana-broadcaster-transmit") {
                     return res;
                 }
             };
@@ -428,10 +472,16 @@ fn update_peer_stats(
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum BroadcastSocket<'a> {
+    Udp(&'a UdpSocket),
+    Xdp(&'a XdpSender),
+}
+
 /// Broadcasts shreds from the leader (i.e. this node) to the root of the
 /// turbine retransmit tree for each shred.
 pub fn broadcast_shreds(
-    s: &UdpSocket,
+    socket: BroadcastSocket,
     shreds: &[Shred],
     cluster_nodes_cache: &ClusterNodesCache<BroadcastStage>,
     last_datapoint_submit: &AtomicInterval,
@@ -442,6 +492,7 @@ pub fn broadcast_shreds(
     quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
 ) -> Result<()> {
     let mut result = Ok(());
+    // Compute destinations & transmission protocols for each of the shreds to be sent
     let mut shred_select = Measure::start("shred_select");
     let (root_bank, working_bank) = {
         let bank_forks = bank_forks.read().unwrap();
@@ -461,7 +512,6 @@ pub fn broadcast_shreds(
                 cluster_nodes
                     .get_broadcast_peer(&key)?
                     .tvu(protocol)
-                    .ok()
                     .filter(|addr| socket_addr_space.check(addr))
                     .map(|addr| {
                         (match protocol {
@@ -474,25 +524,44 @@ pub fn broadcast_shreds(
         .partition_map(std::convert::identity);
     shred_select.stop();
     transmit_stats.shred_select += shred_select.as_us();
-
-    let mut send_mmsg_time = Measure::start("send_mmsg");
-    match batch_send(s, &packets[..]) {
-        Ok(()) => (),
-        Err(SendPktsError::IoError(ioerr, num_failed)) => {
-            transmit_stats.dropped_packets_udp += num_failed;
-            result = Err(Error::Io(ioerr));
+    let num_udp_packets = packets.len();
+    match socket {
+        BroadcastSocket::Udp(s) => {
+            let mut send_mmsg_time = Measure::start("send_mmsg");
+            match batch_send(s, packets) {
+                Ok(()) => (),
+                Err(SendPktsError::IoError(ioerr, num_failed)) => {
+                    transmit_stats.dropped_packets_udp += num_failed;
+                    result = Err(Error::Io(ioerr));
+                }
+            }
+            send_mmsg_time.stop();
+            transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
+        }
+        BroadcastSocket::Xdp(s) => {
+            let mut send_xdp_time = Measure::start("send_xdp");
+            for (idx, (payload, addr)) in packets.into_iter().enumerate() {
+                if let Err(e) = s.try_send(idx, addr, payload.clone()) {
+                    log::warn!("xdp channel full: {e:?}");
+                    transmit_stats.dropped_packets_xdp += 1;
+                    result = Err(Error::XdpChannelFull);
+                }
+            }
+            send_xdp_time.stop();
+            transmit_stats.send_xdp_elapsed += send_xdp_time.as_us();
         }
     }
-    send_mmsg_time.stop();
-    transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
-    transmit_stats.total_packets += packets.len() + quic_packets.len();
-    for (shred, addr) in quic_packets {
-        let shred = Bytes::from(shred.clone());
-        if let Err(err) = quic_endpoint_sender.blocking_send((addr, shred)) {
+
+    let mut quic_send_time = Measure::start("send shreds via quic");
+    transmit_stats.total_packets += num_udp_packets + quic_packets.len();
+    for (payload, addr) in quic_packets {
+        if let Err(err) = quic_endpoint_sender.blocking_send((addr, payload.bytes.clone())) {
             transmit_stats.dropped_packets_quic += 1;
             result = Err(Error::from(err));
         }
     }
+    quic_send_time.stop();
+    transmit_stats.send_quic_elapsed = quic_send_time.as_us();
     result
 }
 
@@ -515,7 +584,9 @@ pub mod test {
         crossbeam_channel::unbounded,
         rand::Rng,
         solana_entry::entry::create_ticks,
-        solana_gossip::cluster_info::{ClusterInfo, Node},
+        solana_gossip::{cluster_info::ClusterInfo, node::Node},
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
@@ -523,10 +594,7 @@ pub mod test {
             shred::{max_ticks_per_n_shreds, ProcessShredsStats, ReedSolomonCache, Shredder},
         },
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            hash::Hash,
-            signature::{Keypair, Signer},
-        },
+        solana_signer::Signer,
         std::{
             path::Path,
             sync::{atomic::AtomicBool, Arc},
@@ -551,15 +619,14 @@ pub mod test {
             slot, /*parent_slot:*/ 0, /*reference_tick:*/ 0, /*version:*/ 0,
         )
         .unwrap();
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &Keypair::new(),
             &entries,
             true, // is_last_in_slot
             // chained_merkle_root
             Some(Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index,
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index,
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -698,6 +765,7 @@ pub mod test {
             bank_forks,
             quic_endpoint_sender,
             StandardBroadcastRun::new(0),
+            None,
         );
 
         MockBroadcastStage {
@@ -742,10 +810,8 @@ pub mod test {
         }
 
         trace!(
-            "[broadcast_ledger] max_tick_height: {}, start_tick_height: {}, ticks_per_slot: {}",
-            max_tick_height,
-            start_tick_height,
-            ticks_per_slot,
+            "[broadcast_ledger] max_tick_height: {max_tick_height}, start_tick_height: \
+             {start_tick_height}, ticks_per_slot: {ticks_per_slot}",
         );
 
         let mut entries = vec![];

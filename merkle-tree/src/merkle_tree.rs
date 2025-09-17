@@ -68,7 +68,7 @@ impl MerkleTree {
         if level_len == 1 {
             0
         } else {
-            (level_len + 1) / 2
+            level_len.div_ceil(2)
         }
     }
 

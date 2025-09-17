@@ -5,11 +5,10 @@ use {
     bincode::serialize,
     rand::{rngs::SmallRng, Rng, SeedableRng},
     solana_accounts_db::ancestors::Ancestors,
+    solana_hash::{Hash, HASH_BYTES},
     solana_runtime::{bank::BankStatusCache, status_cache::*},
-    solana_sdk::{
-        hash::{hash, Hash, HASH_BYTES},
-        signature::{Signature, SIGNATURE_BYTES},
-    },
+    solana_sha256_hasher::hash,
+    solana_signature::{Signature, SIGNATURE_BYTES},
     test::Bencher,
 };
 
@@ -30,6 +29,20 @@ fn bench_status_cache_serialize(bencher: &mut Bencher) {
             status_cache.insert(&blockhash, sig, 0, Ok(()));
         }
     }
+    assert!(status_cache.roots().contains(&0));
+    bencher.iter(|| {
+        let _ = serialize(&status_cache.root_slot_deltas()).unwrap();
+    });
+}
+
+#[bench]
+fn bench_status_cache_serialize_max(bencher: &mut Bencher) {
+    // Fill up the status cache to better match what intense runtime usage would
+    // look like.
+    let max_cache_entries = MAX_CACHE_ENTRIES as u64;
+    let mut status_cache = BankStatusCache::default();
+    fill_status_cache(&mut status_cache, max_cache_entries, 100_000);
+
     assert!(status_cache.roots().contains(&0));
     bencher.iter(|| {
         let _ = serialize(&status_cache.root_slot_deltas()).unwrap();

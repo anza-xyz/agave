@@ -10,8 +10,8 @@ use {
 };
 
 impl SVMMessage for SanitizedTransaction {
-    fn num_total_signatures(&self) -> u64 {
-        SVMMessage::num_total_signatures(SanitizedTransaction::message(self))
+    fn num_transaction_signatures(&self) -> u64 {
+        SVMMessage::num_transaction_signatures(SanitizedTransaction::message(self))
     }
 
     fn num_write_locks(&self) -> u64 {
@@ -32,6 +32,10 @@ impl SVMMessage for SanitizedTransaction {
 
     fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
         SVMMessage::program_instructions_iter(SanitizedTransaction::message(self))
+    }
+
+    fn static_account_keys(&self) -> &[Pubkey] {
+        SVMMessage::static_account_keys(SanitizedTransaction::message(self))
     }
 
     fn account_keys(&self) -> AccountKeys {

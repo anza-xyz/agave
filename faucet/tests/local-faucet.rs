@@ -1,5 +1,7 @@
 use {
-    solana_faucet::faucet::{request_airdrop_transaction, run_local_faucet},
+    solana_faucet::faucet::{
+        request_airdrop_transaction, run_local_faucet_with_unique_port_for_tests,
+    },
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_message::Message,
@@ -17,8 +19,7 @@ fn test_local_faucet() {
     let create_instruction = transfer(&keypair.pubkey(), &to, lamports);
     let message = Message::new(&[create_instruction], Some(&keypair.pubkey()));
     let expected_tx = Transaction::new(&[&keypair], message, blockhash);
-
-    let faucet_addr = run_local_faucet(keypair, None);
+    let faucet_addr = run_local_faucet_with_unique_port_for_tests(keypair);
 
     let result = request_airdrop_transaction(&faucet_addr, &to, lamports, blockhash);
     assert_eq!(expected_tx, result.unwrap());

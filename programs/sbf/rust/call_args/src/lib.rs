@@ -1,9 +1,9 @@
 use {
     borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
-    solana_program::{
-        account_info::AccountInfo, entrypoint::ProgramResult, program::set_return_data,
-        pubkey::Pubkey,
-    },
+    solana_account_info::AccountInfo,
+    solana_program::program::set_return_data,
+    solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey,
 };
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Copy)]
@@ -33,7 +33,7 @@ struct OutputData {
     many_args_2: i64,
 }
 
-solana_program::entrypoint_no_alloc!(entry);
+solana_program_entrypoint::entrypoint_no_alloc!(entry);
 
 pub fn entry(_program_id: &Pubkey, _accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     // This code is supposed to occupy stack space. The purpose of this test is to make sure

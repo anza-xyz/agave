@@ -1,16 +1,14 @@
 use {
-    solana_program::{
-        account_info::AccountInfo,
-        entrypoint::ProgramResult,
-        instruction::{AccountMeta, Instruction},
-        msg,
-        program::invoke,
-        pubkey::Pubkey,
-    },
+    solana_account_info::AccountInfo,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_msg::msg,
+    solana_program::program::invoke,
+    solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey,
     std::convert::TryInto,
 };
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 fn process_instruction(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -22,8 +20,7 @@ fn process_instruction(
         let mut lamports = accounts[0].lamports();
         let owner = &accounts[0].owner;
         let mut data = accounts[0].try_borrow_mut_data()?;
-        let account =
-            AccountInfo::new(&key, false, false, &mut lamports, &mut data, owner, true, 0);
+        let account = AccountInfo::new(&key, false, false, &mut lamports, &mut data, owner, true);
         msg!("{:?} calling {:?}", program_id, key);
         invoke(&ix, &[account])?;
     } else {

@@ -34,6 +34,9 @@ echo --- build environment
   cargo clippy --version --verbose
   $cargoNightly clippy --version --verbose
 
+  # miri is only available with nightly
+  $cargoNightly miri --version --verbose
+
   $cargoNightly hack --version --verbose
 
   # audit is done only with "$cargo stable"
@@ -44,6 +47,9 @@ echo --- build environment
   sccache --version
 
   wasm-pack --version
+
+  cargo nextest --version --verbose
+  $cargoNightly nextest --version --verbose
 )
 
 export RUST_BACKTRACE=1

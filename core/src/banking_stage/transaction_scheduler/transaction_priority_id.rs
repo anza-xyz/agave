@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::banking_stage::scheduler_messages::TransactionId,
     prio_graph::TopLevelId,
@@ -5,6 +7,7 @@ use {
 };
 
 /// A unique identifier tied with priority ordering for a transaction/packet:
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct TransactionPriorityId {
     pub(crate) priority: u64,

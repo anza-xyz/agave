@@ -1,15 +1,24 @@
 use {
-    solana_builtins_default_costs::{is_builtin_program, MAYBE_BUILTIN_KEY},
-    solana_sdk::{packet::PACKET_DATA_SIZE, pubkey::Pubkey},
+    solana_builtins_default_costs::{
+        get_builtin_migration_feature_index, BuiltinMigrationFeatureIndex, MAYBE_BUILTIN_KEY,
+    },
+    solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
 };
 
 // The maximum number of pubkeys that a packet can contain.
-pub const FILTER_SIZE: u8 = (PACKET_DATA_SIZE / core::mem::size_of::<Pubkey>()) as u8;
+pub(crate) const FILTER_SIZE: u8 = (PACKET_DATA_SIZE / core::mem::size_of::<Pubkey>()) as u8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ProgramKind {
     NotBuiltin,
     Builtin,
+    // Builtin program maybe in process of being migrated to core bpf,
+    // if core_bpf_migration_feature is activated, then the migration has
+    // completed and it should no longer be considered as builtin
+    MigratingBuiltin {
+        core_bpf_migration_feature_index: usize,
+    },
 }
 
 pub(crate) struct BuiltinProgramsFilter {
@@ -40,17 +49,26 @@ impl BuiltinProgramsFilter {
             return ProgramKind::NotBuiltin;
         }
 
-        if is_builtin_program(program_id) {
-            ProgramKind::Builtin
-        } else {
-            ProgramKind::NotBuiltin
+        match get_builtin_migration_feature_index(program_id) {
+            BuiltinMigrationFeatureIndex::NotBuiltin => ProgramKind::NotBuiltin,
+            BuiltinMigrationFeatureIndex::BuiltinNoMigrationFeature => ProgramKind::Builtin,
+            BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(
+                core_bpf_migration_feature_index,
+            ) => ProgramKind::MigratingBuiltin {
+                core_bpf_migration_feature_index,
+            },
         }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use {
+        super::*,
+        solana_builtins_default_costs::{
+            get_migration_feature_id, BuiltinCost, MigratingBuiltinCost, MIGRATING_BUILTINS_COSTS,
+        },
+    };
 
     const DUMMY_PROGRAM_ID: &str = "dummmy1111111111111111111111111111111111111";
 
@@ -75,23 +93,48 @@ mod test {
         // lookup same `index` will return cached data, will not lookup `program_id`
         // again
         assert_eq!(
-            test_store.get_program_kind(index, &solana_sdk::loader_v4::id()),
+            test_store.get_program_kind(index, &solana_sdk_ids::loader_v4::id()),
             ProgramKind::NotBuiltin
         );
 
         // not-migrating builtin
         index += 1;
         assert_eq!(
-            test_store.get_program_kind(index, &solana_sdk::loader_v4::id()),
+            test_store.get_program_kind(index, &solana_sdk_ids::loader_v4::id()),
             ProgramKind::Builtin,
         );
 
         // compute-budget
         index += 1;
         assert_eq!(
-            test_store.get_program_kind(index, &solana_sdk::compute_budget::id()),
+            test_store.get_program_kind(index, &solana_sdk_ids::compute_budget::id()),
             ProgramKind::Builtin,
         );
+
+        // migrating builtins
+        for (program_id, migrating_builtin) in MIGRATING_BUILTINS_COSTS {
+            index += 1;
+
+            let BuiltinCost::Migrating(MigratingBuiltinCost {
+                core_bpf_migration_feature,
+                position,
+            }) = migrating_builtin
+            else {
+                panic!("MIGRATING_BUILTINS_COSTS must only contain BuiltinCost::Migrating");
+            };
+
+            assert_eq!(
+                get_migration_feature_id(*position),
+                core_bpf_migration_feature
+            );
+
+            assert_eq!(
+                test_store.get_program_kind(index, program_id),
+                ProgramKind::MigratingBuiltin {
+                    core_bpf_migration_feature_index: *position,
+                }
+            );
+        }
     }
 
     #[test]

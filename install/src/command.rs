@@ -9,15 +9,18 @@ use {
     crossbeam_channel::unbounded,
     indicatif::{ProgressBar, ProgressStyle},
     serde_derive::{Deserialize, Serialize},
-    solana_config_program::{config_instruction, get_config_data, ConfigState},
-    solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{
-        hash::{Hash, Hasher},
-        message::Message,
-        pubkey::Pubkey,
-        signature::{read_keypair_file, Keypair, Signable, Signer},
-        transaction::Transaction,
+    solana_config_interface::{
+        instruction::{self as config_instruction},
+        state::get_config_data,
     },
+    solana_hash::Hash,
+    solana_keypair::{read_keypair_file, signable::Signable, Keypair},
+    solana_message::Message,
+    solana_pubkey::Pubkey,
+    solana_rpc_client::rpc_client::RpcClient,
+    solana_sha256_hasher::Hasher,
+    solana_signer::Signer,
+    solana_transaction::Transaction,
     std::{
         fs::{self, File},
         io::{self, BufReader, Read},
@@ -148,7 +151,7 @@ fn download_to_temp(
         .map_err(|err| format!("Unable to hash {temp_file:?}: {err}"))?;
 
     if expected_sha256.is_some() && expected_sha256 != Some(&temp_file_sha256) {
-        return Err(io::Error::new(io::ErrorKind::Other, "Incorrect hash").into());
+        return Err(io::Error::other("Incorrect hash").into());
     }
 
     source.progress_bar.finish_and_clear();
@@ -226,14 +229,16 @@ fn new_update_manifest(
         let recent_blockhash = rpc_client.get_latest_blockhash()?;
 
         let lamports = rpc_client
-            .get_minimum_balance_for_rent_exemption(SignedUpdateManifest::max_space() as usize)?;
+            .get_minimum_balance_for_rent_exemption(SignedUpdateManifest::MAX_SPACE as usize)?;
 
-        let instructions = config_instruction::create_account::<SignedUpdateManifest>(
-            &from_keypair.pubkey(),
-            &update_manifest_keypair.pubkey(),
-            lamports,
-            vec![], // additional keys
-        );
+        let instructions =
+            config_instruction::create_account_with_max_config_space::<SignedUpdateManifest>(
+                &from_keypair.pubkey(),
+                &update_manifest_keypair.pubkey(),
+                lamports,
+                SignedUpdateManifest::MAX_SPACE,
+                vec![], // additional keys
+            );
         let message = Message::new(&instructions, Some(&from_keypair.pubkey()));
         let signers = [from_keypair, update_manifest_keypair];
         let transaction = Transaction::new(&signers, message, recent_blockhash);
@@ -304,7 +309,8 @@ fn check_env_path_for_bin_dir(config: &Config) {
 
     if !found {
         println!(
-            "\nPlease update your PATH environment variable to include the solana programs:\n    PATH=\"{}:$PATH\"\n",
+            "\nPlease update your PATH environment variable to include the solana programs:\n    \
+             PATH=\"{}:$PATH\"\n",
             config.active_release_bin_dir().to_str().unwrap()
         );
     }
@@ -314,7 +320,7 @@ fn check_env_path_for_bin_dir(config: &Config) {
 #[cfg(windows)]
 pub fn string_to_winreg_bytes(s: &str) -> Vec<u8> {
     use std::{ffi::OsString, os::windows::ffi::OsStrExt};
-    let v: Vec<_> = OsString::from(format!("{}\x00", s)).encode_wide().collect();
+    let v: Vec<_> = OsString::from(format!("{s}\x00")).encode_wide().collect();
     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len() * 2).to_vec() }
 }
 
@@ -356,7 +362,7 @@ fn get_windows_path_var() -> Result<Option<String>, String> {
     let root = RegKey::predef(HKEY_CURRENT_USER);
     let environment = root
         .open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
-        .map_err(|err| format!("Unable to open HKEY_CURRENT_USER\\Environment: {}", err))?;
+        .map_err(|err| format!("Unable to open HKEY_CURRENT_USER\\Environment: {err}"))?;
 
     let reg_value = environment.get_raw_value("PATH");
     match reg_value {
@@ -364,7 +370,10 @@ fn get_windows_path_var() -> Result<Option<String>, String> {
             if let Some(s) = string_from_winreg_value(&val) {
                 Ok(Some(s))
             } else {
-                println!("the registry key HKEY_CURRENT_USER\\Environment\\PATH does not contain valid Unicode. Not modifying the PATH variable");
+                println!(
+                    "the registry key HKEY_CURRENT_USER\\Environment\\PATH does not contain valid \
+                     Unicode. Not modifying the PATH variable"
+                );
                 Ok(None)
             }
         }
@@ -390,7 +399,7 @@ fn add_to_path(new_path: &str) -> bool {
     };
 
     let Some(old_path) =
-        get_windows_path_var().unwrap_or_else(|err| panic!("Unable to get PATH: {}", err))
+        get_windows_path_var().unwrap_or_else(|err| panic!("Unable to get PATH: {err}"))
     else {
         return false;
     };
@@ -405,7 +414,7 @@ fn add_to_path(new_path: &str) -> bool {
         let root = RegKey::predef(HKEY_CURRENT_USER);
         let environment = root
             .open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
-            .unwrap_or_else(|err| panic!("Unable to open HKEY_CURRENT_USER\\Environment: {}", err));
+            .unwrap_or_else(|err| panic!("Unable to open HKEY_CURRENT_USER\\Environment: {err}"));
 
         let reg_value = RegValue {
             bytes: string_to_winreg_bytes(&new_path),
@@ -414,9 +423,7 @@ fn add_to_path(new_path: &str) -> bool {
 
         environment
             .set_raw_value("PATH", &reg_value)
-            .unwrap_or_else(|err| {
-                panic!("Unable set HKEY_CURRENT_USER\\Environment\\PATH: {}", err)
-            });
+            .unwrap_or_else(|err| panic!("Unable set HKEY_CURRENT_USER\\Environment\\PATH: {err}"));
 
         // Tell other processes to update their environment
         unsafe {
@@ -424,7 +431,7 @@ fn add_to_path(new_path: &str) -> bool {
                 HWND_BROADCAST,
                 WM_SETTINGCHANGE,
                 0_usize,
-                "Environment\0".as_ptr() as LPARAM,
+                c"Environment".as_ptr() as LPARAM,
                 SMTO_ABORTIFHUNG,
                 5000,
                 ptr::null_mut(),
@@ -434,9 +441,14 @@ fn add_to_path(new_path: &str) -> bool {
 
     println!(
         "\n{}\n  {}\n\n{}",
-        style("The HKEY_CURRENT_USER/Environment/PATH registry key has been modified to include:").bold(),
+        style("The HKEY_CURRENT_USER/Environment/PATH registry key has been modified to include:")
+            .bold(),
         new_path,
-        style("Future applications will automatically have the correct environment, but you may need to restart your current shell.").bold()
+        style(
+            "Future applications will automatically have the correct environment, but you may \
+             need to restart your current shell."
+        )
+        .bold()
     );
     true
 }
@@ -518,9 +530,14 @@ fn add_to_path(new_path: &str) -> bool {
     if modified_rcfiles {
         println!(
             "\n{}\n  {}\n",
-            style("Close and reopen your terminal to apply the PATH changes or run the following in your existing shell:").bold().blue(),
+            style(
+                "Close and reopen your terminal to apply the PATH changes or run the following in \
+                 your existing shell:"
+            )
+            .bold()
+            .blue(),
             shell_export_string
-       );
+        );
     }
 
     modified_rcfiles
@@ -925,7 +942,7 @@ fn check_for_newer_github_release(
                             if (prerelease_allowed || !prerelease)
                                 && version_filter
                                     .as_ref()
-                                    .map_or(true, |version_filter| version_filter.matches(&version))
+                                    .is_none_or(|version_filter| version_filter.matches(&version))
                             {
                                 return Some(version);
                             }
@@ -1000,8 +1017,9 @@ pub fn init_or_update(config_file: &str, is_init: bool, check_only: bool) -> Res
                                         == active_release_version.channel
                                     {
                                         println!(
-                                        "Install is up to date. {release_semver} is the latest compatible release"
-                                    );
+                                            "Install is up to date. {release_semver} is the \
+                                             latest compatible release"
+                                        );
                                         return Ok(false);
                                     }
                                 }
@@ -1294,8 +1312,8 @@ pub fn list(config_file: &str) -> Result<(), String> {
 
     let entries = fs::read_dir(&config.releases_dir).map_err(|err| {
         format!(
-            "Failed to read install directory, \
-            double check that your configuration file is correct: {err}"
+            "Failed to read install directory, double check that your configuration file is \
+             correct: {err}"
         )
     })?;
 

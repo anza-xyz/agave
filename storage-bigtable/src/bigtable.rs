@@ -78,7 +78,7 @@ pub enum Error {
     ObjectCorrupt(String),
 
     #[error("RPC: {0}")]
-    Rpc(tonic::Status),
+    Rpc(Box<tonic::Status>),
 
     #[error("Timeout")]
     Timeout,
@@ -107,7 +107,7 @@ impl std::convert::From<tonic::transport::Error> for Error {
 
 impl std::convert::From<tonic::Status> for Error {
     fn from(err: tonic::Status) -> Self {
-        Self::Rpc(err)
+        Self::Rpc(Box::new(err))
     }
 }
 
@@ -146,7 +146,7 @@ impl BigTableConnection {
     ) -> Result<Self> {
         match std::env::var("BIGTABLE_EMULATOR_HOST") {
             Ok(endpoint) => {
-                info!("Connecting to bigtable emulator at {}", endpoint);
+                info!("Connecting to bigtable emulator at {endpoint}");
                 Self::new_for_emulator(
                     instance_name,
                     app_profile_id,
@@ -259,7 +259,7 @@ impl BigTableConnection {
                                 .insert("authorization", authorization_header);
                         }
                         Err(err) => {
-                            warn!("Failed to set authorization header: {}", err);
+                            warn!("Failed to set authorization header: {err}");
                         }
                     }
                 }
@@ -366,7 +366,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
             for (i, mut chunk) in res.chunks.into_iter().enumerate() {
                 // The comments for `read_rows_response::CellChunk` provide essential details for
                 // understanding how the below decoding works...
-                trace!("chunk {}: {:?}", i, chunk);
+                trace!("chunk {i}: {chunk:?}");
 
                 // Starting a new row?
                 if !chunk.row_key.is_empty() {
@@ -934,7 +934,7 @@ where
 
     let data = decompress(value)?;
     T::decode(&data[..]).map_err(|err| {
-        warn!("Failed to deserialize {}/{}: {}", table, key, err);
+        warn!("Failed to deserialize {table}/{key}: {err}");
         Error::ObjectCorrupt(format!("{table}/{key}"))
     })
 }
@@ -955,7 +955,7 @@ where
 
     let data = decompress(value)?;
     bincode::deserialize(&data).map_err(|err| {
-        warn!("Failed to deserialize {}/{}: {}", table, key, err);
+        warn!("Failed to deserialize {table}/{key}: {err}");
         Error::ObjectCorrupt(format!("{table}/{key}"))
     })
 }
@@ -966,11 +966,13 @@ mod tests {
         super::*,
         crate::StoredConfirmedBlock,
         prost::Message,
-        solana_sdk::{
-            hash::Hash, message::v0::LoadedAddresses, signature::Keypair, system_transaction,
-            transaction::VersionedTransaction, transaction_context::TransactionReturnData,
-        },
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::v0::LoadedAddresses,
         solana_storage_proto::convert::generated,
+        solana_system_transaction as system_transaction,
+        solana_transaction::versioned::VersionedTransaction,
+        solana_transaction_context::TransactionReturnData,
         solana_transaction_status::{
             ConfirmedBlock, TransactionStatusMeta, TransactionWithStatusMeta,
             VersionedTransactionWithStatusMeta,
@@ -1006,7 +1008,7 @@ mod tests {
     #[test]
     fn test_deserialize_protobuf_or_bincode_cell_data() {
         let from = Keypair::new();
-        let recipient = solana_sdk::pubkey::new_rand();
+        let recipient = solana_pubkey::new_rand();
         let transaction = system_transaction::transfer(&from, &recipient, 42, Hash::default());
         let with_meta = TransactionWithStatusMeta::Complete(VersionedTransactionWithStatusMeta {
             transaction: VersionedTransaction::from(transaction),
@@ -1023,6 +1025,7 @@ mod tests {
                 loaded_addresses: LoadedAddresses::default(),
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed: Some(1234),
+                cost_units: Some(5678),
             },
         });
         let expected_block = ConfirmedBlock {
@@ -1083,6 +1086,7 @@ mod tests {
                 meta.rewards = None; // Legacy bincode implementation does not support rewards
                 meta.return_data = None; // Legacy bincode implementation does not support return data
                 meta.compute_units_consumed = None; // Legacy bincode implementation does not support CU consumed
+                meta.cost_units = None; // Legacy bincode implementation does not support CU
             }
             assert_eq!(block, bincode_block.into());
         } else {

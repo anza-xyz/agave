@@ -21,6 +21,28 @@ The Solana validator community holds regular educational workshops. You can
 watch past workshops through the
 [Solana validator educational workshops playlist](https://www.youtube.com/watch?v=86zySQ5vGW8&list=PLilwLeBwGuK6jKrmn7KOkxRxS9tvbRa5p).
 
+## Community Validator calls
+
+The Solana validator community holds regular calls. 
+There is the 'Solana Foundation Validator Discussion' which is hosted by the Solana Foundation and the 'Community Led Validator Call'
+which is hosted by the community itself. 
+
+### Solana Foundation Validator Discussion
+
+This is a monthly call that is hosted by the Solana Foundation. 
+- Schedule: every second Thursday of the month 18:00 CET
+- Agenda: See [validator-announcements channel in Discord](https://discord.com/channels/428295358100013066/586252910506016798). 
+- This call **is recorded** and past calls can be watched back on the [Community Validator Discussions playlist](https://www.youtube.com/playlist?list=PLilwLeBwGuK78yjGBZwYhTf7rao0t13Zw)
+
+### Community Led Validator Call
+
+This is also a monthly call hosted by the Solana validator community itself.
+- Schedule: every fourth Thursday of the month 18:00 CET
+- Agenda: See [HackMD site](https://hackmd.io/1DFauFMWTZG37-U7CXhxMg?view#Solana-Community-Validator-Call-Agendas). 
+- This call is **not recorded**
+
+***Please note that the scheduling of these calls can be changed last minute due to any circumstances. For the most up-to-date information go to the [validator-announcements channel in Discord](https://discord.com/channels/428295358100013066/586252910506016798).***
+
 ## Help with the validator command line
 
 From within the Solana CLI, you can execute the `agave-validator` command with
@@ -67,45 +89,18 @@ will need to upgrade often, so it is important to get comfortable with this
 process.
 
 > **Note** validator nodes do not need to be offline while the newest version is
-> being downloaded or built from source. All methods below can be done before
+> being built from source. All methods below can be done before
 > the validator process is restarted.
 
-### Building From Source
+### Building the newest version from source
 
-It is a best practice to always build your Agave binaries from source. If you
-build from source, you are certain that the code you are building has not been
-tampered with before the binary was created. You may also be able to optimize
-your `agave-validator` binary to your specific hardware.
-
-If you build from source on the validator machine (or a machine with the same
-CPU), you can target your specific architecture using the `-march` flag. Refer
-to the following doc for
-[instructions on building from source](../../cli/install.md#build-from-source).
-
-### agave-install
-
-If you are not comfortable building from source, or you need to quickly install
-a new version to test something out, you could instead try using the
-`agave-install` command.
-
-Assuming you want to install Agave version `1.14.17`, you would execute the
-following:
-
-```
-agave-install init 1.14.17
-```
-
-This command downloads the executable for `1.14.17` and installs it into a
-`.local` directory. You can also look at `agave-install --help` for more
-options.
-
-> **Note** this command only works if you already have the solana cli installed.
-> If you do not have the cli installed, refer to
-> [install solana cli tools](../../cli/install.md)
+The easiest way to upgrade the Solana CLI software is to build the newest
+version from source. See the
+[build from source](../../cli/install.md#build-from-source) instructions for details.
 
 ### Restart
 
-For all install methods, the validator process will need to be restarted before
+The validator process will need to be restarted before
 the newly installed version is in use. Use `agave-validator exit` to restart
 your validator process.
 
@@ -128,7 +123,7 @@ ledger. Therefore, you should not download a new snapshot any time your
 validator is offline or experiences an issue. Downloading a snapshot should only
 be reserved for occasions when you do not have local state. Prolonged downtime
 or the first install of a new validator are examples of times when you may not
-have state locally. In other cases such as restarts for upgrades, a snapshot
+have state locally. In other cases, such as restarts for upgrades, a snapshot
 download should be avoided.
 
 To avoid downloading a snapshot on restart, add the following flag to the

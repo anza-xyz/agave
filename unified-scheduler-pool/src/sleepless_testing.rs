@@ -33,7 +33,6 @@ pub(crate) use real::*;
 #[cfg(test)]
 mod real {
     use {
-        lazy_static::lazy_static,
         log::trace,
         std::{
             cmp::Ordering::{Equal, Greater, Less},
@@ -146,10 +145,8 @@ mod real {
         }
     }
 
-    lazy_static! {
-        static ref THREAD_REGISTRY: Mutex<HashMap<ThreadId, Arc<Progress>>> =
-            Mutex::new(HashMap::new());
-    }
+    static THREAD_REGISTRY: std::sync::LazyLock<Mutex<HashMap<ThreadId, Arc<Progress>>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
     #[must_use]
     pub(crate) struct ActiveProgress(Arc<Progress>, ThreadId);
@@ -285,7 +282,7 @@ mod real {
             spawned_thread
         }
 
-        impl<'scope, 'env> ScopeTracked<'scope> for Scope<'scope, 'env> {
+        impl<'scope> ScopeTracked<'scope> for Scope<'scope, '_> {
             fn spawn_tracked<T: Send + 'scope>(
                 &'scope self,
                 f: impl FnOnce() -> T + Send + 'scope,
@@ -350,7 +347,7 @@ mod dummy {
             spawn(f)
         }
 
-        impl<'scope, 'env> ScopeTracked<'scope> for Scope<'scope, 'env> {
+        impl<'scope> ScopeTracked<'scope> for Scope<'scope, '_> {
             #[inline]
             fn spawn_tracked<T: Send + 'scope>(
                 &'scope self,

@@ -178,7 +178,7 @@ use {
     solana_account_decoder_client_types::UiAccount,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_rpc_client_api::{
+    solana_rpc_client_types::{
         config::{
             RpcAccountInfoConfig, RpcBlockSubscribeConfig, RpcBlockSubscribeFilter,
             RpcProgramAccountsConfig, RpcSignatureSubscribeConfig, RpcTransactionLogsConfig,
@@ -219,10 +219,10 @@ pub enum PubsubClientError {
     UrlParseError(#[from] url::ParseError),
 
     #[error("unable to connect to server")]
-    ConnectionError(tokio_tungstenite::tungstenite::Error),
+    ConnectionError(Box<tokio_tungstenite::tungstenite::Error>),
 
     #[error("websocket error")]
-    WsError(#[from] tokio_tungstenite::tungstenite::Error),
+    WsError(#[from] Box<tokio_tungstenite::tungstenite::Error>),
 
     #[error("connection closed (({0})")]
     ConnectionClosed(String),
@@ -276,6 +276,7 @@ impl PubsubClient {
         let url = Url::parse(url)?;
         let (ws, _response) = connect_async(url)
             .await
+            .map_err(Box::new)
             .map_err(PubsubClientError::ConnectionError)?;
 
         let (subscribe_sender, subscribe_receiver) = mpsc::unbounded_channel();
@@ -299,11 +300,6 @@ impl PubsubClient {
     pub async fn shutdown(self) -> PubsubClientResult {
         let _ = self.shutdown_sender.send(());
         self.ws.await.unwrap() // WS future should not be cancelled or panicked
-    }
-
-    #[deprecated(since = "2.0.2", note = "PubsubClient::node_version is no longer used")]
-    pub async fn set_node_version(&self, _version: semver::Version) -> Result<(), ()> {
-        Ok(())
     }
 
     async fn subscribe<'a, T>(&self, operation: &str, params: Value) -> SubscribeResult<'a, T>
@@ -505,20 +501,20 @@ impl PubsubClient {
                 // Send close on shutdown signal
                 _ = (&mut shutdown_receiver) => {
                     let frame = CloseFrame { code: CloseCode::Normal, reason: "".into() };
-                    ws.send(Message::Close(Some(frame))).await?;
-                    ws.flush().await?;
+                    ws.send(Message::Close(Some(frame))).await.map_err(Box::new)?;
+                    ws.flush().await.map_err(Box::new)?;
                     break;
                 },
                 // Send `Message::Ping` each 10s if no any other communication
                 () = sleep(Duration::from_secs(10)) => {
-                    ws.send(Message::Ping(Vec::new())).await?;
+                    ws.send(Message::Ping(Vec::new())).await.map_err(Box::new)?;
                 },
                 // Read message for subscribe
                 Some((operation, params, response_sender)) = subscribe_receiver.recv() => {
                     request_id += 1;
                     let method = format!("{operation}Subscribe");
                     let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params}).to_string();
-                    ws.send(Message::Text(text)).await?;
+                    ws.send(Message::Text(text)).await.map_err(Box::new)?;
                     requests_subscribe.insert(request_id, (operation, response_sender));
                 },
                 // Read message for unsubscribe
@@ -527,20 +523,20 @@ impl PubsubClient {
                     request_id += 1;
                     let method = format!("{operation}Unsubscribe");
                     let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":[sid]}).to_string();
-                    ws.send(Message::Text(text)).await?;
+                    ws.send(Message::Text(text)).await.map_err(Box::new)?;
                     requests_unsubscribe.insert(request_id, response_sender);
                 },
                 // Read message for other requests
                 Some((method, params, response_sender)) = request_receiver.recv() => {
                     request_id += 1;
                     let text = json!({"jsonrpc":"2.0","id":request_id,"method":method,"params":params}).to_string();
-                    ws.send(Message::Text(text)).await?;
+                    ws.send(Message::Text(text)).await.map_err(Box::new)?;
                     other_requests.insert(request_id, response_sender);
                 }
                 // Read incoming WebSocket message
                 next_msg = ws.next() => {
                     let msg = match next_msg {
-                        Some(msg) => msg?,
+                        Some(msg) => msg.map_err(Box::new)?,
                         None => break,
                     };
                     trace!("ws.next(): {:?}", &msg);
@@ -550,7 +546,7 @@ impl PubsubClient {
                         Message::Text(text) => text,
                         Message::Binary(_data) => continue, // Ignore
                         Message::Ping(data) => {
-                            ws.send(Message::Pong(data)).await?;
+                            ws.send(Message::Pong(data)).await.map_err(Box::new)?;
                             continue
                         },
                         Message::Pong(_data) => continue,
@@ -626,7 +622,7 @@ impl PubsubClient {
                                 }
                             }
                         } else {
-                            error!("Unknown request id: {}", id);
+                            error!("Unknown request id: {id}");
                             break;
                         }
                         continue;

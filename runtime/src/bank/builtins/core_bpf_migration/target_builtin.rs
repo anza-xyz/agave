@@ -1,13 +1,11 @@
 use {
     super::error::CoreBpfMigrationError,
     crate::bank::Bank,
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_builtins::core_bpf_migration::CoreBpfMigrationTargetType,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        bpf_loader_upgradeable::get_program_data_address,
-        native_loader::ID as NATIVE_LOADER_ID,
-        pubkey::Pubkey,
-    },
+    solana_loader_v3_interface::get_program_data_address,
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::native_loader::ID as NATIVE_LOADER_ID,
 };
 
 /// The account details of a built-in program to be migrated to Core BPF.
@@ -73,15 +71,11 @@ impl TargetBuiltin {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        crate::bank::{tests::create_simple_test_bank, ApplyFeatureActivationsCaller},
-        assert_matches::assert_matches,
-        solana_feature_set as feature_set,
-        solana_sdk::{
-            account::Account,
-            bpf_loader_upgradeable::{UpgradeableLoaderState, ID as BPF_LOADER_UPGRADEABLE_ID},
-            feature,
-        },
+        super::*, crate::bank::tests::create_simple_test_bank, agave_feature_set as feature_set,
+        assert_matches::assert_matches, solana_account::Account,
+        solana_feature_gate_interface as feature,
+        solana_loader_v3_interface::state::UpgradeableLoaderState,
+        solana_sdk_ids::bpf_loader_upgradeable::ID as BPF_LOADER_UPGRADEABLE_ID,
         test_case::test_case,
     };
 
@@ -105,18 +99,15 @@ mod tests {
         bank.store_account_and_update_capitalization(address, &account);
     }
 
-    #[test_case(solana_sdk::address_lookup_table::program::id(), None)]
-    #[test_case(solana_sdk::bpf_loader::id(), None)]
-    #[test_case(solana_sdk::bpf_loader_deprecated::id(), None)]
-    #[test_case(solana_sdk::bpf_loader_upgradeable::id(), None)]
-    #[test_case(solana_sdk::compute_budget::id(), None)]
-    #[test_case(solana_config_program::id(), None)]
-    #[test_case(solana_stake_program::id(), None)]
-    #[test_case(solana_system_program::id(), None)]
-    #[test_case(solana_vote_program::id(), None)]
+    #[test_case(solana_sdk_ids::bpf_loader::id(), None)]
+    #[test_case(solana_sdk_ids::bpf_loader_deprecated::id(), None)]
+    #[test_case(solana_sdk_ids::bpf_loader_upgradeable::id(), None)]
+    #[test_case(solana_compute_budget_interface::id(), None)]
+    #[test_case(solana_system_interface::program::id(), None)]
+    #[test_case(solana_vote_interface::program::id(), None)]
     #[test_case(
-        solana_sdk::loader_v4::id(),
-        Some(feature_set::enable_program_runtime_v2_and_loader_v4::id())
+        solana_sdk_ids::loader_v4::id(),
+        Some(feature_set::enable_loader_v4::id())
     )]
     #[test_case(
         solana_sdk_ids::zk_token_proof_program::id(),
@@ -139,7 +130,7 @@ mod tests {
                     bank.get_minimum_balance_for_rent_exemption(feature::Feature::size_of()),
                 ),
             );
-            bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
+            bank.compute_and_apply_new_feature_activations();
         }
 
         let program_account = bank.get_account_with_fixed_root(&program_address).unwrap();
@@ -199,8 +190,8 @@ mod tests {
         );
     }
 
-    #[test_case(solana_sdk::feature::id())]
-    #[test_case(solana_sdk::native_loader::id())]
+    #[test_case(solana_feature_gate_interface::id())]
+    #[test_case(solana_sdk_ids::native_loader::id())]
     fn test_target_program_stateless_builtin(program_address: Pubkey) {
         let migration_target = CoreBpfMigrationTargetType::Stateless;
         let bank = create_simple_test_bank(0);

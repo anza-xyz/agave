@@ -2,6 +2,7 @@ use {
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
+    std::net::SocketAddr,
     x509_parser::{prelude::*, public_key::PublicKey},
 };
 
@@ -31,7 +32,7 @@ pub fn new_dummy_x509_certificate(
     ];
 
     let key_pkcs8_der = {
-        let keypair_secret_bytes = keypair.secret().as_bytes();
+        let keypair_secret_bytes = keypair.secret_bytes();
         let keypair_secret_len = keypair_secret_bytes.len();
         if keypair_secret_len != 32 {
             panic!("Unexpected secret key length!");
@@ -126,9 +127,28 @@ pub fn get_pubkey_from_tls_certificate(
     }
 }
 
+/// Translate a SocketAddr into a valid SNI for the purposes of QUIC connection
+///
+/// We do not actually check if the server holds a cert for this server_name
+/// since Solana does not rely on DNS names, but we need to provide a unique
+/// one to ensure that we present correct QUIC tokens to the correct server.
+pub fn socket_addr_to_quic_server_name(peer: SocketAddr) -> String {
+    format!("{}.{}.sol", peer.ip(), peer.port())
+}
+
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_signer::Signer};
+    use {
+        super::*,
+        solana_signer::Signer,
+        std::net::{IpAddr, Ipv4Addr},
+    };
+
+    #[test]
+    fn test_socket_addr_to_quic_server_name() {
+        let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), 8004);
+        assert_eq!(socket_addr_to_quic_server_name(socket), "1.2.3.4.8004.sol");
+    }
 
     #[test]
     fn test_generate_tls_certificate() {

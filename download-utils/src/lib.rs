@@ -1,13 +1,14 @@
 pub use solana_file_download::DownloadProgressRecord;
 use {
     log::*,
+    solana_clock::Slot,
     solana_file_download::{download_file, DownloadProgressCallbackOption},
+    solana_genesis_config::DEFAULT_GENESIS_ARCHIVE,
     solana_runtime::{
         snapshot_hash::SnapshotHash,
         snapshot_package::SnapshotKind,
-        snapshot_utils::{self, ArchiveFormat},
+        snapshot_utils::{self, ArchiveFormat, ZstdConfig},
     },
-    solana_sdk::{clock::Slot, genesis_config::DEFAULT_GENESIS_ARCHIVE},
     std::{
         fs,
         net::SocketAddr,
@@ -67,11 +68,10 @@ pub fn download_snapshot_archive(
     fs::create_dir_all(&snapshot_archives_remote_dir).unwrap();
 
     for archive_format in [
-        ArchiveFormat::TarZstd,
-        ArchiveFormat::TarGzip,
-        ArchiveFormat::TarBzip2,
+        ArchiveFormat::TarZstd {
+            config: ZstdConfig::default(),
+        },
         ArchiveFormat::TarLz4,
-        ArchiveFormat::Tar,
     ] {
         let destination_path = match snapshot_kind {
             SnapshotKind::FullSnapshot => snapshot_utils::build_full_snapshot_archive_path(
@@ -106,7 +106,7 @@ pub fn download_snapshot_archive(
             progress_notify_callback,
         ) {
             Ok(()) => return Ok(()),
-            Err(err) => info!("{}", err),
+            Err(err) => info!("{err}"),
         }
     }
     Err(format!(

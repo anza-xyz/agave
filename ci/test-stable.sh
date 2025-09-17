@@ -12,6 +12,30 @@ annotate() {
   }
 }
 
+cargo_build_sbf_sanity() {
+  cargo_build_sbf="$(realpath ./cargo-build-sbf)"
+
+  pushd programs/sbf
+  # Generate the sanity programs list
+  if [ ! -f sanity_programs.txt ]; then
+    cargo test --features="sbf_rust,sbf_sanity_list" --test programs test_program_sbf_sanity
+  fi
+  mapfile -t rust_programs < <(cat sanity_programs.txt)
+
+  pushd rust
+  # This is done in a loop to mock how developers invoke `cargo-build-sbf`
+  for program in "${rust_programs[@]}"
+  do
+    pushd "$program"
+    $cargo_build_sbf --arch "$1"
+    popd
+  done
+  popd
+
+  cargo test --features=sbf_rust --test programs test_program_sbf_sanity
+  popd
+}
+
 # Run the appropriate test based on entrypoint
 testName=$(basename "$0" .sh)
 
@@ -52,72 +76,29 @@ test-stable-sbf)
   # platform-tools version
   "$cargo_build_sbf" --version
 
-  # SBF solana-sdk legacy compile test
-  "$cargo_build_sbf" --manifest-path sdk/Cargo.toml
+  # Install the platform tools
+  _ platform-tools-sdk/sbf/scripts/install.sh
 
-  # Ensure the minimum supported "rust-version" matches platform tools to fail
-  # quickly if users try to build with an older platform tools install
-  cargo_toml=sdk/program/Cargo.toml
-  source "scripts/read-cargo-variable.sh"
-  crate_rust_version=$(readCargoVariable rust-version $cargo_toml)
-  platform_tools_rust_version=$("$cargo_build_sbf" --version | grep rustc)
-  platform_tools_rust_version=$(echo "$platform_tools_rust_version" | cut -d\  -f2) # Remove "rustc " prefix from a string like "rustc 1.68.0-dev"
-  platform_tools_rust_version=$(echo "$platform_tools_rust_version" | cut -d- -f1)  # Remove "-dev" suffix from a string like "1.68.0-dev"
+  # SBPFv0 program tests
+  _ make -C programs/sbf test-v0
+  _ make -C programs/sbf clean-all
+  _ cargo_build_sbf_sanity "v0"
 
-  if [[ $crate_rust_version != "$platform_tools_rust_version" ]]; then
-    echo "Error: Update 'rust-version' field in '$cargo_toml' from $crate_rust_version to $platform_tools_rust_version"
-    exit 1
-  fi
+  # SBPFv1 program tests
+  _ make -C programs/sbf clean-all test-v1
+  _ make -C programs/sbf clean-all
+  _ cargo_build_sbf_sanity "v1"
 
-  # SBF program tests
-  export SBF_OUT_DIR=target/sbf-solana-solana/release
-  _ make -C programs/sbf test
+  # SBPFv2 program tests
+  _ make -C programs/sbf clean-all test-v2
+  _ make -C programs/sbf clean-all
+  _ cargo_build_sbf_sanity "v2"
 
-  # SBF program instruction count assertion
-  sbf_target_path=programs/sbf/target
-  mkdir -p $sbf_target_path/deploy
-  _ cargo test \
-    --manifest-path programs/sbf/Cargo.toml \
-    --features=sbf_c,sbf_rust assert_instruction_count \
-    -- --nocapture &> $sbf_target_path/deploy/instruction_counts.txt
+  # SBPFv3 program tests
+  _ make -C programs/sbf clean-all test-v3
+  _ make -C programs/sbf clean-all
+  _ cargo_build_sbf_sanity "v3"
 
-  sbf_dump_archive="sbf-dumps.tar.bz2"
-  rm -f "$sbf_dump_archive"
-  tar cjvf "$sbf_dump_archive" $sbf_target_path/{deploy/*.txt,sbf-solana-solana/release/*.so}
-  exit 0
-  ;;
-test-stable-perf)
-  if [[ $(uname) = Linux ]]; then
-    # Enable persistence mode to keep the CUDA kernel driver loaded, avoiding a
-    # lengthy and unexpected delay the first time CUDA is involved when the driver
-    # is not yet loaded.
-    sudo --non-interactive ./net/scripts/enable-nvidia-persistence-mode.sh || true
-
-    rm -rf target/perf-libs
-    ./fetch-perf-libs.sh
-
-    # Force CUDA for solana-core unit tests
-    export TEST_PERF_LIBS_CUDA=1
-
-    # Force CUDA in ci/localnet-sanity.sh
-    export SOLANA_CUDA=1
-  fi
-
-  _ cargo build --bins ${V:+--verbose}
-  _ cargo test --package solana-perf --package solana-ledger --package solana-core --lib ${V:+--verbose} -- --nocapture
-  _ cargo run --manifest-path poh-bench/Cargo.toml ${V:+--verbose} -- --hashes-per-tick 10
-  ;;
-test-wasm)
-  _ node --version
-  _ npm --version
-  for dir in sdk/{program,}; do
-    if [[ -r "$dir"/package.json ]]; then
-      pushd "$dir"
-      _ npm install
-      _ npm test
-      popd
-    fi
-  done
   exit 0
   ;;
 test-docs)

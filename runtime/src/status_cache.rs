@@ -1,14 +1,13 @@
 use {
+    ahash::{HashMap, HashMapExt as _},
     log::*,
     rand::{thread_rng, Rng},
     serde::Serialize,
     solana_accounts_db::ancestors::Ancestors,
-    solana_sdk::{
-        clock::{Slot, MAX_RECENT_BLOCKHASHES},
-        hash::Hash,
-    },
+    solana_clock::{Slot, MAX_RECENT_BLOCKHASHES},
+    solana_hash::Hash,
     std::{
-        collections::{hash_map::Entry, HashMap, HashSet},
+        collections::{hash_map::Entry, HashSet},
         sync::{Arc, Mutex},
     },
 };
@@ -18,7 +17,7 @@ const CACHED_KEY_SIZE: usize = 20;
 
 // Store forks in a single chunk of memory to avoid another lookup.
 pub type ForkStatus<T> = Vec<(Slot, T)>;
-type KeySlice = [u8; CACHED_KEY_SIZE];
+pub(crate) type KeySlice = [u8; CACHED_KEY_SIZE];
 type KeyMap<T> = HashMap<KeySlice, ForkStatus<T>>;
 // Map of Hash and status
 pub type Status<T> = Arc<Mutex<HashMap<Hash, (usize, Vec<(KeySlice, T)>)>>>;
@@ -102,7 +101,8 @@ impl<T: Serialize + Clone> StatusCache<T> {
                             }
                         } else {
                             panic!(
-                                "Map for key must exist if key exists in self.slot_deltas, slot: {slot}"
+                                "Map for key must exist if key exists in self.slot_deltas, slot: \
+                                 {slot}"
                             )
                         }
                     }
@@ -154,7 +154,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
         let keys: Vec<_> = self.cache.keys().copied().collect();
 
         for blockhash in keys.iter() {
-            trace!("get_status_any_blockhash: trying {}", blockhash);
+            trace!("get_status_any_blockhash: trying {blockhash}");
             let status = self.get_status(&key, blockhash, ancestors);
             if status.is_some() {
                 return status;
@@ -307,10 +307,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        solana_sdk::{hash::hash, signature::Signature},
-    };
+    use {super::*, solana_sha256_hasher::hash, solana_signature::Signature};
 
     type BankStatusCache = StatusCache<()>;
 

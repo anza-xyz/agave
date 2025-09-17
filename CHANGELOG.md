@@ -5,21 +5,133 @@ All notable changes to this project will be documented in this file.
 Please follow the [guidance](#adding-to-this-changelog) at the bottom of this file when making changes
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
-and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backwards-compatibility)
+and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v2.2](#edge-channel)
-* [beta - v2.1](https://github.com/anza-xyz/agave/blob/v2.1/CHANGELOG.md)
-* [stable - v2.0](https://github.com/anza-xyz/agave/blob/v2.0/CHANGELOG.md)
+* [edge - v3.1](#edge-channel)
+* [beta - v3.0](https://github.com/anza-xyz/agave/blob/v3.0/CHANGELOG.md)
+* [stable - v2.3](https://github.com/anza-xyz/agave/blob/v2.3/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## [2.2.0] - Unreleased
-* Changes
-  * CLI:
-    * Add global `--skip-preflight` option for skipping preflight checks on all transactions sent through RPC. This flag, along with `--use-rpc`, can improve success rate with program deployments using the public RPC nodes.
-  * Unhide `--accounts-db-access-storages-method` for agave-validator and agave-ledger-tool
+## 3.1.0—Unreleased
+### RPC
+#### Breaking
+#### Changes
+### Validator
+#### Breaking
+#### Deprecations
+* The `--monitor` flag with `agave-validator exit` is now deprecated. Operators can use the `monitor` command after `exit` instead.
 
-## [2.1.0]
+## 3.0.0
+
+### RPC
+
+#### Breaking
+* Added a `slot` property to `EpochRewardsPeriodActiveErrorData`
+* Added error data containing a `slot` property to `RpcCustomError::SlotNotEpochBoundary`
+
+#### Changes
+* The subscription server now prioritizes processing received messages before sending out responses. This ensures that new subscription requests and time-sensitive messages like `PING` opcodes take priority over notifications.
+
+### Validator
+
+#### Breaking
+* Require increased `memlock` limits - recommended setting is `LimitMEMLOCK=2000000000` in systemd service configuration. Lack of sufficient limit (on Linux) will cause startup error.
+* Remove deprecated arguments
+  * `--accounts-index-memory-limit-mb`
+  * `--accountsdb-repl-bind-address`, `--accountsdb-repl-port`, `--accountsdb-repl-threads`, `--enable-accountsdb-repl`
+  * `--disable-quic-servers`, `--enable-quic-servers`
+  * `--etcd-cacert-file`, `--etcd-cert-file`, `--etcd-domain-name`, `--etcd-endpoint`, `--etcd-key-file`, `--tower-storage`
+  * `--no-check-vote-account`
+  * `--no-rocksdb-compaction`, `--rocksdb-compaction-interval-slots`, `--rocksdb-max-compaction-jitter-slots`
+  * `--replay-slots-concurrently`
+  * `--rpc-pubsub-max-connections`, `--rpc-pubsub-max-fragment-size`, `--rpc-pubsub-max-in-buffer-capacity`, `--rpc-pubsub-max-out-buffer-capacity`, `--enable-cpi-and-log-storage`, `--minimal-rpc-api`
+  * `--skip-poh-verify`
+* Deprecated snapshot archive formats have been removed and are no longer loadable.
+* Using `--snapshot-interval-slots 0` to disable generating snapshots has been removed. Use `--no-snapshots` instead.
+* Validator will now bind all ports within provided `--dynamic-port-range`, including the client ports. A range of at least 25 ports is recommended to avoid failures to bind during startup.
+* Agave and agave-ledger-tool can no longer operate with legacy shreds. Legacy shreds have not been in circulation since the activation of https://explorer.solana.com/address/GV49KKQdBNaiv2pgqhS2Dy3GWYJGXMTVYbYkdk91orRy. This change may break operations with old ledgers that may still contain legacy shreds.
+
+#### Changes
+* `--transaction-structure view` is now the default.
+* The default full snapshot interval is now 100,000 slots.
+* `SOLANA_BANKING_THREADS` environment variable is no longer supported. Use `--block-prouduction-num-workers` instead.
+* By default, `agave-validator exit` will now wait for the validator process to terminate before returning. The `--wait-for-exit` flag has been deprecated, but operators can still opt out with the new `--no-wait-for-exit` flag.
+
+## 2.3.0
+
+### Validator
+
+#### Breaking
+* ABI of `TimedTracedEvent` changed, since `PacketBatch` became an enum, which carries different packet batch types. (#5646)
+
+#### Changes
+* Account notifications for Geyser are no longer deduplicated when restoring from a snapshot.
+* Add `--no-snapshots` to disable generating snapshots.
+* `--block-production-method central-scheduler-greedy` is now the default.
+* The default full snapshot interval is now 50,000 slots.
+* Graceful exit (via `agave-validtor exit`) is required in order to boot from local state. Refer to the help of `--use-snapshot-archives-at-startup` for more information about booting from local state.
+
+#### Deprecations
+* Using `--snapshot-interval-slots 0` to disable generating snapshots is now deprecated.
+* Using `blockstore-processor` for `--block-verification-method` is now deprecated.
+
+### Platform Tools SDK
+
+#### Changes
+* `cargo-build-sbf` and `cargo-test-sbf` now accept `v0`, `v1`, `v2` and `v3` for the `--arch` argument. These parameters specify the SBPF version to build for.
+* SBFPv1 and SBPFv2 are also available for Anza's C compiler toolchain.
+* SBPFv3 will be only available for the Rust toolchain. The C toolchain will no longer be supported for SBPFv3 onwards.
+* `cargo-build-sbf` now supports the `--optimize-size` argument, which reduces program size, potentially at the cost of increased CU usage.
+
+#### Breaking
+* Although the solana rust toolchain still supports the `sbf-solana-solana` target, the new `cargo-build-sbf` version target defaults to `sbpf-solana-solana`. The generated programs will be available on `target/deploy` and `target/sbpf-solana-solana/release`.
+* If the `sbf-solana-solana` target folder is still necessary, use `cargo +solana build --triple sbf-solana-solana --release`.
+* The target triple changes as well for the new SBPF versions. Triples will be `sbpfv1-solana-solana` for version `v1`, `sbpfv2-solana-solana` for `v2`, and `sbpfv3-solana-solana` for `v3`. Generated programs are available on both the `target/deploy` folder and the `target/<triple>/release` folder. The binary in `target/deploy` has smaller size, since we strip unnecessary sections from the one available in `target/<triple>/release`.
+* `cargo-build-sbf` no longer automatically enables the `program` feature to the `solana-sdk` dependency. This feature allowed `solana-sdk` to work in on-chain programs. Users must enable the `program` feature explicitly or use `solana-program` instead. This new behavior only breaks programs using `solana-sdk` v1.3 and earlier.
+
+### CLI
+
+#### Changes
+* `withdraw-stake` now accepts the `AVAILABLE` keyword for the amount, allowing withdrawal of unstaked lamports (#4483)
+* `solana-test-validator` will now bind to localhost (127.0.0.1) by default rather than all interfaces to improve security. Provide `--bind-address 0.0.0.0` to bind to all interfaces to restore the previous default behavior.
+
+### RPC
+
+#### Changes
+* `simulateTransaction` now includes `loadedAccountsDataSize` in its result. `loadedAccountsDataSize` is the total number of bytes loaded for all accounts in the simulated transaction.
+
+## 2.2.0
+
+### CLI
+
+#### Changes
+* Add global `--skip-preflight` option for skipping preflight checks on all transactions sent through RPC. This flag, along with `--use-rpc`, can improve success rate with program deployments using the public RPC nodes.
+* Add new command `solana feature revoke` for revoking pending feature activations. When a feature is activated, `solana feature revoke <feature-keypair> <cluster>` can be used to deallocate and reassign the account to the System program, undoing the operation. This can only be done before the feature becomes active.
+
+### Validator
+
+#### Breaking
+* Blockstore Index column format change
+  * The Blockstore Index column format has been updated. The column format written in v2.2 is compatible with v2.1, but incompatible with v2.0 and older.
+* Snapshot format change
+  * The snapshot format has been modified to implement SIMD-215. Since only adjacent versions are guaranteed to maintain snapshot compatibility, this means snapshots created with v2.2 are compatible with v2.1 and incompatible with v2.0 and older.
+
+#### Changes
+* Add new variant to `--block-production-method` for `central-scheduler-greedy`. This is a simplified scheduler that has much better performance than the more strict `central-scheduler` variant.
+* Unhide `--accounts-db-access-storages-method` for agave-validator and agave-ledger-tool and change default to `file`
+* Remove tracer stats from banking-trace. `banking-trace` directory should be cleared when restarting on v2.2 for first time. It will not break if not cleared, but the file will be a mix of new/old format. (#4043)
+* Add `--snapshot-zstd-compression-level` to set the compression level when archiving snapshots with zstd.
+
+#### Deprecations
+* Deprecate `--tower-storage` and all `--etcd-*` arguments
+
+### SDK
+
+#### Changes
+* `cargo-build-sbf`: add `--skip-tools-install` flag to avoid downloading platform tools and `--no-rustup-override` flag to not use rustup when invoking `cargo`. Useful for immutable environments like Nix.
+
+## 2.1.0
 * Breaking:
   * SDK:
     * `cargo-build-bpf` and `cargo-test-bpf` have been deprecated for two years and have now been definitely removed.
@@ -65,7 +177,7 @@ solana_pubkey::declare_id!("MyProgram1111111111111111111111111111111111");
   * `unified-scheduler` as default option for `--block-verification-method` (#2653)
   * warn that `thread-local-multi-iterator` option for `--block-production-method` is deprecated (#3113)
 
-## [2.0.0]
+## 2.0.0
 * Breaking
   * SDK:
     * Support for Borsh v0.9 removed, please use v1 or v0.10 (#1440)
@@ -106,7 +218,7 @@ solana_pubkey::declare_id!("MyProgram1111111111111111111111111111111111");
   * Deprecate the `fifo` option for `--rocksdb-shred-compaction` (#1882)
     * `fifo` will remain supported in v2.0 with plans to fully remove in v2.1
 
-## [1.18.0]
+## 1.18.0
 * Changes
   * Added a github check to support `changelog` label
   * The default for `--use-snapshot-archives-at-startup` is now `when-newest` (#33883)
@@ -133,7 +245,7 @@ limited backward compatibility for v0.10 and v0.9. Please upgrade to Borsh v1.
   * Operators running their own bigtable instances need to create the `entries`
     table before upgrading their warehouse nodes
 
-## [1.17.0]
+## 1.17.0
 * Changes
   * Added a changelog.
   * Added `--use-snapshot-archives-at-startup` for faster validator restarts
@@ -174,11 +286,8 @@ This simplifies the process of diffing between versions of the log.
   * Update the edge, beta, and stable links
   * Create new section: `vx.y+1.0 - Unreleased`
   * Remove `Unreleased` annotation from vx.y.0 section.
-* Create vx.y branch starting at that commit
-* Tag that commit as vx.y.0
-
-### When creating a new patch release:
-* Commit to the release branch updating the changelog:
-  * Remove `Unreleased` annotation from `vx.y.z` section
-  * Add a new section at the top for `vx.y.z+1 - Unreleased`
-* Tag that new commit as the new release
+* Create vx.y branch starting at that commit.
+* Commit to `vx.y` updating the changelog:
+  * Remove the `vx.y+1.0 - Unreleased` section
+  * Remove the channel links
+* Tag vx.y.0 on the new branch

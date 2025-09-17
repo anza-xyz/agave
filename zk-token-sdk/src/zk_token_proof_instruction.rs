@@ -12,7 +12,7 @@
 //! In step 1, the zero-knowledge proof can be included directly as the instruction data or
 //! pre-written to an account. The program determines whether the proof is provided as instruction
 //! data or pre-written to an account by inspecting the length of the data. If the instruction data
-//! is exactly 5 bytes (instruction disciminator + unsigned 32-bit integer), then the program
+//! is exactly 5 bytes (instruction discriminator + unsigned 32-bit integer), then the program
 //! assumes that the first account provided with the instruction contains the zero-knowledge proof
 //! and verifies the account data at the offset specified in the instruction data. Otherwise, the
 //! program assumes that the zero-knowledge proof is provided as part of the instruction data.
@@ -29,8 +29,8 @@
 //! this instruction must be signed by the context account's owner. This instruction can be used by
 //! the account owner to reclaim lamports for storage.
 //!
-//! [`ZK Token proof`]: https://docs.solanalabs.com/runtime/zk-token-proof
-//! [`context-state`]: https://docs.solanalabs.com/runtime/zk-token-proof#context-data
+//! [`ZK Token proof`]: https://docs.anza.xyz/runtime/zk-elgamal-proof
+//! [`context-state`]: https://docs.anza.xyz/runtime/zk-elgamal-proof#context-data
 
 pub use crate::instruction::*;
 use {

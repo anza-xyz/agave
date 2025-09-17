@@ -5,10 +5,9 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::deserialize,
     serde_json::json,
-    solana_sdk::{
-        instruction::CompiledInstruction, loader_instruction::LoaderInstruction,
-        loader_upgradeable_instruction::UpgradeableLoaderInstruction, message::AccountKeys,
-    },
+    solana_loader_v2_interface::LoaderInstruction,
+    solana_loader_v3_interface::instruction::UpgradeableLoaderInstruction,
+    solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
 };
 
 pub fn parse_bpf_loader(
@@ -175,13 +174,46 @@ pub fn parse_bpf_upgradeable_loader(
                     "additionalBytes": additional_bytes,
                     "programDataAccount": account_keys[instruction.accounts[0] as usize].to_string(),
                     "programAccount": account_keys[instruction.accounts[1] as usize].to_string(),
-                    "systemProgram": if instruction.accounts.len() > 3 {
+                    "systemProgram": if instruction.accounts.len() > 2 {
                         Some(account_keys[instruction.accounts[2] as usize].to_string())
                     } else {
                         None
                     },
-                    "payerAccount": if instruction.accounts.len() > 4 {
+                    "payerAccount": if instruction.accounts.len() > 3 {
                         Some(account_keys[instruction.accounts[3] as usize].to_string())
+                    } else {
+                        None
+                    },
+                }),
+            })
+        }
+        UpgradeableLoaderInstruction::Migrate => {
+            check_num_bpf_upgradeable_loader_accounts(&instruction.accounts, 3)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "migrate".to_string(),
+                info: json!({
+                    "programDataAccount": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "programAccount": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "authority": account_keys[instruction.accounts[2] as usize].to_string(),
+                }),
+            })
+        }
+        UpgradeableLoaderInstruction::ExtendProgramChecked { additional_bytes } => {
+            check_num_bpf_upgradeable_loader_accounts(&instruction.accounts, 3)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "extendProgramChecked".to_string(),
+                info: json!({
+                    "additionalBytes": additional_bytes,
+                    "programDataAccount": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "programAccount": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "authority": account_keys[instruction.accounts[2] as usize].to_string(),
+                    "systemProgram": if instruction.accounts.len() > 3 {
+                        Some(account_keys[instruction.accounts[3] as usize].to_string())
+                    } else {
+                        None
+                    },
+                    "payerAccount": if instruction.accounts.len() > 4 {
+                        Some(account_keys[instruction.accounts[4] as usize].to_string())
                     } else {
                         None
                     },
@@ -207,12 +239,10 @@ mod test {
     use {
         super::*,
         serde_json::Value,
-        solana_sdk::{
-            bpf_loader_upgradeable,
-            message::Message,
-            pubkey::{self, Pubkey},
-            system_program, sysvar,
-        },
+        solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
+        solana_message::Message,
+        solana_pubkey::{self as pubkey, Pubkey},
+        solana_sdk_ids::{system_program, sysvar},
     };
 
     #[test]
@@ -225,12 +255,9 @@ mod test {
         let account_keys = vec![fee_payer, account_pubkey];
         let missing_account_keys = vec![account_pubkey];
 
-        let instruction = solana_sdk::loader_instruction::write(
-            &account_pubkey,
-            &program_id,
-            offset,
-            bytes.clone(),
-        );
+        #[allow(deprecated)]
+        let instruction =
+            solana_loader_v2_interface::write(&account_pubkey, &program_id, offset, bytes.clone());
         let mut message = Message::new(&[instruction], Some(&fee_payer));
         assert_eq!(
             parse_bpf_loader(
@@ -259,7 +286,8 @@ mod test {
         )
         .is_err());
 
-        let instruction = solana_sdk::loader_instruction::finalize(&account_pubkey, &program_id);
+        #[allow(deprecated)]
+        let instruction = solana_loader_v2_interface::finalize(&account_pubkey, &program_id);
         let mut message = Message::new(&[instruction], Some(&fee_payer));
         assert_eq!(
             parse_bpf_loader(
@@ -408,9 +436,10 @@ mod test {
         let upgrade_authority_address = Pubkey::new_unique();
         let programdata_address = Pubkey::find_program_address(
             &[program_address.as_ref()],
-            &bpf_loader_upgradeable::id(),
+            &solana_sdk_ids::bpf_loader_upgradeable::id(),
         )
         .0;
+        #[allow(deprecated)]
         let instructions = bpf_loader_upgradeable::deploy_with_max_program_len(
             &payer_address,
             &program_address,
@@ -464,7 +493,7 @@ mod test {
         let spill_address = Pubkey::new_unique();
         let programdata_address = Pubkey::find_program_address(
             &[program_address.as_ref()],
-            &bpf_loader_upgradeable::id(),
+            &solana_sdk_ids::bpf_loader_upgradeable::id(),
         )
         .0;
         let instruction = bpf_loader_upgradeable::upgrade(
@@ -588,7 +617,7 @@ mod test {
         let new_authority_address = Pubkey::new_unique();
         let (programdata_address, _) = Pubkey::find_program_address(
             &[program_address.as_ref()],
-            &bpf_loader_upgradeable::id(),
+            &solana_sdk_ids::bpf_loader_upgradeable::id(),
         );
         let instruction = bpf_loader_upgradeable::set_upgrade_authority(
             &program_address,
@@ -667,7 +696,7 @@ mod test {
         let new_authority_address = Pubkey::new_unique();
         let (programdata_address, _) = Pubkey::find_program_address(
             &[program_address.as_ref()],
-            &bpf_loader_upgradeable::id(),
+            &solana_sdk_ids::bpf_loader_upgradeable::id(),
         );
         let instruction = bpf_loader_upgradeable::set_upgrade_authority_checked(
             &program_address,

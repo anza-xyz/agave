@@ -52,6 +52,11 @@ const LEDGER_NANO_S_PLUS_PIDS: [u16; 33] = [
     0x500b, 0x500c, 0x500d, 0x500e, 0x500f, 0x5010, 0x5011, 0x5012, 0x5013, 0x5014, 0x5015, 0x5016,
     0x5017, 0x5018, 0x5019, 0x501a, 0x501b, 0x501c, 0x501d, 0x501e, 0x501f,
 ];
+const LEDGER_STAX_PIDS: [u16; 33] = [
+    0x0006, 0x6000, 0x6001, 0x6002, 0x6003, 0x6004, 0x6005, 0x6006, 0x6007, 0x6008, 0x6009, 0x600a,
+    0x600b, 0x600c, 0x600d, 0x600e, 0x600f, 0x6010, 0x6011, 0x6012, 0x6013, 0x6014, 0x6015, 0x6016,
+    0x6017, 0x6018, 0x6019, 0x601a, 0x601b, 0x601c, 0x601d, 0x601e, 0x601f,
+];
 const LEDGER_FLEX_PIDS: [u16; 33] = [
     0x0007, 0x7000, 0x7001, 0x7002, 0x7003, 0x7004, 0x7005, 0x7006, 0x7007, 0x7008, 0x7009, 0x700a,
     0x700b, 0x700c, 0x700d, 0x700e, 0x700f, 0x7010, 0x7011, 0x7012, 0x7013, 0x7014, 0x7015, 0x7016,
@@ -237,7 +242,7 @@ impl LedgerWallet {
             {
                 return Err(RemoteWalletError::Protocol("Unexpected chunk header"));
             }
-            let seq = (chunk[3] as usize) << 8 | (chunk[4] as usize);
+            let seq = ((chunk[3] as usize) << 8) | (chunk[4] as usize);
             if seq != chunk_index {
                 return Err(RemoteWalletError::Protocol("Unexpected chunk header"));
             }
@@ -248,7 +253,7 @@ impl LedgerWallet {
                 if chunk_size < 7 {
                     return Err(RemoteWalletError::Protocol("Unexpected chunk header"));
                 }
-                message_size = (chunk[5] as usize) << 8 | (chunk[6] as usize);
+                message_size = ((chunk[5] as usize) << 8) | (chunk[6] as usize);
                 offset += 2;
             }
             message.extend_from_slice(&chunk[offset..chunk_size]);
@@ -261,8 +266,8 @@ impl LedgerWallet {
             return Err(RemoteWalletError::Protocol("No status word"));
         }
         let status =
-            (message[message.len() - 2] as usize) << 8 | (message[message.len() - 1] as usize);
-        trace!("Read status {:x}", status);
+            ((message[message.len() - 2] as usize) << 8) | (message[message.len() - 1] as usize);
+        trace!("Read status {status:x}");
         Self::parse_status(status)?;
         let new_len = message.len() - 2;
         message.truncate(new_len);
@@ -565,6 +570,7 @@ pub fn is_valid_ledger(vendor_id: u16, product_id: u16) -> bool {
         LEDGER_NANO_S_PIDS,
         LEDGER_NANO_X_PIDS,
         LEDGER_NANO_S_PLUS_PIDS,
+        LEDGER_STAX_PIDS,
         LEDGER_FLEX_PIDS,
     ];
     vendor_id == LEDGER_VID && product_ids.iter().any(|pids| pids.contains(&product_id))

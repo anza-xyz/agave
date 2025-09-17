@@ -1,16 +1,14 @@
 //! Test mem functions
 
 use {
-    solana_program::{
-        account_info::AccountInfo,
-        entrypoint::ProgramResult,
-        program_memory::{sol_memcmp, sol_memcpy, sol_memmove, sol_memset},
-        pubkey::Pubkey,
-    },
+    solana_account_info::AccountInfo,
+    solana_program_error::ProgramResult,
+    solana_program_memory::{sol_memcmp, sol_memcpy, sol_memmove, sol_memset},
+    solana_pubkey::Pubkey,
     solana_sbf_rust_mem_dep::{run_mem_tests, MemOps},
 };
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 pub fn process_instruction(
     _program_id: &Pubkey,
     _accounts: &[AccountInfo],
@@ -20,16 +18,16 @@ pub fn process_instruction(
     #[derive(Default)]
     struct MemOpSyscalls();
     impl MemOps for MemOpSyscalls {
-        fn memcpy(&self, dst: &mut [u8], src: &[u8], n: usize) {
+        unsafe fn memcpy(&self, dst: &mut [u8], src: &[u8], n: usize) {
             sol_memcpy(dst, src, n)
         }
         unsafe fn memmove(&self, dst: *mut u8, src: *mut u8, n: usize) {
             sol_memmove(dst, src, n)
         }
-        fn memset(&self, s: &mut [u8], c: u8, n: usize) {
+        unsafe fn memset(&self, s: &mut [u8], c: u8, n: usize) {
             sol_memset(s, c, n)
         }
-        fn memcmp(&self, s1: &[u8], s2: &[u8], n: usize) -> i32 {
+        unsafe fn memcmp(&self, s1: &[u8], s2: &[u8], n: usize) -> i32 {
             sol_memcmp(s1, s2, n)
         }
     }

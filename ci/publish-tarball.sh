@@ -89,7 +89,7 @@ echo --- Creating release tarball
   export CHANNEL
 
   source ci/rust-version.sh stable
-  scripts/cargo-install-all.sh stable "${RELEASE_BASENAME}"
+  scripts/cargo-install-all.sh --public-release stable "${RELEASE_BASENAME}"
 
   tar cvf "${TARBALL_BASENAME}"-$TARGET.tar "${RELEASE_BASENAME}"
   bzip2 "${TARBALL_BASENAME}"-$TARGET.tar
@@ -102,7 +102,7 @@ MAYBE_TARBALLS=
 if [[ "$CI_OS_NAME" = linux ]]; then
   (
     set -x
-    sdk/sbf/scripts/package.sh
+    platform-tools-sdk/sbf/scripts/package.sh
     [[ -f sbf-sdk.tar.bz2 ]]
   )
   MAYBE_TARBALLS="sbf-sdk.tar.bz2"

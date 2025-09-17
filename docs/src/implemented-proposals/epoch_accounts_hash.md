@@ -302,7 +302,7 @@ normal behavior.
 #### parent slot: `B`, warp slot: `B`
 
 A new EAH will be calculated at parent slot, which will be included in `stop
-slot 1`, _not_ the previously-calculated EAH from `start slot 1`.  This behaior
+slot 1`, _not_ the previously-calculated EAH from `start slot 1`.  This behavior
 is different.
 
 

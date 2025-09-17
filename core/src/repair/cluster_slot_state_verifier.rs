@@ -9,8 +9,9 @@ use {
             AncestorHashesReplayUpdate, AncestorHashesReplayUpdateSender,
         },
     },
+    solana_clock::Slot,
+    solana_hash::Hash,
     solana_ledger::blockstore::Blockstore,
-    solana_sdk::{clock::Slot, hash::Hash},
     std::collections::{BTreeMap, BTreeSet, HashMap},
 };
 
@@ -376,8 +377,8 @@ fn check_duplicate_confirmed_hash_against_bank_status(
             // If the cluster duplicate confirmed some version of this slot, then
             // there's another version of our dead slot
             warn!(
-                "Cluster duplicate confirmed slot {} with hash {}, but we marked slot dead",
-                slot, duplicate_confirmed_hash
+                "Cluster duplicate confirmed slot {slot} with hash {duplicate_confirmed_hash}, \
+                 but we marked slot dead"
             );
             state_changes.push(ResultingStateChange::RepairDuplicateConfirmedVersion(
                 duplicate_confirmed_hash,
@@ -396,8 +397,8 @@ fn check_duplicate_confirmed_hash_against_bank_status(
             // Modify fork choice rule to exclude our version from being voted
             // on and also repair the correct version
             warn!(
-                "Cluster duplicate confirmed slot {} with hash {}, but our version has hash {}",
-                slot, duplicate_confirmed_hash, bank_frozen_hash
+                "Cluster duplicate confirmed slot {slot} with hash {duplicate_confirmed_hash}, \
+                 but our version has hash {bank_frozen_hash}"
             );
             state_changes.push(ResultingStateChange::MarkSlotDuplicate(bank_frozen_hash));
             state_changes.push(ResultingStateChange::RepairDuplicateConfirmedVersion(
@@ -434,9 +435,8 @@ fn check_epoch_slots_hash_against_bank_status(
         BankStatus::Frozen(bank_frozen_hash) => {
             // The epoch slots hash does not match our frozen hash.
             warn!(
-                "EpochSlots sample returned slot {} with hash {}, but our version
-                has hash {:?}",
-                slot, epoch_slots_frozen_hash, bank_frozen_hash
+                "EpochSlots sample returned slot {slot} with hash {epoch_slots_frozen_hash}, but \
+                 our version has hash {bank_frozen_hash:?}",
             );
             if !is_popular_pruned {
                 // If the slot is not already pruned notify fork choice to mark as invalid
@@ -446,8 +446,8 @@ fn check_epoch_slots_hash_against_bank_status(
         BankStatus::Dead => {
             // Cluster sample found a hash for our dead slot, we must have the wrong version
             warn!(
-                "EpochSlots sample returned slot {} with hash {}, but we marked slot dead",
-                slot, epoch_slots_frozen_hash
+                "EpochSlots sample returned slot {slot} with hash {epoch_slots_frozen_hash}, but \
+                 we marked slot dead",
             );
         }
         BankStatus::Unprocessed => {
@@ -644,9 +644,9 @@ fn on_epoch_slots_frozen(
         if let Some(duplicate_confirmed_hash) = duplicate_confirmed_hash {
             if epoch_slots_frozen_hash != duplicate_confirmed_hash {
                 warn!(
-                    "EpochSlots sample returned slot {} with hash {}, but we already saw \
-                     duplicate confirmation on hash: {:?}",
-                    slot, epoch_slots_frozen_hash, duplicate_confirmed_hash
+                    "EpochSlots sample returned slot {slot} with hash {epoch_slots_frozen_hash}, \
+                     but we already saw duplicate confirmation on hash: \
+                     {duplicate_confirmed_hash:?}",
                 );
             }
             return vec![];
@@ -778,9 +778,9 @@ fn get_duplicate_confirmed_hash(
         (Some(local_duplicate_confirmed_hash), Some(duplicate_confirmed_hash)) => {
             if local_duplicate_confirmed_hash != duplicate_confirmed_hash {
                 error!(
-                    "For slot {}, the gossip duplicate confirmed hash {}, is not equal
-                to the confirmed hash we replayed: {}",
-                    slot, duplicate_confirmed_hash, local_duplicate_confirmed_hash
+                    "For slot {slot}, the gossip duplicate confirmed hash: \
+                     {duplicate_confirmed_hash} is not equal to the confirmed hash we replayed: \
+                     {local_duplicate_confirmed_hash}",
                 );
             }
             Some(local_duplicate_confirmed_hash)
@@ -858,8 +858,8 @@ pub(crate) fn check_slot_agrees_with_cluster(
     slot_state_update: SlotStateUpdate,
 ) {
     info!(
-        "check_slot_agrees_with_cluster() slot: {}, root: {}, slot_state_update: {:?}",
-        slot, root, slot_state_update
+        "check_slot_agrees_with_cluster() slot: {slot}, root: {root}, slot_state_update: \
+         {slot_state_update:?}"
     );
 
     if slot <= root {
@@ -1584,7 +1584,7 @@ mod test {
         let (vote_simulator, blockstore) = setup_forks_from_tree(forks, 1, None);
         let descendants = vote_simulator.bank_forks.read().unwrap().descendants();
         InitialState {
-            heaviest_subtree_fork_choice: vote_simulator.heaviest_subtree_fork_choice,
+            heaviest_subtree_fork_choice: vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             progress: vote_simulator.progress,
             descendants,
             bank_forks: vote_simulator.bank_forks,

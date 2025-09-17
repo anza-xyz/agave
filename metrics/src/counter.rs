@@ -57,21 +57,16 @@ macro_rules! create_counter {
 #[macro_export]
 macro_rules! inc_counter {
     ($name:expr, $level:expr, $count:expr) => {
-        #[allow(clippy::macro_metavars_in_unsafe)]
-        unsafe {
-            $name.inc($level, $count)
-        };
+        $name.inc($level, $count)
     };
 }
 
 #[macro_export]
 macro_rules! inc_counter_info {
     ($name:expr, $count:expr) => {
-        unsafe {
-            if log_enabled!(log::Level::Info) {
-                $name.inc(log::Level::Info, $count)
-            }
-        };
+        if log_enabled!(log::Level::Info) {
+            $name.inc(log::Level::Info, $count)
+        }
     };
 }
 
@@ -79,15 +74,14 @@ macro_rules! inc_counter_info {
 macro_rules! inc_new_counter {
     ($name:expr, $count:expr, $level:expr, $lograte:expr, $metricsrate:expr) => {{
         if log_enabled!($level) {
-            static mut INC_NEW_COUNTER: $crate::counter::Counter =
-                create_counter!($name, $lograte, $metricsrate);
-            static INIT_HOOK: std::sync::Once = std::sync::Once::new();
-            unsafe {
-                INIT_HOOK.call_once(|| {
-                    INC_NEW_COUNTER.init();
+            static INC_NEW_COUNTER: std::sync::LazyLock<$crate::counter::Counter> =
+                std::sync::LazyLock::new(|| {
+                    let mut counter = create_counter!($name, $lograte, $metricsrate);
+                    counter.init();
+                    counter
                 });
-            }
-            inc_counter!(INC_NEW_COUNTER, $level, $count);
+
+            INC_NEW_COUNTER.inc($level, $count);
         }
     }};
 }
@@ -172,7 +166,7 @@ impl Counter {
         self.metricsrate
             .compare_and_swap(0, Self::default_metrics_rate(), Ordering::Relaxed);
     }
-    pub fn inc(&mut self, level: log::Level, events: usize) {
+    pub fn inc(&self, level: log::Level, events: usize) {
         let now = solana_time_utils::timestamp();
         let counts = self.counts.fetch_add(events, Ordering::Relaxed);
         let times = self.times.fetch_add(1, Ordering::Relaxed);
@@ -180,13 +174,12 @@ impl Counter {
         let metricsrate = self.metricsrate.load(Ordering::Relaxed);
 
         if times % lograte == 0 && times > 0 && log_enabled!(level) {
-            log!(level,
-                "COUNTER:{{\"name\": \"{}\", \"counts\": {}, \"samples\": {},  \"now\": {}, \"events\": {}}}",
+            log!(
+                level,
+                "COUNTER:{{\"name\": \"{}\", \"counts\": {}, \"samples\": {times}, \"now\": \
+                 {now}, \"events\": {events}}}",
                 self.name,
                 counts + events,
-                times,
-                now,
-                events,
             );
         }
 
@@ -214,20 +207,13 @@ mod tests {
         serial_test::serial,
         std::{
             env,
-            sync::{atomic::Ordering, Once, RwLock},
+            sync::{atomic::Ordering, RwLock},
         },
     };
 
     fn get_env_lock() -> &'static RwLock<()> {
-        static mut ENV_LOCK: Option<RwLock<()>> = None;
-        static INIT_HOOK: Once = Once::new();
-
-        unsafe {
-            INIT_HOOK.call_once(|| {
-                ENV_LOCK = Some(RwLock::new(()));
-            });
-            ENV_LOCK.as_ref().unwrap()
-        }
+        static ENV_LOCK: RwLock<()> = RwLock::new(());
+        &ENV_LOCK
     }
 
     /// Try to initialize the logger with a filter level of INFO.
@@ -251,29 +237,20 @@ mod tests {
     fn test_counter() {
         try_init_logger_at_level_info().ok();
         let _readlock = get_env_lock().read();
-        static mut COUNTER: Counter = create_counter!("test", 1000, 1);
-        unsafe {
-            COUNTER.init();
-        }
-        let count = 1;
-        inc_counter!(COUNTER, Level::Info, count);
-        unsafe {
-            assert_eq!(COUNTER.counts.load(Ordering::Relaxed), 1);
-            assert_eq!(COUNTER.times.load(Ordering::Relaxed), 1);
-            assert_eq!(COUNTER.lograte.load(Ordering::Relaxed), 1000);
-            assert_eq!(COUNTER.lastlog.load(Ordering::Relaxed), 0);
-            assert_eq!(COUNTER.name, "test");
-        }
+        let mut counter = create_counter!("test", 1000, 1);
+        counter.init();
+        counter.inc(Level::Info, 1);
+        assert_eq!(counter.counts.load(Ordering::Relaxed), 1);
+        assert_eq!(counter.times.load(Ordering::Relaxed), 1);
+        assert_eq!(counter.lograte.load(Ordering::Relaxed), 1000);
+        assert_eq!(counter.lastlog.load(Ordering::Relaxed), 0);
+        assert_eq!(counter.name, "test");
         for _ in 0..199 {
-            inc_counter!(COUNTER, Level::Info, 2);
+            counter.inc(Level::Info, 2);
         }
-        unsafe {
-            assert_eq!(COUNTER.lastlog.load(Ordering::Relaxed), 397);
-        }
-        inc_counter!(COUNTER, Level::Info, 2);
-        unsafe {
-            assert_eq!(COUNTER.lastlog.load(Ordering::Relaxed), 399);
-        }
+        assert_eq!(counter.lastlog.load(Ordering::Relaxed), 397);
+        counter.inc(Level::Info, 2);
+        assert_eq!(counter.lastlog.load(Ordering::Relaxed), 399);
     }
 
     #[test]
@@ -282,14 +259,12 @@ mod tests {
         try_init_logger_at_level_info().ok();
         let _readlock = get_env_lock().read();
         env::remove_var("SOLANA_DEFAULT_METRICS_RATE");
-        static mut COUNTER: Counter = create_counter!("test", 1000, 0);
-        unsafe {
-            COUNTER.init();
-            assert_eq!(
-                COUNTER.metricsrate.load(Ordering::Relaxed),
-                DEFAULT_METRICS_RATE
-            );
-        }
+        let mut counter = create_counter!("test", 1000, 0);
+        counter.init();
+        assert_eq!(
+            counter.metricsrate.load(Ordering::Relaxed),
+            DEFAULT_METRICS_RATE
+        );
     }
 
     #[test]
@@ -298,11 +273,9 @@ mod tests {
         try_init_logger_at_level_info().ok();
         let _writelock = get_env_lock().write();
         env::set_var("SOLANA_DEFAULT_METRICS_RATE", "50");
-        static mut COUNTER: Counter = create_counter!("test", 1000, 0);
-        unsafe {
-            COUNTER.init();
-            assert_eq!(COUNTER.metricsrate.load(Ordering::Relaxed), 50);
-        }
+        let mut counter = create_counter!("test", 1000, 0);
+        counter.init();
+        assert_eq!(counter.metricsrate.load(Ordering::Relaxed), 50);
     }
 
     #[test]
@@ -324,15 +297,14 @@ mod tests {
         assert_eq!(
             Counter::default_log_rate(),
             DEFAULT_LOG_RATE,
-            "default_log_rate() is {}, expected {}, SOLANA_DEFAULT_LOG_RATE environment variable set?",
+            "default_log_rate() is {}, expected {}, SOLANA_DEFAULT_LOG_RATE environment variable \
+             set?",
             Counter::default_log_rate(),
             DEFAULT_LOG_RATE,
         );
-        static mut COUNTER: Counter = create_counter!("test_lograte", 0, 1);
-        unsafe {
-            COUNTER.init();
-            assert_eq!(COUNTER.lograte.load(Ordering::Relaxed), DEFAULT_LOG_RATE);
-        }
+        let mut counter = create_counter!("test_lograte", 0, 1);
+        counter.init();
+        assert_eq!(counter.lograte.load(Ordering::Relaxed), DEFAULT_LOG_RATE);
     }
 
     #[test]
@@ -341,18 +313,14 @@ mod tests {
         try_init_logger_at_level_info().ok();
         assert_ne!(DEFAULT_LOG_RATE, 0);
         let _writelock = get_env_lock().write();
-        static mut COUNTER: Counter = create_counter!("test_lograte_env", 0, 1);
+        let mut counter = create_counter!("test_lograte_env", 0, 1);
         env::set_var("SOLANA_DEFAULT_LOG_RATE", "50");
-        unsafe {
-            COUNTER.init();
-            assert_eq!(COUNTER.lograte.load(Ordering::Relaxed), 50);
-        }
+        counter.init();
+        assert_eq!(counter.lograte.load(Ordering::Relaxed), 50);
 
-        static mut COUNTER2: Counter = create_counter!("test_lograte_env", 0, 1);
+        let mut counter2 = create_counter!("test_lograte_env", 0, 1);
         env::set_var("SOLANA_DEFAULT_LOG_RATE", "0");
-        unsafe {
-            COUNTER2.init();
-            assert_eq!(COUNTER2.lograte.load(Ordering::Relaxed), DEFAULT_LOG_RATE);
-        }
+        counter2.init();
+        assert_eq!(counter2.lograte.load(Ordering::Relaxed), DEFAULT_LOG_RATE);
     }
 }

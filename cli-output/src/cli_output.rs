@@ -16,31 +16,31 @@ use {
     inflector::cases::titlecase::to_title_case,
     serde::{Deserialize, Serialize},
     serde_json::{Map, Value},
+    solana_account::ReadableAccount,
     solana_account_decoder::{
-        encode_ui_account, parse_account_data::AccountAdditionalDataV2,
+        encode_ui_account, parse_account_data::AccountAdditionalDataV3,
         parse_token::UiTokenAccount, UiAccountEncoding, UiDataSliceConfig,
     },
     solana_clap_utils::keypair::SignOnly,
+    solana_clock::{Epoch, Slot, UnixTimestamp},
+    solana_epoch_info::EpochInfo,
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
     solana_rpc_client_api::response::{
         RpcAccountBalance, RpcContactInfo, RpcInflationGovernor, RpcInflationRate, RpcKeyedAccount,
         RpcSupply, RpcVoteAccountInfo,
     },
-    solana_sdk::{
-        account::ReadableAccount,
-        clock::{Epoch, Slot, UnixTimestamp},
-        epoch_info::EpochInfo,
-        hash::Hash,
-        native_token::lamports_to_sol,
-        pubkey::Pubkey,
-        signature::Signature,
-        stake::state::{Authorized, Lockup},
+    solana_signature::Signature,
+    solana_stake_interface::{
         stake_history::StakeHistoryEntry,
-        transaction::{Transaction, TransactionError, VersionedTransaction},
+        state::{Authorized, Lockup},
     },
+    solana_transaction::{versioned::VersionedTransaction, Transaction},
     solana_transaction_status::{
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
         UiTransactionStatusMeta,
     },
+    solana_transaction_status_client_types::UiTransactionError,
     solana_vote_program::{
         authorized_voters::AuthorizedVoters,
         vote_state::{BlockTimestamp, LandedVote, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
@@ -118,9 +118,9 @@ impl VerboseDisplay for CliPrioritizationFeeStats {
     fn write_str(&self, f: &mut dyn std::fmt::Write) -> fmt::Result {
         writeln!(f, "{:<11} prioritization_fee", "slot")?;
         for fee in &self.fees {
-            write!(f, "{}", fee)?;
+            write!(f, "{fee}")?;
         }
-        write!(f, "{}", self)
+        write!(f, "{self}")
     }
 }
 
@@ -159,7 +159,7 @@ pub struct CliAccount {
 
 pub struct CliAccountNewConfig {
     pub data_encoding: UiAccountEncoding,
-    pub additional_data: Option<AccountAdditionalDataV2>,
+    pub additional_data: Option<AccountAdditionalDataV3>,
     pub data_slice_config: Option<UiDataSliceConfig>,
     pub use_lamports_unit: bool,
 }
@@ -877,7 +877,7 @@ impl fmt::Display for CliHistorySignature {
 pub struct CliHistoryVerbose {
     pub slot: Slot,
     pub block_time: Option<UnixTimestamp>,
-    pub err: Option<TransactionError>,
+    pub err: Option<UiTransactionError>,
     pub confirmation_status: Option<TransactionConfirmationStatus>,
     pub memo: Option<String>,
 }
@@ -1021,11 +1021,19 @@ pub struct CliKeyedEpochReward {
     pub reward: Option<CliEpochReward>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CliEpochRewardsMetadata {
     pub epoch: Epoch,
+    #[deprecated(
+        since = "2.2.0",
+        note = "Please use CliEpochReward::effective_slot per reward"
+    )]
     pub effective_slot: Slot,
+    #[deprecated(
+        since = "2.2.0",
+        note = "Please use CliEpochReward::block_time per reward"
+    )]
     pub block_time: UnixTimestamp,
 }
 
@@ -1038,7 +1046,59 @@ pub struct CliKeyedEpochRewards {
 }
 
 impl QuietDisplay for CliKeyedEpochRewards {}
-impl VerboseDisplay for CliKeyedEpochRewards {}
+impl VerboseDisplay for CliKeyedEpochRewards {
+    fn write_str(&self, w: &mut dyn std::fmt::Write) -> std::fmt::Result {
+        if self.rewards.is_empty() {
+            writeln!(w, "No rewards found in epoch")?;
+            return Ok(());
+        }
+
+        if let Some(metadata) = &self.epoch_metadata {
+            writeln!(w, "Epoch: {}", metadata.epoch)?;
+        }
+        writeln!(w, "Epoch Rewards:")?;
+        writeln!(
+            w,
+            "  {:<44}  {:<11}  {:<23}  {:<18}  {:<20}  {:>14}  {:>7}  {:>10}",
+            "Address",
+            "Reward Slot",
+            "Time",
+            "Amount",
+            "New Balance",
+            "Percent Change",
+            "APR",
+            "Commission"
+        )?;
+        for keyed_reward in &self.rewards {
+            match &keyed_reward.reward {
+                Some(reward) => {
+                    writeln!(
+                        w,
+                        "  {:<44}  {:<11}  {:<23}  ◎{:<17.9}  ◎{:<19.9}  {:>13.9}%  {:>7}  {:>10}",
+                        keyed_reward.address,
+                        reward.effective_slot,
+                        Utc.timestamp_opt(reward.block_time, 0).unwrap(),
+                        build_balance_message(reward.amount, false, false),
+                        build_balance_message(reward.post_balance, false, false),
+                        reward.percent_change,
+                        reward
+                            .apr
+                            .map(|apr| format!("{apr:.2}%"))
+                            .unwrap_or_default(),
+                        reward
+                            .commission
+                            .map(|commission| format!("{commission}%"))
+                            .unwrap_or_else(|| "-".to_string()),
+                    )?;
+                }
+                None => {
+                    writeln!(w, "  {:<44}  No rewards in epoch", keyed_reward.address,)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
 
 impl fmt::Display for CliKeyedEpochRewards {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -1049,14 +1109,11 @@ impl fmt::Display for CliKeyedEpochRewards {
 
         if let Some(metadata) = &self.epoch_metadata {
             writeln!(f, "Epoch: {}", metadata.epoch)?;
-            writeln!(f, "Reward Slot: {}", metadata.effective_slot)?;
-            let timestamp = metadata.block_time;
-            writeln!(f, "Block Time: {}", unix_timestamp_to_string(timestamp))?;
         }
         writeln!(f, "Epoch Rewards:")?;
         writeln!(
             f,
-            "  {:<44}  {:<18}  {:<18}  {:>14}  {:>14}  {:>10}",
+            "  {:<44}  {:<18}  {:<18}  {:>14}  {:>7}  {:>10}",
             "Address", "Amount", "New Balance", "Percent Change", "APR", "Commission"
         )?;
         for keyed_reward in &self.rewards {
@@ -1064,10 +1121,10 @@ impl fmt::Display for CliKeyedEpochRewards {
                 Some(reward) => {
                     writeln!(
                         f,
-                        "  {:<44}  ◎{:<17.9}  ◎{:<17.9}  {:>13.9}%  {:>14}  {:>10}",
+                        "  {:<44}  ◎{:<17.9}  ◎{:<17.9}  {:>13.9}%  {:>7}  {:>10}",
                         keyed_reward.address,
-                        lamports_to_sol(reward.amount),
-                        lamports_to_sol(reward.post_balance),
+                        build_balance_message(reward.amount, false, false),
+                        build_balance_message(reward.post_balance, false, false),
                         reward.percent_change,
                         reward
                             .apr
@@ -1242,13 +1299,13 @@ fn show_epoch_rewards(
             format_as!(
                 f,
                 "{},{},{},{},{},{}%,{},{}",
-                "  {:<6}  {:<11}  {:<26}  ◎{:<17.9}  ◎{:<17.9}  {:>13.3}%  {:>14}  {:>10}",
+                "  {:<6}  {:<11}  {:<26}  ◎{:<17.11}  ◎{:<17.11}  {:>13.3}%  {:>14}  {:>10}",
                 fmt,
                 reward.epoch,
                 reward.effective_slot,
                 Utc.timestamp_opt(reward.block_time, 0).unwrap(),
-                lamports_to_sol(reward.amount),
-                lamports_to_sol(reward.post_balance),
+                build_balance_message(reward.amount, false, false),
+                build_balance_message(reward.post_balance, false, false),
                 reward.percent_change,
                 reward
                     .apr
@@ -1969,7 +2026,10 @@ impl fmt::Display for CliAccountBalances {
                 f,
                 "{:<44}  {}",
                 account.address,
-                &format!("{} SOL", lamports_to_sol(account.lamports))
+                &format!(
+                    "{} SOL",
+                    build_balance_message(account.lamports, false, false)
+                ),
             )?;
         }
         Ok(())
@@ -2004,16 +2064,26 @@ impl VerboseDisplay for CliSupply {}
 
 impl fmt::Display for CliSupply {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln_name_value(f, "Total:", &format!("{} SOL", lamports_to_sol(self.total)))?;
+        writeln_name_value(
+            f,
+            "Total:",
+            &format!("{} SOL", build_balance_message(self.total, false, false)),
+        )?;
         writeln_name_value(
             f,
             "Circulating:",
-            &format!("{} SOL", lamports_to_sol(self.circulating)),
+            &format!(
+                "{} SOL",
+                build_balance_message(self.circulating, false, false)
+            ),
         )?;
         writeln_name_value(
             f,
             "Non-Circulating:",
-            &format!("{} SOL", lamports_to_sol(self.non_circulating)),
+            &format!(
+                "{} SOL",
+                build_balance_message(self.non_circulating, false, false)
+            ),
         )?;
         if self.print_accounts {
             writeln!(f)?;
@@ -2412,6 +2482,25 @@ impl fmt::Display for CliUpgradeableProgramExtended {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliUpgradeableProgramMigrated {
+    pub program_id: String,
+}
+impl QuietDisplay for CliUpgradeableProgramMigrated {}
+impl VerboseDisplay for CliUpgradeableProgramMigrated {}
+impl fmt::Display for CliUpgradeableProgramMigrated {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f)?;
+        writeln!(
+            f,
+            "Migrated Program Id {} from loader-v3 to loader-v4",
+            &self.program_id,
+        )?;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliUpgradeableBuffer {
@@ -2760,14 +2849,14 @@ impl fmt::Display for CliBlock {
                     format!(
                         "{}◎{:<14.9}",
                         sign,
-                        lamports_to_sol(reward.lamports.unsigned_abs())
+                        build_balance_message(reward.lamports.unsigned_abs(), false, false)
                     ),
                     if reward.post_balance == 0 {
                         "          -                 -".to_string()
                     } else {
                         format!(
                             "◎{:<19.9}  {:>13.9}%",
-                            lamports_to_sol(reward.post_balance),
+                            build_balance_message(reward.post_balance, false, false),
                             (reward.lamports.abs() as f64
                                 / (reward.post_balance as f64 - reward.lamports as f64))
                                 * 100.0
@@ -2785,7 +2874,7 @@ impl fmt::Display for CliBlock {
                 f,
                 "Total Rewards: {}◎{:<12.9}",
                 sign,
-                lamports_to_sol(total_rewards.unsigned_abs())
+                build_balance_message(total_rewards.unsigned_abs(), false, false)
             )?;
         }
         for (index, transaction_with_meta) in
@@ -2850,7 +2939,7 @@ pub struct CliTransactionConfirmation {
     #[serde(skip_serializing)]
     pub get_transaction_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub err: Option<TransactionError>,
+    pub err: Option<UiTransactionError>,
 }
 
 impl QuietDisplay for CliTransactionConfirmation {}
@@ -3223,13 +3312,13 @@ mod tests {
     use {
         super::*,
         clap::{App, Arg},
-        solana_sdk::{
-            message::Message,
-            pubkey::Pubkey,
-            signature::{keypair_from_seed, NullSigner, Signature, Signer, SignerError},
-            system_instruction,
-            transaction::Transaction,
-        },
+        solana_keypair::keypair_from_seed,
+        solana_message::Message,
+        solana_pubkey::Pubkey,
+        solana_signature::Signature,
+        solana_signer::{null_signer::NullSigner, Signer, SignerError},
+        solana_system_interface::instruction::transfer,
+        solana_transaction::Transaction,
     };
 
     #[test]
@@ -3267,7 +3356,7 @@ mod tests {
         let fee_payer = absent.pubkey();
         let nonce_auth = bad.pubkey();
         let mut tx = Transaction::new_unsigned(Message::new_with_nonce(
-            vec![system_instruction::transfer(&from, &to, 42)],
+            vec![transfer(&from, &to, 42)],
             Some(&fee_payer),
             &nonce,
             &nonce_auth,
@@ -3452,13 +3541,42 @@ mod tests {
             recent_timestamp: BlockTimestamp::default(),
             ..CliVoteAccount::default()
         };
+        #[rustfmt::skip]
+        let expected_output_common =
+            "Account Balance: 0.00001 SOL\n\
+             Validator Identity: 11111111111111111111111111111111\n\
+             Vote Authority: None\n\
+             Withdraw Authority: \n\
+             Credits: 0\n\
+             Commission: 0%\n\
+             Root Slot: ~\n\
+             Recent Timestamp: 1970-01-01T00:00:00Z from slot 0\n";
+
         let s = format!("{c}");
-        assert_eq!(s, "Account Balance: 0.00001 SOL\nValidator Identity: 11111111111111111111111111111111\nVote Authority: None\nWithdraw Authority: \nCredits: 0\nCommission: 0%\nRoot Slot: ~\nRecent Timestamp: 1970-01-01T00:00:00Z from slot 0\nEpoch Rewards:\n  Epoch   Reward Slot  Time                        Amount              New Balance         Percent Change             APR  Commission\n  1       100          1970-01-01 00:00:00 UTC  ◎0.000000010        ◎0.000000100               11.000%          10.00%          1%\n  2       200          1970-01-12 13:46:40 UTC  ◎0.000000012        ◎0.000000100               11.000%          13.00%          1%\n");
+        #[rustfmt::skip]
+        let expected_epoch_rewards_output =
+            "Epoch Rewards:\n  \
+             Epoch   Reward Slot  Time                        Amount              New Balance         Percent Change             APR  Commission\n  \
+             1       100          1970-01-01 00:00:00 UTC  ◎0.00000001         ◎0.0000001                 11.000%          10.00%          1%\n  \
+             2       200          1970-01-12 13:46:40 UTC  ◎0.000000012        ◎0.0000001                 11.000%          13.00%          1%\n";
+        assert_eq!(
+            s,
+            format!("{expected_output_common}{expected_epoch_rewards_output}")
+        );
         println!("{s}");
 
         c.use_csv = true;
         let s = format!("{c}");
-        assert_eq!(s, "Account Balance: 0.00001 SOL\nValidator Identity: 11111111111111111111111111111111\nVote Authority: None\nWithdraw Authority: \nCredits: 0\nCommission: 0%\nRoot Slot: ~\nRecent Timestamp: 1970-01-01T00:00:00Z from slot 0\nEpoch Rewards:\nEpoch,Reward Slot,Time,Amount,New Balance,Percent Change,APR,Commission\n1,100,1970-01-01 00:00:00 UTC,0.00000001,0.0000001,11%,10.00%,1%\n2,200,1970-01-12 13:46:40 UTC,0.000000012,0.0000001,11%,13.00%,1%\n");
+        #[rustfmt::skip]
+        let expected_epoch_rewards_output =
+            "Epoch Rewards:\n\
+             Epoch,Reward Slot,Time,Amount,New Balance,Percent Change,APR,Commission\n\
+             1,100,1970-01-01 00:00:00 UTC,0.00000001,0.0000001,11%,10.00%,1%\n\
+             2,200,1970-01-12 13:46:40 UTC,0.000000012,0.0000001,11%,13.00%,1%\n";
+        assert_eq!(
+            s,
+            format!("{expected_output_common}{expected_epoch_rewards_output}")
+        );
         println!("{s}");
     }
 }

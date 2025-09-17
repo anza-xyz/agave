@@ -1,3 +1,10 @@
+// Deprecate the crate
+#![deprecated(
+    since = "3.0.0",
+    note = "use the `solana-zk-sdk` instead: https://github.com/solana-program/zk-elgamal-proof/tree/main/zk-sdk"
+)]
+// Allow deprecated warnings to be suppressed in the crate
+#![allow(deprecated)]
 #![allow(clippy::arithmetic_side_effects, clippy::op_ref)]
 
 // The warning `clippy::op_ref` is disabled to allow efficient operator arithmetic of structs that

@@ -7,8 +7,7 @@ use {
     clap::{crate_description, crate_name, Arg, Command},
     solana_measure::measure::Measure,
     solana_perf::perf_libs,
-    solana_rayon_threadlimit::get_max_thread_count,
-    solana_sdk::hash::hash,
+    solana_sha256_hasher::hash,
 };
 
 fn main() {
@@ -74,9 +73,7 @@ fn main() {
     let start_hash = hash(&[1, 2, 3, 4]);
     let ticks = create_ticks(max_num_entries, hashes_per_tick, start_hash);
     let mut num_entries = start_num_entries as usize;
-    let num_threads = matches
-        .value_of_t("num_threads")
-        .unwrap_or(get_max_thread_count());
+    let num_threads = matches.value_of_t("num_threads").unwrap_or(num_cpus::get());
     let thread_pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)
         .thread_name(|i| format!("solPohBench{i:02}"))

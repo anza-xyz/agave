@@ -9,32 +9,55 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 Inflector = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
 bv = { workspace = true }
-lazy_static = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
+solana-account = { workspace = true }
 solana-account-decoder-client-types = { workspace = true, features = ["zstd"] }
-solana-config-program = { workspace = true }
-solana-sdk = { workspace = true }
-spl-token = { workspace = true, features = ["no-entrypoint"] }
-spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
+solana-address-lookup-table-interface = { workspace = true, features = [
+    "bincode",
+    "bytemuck",
+] }
+solana-clock = { workspace = true }
+solana-config-interface = { workspace = true, features = ["bincode"] }
+solana-epoch-schedule = { workspace = true }
+solana-fee-calculator = { workspace = true }
+solana-instruction = { workspace = true }
+solana-loader-v3-interface = { workspace = true, features = ["serde"] }
+solana-nonce = { workspace = true, features = ["serde"] }
+solana-program-option = { workspace = true }
+solana-program-pack = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-slot-hashes = { workspace = true }
+solana-slot-history = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["bincode", "sysvar"] }
+solana-sysvar = { workspace = true }
+solana-vote-interface = { workspace = true, features = ["bincode"] }
+spl-generic-token = { workspace = true }
+spl-token-2022-interface = { workspace = true }
 spl-token-group-interface = { workspace = true }
+spl-token-interface = { workspace = true }
 spl-token-metadata-interface = { workspace = true }
 thiserror = { workspace = true }
 zstd = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
+solana-hash = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 spl-pod = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

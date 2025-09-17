@@ -4,37 +4,38 @@ use {
     solana_cli_config::ConfigInput,
     solana_commitment_config::CommitmentConfig,
     solana_keypair::Keypair,
+    solana_net_utils::sockets::unique_port_range_for_tests,
     solana_pubkey::Pubkey,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_streamer::{
         nonblocking::testing_utilities::{
-            make_client_endpoint, setup_quic_server, SpawnTestServerResult, TestServerConfig,
+            make_client_endpoint, setup_quic_server, SpawnTestServerResult,
         },
         packet::PacketBatch,
+        quic::QuicServerParams,
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
         connection_workers_scheduler::{
-            ConnectionWorkersSchedulerConfig, Fanout, TransactionStatsAndReceiver,
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
         leader_updater::create_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
-        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
+        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
     },
     std::{
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         num::Saturating,
-        str::FromStr,
         sync::{atomic::Ordering, Arc},
         time::Duration,
     },
     tokio::{
         sync::{
             mpsc::{channel, Receiver},
-            oneshot,
+            oneshot, watch,
         },
         task::JoinHandle,
         time::{sleep, Instant},
@@ -42,10 +43,14 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-fn test_config(identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
+fn test_config(stake_identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
+    let address = SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        unique_port_range_for_tests(1).start,
+    );
     ConnectionWorkersSchedulerConfig {
-        bind: SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0),
-        identity,
+        bind: BindTarget::Address(address),
+        stake_identity: stake_identity.map(|identity| StakeIdentity::new(&identity)),
         num_connections: 1,
         skip_check_transaction_age: false,
         // At the moment we have only one strategy to send transactions: we try
@@ -65,9 +70,10 @@ fn test_config(identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
 async fn setup_connection_worker_scheduler(
     tpu_address: SocketAddr,
     transaction_receiver: Receiver<TransactionBatch>,
-    identity: Option<Keypair>,
+    stake_identity: Option<Keypair>,
 ) -> (
-    JoinHandle<Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError>>,
+    JoinHandle<Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError>>,
+    watch::Sender<Option<StakeIdentity>>,
     CancellationToken,
 ) {
     let json_rpc_url = "http://127.0.0.1:8899";
@@ -84,30 +90,29 @@ async fn setup_connection_worker_scheduler(
         .expect("Leader updates was successfully created");
 
     let cancel = CancellationToken::new();
-    let config = test_config(identity);
-    let scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
-        config,
+    let (update_identity_sender, update_identity_receiver) = watch::channel(None);
+    let scheduler = ConnectionWorkersScheduler::new(
         leader_updater,
         transaction_receiver,
+        update_identity_receiver,
         cancel.clone(),
-    ));
+    );
+    let config = test_config(stake_identity);
+    let scheduler = tokio::spawn(scheduler.run(config));
 
-    (scheduler, cancel)
+    (scheduler, update_identity_sender, cancel)
 }
 
 async fn join_scheduler(
     scheduler_handle: JoinHandle<
-        Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError>,
+        Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError>,
     >,
 ) -> SendTransactionStatsNonAtomic {
-    let (stats_per_ip, _) = scheduler_handle
+    let scheduler_stats = scheduler_handle
         .await
         .unwrap()
         .expect("Scheduler should stop successfully.");
-    stats_per_ip
-        .get(&IpAddr::from_str("127.0.0.1").unwrap())
-        .expect("setup_connection_worker_scheduler() connected to a leader at 127.0.0.1")
-        .to_non_atomic()
+    scheduler_stats.read_and_reset()
 }
 
 // Specify the pessimistic time to finish generation and result checks.
@@ -195,7 +200,7 @@ async fn test_basic_transactions_sending() {
         receiver,
         server_address,
         stats: _stats,
-    } = setup_quic_server(None, TestServerConfig::default());
+    } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
     // Setup sending txs
     let tx_size = 1;
@@ -207,8 +212,10 @@ async fn test_basic_transactions_sending() {
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(10));
 
-    let (scheduler_handle, _scheduler_cancel) =
+    let (scheduler_handle, update_identity_sender, _scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
+    // dropping sender will not lead to stop the scheduler.
+    drop(update_identity_sender);
 
     // Check results
     let mut received_data = Vec::with_capacity(expected_num_txs);
@@ -219,10 +226,8 @@ async fn test_basic_transactions_sending() {
             let elapsed = now.elapsed();
             assert!(
                 elapsed < TEST_MAX_TIME,
-                "Failed to send {} transaction in {:?}.  Only sent {}",
-                expected_num_txs,
-                elapsed,
-                actual_num_packets,
+                "Failed to send {expected_num_txs} transaction in {elapsed:?}. Only sent \
+                 {actual_num_packets}",
             );
         }
 
@@ -246,14 +251,8 @@ async fn test_basic_transactions_sending() {
 
     // Stop sending
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
-    assert_eq!(
-        localhost_stats,
-        SendTransactionStatsNonAtomic {
-            successfully_sent: expected_num_txs as u64,
-            ..Default::default()
-        }
-    );
+    let stats = join_scheduler(scheduler_handle).await;
+    assert_eq!(stats.successfully_sent, expected_num_txs as u64,);
 
     // Stop server
     exit.store(true, Ordering::Relaxed);
@@ -291,7 +290,7 @@ async fn test_connection_denied_until_allowed() {
         receiver,
         server_address,
         stats: _stats,
-    } = setup_quic_server(None, TestServerConfig::default());
+    } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
     // To prevent server from accepting a new connection, we use the following observation.
     // Since max_connections_per_peer == 1 (< max_unstaked_connections == 500), if we create a first
@@ -310,28 +309,28 @@ async fn test_connection_denied_until_allowed() {
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
 
-    let (scheduler_handle, _scheduler_cancel) =
+    let (scheduler_handle, _update_identity_sender, _scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     // Check results
     let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
     assert!(
         actual_num_packets < expected_num_txs,
-        "Expected to receive {expected_num_txs} packets in {TEST_MAX_TIME:?}\n\
-         Got packets: {actual_num_packets}"
+        "Expected to receive {expected_num_txs} packets in {TEST_MAX_TIME:?} Got packets: \
+         {actual_num_packets}"
     );
 
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
-    // in case of pruning, server closes the connection with code 1 and error
-    // message b"dropped". This might lead to connection error
-    // (ApplicationClosed::ApplicationClose) or to stream error
-    // (ConnectionLost::ApplicationClosed::ApplicationClose).
-    assert_eq!(
-        localhost_stats.write_error_connection_lost
-            + localhost_stats.connection_error_application_closed,
-        1
+    let stats = join_scheduler(scheduler_handle).await;
+    // With proactive detection, we detect rejection immediately and retry within test duration.
+    // Expect at least 2 errors: initial rejection + retry attempts.
+    assert!(
+        stats.write_error_connection_lost + stats.connection_error_application_closed >= 2,
+        "Expected at least 2 connection errors, got write_error_connection_lost: {}, \
+         connection_error_application_closed: {}",
+        stats.write_error_connection_lost,
+        stats.connection_error_application_closed
     );
 
     drop(throttling_connection);
@@ -342,8 +341,8 @@ async fn test_connection_denied_until_allowed() {
 }
 
 // Check that if the client connection has been pruned, client manages to
-// reestablish it. Pruning will lead to 1 packet loss, because when we send the
-// next packet we will reestablish connection.
+// reestablish it. With more packets, we can observe the impact of pruning
+// even with proactive detection.
 #[tokio::test]
 async fn test_connection_pruned_and_reopened() {
     let SpawnTestServerResult {
@@ -354,23 +353,23 @@ async fn test_connection_pruned_and_reopened() {
         stats: _stats,
     } = setup_quic_server(
         None,
-        TestServerConfig {
+        QuicServerParams {
             max_connections_per_peer: 100,
             max_unstaked_connections: 1,
-            ..Default::default()
+            ..QuicServerParams::default_for_tests()
         },
     );
 
     // Setup sending txs
     let tx_size = 1;
-    let expected_num_txs: usize = 16;
+    let expected_num_txs: usize = 48;
     let SpawnTxGenerator {
         tx_receiver,
         tx_sender_shutdown,
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
 
-    let (scheduler_handle, _scheduler_cancel) =
+    let (scheduler_handle, _update_identity_sender, _scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     sleep(Duration::from_millis(400)).await;
@@ -382,15 +381,11 @@ async fn test_connection_pruned_and_reopened() {
 
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
-    // in case of pruning, server closes the connection with code 1 and error
-    // message b"dropped". This might lead to connection error
-    // (ApplicationClosed::ApplicationClose) or to stream error
-    // (ConnectionLost::ApplicationClosed::ApplicationClose).
-    assert_eq!(
-        localhost_stats.connection_error_application_closed
-            + localhost_stats.write_error_connection_lost,
-        1,
+    let stats = join_scheduler(scheduler_handle).await;
+    // Proactive detection catches pruning immediately, expect multiple retries.
+    assert!(
+        stats.connection_error_application_closed + stats.write_error_connection_lost >= 1,
+        "Expected at least 1 connection error from pruning and retries. Stats: {stats:?}"
     );
 
     // Exit server
@@ -402,8 +397,8 @@ async fn test_connection_pruned_and_reopened() {
 /// connection and verify that all the txs has been received.
 #[tokio::test]
 async fn test_staked_connection() {
-    let identity = Keypair::new();
-    let stakes = HashMap::from([(identity.pubkey(), 100_000)]);
+    let stake_identity = Keypair::new();
+    let stakes = HashMap::from([(stake_identity.pubkey(), 100_000)]);
     let staked_nodes = StakedNodes::new(Arc::new(stakes), HashMap::<Pubkey, u64>::default());
 
     let SpawnTestServerResult {
@@ -414,13 +409,13 @@ async fn test_staked_connection() {
         stats: _stats,
     } = setup_quic_server(
         Some(staked_nodes),
-        TestServerConfig {
+        QuicServerParams {
             // Must use at least the number of endpoints (10) because
             // `max_staked_connections` and `max_unstaked_connections` are
             // cumulative for all the endpoints.
             max_staked_connections: 10,
             max_unstaked_connections: 0,
-            ..Default::default()
+            ..QuicServerParams::default_for_tests()
         },
     );
 
@@ -433,8 +428,8 @@ async fn test_staked_connection() {
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
 
-    let (scheduler_handle, _scheduler_cancel) =
-        setup_connection_worker_scheduler(server_address, tx_receiver, Some(identity)).await;
+    let (scheduler_handle, _update_certificate_sender, _scheduler_cancel) =
+        setup_connection_worker_scheduler(server_address, tx_receiver, Some(stake_identity)).await;
 
     // Check results
     let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
@@ -442,9 +437,9 @@ async fn test_staked_connection() {
 
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let stats = join_scheduler(scheduler_handle).await;
     assert_eq!(
-        localhost_stats,
+        stats,
         SendTransactionStatsNonAtomic {
             successfully_sent: expected_num_txs as u64,
             ..Default::default()
@@ -467,7 +462,7 @@ async fn test_connection_throttling() {
         receiver,
         server_address,
         stats: _stats,
-    } = setup_quic_server(None, TestServerConfig::default());
+    } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
     // Setup sending txs
     let tx_size = 1;
@@ -479,7 +474,7 @@ async fn test_connection_throttling() {
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(1));
 
-    let (scheduler_handle, _scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, _scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     // Check results
@@ -489,9 +484,9 @@ async fn test_connection_throttling() {
 
     // Stop sending
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let stats = join_scheduler(scheduler_handle).await;
     assert_eq!(
-        localhost_stats,
+        stats,
         SendTransactionStatsNonAtomic {
             successfully_sent: expected_num_txs as u64,
             ..Default::default()
@@ -521,7 +516,7 @@ async fn test_no_host() {
         ..
     } = spawn_tx_sender(tx_size, max_send_attempts, Duration::from_millis(10));
 
-    let (scheduler_handle, _scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, _scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     // Wait for all the transactions to be sent, and some extra time for the delivery to be
@@ -532,15 +527,15 @@ async fn test_no_host() {
     // Wait for the generator to finish.
     tx_sender_shutdown.await;
 
-    // While attempting to establish a connection with a nonexistent host, we fill the worker's
-    // channel.
-    let (stats, _) = scheduler_handle
-        .await
-        .expect("Scheduler should stop successfully")
-        .expect("Scheduler execution was successful");
-    let stats = stats.get(&server_ip).unwrap().to_non_atomic();
-    // `5` because `config.max_reconnect_attempts` is 4
-    assert_eq!(stats.connect_error_invalid_remote_address, 5);
+    // For each transaction, we will check if worker exists and active. In this
+    // case, worker will never be active because when failed creating
+    // connection, we stop it. So scheduler will `max_send_attempts` try to
+    // create worker and fail each time.
+    let stats = join_scheduler(scheduler_handle).await;
+    assert_eq!(
+        stats.connect_error_invalid_remote_address,
+        max_send_attempts as u64
+    );
 }
 
 // Check that when the client is rate-limited by server, we update counters
@@ -560,18 +555,19 @@ async fn test_rate_limiting() {
         stats: _stats,
     } = setup_quic_server(
         None,
-        TestServerConfig {
+        QuicServerParams {
             max_connections_per_peer: 100,
             max_connections_per_ipaddr_per_min: 1,
-            ..Default::default()
+            ..QuicServerParams::default_for_tests()
         },
     );
 
+    // open a connection to consume the limit
     let connection_to_reach_limit = make_client_endpoint(&server_address, None).await;
     drop(connection_to_reach_limit);
 
-    // Setup sending txs
-    let tx_size = 1;
+    // Setup sending txs which are full packets in size
+    let tx_size = 1024;
     let expected_num_txs: usize = 16;
     let SpawnTxGenerator {
         tx_receiver,
@@ -579,7 +575,7 @@ async fn test_rate_limiting() {
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
 
-    let (scheduler_handle, scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
@@ -590,13 +586,18 @@ async fn test_rate_limiting() {
 
     // And the scheduler.
     scheduler_cancel.cancel();
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let stats = join_scheduler(scheduler_handle).await;
 
-    // We do not expect to see any errors, as the connection is in the pending state still, when we
-    // do the shutdown.  If we increase the time we wait in `count_received_packets_for`, we would
-    // start seeing a `connection_error_timed_out` incremented to 1.  Potentially, we may want to
-    // accept both 0 and 1 as valid values for it.
-    assert_eq!(localhost_stats, SendTransactionStatsNonAtomic::default());
+    // we get 2 transactions registered as sent (but not acked) because of how QUIC works
+    // before ratelimiter kicks in.
+    assert!(
+        stats
+            == SendTransactionStatsNonAtomic {
+                successfully_sent: 2,
+                write_error_connection_lost: 2,
+                ..Default::default()
+            }
+    );
 
     // Stop the server.
     exit.store(true, Ordering::Relaxed);
@@ -618,10 +619,10 @@ async fn test_rate_limiting_establish_connection() {
         stats: _stats,
     } = setup_quic_server(
         None,
-        TestServerConfig {
+        QuicServerParams {
             max_connections_per_peer: 100,
             max_connections_per_ipaddr_per_min: 1,
-            ..Default::default()
+            ..QuicServerParams::default_for_tests()
         },
     );
 
@@ -637,16 +638,16 @@ async fn test_rate_limiting_establish_connection() {
         ..
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(1000));
 
-    let (scheduler_handle, scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, scheduler_cancel) =
         setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     let actual_num_packets =
         count_received_packets_for(receiver, tx_size, Duration::from_secs(70)).await;
     assert!(
         actual_num_packets > 0,
-        "As we wait longer than 1 minute, at least one transaction should be delivered.  \
-         After 1 minute the server is expected to accept our connection.\n\
-         Actual packets delivered: {actual_num_packets}"
+        "As we wait longer than 1 minute, at least one transaction should be delivered. After 1 \
+         minute the server is expected to accept our connection. Actual packets delivered: \
+         {actual_num_packets}"
     );
 
     // Stop the sender.
@@ -654,28 +655,173 @@ async fn test_rate_limiting_establish_connection() {
 
     // And the scheduler.
     scheduler_cancel.cancel();
-    let mut localhost_stats = join_scheduler(scheduler_handle).await;
+    let mut stats = join_scheduler(scheduler_handle).await;
     assert!(
-        localhost_stats.connection_error_timed_out > 0,
+        stats.connection_error_timed_out > 0,
         "As the quinn timeout is below 1 minute, a few connections will fail to connect during \
-         the 1 minute delay.\n\
-         Actual connection_error_timed_out: {}",
-        localhost_stats.connection_error_timed_out
+         the 1 minute delay. Actual connection_error_timed_out: {}",
+        stats.connection_error_timed_out
     );
     assert!(
-        localhost_stats.successfully_sent > 0,
+        stats.successfully_sent > 0,
         "As we run the test for longer than 1 minute, we expect a connection to be established, \
-         and a number of transactions to be delivered.\n\
-         Actual successfully_sent: {}",
-        localhost_stats.successfully_sent
+         and a number of transactions to be delivered.\nActual successfully_sent: {}",
+        stats.successfully_sent
     );
 
     // All the rest of the error counters should be 0.
-    localhost_stats.connection_error_timed_out = 0;
-    localhost_stats.successfully_sent = 0;
-    assert_eq!(localhost_stats, SendTransactionStatsNonAtomic::default());
+    stats.connection_error_timed_out = 0;
+    stats.successfully_sent = 0;
+    assert_eq!(stats, SendTransactionStatsNonAtomic::default());
 
     // Stop the server.
+    exit.store(true, Ordering::Relaxed);
+    server_handle.await.unwrap();
+}
+
+// Check that identity is updated successfully using corresponding channel.
+//
+// Since the identity update and the transactions are sent concurrently to their channels
+// and scheduler selects randomly which channel to handle first, we cannot
+// guarantee in this test that the identity has been updated before we start
+// sending transactions. Hence, instead of checking that all the transactions
+// have been delivered, we check that at least some have been.
+#[tokio::test]
+async fn test_update_identity() {
+    let stake_identity = Keypair::new();
+    let stakes = HashMap::from([(stake_identity.pubkey(), 100_000)]);
+    let staked_nodes = StakedNodes::new(Arc::new(stakes), HashMap::<Pubkey, u64>::default());
+
+    let SpawnTestServerResult {
+        join_handle: server_handle,
+        exit,
+        receiver,
+        server_address,
+        stats: _stats,
+    } = setup_quic_server(
+        Some(staked_nodes),
+        QuicServerParams {
+            // Must use at least the number of endpoints (10) because
+            // `max_staked_connections` and `max_unstaked_connections` are
+            // cumulative for all the endpoints.
+            max_staked_connections: 10,
+            // Deny all unstaked connections.
+            max_unstaked_connections: 0,
+            ..QuicServerParams::default_for_tests()
+        },
+    );
+
+    // Setup sending txs
+    let tx_size = 1;
+    let num_txs: usize = 100;
+    let SpawnTxGenerator {
+        tx_receiver,
+        tx_sender_shutdown,
+        ..
+    } = spawn_tx_sender(tx_size, num_txs, Duration::from_millis(50));
+
+    let (scheduler_handle, update_identity_sender, scheduler_cancel) =
+        setup_connection_worker_scheduler(
+            server_address,
+            tx_receiver,
+            // Create scheduler with unstaked identity.
+            None,
+        )
+        .await;
+    // Update identity.
+    update_identity_sender
+        .send(Some(StakeIdentity::new(&stake_identity)))
+        .unwrap();
+
+    let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
+    assert!(actual_num_packets > 0);
+
+    // Stop the sender.
+    tx_sender_shutdown.await;
+
+    // And the scheduler.
+    scheduler_cancel.cancel();
+
+    let stats = join_scheduler(scheduler_handle).await;
+    assert!(stats.successfully_sent > 0);
+
+    // Exit server
+    exit.store(true, Ordering::Relaxed);
+    server_handle.await.unwrap();
+}
+
+// Test that connection close events are detected immediately via connection.closed()
+// monitoring, not only when send operations fail.
+#[tokio::test]
+async fn test_proactive_connection_close_detection() {
+    let SpawnTestServerResult {
+        join_handle: server_handle,
+        exit,
+        receiver,
+        server_address,
+        stats: _stats,
+    } = setup_quic_server(
+        None,
+        QuicServerParams {
+            max_connections_per_peer: 1,
+            max_unstaked_connections: 1,
+            ..QuicServerParams::default_for_tests()
+        },
+    );
+
+    // Setup controlled transaction sending
+    let tx_size = 1;
+    let (tx_sender, tx_receiver) = channel(10);
+
+    let sender_task = tokio::spawn(async move {
+        // Send first transaction to establish connection
+        tx_sender
+            .send(TransactionBatch::new(vec![vec![1u8; tx_size]]))
+            .await
+            .expect("Send first batch");
+
+        // Idle period where connection might be closed
+        sleep(Duration::from_millis(500)).await;
+
+        // Attempt another send
+        drop(tx_sender.send(TransactionBatch::new(vec![vec![2u8; tx_size]])));
+    });
+
+    let (scheduler_handle, _update_identity_sender, scheduler_cancel) =
+        setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
+
+    // Verify first packet received
+    let mut first_packet_received = false;
+    let start = Instant::now();
+    while !first_packet_received && start.elapsed() < Duration::from_secs(1) {
+        if let Ok(packets) = receiver.try_recv() {
+            if !packets.is_empty() {
+                first_packet_received = true;
+            }
+        } else {
+            sleep(Duration::from_millis(10)).await;
+        }
+    }
+    assert!(first_packet_received, "First packet should be received");
+
+    // Force connection close by exceeding max_connections_per_peer
+    let _pruning_connection = make_client_endpoint(&server_address, None).await;
+
+    // Allow time for proactive detection
+    sleep(Duration::from_millis(200)).await;
+
+    // Clean up
+    scheduler_cancel.cancel();
+    let _ = sender_task.await;
+    let stats = join_scheduler(scheduler_handle).await;
+
+    // Verify proactive close detection
+    assert!(
+        stats.connection_error_application_closed > 0 || stats.write_error_connection_lost > 0,
+        "Should detect connection close proactively. Stats: {stats:?}"
+    );
+
+    // Exit server
     exit.store(true, Ordering::Relaxed);
     server_handle.await.unwrap();
 }

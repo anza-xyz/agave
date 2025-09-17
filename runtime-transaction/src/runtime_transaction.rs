@@ -1,10 +1,10 @@
 //! RuntimeTransaction is `runtime` facing representation of transaction, while
-//! solana_sdk::SanitizedTransaction is client facing representation.
+//! solana_transaction::sanitized::SanitizedTransaction is client facing representation.
 //!
 //! It has two states:
 //! 1. Statically Loaded: after receiving `packet` from sigverify and deserializing
-//!    it into `solana_sdk::VersionedTransaction`, then sanitizing into
-//!    `solana_sdk::SanitizedVersionedTransaction`, which can be wrapped into
+//!    it into `solana_transaction::versioned::VersionedTransaction`, then sanitizing into
+//!    `solana_transaction::versioned::sanitized::SanitizedVersionedTransaction`, which can be wrapped into
 //!    `RuntimeTransaction` with static transaction metadata extracted.
 //! 2. Dynamically Loaded: after successfully loaded account addresses from onchain
 //!    ALT, RuntimeTransaction<SanitizedMessage> transits into Dynamically Loaded state,
@@ -13,12 +13,10 @@ use {
     crate::transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
     core::ops::Deref,
     solana_compute_budget_instruction::compute_budget_instruction_details::*,
-    solana_sdk::{
-        hash::Hash,
-        message::{AccountKeys, TransactionSignatureDetails},
-        pubkey::Pubkey,
-        signature::Signature,
-    },
+    solana_hash::Hash,
+    solana_message::{AccountKeys, TransactionSignatureDetails},
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
     solana_svm_transaction::{
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
         svm_message::SVMMessage, svm_transaction::SVMTransaction,
@@ -37,6 +35,12 @@ pub struct RuntimeTransaction<T> {
     meta: TransactionMeta,
 }
 
+impl<T> RuntimeTransaction<T> {
+    pub fn into_inner_transaction(self) -> T {
+        self.transaction
+    }
+}
+
 impl<T> StaticMeta for RuntimeTransaction<T> {
     fn message_hash(&self) -> &Hash {
         &self.meta.message_hash
@@ -49,6 +53,9 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     }
     fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails {
         &self.meta.compute_budget_instruction_details
+    }
+    fn instruction_data_len(&self) -> u16 {
+        self.meta.instruction_data_len
     }
 }
 
@@ -63,9 +70,26 @@ impl<T> Deref for RuntimeTransaction<T> {
 }
 
 impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
+    fn num_transaction_signatures(&self) -> u64 {
+        self.transaction.num_transaction_signatures()
+    }
     // override to access from the cached meta instead of re-calculating
-    fn num_total_signatures(&self) -> u64 {
-        self.meta.signature_details.total_signatures()
+    fn num_ed25519_signatures(&self) -> u64 {
+        self.meta
+            .signature_details
+            .num_ed25519_instruction_signatures()
+    }
+    // override to access from the cached meta instead of re-calculating
+    fn num_secp256k1_signatures(&self) -> u64 {
+        self.meta
+            .signature_details
+            .num_secp256k1_instruction_signatures()
+    }
+    // override to access form the cached meta instead of re-calculating
+    fn num_secp256r1_signatures(&self) -> u64 {
+        self.meta
+            .signature_details
+            .num_secp256r1_instruction_signatures()
     }
 
     fn num_write_locks(&self) -> u64 {
@@ -86,6 +110,10 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
 
     fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
         self.transaction.program_instructions_iter()
+    }
+
+    fn static_account_keys(&self) -> &[Pubkey] {
+        self.transaction.static_account_keys()
     }
 
     fn account_keys(&self) -> AccountKeys {

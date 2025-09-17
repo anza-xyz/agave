@@ -1,8 +1,6 @@
 use {
-    solana_sdk::{
-        transaction::TransactionError, transaction_context::TransactionReturnData,
-        transport::TransportError,
-    },
+    solana_transaction_context::TransactionReturnData,
+    solana_transaction_error::{TransactionError, TransportError},
     std::io,
     tarpc::client::RpcError,
     thiserror::Error,
@@ -45,15 +43,11 @@ impl BanksClientError {
 impl From<BanksClientError> for io::Error {
     fn from(err: BanksClientError) -> Self {
         match err {
-            BanksClientError::ClientError(err) => Self::new(io::ErrorKind::Other, err.to_string()),
+            BanksClientError::ClientError(err) => Self::other(err.to_string()),
             BanksClientError::Io(err) => err,
-            BanksClientError::RpcError(err) => Self::new(io::ErrorKind::Other, err.to_string()),
-            BanksClientError::TransactionError(err) => {
-                Self::new(io::ErrorKind::Other, err.to_string())
-            }
-            BanksClientError::SimulationError { err, .. } => {
-                Self::new(io::ErrorKind::Other, err.to_string())
-            }
+            BanksClientError::RpcError(err) => Self::other(err.to_string()),
+            BanksClientError::TransactionError(err) => Self::other(err.to_string()),
+            BanksClientError::SimulationError { err, .. } => Self::other(err.to_string()),
         }
     }
 }
@@ -61,15 +55,9 @@ impl From<BanksClientError> for io::Error {
 impl From<BanksClientError> for TransportError {
     fn from(err: BanksClientError) -> Self {
         match err {
-            BanksClientError::ClientError(err) => {
-                Self::IoError(io::Error::new(io::ErrorKind::Other, err.to_string()))
-            }
-            BanksClientError::Io(err) => {
-                Self::IoError(io::Error::new(io::ErrorKind::Other, err.to_string()))
-            }
-            BanksClientError::RpcError(err) => {
-                Self::IoError(io::Error::new(io::ErrorKind::Other, err.to_string()))
-            }
+            BanksClientError::ClientError(err) => Self::IoError(io::Error::other(err.to_string())),
+            BanksClientError::Io(err) => Self::IoError(io::Error::other(err.to_string())),
+            BanksClientError::RpcError(err) => Self::IoError(io::Error::other(err.to_string())),
             BanksClientError::TransactionError(err) => Self::TransactionError(err),
             BanksClientError::SimulationError { err, .. } => Self::TransactionError(err),
         }

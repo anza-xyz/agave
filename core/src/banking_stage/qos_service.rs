@@ -4,21 +4,28 @@
 //!
 
 use {
-    super::{committer::CommitTransactionDetails, BatchedTransactionDetails},
+    super::{
+        committer::CommitTransactionDetails, BatchedTransactionCostDetails,
+        BatchedTransactionDetails, BatchedTransactionErrorDetails,
+    },
+    agave_feature_set::FeatureSet,
+    solana_clock::Slot,
     solana_cost_model::{
         cost_model::CostModel, cost_tracker::UpdatedCosts, transaction_cost::TransactionCost,
     },
-    solana_feature_set::FeatureSet,
     solana_measure::measure::Measure,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::{
-        clock::Slot,
-        saturating_add_assign,
-        transaction::{self, TransactionError},
+    solana_transaction_error::TransactionError,
+    std::{
+        num::Saturating,
+        sync::atomic::{AtomicU64, Ordering},
     },
-    std::sync::atomic::{AtomicU64, Ordering},
 };
+
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
 
 // QosService is local to each banking thread, each instance of QosService provides services to
 // one banking thread.
@@ -190,6 +197,8 @@ impl QosService {
                         CommitTransactionDetails::Committed {
                             compute_units,
                             loaded_accounts_data_size,
+                            result: _,
+                            fee_payer_post_balance: _,
                         } => {
                             cost_tracker.update_execution_cost(
                                 tx_cost,
@@ -200,7 +209,7 @@ impl QosService {
                                 ),
                             );
                         }
-                        CommitTransactionDetails::NotCommitted => {
+                        CommitTransactionDetails::NotCommitted(_err) => {
                             cost_tracker.remove(tx_cost);
                         }
                     }
@@ -236,77 +245,78 @@ impl QosService {
         &self,
         batched_transaction_details: &BatchedTransactionDetails,
     ) {
-        self.metrics.stats.estimated_signature_cu.fetch_add(
-            batched_transaction_details.costs.batched_signature_cost,
-            Ordering::Relaxed,
-        );
-        self.metrics.stats.estimated_write_lock_cu.fetch_add(
-            batched_transaction_details.costs.batched_write_lock_cost,
-            Ordering::Relaxed,
-        );
-        self.metrics.stats.estimated_data_bytes_cu.fetch_add(
-            batched_transaction_details.costs.batched_data_bytes_cost,
-            Ordering::Relaxed,
-        );
+        let &BatchedTransactionDetails {
+            costs:
+                BatchedTransactionCostDetails {
+                    batched_signature_cost: Saturating(batched_signature_cost),
+                    batched_write_lock_cost: Saturating(batched_write_lock_cost),
+                    batched_data_bytes_cost: Saturating(batched_data_bytes_cost),
+                    batched_loaded_accounts_data_size_cost:
+                        Saturating(batched_loaded_accounts_data_size_cost),
+                    batched_programs_execute_cost: Saturating(batched_programs_execute_cost),
+                },
+            errors:
+                BatchedTransactionErrorDetails {
+                    batched_retried_txs_per_block_limit_count:
+                        Saturating(batched_retried_txs_per_block_limit_count),
+                    batched_retried_txs_per_vote_limit_count:
+                        Saturating(batched_retried_txs_per_vote_limit_count),
+                    batched_retried_txs_per_account_limit_count:
+                        Saturating(batched_retried_txs_per_account_limit_count),
+                    batched_retried_txs_per_account_data_block_limit_count:
+                        Saturating(batched_retried_txs_per_account_data_block_limit_count),
+                    batched_dropped_txs_per_account_data_total_limit_count:
+                        Saturating(batched_dropped_txs_per_account_data_total_limit_count),
+                },
+        } = batched_transaction_details;
+        self.metrics
+            .stats
+            .estimated_signature_cu
+            .fetch_add(batched_signature_cost, Ordering::Relaxed);
+        self.metrics
+            .stats
+            .estimated_write_lock_cu
+            .fetch_add(batched_write_lock_cost, Ordering::Relaxed);
+        self.metrics
+            .stats
+            .estimated_data_bytes_cu
+            .fetch_add(batched_data_bytes_cost, Ordering::Relaxed);
         self.metrics
             .stats
             .estimated_loaded_accounts_data_size_cu
-            .fetch_add(
-                batched_transaction_details
-                    .costs
-                    .batched_loaded_accounts_data_size_cost,
-                Ordering::Relaxed,
-            );
-        self.metrics.stats.estimated_programs_execute_cu.fetch_add(
-            batched_transaction_details
-                .costs
-                .batched_programs_execute_cost,
-            Ordering::Relaxed,
-        );
+            .fetch_add(batched_loaded_accounts_data_size_cost, Ordering::Relaxed);
+        self.metrics
+            .stats
+            .estimated_programs_execute_cu
+            .fetch_add(batched_programs_execute_cost, Ordering::Relaxed);
 
         self.metrics
             .errors
             .retried_txs_per_block_limit_count
-            .fetch_add(
-                batched_transaction_details
-                    .errors
-                    .batched_retried_txs_per_block_limit_count,
-                Ordering::Relaxed,
-            );
+            .fetch_add(batched_retried_txs_per_block_limit_count, Ordering::Relaxed);
         self.metrics
             .errors
             .retried_txs_per_vote_limit_count
-            .fetch_add(
-                batched_transaction_details
-                    .errors
-                    .batched_retried_txs_per_vote_limit_count,
-                Ordering::Relaxed,
-            );
+            .fetch_add(batched_retried_txs_per_vote_limit_count, Ordering::Relaxed);
         self.metrics
             .errors
             .retried_txs_per_account_limit_count
             .fetch_add(
-                batched_transaction_details
-                    .errors
-                    .batched_retried_txs_per_account_limit_count,
+                batched_retried_txs_per_account_limit_count,
                 Ordering::Relaxed,
             );
         self.metrics
             .errors
             .retried_txs_per_account_data_block_limit_count
             .fetch_add(
-                batched_transaction_details
-                    .errors
-                    .batched_retried_txs_per_account_data_block_limit_count,
+                batched_retried_txs_per_account_data_block_limit_count,
                 Ordering::Relaxed,
             );
         self.metrics
             .errors
             .dropped_txs_per_account_data_total_limit_count
             .fetch_add(
-                batched_transaction_details
-                    .errors
-                    .batched_dropped_txs_per_account_data_total_limit_count,
+                batched_dropped_txs_per_account_data_total_limit_count,
                 Ordering::Relaxed,
             );
     }
@@ -333,71 +343,43 @@ impl QosService {
         let mut batched_transaction_details = BatchedTransactionDetails::default();
         transactions_costs.for_each(|cost| match cost {
             Ok(cost) => {
-                saturating_add_assign!(
-                    batched_transaction_details.costs.batched_signature_cost,
-                    cost.signature_cost()
-                );
-                saturating_add_assign!(
-                    batched_transaction_details.costs.batched_write_lock_cost,
-                    cost.write_lock_cost()
-                );
-                saturating_add_assign!(
-                    batched_transaction_details.costs.batched_data_bytes_cost,
-                    cost.data_bytes_cost()
-                );
-                saturating_add_assign!(
-                    batched_transaction_details
-                        .costs
-                        .batched_loaded_accounts_data_size_cost,
-                    cost.loaded_accounts_data_size_cost()
-                );
-                saturating_add_assign!(
-                    batched_transaction_details
-                        .costs
-                        .batched_programs_execute_cost,
-                    cost.programs_execution_cost()
-                );
+                batched_transaction_details.costs.batched_signature_cost += cost.signature_cost();
+                batched_transaction_details.costs.batched_write_lock_cost += cost.write_lock_cost();
+                batched_transaction_details.costs.batched_data_bytes_cost +=
+                    u64::from(cost.data_bytes_cost());
+                batched_transaction_details
+                    .costs
+                    .batched_loaded_accounts_data_size_cost +=
+                    cost.loaded_accounts_data_size_cost();
+                batched_transaction_details
+                    .costs
+                    .batched_programs_execute_cost += cost.programs_execution_cost();
             }
             Err(transaction_error) => match transaction_error {
                 TransactionError::WouldExceedMaxBlockCostLimit => {
-                    saturating_add_assign!(
-                        batched_transaction_details
-                            .errors
-                            .batched_retried_txs_per_block_limit_count,
-                        1
-                    );
+                    batched_transaction_details
+                        .errors
+                        .batched_retried_txs_per_block_limit_count += 1;
                 }
                 TransactionError::WouldExceedMaxVoteCostLimit => {
-                    saturating_add_assign!(
-                        batched_transaction_details
-                            .errors
-                            .batched_retried_txs_per_vote_limit_count,
-                        1
-                    );
+                    batched_transaction_details
+                        .errors
+                        .batched_retried_txs_per_vote_limit_count += 1;
                 }
                 TransactionError::WouldExceedMaxAccountCostLimit => {
-                    saturating_add_assign!(
-                        batched_transaction_details
-                            .errors
-                            .batched_retried_txs_per_account_limit_count,
-                        1
-                    );
+                    batched_transaction_details
+                        .errors
+                        .batched_retried_txs_per_account_limit_count += 1;
                 }
                 TransactionError::WouldExceedAccountDataBlockLimit => {
-                    saturating_add_assign!(
-                        batched_transaction_details
-                            .errors
-                            .batched_retried_txs_per_account_data_block_limit_count,
-                        1
-                    );
+                    batched_transaction_details
+                        .errors
+                        .batched_retried_txs_per_account_data_block_limit_count += 1;
                 }
                 TransactionError::WouldExceedAccountDataTotalLimit => {
-                    saturating_add_assign!(
-                        batched_transaction_details
-                            .errors
-                            .batched_dropped_txs_per_account_data_total_limit_count,
-                        1
-                    );
+                    batched_transaction_details
+                        .errors
+                        .batched_dropped_txs_per_account_data_total_limit_count += 1;
                 }
                 _ => {}
             },
@@ -611,14 +593,14 @@ mod tests {
         super::*,
         itertools::Itertools,
         solana_cost_model::transaction_cost::{UsageCostDetails, WritableKeysTransaction},
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_runtime::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            hash::Hash,
-            signature::{Keypair, Signer},
-            system_transaction,
-        },
-        solana_vote_program::{vote_state::TowerSync, vote_transaction},
+        solana_signer::Signer,
+        solana_system_transaction as system_transaction,
+        solana_vote::vote_transaction,
+        solana_vote_program::vote_state::TowerSync,
         std::sync::Arc,
     };
 
@@ -725,10 +707,10 @@ mod tests {
         let transaction_count = 5;
         let keypair = Keypair::new();
         let loaded_accounts_data_size: u32 = 1_000_000;
-        let transaction = solana_sdk::transaction::Transaction::new_unsigned(solana_sdk::message::Message::new(
+        let transaction = solana_transaction::Transaction::new_unsigned(solana_message::Message::new(
             &[
-                solana_sdk::compute_budget::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size),
-                solana_sdk::system_instruction::transfer(&keypair.pubkey(), &solana_sdk::pubkey::Pubkey::new_unique(), 1),
+                solana_compute_budget_interface::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size),
+                solana_system_interface::instruction::transfer(&keypair.pubkey(), &solana_pubkey::Pubkey::new_unique(), 1),
             ],
             Some(&keypair.pubkey()),
         ));
@@ -770,6 +752,8 @@ mod tests {
                         + execute_units_adjustment,
                     loaded_accounts_data_size: loaded_accounts_data_size
                         + loaded_accounts_data_size_adjustment,
+                    result: Ok(()),
+                    fee_payer_post_balance: 0,
                 })
                 .collect();
             let final_txs_cost = total_txs_cost
@@ -849,10 +833,10 @@ mod tests {
         let transaction_count = 5;
         let keypair = Keypair::new();
         let loaded_accounts_data_size: u32 = 1_000_000;
-        let transaction = solana_sdk::transaction::Transaction::new_unsigned(solana_sdk::message::Message::new(
+        let transaction = solana_transaction::Transaction::new_unsigned(solana_message::Message::new(
             &[
-                solana_sdk::compute_budget::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size),
-                solana_sdk::system_instruction::transfer(&keypair.pubkey(), &solana_sdk::pubkey::Pubkey::new_unique(), 1),
+                solana_compute_budget_interface::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size),
+                solana_system_interface::instruction::transfer(&keypair.pubkey(), &solana_pubkey::Pubkey::new_unique(), 1),
             ],
             Some(&keypair.pubkey()),
         ));
@@ -891,13 +875,17 @@ mod tests {
                 .enumerate()
                 .map(|(n, tx_cost)| {
                     if n % 2 == 0 {
-                        CommitTransactionDetails::NotCommitted
+                        CommitTransactionDetails::NotCommitted(
+                            TransactionError::InsufficientFundsForFee,
+                        )
                     } else {
                         CommitTransactionDetails::Committed {
                             compute_units: tx_cost.as_ref().unwrap().programs_execution_cost()
                                 + execute_units_adjustment,
                             loaded_accounts_data_size: loaded_accounts_data_size
                                 + loaded_accounts_data_size_adjustment,
+                            result: Ok(()),
+                            fee_payer_post_balance: 1,
                         }
                     }
                 })
@@ -960,24 +948,24 @@ mod tests {
         // should only accumulate half of the costs that are OK
         let expected_signatures = signature_cost * (num_txs / 2);
         let expected_write_locks = write_lock_cost * (num_txs / 2);
-        let expected_data_bytes = data_bytes_cost * (num_txs / 2);
+        let expected_data_bytes = u64::from(data_bytes_cost) * (num_txs / 2);
         let expected_programs_execution_costs = programs_execution_cost * (num_txs / 2);
         let batched_transaction_details =
             QosService::accumulate_batched_transaction_costs(tx_cost_results.iter());
         assert_eq!(
-            expected_signatures,
+            Saturating(expected_signatures),
             batched_transaction_details.costs.batched_signature_cost
         );
         assert_eq!(
-            expected_write_locks,
+            Saturating(expected_write_locks),
             batched_transaction_details.costs.batched_write_lock_cost
         );
         assert_eq!(
-            expected_data_bytes,
+            Saturating(expected_data_bytes),
             batched_transaction_details.costs.batched_data_bytes_cost
         );
         assert_eq!(
-            expected_programs_execution_costs,
+            Saturating(expected_programs_execution_costs),
             batched_transaction_details
                 .costs
                 .batched_programs_execute_cost

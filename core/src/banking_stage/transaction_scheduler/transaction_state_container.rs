@@ -1,16 +1,16 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
-    super::{
-        transaction_priority_id::TransactionPriorityId,
-        transaction_state::{SanitizedTransactionTTL, TransactionState},
-    },
-    crate::banking_stage::{
-        immutable_deserialized_packet::ImmutableDeserializedPacket,
-        scheduler_messages::TransactionId,
-    },
+    super::{transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState},
+    crate::banking_stage::scheduler_messages::{MaxAge, TransactionId},
+    agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
-    slab::Slab,
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    slab::{Slab, VacantEntry},
+    solana_packet::PACKET_DATA_SIZE,
+    solana_runtime_transaction::{
+        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+    },
     std::sync::Arc,
 };
 
@@ -39,20 +39,24 @@ use {
 ///
 /// The container maintains a fixed capacity. If the queue is full when pushing
 /// a new transaction, the lowest priority transaction will be dropped.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
+    capacity: usize,
     priority_queue: MinMaxHeap<TransactionPriorityId>,
     id_to_transaction_state: Slab<TransactionState<Tx>>,
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     /// Create a new `TransactionStateContainer` with the given capacity.
     fn with_capacity(capacity: usize) -> Self;
 
+    fn queue_size(&self) -> usize;
+
+    fn buffer_size(&self) -> usize;
+
     /// Returns true if the queue is empty.
     fn is_empty(&self) -> bool;
-
-    /// Returns the remaining capacity of the container
-    fn remaining_capacity(&self) -> usize;
 
     /// Get the top transaction id in the priority queue.
     fn pop(&mut self) -> Option<TransactionPriorityId>;
@@ -63,56 +67,62 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
 
     /// Get reference to `SanitizedTransactionTTL` by id.
     /// Panics if the transaction does not exist.
-    fn get_transaction_ttl(&self, id: TransactionId) -> Option<&SanitizedTransactionTTL<Tx>>;
+    fn get_transaction(&self, id: TransactionId) -> Option<&Tx>;
 
-    /// Insert a new transaction into the container's queues and maps.
-    /// Returns `true` if a packet was dropped due to capacity limits.
-    fn insert_new_transaction(
-        &mut self,
-        transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Arc<ImmutableDeserializedPacket>,
-        priority: u64,
-        cost: u64,
-    ) -> bool;
-
-    /// Retries a transaction - inserts transaction back into map (but not packet).
+    /// Retries a transaction - inserts transaction back into map.
     /// This transitions the transaction to `Unprocessed` state.
-    fn retry_transaction(
-        &mut self,
-        transaction_id: TransactionId,
-        transaction_ttl: SanitizedTransactionTTL<Tx>,
-    );
+    fn retry_transaction(&mut self, transaction_id: TransactionId, transaction: Tx) {
+        let transaction_state = self
+            .get_mut_transaction_state(transaction_id)
+            .expect("transaction must exist");
+        let priority_id = TransactionPriorityId::new(transaction_state.priority(), transaction_id);
+        transaction_state.retry_transaction(transaction);
+        self.push_ids_into_queue(std::iter::once(priority_id));
+    }
 
-    /// Pushes a transaction id into the priority queue. If the queue is full, the lowest priority
-    /// transaction will be dropped (removed from the queue and map).
-    /// Returns `true` if a packet was dropped due to capacity limits.
-    fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool;
+    /// Pushes transaction ids into the priority queue. If the queue if full,
+    /// the lowest priority transactions will be dropped (removed from the
+    /// queue and map) **after** all ids have been pushed.
+    /// To avoid allocating, the caller should not push more than
+    /// [`EXTRA_CAPACITY`] ids in a call.
+    /// Returns the number of dropped transactions.
+    fn push_ids_into_queue(
+        &mut self,
+        priority_ids: impl Iterator<Item = TransactionPriorityId>,
+    ) -> usize;
 
     /// Remove transaction by id.
     fn remove_by_id(&mut self, id: TransactionId);
 
     fn get_min_max_priority(&self) -> MinMaxResult<u64>;
+
+    #[cfg(feature = "dev-context-only-utils")]
+    fn clear(&mut self);
 }
+
+// Extra capacity is added because some additional space is needed when
+// pushing a new transaction into the container to avoid reallocation.
+pub(crate) const EXTRA_CAPACITY: usize = 64;
 
 impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<Tx> {
     fn with_capacity(capacity: usize) -> Self {
-        // Extra capacity is added because some additional space is needed when
-        // pushing a new transaction into the container to avoid reallocation.
-        const EXTRA_CAPACITY: usize = 64;
         Self {
-            priority_queue: MinMaxHeap::with_capacity(capacity),
+            capacity,
+            priority_queue: MinMaxHeap::with_capacity(capacity + EXTRA_CAPACITY),
             id_to_transaction_state: Slab::with_capacity(capacity + EXTRA_CAPACITY),
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.priority_queue.is_empty()
+    fn queue_size(&self) -> usize {
+        self.priority_queue.len()
     }
 
-    fn remaining_capacity(&self) -> usize {
-        self.priority_queue
-            .capacity()
-            .saturating_sub(self.id_to_transaction_state.len())
+    fn buffer_size(&self) -> usize {
+        self.id_to_transaction_state.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.priority_queue.is_empty()
     }
 
     fn pop(&mut self) -> Option<TransactionPriorityId> {
@@ -126,52 +136,35 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         self.id_to_transaction_state.get_mut(id)
     }
 
-    fn get_transaction_ttl(&self, id: TransactionId) -> Option<&SanitizedTransactionTTL<Tx>> {
+    fn get_transaction(&self, id: TransactionId) -> Option<&Tx> {
         self.id_to_transaction_state
             .get(id)
-            .map(|state| state.transaction_ttl())
+            .map(|state| state.transaction())
     }
 
-    fn insert_new_transaction(
+    fn push_ids_into_queue(
         &mut self,
-        transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Arc<ImmutableDeserializedPacket>,
-        priority: u64,
-        cost: u64,
-    ) -> bool {
-        // cache the remaining capacity **before** we take ownership of
-        // the next vacant entry. i.e. get the size before we insert.
-        let remaining_capacity = self.remaining_capacity();
-        let priority_id = {
-            let entry = self.id_to_transaction_state.vacant_entry();
-            let transaction_id = entry.key();
-            entry.insert(TransactionState::new(
-                transaction_ttl,
-                packet,
-                priority,
-                cost,
-            ));
-            TransactionPriorityId::new(priority, transaction_id)
-        };
+        priority_ids: impl Iterator<Item = TransactionPriorityId>,
+    ) -> usize {
+        for id in priority_ids {
+            self.priority_queue.push(id);
+        }
 
-        self.push_id_into_queue_with_remaining_capacity(priority_id, remaining_capacity)
-    }
+        // The number of items in the `id_to_transaction_state` map is
+        // greater than or equal to the number of elements in the queue.
+        // To avoid the map going over capacity, we use the length of the
+        // map here instead of the queue.
+        let num_dropped = self
+            .id_to_transaction_state
+            .len()
+            .saturating_sub(self.capacity);
 
-    fn retry_transaction(
-        &mut self,
-        transaction_id: TransactionId,
-        transaction_ttl: SanitizedTransactionTTL<Tx>,
-    ) {
-        let transaction_state = self
-            .get_mut_transaction_state(transaction_id)
-            .expect("transaction must exist");
-        let priority_id = TransactionPriorityId::new(transaction_state.priority(), transaction_id);
-        transaction_state.transition_to_unprocessed(transaction_ttl);
-        self.push_id_into_queue(priority_id);
-    }
+        for _ in 0..num_dropped {
+            let priority_id = self.priority_queue.pop_min().expect("queue is not empty");
+            self.id_to_transaction_state.remove(priority_id.id);
+        }
 
-    fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
-        self.push_id_into_queue_with_remaining_capacity(priority_id, self.remaining_capacity())
+        num_dropped
     }
 
     fn remove_by_id(&mut self, id: TransactionId) {
@@ -187,22 +180,163 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
             None => MinMaxResult::NoElements,
         }
     }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    fn clear(&mut self) {
+        self.priority_queue.clear();
+        self.id_to_transaction_state.clear();
+    }
 }
 
 impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
-    fn push_id_into_queue_with_remaining_capacity(
+    /// Insert a new transaction into the container's queues and maps.
+    /// Returns `true` if a packet was dropped due to capacity limits.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    pub(crate) fn insert_new_transaction(
         &mut self,
-        priority_id: TransactionPriorityId,
-        remaining_capacity: usize,
+        transaction: Tx,
+        max_age: MaxAge,
+        priority: u64,
+        cost: u64,
     ) -> bool {
-        if remaining_capacity == 0 {
-            let popped_id = self.priority_queue.push_pop_min(priority_id);
-            self.remove_by_id(popped_id.id);
-            true
-        } else {
-            self.priority_queue.push(priority_id);
-            false
+        let priority_id = {
+            let entry = self.get_vacant_map_entry();
+            let transaction_id = entry.key();
+            entry.insert(TransactionState::new(transaction, max_age, priority, cost));
+            TransactionPriorityId::new(priority, transaction_id)
+        };
+
+        self.push_ids_into_queue(std::iter::once(priority_id)) > 0
+    }
+
+    fn get_vacant_map_entry(&mut self) -> VacantEntry<TransactionState<Tx>> {
+        assert!(self.id_to_transaction_state.len() < self.id_to_transaction_state.capacity());
+        self.id_to_transaction_state.vacant_entry()
+    }
+}
+
+pub type SharedBytes = Arc<Vec<u8>>;
+pub(crate) type RuntimeTransactionView = RuntimeTransaction<ResolvedTransactionView<SharedBytes>>;
+pub(crate) type TransactionViewState = TransactionState<RuntimeTransactionView>;
+
+/// A wrapper around `TransactionStateContainer` that allows re-uses
+/// pre-allocated `Bytes` to copy packet data into and use for serialization.
+/// This is used to avoid allocations in parsing transactions.
+pub struct TransactionViewStateContainer {
+    inner: TransactionStateContainer<RuntimeTransactionView>,
+    bytes_buffer: Box<[SharedBytes]>,
+}
+
+impl TransactionViewStateContainer {
+    /// Insert into the map, but NOT into the priority queue.
+    /// Returns the id of the transaction if it was inserted.
+    pub(crate) fn try_insert_map_only_with_data(
+        &mut self,
+        data: &[u8],
+        f: impl FnOnce(SharedBytes) -> Result<TransactionState<RuntimeTransactionView>, ()>,
+    ) -> Option<usize> {
+        // Get a vacant entry in the slab.
+        let vacant_entry = self.inner.get_vacant_map_entry();
+        let transaction_id = vacant_entry.key();
+
+        // Get the vacant space in the bytes buffer.
+        let bytes_entry = &mut self.bytes_buffer[transaction_id];
+        // Assert the entry is unique, then copy the packet data.
+        {
+            // The strong count must be 1 here. These are only cloned into the
+            // inner container below, wrapped by a `ResolveTransactionView`,
+            // which does not expose the backing memory (the `Arc`), or
+            // implement `Clone`.
+            // This could only fail if there is a bug in the container that the
+            // entry in the slab was not cleared. However, since we share
+            // indexing between the slab and our `bytes_buffer`, we know that
+            // `vacant_entry` is not occupied.
+            assert_eq!(Arc::strong_count(bytes_entry), 1, "entry must be unique");
+            let bytes = Arc::make_mut(bytes_entry);
+
+            // Clear and copy the packet data into the bytes buffer.
+            bytes.clear();
+            bytes.extend_from_slice(data);
         }
+
+        // Attempt to insert the transaction.
+        if let Ok(state) = f(Arc::clone(bytes_entry)) {
+            vacant_entry.insert(state);
+            Some(transaction_id)
+        } else {
+            None
+        }
+    }
+}
+
+impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
+    fn with_capacity(capacity: usize) -> Self {
+        let inner = TransactionStateContainer::with_capacity(capacity);
+        let bytes_buffer = (0..inner.id_to_transaction_state.capacity())
+            .map(|_| Arc::new(Vec::with_capacity(PACKET_DATA_SIZE)))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        Self {
+            inner,
+            bytes_buffer,
+        }
+    }
+
+    #[inline]
+    fn queue_size(&self) -> usize {
+        self.inner.queue_size()
+    }
+
+    #[inline]
+    fn buffer_size(&self) -> usize {
+        self.inner.buffer_size()
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    #[inline]
+    fn pop(&mut self) -> Option<TransactionPriorityId> {
+        self.inner.pop()
+    }
+
+    #[inline]
+    fn get_mut_transaction_state(
+        &mut self,
+        id: TransactionId,
+    ) -> Option<&mut TransactionViewState> {
+        self.inner.get_mut_transaction_state(id)
+    }
+
+    #[inline]
+    fn get_transaction(&self, id: TransactionId) -> Option<&RuntimeTransactionView> {
+        self.inner.get_transaction(id)
+    }
+
+    #[inline]
+    fn push_ids_into_queue(
+        &mut self,
+        priority_ids: impl Iterator<Item = TransactionPriorityId>,
+    ) -> usize {
+        self.inner.push_ids_into_queue(priority_ids)
+    }
+
+    #[inline]
+    fn remove_by_id(&mut self, id: TransactionId) {
+        self.inner.remove_by_id(id);
+    }
+
+    #[inline]
+    fn get_min_max_priority(&self) -> MinMaxResult<u64> {
+        self.inner.get_min_max_priority()
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    #[inline]
+    fn clear(&mut self) {
+        self.inner.clear();
     }
 }
 
@@ -211,35 +345,29 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::scheduler_messages::MaxAge,
+        agave_transaction_view::transaction_view::SanitizedTransactionView,
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::Message,
+        solana_perf::packet::Packet,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            compute_budget::ComputeBudgetInstruction,
-            hash::Hash,
-            message::Message,
-            packet::Packet,
-            signature::Keypair,
-            signer::Signer,
-            system_instruction,
-            transaction::{SanitizedTransaction, Transaction},
+        solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
+        solana_transaction::{
+            sanitized::{MessageHash, SanitizedTransaction},
+            Transaction,
         },
+        std::collections::HashSet,
     };
 
     /// Returns (transaction_ttl, priority, cost)
     fn test_transaction(
         priority: u64,
-    ) -> (
-        SanitizedTransactionTTL<RuntimeTransaction<SanitizedTransaction>>,
-        Arc<ImmutableDeserializedPacket>,
-        u64,
-        u64,
-    ) {
+    ) -> (RuntimeTransaction<SanitizedTransaction>, MaxAge, u64, u64) {
         let from_keypair = Keypair::new();
         let ixs = vec![
-            system_instruction::transfer(
-                &from_keypair.pubkey(),
-                &solana_sdk::pubkey::new_rand(),
-                1,
-            ),
+            system_instruction::transfer(&from_keypair.pubkey(), &solana_pubkey::new_rand(), 1),
             ComputeBudgetInstruction::set_compute_unit_price(priority),
         ];
         let message = Message::new(&ixs, Some(&from_keypair.pubkey()));
@@ -248,18 +376,8 @@ mod tests {
             message,
             Hash::default(),
         ));
-        let packet = Arc::new(
-            ImmutableDeserializedPacket::new(
-                Packet::from_data(None, tx.to_versioned_transaction()).unwrap(),
-            )
-            .unwrap(),
-        );
-        let transaction_ttl = SanitizedTransactionTTL {
-            transaction: tx,
-            max_age: MaxAge::MAX,
-        };
         const TEST_TRANSACTION_COST: u64 = 5000;
-        (transaction_ttl, packet, priority, TEST_TRANSACTION_COST)
+        (tx, MaxAge::MAX, priority, TEST_TRANSACTION_COST)
     }
 
     fn push_to_container(
@@ -267,8 +385,8 @@ mod tests {
         num: usize,
     ) {
         for priority in 0..num as u64 {
-            let (transaction_ttl, packet, priority, cost) = test_transaction(priority);
-            container.insert_new_transaction(transaction_ttl, packet, priority, cost);
+            let (transaction, max_age, priority, cost) = test_transaction(priority);
+            container.insert_new_transaction(transaction, max_age, priority, cost);
         }
     }
 
@@ -311,5 +429,81 @@ mod tests {
         assert!(container
             .get_mut_transaction_state(non_existing_id)
             .is_none());
+    }
+
+    #[test]
+    fn test_view_push_ids_to_queue() {
+        let mut container = TransactionViewStateContainer::with_capacity(2);
+
+        let reserved_addresses = HashSet::default();
+        let packet_parser = |data, priority, cost| {
+            let view = SanitizedTransactionView::try_new_sanitized(data).unwrap();
+            let view = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+                view,
+                MessageHash::Compute,
+                None,
+            )
+            .unwrap();
+            let view = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
+                view,
+                None,
+                &reserved_addresses,
+            )
+            .unwrap();
+
+            Ok(TransactionState::new(view, MaxAge::MAX, priority, cost))
+        };
+
+        // Push 2 transactions into the queue so buffer is full.
+        for priority in [4, 5] {
+            let (transaction, _max_age, priority, cost) = test_transaction(priority);
+            let packet = Packet::from_data(None, transaction.to_versioned_transaction()).unwrap();
+            let id = container
+                .try_insert_map_only_with_data(packet.data(..).unwrap(), |data| {
+                    packet_parser(data, priority, cost)
+                })
+                .unwrap();
+            let priority_id = TransactionPriorityId::new(priority, id);
+            assert_eq!(
+                container.push_ids_into_queue(std::iter::once(priority_id)),
+                0
+            );
+        }
+
+        // Push 5 additional packets in. 5 should be dropped.
+        let mut priority_ids = Vec::with_capacity(5);
+        for priority in [10, 11, 12, 1, 2] {
+            let (transaction, _max_age, priority, cost) = test_transaction(priority);
+            let packet = Packet::from_data(None, transaction.to_versioned_transaction()).unwrap();
+            let id = container
+                .try_insert_map_only_with_data(packet.data(..).unwrap(), |data| {
+                    packet_parser(data, priority, cost)
+                })
+                .unwrap();
+            let priority_id = TransactionPriorityId::new(priority, id);
+            priority_ids.push(priority_id);
+        }
+        assert_eq!(container.push_ids_into_queue(priority_ids.into_iter()), 5);
+        assert_eq!(container.pop().unwrap().priority, 12);
+        assert_eq!(container.pop().unwrap().priority, 11);
+        assert!(container.pop().is_none());
+
+        // Container now has no items in the queue, but still has 5 items in the map.
+        // If we attempt to push additional transactions to the queue, they
+        // are rejected regardless of their priority.
+        let priority = u64::MAX;
+        let (transaction, _max_age, priority, cost) = test_transaction(priority);
+        let packet = Packet::from_data(None, transaction.to_versioned_transaction()).unwrap();
+        let id = container
+            .try_insert_map_only_with_data(packet.data(..).unwrap(), |data| {
+                packet_parser(data, priority, cost)
+            })
+            .unwrap();
+        let priority_id = TransactionPriorityId::new(priority, id);
+        assert_eq!(
+            container.push_ids_into_queue(std::iter::once(priority_id)),
+            1
+        );
+        assert!(container.pop().is_none());
     }
 }

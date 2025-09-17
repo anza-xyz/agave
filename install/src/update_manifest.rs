@@ -1,11 +1,9 @@
 use {
     serde_derive::{Deserialize, Serialize},
-    solana_config_program::ConfigState,
-    solana_sdk::{
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Signable, Signature},
-    },
+    solana_hash::Hash,
+    solana_keypair::signable::Signable,
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
     std::{borrow::Cow, error, io},
 };
 
@@ -43,6 +41,8 @@ impl Signable for SignedUpdateManifest {
 }
 
 impl SignedUpdateManifest {
+    pub const MAX_SPACE: u64 = 256; // Enough space for a fully populated SignedUpdateManifest
+
     pub fn deserialize(
         account_pubkey: &Pubkey,
         input: &[u8],
@@ -50,15 +50,9 @@ impl SignedUpdateManifest {
         let mut manifest: SignedUpdateManifest = bincode::deserialize(input)?;
         manifest.account_pubkey = *account_pubkey;
         if !manifest.verify() {
-            Err(io::Error::new(io::ErrorKind::Other, "Manifest failed to verify").into())
+            Err(io::Error::other("Manifest failed to verify").into())
         } else {
             Ok(manifest)
         }
-    }
-}
-
-impl ConfigState for SignedUpdateManifest {
-    fn max_space() -> u64 {
-        256 // Enough space for a fully populated SignedUpdateManifest
     }
 }

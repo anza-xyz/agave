@@ -1,6 +1,9 @@
 use {
-    crate::shred::{CodingShredHeader, DataShredHeader, Error, ShredCommonHeader},
-    solana_sdk::{clock::Slot, signature::Signature},
+    crate::shred::{
+        payload::Payload, CodingShredHeader, DataShredHeader, Error, ShredCommonHeader,
+    },
+    solana_clock::Slot,
+    solana_signature::Signature,
 };
 
 pub(super) trait Shred<'a>: Sized {
@@ -12,28 +15,24 @@ pub(super) trait Shred<'a>: Sized {
 
     type SignedData: AsRef<[u8]>;
 
-    fn from_payload(shred: Vec<u8>) -> Result<Self, Error>;
+    fn from_payload<T>(shred: T) -> Result<Self, Error>
+    where
+        Payload: From<T>;
     fn common_header(&self) -> &ShredCommonHeader;
     fn sanitize(&self) -> Result<(), Error>;
 
     fn set_signature(&mut self, signature: Signature);
 
-    fn payload(&self) -> &Vec<u8>;
-    fn into_payload(self) -> Vec<u8>;
+    fn payload(&self) -> &Payload;
+    fn into_payload(self) -> Payload;
 
     // Returns the shard index within the erasure coding set.
     fn erasure_shard_index(&self) -> Result<usize, Error>;
     // Returns the portion of the shred's payload which is erasure coded.
-    fn erasure_shard(self) -> Result<Vec<u8>, Error>;
-    // Like Shred::erasure_shard but returning a slice.
-    fn erasure_shard_as_slice(&self) -> Result<&[u8], Error>;
+    fn erasure_shard(&self) -> Result<&[u8], Error>;
 
     // Portion of the payload which is signed.
     fn signed_data(&'a self) -> Result<Self::SignedData, Error>;
-
-    // Only for tests.
-    fn set_index(&mut self, index: u32);
-    fn set_slot(&mut self, slot: Slot);
 }
 
 pub(super) trait ShredData: for<'a> Shred<'a> {

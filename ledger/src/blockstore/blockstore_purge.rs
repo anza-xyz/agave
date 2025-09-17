@@ -1,6 +1,6 @@
 use {
     super::*,
-    solana_sdk::message::AccountKeys,
+    solana_message::AccountKeys,
     std::{cmp::max, time::Instant},
 };
 
@@ -56,10 +56,7 @@ impl Blockstore {
             )
         );
         if let Err(e) = purge_result {
-            error!(
-                "Error: {:?}; Purge failed in range {:?} to {:?}",
-                e, from_slot, to_slot
-            );
+            error!("Error: {e:?}; Purge failed in range {from_slot:?} to {to_slot:?}");
         }
     }
 
@@ -104,8 +101,7 @@ impl Blockstore {
             count += 1;
             if last_print.elapsed().as_millis() > 2000 {
                 info!(
-                    "purged: {} slots rewritten: {} retain_time: {}us",
-                    count, rewritten, total_retain_us
+                    "purged: {count} slots rewritten: {rewritten} retain_time: {total_retain_us}us"
                 );
                 count = 0;
                 rewritten = 0;
@@ -123,11 +119,7 @@ impl Blockstore {
                     slot,
                     from_slot..=to_slot
                 );
-                self.put_meta_bytes(
-                    slot,
-                    &bincode::serialize(&meta).expect("couldn't update meta"),
-                )
-                .expect("couldn't update meta");
+                self.put_meta(slot, &meta).expect("couldn't update meta");
             }
             time.stop();
             total_retain_us += time.as_us();
@@ -170,9 +162,8 @@ impl Blockstore {
                     .put_in_batch(&mut write_batch, parent_slot, &parent_slot_meta)?;
             } else {
                 error!(
-                    "Parent slot meta {} for child {} is missing  or cleaned up.
-                       Falling back to orphan repair to remedy the situation",
-                    parent_slot, slot
+                    "Parent slot meta {parent_slot} for child {slot} is missing or cleaned up. \
+                     Falling back to orphan repair to remedy the situation",
                 );
             }
         }
@@ -183,10 +174,7 @@ impl Blockstore {
             .put_in_batch(&mut write_batch, slot, &slot_meta)?;
 
         self.write_batch(write_batch).inspect_err(|e| {
-            error!(
-                "Error: {:?} while submitting write batch for slot {:?}",
-                e, slot
-            )
+            error!("Error: {e:?} while submitting write batch for slot {slot:?}")
         })?;
         Ok(columns_purged)
     }
@@ -216,8 +204,8 @@ impl Blockstore {
         let mut write_timer = Measure::start("write_batch");
         self.write_batch(write_batch).inspect_err(|e| {
             error!(
-                "Error: {:?} while submitting write batch for purge from_slot {} to_slot {}",
-                e, from_slot, to_slot
+                "Error: {e:?} while submitting write batch for purge from_slot {from_slot} \
+                 to_slot {to_slot}"
             )
         })?;
         write_timer.stop();
@@ -529,11 +517,10 @@ pub mod tests {
         },
         bincode::serialize,
         solana_entry::entry::next_entry_mut,
-        solana_sdk::{
-            hash::{hash, Hash},
-            message::Message,
-            transaction::Transaction,
-        },
+        solana_hash::Hash,
+        solana_message::Message,
+        solana_sha256_hasher::hash,
+        solana_transaction::Transaction,
         test_case::test_case,
     };
 
@@ -621,7 +608,6 @@ pub mod tests {
                 x.saturating_sub(1), // parent_slot
                 true,                // is_full_slot
                 0,                   // version
-                true,                // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
             let signature = entries
@@ -662,7 +648,6 @@ pub mod tests {
                 x.saturating_sub(1), // parent_slot
                 true,                // is_full_slot
                 0,                   // version
-                true,                // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
             let signature = entries
@@ -704,7 +689,6 @@ pub mod tests {
                 slot.saturating_sub(1),
                 true, // is_full_slot
                 0,    // version
-                true, // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
 
@@ -803,21 +787,6 @@ pub mod tests {
         assert_eq!(status_entry_iterator.next(), None);
     }
 
-    fn get_index_bounds(blockstore: &Blockstore) -> (Box<[u8]>, Box<[u8]>) {
-        let (first_index, _value) = blockstore
-            .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start)
-            .next()
-            .unwrap();
-        let (last_index, _value) = blockstore
-            .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::End)
-            .next()
-            .unwrap();
-
-        (first_index, last_index)
-    }
-
     fn purge_exact(blockstore: &Blockstore, oldest_slot: Slot) {
         blockstore
             .run_purge(0, oldest_slot - 1, PurgeType::Exact)
@@ -825,11 +794,8 @@ pub mod tests {
     }
 
     fn purge_compaction_filter(blockstore: &Blockstore, oldest_slot: Slot) {
-        let (first_index, last_index) = get_index_bounds(blockstore);
         blockstore.db.set_oldest_slot(oldest_slot);
-        blockstore
-            .transaction_status_cf
-            .compact_range_raw_key(&first_index, &last_index);
+        blockstore.transaction_status_cf.compact();
     }
 
     #[test_case(purge_exact; "exact")]
@@ -972,7 +938,6 @@ pub mod tests {
             slot - 1, // parent_slot
             true,     // is_full_slot
             0,        // version
-            true,     // merkle_variant
         );
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
@@ -989,13 +954,10 @@ pub mod tests {
         let max_slot = 19;
 
         clear_and_repopulate_transaction_statuses_for_test(&blockstore, max_slot);
-        let (first_index, last_index) = get_index_bounds(&blockstore);
 
         let oldest_slot = 3;
         blockstore.db.set_oldest_slot(oldest_slot);
-        blockstore
-            .transaction_status_cf
-            .compact_range_raw_key(&first_index, &last_index);
+        blockstore.transaction_status_cf.compact();
 
         let status_entry_iterator = blockstore
             .transaction_status_cf
@@ -1009,13 +971,10 @@ pub mod tests {
         assert_eq!(count, max_slot - (oldest_slot - 1));
 
         clear_and_repopulate_transaction_statuses_for_test(&blockstore, max_slot);
-        let (first_index, last_index) = get_index_bounds(&blockstore);
 
         let oldest_slot = 12;
         blockstore.db.set_oldest_slot(oldest_slot);
-        blockstore
-            .transaction_status_cf
-            .compact_range_raw_key(&first_index, &last_index);
+        blockstore.transaction_status_cf.compact();
 
         let status_entry_iterator = blockstore
             .transaction_status_cf
@@ -1071,22 +1030,9 @@ pub mod tests {
             )
             .unwrap();
 
-        let (first_index, _value) = blockstore
-            .transaction_memos_cf
-            .iterator_cf_raw_key(IteratorMode::Start)
-            .next()
-            .unwrap();
-        let (last_index, _value) = blockstore
-            .transaction_memos_cf
-            .iterator_cf_raw_key(IteratorMode::End)
-            .next()
-            .unwrap();
-
         // Purge at slot 0 should not affect any memos
         blockstore.db.set_oldest_slot(0);
-        blockstore
-            .transaction_memos_cf
-            .compact_range_raw_key(&first_index, &last_index);
+        blockstore.transaction_memos_cf.compact();
         let num_memos = blockstore
             .transaction_memos_cf
             .iter(IteratorMode::Start)
@@ -1096,9 +1042,7 @@ pub mod tests {
 
         // Purge at oldest_slot without clean_slot_0 only purges the current memo at slot 4
         blockstore.db.set_oldest_slot(oldest_slot);
-        blockstore
-            .transaction_memos_cf
-            .compact_range_raw_key(&first_index, &last_index);
+        blockstore.transaction_memos_cf.compact();
         let memos_iterator = blockstore
             .transaction_memos_cf
             .iter(IteratorMode::Start)
@@ -1112,9 +1056,7 @@ pub mod tests {
 
         // Purge at oldest_slot with clean_slot_0 purges deprecated memos
         blockstore.db.set_clean_slot_0(true);
-        blockstore
-            .transaction_memos_cf
-            .compact_range_raw_key(&first_index, &last_index);
+        blockstore.transaction_memos_cf.compact();
         let memos_iterator = blockstore
             .transaction_memos_cf
             .iter(IteratorMode::Start)
@@ -1148,9 +1090,9 @@ pub mod tests {
 
         let (shreds, _) = make_many_slot_entries(0, 10, 5);
         blockstore.insert_shreds(shreds, None, false).unwrap();
-        let (slot_11, _) = make_slot_entries(11, 4, 5, true);
+        let (slot_11, _) = make_slot_entries(11, 4, 5);
         blockstore.insert_shreds(slot_11, None, false).unwrap();
-        let (slot_12, _) = make_slot_entries(12, 5, 5, true);
+        let (slot_12, _) = make_slot_entries(12, 5, 5);
         blockstore.insert_shreds(slot_12, None, false).unwrap();
 
         blockstore.purge_slot_cleanup_chaining(5).unwrap();

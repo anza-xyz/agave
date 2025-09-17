@@ -3,9 +3,9 @@
 use {
     bytemuck::Pod,
     solana_instruction::error::InstructionError,
-    solana_log_collector::ic_msg,
     solana_program_runtime::{declare_process_instruction, invoke_context::InvokeContext},
     solana_sdk_ids::system_program,
+    solana_svm_log_collector::ic_msg,
     solana_zk_sdk::zk_elgamal_proof_program::{
         id,
         instruction::ProofInstruction,
@@ -45,8 +45,8 @@ where
 
     // if instruction data is exactly 5 bytes, then read proof from an account
     let context_data = if instruction_data.len() == INSTRUCTION_DATA_LENGTH_WITH_PROOF_ACCOUNT {
-        let proof_data_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, accessed_accounts)?;
+        let proof_data_account =
+            instruction_context.try_borrow_instruction_account(accessed_accounts)?;
         accessed_accounts = accessed_accounts.checked_add(1).unwrap();
 
         let proof_data_offset = u32::from_le_bytes(
@@ -93,14 +93,11 @@ where
     // create context state if additional accounts are provided with the instruction
     if instruction_context.get_number_of_instruction_accounts() > accessed_accounts {
         let context_state_authority = *instruction_context
-            .try_borrow_instruction_account(
-                transaction_context,
-                accessed_accounts.checked_add(1).unwrap(),
-            )?
+            .try_borrow_instruction_account(accessed_accounts.checked_add(1).unwrap())?
             .get_key();
 
-        let mut proof_context_account = instruction_context
-            .try_borrow_instruction_account(transaction_context, accessed_accounts)?;
+        let mut proof_context_account =
+            instruction_context.try_borrow_instruction_account(accessed_accounts)?;
 
         if *proof_context_account.get_owner() != id() {
             return Err(InstructionError::InvalidAccountOwner);
@@ -131,27 +128,20 @@ fn process_close_proof_context(invoke_context: &mut InvokeContext) -> Result<(),
     let instruction_context = transaction_context.get_current_instruction_context()?;
 
     let owner_pubkey = {
-        let owner_account =
-            instruction_context.try_borrow_instruction_account(transaction_context, 2)?;
-
-        if !owner_account.is_signer() {
+        if !instruction_context.is_instruction_account_signer(2)? {
             return Err(InstructionError::MissingRequiredSignature);
         }
-        *owner_account.get_key()
-    }; // done with `owner_account`, so drop it to prevent a potential double borrow
 
-    let proof_context_account_pubkey = *instruction_context
-        .try_borrow_instruction_account(transaction_context, 0)?
-        .get_key();
-    let destination_account_pubkey = *instruction_context
-        .try_borrow_instruction_account(transaction_context, 1)?
-        .get_key();
+        *instruction_context.get_key_of_instruction_account(2)?
+    };
+
+    let proof_context_account_pubkey = *instruction_context.get_key_of_instruction_account(0)?;
+    let destination_account_pubkey = *instruction_context.get_key_of_instruction_account(1)?;
     if proof_context_account_pubkey == destination_account_pubkey {
         return Err(InstructionError::InvalidInstructionData);
     }
 
-    let mut proof_context_account =
-        instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+    let mut proof_context_account = instruction_context.try_borrow_instruction_account(0)?;
     let proof_context_state_meta =
         ProofContextStateMeta::try_from_bytes(proof_context_account.get_data())?;
     let expected_owner_pubkey = proof_context_state_meta.context_state_authority;
@@ -160,8 +150,7 @@ fn process_close_proof_context(invoke_context: &mut InvokeContext) -> Result<(),
         return Err(InstructionError::InvalidAccountOwner);
     }
 
-    let mut destination_account =
-        instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
+    let mut destination_account = instruction_context.try_borrow_instruction_account(1)?;
     destination_account.checked_add_lamports(proof_context_account.get_lamports())?;
     proof_context_account.set_lamports(0)?;
     proof_context_account.set_data_length(0)?;
@@ -171,6 +160,20 @@ fn process_close_proof_context(invoke_context: &mut InvokeContext) -> Result<(),
 }
 
 declare_process_instruction!(Entrypoint, 0, |invoke_context| {
+    if invoke_context
+        .get_feature_set()
+        .disable_zk_elgamal_proof_program
+        && !invoke_context
+            .get_feature_set()
+            .reenable_zk_elgamal_proof_program
+    {
+        ic_msg!(
+            invoke_context,
+            "zk-elgamal-proof program is temporarily disabled"
+        );
+        return Err(InstructionError::InvalidInstructionData);
+    }
+
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();

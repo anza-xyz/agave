@@ -1,29 +1,28 @@
 //! Used to create minimal snapshots - separated here to keep accounts_db simpler
+#![cfg(feature = "dev-context-only-utils")]
 
 use {
     crate::{bank::Bank, static_ids},
+    agave_reserved_account_keys::ReservedAccountKeys,
     dashmap::DashSet,
     log::info,
     rayon::{
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
         prelude::ParallelSlice,
     },
+    solana_account::{state_traits::StateMut, ReadableAccount},
     solana_accounts_db::{
         accounts_db::{
             stats::PurgeStats, AccountStorageEntry, AccountsDb, GetUniqueAccountsResult,
+            UpdateIndexThreadSelection,
         },
-        accounts_partition,
         storable_accounts::StorableAccountsBySlot,
     },
+    solana_clock::Slot,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_measure::measure_time,
-    solana_sdk::{
-        account::ReadableAccount,
-        account_utils::StateMut,
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        clock::Slot,
-        pubkey::Pubkey,
-        reserved_account_keys::ReservedAccountKeys,
-    },
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::bpf_loader_upgradeable,
     std::{
         collections::HashSet,
         sync::{
@@ -37,27 +36,25 @@ use {
 pub struct SnapshotMinimizer<'a> {
     bank: &'a Bank,
     starting_slot: Slot,
-    ending_slot: Slot,
     minimized_account_set: DashSet<Pubkey>,
 }
 
 impl<'a> SnapshotMinimizer<'a> {
     /// Removes all accounts not necessary for replaying slots in the range [starting_slot, ending_slot].
     /// `transaction_account_set` should contain accounts used in transactions in the slot range [starting_slot, ending_slot].
-    /// This function will accumulate other accounts (rent collection, builtins, etc) necessary to replay transactions.
+    /// This function will accumulate other accounts (builtins, etc) necessary to replay transactions.
     ///
     /// This function will modify accounts_db by removing accounts not needed to replay [starting_slot, ending_slot],
     /// and update the bank's capitalization.
     pub fn minimize(
         bank: &'a Bank,
         starting_slot: Slot,
-        ending_slot: Slot,
         transaction_account_set: DashSet<Pubkey>,
+        should_recalculate_accounts_lt_hash: bool,
     ) {
         let minimizer = SnapshotMinimizer {
             bank,
             starting_slot,
-            ending_slot,
             minimized_account_set: transaction_account_set,
         };
 
@@ -66,10 +63,6 @@ impl<'a> SnapshotMinimizer<'a> {
         minimizer.add_accounts(Self::get_static_runtime_accounts, "static runtime accounts");
         minimizer.add_accounts(Self::get_reserved_accounts, "reserved accounts");
 
-        minimizer.add_accounts(
-            Self::get_rent_collection_accounts,
-            "rent collection accounts",
-        );
         minimizer.add_accounts(Self::get_vote_accounts, "vote accounts");
         minimizer.add_accounts(Self::get_stake_accounts, "stake accounts");
         minimizer.add_accounts(Self::get_owner_accounts, "owner accounts");
@@ -79,7 +72,20 @@ impl<'a> SnapshotMinimizer<'a> {
 
         // Update accounts_cache and capitalization
         minimizer.bank.force_flush_accounts_cache();
-        minimizer.bank.set_capitalization();
+        minimizer
+            .bank
+            .set_capitalization_for_tests(minimizer.bank.calculate_capitalization_for_tests());
+
+        if should_recalculate_accounts_lt_hash {
+            // Since the account state has changed, the accounts lt hash must be recalculated
+            let new_accounts_lt_hash = minimizer
+                .accounts_db()
+                .calculate_accounts_lt_hash_at_startup_from_index(
+                    &minimizer.bank.ancestors,
+                    minimizer.bank.slot(),
+                );
+            bank.set_accounts_lt_hash_for_snapshot_minimizer(new_accounts_lt_hash);
+        }
     }
 
     /// Helper function to measure time and number of accounts added
@@ -93,20 +99,25 @@ impl<'a> SnapshotMinimizer<'a> {
         let added_accounts = total_accounts_len - initial_accounts_len;
 
         info!(
-            "Added {added_accounts} {name} for total of {total_accounts_len} accounts. get {measure}"
+            "Added {added_accounts} {name} for total of {total_accounts_len} accounts. get \
+             {measure}"
         );
     }
 
     /// Used to get active bank feature accounts in `minimize`.
     fn get_active_bank_features(&self) {
-        self.bank.feature_set.active.iter().for_each(|(pubkey, _)| {
-            self.minimized_account_set.insert(*pubkey);
-        });
+        self.bank
+            .feature_set
+            .active()
+            .iter()
+            .for_each(|(pubkey, _)| {
+                self.minimized_account_set.insert(*pubkey);
+            });
     }
 
     /// Used to get inactive bank feature accounts in `minimize`
     fn get_inactive_bank_features(&self) {
-        self.bank.feature_set.inactive.iter().for_each(|pubkey| {
+        self.bank.feature_set.inactive().iter().for_each(|pubkey| {
             self.minimized_account_set.insert(*pubkey);
         });
     }
@@ -123,33 +134,6 @@ impl<'a> SnapshotMinimizer<'a> {
         ReservedAccountKeys::all_keys_iter().for_each(|pubkey| {
             self.minimized_account_set.insert(*pubkey);
         })
-    }
-
-    /// Used to get rent collection accounts in `minimize`
-    /// Add all pubkeys we would collect rent from or rewrite to `minimized_account_set`.
-    /// related to Bank::rent_collection_partitions
-    fn get_rent_collection_accounts(&self) {
-        let partitions = if !self.bank.use_fixed_collection_cycle() {
-            self.bank
-                .variable_cycle_partitions_between_slots(self.starting_slot, self.ending_slot)
-        } else {
-            self.bank
-                .fixed_cycle_partitions_between_slots(self.starting_slot, self.ending_slot)
-        };
-
-        partitions.into_iter().for_each(|partition| {
-            let subrange = accounts_partition::pubkey_range_from_partition(partition);
-            // This may be overkill since we just need the pubkeys and don't need to actually load the accounts.
-            // Leaving it for now as this is only used by ledger-tool. If used in runtime, we will need to instead use
-            // some of the guts of `load_to_collect_rent_eagerly`.
-            self.bank
-                .accounts()
-                .load_to_collect_rent_eagerly(&self.bank.ancestors, subrange)
-                .into_par_iter()
-                .for_each(|(pubkey, ..)| {
-                    self.minimized_account_set.insert(pubkey);
-                })
-        });
     }
 
     /// Used to get vote and node pubkeys in `minimize`
@@ -334,11 +318,8 @@ impl<'a> SnapshotMinimizer<'a> {
         let remove_pubkeys = purge_pubkeys_collect.into_inner().unwrap();
         let total_bytes = total_bytes_collect.load(Ordering::Relaxed);
 
-        let purge_pubkeys: Vec<_> = remove_pubkeys
-            .into_iter()
-            .map(|pubkey| (*pubkey, slot))
-            .collect();
-        let _ = self.accounts_db().purge_keys_exact(purge_pubkeys.iter());
+        let purge_pubkeys = remove_pubkeys.into_iter().map(|pubkey| (*pubkey, slot));
+        let _ = self.accounts_db().purge_keys_exact(purge_pubkeys);
 
         let mut shrink_in_progress = None;
         if total_bytes > 0 {
@@ -352,8 +333,11 @@ impl<'a> SnapshotMinimizer<'a> {
             let storable_accounts =
                 StorableAccountsBySlot::new(slot, &accounts, self.accounts_db());
 
-            self.accounts_db()
-                .store_accounts_frozen(storable_accounts, new_storage);
+            self.accounts_db().store_accounts_frozen(
+                storable_accounts,
+                new_storage,
+                UpdateIndexThreadSelection::Inline,
+            );
 
             new_storage.flush().unwrap();
         }
@@ -374,7 +358,7 @@ impl<'a> SnapshotMinimizer<'a> {
     fn purge_dead_slots(&self, dead_slots: Vec<Slot>) {
         let stats = PurgeStats::default();
         self.accounts_db()
-            .purge_slots_from_cache_and_store(dead_slots.iter(), &stats, false);
+            .purge_slots_from_cache_and_store(dead_slots.iter(), &stats);
     }
 
     /// Convenience function for getting accounts_db
@@ -387,90 +371,33 @@ impl<'a> SnapshotMinimizer<'a> {
 mod tests {
     use {
         crate::{
-            bank::Bank, genesis_utils::create_genesis_config_with_leader,
+            bank::Bank,
+            genesis_utils::{self, create_genesis_config_with_leader},
+            runtime_config::RuntimeConfig,
+            snapshot_bank_utils,
+            snapshot_config::SnapshotConfig,
             snapshot_minimizer::SnapshotMinimizer,
+            snapshot_utils,
         },
         dashmap::DashSet,
-        solana_sdk::{
-            account::{AccountSharedData, ReadableAccount, WritableAccount},
-            bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-            genesis_config::{create_genesis_config, GenesisConfig},
-            pubkey::Pubkey,
-            signer::Signer,
-            stake,
-        },
+        solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+        solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+        solana_genesis_config::create_genesis_config,
+        solana_loader_v3_interface::state::UpgradeableLoaderState,
+        solana_pubkey::Pubkey,
+        solana_sdk_ids::bpf_loader_upgradeable,
+        solana_signer::Signer,
+        solana_stake_interface as stake,
         std::sync::Arc,
+        tempfile::TempDir,
+        test_case::test_case,
     };
-
-    #[test]
-    fn test_get_rent_collection_accounts() {
-        solana_logger::setup();
-
-        let genesis_config = GenesisConfig::default();
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-
-        // Slots correspond to subrange: A52Kf8KJNVhs1y61uhkzkSF82TXCLxZekqmFwiFXLnHu..=ChWNbfHUHLvFY3uhXj6kQhJ7a9iZB4ykh34WRGS5w9NE
-        // Initially, there are no existing keys in this range
-        {
-            let minimizer = SnapshotMinimizer {
-                bank: &bank,
-                starting_slot: 100_000,
-                ending_slot: 110_000,
-                minimized_account_set: DashSet::new(),
-            };
-            minimizer.get_rent_collection_accounts();
-            assert!(
-                minimizer.minimized_account_set.is_empty(),
-                "rent collection accounts should be empty: len={}",
-                minimizer.minimized_account_set.len()
-            );
-        }
-
-        // Add a key in the subrange
-        let pubkey: Pubkey = "ChWNbfHUHLvFY3uhXj6kQhJ7a9iZB4ykh34WRGS5w9ND"
-            .parse()
-            .unwrap();
-        bank.store_account(&pubkey, &AccountSharedData::new(1, 0, &Pubkey::default()));
-
-        {
-            let minimizer = SnapshotMinimizer {
-                bank: &bank,
-                starting_slot: 100_000,
-                ending_slot: 110_000,
-                minimized_account_set: DashSet::new(),
-            };
-            minimizer.get_rent_collection_accounts();
-            assert_eq!(
-                1,
-                minimizer.minimized_account_set.len(),
-                "rent collection accounts should have len=1: len={}",
-                minimizer.minimized_account_set.len()
-            );
-            assert!(minimizer.minimized_account_set.contains(&pubkey));
-        }
-
-        // Slots correspond to subrange: ChXFtoKuDvQum4HvtgiqGWrgUYbtP1ZzGFGMnT8FuGaB..=FKzRYCFeCC8e48jP9kSW4xM77quv1BPrdEMktpceXWSa
-        // The previous key is not contained in this range, so is not added
-        {
-            let minimizer = SnapshotMinimizer {
-                bank: &bank,
-                starting_slot: 110_001,
-                ending_slot: 120_000,
-                minimized_account_set: DashSet::new(),
-            };
-            assert!(
-                minimizer.minimized_account_set.is_empty(),
-                "rent collection accounts should be empty: len={}",
-                minimizer.minimized_account_set.len()
-            );
-        }
-    }
 
     #[test]
     fn test_minimization_get_vote_accounts() {
         solana_logger::setup();
 
-        let bootstrap_validator_pubkey = solana_sdk::pubkey::new_rand();
+        let bootstrap_validator_pubkey = solana_pubkey::new_rand();
         let bootstrap_validator_stake_lamports = 30;
         let genesis_config_info = create_genesis_config_with_leader(
             10,
@@ -483,7 +410,6 @@ mod tests {
         let minimizer = SnapshotMinimizer {
             bank: &bank,
             starting_slot: 0,
-            ending_slot: 0,
             minimized_account_set: DashSet::new(),
         };
         minimizer.get_vote_accounts();
@@ -500,7 +426,7 @@ mod tests {
     fn test_minimization_get_stake_accounts() {
         solana_logger::setup();
 
-        let bootstrap_validator_pubkey = solana_sdk::pubkey::new_rand();
+        let bootstrap_validator_pubkey = solana_pubkey::new_rand();
         let bootstrap_validator_stake_lamports = 30;
         let genesis_config_info = create_genesis_config_with_leader(
             10,
@@ -512,7 +438,6 @@ mod tests {
         let minimizer = SnapshotMinimizer {
             bank: &bank,
             starting_slot: 0,
-            ending_slot: 0,
             minimized_account_set: DashSet::new(),
         };
         minimizer.get_stake_accounts();
@@ -543,8 +468,8 @@ mod tests {
         let (genesis_config, _) = create_genesis_config(1_000_000);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
-        let pubkey = solana_sdk::pubkey::new_rand();
-        let owner_pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
+        let owner_pubkey = solana_pubkey::new_rand();
         bank.store_account(&pubkey, &AccountSharedData::new(1, 0, &owner_pubkey));
 
         let owner_accounts = DashSet::new();
@@ -552,7 +477,6 @@ mod tests {
         let minimizer = SnapshotMinimizer {
             bank: &bank,
             starting_slot: 0,
-            ending_slot: 0,
             minimized_account_set: owner_accounts,
         };
 
@@ -568,9 +492,9 @@ mod tests {
         let (genesis_config, _) = create_genesis_config(1_000_000);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
-        let non_program_id = solana_sdk::pubkey::new_rand();
-        let program_id = solana_sdk::pubkey::new_rand();
-        let programdata_address = solana_sdk::pubkey::new_rand();
+        let non_program_id = solana_pubkey::new_rand();
+        let program_id = solana_pubkey::new_rand();
+        let programdata_address = solana_pubkey::new_rand();
 
         let program = UpgradeableLoaderState::Program {
             programdata_address,
@@ -590,7 +514,6 @@ mod tests {
         let minimizer = SnapshotMinimizer {
             bank: &bank,
             starting_slot: 0,
-            ending_slot: 0,
             minimized_account_set: programdata_accounts,
         };
         minimizer.get_programdata_accounts();
@@ -623,7 +546,7 @@ mod tests {
         let minimized_account_set = DashSet::new();
         for _ in 0..num_slots {
             let pubkeys: Vec<_> = (0..num_accounts_per_slot)
-                .map(|_| solana_sdk::pubkey::new_rand())
+                .map(|_| solana_pubkey::new_rand())
                 .collect();
 
             let some_lamport = 223;
@@ -634,13 +557,12 @@ mod tests {
             current_slot += 1;
 
             for (index, pubkey) in pubkeys.iter().enumerate() {
-                accounts.store_for_tests(current_slot, &[(pubkey, &account)]);
+                accounts.store_for_tests((current_slot, [(pubkey, &account)].as_slice()));
 
                 if current_slot % 2 == 0 && index % 100 == 0 {
                     minimized_account_set.insert(*pubkey);
                 }
             }
-            accounts.calculate_accounts_delta_hash(current_slot);
             accounts.add_root_and_flush_write_cache(current_slot);
         }
 
@@ -648,7 +570,6 @@ mod tests {
         let minimizer = SnapshotMinimizer {
             bank: &bank,
             starting_slot: current_slot,
-            ending_slot: current_slot,
             minimized_account_set,
         };
         minimizer.minimize_accounts_db();
@@ -658,14 +579,100 @@ mod tests {
 
         let mut account_count = 0;
         snapshot_storages.into_iter().for_each(|storage| {
-            storage.accounts.scan_pubkeys(|_| {
-                account_count += 1;
-            });
+            storage
+                .accounts
+                .scan_pubkeys(|_| {
+                    account_count += 1;
+                })
+                .expect("must scan accounts storage");
         });
 
         assert_eq!(
             account_count,
             minimizer.minimized_account_set.len() + num_accounts_per_slot
         ); // snapshot slot is untouched, so still has all 300 accounts
+    }
+
+    /// Ensure that minimized snapshots are loadable with and without
+    /// recalculating the accounts lt hash.
+    #[test_case(false)]
+    #[test_case(true)]
+    fn test_minimize_and_recalculate_accounts_lt_hash(should_recalculate_accounts_lt_hash: bool) {
+        let genesis_config_info = genesis_utils::create_genesis_config(123_456_789_000_000_000);
+        let (bank, bank_forks) =
+            Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
+
+        // write to multiple accounts and keep track of one, for minimization later
+        let pubkey_to_keep = Pubkey::new_unique();
+        let slot = bank.slot() + 1;
+        let bank = Bank::new_from_parent(bank, &Pubkey::default(), slot);
+        let bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(bank)
+            .clone_without_scheduler();
+        bank.register_unique_recent_blockhash_for_test();
+        bank.transfer(
+            1_000_000_000,
+            &genesis_config_info.mint_keypair,
+            &Pubkey::new_unique(),
+        )
+        .unwrap();
+        bank.transfer(
+            1_000_000_000,
+            &genesis_config_info.mint_keypair,
+            &pubkey_to_keep,
+        )
+        .unwrap();
+        bank.fill_bank_with_ticks_for_tests();
+        bank.squash();
+        bank.force_flush_accounts_cache();
+
+        // do the minimization
+        SnapshotMinimizer::minimize(
+            &bank,
+            bank.slot(),
+            DashSet::from_iter([pubkey_to_keep]),
+            should_recalculate_accounts_lt_hash,
+        );
+
+        // take a snapshot of the minimized bank, then load it
+        let snapshot_config = SnapshotConfig::default();
+        let bank_snapshots_dir = TempDir::new().unwrap();
+        let snapshot_archives_dir = TempDir::new().unwrap();
+        let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
+            &bank_snapshots_dir,
+            &bank,
+            Some(snapshot_config.snapshot_version),
+            &snapshot_archives_dir,
+            &snapshot_archives_dir,
+            snapshot_config.archive_format,
+        )
+        .unwrap();
+        let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
+        let accounts_db_config = AccountsDbConfig {
+            // must skip accounts verification if we did not recalculate the accounts lt hash
+            skip_initial_hash_calc: !should_recalculate_accounts_lt_hash,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
+        let roundtrip_bank = snapshot_bank_utils::bank_from_snapshot_archives(
+            &[accounts_dir],
+            &bank_snapshots_dir,
+            &snapshot,
+            None,
+            &genesis_config_info.genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            false,
+            false,
+            false,
+            accounts_db_config,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+
+        assert_eq!(roundtrip_bank, *bank);
     }
 }

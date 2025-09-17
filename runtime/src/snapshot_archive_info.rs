@@ -5,7 +5,7 @@ use {
         snapshot_hash::SnapshotHash,
         snapshot_utils::{self, ArchiveFormat, Result},
     },
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
     std::{cmp::Ordering, path::PathBuf},
 };
 
@@ -33,9 +33,7 @@ pub trait SnapshotArchiveInfoGetter {
         self.snapshot_archive_info()
             .path
             .parent()
-            .map_or(false, |p| {
-                p.ends_with(snapshot_utils::SNAPSHOT_ARCHIVE_DOWNLOAD_DIR)
-            })
+            .is_some_and(|p| p.ends_with(snapshot_utils::SNAPSHOT_ARCHIVE_DOWNLOAD_DIR))
     }
 }
 

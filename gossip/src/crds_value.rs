@@ -5,15 +5,17 @@ use {
         duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
     },
+    arrayvec::ArrayVec,
     bincode::serialize,
     rand::Rng,
     serde::de::{Deserialize, Deserializer},
+    solana_hash::Hash,
+    solana_keypair::{signable::Signable, Keypair},
+    solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::{
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Keypair, Signable, Signature, Signer},
-    },
+    solana_signature::Signature,
+    solana_signer::Signer,
     std::borrow::{Borrow, Cow},
 };
 
@@ -102,7 +104,7 @@ impl CrdsValue {
     pub fn new(data: CrdsData, keypair: &Keypair) -> Self {
         let bincode_serialized_data = bincode::serialize(&data).unwrap();
         let signature = keypair.sign_message(&bincode_serialized_data);
-        let hash = solana_sdk::hash::hashv(&[signature.as_ref(), &bincode_serialized_data]);
+        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &bincode_serialized_data]);
         Self {
             signature,
             data,
@@ -114,7 +116,7 @@ impl CrdsValue {
     pub(crate) fn new_unsigned(data: CrdsData) -> Self {
         let bincode_serialized_data = bincode::serialize(&data).unwrap();
         let signature = Signature::default();
-        let hash = solana_sdk::hash::hashv(&[signature.as_ref(), &bincode_serialized_data]);
+        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &bincode_serialized_data]);
         Self {
             signature,
             data,
@@ -227,8 +229,12 @@ impl<'de> Deserialize<'de> for CrdsValue {
             data: CrdsData,
         }
         let CrdsValue { signature, data } = CrdsValue::deserialize(deserializer)?;
-        let bincode_serialized_data = bincode::serialize(&data).unwrap();
-        let hash = solana_sdk::hash::hashv(&[signature.as_ref(), &bincode_serialized_data]);
+        // To compute the hash of the received CrdsData we need to re-serialize it
+        // PACKET_DATA_SIZE is always enough since we have just received the value in a packet
+        // ArrayVec allows us to write serialized data into stack memory without initializing it
+        let mut buffer = ArrayVec::<u8, PACKET_DATA_SIZE>::new();
+        bincode::serialize_into(&mut buffer, &data).map_err(serde::de::Error::custom)?;
+        let hash = solana_sha256_hasher::hashv(&[signature.as_ref(), &buffer]);
         Ok(Self {
             signature,
             data,
@@ -245,20 +251,20 @@ mod test {
         bincode::deserialize,
         rand0_7::{Rng, SeedableRng},
         rand_chacha0_2::ChaChaRng,
+        solana_keypair::Keypair,
         solana_perf::test_tx::new_test_vote_tx,
-        solana_sdk::{
-            signature::{Keypair, Signer},
-            timing::timestamp,
-            vote::state::TowerSync,
-        },
-        solana_vote_program::{vote_state::Lockout, vote_transaction::new_tower_sync_transaction},
+        solana_signer::Signer,
+        solana_time_utils::timestamp,
+        solana_vote::vote_transaction::new_tower_sync_transaction,
+        solana_vote_interface::state::TowerSync,
+        solana_vote_program::vote_state::Lockout,
         std::str::FromStr,
     };
 
     #[test]
     fn test_keys_and_values() {
         let mut rng = rand::thread_rng();
-        let v = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::default()));
+        let v = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::default()));
         assert_eq!(v.wallclock(), 0);
         let key = *v.contact_info().unwrap().pubkey();
         assert_eq!(v.label(), CrdsValueLabel::ContactInfo(key));
@@ -289,7 +295,7 @@ mod test {
         let mut rng = rand::thread_rng();
         let keypair = Keypair::new();
         let wrong_keypair = Keypair::new();
-        let mut v = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::new_localhost(
+        let mut v = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
             &keypair.pubkey(),
             timestamp(),
         )));
@@ -339,7 +345,7 @@ mod test {
         let mut rng = rand::thread_rng();
         let pubkey = Pubkey::new_unique();
         assert!(
-            !CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::new_rand(
+            !CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_rand(
                 &mut rng,
                 Some(pubkey)
             )))
@@ -365,7 +371,7 @@ mod test {
         );
         let values: Vec<CrdsValue> = vec![
             {
-                let keypair = Keypair::generate(&mut rng);
+                let keypair = Keypair::new_from_array(rng.gen());
                 let lockouts: [Lockout; 4] = [
                     Lockout::new_with_confirmation_count(302_388_991, 11),
                     Lockout::new_with_confirmation_count(302_388_995, 7),
@@ -381,11 +387,11 @@ mod test {
                 };
                 let vote = new_tower_sync_transaction(
                     tower_sync,
-                    Hash::new_from_array(rng.gen()), // blockhash
-                    &keypair,                        // node_keypair
-                    &Keypair::generate(&mut rng),    // vote_keypair
-                    &Keypair::generate(&mut rng),    // authorized_voter_keypair
-                    None,                            // switch_proof_hash
+                    Hash::new_from_array(rng.gen()),     // blockhash
+                    &keypair,                            // node_keypair
+                    &Keypair::new_from_array(rng.gen()), // vote_keypair
+                    &Keypair::new_from_array(rng.gen()), // authorized_voter_keypair
+                    None,                                // switch_proof_hash
                 );
                 let vote = Vote::new(
                     keypair.pubkey(),
@@ -396,7 +402,7 @@ mod test {
                 CrdsValue::new(CrdsData::Vote(5, vote), &keypair)
             },
             {
-                let keypair = Keypair::generate(&mut rng);
+                let keypair = Keypair::new_from_array(rng.gen());
                 let lockouts: [Lockout; 3] = [
                     Lockout::new_with_confirmation_count(302_410_500, 9),
                     Lockout::new_with_confirmation_count(302_410_505, 5),
@@ -411,11 +417,11 @@ mod test {
                 };
                 let vote = new_tower_sync_transaction(
                     tower_sync,
-                    Hash::new_from_array(rng.gen()), // blockhash
-                    &keypair,                        // node_keypair
-                    &Keypair::generate(&mut rng),    // vote_keypair
-                    &Keypair::generate(&mut rng),    // authorized_voter_keypair
-                    None,                            // switch_proof_hash
+                    Hash::new_from_array(rng.gen()),     // blockhash
+                    &keypair,                            // node_keypair
+                    &Keypair::new_from_array(rng.gen()), // vote_keypair
+                    &Keypair::new_from_array(rng.gen()), // authorized_voter_keypair
+                    None,                                // switch_proof_hash
                 );
                 let vote = Vote::new(
                     keypair.pubkey(),
@@ -429,8 +435,8 @@ mod test {
         let bytes = bincode::serialize(&values).unwrap();
         // Serialized bytes are fixed and should never change.
         assert_eq!(
-            solana_sdk::hash::hash(&bytes),
-            Hash::from_str("7gtcoafccWE964njbs2bA1QuVFeV34RaoY781yLx2A8N").unwrap()
+            solana_sha256_hasher::hash(&bytes),
+            Hash::from_str("BTg284TRo5S5PpbA9YZaab5rKeoLNAj7arwadvG6XVLT").unwrap()
         );
         // serialize -> deserialize should round trip.
         assert_eq!(

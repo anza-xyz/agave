@@ -9,9 +9,17 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+dev-context-only-utils = []
+
 [dependencies]
-solana-sdk = { workspace = true }
+solana-hash = { workspace = true }
+solana-message = { workspace = true }
+solana-packet = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-short-vec = { workspace = true }
+solana-signature = { workspace = true }
 solana-svm-transaction = { workspace = true }
 
 [dev-dependencies]
@@ -19,9 +27,13 @@ solana-svm-transaction = { workspace = true }
 agave-transaction-view = { path = ".", features = ["dev-context-only-utils"] }
 bincode = { workspace = true }
 criterion = { workspace = true }
-
-[features]
-dev-context-only-utils = []
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
+solana-message = { workspace = true, features = ["serde"] }
+solana-signature = { workspace = true, features = ["serde"] }
+solana-signer = { workspace = true }
+solana-system-interface = { workspace = true, features = ["bincode"] }
+solana-transaction = { workspace = true, features = ["bincode"] }
 
 [[bench]]
 name = "bytes"

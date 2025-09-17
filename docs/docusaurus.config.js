@@ -4,7 +4,7 @@ module.exports = {
   title: "Agave",
   tagline:
     "Agave is an open source project implementing a new, high-performance, permissionless blockchain.",
-  url: "https://docs.solanalabs.com",
+  url: "https://docs.anza.xyz",
   baseUrl: "/",
   favicon: "img/favicon.ico",
   organizationName: "anza-xyz", // Usually your GitHub org/user name.
@@ -19,31 +19,6 @@ module.exports = {
       crossorigin: "anonymous",
     },
   ],
-  i18n: {
-    defaultLocale: "en",
-    locales: ["en", "de", "es", "ru", "ar"],
-    // localesNotBuilding: ["ko", "pt", "vi", "zh", "ja"],
-    localeConfigs: {
-      en: {
-        label: "English",
-      },
-      ru: {
-        label: "Русский",
-      },
-      es: {
-        label: "Español",
-      },
-      de: {
-        label: "Deutsch",
-      },
-      ar: {
-        label: "العربية",
-      },
-      ko: {
-        label: "한국어",
-      },
-    },
-  },
   themeConfig: {
     prism: {
       additionalLanguages: ["rust"],
@@ -82,14 +57,10 @@ module.exports = {
           ],
         },
         {
-          type: "localeDropdown",
-          position: "right",
-        },
-        {
           href: "https://solana.com/discord",
           // label: "Discord",
           className: "header-link-icon header-discord-link",
-          "aria-label": "Solana Discord",
+          "aria-label": "Solana Tech Discord",
           position: "right",
         },
         {

@@ -102,7 +102,6 @@ impl Stats {
 }
 
 impl Default for Stats {
-    #[must_use]
     fn default() -> Self {
         Self {
             num_iterations: 0,

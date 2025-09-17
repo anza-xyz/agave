@@ -11,7 +11,7 @@ pub struct OutstandingRequests<T> {
     requests: LruCache<Nonce, RequestStatus<T>>,
 }
 
-impl<T, S> OutstandingRequests<T>
+impl<T, S: ?Sized> OutstandingRequests<T>
 where
     T: RequestResponse<Response = S>,
 {
@@ -85,10 +85,8 @@ pub struct RequestStatus<T> {
 #[cfg(test)]
 pub(crate) mod tests {
     use {
-        super::*,
-        crate::repair::serve_repair::ShredRepairType,
-        solana_ledger::shred::{Shred, ShredFlags},
-        solana_sdk::timing::timestamp,
+        super::*, crate::repair::serve_repair::ShredRepairType, solana_keypair::Keypair,
+        solana_ledger::shred::Shredder, solana_time_utils::timestamp,
     };
 
     #[test]
@@ -109,7 +107,8 @@ pub(crate) mod tests {
         let repair_type = ShredRepairType::Orphan(9);
         let mut outstanding_requests = OutstandingRequests::default();
         let nonce = outstanding_requests.add_request(repair_type, timestamp());
-        let shred = Shred::new_from_data(0, 0, 0, &[], ShredFlags::empty(), 0, 0, 0);
+        let keypair = Keypair::new();
+        let shred = Shredder::single_shred_for_tests(0, &keypair);
 
         let expire_timestamp = outstanding_requests
             .requests
@@ -118,7 +117,7 @@ pub(crate) mod tests {
             .expire_timestamp;
 
         assert!(outstanding_requests
-            .register_response(nonce, &shred, expire_timestamp + 1, |_| ())
+            .register_response(nonce, shred.payload(), expire_timestamp + 1, |_| ())
             .is_none());
         assert!(outstanding_requests.requests.get(&nonce).is_none());
     }
@@ -128,8 +127,8 @@ pub(crate) mod tests {
         let repair_type = ShredRepairType::Orphan(9);
         let mut outstanding_requests = OutstandingRequests::default();
         let nonce = outstanding_requests.add_request(repair_type, timestamp());
-
-        let shred = Shred::new_from_data(0, 0, 0, &[], ShredFlags::empty(), 0, 0, 0);
+        let keypair = Keypair::new();
+        let shred = Shredder::single_shred_for_tests(0, &keypair);
         let mut expire_timestamp = outstanding_requests
             .requests
             .get(&nonce)
@@ -144,7 +143,7 @@ pub(crate) mod tests {
 
         // Response that passes all checks should decrease num_expected_responses
         assert!(outstanding_requests
-            .register_response(nonce, &shred, expire_timestamp - 1, |_| ())
+            .register_response(nonce, shred.payload(), expire_timestamp - 1, |_| ())
             .is_some());
         num_expected_responses -= 1;
         assert_eq!(
@@ -158,10 +157,10 @@ pub(crate) mod tests {
 
         // Response with incorrect nonce is ignored
         assert!(outstanding_requests
-            .register_response(nonce + 1, &shred, expire_timestamp - 1, |_| ())
+            .register_response(nonce + 1, shred.payload(), expire_timestamp - 1, |_| ())
             .is_none());
         assert!(outstanding_requests
-            .register_response(nonce + 1, &shred, expire_timestamp, |_| ())
+            .register_response(nonce + 1, shred.payload(), expire_timestamp, |_| ())
             .is_none());
         assert_eq!(
             outstanding_requests
@@ -175,7 +174,7 @@ pub(crate) mod tests {
         // Response with timestamp over limit should remove status, preventing late
         // responses from being accepted
         assert!(outstanding_requests
-            .register_response(nonce, &shred, expire_timestamp, |_| ())
+            .register_response(nonce, shred.payload(), expire_timestamp, |_| ())
             .is_none());
         assert!(outstanding_requests.requests.get(&nonce).is_none());
 
@@ -195,7 +194,7 @@ pub(crate) mod tests {
         for _ in 0..num_expected_responses {
             assert!(outstanding_requests.requests.get(&nonce).is_some());
             assert!(outstanding_requests
-                .register_response(nonce, &shred, expire_timestamp - 1, |_| ())
+                .register_response(nonce, shred.payload(), expire_timestamp - 1, |_| ())
                 .is_some());
         }
         assert!(outstanding_requests.requests.get(&nonce).is_none());

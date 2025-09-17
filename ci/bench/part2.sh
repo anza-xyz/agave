@@ -6,10 +6,6 @@ here="$(dirname "$0")"
 #shellcheck source=ci/bench/common.sh
 source "$here"/common.sh
 
-# Run sdk benches
-_ cargo +"$rust_nightly" bench --manifest-path sdk/Cargo.toml ${V:+--verbose} \
-  --features openssl-vendored -- -Z unstable-options --format=json | tee -a "$BENCH_FILE"
-
 # Run runtime benches
 _ cargo +"$rust_nightly" bench --manifest-path runtime/Cargo.toml ${V:+--verbose} \
   -- -Z unstable-options --format=json | tee -a "$BENCH_FILE"
@@ -28,7 +24,9 @@ _ cargo +"$rust_nightly" bench --manifest-path runtime/Cargo.toml ${V:+--verbose
 
 # Run banking/accounts bench. Doesn't require nightly, but use since it is already built.
 _ cargo +"$rust_nightly" run --release --manifest-path banking-bench/Cargo.toml ${V:+--verbose} | tee -a "$BENCH_FILE"
-_ cargo +"$rust_nightly" run --release --manifest-path accounts-bench/Cargo.toml ${V:+--verbose} -- --num_accounts 10000 --num_slots 4 | tee -a "$BENCH_FILE"
 
-# Run zk-token-proof benches.
-_ cargo +"$rust_nightly" bench --manifest-path programs/zk-token-proof/Cargo.toml ${V:+--verbose} | tee -a "$BENCH_FILE"
+# Run zk-elgamal-proof benches.
+_ cargo +"$rust_nightly" bench --manifest-path programs/zk-elgamal-proof/Cargo.toml ${V:+--verbose} | tee -a "$BENCH_FILE"
+
+# Run precompile benches.
+_ cargo +"$rust_nightly" bench --manifest-path precompiles/Cargo.toml ${V:+--verbose} | tee -a "$BENCH_FILE"

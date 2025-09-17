@@ -1,44 +1,45 @@
 //! Example Rust-based SBF program that tests sysvar use
 
-extern crate solana_program;
 #[allow(deprecated)]
-use solana_program::sysvar::recent_blockhashes::RecentBlockhashes;
-use solana_program::{
-    account_info::AccountInfo,
-    entrypoint::ProgramResult,
-    instruction::{AccountMeta, Instruction},
-    msg,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    stake_history::StakeHistoryGetEntry,
-    sysvar::{
-        self,
+use solana_sysvar::recent_blockhashes::RecentBlockhashes;
+use {
+    solana_account_info::AccountInfo,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_instructions_sysvar as instructions,
+    solana_msg::msg,
+    solana_program_error::{ProgramError, ProgramResult},
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::sysvar,
+    solana_stake_interface::{
+        stake_history::{StakeHistory, StakeHistoryGetEntry},
+        sysvar::stake_history::StakeHistorySysvar,
+    },
+    solana_sysvar::{
         clock::Clock,
         epoch_rewards::EpochRewards,
         epoch_schedule::EpochSchedule,
-        instructions,
         rent::Rent,
         slot_hashes::{PodSlotHashes, SlotHashes},
         slot_history::SlotHistory,
-        stake_history::{StakeHistory, StakeHistorySysvar},
-        Sysvar,
+        Sysvar, SysvarSerialize,
     },
 };
 
-// Adapted from `solana_program::sysvar::get_sysvar` (private).
+// Adapted from `solana_sysvar::get_sysvar` (private).
 #[cfg(target_os = "solana")]
 fn sol_get_sysvar_handler<T>(dst: &mut [u8], offset: u64, length: u64) -> Result<(), ProgramError>
 where
-    T: Sysvar,
+    T: SysvarSerialize,
 {
     let sysvar_id = &T::id() as *const _ as *const u8;
     let var_addr = dst as *mut _ as *mut u8;
 
-    let result =
-        unsafe { solana_program::syscalls::sol_get_sysvar(sysvar_id, var_addr, offset, length) };
+    let result = unsafe {
+        solana_define_syscall::definitions::sol_get_sysvar(sysvar_id, var_addr, offset, length)
+    };
 
     match result {
-        solana_program::entrypoint::SUCCESS => Ok(()),
+        solana_program_entrypoint::SUCCESS => Ok(()),
         e => Err(e.into()),
     }
 }
@@ -46,7 +47,7 @@ where
 // Double-helper arrangement is easier to write to a mutable slice.
 fn sol_get_sysvar<T>() -> Result<T, ProgramError>
 where
-    T: Sysvar,
+    T: SysvarSerialize,
 {
     #[cfg(target_os = "solana")]
     {
@@ -61,7 +62,7 @@ where
     Err(ProgramError::UnsupportedSysvar)
 }
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 pub fn process_instruction(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -150,7 +151,7 @@ pub fn process_instruction(
         Some(&1) => {
             // Instructions
             msg!("Instructions identifier:");
-            sysvar::instructions::id().log();
+            instructions::id().log();
             assert_eq!(*accounts[4].owner, sysvar::id());
             let index = instructions::load_current_index_checked(&accounts[4])?;
             let instruction =
@@ -205,6 +206,16 @@ pub fn process_instruction(
                 let pod_slot_hashes = PodSlotHashes::fetch()?;
                 assert!(pod_slot_hashes.get(/* slot */ &0)?.is_some());
             }
+
+            Ok(())
+        }
+        Some(&4) => {
+            // Attempt to store the result in the input region instead of the stack or heap
+            unsafe {
+                solana_define_syscall::definitions::sol_get_epoch_rewards_sysvar(
+                    accounts[2].data.borrow_mut().as_mut_ptr(),
+                )
+            };
 
             Ok(())
         }

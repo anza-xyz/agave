@@ -2,18 +2,18 @@
 use {
     crate::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},
     serde::Serialize,
-    solana_sdk::{
-        account::{AccountSharedData, WritableAccount},
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        client::{Client, SyncClient},
-        clock::Clock,
-        instruction::{AccountMeta, Instruction},
-        loader_v4,
-        message::Message,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        system_instruction,
-    },
+    solana_account::{AccountSharedData, WritableAccount},
+    solana_client_traits::{Client, SyncClient},
+    solana_clock::Clock,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::Keypair,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_loader_v4_interface::instruction,
+    solana_message::Message,
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::loader_v4,
+    solana_signer::Signer,
+    solana_system_interface::instruction as system_instruction,
     std::{
         env,
         fs::File,
@@ -38,8 +38,7 @@ pub fn load_program_from_file(name: &str) -> Vec<u8> {
                 .unwrap(),
         )
     };
-    pathbuf.push("sbf-solana-solana");
-    pathbuf.push("release");
+    pathbuf.push("deploy");
     pathbuf.push(name);
     pathbuf.set_extension("so");
     let mut file = File::open(&pathbuf).unwrap_or_else(|err| {
@@ -81,7 +80,7 @@ pub fn load_upgradeable_buffer<T: Client>(
         .send_and_confirm_message(
             &[from_keypair, buffer_keypair],
             Message::new(
-                &bpf_loader_upgradeable::create_buffer(
+                &solana_loader_v3_interface::instruction::create_buffer(
                     &from_keypair.pubkey(),
                     &buffer_pubkey,
                     &buffer_authority_pubkey,
@@ -102,7 +101,7 @@ pub fn load_upgradeable_buffer<T: Client>(
     let mut offset = 0;
     for chunk in program.chunks(chunk_size) {
         let message = Message::new(
-            &[bpf_loader_upgradeable::write(
+            &[solana_loader_v3_interface::instruction::write(
                 &buffer_pubkey,
                 &buffer_authority_pubkey,
                 offset,
@@ -119,6 +118,7 @@ pub fn load_upgradeable_buffer<T: Client>(
     program
 }
 
+#[deprecated(since = "2.2.0", note = "Use load_program_of_loader_v4() instead")]
 pub fn load_upgradeable_program(
     bank_client: &BankClient,
     from_keypair: &Keypair,
@@ -135,8 +135,9 @@ pub fn load_upgradeable_program(
         name,
     );
 
+    #[allow(deprecated)]
     let message = Message::new(
-        &bpf_loader_upgradeable::deploy_with_max_program_len(
+        &solana_loader_v3_interface::instruction::deploy_with_max_program_len(
             &from_keypair.pubkey(),
             &executable_keypair.pubkey(),
             &buffer_keypair.pubkey(),
@@ -165,6 +166,7 @@ pub fn load_upgradeable_program(
     });
 }
 
+#[deprecated(since = "2.2.0", note = "Use load_program_of_loader_v4() instead")]
 pub fn load_upgradeable_program_wrapper(
     bank_client: &BankClient,
     mint_keypair: &Keypair,
@@ -173,6 +175,7 @@ pub fn load_upgradeable_program_wrapper(
 ) -> Pubkey {
     let buffer_keypair = Keypair::new();
     let program_keypair = Keypair::new();
+    #[allow(deprecated)]
     load_upgradeable_program(
         bank_client,
         mint_keypair,
@@ -184,6 +187,7 @@ pub fn load_upgradeable_program_wrapper(
     program_keypair.pubkey()
 }
 
+#[deprecated(since = "2.2.0", note = "Use load_program_of_loader_v4() instead")]
 pub fn load_upgradeable_program_and_advance_slot(
     bank_client: &mut BankClient,
     bank_forks: &RwLock<BankForks>,
@@ -191,6 +195,7 @@ pub fn load_upgradeable_program_and_advance_slot(
     authority_keypair: &Keypair,
     name: &str,
 ) -> (Arc<Bank>, Pubkey) {
+    #[allow(deprecated)]
     let program_id =
         load_upgradeable_program_wrapper(bank_client, mint_keypair, authority_keypair, name);
 
@@ -223,7 +228,7 @@ pub fn upgrade_program<T: Client>(
         name,
     );
     let message = Message::new(
-        &[bpf_loader_upgradeable::upgrade(
+        &[solana_loader_v3_interface::instruction::upgrade(
             executable_pubkey,
             &buffer_keypair.pubkey(),
             &authority_keypair.pubkey(),
@@ -244,11 +249,13 @@ pub fn set_upgrade_authority<T: Client>(
     new_authority_pubkey: Option<&Pubkey>,
 ) {
     let message = Message::new(
-        &[bpf_loader_upgradeable::set_upgrade_authority(
-            program_pubkey,
-            &current_authority_keypair.pubkey(),
-            new_authority_pubkey,
-        )],
+        &[
+            solana_loader_v3_interface::instruction::set_upgrade_authority(
+                program_pubkey,
+                &current_authority_keypair.pubkey(),
+                new_authority_pubkey,
+            ),
+        ],
         Some(&from_keypair.pubkey()),
     );
     bank_client
@@ -273,14 +280,17 @@ pub fn instructions_to_load_program_of_loader_v4<T: Client>(
             &payer_keypair.pubkey(),
             &program_keypair.pubkey(),
             bank_client
-                .get_minimum_balance_for_rent_exemption(program.len())
+                .get_minimum_balance_for_rent_exemption(
+                    solana_loader_v4_interface::state::LoaderV4State::program_data_offset()
+                        .saturating_add(program.len()),
+                )
                 .unwrap(),
             0,
             loader_id,
         ));
         program_keypair
     });
-    instructions.push(loader_v4::truncate_uninitialized(
+    instructions.push(instruction::set_program_length(
         &program_keypair.pubkey(),
         &authority_keypair.pubkey(),
         program.len() as u32,
@@ -289,7 +299,7 @@ pub fn instructions_to_load_program_of_loader_v4<T: Client>(
     let chunk_size = CHUNK_SIZE;
     let mut offset = 0;
     for chunk in program.chunks(chunk_size) {
-        instructions.push(loader_v4::write(
+        instructions.push(instruction::write(
             &program_keypair.pubkey(),
             &authority_keypair.pubkey(),
             offset,
@@ -297,15 +307,31 @@ pub fn instructions_to_load_program_of_loader_v4<T: Client>(
         ));
         offset += chunk_size as u32;
     }
-    instructions.push(if let Some(target_program_id) = target_program_id {
-        loader_v4::deploy_from_source(
+    if let Some(target_program_id) = target_program_id {
+        instructions.push(instruction::set_program_length(
+            target_program_id,
+            &authority_keypair.pubkey(),
+            program.len() as u32,
+            &payer_keypair.pubkey(),
+        ));
+        instructions.push(instruction::copy(
             target_program_id,
             &authority_keypair.pubkey(),
             &program_keypair.pubkey(),
-        )
+            0,
+            0,
+            program.len() as u32,
+        ));
+        instructions.push(instruction::deploy(
+            target_program_id,
+            &authority_keypair.pubkey(),
+        ));
     } else {
-        loader_v4::deploy(&program_keypair.pubkey(), &authority_keypair.pubkey())
-    });
+        instructions.push(instruction::deploy(
+            &program_keypair.pubkey(),
+            &authority_keypair.pubkey(),
+        ));
+    }
     (program_keypair, instructions)
 }
 
@@ -326,12 +352,9 @@ pub fn load_program_of_loader_v4(
     );
     let signers: &[&[&Keypair]] = &[
         &[payer_keypair, &program_keypair],
-        &[payer_keypair, &program_keypair, authority_keypair],
         &[payer_keypair, authority_keypair],
     ];
-    let signers = std::iter::once(signers[0])
-        .chain(std::iter::once(signers[1]))
-        .chain(std::iter::repeat(signers[2]));
+    let signers = std::iter::once(signers[0]).chain(std::iter::repeat(signers[1]));
     for (instruction, signers) in instructions.into_iter().zip(signers) {
         let message = Message::new(&[instruction], Some(&payer_keypair.pubkey()));
         bank_client

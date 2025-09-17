@@ -84,3 +84,13 @@ export TELEGRAM_CHAT_ID=<negative chat id number>
 Once your environment variables are set, restart `agave-watchtower`. You should see output about your validator.
 
 To test that your Telegram configuration is working properly, you could stop your validator briefly until it is labeled as delinquent. Up to a minute after the validator is delinquent, you should receive a message in the Telegram group from your bot. Start the validator again and verify that you get another message in your Telegram group from the bot. The message should say `all clear`.
+
+## Collecting metrics
+
+It is important to collect metrics: it helps diagnose existing problems and allows to anticipate future ones.
+
+### metrics.solana.com
+
+There are several public dashboards available, one of them is hosted at [metrics.solana.com](https://metrics.solana.com). Reporting to the solana.com public dashboard is even required if you participate in the [Solana Foundation Delegation Program](https://solana.org/delegation-program). Using it is done by simply setting the `$SOLANA_METRICS_CONFIG` variable in your validator's environment (e.g. at the beginning of your `validator.sh` script).
+
+Refer to the [available Solana clusters documentation](../../clusters/available.md) to get the appropriate value of `$SOLANA_METRICS_CONFIG` for your validator.

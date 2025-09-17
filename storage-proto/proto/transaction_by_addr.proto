@@ -63,6 +63,7 @@ enum TransactionErrorType {
     PROGRAM_EXECUTION_TEMPORARILY_RESTRICTED = 35;
     UNBALANCED_TRANSACTION = 36;
     PROGRAM_CACHE_HIT_MAX_LIMIT = 37;
+    COMMIT_CANCELLED = 38;
 }
 
 message InstructionError {

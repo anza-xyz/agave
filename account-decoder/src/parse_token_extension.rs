@@ -2,16 +2,17 @@ pub use solana_account_decoder_client_types::token::{
     UiConfidentialMintBurn, UiConfidentialTransferAccount, UiConfidentialTransferFeeAmount,
     UiConfidentialTransferFeeConfig, UiConfidentialTransferMint, UiCpiGuard, UiDefaultAccountState,
     UiExtension, UiGroupMemberPointer, UiGroupPointer, UiInterestBearingConfig, UiMemoTransfer,
-    UiMetadataPointer, UiMintCloseAuthority, UiPermanentDelegate, UiTokenGroup, UiTokenGroupMember,
-    UiTokenMetadata, UiTransferFee, UiTransferFeeAmount, UiTransferFeeConfig, UiTransferHook,
-    UiTransferHookAccount,
+    UiMetadataPointer, UiMintCloseAuthority, UiPausableConfig, UiPermanentDelegate,
+    UiScaledUiAmountConfig, UiTokenGroup, UiTokenGroupMember, UiTokenMetadata, UiTransferFee,
+    UiTransferFeeAmount, UiTransferFeeConfig, UiTransferHook, UiTransferHookAccount,
 };
 use {
     crate::parse_token::convert_account_state,
-    solana_sdk::{clock::UnixTimestamp, program_pack::Pack},
-    spl_token_2022::{
+    solana_clock::UnixTimestamp,
+    solana_program_pack::Pack,
+    solana_pubkey::Pubkey,
+    spl_token_2022_interface::{
         extension::{self, BaseState, BaseStateWithExtensions, ExtensionType, StateWithExtensions},
-        solana_program::pubkey::Pubkey,
         solana_zk_sdk::encryption::pod::elgamal::PodElGamalPubkey,
     },
     spl_token_group_interface::state::{TokenGroup, TokenGroupMember},
@@ -141,6 +142,17 @@ pub fn parse_extension<S: BaseState + Pack>(
                 UiExtension::ConfidentialMintBurn(convert_confidential_mint_burn(extension))
             })
             .unwrap_or(UiExtension::UnparseableExtension),
+        ExtensionType::ScaledUiAmount => account
+            .get_extension::<extension::scaled_ui_amount::ScaledUiAmountConfig>()
+            .map(|&extension| {
+                UiExtension::ScaledUiAmountConfig(convert_scaled_ui_amount(extension))
+            })
+            .unwrap_or(UiExtension::UnparseableExtension),
+        ExtensionType::Pausable => account
+            .get_extension::<extension::pausable::PausableConfig>()
+            .map(|&extension| UiExtension::PausableConfig(convert_pausable_config(extension)))
+            .unwrap_or(UiExtension::UnparseableExtension),
+        ExtensionType::PausableAccount => UiExtension::PausableAccount,
     }
 }
 
@@ -190,8 +202,9 @@ fn convert_mint_close_authority(
 fn convert_default_account_state(
     default_account_state: extension::default_account_state::DefaultAccountState,
 ) -> UiDefaultAccountState {
-    let account_state = spl_token_2022::state::AccountState::try_from(default_account_state.state)
-        .unwrap_or_default();
+    let account_state =
+        spl_token_2022_interface::state::AccountState::try_from(default_account_state.state)
+            .unwrap_or_default();
     UiDefaultAccountState {
         account_state: convert_account_state(account_state),
     }
@@ -393,5 +406,33 @@ fn convert_confidential_mint_burn(
         confidential_supply: confidential_mint_burn.confidential_supply.to_string(),
         decryptable_supply: confidential_mint_burn.decryptable_supply.to_string(),
         supply_elgamal_pubkey: confidential_mint_burn.supply_elgamal_pubkey.to_string(),
+        pending_burn: confidential_mint_burn.pending_burn.to_string(),
+    }
+}
+
+fn convert_scaled_ui_amount(
+    scaled_ui_amount_config: extension::scaled_ui_amount::ScaledUiAmountConfig,
+) -> UiScaledUiAmountConfig {
+    let authority: Option<Pubkey> = scaled_ui_amount_config.authority.into();
+    let multiplier: f64 = scaled_ui_amount_config.multiplier.into();
+    let new_multiplier_effective_timestamp: i64 = scaled_ui_amount_config
+        .new_multiplier_effective_timestamp
+        .into();
+    let new_multiplier: f64 = scaled_ui_amount_config.new_multiplier.into();
+    UiScaledUiAmountConfig {
+        authority: authority.map(|pubkey| pubkey.to_string()),
+        multiplier: multiplier.to_string(),
+        new_multiplier_effective_timestamp,
+        new_multiplier: new_multiplier.to_string(),
+    }
+}
+
+fn convert_pausable_config(
+    pausable_config: extension::pausable::PausableConfig,
+) -> UiPausableConfig {
+    let authority: Option<Pubkey> = pausable_config.authority.into();
+    UiPausableConfig {
+        authority: authority.map(|pubkey| pubkey.to_string()),
+        paused: pausable_config.paused.into(),
     }
 }

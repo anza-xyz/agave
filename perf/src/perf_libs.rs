@@ -8,7 +8,7 @@ use {
         fs,
         os::raw::{c_int, c_uint},
         path::{Path, PathBuf},
-        sync::Once,
+        sync::{Once, OnceLock},
     },
 };
 
@@ -81,30 +81,26 @@ pub struct Api<'a> {
         Symbol<'a, unsafe extern "C" fn(packed_ge: *const u8) -> c_int>,
 }
 
-static mut API: Option<Container<Api>> = None;
+static API: OnceLock<Container<Api>> = OnceLock::new();
 
 fn init(name: &OsStr) {
-    static INIT_HOOK: Once = Once::new();
-
-    info!("Loading {:?}", name);
-    unsafe {
-        INIT_HOOK.call_once(|| {
-            API = Some(Container::load(name).unwrap_or_else(|err| {
-                error!("Unable to load {:?}: {}", name, err);
-                std::process::exit(1);
-            }));
+    info!("Loading {name:?}");
+    API.get_or_init(|| {
+        unsafe { Container::load(name) }.unwrap_or_else(|err| {
+            error!("Unable to load {name:?}: {err}");
+            std::process::exit(1);
         })
-    }
+    });
 }
 
 pub fn locate_perf_libs() -> Option<PathBuf> {
     let exe = env::current_exe().expect("Unable to get executable path");
     let perf_libs = exe.parent().unwrap().join("perf-libs");
     if perf_libs.is_dir() {
-        info!("perf-libs found at {:?}", perf_libs);
+        info!("perf-libs found at {perf_libs:?}");
         return Some(perf_libs);
     }
-    warn!("{:?} does not exist", perf_libs);
+    warn!("{perf_libs:?} does not exist");
     None
 }
 
@@ -112,10 +108,10 @@ fn find_cuda_home(perf_libs_path: &Path) -> Option<PathBuf> {
     if let Ok(cuda_home) = env::var("CUDA_HOME") {
         let path = PathBuf::from(cuda_home);
         if path.is_dir() {
-            info!("Using CUDA_HOME: {:?}", path);
+            info!("Using CUDA_HOME: {path:?}");
             return Some(path);
         }
-        warn!("Ignoring CUDA_HOME, not a path: {:?}", path);
+        warn!("Ignoring CUDA_HOME, not a path: {path:?}");
     }
 
     // Search /usr/local for a `cuda-` directory that matches a perf-libs subdirectory
@@ -134,7 +130,7 @@ fn find_cuda_home(perf_libs_path: &Path) -> Option<PathBuf> {
             continue;
         }
 
-        info!("CUDA installation found at {:?}", cuda_home);
+        info!("CUDA installation found at {cuda_home:?}");
         return Some(cuda_home);
     }
     None
@@ -145,7 +141,7 @@ pub fn append_to_ld_library_path(mut ld_library_path: String) {
         ld_library_path.push(':');
         ld_library_path.push_str(&env_value);
     }
-    info!("setting ld_library_path to: {:?}", ld_library_path);
+    info!("setting ld_library_path to: {ld_library_path:?}");
     env::set_var("LD_LIBRARY_PATH", ld_library_path);
 }
 
@@ -158,7 +154,7 @@ pub fn init_cuda() {
                 // to ensure the correct CUDA version is used
                 append_to_ld_library_path(cuda_lib64_dir.to_str().unwrap_or("").to_string())
             } else {
-                warn!("CUDA lib64 directory does not exist: {:?}", cuda_lib64_dir);
+                warn!("CUDA lib64 directory does not exist: {cuda_lib64_dir:?}");
             }
 
             let libcuda_crypt = perf_libs_path
@@ -181,8 +177,8 @@ pub fn api() -> Option<&'static Container<Api<'static>>> {
             if std::env::var("TEST_PERF_LIBS_CUDA").is_ok() {
                 init_cuda();
             }
-        })
+        });
     }
 
-    unsafe { API.as_ref() }
+    API.get()
 }

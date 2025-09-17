@@ -4,7 +4,7 @@ use {
     rand::{Rng, SeedableRng},
     rand_chacha::ChaChaRng,
     rayon::prelude::*,
-    solana_sdk::{signature::Keypair, signer::keypair::keypair_from_seed},
+    solana_keypair::{keypair_from_seed, Keypair},
 };
 
 pub struct GenKeys {
@@ -47,8 +47,8 @@ impl GenKeys {
 
 #[cfg(test)]
 mod tests {
-    pub use solana_sdk::pubkey::Pubkey;
-    use {super::*, solana_sdk::signature::Signer, std::collections::HashSet};
+    pub use solana_pubkey::Pubkey;
+    use {super::*, solana_signer::Signer, std::collections::HashSet};
 
     #[test]
     fn test_new_key_is_deterministic() {

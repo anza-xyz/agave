@@ -7,14 +7,11 @@ use {
     crossbeam_channel::{select, tick, unbounded, Receiver, Sender},
     log::*,
     serde::Serialize,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE},
+    solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_measure::measure::Measure,
     solana_rpc_client_api::config::RpcBlockConfig,
-    solana_sdk::{
-        clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE},
-        commitment_config::{CommitmentConfig, CommitmentLevel},
-        signature::Signature,
-        slot_history::Slot,
-    },
+    solana_signature::Signature,
     solana_tps_client::TpsClient,
     solana_transaction_status::{
         option_serializer::OptionSerializer, EncodedTransactionWithStatusMeta, RewardType,
@@ -92,7 +89,10 @@ impl LogTransactionService {
         Client: 'static + TpsClient + Send + Sync + ?Sized,
     {
         if !data_file_provided(block_data_file, transaction_data_file) {
-            panic!("Expect block-data-file or transaction-data-file is specified, must have been verified by callee.");
+            panic!(
+                "Expect block-data-file or transaction-data-file is specified, must have been \
+                 verified by callee."
+            );
         }
 
         let client = client.clone();
@@ -126,8 +126,10 @@ impl LogTransactionService {
         };
         let block_processing_timer_receiver = tick(Duration::from_millis(PROCESS_BLOCKS_EVERY_MS));
 
-        let mut start_slot = get_slot_with_retry(&client, commitment)
-            .expect("get_slot_with_retry should have succeed, cannot proceed without having slot. Must be a problem with RPC.");
+        let mut start_slot = get_slot_with_retry(&client, commitment).expect(
+            "get_slot_with_retry should have succeed, cannot proceed without having slot. Must be \
+             a problem with RPC.",
+        );
 
         let mut sender_stopped = false;
         let mut signature_to_tx_info = MapSignatureToTxInfo::new();
@@ -476,7 +478,7 @@ impl TransactionLogWriter {
                     .latest()
                     .expect("valid timestamp")
             }),
-            successful: meta.as_ref().map_or(false, |m| m.status.is_ok()),
+            successful: meta.as_ref().is_some_and(|m| m.status.is_ok()),
             error: meta
                 .as_ref()
                 .and_then(|m| m.err.as_ref().map(|x| x.to_string())),

@@ -16,8 +16,14 @@ use {
         RequestMiddlewareAction, ServerBuilder,
     },
     regex::Regex,
-    solana_client::connection_cache::ConnectionCache,
+    solana_cli_output::display::build_balance_message,
+    solana_client::{
+        client_option::ClientOption,
+        connection_cache::{ConnectionCache, Protocol},
+    },
+    solana_genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_hash::Hash,
     solana_ledger::{
         bigtable_upload::ConfirmedBlockUploadConfig,
         bigtable_upload_service::BigTableUploadService, blockstore::Blockstore,
@@ -26,36 +32,87 @@ use {
     solana_metrics::inc_new_counter_info,
     solana_perf::thread::renice_this_thread,
     solana_poh::poh_recorder::PohRecorder,
+    solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::{
-        bank_forks::BankForks, commitment::BlockCommitmentCache,
+        bank::Bank,
+        bank_forks::BankForks,
+        commitment::BlockCommitmentCache,
+        non_circulating_supply::calculate_non_circulating_supply,
         prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
-        snapshot_utils,
-    },
-    solana_sdk::{
-        exit::Exit, genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH, hash::Hash,
-        native_token::lamports_to_sol,
+        snapshot_archive_info::SnapshotArchiveInfoGetter,
+        snapshot_config::SnapshotConfig,
+        snapshot_utils::{self, SnapshotInterval},
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
-        transaction_client::ConnectionCacheClient,
+        transaction_client::{ConnectionCacheClient, TpuClientNextClient, TransactionClient},
     },
     solana_storage_bigtable::CredentialType,
+    solana_validator_exit::Exit,
     std::{
         net::SocketAddr,
         path::{Path, PathBuf},
+        pin::Pin,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
         },
+        task::{Context, Poll},
         thread::{self, Builder, JoinHandle},
+        time::{Duration, Instant},
     },
-    tokio_util::codec::{BytesCodec, FramedRead},
+    tokio::runtime::{Builder as TokioBuilder, Runtime as TokioRuntime},
+    tokio_util::{
+        bytes::Bytes,
+        codec::{BytesCodec, FramedRead},
+    },
 };
 
 const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";
 const INCREMENTAL_SNAPSHOT_REQUEST_PATH: &str = "/incremental-snapshot.tar.bz2";
 const LARGEST_ACCOUNTS_CACHE_DURATION: u64 = 60 * 60 * 2;
+/// Default minimum snapshot download speed is 10 MB/s
+/// Full snapshots are ~90 GB, incremental are ~1 GB today but both will increase over time
+/// Full: 120 GB / 10 MB/s = 12,000 seconds -> ~30k slots
+const FALLBACK_FULL_SNAPSHOT_TIMEOUT_SECS: Duration = Duration::from_secs(12_000);
+/// Incremental: 2.5 GB / 10 MB/s = 250 seconds -> ~625 slots
+const FALLBACK_INCREMENTAL_SNAPSHOT_TIMEOUT_SECS: Duration = Duration::from_secs(250);
+
+enum SnapshotKind {
+    Full,
+    Incremental,
+}
+
+struct TimeoutStream<S> {
+    inner: S,
+    deadline: Instant,
+}
+
+impl<S> TimeoutStream<S> {
+    fn new(inner: S, timeout: Duration) -> Self {
+        Self {
+            inner,
+            deadline: Instant::now() + timeout,
+        }
+    }
+}
+
+impl<S> Stream for TimeoutStream<S>
+where
+    S: Stream<Item = std::io::Result<Bytes>> + Unpin,
+{
+    type Item = std::io::Result<Bytes>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if Instant::now() >= self.deadline {
+            return Poll::Ready(Some(Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "snapshot transfer deadline exceeded",
+            ))));
+        }
+        Pin::new(&mut self.inner).poll_next(cx)
+    }
+}
 
 pub struct JsonRpcService {
     thread_hdl: JoinHandle<()>,
@@ -64,6 +121,8 @@ pub struct JsonRpcService {
     pub request_processor: JsonRpcRequestProcessor, // Used only by test_rpc_new()...
 
     close_handle: Option<CloseHandle>,
+
+    client_updater: Arc<dyn NotifyKeyUpdate + Send + Sync>,
 }
 
 struct RpcRequestMiddleware {
@@ -158,14 +217,14 @@ impl RpcRequestMiddleware {
         tokio::fs::File::open(path).await
     }
 
-    fn find_snapshot_file<P>(&self, stem: P) -> PathBuf
+    fn find_snapshot_file<P>(&self, stem: P) -> (PathBuf, SnapshotKind)
     where
         P: AsRef<Path>,
     {
-        let root = if self
+        let is_full = self
             .full_snapshot_archive_path_regex
-            .is_match(Path::new("").join(&stem).to_str().unwrap())
-        {
+            .is_match(Path::new("").join(&stem).to_str().unwrap());
+        let root = if is_full {
             &self
                 .snapshot_config
                 .as_ref()
@@ -179,37 +238,74 @@ impl RpcRequestMiddleware {
                 .incremental_snapshot_archives_dir
         };
         let local_path = root.join(&stem);
-        if local_path.exists() {
+        let path = if local_path.exists() {
             local_path
         } else {
             // remote snapshot archive path
             snapshot_utils::build_snapshot_archives_remote_dir(root).join(stem)
-        }
+        };
+        (
+            path,
+            if is_full {
+                SnapshotKind::Full
+            } else {
+                SnapshotKind::Incremental
+            },
+        )
     }
 
     fn process_file_get(&self, path: &str) -> RequestMiddlewareAction {
-        let filename = {
+        let (filename, snapshot_type) = {
             let stem = Self::strip_leading_slash(path).expect("path already verified");
             match path {
                 DEFAULT_GENESIS_DOWNLOAD_PATH => {
                     inc_new_counter_info!("rpc-get_genesis", 1);
-                    self.ledger_path.join(stem)
+                    (self.ledger_path.join(stem), None)
                 }
                 _ => {
                     inc_new_counter_info!("rpc-get_snapshot", 1);
-                    self.find_snapshot_file(stem)
+                    let (path, snapshot_type) = self.find_snapshot_file(stem);
+                    (path, Some(snapshot_type))
                 }
             }
         };
-
         let file_length = std::fs::metadata(&filename)
             .map(|m| m.len())
             .unwrap_or(0)
             .to_string();
-        info!("get {} -> {:?} ({} bytes)", path, filename, file_length);
+        info!("get {path} -> {filename:?} ({file_length} bytes)");
+
+        if cfg!(not(test)) {
+            assert!(
+                self.snapshot_config.is_some(),
+                "snapshot_config should never be None outside of tests"
+            );
+        }
+        let snapshot_timeout = self.snapshot_config.as_ref().and_then(|config| {
+            snapshot_type.map(|st| {
+                let interval = match st {
+                    SnapshotKind::Full => config.full_snapshot_archive_interval,
+                    SnapshotKind::Incremental => config.incremental_snapshot_archive_interval,
+                };
+                let computed = match interval {
+                    SnapshotInterval::Disabled => Duration::ZERO,
+                    SnapshotInterval::Slots(slots) => Duration::from_millis(
+                        slots
+                            .get()
+                            .saturating_mul(solana_clock::DEFAULT_MS_PER_SLOT),
+                    ),
+                };
+                let fallback = match st {
+                    SnapshotKind::Full => FALLBACK_FULL_SNAPSHOT_TIMEOUT_SECS,
+                    SnapshotKind::Incremental => FALLBACK_INCREMENTAL_SNAPSHOT_TIMEOUT_SECS,
+                };
+                std::cmp::max(computed, fallback)
+            })
+        });
+
         RequestMiddlewareAction::Respond {
             should_validate_hosts: true,
-            response: Box::pin(async {
+            response: Box::pin(async move {
                 match Self::open_no_follow(filename).await {
                     Err(err) => Ok(if err.kind() == std::io::ErrorKind::NotFound {
                         Self::not_found()
@@ -219,8 +315,11 @@ impl RpcRequestMiddleware {
                     Ok(file) => {
                         let stream =
                             FramedRead::new(file, BytesCodec::new()).map_ok(|b| b.freeze());
-                        let body = hyper::Body::wrap_stream(stream);
-
+                        let body = if let Some(timeout) = snapshot_timeout {
+                            hyper::Body::wrap_stream(TimeoutStream::new(stream, timeout))
+                        } else {
+                            hyper::Body::wrap_stream(stream)
+                        };
                         Ok(hyper::Response::builder()
                             .header(hyper::header::CONTENT_LENGTH, file_length)
                             .body(body)
@@ -237,7 +336,7 @@ impl RpcRequestMiddleware {
             RpcHealthStatus::Behind { .. } => "behind",
             RpcHealthStatus::Unknown => "unknown",
         };
-        info!("health check: {}", response);
+        info!("health check: {response}");
         response
     }
 }
@@ -290,12 +389,8 @@ impl RequestMiddleware for RpcRequestMiddleware {
             }
         }
 
-        if let Some(result) = process_rest(&self.bank_forks, request.uri().path()) {
-            hyper::Response::builder()
-                .status(hyper::StatusCode::OK)
-                .body(hyper::Body::from(result))
-                .unwrap()
-                .into()
+        if let Some(path) = match_supply_path(request.uri().path()) {
+            process_rest(&self.bank_forks, path)
         } else if self.is_file_get_path(request.uri().path()) {
             self.process_file_get(request.uri().path())
         } else if request.uri().path() == "/health" {
@@ -310,30 +405,198 @@ impl RequestMiddleware for RpcRequestMiddleware {
     }
 }
 
-fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<String> {
+fn match_supply_path(path: &str) -> Option<&str> {
+    match path {
+        "/v0/circulating-supply" | "/v0/total-supply" => Some(path),
+        _ => None,
+    }
+}
+
+#[derive(Debug)]
+pub enum SupplyCalcError {
+    Scan(String),
+}
+
+async fn calculate_circulating_supply_async(bank: &Arc<Bank>) -> Result<u64, SupplyCalcError> {
+    let total_supply = bank.capitalization();
+    let bank = Arc::clone(bank);
+    let non_circulating_supply =
+        tokio::task::spawn_blocking(move || calculate_non_circulating_supply(&bank))
+            .await
+            .expect("Failed to spawn blocking task")
+            .map_err(|e| SupplyCalcError::Scan(e.to_string()))?;
+
+    Ok(total_supply.saturating_sub(non_circulating_supply.lamports))
+}
+
+async fn handle_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<String> {
     match path {
         "/v0/circulating-supply" => {
             let bank = bank_forks.read().unwrap().root_bank();
-            let total_supply = bank.capitalization();
-            let non_circulating_supply =
-                solana_runtime::non_circulating_supply::calculate_non_circulating_supply(&bank)
-                    .expect("Scan should not error on root banks")
-                    .lamports;
-            Some(format!(
-                "{}",
-                lamports_to_sol(total_supply - non_circulating_supply)
-            ))
+            let supply_result = calculate_circulating_supply_async(&bank).await;
+            match supply_result {
+                Ok(supply) => Some(build_balance_message(supply, false, false)),
+                Err(_) => None,
+            }
         }
         "/v0/total-supply" => {
             let bank = bank_forks.read().unwrap().root_bank();
             let total_supply = bank.capitalization();
-            Some(format!("{}", lamports_to_sol(total_supply)))
+            Some(build_balance_message(total_supply, false, false))
         }
         _ => None,
     }
 }
 
+fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> RequestMiddlewareAction {
+    let bank_forks = bank_forks.clone();
+    let path = path.to_string();
+
+    RequestMiddlewareAction::Respond {
+        should_validate_hosts: true,
+        response: Box::pin(async move {
+            let result = handle_rest(&bank_forks, path.as_str()).await;
+            match result {
+                Some(s) => Ok(hyper::Response::builder()
+                    .status(hyper::StatusCode::OK)
+                    .body(hyper::Body::from(s))
+                    .unwrap()),
+                None => Ok(RpcRequestMiddleware::not_found()),
+            }
+        }),
+    }
+}
+
+/// [`JsonRpcServiceConfig`] is a helper structure that simplifies the creation
+/// of a [`JsonRpcService`] with a target TPU client specified by
+/// `client_option`.
+pub struct JsonRpcServiceConfig<'a> {
+    pub rpc_addr: SocketAddr,
+    pub rpc_config: JsonRpcConfig,
+    pub snapshot_config: Option<SnapshotConfig>,
+    pub bank_forks: Arc<RwLock<BankForks>>,
+    pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+    pub blockstore: Arc<Blockstore>,
+    pub cluster_info: Arc<ClusterInfo>,
+    pub poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
+    pub genesis_hash: Hash,
+    pub ledger_path: PathBuf,
+    pub validator_exit: Arc<RwLock<Exit>>,
+    pub exit: Arc<AtomicBool>,
+    pub override_health_check: Arc<AtomicBool>,
+    pub optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+    pub send_transaction_service_config: send_transaction_service::Config,
+    pub max_slots: Arc<MaxSlots>,
+    pub leader_schedule_cache: Arc<LeaderScheduleCache>,
+    pub max_complete_transaction_status_slot: Arc<AtomicU64>,
+    pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    pub client_option: ClientOption<'a>,
+}
+
 impl JsonRpcService {
+    pub fn new_with_config(config: JsonRpcServiceConfig) -> Result<Self, String> {
+        let runtime = service_runtime(
+            config.rpc_config.rpc_threads,
+            config.rpc_config.rpc_blocking_threads,
+            config.rpc_config.rpc_niceness_adj,
+        );
+        let leader_info = config
+            .poh_recorder
+            .map(|recorder| ClusterTpuInfo::new(config.cluster_info.clone(), recorder));
+
+        match config.client_option {
+            ClientOption::ConnectionCache(connection_cache) => {
+                let my_tpu_address = config
+                    .cluster_info
+                    .my_contact_info()
+                    .tpu(connection_cache.protocol())
+                    .ok_or(format!(
+                        "Invalid {:?} socket address for TPU",
+                        connection_cache.protocol()
+                    ))?;
+                let client = ConnectionCacheClient::new(
+                    connection_cache,
+                    my_tpu_address,
+                    config.send_transaction_service_config.tpu_peers.clone(),
+                    leader_info,
+                    config.send_transaction_service_config.leader_forward_count,
+                );
+                let json_rpc_service = Self::new_with_client(
+                    config.rpc_addr,
+                    config.rpc_config,
+                    config.snapshot_config,
+                    config.bank_forks,
+                    config.block_commitment_cache,
+                    config.blockstore,
+                    config.cluster_info,
+                    config.genesis_hash,
+                    config.ledger_path.as_path(),
+                    config.validator_exit,
+                    config.exit,
+                    config.override_health_check,
+                    config.optimistically_confirmed_bank,
+                    config.send_transaction_service_config,
+                    config.max_slots,
+                    config.leader_schedule_cache,
+                    client.clone(),
+                    config.max_complete_transaction_status_slot,
+                    config.prioritization_fee_cache,
+                    runtime,
+                )?;
+                Ok(json_rpc_service)
+            }
+            ClientOption::TpuClientNext(
+                identity_keypair,
+                tpu_client_socket,
+                client_runtime,
+                cancel,
+            ) => {
+                let my_tpu_address = config
+                    .cluster_info
+                    .my_contact_info()
+                    .tpu(Protocol::QUIC)
+                    .ok_or(format!(
+                        "Invalid {:?} socket address for TPU",
+                        Protocol::QUIC
+                    ))?;
+                let client = TpuClientNextClient::new(
+                    client_runtime,
+                    my_tpu_address,
+                    config.send_transaction_service_config.tpu_peers.clone(),
+                    leader_info,
+                    config.send_transaction_service_config.leader_forward_count,
+                    Some(identity_keypair),
+                    tpu_client_socket,
+                    cancel,
+                );
+
+                let json_rpc_service = Self::new_with_client(
+                    config.rpc_addr,
+                    config.rpc_config.clone(),
+                    config.snapshot_config,
+                    config.bank_forks.clone(),
+                    config.block_commitment_cache.clone(),
+                    config.blockstore.clone(),
+                    config.cluster_info.clone(),
+                    config.genesis_hash,
+                    config.ledger_path.as_path(),
+                    config.validator_exit,
+                    config.exit,
+                    config.override_health_check,
+                    config.optimistically_confirmed_bank,
+                    config.send_transaction_service_config,
+                    config.max_slots,
+                    config.leader_schedule_cache,
+                    client,
+                    config.max_complete_transaction_status_slot,
+                    config.prioritization_fee_cache,
+                    runtime,
+                )?;
+                Ok(json_rpc_service)
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         rpc_addr: SocketAddr,
@@ -349,19 +612,96 @@ impl JsonRpcService {
         validator_exit: Arc<RwLock<Exit>>,
         exit: Arc<AtomicBool>,
         override_health_check: Arc<AtomicBool>,
-        startup_verification_complete: Arc<AtomicBool>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         send_transaction_service_config: send_transaction_service::Config,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         connection_cache: Arc<ConnectionCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
-        max_complete_rewards_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     ) -> Result<Self, String> {
-        info!("rpc bound to {:?}", rpc_addr);
-        info!("rpc configuration: {:?}", config);
-        let rpc_threads = 1.max(config.rpc_threads);
+        let runtime = service_runtime(
+            config.rpc_threads,
+            config.rpc_blocking_threads,
+            config.rpc_niceness_adj,
+        );
+
+        let tpu_address = cluster_info
+            .my_contact_info()
+            .tpu(connection_cache.protocol())
+            .ok_or_else(|| {
+                format!(
+                    "Invalid {:?} socket address for TPU",
+                    connection_cache.protocol()
+                )
+            })?;
+
+        let leader_info =
+            poh_recorder.map(|recorder| ClusterTpuInfo::new(cluster_info.clone(), recorder));
+        let client = ConnectionCacheClient::new(
+            connection_cache,
+            tpu_address,
+            send_transaction_service_config.tpu_peers.clone(),
+            leader_info,
+            send_transaction_service_config.leader_forward_count,
+        );
+        let json_rpc_service = Self::new_with_client(
+            rpc_addr,
+            config,
+            snapshot_config,
+            bank_forks,
+            block_commitment_cache,
+            blockstore,
+            cluster_info,
+            genesis_hash,
+            ledger_path,
+            validator_exit,
+            exit,
+            override_health_check,
+            optimistically_confirmed_bank,
+            send_transaction_service_config,
+            max_slots,
+            leader_schedule_cache,
+            client.clone(),
+            max_complete_transaction_status_slot,
+            prioritization_fee_cache,
+            runtime,
+        )?;
+        Ok(json_rpc_service)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_client<
+        Client: TransactionClient
+            + NotifyKeyUpdate
+            + Clone
+            + std::marker::Send
+            + std::marker::Sync
+            + 'static,
+    >(
+        rpc_addr: SocketAddr,
+        config: JsonRpcConfig,
+        snapshot_config: Option<SnapshotConfig>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
+        blockstore: Arc<Blockstore>,
+        cluster_info: Arc<ClusterInfo>,
+        genesis_hash: Hash,
+        ledger_path: &Path,
+        validator_exit: Arc<RwLock<Exit>>,
+        exit: Arc<AtomicBool>,
+        override_health_check: Arc<AtomicBool>,
+        optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+        send_transaction_service_config: send_transaction_service::Config,
+        max_slots: Arc<MaxSlots>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        client: Client,
+        max_complete_transaction_status_slot: Arc<AtomicU64>,
+        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        runtime: Arc<TokioRuntime>,
+    ) -> Result<Self, String> {
+        info!("rpc bound to {rpc_addr:?}");
+        info!("rpc configuration: {config:?}");
         let rpc_niceness_adj = config.rpc_niceness_adj;
 
         let health = Arc::new(RpcHealth::new(
@@ -369,33 +709,11 @@ impl JsonRpcService {
             Arc::clone(&blockstore),
             config.health_check_slot_distance,
             override_health_check,
-            startup_verification_complete,
         ));
 
         let largest_accounts_cache = Arc::new(RwLock::new(LargestAccountsCache::new(
             LARGEST_ACCOUNTS_CACHE_DURATION,
         )));
-
-        let tpu_address = cluster_info
-            .my_contact_info()
-            .tpu(connection_cache.protocol())
-            .map_err(|err| format!("{err}"))?;
-
-        // sadly, some parts of our current rpc implemention block the jsonrpc's
-        // _socket-listening_ event loop for too long, due to (blocking) long IO or intesive CPU,
-        // causing no further processing of incoming requests and ultimatily innocent clients timing-out.
-        // So create a (shared) multi-threaded event_loop for jsonrpc and set its .threads() to 1,
-        // so that we avoid the single-threaded event loops from being created automatically by
-        // jsonrpc for threads when .threads(N > 1) is given.
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(rpc_threads)
-                .on_thread_start(move || renice_this_thread(rpc_niceness_adj).unwrap())
-                .thread_name("solRpcEl")
-                .enable_all()
-                .build()
-                .expect("Runtime"),
-        );
 
         let exit_bigtable_ledger_upload_service = Arc::new(AtomicBool::new(false));
 
@@ -430,7 +748,6 @@ impl JsonRpcService {
                                 blockstore.clone(),
                                 block_commitment_cache.clone(),
                                 max_complete_transaction_status_slot.clone(),
-                                max_complete_rewards_slot.clone(),
                                 ConfirmedBlockUploadConfig::default(),
                                 exit_bigtable_ledger_upload_service.clone(),
                             )))
@@ -444,7 +761,7 @@ impl JsonRpcService {
                         )
                     })
                     .unwrap_or_else(|err| {
-                        error!("Failed to initialize BigTable ledger storage: {:?}", err);
+                        error!("Failed to initialize BigTable ledger storage: {err:?}");
                         (None, None)
                     })
             } else {
@@ -471,26 +788,17 @@ impl JsonRpcService {
             max_slots,
             leader_schedule_cache,
             max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
             prioritization_fee_cache,
+            Arc::clone(&runtime),
         );
 
-        let leader_info =
-            poh_recorder.map(|recorder| ClusterTpuInfo::new(cluster_info.clone(), recorder));
-        let client = ConnectionCacheClient::new(
-            connection_cache,
-            tpu_address,
-            send_transaction_service_config.tpu_peers.clone(),
-            leader_info,
-            send_transaction_service_config.leader_forward_count,
-        );
-        let _send_transaction_service = SendTransactionService::new_with_config(
+        let _send_transaction_service = Arc::new(SendTransactionService::new_with_client(
             &bank_forks,
             receiver,
-            client,
+            client.clone(),
             send_transaction_service_config,
             exit,
-        );
+        ));
 
         #[cfg(test)]
         let test_request_processor = request_processor.clone();
@@ -542,9 +850,8 @@ impl JsonRpcService {
 
                 if let Err(e) = server {
                     warn!(
-                        "JSON RPC service unavailable error: {:?}. \n\
-                           Also, check that port {} is not already in use by another application",
-                        e,
+                        "JSON RPC service unavailable error: {e:?}. Also, check that port {} is \
+                         not already in use by another application",
                         rpc_addr.port()
                     );
                     close_handle_sender.send(Err(e.to_string())).unwrap();
@@ -571,6 +878,7 @@ impl JsonRpcService {
             #[cfg(test)]
             request_processor: test_request_processor,
             close_handle: Some(close_handle),
+            client_updater: Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
         })
     }
 
@@ -584,6 +892,46 @@ impl JsonRpcService {
         self.exit();
         self.thread_hdl.join()
     }
+
+    pub fn get_client_key_updater(&self) -> Arc<dyn NotifyKeyUpdate + Send + Sync> {
+        self.client_updater.clone()
+    }
+}
+
+pub fn service_runtime(
+    rpc_threads: usize,
+    rpc_blocking_threads: usize,
+    rpc_niceness_adj: i8,
+) -> Arc<TokioRuntime> {
+    // The jsonrpc_http_server crate supports two execution models:
+    //
+    // - By default, it spawns a number of threads - configured with .threads(N) - and runs a
+    //   single-threaded futures executor in each thread.
+    // - Alternatively when configured with .event_loop_executor(executor) and .threads(1),
+    //   it executes all the tasks on the given executor, not spawning any extra internal threads.
+    //
+    // We use the latter configuration, using a multi threaded tokio runtime as the executor. We
+    // do this so we can configure the number of worker threads, the number of blocking threads
+    // and then use tokio::task::spawn_blocking() to avoid blocking the worker threads on CPU
+    // bound operations like getMultipleAccounts. This results in reduced latency, since fast
+    // rpc calls (the majority) are not blocked by slow CPU bound ones.
+    //
+    // NB: `rpc_blocking_threads` shouldn't be set too high (defaults to num_cpus / 2). Too many
+    // (busy) blocking threads could compete with CPU time with other validator threads and
+    // negatively impact performance.
+    let rpc_threads = 1.max(rpc_threads);
+    let rpc_blocking_threads = 1.max(rpc_blocking_threads);
+    let runtime = Arc::new(
+        TokioBuilder::new_multi_thread()
+            .worker_threads(rpc_threads)
+            .max_blocking_threads(rpc_blocking_threads)
+            .on_thread_start(move || renice_this_thread(rpc_niceness_adj).unwrap())
+            .thread_name("solRpcEl")
+            .enable_all()
+            .build()
+            .expect("Runtime"),
+    );
+    runtime
 }
 
 #[cfg(test)]
@@ -591,16 +939,15 @@ mod tests {
     use {
         super::*,
         crate::rpc::{create_validator_exit, tests::new_test_cluster_info},
+        solana_cluster_type::ClusterType,
+        solana_genesis_config::DEFAULT_GENESIS_ARCHIVE,
         solana_ledger::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,
         },
         solana_rpc_client_api::config::RpcContextConfig,
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            genesis_config::{ClusterType, DEFAULT_GENESIS_ARCHIVE},
-            signature::Signer,
-        },
+        solana_signer::Signer,
         std::{
             io::Write,
             net::{IpAddr, Ipv4Addr},
@@ -620,9 +967,10 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let cluster_info = Arc::new(new_test_cluster_info());
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
         let rpc_addr = SocketAddr::new(
             ip_addr,
-            solana_net_utils::find_available_port_in_range(ip_addr, (10000, 65535)).unwrap(),
+            solana_net_utils::find_available_port_in_range(ip_addr, port_range).unwrap(),
         );
         let bank_forks = BankForks::new_rw_arc(bank);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -645,7 +993,6 @@ mod tests {
             validator_exit,
             exit,
             Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(true)),
             optimistically_confirmed_bank,
             send_transaction_service::Config {
                 retry_rate_ms: 1000,
@@ -655,7 +1002,6 @@ mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             connection_cache,
-            Arc::new(AtomicU64::default()),
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         )
@@ -687,12 +1033,25 @@ mod tests {
     #[test]
     fn test_process_rest_api() {
         let bank_forks = create_bank_forks();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
 
-        assert_eq!(None, process_rest(&bank_forks, "not-a-supported-rest-api"));
-        assert_eq!(
-            process_rest(&bank_forks, "/v0/circulating-supply"),
-            process_rest(&bank_forks, "/v0/total-supply")
-        );
+        runtime.block_on(async {
+            assert_eq!(
+                None,
+                handle_rest(&bank_forks, "not-a-supported-rest-api").await
+            );
+
+            let circulating_supply = handle_rest(&bank_forks, "/v0/circulating-supply").await;
+            assert!(circulating_supply.is_some());
+
+            let total_supply = handle_rest(&bank_forks, "/v0/total-supply").await;
+            assert!(total_supply.is_some());
+
+            assert_eq!(
+                handle_rest(&bank_forks, "/v0/circulating-supply").await,
+                handle_rest(&bank_forks, "/v0/total-supply").await
+            );
+        });
     }
 
     #[test]
@@ -757,49 +1116,57 @@ mod tests {
         assert!(!rrm.is_file_get_path("/incremental-snapshot.tar.bz2"));
 
         assert!(!rrm.is_file_get_path(
-            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm.is_file_get_path(
-            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
 
-        assert!(rrm_with_snapshot_config.is_file_get_path(
-            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
-        ));
         assert!(rrm_with_snapshot_config.is_file_get_path(
             "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
-        assert!(rrm_with_snapshot_config
+        assert!(rrm_with_snapshot_config.is_file_get_path(
+            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.lz4"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+        ));
+        assert!(!rrm_with_snapshot_config
             .is_file_get_path("/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.gz"));
-        assert!(rrm_with_snapshot_config
+        assert!(!rrm_with_snapshot_config
             .is_file_get_path("/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
 
-        assert!(rrm_with_snapshot_config.is_file_get_path(
-            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
-        ));
         assert!(rrm_with_snapshot_config.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(rrm_with_snapshot_config.is_file_get_path(
+            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.lz4"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.gz"
         ));
-        assert!(rrm_with_snapshot_config.is_file_get_path(
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
         ));
 
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/snapshot-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/snapshot-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/incremental-snapshot-notaslotnumber-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/incremental-snapshot-notaslotnumber-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/incremental-snapshot-100-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/incremental-snapshot-100-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
 
-        assert!(!rrm_with_snapshot_config.is_file_get_path("../../../test/snapshot-123-xxx.tar"));
+        assert!(
+            !rrm_with_snapshot_config.is_file_get_path("../../../test/snapshot-123-xxx.tar.zst")
+        );
         assert!(!rrm_with_snapshot_config
-            .is_file_get_path("../../../test/incremental-snapshot-123-456-xxx.tar"));
+            .is_file_get_path("../../../test/incremental-snapshot-123-456-xxx.tar.zst"));
 
         assert!(!rrm.is_file_get_path("/"));
         assert!(!rrm.is_file_get_path("//"));
@@ -815,20 +1182,23 @@ mod tests {
         assert!(!rrm.is_file_get_path("..//"));
         assert!(!rrm.is_file_get_path("🎣"));
 
-        assert!(!rrm_with_snapshot_config
-            .is_file_get_path("//snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
-        assert!(!rrm_with_snapshot_config
-            .is_file_get_path("/./snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
-        assert!(!rrm_with_snapshot_config
-            .is_file_get_path("/../snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "//incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
+            "//snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/./incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
+            "/./snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/../incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
+            "/../snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "//incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "/./incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "/../incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
     }
 

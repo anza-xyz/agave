@@ -28,17 +28,13 @@ fn decompress_reader<'a, R: Read + 'a>(
 pub fn decompress(data: &[u8]) -> Result<Vec<u8>, io::Error> {
     let method_size = bincode::serialized_size(&CompressionMethod::NoCompression).unwrap();
     if (data.len() as u64) < method_size {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("data len too small: {}", data.len()),
-        ));
+        return Err(io::Error::other(format!(
+            "data len too small: {}",
+            data.len()
+        )));
     }
-    let method = bincode::deserialize(&data[..method_size as usize]).map_err(|err| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!("method deserialize failed: {err}"),
-        )
-    })?;
+    let method = bincode::deserialize(&data[..method_size as usize])
+        .map_err(|err| io::Error::other(format!("method deserialize failed: {err}")))?;
 
     let mut reader = decompress_reader(method, &data[method_size as usize..])?;
     let mut uncompressed_data = vec![];

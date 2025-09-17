@@ -128,13 +128,9 @@ information.
 
 ```rust
 pub trait TransactionProcessingCallback {
-    fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize>;
-
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData>;
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)>;
 
     fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey) {}
-
-    fn get_current_epoch_vote_account_stake(&self, _vote_address: &Pubkey) -> u64;
 }
 ```
 
@@ -194,8 +190,6 @@ the transaction processor.
 - `limit_to_load_programs`: Whether to limit the number of programs loaded for
   the transaction batch.
 - `recording_config`: Recording capabilities for transaction execution.
-- `transaction_account_lock_limit`: The max number of accounts that a
-  transaction may lock.
 
 ### `LoadAndExecuteSanitizedTransactionsOutput`
 
@@ -278,8 +272,8 @@ Steps of `load_and_execute_sanitized_transactions`
       the clone of environments of `programs_loaded_for_tx_batch`
          - `programs_loaded_for_tx_batch` contains a reference to all the `ProgramCacheEntry`s
             necessary for the transaction. It maintains an `Arc` to the programs in the global
-            `ProgramCacheEntrys` data structure.
-      6. Call `MessageProcessor::process_message` to execute the
+            `ProgramCacheEntry` data structure.
+   6. Call `MessageProcessor::process_message` to execute the
       transaction. `MessageProcessor` is contained in
       solana-program-runtime crate. The result of processing message
       is either `ProcessedMessageInfo` which is an i64 wrapped in a

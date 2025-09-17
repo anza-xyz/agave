@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 agave-geyser-plugin-interface = { workspace = true }
 bs58 = { workspace = true }
@@ -18,17 +21,19 @@ jsonrpc-core = { workspace = true }
 libloading = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
+solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
+solana-clock = { workspace = true }
 solana-entry = { workspace = true }
+solana-hash = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-rpc = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk = { workspace = true }
+solana-signature = { workspace = true }
+solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

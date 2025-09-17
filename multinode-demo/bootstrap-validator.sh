@@ -28,7 +28,7 @@ while [[ -n $1 ]]; do
     if [[ $1 = --init-complete-file ]]; then
       args+=("$1" "$2")
       shift 2
-    elif [[ $1 = --gossip-host ]]; then
+    elif [[ $1 = --bind-address ]]; then
       args+=("$1" "$2")
       shift 2
     elif [[ $1 = --gossip-port ]]; then
@@ -110,6 +110,9 @@ while [[ -n $1 ]]; do
       args+=("$1" "$2")
       shift 2
     elif [[ $1 == --block-production-method ]]; then
+      args+=("$1" "$2")
+      shift 2
+    elif [[ $1 == --transaction-structure ]]; then
       args+=("$1" "$2")
       shift 2
     elif [[ $1 == --wen-restart ]]; then

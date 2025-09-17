@@ -7,7 +7,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 #[cfg(target_os = "linux")]
 use std::{fs::File, io::BufReader};
 use {
-    solana_sdk::timing::AtomicInterval,
+    solana_time_utils::AtomicInterval,
     std::{
         collections::HashMap,
         io::BufRead,
@@ -328,10 +328,7 @@ fn read_disk_stats() -> Result<DiskStats, String> {
                     }
                     let mut path = blk_device_dir.path();
                     path.push("stat");
-                    match File::open(path) {
-                        Ok(file_diskstats) => Some(file_diskstats),
-                        Err(_) => None,
-                    }
+                    File::open(path).ok()
                 }
                 Err(_) => None,
             }
@@ -432,7 +429,7 @@ impl SystemMonitorService {
         }
 
         fn normalize_err<E: std::fmt::Display>(key: &str, error: E) -> String {
-            format!("Failed to query value for {}: {}", key, error)
+            format!("Failed to query value for {key}: {error}")
         }
         INTERESTING_LIMITS
             .iter()
@@ -441,7 +438,7 @@ impl SystemMonitorService {
                     .map_err(|e| normalize_err(key, e))
                     .and_then(|val| val.parse::<i64>().map_err(|e| normalize_err(key, e)))
                     .unwrap_or_else(|e| {
-                        error!("{}", e);
+                        error!("{e}");
                         -1
                     });
                 (*key, interesting_limit, current_value)
@@ -455,7 +452,7 @@ impl SystemMonitorService {
     ) -> bool {
         current_limits
             .iter()
-            .map(|(key, interesting_limit, current_value)| {
+            .all(|(key, interesting_limit, current_value)| {
                 datapoint_warn!("os-config", (key, *current_value, i64));
                 match interesting_limit {
                     InterestingLimit::Recommend(recommended_value)
@@ -477,7 +474,6 @@ impl SystemMonitorService {
                     }
                 }
             })
-            .all(|good| good)
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -502,7 +498,7 @@ impl SystemMonitorService {
                 }
                 *net_stats = Some(new_stats);
             }
-            Err(e) => warn!("read_net_stats: {}", e),
+            Err(e) => warn!("read_net_stats: {e}"),
         }
     }
 
@@ -837,7 +833,7 @@ impl SystemMonitorService {
                 }
                 *disk_stats = Some(new_stats);
             }
-            Err(e) => warn!("read_disk_stats: {}", e),
+            Err(e) => warn!("read_disk_stats: {e}"),
         }
     }
 

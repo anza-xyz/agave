@@ -41,7 +41,7 @@ treatment of Pedersen commitment and the (twisted) ElGamal encryption schemes.
 - [Notes](https://github.com/solana-labs/solana/blob/master/docs/src/runtime/zk-docs/twisted_elgamal.pdf)
   on the twisted ElGamal encryption
 - A technical
-  [overview](https://github.com/solana-labs/solana-program-library/blob/master/token/zk-token-protocol-paper/part1.pdf)
+  [overview](https://github.com/solana-program/token-2022/blob/main/zk-token-protocol-paper/part1.pdf)
   of the SPL Token 2022 confidential extension
 - Pretty Good Confidentiality [research paper](https://eprint.iacr.org/2019/319)
 
@@ -131,3 +131,12 @@ proofs.
     cipehrtext is well-formed
     - Mathematical description and proof of security:
       [[Notes]](https://github.com/anza-xyz/agave/blob/master/docs/src/runtime/zk-docs/ciphertext_validity.pdf)
+
+#### Percentage with Cap proof
+
+- `PercentageWithCap`:
+
+  - The percentage with cap proof certifies that percentage relation useful
+    for fee calcluations
+    - Mathematical description and proof of security:
+      [[Notes]](https://github.com/anza-xyz/agave/blob/master/docs/src/runtime/zk-docs/percentage_with_cap.pdf)

@@ -14,12 +14,9 @@ struct Bin {
     avg: usize,
 }
 
+/// Creates a string of spaces (` `) of length `width`
 fn pad(width: usize) -> String {
-    let mut s = String::new();
-    for _i in 0..width {
-        s = format!("{s} ");
-    }
-    s
+    " ".repeat(width)
 }
 
 fn get_stars(x: usize, max: usize, width: usize) -> String {
@@ -52,7 +49,7 @@ fn calc(info: &[(usize, usize)], bin_widths: Vec<usize>, offset: i64) {
     eprintln!("lowest slot: {min}");
     eprintln!("highest slot: {max_inclusive}");
     eprintln!("slot range: {}", max_inclusive - min + 1);
-    eprintln!("ancient boundary: {}", outside_slot);
+    eprintln!("ancient boundary: {outside_slot}");
     eprintln!(
         "number of slots beyond ancient boundary: {}",
         info.iter()
@@ -308,10 +305,10 @@ fn main() {
             calc(&info, normal_ancient(offset), offset);
             eprintln!("========");
         } else {
-            panic!("couldn't read folder: {path:?}, {:?}", dir);
+            panic!("couldn't read folder: {path:?}, {dir:?}");
         }
     } else {
-        panic!("not a folder: {:?}", path);
+        panic!("not a folder: {path:?}");
     }
 }
 

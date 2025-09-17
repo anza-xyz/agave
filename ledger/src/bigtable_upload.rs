@@ -2,8 +2,8 @@ use {
     crate::blockstore::Blockstore,
     crossbeam_channel::{bounded, unbounded},
     log::*,
+    solana_clock::Slot,
     solana_measure::measure::Measure,
-    solana_sdk::clock::Slot,
     std::{
         cmp::{max, min},
         collections::HashSet,
@@ -54,10 +54,7 @@ pub async fn upload_confirmed_blocks(
 ) -> Result<Slot, Box<dyn std::error::Error>> {
     let mut measure = Measure::start("entire upload");
 
-    info!(
-        "Loading ledger slots from {} to {}",
-        starting_slot, ending_slot
-    );
+    info!("Loading ledger slots from {starting_slot} to {ending_slot}");
     let blockstore_slots: Vec<_> = blockstore
         .rooted_slot_iterator(starting_slot)
         .map_err(|err| {
@@ -84,8 +81,8 @@ pub async fn upload_confirmed_blocks(
     let bigtable_slots = if !config.force_reupload {
         let mut bigtable_slots = vec![];
         info!(
-            "Loading list of bigtable blocks between slots {} and {}...",
-            first_blockstore_slot, last_blockstore_slot
+            "Loading list of bigtable blocks between slots {first_blockstore_slot} and \
+             {last_blockstore_slot}..."
         );
 
         let mut start_slot = first_blockstore_slot;
@@ -98,7 +95,7 @@ pub async fn upload_confirmed_blocks(
                 {
                     Ok(slots) => break slots,
                     Err(err) => {
-                        error!("get_confirmed_blocks for {} failed: {:?}", start_slot, err);
+                        error!("get_confirmed_blocks for {start_slot} failed: {err:?}");
                         // Consider exponential backoff...
                         tokio::time::sleep(Duration::from_secs(2)).await;
                     }
@@ -135,8 +132,7 @@ pub async fn upload_confirmed_blocks(
 
     if blocks_to_upload.is_empty() {
         info!(
-            "No blocks between {} and {} need to be uploaded to bigtable",
-            starting_slot, ending_slot
+            "No blocks between {starting_slot} and {ending_slot} need to be uploaded to bigtable"
         );
         return Ok(ending_slot);
     }
@@ -185,8 +181,8 @@ pub async fn upload_confirmed_blocks(
                                     }
                                     Err(err) => {
                                         warn!(
-                                            "Failed to get load confirmed block from slot {}: {:?}",
-                                            slot, err
+                                            "Failed to get load confirmed block from slot {slot}: \
+                                             {err:?}"
                                         );
                                         sender.send((slot, None))
                                     }
@@ -217,7 +213,7 @@ pub async fn upload_confirmed_blocks(
 
         let mut measure_upload = Measure::start("Upload");
         let mut num_blocks = blocks.len();
-        info!("Preparing the next {} blocks for upload", num_blocks);
+        info!("Preparing the next {num_blocks} blocks for upload");
 
         let uploads = blocks.into_iter().filter_map(|(slot, block)| match block {
             None => {
@@ -235,20 +231,20 @@ pub async fn upload_confirmed_blocks(
 
         for result in futures::future::join_all(uploads).await {
             if let Err(err) = result {
-                error!("upload_confirmed_block() join failed: {:?}", err);
+                error!("upload_confirmed_block() join failed: {err:?}");
                 failures += 1;
             } else if let Err(err) = result.unwrap() {
-                error!("upload_confirmed_block() upload failed: {:?}", err);
+                error!("upload_confirmed_block() upload failed: {err:?}");
                 failures += 1;
             }
         }
 
         measure_upload.stop();
-        info!("{} for {} blocks", measure_upload, num_blocks);
+        info!("{measure_upload} for {num_blocks} blocks");
     }
 
     measure.stop();
-    info!("{}", measure);
+    info!("{measure}");
 
     let blockstore_results = loader_threads.into_iter().map(|t| t.join());
 
@@ -263,7 +259,7 @@ pub async fn upload_confirmed_blocks(
                 blockstore_load_wallclock = max(stats.elapsed, blockstore_load_wallclock);
             }
             Err(e) => {
-                error!("error joining blockstore thread: {:?}", e);
+                error!("error joining blockstore thread: {e:?}");
                 blockstore_errors += 1;
             }
         }

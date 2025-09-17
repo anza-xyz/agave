@@ -5,7 +5,6 @@ use {
     crate::nonblocking::quic_client::{
         QuicClient, QuicClientConnection as NonblockingQuicConnection, QuicLazyInitializedEndpoint,
     },
-    lazy_static::lazy_static,
     log::*,
     solana_connection_cache::{
         client_connection::{ClientConnection, ClientStats},
@@ -65,19 +64,23 @@ impl AsyncTaskSemaphore {
     }
 }
 
-lazy_static! {
-    static ref ASYNC_TASK_SEMAPHORE: AsyncTaskSemaphore =
-        AsyncTaskSemaphore::new(MAX_OUTSTANDING_TASK);
-    static ref RUNTIME: Runtime = tokio::runtime::Builder::new_multi_thread()
+static ASYNC_TASK_SEMAPHORE: std::sync::LazyLock<AsyncTaskSemaphore> =
+    std::sync::LazyLock::new(|| AsyncTaskSemaphore::new(MAX_OUTSTANDING_TASK));
+static RUNTIME: std::sync::LazyLock<Runtime> = std::sync::LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
         .thread_name("solQuicClientRt")
         .enable_all()
         .build()
-        .unwrap();
+        .unwrap()
+});
+
+pub fn get_runtime() -> &'static Runtime {
+    &RUNTIME
 }
 
 async fn send_data_async(
     connection: Arc<NonblockingQuicConnection>,
-    buffer: Vec<u8>,
+    buffer: Arc<Vec<u8>>,
 ) -> TransportResult<()> {
     let result = timeout(SEND_DATA_TIMEOUT, connection.send_data(&buffer)).await;
     ASYNC_TASK_SEMAPHORE.release();
@@ -157,7 +160,7 @@ impl ClientConnection for QuicClientConnection {
         Ok(())
     }
 
-    fn send_data_async(&self, data: Vec<u8>) -> TransportResult<()> {
+    fn send_data_async(&self, data: Arc<Vec<u8>>) -> TransportResult<()> {
         let _lock = ASYNC_TASK_SEMAPHORE.acquire();
         let inner = self.inner.clone();
 
@@ -176,4 +179,10 @@ impl ClientConnection for QuicClientConnection {
         RUNTIME.block_on(self.inner.send_data(buffer))?;
         Ok(())
     }
+}
+
+pub(crate) fn close_quic_connection(connection: Arc<QuicClient>) {
+    // Close the connection and release resources
+    trace!("Closing QUIC connection to {}", connection.server_addr());
+    RUNTIME.block_on(connection.close());
 }

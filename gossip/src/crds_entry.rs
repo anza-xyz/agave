@@ -6,7 +6,7 @@ use {
         crds_value::{CrdsValue, CrdsValueLabel},
     },
     indexmap::IndexMap,
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
 };
 
 type CrdsTable = IndexMap<CrdsValueLabel, VersionedCrdsValue>;
@@ -68,7 +68,7 @@ mod tests {
             crds_data::new_rand_timestamp,
         },
         rand::seq::SliceRandom,
-        solana_sdk::signature::Keypair,
+        solana_keypair::Keypair,
         std::collections::HashMap,
     };
 

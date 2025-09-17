@@ -9,6 +9,16 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+name = "solana_clap_v3_utils"
+
+[features]
+default = []
+elgamal = ["dep:solana-zk-sdk"]
+
 [dependencies]
 chrono = { workspace = true, features = ["default"] }
 clap = { version = "3.2.23", features = ["cargo"] }
@@ -17,18 +27,19 @@ solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-derivation-path = { workspace = true }
-solana-hash = { workspace = true }
+# the borsh feature is required to use the value_parser macro
+solana-hash = { workspace = true, features = ["borsh"] }
 solana-keypair = { workspace = true, features = ["seed-derivable"] }
+solana-message = { workspace = true }
 solana-native-token = { workspace = true }
 solana-presigner = { workspace = true }
-solana-program = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-seed-derivable = { workspace = true }
 solana-seed-phrase = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
-solana-zk-token-sdk = { workspace = true }
+solana-zk-sdk = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tiny-bip39 = { workspace = true }
 uriparse = { workspace = true }
@@ -37,10 +48,5 @@ url = { workspace = true }
 [dev-dependencies]
 assert_matches = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
+solana-system-interface = { workspace = true, features = ["bincode"] }
 tempfile = { workspace = true }
-
-[lib]
-name = "solana_clap_v3_utils"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

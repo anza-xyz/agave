@@ -1,6 +1,6 @@
 use {
     super::*,
-    spl_token_2022::{
+    spl_token_2022_interface::{
         extension::memo_transfer::instruction::RequiredMemoTransfersInstruction,
         instruction::decode_instruction_type,
     },
@@ -40,12 +40,10 @@ pub(in crate::parse_token) fn parse_memo_transfer_instruction(
 mod test {
     use {
         super::*,
-        solana_sdk::pubkey::Pubkey,
-        spl_token_2022::{
-            extension::memo_transfer::instruction::{
-                disable_required_transfer_memos, enable_required_transfer_memos,
-            },
-            solana_program::message::Message,
+        solana_message::Message,
+        solana_pubkey::Pubkey,
+        spl_token_2022_interface::extension::memo_transfer::instruction::{
+            disable_required_transfer_memos, enable_required_transfer_memos,
         },
     };
 
@@ -56,7 +54,7 @@ mod test {
         // Enable, single owner
         let owner_pubkey = Pubkey::new_unique();
         let enable_memo_transfers_ix = enable_required_transfer_memos(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &account_pubkey,
             &owner_pubkey,
             &[],
@@ -84,7 +82,7 @@ mod test {
         let multisig_signer0 = Pubkey::new_unique();
         let multisig_signer1 = Pubkey::new_unique();
         let enable_memo_transfers_ix = enable_required_transfer_memos(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &account_pubkey,
             &multisig_pubkey,
             &[&multisig_signer0, &multisig_signer1],
@@ -113,7 +111,7 @@ mod test {
 
         // Disable, single owner
         let enable_memo_transfers_ix = disable_required_transfer_memos(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &account_pubkey,
             &owner_pubkey,
             &[],
@@ -141,7 +139,7 @@ mod test {
         let multisig_signer0 = Pubkey::new_unique();
         let multisig_signer1 = Pubkey::new_unique();
         let enable_memo_transfers_ix = disable_required_transfer_memos(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &account_pubkey,
             &multisig_pubkey,
             &[&multisig_signer0, &multisig_signer1],

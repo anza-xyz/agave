@@ -1,0 +1,30 @@
+[package]
+name = "agave-feature-set"
+description = "Solana runtime feature declarations"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+readme = false
+
+[features]
+frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+
+[dependencies]
+ahash = { workspace = true }
+solana-epoch-schedule = { workspace = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-hash = { workspace = true }
+solana-pubkey = { workspace = true, default-features = false }
+solana-sha256-hasher = { workspace = true }
+solana-svm-feature-set = { workspace = true }
+
+[lints]
+workspace = true

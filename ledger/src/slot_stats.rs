@@ -2,11 +2,8 @@ use {
     crate::blockstore_meta::SlotMeta,
     bitflags::bitflags,
     lru::LruCache,
-    solana_sdk::clock::Slot,
-    std::{
-        collections::HashMap,
-        sync::{Mutex, MutexGuard},
-    },
+    solana_clock::Slot,
+    std::{collections::HashMap, sync::Mutex},
 };
 
 const SLOTS_STATS_CACHE_CAPACITY: usize = 300;
@@ -74,19 +71,25 @@ impl Default for SlotsStats {
 }
 
 impl SlotsStats {
-    fn get_or_default_with_eviction_check<'a>(
-        stats: &'a mut MutexGuard<LruCache<Slot, SlotStats>>,
+    /// Returns a mutable reference to [`SlotStats`] associated with the slot in the stats LruCache
+    /// and a possibly evicted cache entry.
+    ///
+    /// A new SlotStats entry will be inserted if there is not one present for `slot`; insertion
+    /// may cause an existing entry to be evicted.
+    fn get_or_default_with_eviction_check(
+        stats: &mut LruCache<Slot, SlotStats>,
         slot: Slot,
-    ) -> (&'a mut SlotStats, Option<(Slot, SlotStats)>) {
-        let evicted = if stats.len() == stats.cap() {
-            match stats.peek_lru() {
-                Some((s, _)) if *s == slot => None,
-                _ => stats.pop_lru(),
-            }
-        } else {
+    ) -> (&mut SlotStats, Option<(Slot, SlotStats)>) {
+        let evicted = if stats.contains(&slot) {
             None
+        } else {
+            // insert slot in cache which might potentially evict an entry
+            let evicted = stats.push(slot, SlotStats::default());
+            if let Some((evicted_slot, _)) = evicted {
+                assert_ne!(evicted_slot, slot);
+            }
+            evicted
         };
-        stats.get_or_insert(slot, SlotStats::default);
         (stats.get_mut(&slot).unwrap(), evicted)
     }
 
@@ -97,34 +100,36 @@ impl SlotsStats {
         source: ShredSource,
         slot_meta: Option<&SlotMeta>,
     ) {
-        let mut slot_full_reporting_info = None;
-        let mut stats = self.stats.lock().unwrap();
-        let (slot_stats, evicted) = Self::get_or_default_with_eviction_check(&mut stats, slot);
-        match source {
-            ShredSource::Recovered => slot_stats.num_recovered += 1,
-            ShredSource::Repaired => slot_stats.num_repaired += 1,
-            ShredSource::Turbine => {
-                *slot_stats
-                    .turbine_fec_set_index_counts
-                    .entry(fec_set_index)
-                    .or_default() += 1
-            }
-        }
-        if let Some(meta) = slot_meta {
-            if meta.is_full() {
-                slot_stats.last_index = meta.last_index.unwrap_or_default();
-                if !slot_stats.flags.contains(SlotFlags::FULL) {
-                    slot_stats.flags |= SlotFlags::FULL;
-                    slot_full_reporting_info =
-                        Some((slot_stats.num_repaired, slot_stats.num_recovered));
+        let (slot_full_reporting_info, evicted) = {
+            let mut stats = self.stats.lock().unwrap();
+            let (slot_stats, evicted) = Self::get_or_default_with_eviction_check(&mut stats, slot);
+            match source {
+                ShredSource::Recovered => slot_stats.num_recovered += 1,
+                ShredSource::Repaired => slot_stats.num_repaired += 1,
+                ShredSource::Turbine => {
+                    *slot_stats
+                        .turbine_fec_set_index_counts
+                        .entry(fec_set_index)
+                        .or_default() += 1
                 }
             }
-        }
-        drop(stats);
+            let mut slot_full_reporting_info = None;
+            if let Some(meta) = slot_meta {
+                if meta.is_full() {
+                    slot_stats.last_index = meta.last_index.unwrap();
+                    if !slot_stats.flags.contains(SlotFlags::FULL) {
+                        slot_stats.flags |= SlotFlags::FULL;
+                        slot_full_reporting_info =
+                            Some((slot_stats.num_repaired, slot_stats.num_recovered));
+                    }
+                }
+            }
+            (slot_full_reporting_info, evicted)
+        };
         if let Some((num_repaired, num_recovered)) = slot_full_reporting_info {
             let slot_meta = slot_meta.unwrap();
             let total_time_ms =
-                solana_sdk::timing::timestamp().saturating_sub(slot_meta.first_shred_timestamp);
+                solana_time_utils::timestamp().saturating_sub(slot_meta.first_shred_timestamp);
             let last_index = slot_meta
                 .last_index
                 .and_then(|ix| i64::try_from(ix).ok())

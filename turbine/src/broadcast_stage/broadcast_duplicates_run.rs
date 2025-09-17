@@ -4,12 +4,12 @@ use {
     crossbeam_channel::Sender,
     itertools::Itertools,
     solana_entry::entry::Entry,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
-    solana_sdk::{
-        hash::Hash,
-        signature::{Keypair, Signature, Signer},
-        system_transaction,
-    },
+    solana_signature::Signature,
+    solana_signer::Signer,
+    solana_system_transaction as system_transaction,
     std::collections::HashSet,
 };
 
@@ -38,6 +38,7 @@ pub(super) struct BroadcastDuplicatesRun {
     config: BroadcastDuplicatesConfig,
     current_slot: Slot,
     chained_merkle_root: Hash,
+    carryover_entry: Option<WorkingBankEntry>,
     next_shred_index: u32,
     next_code_index: u32,
     shred_version: u16,
@@ -59,6 +60,7 @@ impl BroadcastDuplicatesRun {
         Self {
             config,
             chained_merkle_root: Hash::default(),
+            carryover_entry: None,
             next_shred_index: u32::MAX,
             next_code_index: 0,
             shred_version,
@@ -84,7 +86,9 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
     ) -> Result<()> {
         // 1) Pull entries from banking stage
-        let mut receive_results = broadcast_utils::recv_slot_entries(receiver)?;
+        let mut stats = ProcessShredsStats::default();
+        let mut receive_results =
+            broadcast_utils::recv_slot_entries(receiver, &mut self.carryover_entry, &mut stats)?;
         let bank = receive_results.bank.clone();
         let last_tick_height = receive_results.last_tick_height;
 
@@ -177,16 +181,15 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         )
         .expect("Expected to create a new shredder");
 
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             keypair,
             &receive_results.entries,
             last_tick_height == bank.max_tick_height() && last_entries.is_none(),
             Some(self.chained_merkle_root),
             self.next_shred_index,
             self.next_code_index,
-            true, // merkle_variant
             &self.reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
+            &mut stats,
         );
         if let Some(shred) = data_shreds.iter().max_by_key(|shred| shred.index()) {
             self.chained_merkle_root = shred.merkle_root().unwrap();
@@ -197,30 +200,28 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         }
         let last_shreds =
             last_entries.map(|(original_last_entry, duplicate_extra_last_entries)| {
-                let (original_last_data_shred, _) = shredder.entries_to_shreds(
+                let (original_last_data_shred, _) = shredder.entries_to_merkle_shreds_for_tests(
                     keypair,
                     &[original_last_entry],
                     true,
                     Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
-                    true, // merkle_variant
                     &self.reed_solomon_cache,
-                    &mut ProcessShredsStats::default(),
+                    &mut stats,
                 );
                 // Don't mark the last shred as last so that validators won't
                 // know that they've gotten all the shreds, and will continue
                 // trying to repair.
-                let (partition_last_data_shred, _) = shredder.entries_to_shreds(
+                let (partition_last_data_shred, _) = shredder.entries_to_merkle_shreds_for_tests(
                     keypair,
                     &duplicate_extra_last_entries,
                     true,
                     Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
-                    true, // merkle_variant
                     &self.reed_solomon_cache,
-                    &mut ProcessShredsStats::default(),
+                    &mut stats,
                 );
                 let sigs: Vec<_> = partition_last_data_shred
                     .iter()
@@ -294,7 +295,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         &mut self,
         receiver: &TransmitReceiver,
         cluster_info: &ClusterInfo,
-        sock: &UdpSocket,
+        sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
         _quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
@@ -341,7 +342,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             .iter()
             .filter_map(|shred| {
                 let node = cluster_nodes.get_broadcast_peer(&shred.id())?;
-                if !socket_addr_space.check(&node.tvu(Protocol::UDP).ok()?) {
+                if !socket_addr_space.check(&node.tvu(Protocol::UDP)?) {
                     return None;
                 }
                 if self
@@ -352,7 +353,8 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 {
                     if cluster_partition.contains(node.pubkey()) {
                         info!(
-                            "Not broadcasting original shred index {}, slot {} to partition node {}",
+                            "Not broadcasting original shred index {}, slot {} to partition node \
+                             {}",
                             shred.index(),
                             shred.slot(),
                             node.pubkey(),
@@ -374,32 +376,33 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                             .iter()
                             .filter_map(|pubkey| {
                                 info!(
-                                    "Broadcasting partition shred index {}, slot {} to partition node {}",
+                                    "Broadcasting partition shred index {}, slot {} to partition \
+                                     node {}",
                                     shred.index(),
                                     shred.slot(),
                                     pubkey,
                                 );
-                                let tvu = cluster_info
-                                    .lookup_contact_info(pubkey, |node| node.tvu(Protocol::UDP))?
-                                    .ok()?;
+                                let tvu = cluster_info.lookup_contact_info(pubkey, |node| {
+                                    node.tvu(Protocol::UDP)
+                                })??;
                                 Some((shred.payload(), tvu))
                             })
                             .collect(),
                     );
                 }
 
-                Some(vec![(shred.payload(), node.tvu(Protocol::UDP).ok()?)])
+                Some(vec![(shred.payload(), node.tvu(Protocol::UDP)?)])
             })
             .flatten()
             .collect();
 
-        match batch_send(sock, &packets) {
-            Ok(()) => (),
-            Err(SendPktsError::IoError(ioerr, _)) => {
-                return Err(Error::Io(ioerr));
+        let sock = match sock {
+            BroadcastSocket::Udp(sock) => sock,
+            BroadcastSocket::Xdp(_) => {
+                panic!("Xdp not supported for duplicate shreds run");
             }
-        }
-        Ok(())
+        };
+        batch_send(sock, packets).map_err(|SendPktsError::IoError(err, _)| Error::Io(err))
     }
 
     fn record(&mut self, receiver: &RecordReceiver, blockstore: &Blockstore) -> Result<()> {

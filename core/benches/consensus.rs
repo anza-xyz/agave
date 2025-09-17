@@ -8,11 +8,10 @@ use {
         consensus::{tower_storage::FileTowerStorage, Tower},
         vote_simulator::VoteSimulator,
     },
+    solana_keypair::Keypair,
+    solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_sdk::{
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-    },
+    solana_signer::Signer,
     std::{
         collections::{HashMap, HashSet},
         sync::Arc,

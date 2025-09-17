@@ -1,6 +1,6 @@
 //! The instruction data types for the [`ZK Token proof`] instruction.
 //!
-//! [`ZK Token proof`]: https://docs.solanalabs.com/runtime/zk-token-proof
+//! [`ZK Token proof`]: https://docs.anza.xyz/runtime/zk-elgamal-proof
 
 pub mod batched_grouped_ciphertext_validity;
 pub mod batched_range_proof;

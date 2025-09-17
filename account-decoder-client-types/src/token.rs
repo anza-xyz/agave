@@ -121,6 +121,9 @@ pub enum UiExtension {
     TokenGroupMember(UiTokenGroupMember),
     ConfidentialMintBurn(UiConfidentialMintBurn),
     UnparseableExtension,
+    ScaledUiAmountConfig(UiScaledUiAmountConfig),
+    PausableConfig(UiPausableConfig),
+    PausableAccount,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -295,6 +298,7 @@ pub struct UiConfidentialMintBurn {
     pub confidential_supply: String,
     pub decryptable_supply: String,
     pub supply_elgamal_pubkey: String,
+    pub pending_burn: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -316,4 +320,20 @@ pub struct UiMultisig {
     pub num_valid_signers: u8,
     pub is_initialized: bool,
     pub signers: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UiScaledUiAmountConfig {
+    pub authority: Option<String>,
+    pub multiplier: String,
+    pub new_multiplier_effective_timestamp: i64,
+    pub new_multiplier: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UiPausableConfig {
+    pub authority: Option<String>,
+    pub paused: bool,
 }

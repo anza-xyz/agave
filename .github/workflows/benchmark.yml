@@ -30,16 +30,12 @@ jobs:
         #
         test:
           - {
-              name: "solana-sdk",
-              commands: ["cargo +$rust_nightly bench -p solana-sdk --features openssl-vendored"],
-            }
-          - {
               name: "solana-runtime",
               commands: ["cargo +$rust_nightly bench -p solana-runtime"],
             }
           - {
               name: "solana-gossip",
-              commands: ["cargo +$rust_nightly bench -p solana-gossip"],
+              commands: ["cargo bench -p solana-gossip -- --output-format bencher --noplot"],
             }
           - {
               name: "solana-poh",
@@ -73,7 +69,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Before Command
         if: ${{ matrix.test.before_command != '' }}

@@ -1,12 +1,13 @@
 pub mod cluster_slots;
+pub mod slot_supporters;
 use {
     cluster_slots::ClusterSlots,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
-    solana_gossip::cluster_info::ClusterInfo,
+    solana_clock::Slot,
+    solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_ledger::blockstore::Blockstore,
     solana_measure::measure::Measure,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::clock::Slot,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -81,10 +82,13 @@ impl ClusterSlotsService {
     ) {
         let mut cluster_slots_service_timing = ClusterSlotsServiceTiming::default();
         let mut last_stats = Instant::now();
-        loop {
-            if exit.load(Ordering::Relaxed) {
-                break;
-            }
+        let mut epoch_specs = EpochSpecs::from(bank_forks.clone());
+
+        // initialize cluster slots with the current root bank
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        cluster_slots.update(&root_bank, &cluster_info);
+
+        while !exit.load(Ordering::Relaxed) {
             let slots = match cluster_slots_update_receiver.recv_timeout(Duration::from_millis(200))
             {
                 Ok(slots) => Some(slots),
@@ -100,12 +104,25 @@ impl ClusterSlotsService {
             lowest_slot_elapsed.stop();
             let mut process_cluster_slots_updates_elapsed =
                 Measure::start("process_cluster_slots_updates_elapsed");
+
             if let Some(slots) = slots {
-                Self::process_cluster_slots_updates(
-                    slots,
-                    &cluster_slots_update_receiver,
-                    &cluster_info,
-                );
+                let node_id = cluster_info.id();
+                let my_stake = epoch_specs
+                    .current_epoch_staked_nodes()
+                    .get(&node_id)
+                    .cloned()
+                    .unwrap_or_default();
+                // staked node should push EpochSlots into CRDS to save gossip bandwidth
+                if my_stake > 0 {
+                    Self::process_cluster_slots_updates(
+                        slots,
+                        &cluster_slots_update_receiver,
+                        &cluster_info,
+                    );
+                } else {
+                    // drain the channel dropping the updates
+                    while cluster_slots_update_receiver.try_recv().is_ok() {}
+                }
             }
             let root_bank = bank_forks.read().unwrap().root_bank();
             cluster_slots.update(&root_bank, &cluster_info);
@@ -168,8 +185,12 @@ impl ClusterSlotsService {
         // TODO: Should probably incorporate slots that were replayed on startup,
         // and maybe some that were frozen < snapshot root in case validators restart
         // from newer snapshots and lose history.
-        let frozen_banks = bank_forks.read().unwrap().frozen_banks();
-        let mut frozen_bank_slots: Vec<Slot> = frozen_banks.keys().cloned().collect();
+        let mut frozen_bank_slots: Vec<_> = bank_forks
+            .read()
+            .unwrap()
+            .frozen_banks()
+            .map(|(slot, _bank)| slot)
+            .collect();
         frozen_bank_slots.sort_unstable();
 
         if !frozen_bank_slots.is_empty() {
@@ -182,8 +203,9 @@ impl ClusterSlotsService {
 mod test {
     use {
         super::*,
-        solana_gossip::{cluster_info::Node, crds_data::LowestSlot},
-        solana_sdk::signature::{Keypair, Signer},
+        solana_gossip::{crds_data::LowestSlot, node::Node},
+        solana_keypair::Keypair,
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
     };
 

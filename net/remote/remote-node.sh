@@ -271,7 +271,7 @@ EOF
       fi
     fi
     args=(
-      --gossip-host "$entrypointIp"
+      --bind-address "$entrypointIp"
       --gossip-port 8001
       --init-complete-file "$initCompleteFile"
     )

@@ -15,8 +15,7 @@ echo kernel.sysrq=1 >> /etc/sysctl.conf
 if command -v earlyoom; then
   systemctl status earlyoom
 else
-  wget  -r -l1 -np http://ftp.us.debian.org/debian/pool/main/e/earlyoom/ -A 'earlyoom_1.2-*_amd64.deb' -e robots=off -nd
-  apt install --quiet --yes ./earlyoom_1.2-*_amd64.deb
+  apt-get install --quiet --yes earlyoom
 
   cat > earlyoom <<OOM
   # trigger at 20% available RAM,

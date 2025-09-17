@@ -3,13 +3,17 @@ extern crate test;
 
 use {
     solana_entry::entry::{self, next_entry_mut, Entry, EntrySlice},
-    solana_sdk::{
-        hash::{hash, Hash},
-        signature::{Keypair, Signer},
-        system_transaction,
-    },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
+    solana_sha256_hasher::hash,
+    solana_signer::Signer,
+    solana_system_transaction::transfer,
     test::Bencher,
 };
+
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 const NUM_HASHES: u64 = 400;
 const NUM_ENTRIES: usize = 800;
@@ -46,7 +50,7 @@ fn bench_poh_verify_transaction_entries(bencher: &mut Bencher) {
 
     let mut ticks: Vec<Entry> = Vec::with_capacity(NUM_ENTRIES);
     for _ in 0..NUM_ENTRIES {
-        let tx = system_transaction::transfer(&keypair1, &pubkey1, 42, cur_hash);
+        let tx = transfer(&keypair1, &pubkey1, 42, cur_hash);
         ticks.push(next_entry_mut(&mut cur_hash, NUM_HASHES, vec![tx]));
     }
 

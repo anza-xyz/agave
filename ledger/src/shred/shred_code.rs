@@ -1,23 +1,22 @@
 use {
     crate::shred::{
         common::dispatch,
-        legacy, merkle,
+        merkle,
+        payload::Payload,
         traits::{Shred, ShredCode as ShredCodeTrait},
-        CodingShredHeader, Error, ShredCommonHeader, ShredType, SignedData,
-        DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, SIZE_OF_NONCE,
+        CodingShredHeader, Error, ShredCommonHeader, ShredType, DATA_SHREDS_PER_FEC_BLOCK,
+        MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT, SIZE_OF_NONCE,
     },
-    solana_sdk::{clock::Slot, hash::Hash, packet::PACKET_DATA_SIZE, signature::Signature},
+    solana_hash::Hash,
+    solana_packet::PACKET_DATA_SIZE,
+    solana_signature::Signature,
     static_assertions::const_assert_eq,
 };
-
-const_assert_eq!(MAX_CODE_SHREDS_PER_SLOT, 32_768);
-pub const MAX_CODE_SHREDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT;
 
 const_assert_eq!(ShredCode::SIZE_OF_PAYLOAD, 1228);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShredCode {
-    Legacy(legacy::ShredCode),
     Merkle(merkle::ShredCode),
 }
 
@@ -27,60 +26,28 @@ impl ShredCode {
     dispatch!(fn coding_header(&self) -> &CodingShredHeader);
 
     dispatch!(pub(super) fn common_header(&self) -> &ShredCommonHeader);
-    dispatch!(pub(super) fn erasure_shard(self) -> Result<Vec<u8>, Error>);
-    dispatch!(pub(super) fn erasure_shard_as_slice(&self) -> Result<&[u8], Error>);
-    dispatch!(pub(super) fn erasure_shard_index(&self) -> Result<usize, Error>);
     dispatch!(pub(super) fn first_coding_index(&self) -> Option<u32>);
-    dispatch!(pub(super) fn into_payload(self) -> Vec<u8>);
-    dispatch!(pub(super) fn payload(&self) -> &Vec<u8>);
+    dispatch!(pub(super) fn into_payload(self) -> Payload);
+    dispatch!(pub(super) fn payload(&self) -> &Payload);
     dispatch!(pub(super) fn sanitize(&self) -> Result<(), Error>);
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
     dispatch!(pub(super) fn set_signature(&mut self, signature: Signature));
 
-    // Only for tests.
-    dispatch!(pub(super) fn set_index(&mut self, index: u32));
-    dispatch!(pub(super) fn set_slot(&mut self, slot: Slot));
-
-    pub(super) fn signed_data(&self) -> Result<SignedData, Error> {
-        match self {
-            Self::Legacy(shred) => Ok(SignedData::Chunk(shred.signed_data()?)),
-            Self::Merkle(shred) => Ok(SignedData::MerkleRoot(shred.signed_data()?)),
-        }
+    pub(super) fn signed_data(&self) -> Result<Hash, Error> {
+        let Self::Merkle(shred) = self;
+        shred.signed_data()
     }
 
     pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error> {
         match self {
-            Self::Legacy(_) => Err(Error::InvalidShredType),
             Self::Merkle(shred) => shred.chained_merkle_root(),
         }
     }
 
     pub(super) fn merkle_root(&self) -> Result<Hash, Error> {
         match self {
-            Self::Legacy(_) => Err(Error::InvalidShredType),
             Self::Merkle(shred) => shred.merkle_root(),
         }
-    }
-
-    pub(super) fn new_from_parity_shard(
-        slot: Slot,
-        index: u32,
-        parity_shard: &[u8],
-        fec_set_index: u32,
-        num_data_shreds: u16,
-        num_coding_shreds: u16,
-        position: u16,
-        version: u16,
-    ) -> Self {
-        Self::from(legacy::ShredCode::new_from_parity_shard(
-            slot,
-            index,
-            parity_shard,
-            fec_set_index,
-            num_data_shreds,
-            num_coding_shreds,
-            position,
-            version,
-        ))
     }
 
     pub(super) fn num_data_shreds(&self) -> u16 {
@@ -94,9 +61,6 @@ impl ShredCode {
     // Returns true if the erasure coding of the two shreds mismatch.
     pub(super) fn erasure_mismatch(&self, other: &ShredCode) -> bool {
         match (self, other) {
-            (Self::Legacy(shred), Self::Legacy(other)) => erasure_mismatch(shred, other),
-            (Self::Legacy(_), Self::Merkle(_)) => true,
-            (Self::Merkle(_), Self::Legacy(_)) => true,
             (Self::Merkle(shred), Self::Merkle(other)) => {
                 // Merkle shreds within the same erasure batch have the same
                 // merkle root. The root of the merkle tree is signed. So
@@ -109,15 +73,8 @@ impl ShredCode {
 
     pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error> {
         match self {
-            Self::Legacy(_) => Err(Error::InvalidShredVariant),
             Self::Merkle(shred) => shred.retransmitter_signature(),
         }
-    }
-}
-
-impl From<legacy::ShredCode> for ShredCode {
-    fn from(shred: legacy::ShredCode) -> Self {
-        Self::Legacy(shred)
     }
 }
 
@@ -174,7 +131,7 @@ pub(super) fn sanitize<T: ShredCodeTrait>(shred: &T) -> Result<(), Error> {
         ));
     }
     let _shard_index = shred.erasure_shard_index()?;
-    let _erasure_shard = shred.erasure_shard_as_slice()?;
+    let _erasure_shard = shred.erasure_shard()?;
     Ok(())
 }
 

@@ -8,6 +8,12 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 bincode = { workspace = true }
 clap = { workspace = true }
@@ -17,22 +23,29 @@ rayon = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli = { workspace = true }
 solana-client = { workspace = true }
+solana-commitment-config = { workspace = true }
 solana-faucet = { workspace = true }
 solana-gossip = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
+solana-message = { workspace = true }
 solana-net-utils = { workspace = true }
+solana-packet = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk = { workspace = true }
+solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 
 [dev-dependencies]
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
-solana-local-cluster = { workspace = true }
+solana-hash = { workspace = true }
+solana-local-cluster = { workspace = true, features = ["dev-context-only-utils"] }
+solana-poh-config = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

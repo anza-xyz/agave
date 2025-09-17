@@ -1,6 +1,5 @@
 #![allow(clippy::arithmetic_side_effects)]
-#[macro_use]
-extern crate lazy_static;
+
 #[macro_use]
 extern crate serde_derive;
 
@@ -21,9 +20,11 @@ pub use solana_account_decoder_client_types::{
     UiAccount, UiAccountData, UiAccountEncoding, UiDataSliceConfig,
 };
 use {
-    crate::parse_account_data::{parse_account_data_v2, AccountAdditionalDataV2},
+    crate::parse_account_data::{parse_account_data_v3, AccountAdditionalDataV3},
     base64::{prelude::BASE64_STANDARD, Engine},
-    solana_sdk::{account::ReadableAccount, fee_calculator::FeeCalculator, pubkey::Pubkey},
+    solana_account::ReadableAccount,
+    solana_fee_calculator::FeeCalculator,
+    solana_pubkey::Pubkey,
     std::io::Write,
 };
 
@@ -47,7 +48,7 @@ pub fn encode_ui_account<T: ReadableAccount>(
     pubkey: &Pubkey,
     account: &T,
     encoding: UiAccountEncoding,
-    additional_data: Option<AccountAdditionalDataV2>,
+    additional_data: Option<AccountAdditionalDataV3>,
     data_slice_config: Option<UiDataSliceConfig>,
 ) -> UiAccount {
     let space = account.data().len();
@@ -79,7 +80,7 @@ pub fn encode_ui_account<T: ReadableAccount>(
         }
         UiAccountEncoding::JsonParsed => {
             if let Ok(parsed_data) =
-                parse_account_data_v2(pubkey, account.owner(), account.data(), additional_data)
+                parse_account_data_v3(pubkey, account.owner(), account.data(), additional_data)
             {
                 UiAccountData::Json(parsed_data)
             } else {
@@ -141,7 +142,7 @@ mod test {
     use {
         super::*,
         assert_matches::assert_matches,
-        solana_sdk::account::{Account, AccountSharedData},
+        solana_account::{Account, AccountSharedData},
     };
 
     #[test]

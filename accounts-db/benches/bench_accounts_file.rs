@@ -1,36 +1,36 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput},
-    rand::{distributions::WeightedIndex, prelude::*},
-    rand_chacha::ChaChaRng,
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         accounts_file::StorageAccess,
-        append_vec::{self, AppendVec, SCAN_BUFFER_SIZE_WITHOUT_DATA},
+        append_vec::{self, AppendVec},
         tiered_storage::{
             file::TieredReadableFile,
-            hot::{HotStorageReader, HotStorageWriter},
+            hot::{HotStorageReader, HotStorageWriter, RENT_EXEMPT_RENT_EPOCH},
         },
     },
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::Slot,
-        pubkey::Pubkey,
-        rent::Rent,
-        rent_collector::RENT_EXEMPT_RENT_EPOCH,
-        system_instruction::MAX_PERMITTED_DATA_LENGTH,
-    },
-    std::{iter, mem::ManuallyDrop},
+    solana_clock::Slot,
+    solana_pubkey::Pubkey,
+    solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
+    std::mem::ManuallyDrop,
 };
+
+mod utils;
+
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 const ACCOUNTS_COUNTS: [usize; 4] = [
     1,      // the smallest count; will bench overhead
-    100,    // number of accounts written per slot on mnb (with *no* rent rewrites)
-    1_000,  // number of accounts written slot on mnb (with rent rewrites)
+    100,    // lower range of accounts written per slot on mnb
+    1_000,  // higher range of accounts written per slot on mnb
     10_000, // reasonable largest number of accounts written per slot
 ];
 
-fn bench_write_accounts_file(c: &mut Criterion) {
-    let mut group = c.benchmark_group("write_accounts_file");
+fn bench_write_accounts_file(c: &mut Criterion, storage_access: StorageAccess) {
+    let mut group = c.benchmark_group(format!("write_accounts_file_{storage_access:?}"));
 
     // most accounts on mnb are 165-200 bytes, so use that here too
     let space = 200;
@@ -64,7 +64,7 @@ fn bench_write_accounts_file(c: &mut Criterion) {
                 || {
                     let path = temp_dir.path().join(format!("append_vec_{accounts_count}"));
                     let file_size = accounts.len() * (space + append_vec::STORE_META_OVERHEAD);
-                    AppendVec::new(path, true, file_size)
+                    AppendVec::new(path, true, file_size, storage_access)
                 },
                 |append_vec| {
                     let res = append_vec.append_accounts(&storable_accounts, 0).unwrap();
@@ -98,6 +98,14 @@ fn bench_write_accounts_file(c: &mut Criterion) {
     }
 }
 
+fn bench_write_accounts_file_file_io(c: &mut Criterion) {
+    bench_write_accounts_file(c, StorageAccess::File);
+}
+
+fn bench_write_accounts_file_mmap(c: &mut Criterion) {
+    bench_write_accounts_file(c, StorageAccess::Mmap);
+}
+
 fn bench_scan_pubkeys(c: &mut Criterion) {
     let mut group = c.benchmark_group("scan_pubkeys");
     let temp_dir = tempfile::tempdir().unwrap();
@@ -106,52 +114,26 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
     // 3% of accounts have no data
     // 75% of accounts are 165 bytes (a token account)
     // 20% of accounts are 200 bytes (a stake account)
-    // 1% of accounts are 256 kibibytes (pathological case for the scan buffer)
+    // 1% of accounts are 64 kibibytes (pathological case for the scan buffer)
     // 1% of accounts are 10 mebibytes (the max size for an account)
-    let data_sizes = [
-        0,
-        165,
-        200,
-        SCAN_BUFFER_SIZE_WITHOUT_DATA,
-        MAX_PERMITTED_DATA_LENGTH as usize,
-    ];
+    let data_sizes = [0, 165, 200, 1 << 16, MAX_PERMITTED_DATA_LENGTH as usize];
     let weights = [3, 75, 20, 1, 1];
-    let distribution = WeightedIndex::new(weights).unwrap();
-
-    let rent = Rent::default();
-    let rent_minimum_balances: Vec<_> = data_sizes
-        .iter()
-        .map(|data_size| rent.minimum_balance(*data_size))
-        .collect();
 
     for accounts_count in ACCOUNTS_COUNTS {
         group.throughput(Throughput::Elements(accounts_count as u64));
-        let mut rng = ChaChaRng::seed_from_u64(accounts_count as u64);
 
-        let pubkeys: Vec<_> = iter::repeat_with(Pubkey::new_unique)
+        let storable_accounts: Vec<_> = utils::accounts(255, &data_sizes, &weights)
             .take(accounts_count)
             .collect();
-        let accounts: Vec<_> = iter::repeat_with(|| {
-            let index = distribution.sample(&mut rng);
-            AccountSharedData::new_rent_epoch(
-                rent_minimum_balances[index],
-                data_sizes[index],
-                &Pubkey::default(),
-                RENT_EXEMPT_RENT_EPOCH,
-            )
-        })
-        .take(pubkeys.len())
-        .collect();
-        let storable_accounts: Vec<_> = iter::zip(&pubkeys, &accounts).collect();
 
         // create an append vec file
         let append_vec_path = temp_dir.path().join(format!("append_vec_{accounts_count}"));
         _ = std::fs::remove_file(&append_vec_path);
-        let file_size = accounts
+        let file_size = storable_accounts
             .iter()
-            .map(|account| append_vec::aligned_stored_size(account.data().len()))
+            .map(|(_, account)| append_vec::aligned_stored_size(account.data().len()))
             .sum();
-        let append_vec = AppendVec::new(append_vec_path, true, file_size);
+        let append_vec = AppendVec::new(append_vec_path, true, file_size, StorageAccess::File);
         let stored_accounts_info = append_vec
             .append_accounts(&(Slot::MAX, storable_accounts.as_slice()), 0)
             .unwrap();
@@ -190,14 +172,14 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("append_vec_mmap", accounts_count), |b| {
             b.iter(|| {
                 let mut count = 0;
-                append_vec_mmap.scan_pubkeys(|_| count += 1);
+                append_vec_mmap.scan_pubkeys(|_| count += 1).unwrap();
                 assert_eq!(count, accounts_count);
             });
         });
         group.bench_function(BenchmarkId::new("append_vec_file", accounts_count), |b| {
             b.iter(|| {
                 let mut count = 0;
-                append_vec_file.scan_pubkeys(|_| count += 1);
+                append_vec_file.scan_pubkeys(|_| count += 1).unwrap();
                 assert_eq!(count, accounts_count);
             });
         });
@@ -211,5 +193,106 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_write_accounts_file, bench_scan_pubkeys);
+// AppendVec file io has a custom impl for `get_account_shared_data()` that avoids an extra
+// allocation when the account data exceeds the stack buffer.
+// This benchmark times how beneficial this custom impl actually is.  IOW, if the custom impl takes
+// the same time as the `get_stored_account_callback().to_account_shared_data()` impl, then we can
+// remove the custom impl.
+fn bench_get_account_shared_data(c: &mut Criterion) {
+    let mut group = c.benchmark_group("get_account_shared_data");
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    const DATA_SIZES: [usize; 4] = [
+        200,                                /* small data, *does* fit in stack buffer */
+        4 * 1024,                           /* medium data, does *not* fit in stack buffer */
+        1_000_000,                          /* large data, does *not* fix in stack buffer */
+        MAX_PERMITTED_DATA_LENGTH as usize, /* max data, worst-case allocation */
+    ];
+    for data_size in DATA_SIZES {
+        let storable_accounts: Vec<_> = utils::accounts(255, &[data_size], &[1]).take(1).collect();
+
+        // create an append vec file
+        let append_vec_path = temp_dir.path().join(format!("append_vec_{data_size}"));
+        _ = std::fs::remove_file(&append_vec_path);
+        let file_size = storable_accounts
+            .iter()
+            .map(|(_, account)| append_vec::aligned_stored_size(account.data().len()))
+            .sum();
+        let append_vec = AppendVec::new(append_vec_path, true, file_size, StorageAccess::File);
+        let stored_accounts_info = append_vec
+            .append_accounts(&(Slot::MAX, storable_accounts.as_slice()), 0)
+            .unwrap();
+        assert_eq!(stored_accounts_info.offsets.len(), 1);
+        append_vec.flush().unwrap();
+        // Open append vecs for reading here, outside of the bench function, so we don't open lots
+        // of file handles and run out/crash.  We also need to *not* remove the backing file in
+        // these new append vecs because that would cause double-free (or triple-free here).
+        // Wrap the append vecs in ManuallyDrop to *not* remove the backing file on drop.
+        let append_vec_mmap = ManuallyDrop::new(
+            AppendVec::new_from_file(append_vec.path(), append_vec.len(), StorageAccess::Mmap)
+                .unwrap()
+                .0,
+        );
+        let append_vec_file = ManuallyDrop::new(
+            AppendVec::new_from_file(append_vec.path(), append_vec.len(), StorageAccess::File)
+                .unwrap()
+                .0,
+        );
+
+        // Run the benchmarks!
+        // Note, use `iter_with_large_drop()` to avoid timing how long it takes to drop the Vec of
+        // account data.
+        group.bench_function(
+            // The baseline.
+            BenchmarkId::new("append_vec_mmap_get_account_shared_data", data_size),
+            |b| {
+                b.iter_with_large_drop(|| {
+                    _ = append_vec_mmap.get_account_shared_data(0).unwrap();
+                });
+            },
+        );
+        group.bench_function(
+            // The mmap "baseline" impl (above) does exactly the same as this one (below),
+            // so we expect perf to be identical.
+            BenchmarkId::new("append_vec_mmap_get_stored_account_callback", data_size),
+            |b| {
+                b.iter_with_large_drop(|| {
+                    _ = append_vec_mmap
+                        .get_stored_account_callback(0, |account| account.to_account_shared_data())
+                        .unwrap();
+                });
+            },
+        );
+        group.bench_function(
+            // The custom file io impl, which avoids the extra allocation.
+            BenchmarkId::new("append_vec_file_get_account_shared_data", data_size),
+            |b| {
+                b.iter_with_large_drop(|| {
+                    _ = append_vec_file.get_account_shared_data(0).unwrap();
+                });
+            },
+        );
+        group.bench_function(
+            // The "default" file io impl, which requires an additional allocation.
+            // For the larger data sizes that do not fit in the stack buffer, we expect this impl
+            // to be slower than the custom impl (above).
+            BenchmarkId::new("append_vec_file_get_stored_account_callback", data_size),
+            |b| {
+                b.iter_with_large_drop(|| {
+                    _ = append_vec_file
+                        .get_stored_account_callback(0, |account| account.to_account_shared_data())
+                        .unwrap();
+                });
+            },
+        );
+    }
+}
+
+criterion_group!(
+    benches,
+    bench_write_accounts_file_file_io,
+    bench_write_accounts_file_mmap,
+    bench_scan_pubkeys,
+    bench_get_account_shared_data,
+);
 criterion_main!(benches);

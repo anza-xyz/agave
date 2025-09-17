@@ -12,7 +12,7 @@ use {crate::spinner, solana_clock::MAX_HASH_AGE_IN_SECONDS, std::cmp::min};
 use {
     crate::{
         http_sender::HttpSender,
-        mock_sender::{mock_encoded_account, MockSender},
+        mock_sender::{mock_encoded_account, MockSender, MocksMap},
         rpc_client::{
             GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableMessage,
             SerializableTransaction,
@@ -21,6 +21,7 @@ use {
     },
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::serialize,
+    futures::join,
     log::*,
     serde_json::{json, Value},
     solana_account::Account,
@@ -48,6 +49,7 @@ use {
         EncodedConfirmedBlock, EncodedConfirmedTransactionWithStatusMeta, TransactionStatus,
         UiConfirmedBlock, UiTransactionEncoding,
     },
+    solana_vote_interface::state::MAX_LOCKOUT_HISTORY,
     std::{
         net::SocketAddr,
         str::FromStr,
@@ -55,13 +57,6 @@ use {
     },
     tokio::time::sleep,
 };
-// inlined to avoid a solana_program dep
-const MAX_LOCKOUT_HISTORY: usize = 31;
-#[cfg(test)]
-static_assertions::const_assert_eq!(
-    MAX_LOCKOUT_HISTORY,
-    solana_program::vote::state::MAX_LOCKOUT_HISTORY
-);
 
 /// A client of a remote Solana node.
 ///
@@ -438,6 +433,101 @@ impl RpcClient {
             RpcClientConfig::with_commitment(CommitmentConfig::default()),
         )
     }
+    /// Create a mock `RpcClient`.
+    ///
+    /// A mock `RpcClient` contains an implementation of [`RpcSender`] that does
+    /// not use the network, and instead returns synthetic responses, for use in
+    /// tests.
+    ///
+    /// It is primarily for internal use, with limited customizability, and
+    /// behaviors determined by internal Solana test cases. New users should
+    /// consider implementing `RpcSender` themselves and constructing
+    /// `RpcClient` with [`RpcClient::new_sender`] to get mock behavior.
+    ///
+    /// Unless directed otherwise, a mock `RpcClient` will generally return a
+    /// reasonable default response to any request, at least for [`RpcRequest`]
+    /// values for which responses have been implemented.
+    ///
+    /// This mock can be customized in two ways:
+    ///
+    /// 1) By changing the `url` argument, which is not actually a URL, but a
+    ///    simple string directive that changes the mock behavior in specific
+    ///    scenarios.
+    ///
+    ///    It is customary to set the `url` to "succeeds" for mocks that should
+    ///    return successfully, though this value is not actually interpreted.
+    ///
+    ///    If `url` is "fails" then any call to `send` will return `Ok(Value::Null)`.
+    ///
+    ///    Other possible values of `url` are specific to different `RpcRequest`
+    ///    values. Read the implementation of `MockSender` (which is non-public)
+    ///    for details.
+    ///
+    /// 2) Custom responses can be configured by providing [`MocksMap`]. This type
+    ///    is a [`HashMap`] from [`RpcRequest`] to a [`Vec`] of JSON [`Value`] responses,
+    ///    Any entries in this map override the default behavior for the given
+    ///    request.
+    ///
+    /// The [`RpcClient::new_mock_with_mocks_map`] function offers further
+    /// customization options.
+    ///
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::{
+    /// #     request::RpcRequest,
+    /// #     response::{Response, RpcResponseContext},
+    /// # };
+    /// # use solana_rpc_client::{rpc_client::RpcClient, mock_sender::MocksMap};
+    /// # use serde_json::json;
+    /// // Create a mock with a custom response to the `GetBalance` request
+    /// let account_balance_x = 50;
+    /// let account_balance_y = 100;
+    /// let account_balance_z = 150;
+    /// let account_balance_req_responses = vec![
+    ///     (
+    ///         RpcRequest::GetBalance,
+    ///         json!(Response {
+    ///             context: RpcResponseContext {
+    ///                 slot: 1,
+    ///                 api_version: None,
+    ///             },
+    ///             value: json!(account_balance_x),
+    ///         })
+    ///     ),
+    ///     (
+    ///         RpcRequest::GetBalance,
+    ///         json!(Response {
+    ///             context: RpcResponseContext {
+    ///                 slot: 1,
+    ///                 api_version: None,
+    ///             },
+    ///             value: json!(account_balance_y),
+    ///         })
+    ///     ),
+    /// ];
+    ///
+    /// let mut mocks = MocksMap::from_iter(account_balance_req_responses);
+    /// mocks.insert(
+    ///     RpcRequest::GetBalance,
+    ///     json!(Response {
+    ///         context: RpcResponseContext {
+    ///             slot: 1,
+    ///             api_version: None,
+    ///         },
+    ///         value: json!(account_balance_z),
+    ///     }),
+    /// );
+    /// let url = "succeeds".to_string();
+    /// let client = RpcClient::new_mock_with_mocks_map(url, mocks);
+    /// ```
+    pub fn new_mock_with_mocks_map<U: ToString>(url: U, mocks: MocksMap) -> Self {
+        Self::new_sender(
+            MockSender::new_with_mocks_map(url, mocks),
+            RpcClientConfig::with_commitment(CommitmentConfig::default()),
+        )
+    }
 
     /// Create an HTTP `RpcClient` from a [`SocketAddr`].
     ///
@@ -509,11 +599,6 @@ impl RpcClient {
     /// Get the configured url of the client's sender
     pub fn url(&self) -> String {
         self.sender.url()
-    }
-
-    #[deprecated(since = "2.0.2", note = "RpcClient::node_version is no longer used")]
-    pub async fn set_node_version(&self, _version: semver::Version) -> Result<(), ()> {
-        Ok(())
     }
 
     /// Get the configured default [commitment level][cl].
@@ -600,16 +685,9 @@ impl RpcClient {
         const GET_STATUS_RETRIES: usize = usize::MAX;
 
         'sending: for _ in 0..SEND_RETRIES {
-            let signature = self.send_transaction(transaction).await?;
-
-            let recent_blockhash = if transaction.uses_durable_nonce() {
-                let (recent_blockhash, ..) = self
-                    .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
-                    .await?;
-                recent_blockhash
-            } else {
-                *transaction.get_recent_blockhash()
-            };
+            let (latest_blockhash, signature) = self
+                .send_transaction_and_get_latest_blockhash(transaction, None)
+                .await?;
 
             for status_retry in 0..GET_STATUS_RETRIES {
                 match self.get_signature_status(&signature).await? {
@@ -617,7 +695,7 @@ impl RpcClient {
                     Some(Err(e)) => return Err(e.into()),
                     None => {
                         if !self
-                            .is_blockhash_valid(&recent_blockhash, CommitmentConfig::processed())
+                            .is_blockhash_valid(&latest_blockhash, CommitmentConfig::processed())
                             .await?
                         {
                             // Block hash is not found by some reason
@@ -636,9 +714,8 @@ impl RpcClient {
         }
 
         Err(RpcError::ForUser(
-            "unable to confirm transaction. \
-             This can happen in situations such as transaction expiration \
-             and insufficient fee-payer funds"
+            "unable to confirm transaction. This can happen in situations such as transaction \
+             expiration and insufficient fee-payer funds"
                 .to_string(),
         )
         .into())
@@ -673,6 +750,33 @@ impl RpcClient {
         .await
     }
 
+    async fn send_transaction_and_get_latest_blockhash(
+        &self,
+        transaction: &impl SerializableTransaction,
+        config: Option<RpcSendTransactionConfig>,
+    ) -> ClientResult<(Hash, Signature)> {
+        let (latest_blockhash, signature) = join!(
+            async {
+                if transaction.uses_durable_nonce() {
+                    self.get_latest_blockhash_with_commitment(CommitmentConfig::processed())
+                        .await
+                        .map(|v| v.0)
+                } else {
+                    Ok(*transaction.get_recent_blockhash())
+                }
+            },
+            async {
+                if let Some(config) = config {
+                    self.send_transaction_with_config(transaction, config).await
+                } else {
+                    self.send_transaction(transaction).await
+                }
+            },
+        );
+
+        Ok((latest_blockhash?, signature?))
+    }
+
     #[cfg(feature = "spinner")]
     pub async fn send_and_confirm_transaction_with_spinner_and_config(
         &self,
@@ -680,17 +784,10 @@ impl RpcClient {
         commitment: CommitmentConfig,
         config: RpcSendTransactionConfig,
     ) -> ClientResult<Signature> {
-        let recent_blockhash = if transaction.uses_durable_nonce() {
-            self.get_latest_blockhash_with_commitment(CommitmentConfig::processed())
-                .await?
-                .0
-        } else {
-            *transaction.get_recent_blockhash()
-        };
-        let signature = self
-            .send_transaction_with_config(transaction, config)
+        let (latest_blockhash, signature) = self
+            .send_transaction_and_get_latest_blockhash(transaction, Some(config))
             .await?;
-        self.confirm_transaction_with_spinner(&signature, &recent_blockhash, commitment)
+        self.confirm_transaction_with_spinner(&signature, &latest_blockhash, commitment)
             .await?;
         Ok(signature)
     }
@@ -884,9 +981,9 @@ impl RpcClient {
                     code,
                     message,
                     data,
-                }) = &err.kind
+                }) = err.kind()
                 {
-                    debug!("{} {}", code, message);
+                    debug!("{code} {message}");
                     if let RpcResponseErrorData::SendTransactionPreflightFailure(
                         RpcSimulateTransactionResult {
                             logs: Some(logs), ..
@@ -1101,9 +1198,8 @@ impl RpcClient {
             }
         } else {
             return Err(RpcError::ForUser(
-                "unable to confirm transaction. \
-                                      This can happen in situations such as transaction expiration \
-                                      and insufficient fee-payer funds"
+                "unable to confirm transaction. This can happen in situations such as transaction \
+                 expiration and insufficient fee-payer funds"
                     .to_string(),
             )
             .into());
@@ -1134,11 +1230,12 @@ impl RpcClient {
                 .await
                 .unwrap_or(confirmations);
             if now.elapsed().as_secs() >= MAX_HASH_AGE_IN_SECONDS as u64 {
-                return Err(
-                    RpcError::ForUser("transaction not finalized. \
-                                      This can happen when a transaction lands in an abandoned fork. \
-                                      Please retry.".to_string()).into(),
-                );
+                return Err(RpcError::ForUser(
+                    "transaction not finalized. This can happen when a transaction lands in an \
+                     abandoned fork. Please retry."
+                        .to_string(),
+                )
+                .into());
             }
         }
     }
@@ -2213,8 +2310,7 @@ impl RpcClient {
             }
 
             info!(
-                "Waiting for stake to drop below {} current: {:.1}",
-                max_stake_percent, current_percent
+                "Waiting for stake to drop below {max_stake_percent} current: {current_percent:.1}"
             );
             sleep(Duration::from_secs(5)).await;
         }
@@ -2842,7 +2938,7 @@ impl RpcClient {
                 }
                 let result = serde_json::from_value(result_json)
                     .map_err(|err| ClientError::new_with_request(err.into(), request))?;
-                trace!("Response block timestamp {:?} {:?}", slot, result);
+                trace!("Response block timestamp {slot:?} {result:?}");
                 Ok(result)
             })
             .map_err(|err| err.into_with_request(request))?
@@ -3501,7 +3597,7 @@ impl RpcClient {
                     context,
                     value: rpc_account,
                 } = serde_json::from_value::<Response<Option<UiAccount>>>(result_json)?;
-                trace!("Response account {:?} {:?}", pubkey, rpc_account);
+                trace!("Response account {pubkey:?} {rpc_account:?}");
                 let account = rpc_account.and_then(|rpc_account| rpc_account.decode());
 
                 Ok(Response {
@@ -3788,11 +3884,7 @@ impl RpcClient {
 
         let minimum_balance: u64 = serde_json::from_value(minimum_balance_json)
             .map_err(|err| ClientError::new_with_request(err.into(), request))?;
-        trace!(
-            "Response minimum balance {:?} {:?}",
-            data_len,
-            minimum_balance
-        );
+        trace!("Response minimum balance {data_len:?} {minimum_balance:?}");
         Ok(minimum_balance)
     }
 
@@ -4124,7 +4216,7 @@ impl RpcClient {
                     context,
                     value: rpc_account,
                 } = serde_json::from_value::<Response<Option<UiAccount>>>(result_json)?;
-                trace!("Response account {:?} {:?}", pubkey, rpc_account);
+                trace!("Response account {pubkey:?} {rpc_account:?}");
                 let response = {
                     if let Some(rpc_account) = rpc_account {
                         if let UiAccountData::Json(account_data) = rpc_account.data {
@@ -4347,8 +4439,7 @@ impl RpcClient {
         })
         .map_err(|_| {
             RpcError::ForUser(
-                "airdrop request failed. \
-                    This can happen when the rate limit is reached."
+                "airdrop request failed. This can happen when the rate limit is reached."
                     .to_string(),
             )
             .into()
@@ -4411,10 +4502,7 @@ impl RpcClient {
                 return balance_result;
             }
             trace!(
-                "wait_for_balance_with_commitment [{}] {:?} {:?}",
-                run,
-                balance_result,
-                expected_balance
+                "wait_for_balance_with_commitment [{run}] {balance_result:?} {expected_balance:?}"
             );
             if let (Some(expected_balance), Ok(balance_result)) = (expected_balance, balance_result)
             {
@@ -4488,7 +4576,7 @@ impl RpcClient {
                     }
                 }
                 Err(err) => {
-                    debug!("check_confirmations request failed: {:?}", err);
+                    debug!("check_confirmations request failed: {err:?}");
                 }
             };
             if now.elapsed().as_secs() > 20 {
@@ -4604,7 +4692,7 @@ impl RpcClient {
                     return Ok(new_blockhash);
                 }
             }
-            debug!("Got same blockhash ({:?}), will retry...", blockhash);
+            debug!("Got same blockhash ({blockhash:?}), will retry...");
 
             // Retry ~twice during a slot
             sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT / 2)).await;
@@ -4693,7 +4781,7 @@ pub(crate) fn parse_keyed_accounts(
 
 #[doc(hidden)]
 pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
-    let mut mocks = std::collections::HashMap::new();
+    let mut mocks = crate::mock_sender::Mocks::default();
 
     let get_account_request = RpcRequest::GetAccountInfo;
     let get_account_response = serde_json::to_value(Response {

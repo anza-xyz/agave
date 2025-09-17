@@ -4,19 +4,15 @@ FROM ${BASE_IMAGE}
 ARG \
   RUST_VERSION= \
   RUST_NIGHTLY_VERSION= \
-  GOLANG_VERSION=1.21.3 \
-  NODE_MAJOR=18 \
-  SCCACHE_VERSION=v0.8.1 \
-  GRCOV_VERSION=v0.8.18
+  NODE_MAJOR= \
+  SCCACHE_VERSION= \
+  GRCOV_VERSION=
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV \
   DEBIAN_FRONTEND=noninteractive \
   TZ=UTC
-
-# golang
-ENV PATH="/usr/local/go/bin:$PATH"
 
 # rust
 ENV \
@@ -27,6 +23,9 @@ ENV \
 RUN \
   if [ -z "$RUST_VERSION" ]; then echo "ERROR: The RUST_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$RUST_NIGHTLY_VERSION" ]; then echo "ERROR: The RUST_NIGHTLY_VERSION argument is required!" && exit 1; fi && \
+  if [ -z "$NODE_MAJOR" ]; then echo "ERROR: The NODE_MAJOR argument is required!" && exit 1; fi && \
+  if [ -z "$SCCACHE_VERSION" ]; then echo "ERROR: The SCCACHE_VERSION argument is required!" && exit 1; fi && \
+  if [ -z "$GRCOV_VERSION" ]; then echo "ERROR: The GRCOV_VERSION argument is required!" && exit 1; fi && \
   apt-get update && \
   apt-get install --no-install-recommends -y \
   # basic
@@ -42,6 +41,7 @@ RUN \
   gnupg \
   lld \
   cmake \
+  openssh-client \
   # docs
   mscgen \
   # solana compiling
@@ -55,6 +55,7 @@ RUN \
   make \
   libprotobuf-dev \
   protobuf-compiler \
+  libclang-dev \
   && \
   # buildkite
   curl -fsSL https://keys.openpgp.org/vks/v1/by-fingerprint/32A37959C2FA5C3C99EFBC32A79206696452D198 | gpg --dearmor -o /usr/share/keyrings/buildkite-agent-archive-keyring.gpg && \
@@ -78,8 +79,10 @@ RUN \
   rustup component add llvm-tools-preview --toolchain=$RUST_NIGHTLY_VERSION && \
   rustup target add wasm32-unknown-unknown && \
   cargo install cargo-audit && \
-  cargo install cargo-hack && \
-  cargo install cargo-sort && \
+  # uncomment once the dcou-parition related patch is upstreamed...
+  # cargo install cargo-hack && \
+  cargo install --git https://github.com/anza-xyz/cargo-hack.git --rev 5e59c3ec6c661c02601487c0d4b2a2649fe06c9f cargo-hack && \
+  cargo install cargo-sort@^2 && \
   cargo install mdbook && \
   cargo install mdbook-linkcheck && \
   cargo install svgbob_cli && \
@@ -98,10 +101,6 @@ RUN \
   rm -rf "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl" && \
   # nextest
   curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "$CARGO_HOME/bin" && \
-  # golang
-  curl -LOsS "https://golang.org/dl/go$GOLANG_VERSION.linux-amd64.tar.gz" && \
-  tar -C /usr/local -xzf "go$GOLANG_VERSION.linux-amd64.tar.gz" && \
-  rm "go$GOLANG_VERSION.linux-amd64.tar.gz" && \
   # nodejs
   sudo mkdir -p /etc/apt/keyrings && \
   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \

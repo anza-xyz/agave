@@ -1,20 +1,18 @@
+//! Definitions for the base of all Gossip protocol messages
 use {
     crate::{
-        cluster_info_metrics::GossipStats,
-        crds_data::MAX_WALLCLOCK,
+        crds_data::{CrdsData, MAX_WALLCLOCK},
         crds_gossip_pull::CrdsFilter,
         crds_value::CrdsValue,
         ping_pong::{self, Pong},
     },
     bincode::serialize,
-    rayon::prelude::*,
     serde::Serialize,
+    solana_keypair::signable::Signable,
     solana_perf::packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::{
-        pubkey::Pubkey,
-        signature::{Signable, Signature},
-    },
+    solana_signature::Signature,
     std::{
         borrow::{Borrow, Cow},
         fmt::Debug,
@@ -27,6 +25,10 @@ pub(crate) const MAX_CRDS_OBJECT_SIZE: usize = 928;
 /// is equal to PACKET_DATA_SIZE minus serialized size of an empty push
 /// message: Protocol::PushMessage(Pubkey::default(), Vec::default())
 pub(crate) const PUSH_MESSAGE_MAX_PAYLOAD_SIZE: usize = PACKET_DATA_SIZE - 44;
+/// Max size of serialized crds-values in a Protocol::PullResponse packet. This
+/// is equal to PACKET_DATA_SIZE minus serialized size of an empty pull
+/// message: Protocol::PullResponse(Pubkey::default(), Vec::default())
+pub(crate) const PULL_RESPONSE_MAX_PAYLOAD_SIZE: usize = PUSH_MESSAGE_MAX_PAYLOAD_SIZE;
 pub(crate) const DUPLICATE_SHRED_MAX_PAYLOAD_SIZE: usize = PACKET_DATA_SIZE - 115;
 /// Maximum number of incremental hashes in SnapshotHashes a node publishes
 /// such that the serialized size of the push/pull message stays below
@@ -43,15 +45,10 @@ const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 
 // TODO These messages should go through the gpu pipeline for spam filtering
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "CBR9G92mpd1WSXEmiH6dAKHziLjJky9aYWPw6S5WmJkG")
-)]
+/// Gossip protocol messages base enum
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Protocol {
-    /// Gossip protocol messages
     PullRequest(CrdsFilter, CrdsValue),
     PullResponse(Pubkey, Vec<CrdsValue>),
     PushMessage(Pubkey, Vec<CrdsValue>),
@@ -63,7 +60,8 @@ pub(crate) enum Protocol {
     // Update count_packets_received if new variants are added here.
 }
 
-pub(crate) type Ping = ping_pong::Ping<[u8; GOSSIP_PING_TOKEN_SIZE]>;
+pub(crate) type Ping = ping_pong::Ping<GOSSIP_PING_TOKEN_SIZE>;
+pub(crate) type PingCache = ping_pong::PingCache<GOSSIP_PING_TOKEN_SIZE>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -90,68 +88,16 @@ impl Protocol {
             .unwrap()
     }
 
-    pub(crate) fn par_verify(self, stats: &GossipStats) -> Option<Self> {
+    // Returns true if all signatures verify.
+    #[must_use]
+    pub(crate) fn verify(&self) -> bool {
         match self {
-            Protocol::PullRequest(_, ref caller) => {
-                if caller.verify() {
-                    Some(self)
-                } else {
-                    stats.gossip_pull_request_verify_fail.add_relaxed(1);
-                    None
-                }
-            }
-            Protocol::PullResponse(from, data) => {
-                let size = data.len();
-                let data: Vec<_> = data.into_par_iter().filter(Signable::verify).collect();
-                if size != data.len() {
-                    stats
-                        .gossip_pull_response_verify_fail
-                        .add_relaxed((size - data.len()) as u64);
-                }
-                if data.is_empty() {
-                    None
-                } else {
-                    Some(Protocol::PullResponse(from, data))
-                }
-            }
-            Protocol::PushMessage(from, data) => {
-                let size = data.len();
-                let data: Vec<_> = data.into_par_iter().filter(Signable::verify).collect();
-                if size != data.len() {
-                    stats
-                        .gossip_push_msg_verify_fail
-                        .add_relaxed((size - data.len()) as u64);
-                }
-                if data.is_empty() {
-                    None
-                } else {
-                    Some(Protocol::PushMessage(from, data))
-                }
-            }
-            Protocol::PruneMessage(_, ref data) => {
-                if data.verify() {
-                    Some(self)
-                } else {
-                    stats.gossip_prune_msg_verify_fail.add_relaxed(1);
-                    None
-                }
-            }
-            Protocol::PingMessage(ref ping) => {
-                if ping.verify() {
-                    Some(self)
-                } else {
-                    stats.gossip_ping_msg_verify_fail.add_relaxed(1);
-                    None
-                }
-            }
-            Protocol::PongMessage(ref pong) => {
-                if pong.verify() {
-                    Some(self)
-                } else {
-                    stats.gossip_pong_msg_verify_fail.add_relaxed(1);
-                    None
-                }
-            }
+            Self::PullRequest(_, caller) => caller.verify(),
+            Self::PullResponse(_, data) => data.iter().all(CrdsValue::verify),
+            Self::PushMessage(_, data) => data.iter().all(CrdsValue::verify),
+            Self::PruneMessage(_, data) => data.verify(),
+            Self::PingMessage(ping) => ping.verify(),
+            Self::PongMessage(pong) => pong.verify(),
         }
     }
 }
@@ -209,10 +155,23 @@ impl Sanitize for Protocol {
         match self {
             Protocol::PullRequest(filter, val) => {
                 filter.sanitize()?;
+                // PullRequest is only allowed to have ContactInfo in its CrdsData
+                match val.data() {
+                    CrdsData::LegacyContactInfo(_) | CrdsData::ContactInfo(_) => val.sanitize(),
+                    _ => Err(SanitizeError::InvalidValue),
+                }
+            }
+            Protocol::PullResponse(_, val) => {
+                // PullResponse is allowed to carry anything in its CrdsData, including deprecated Crds
+                // such that a deprecated Crds does not get pulled and then rejected.
                 val.sanitize()
             }
-            Protocol::PullResponse(_, val) => val.sanitize(),
-            Protocol::PushMessage(_, val) => val.sanitize(),
+            Protocol::PushMessage(_, val) => {
+                // PushMessage is allowed to carry anything in its CrdsData, including deprecated Crds
+                // such that a deprecated Crds gets ingested instead of the node having to pull it from
+                // other nodes that have inserted it into their Crds table
+                val.sanitize()
+            }
             Protocol::PruneMessage(from, val) => {
                 if *from != val.pubkey {
                     Err(SanitizeError::InvalidValue)
@@ -265,47 +224,32 @@ impl Signable for PruneData {
 /// max_chunk_size.
 /// Note: some messages cannot be contained within that size so in the worst case this returns
 /// N nested Vecs with 1 item each.
-pub(crate) fn split_gossip_messages<I, T>(
+pub(crate) fn split_gossip_messages<T: Serialize + Debug>(
     max_chunk_size: usize,
-    data_feed: I,
-) -> impl Iterator<Item = Vec<T>>
-where
-    T: Serialize + Debug,
-    I: IntoIterator<Item = T>,
-{
+    data_feed: impl IntoIterator<Item = T>,
+) -> impl Iterator<Item = Vec<T>> {
     let mut data_feed = data_feed.into_iter().fuse();
     let mut buffer = vec![];
     let mut buffer_size = 0; // Serialized size of buffered values.
     std::iter::from_fn(move || loop {
-        match data_feed.next() {
-            None => {
-                return if buffer.is_empty() {
-                    None
-                } else {
-                    Some(std::mem::take(&mut buffer))
-                };
+        let Some(data) = data_feed.next() else {
+            return (!buffer.is_empty()).then(|| std::mem::take(&mut buffer));
+        };
+        let data_size = match bincode::serialized_size(&data) {
+            Ok(size) => size as usize,
+            Err(err) => {
+                error!("serialized_size failed: {err:?}");
+                continue;
             }
-            Some(data) => {
-                let data_size = match bincode::serialized_size(&data) {
-                    Ok(size) => size as usize,
-                    Err(err) => {
-                        error!("serialized_size failed: {}", err);
-                        continue;
-                    }
-                };
-                if buffer_size + data_size <= max_chunk_size {
-                    buffer_size += data_size;
-                    buffer.push(data);
-                } else if data_size <= max_chunk_size {
-                    buffer_size = data_size;
-                    return Some(std::mem::replace(&mut buffer, vec![data]));
-                } else {
-                    error!(
-                        "dropping data larger than the maximum chunk size {:?}",
-                        data
-                    );
-                }
-            }
+        };
+        if buffer_size + data_size <= max_chunk_size {
+            buffer_size += data_size;
+            buffer.push(data);
+        } else if data_size <= max_chunk_size {
+            buffer_size = data_size;
+            return Some(std::mem::replace(&mut buffer, vec![data]));
+        } else {
+            error!("dropping data larger than the maximum chunk size {data:?}",);
         }
     })
 }
@@ -322,15 +266,14 @@ pub(crate) mod tests {
             duplicate_shred::{self, tests::new_rand_shred, MAX_DUPLICATE_SHREDS},
         },
         rand::Rng,
+        solana_clock::Slot,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
         solana_perf::packet::Packet,
-        solana_sdk::{
-            clock::Slot,
-            hash::Hash,
-            signature::{Keypair, Signer},
-            timing::timestamp,
-            transaction::Transaction,
-        },
+        solana_signer::Signer,
+        solana_time_utils::timestamp,
+        solana_transaction::Transaction,
         solana_vote_program::{vote_instruction, vote_state::Vote},
         std::{
             iter::repeat_with,
@@ -473,6 +416,15 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_pull_response_max_payload_size() {
+        let header = Protocol::PullResponse(Pubkey::default(), Vec::default());
+        assert_eq!(
+            PULL_RESPONSE_MAX_PAYLOAD_SIZE,
+            PACKET_DATA_SIZE - header.bincode_serialized_size()
+        );
+    }
+
+    #[test]
     fn test_duplicate_shred_max_payload_size() {
         let mut rng = rand::thread_rng();
         let leader = Arc::new(Keypair::new());
@@ -530,7 +482,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_split_messages_small() {
-        let value = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::default()));
+        let value = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::default()));
         test_split_messages(value);
     }
 
@@ -552,7 +504,7 @@ pub(crate) mod tests {
             .collect();
         let splits: Vec<_> =
             split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, values.clone()).collect();
-        let self_pubkey = solana_sdk::pubkey::new_rand();
+        let self_pubkey = solana_pubkey::new_rand();
         assert!(splits.len() * 2 < NUM_CRDS_VALUES);
         // Assert that all messages are included in the splits.
         assert_eq!(NUM_CRDS_VALUES, splits.iter().map(Vec::len).sum::<usize>());
@@ -574,6 +526,44 @@ pub(crate) mod tests {
                     .map(CrdsValue::bincode_serialized_size)
                     .sum::<usize>();
             let message = Protocol::PushMessage(self_pubkey, values);
+            assert_eq!(message.bincode_serialized_size(), size);
+            // Assert that the message fits into a packet.
+            assert!(Packet::from_data(Some(&socket), message).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_split_gossip_messages_pull_response() {
+        const NUM_CRDS_VALUES: usize = 2048;
+        let mut rng = rand::thread_rng();
+        let values: Vec<_> = repeat_with(|| CrdsValue::new_rand(&mut rng, None))
+            .take(NUM_CRDS_VALUES)
+            .collect();
+        let splits: Vec<_> =
+            split_gossip_messages(PULL_RESPONSE_MAX_PAYLOAD_SIZE, values.clone()).collect();
+        let self_pubkey = solana_pubkey::new_rand();
+        assert!(splits.len() * 2 < NUM_CRDS_VALUES);
+        // Assert that all messages are included in the splits.
+        assert_eq!(NUM_CRDS_VALUES, splits.iter().map(Vec::len).sum::<usize>());
+        splits
+            .iter()
+            .flat_map(|s| s.iter())
+            .zip(values)
+            .for_each(|(a, b)| assert_eq!(*a, b));
+        let socket = SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::new(rng.gen(), rng.gen(), rng.gen(), rng.gen()),
+            rng.gen(),
+        ));
+        // check message fits into PullResponse
+        let header_size = PACKET_DATA_SIZE - PULL_RESPONSE_MAX_PAYLOAD_SIZE;
+        for values in splits {
+            // Assert that sum of parts equals the whole.
+            let size = header_size
+                + values
+                    .iter()
+                    .map(CrdsValue::bincode_serialized_size)
+                    .sum::<usize>();
+            let message = Protocol::PullResponse(self_pubkey, values);
             assert_eq!(message.bincode_serialized_size(), size);
             // Assert that the message fits into a packet.
             assert!(Packet::from_data(Some(&socket), message).is_ok());
@@ -610,7 +600,7 @@ pub(crate) mod tests {
         let num_values_per_payload = (PUSH_MESSAGE_MAX_PAYLOAD_SIZE / value_size).max(1);
 
         // Expected len is the ceiling of the division
-        let expected_len = (NUM_VALUES + num_values_per_payload - 1) / num_values_per_payload;
+        let expected_len = NUM_VALUES.div_ceil(num_values_per_payload);
         let msgs = vec![value; NUM_VALUES];
 
         assert!(split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, msgs).count() <= expected_len);

@@ -1,6 +1,6 @@
 use {
     solana_account_decoder::parse_token::real_number_string_trimmed,
-    solana_sdk::native_token::lamports_to_sol,
+    solana_cli_output::display::build_balance_message,
     std::{
         fmt::{Debug, Display, Formatter, Result},
         ops::Add,
@@ -25,7 +25,7 @@ impl Token {
     fn write_with_symbol(&self, f: &mut Formatter) -> Result {
         match &self.token_type {
             TokenType::Sol => {
-                let amount = lamports_to_sol(self.amount);
+                let amount = build_balance_message(self.amount, false, false);
                 write!(f, "{SOL_SYMBOL}{amount}")
             }
             TokenType::SplToken => {

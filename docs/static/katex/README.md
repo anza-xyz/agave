@@ -84,7 +84,7 @@ Learn more about using KaTeX [on the website](https://katex.org)!
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md)
+See [CONTRIBUTING.md](https://github.com/KaTeX/KaTeX/blob/main/CONTRIBUTING.md)
 
 ## License
 

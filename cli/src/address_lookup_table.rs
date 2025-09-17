@@ -1,29 +1,27 @@
 use {
     crate::cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
+    solana_account::from_account,
+    solana_address_lookup_table_interface::{
+        self as address_lookup_table,
+        instruction::{
+            close_lookup_table, create_lookup_table, deactivate_lookup_table, extend_lookup_table,
+            freeze_lookup_table,
+        },
+        state::AddressLookupTable,
+    },
     solana_clap_utils::{self, input_parsers::*, input_validators::*, keypair::*},
     solana_cli_output::{CliAddressLookupTable, CliAddressLookupTableCreated, CliSignature},
+    solana_clock::Clock,
+    solana_commitment_config::CommitmentConfig,
+    solana_message::Message,
+    solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcSendTransactionConfig,
-    solana_sdk::{
-        account::from_account,
-        address_lookup_table::{
-            self,
-            instruction::{
-                close_lookup_table, create_lookup_table, deactivate_lookup_table,
-                extend_lookup_table, freeze_lookup_table,
-            },
-            state::AddressLookupTable,
-        },
-        clock::Clock,
-        commitment_config::CommitmentConfig,
-        message::Message,
-        pubkey::Pubkey,
-        signer::Signer,
-        sysvar,
-        transaction::Transaction,
-    },
+    solana_sdk_ids::sysvar,
+    solana_signer::Signer,
+    solana_transaction::Transaction,
     std::{rc::Rc, sync::Arc},
 };
 
@@ -80,8 +78,8 @@ impl AddressLookupTableSubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .validator(is_pubkey_or_keypair)
                                 .help(
-                                    "Lookup table authority address \
-                                    [default: the default configured keypair].",
+                                    "Lookup table authority address [default: the default \
+                                     configured keypair].",
                                 ),
                         )
                         .arg(
@@ -115,8 +113,8 @@ impl AddressLookupTableSubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .validator(is_valid_signer)
                                 .help(
-                                    "Lookup table authority \
-                                    [default: the default configured keypair]",
+                                    "Lookup table authority [default: the default configured \
+                                     keypair]",
                                 ),
                         )
                         .arg(
@@ -145,8 +143,8 @@ impl AddressLookupTableSubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .validator(is_valid_signer)
                                 .help(
-                                    "Lookup table authority \
-                                    [default: the default configured keypair]",
+                                    "Lookup table authority [default: the default configured \
+                                     keypair]",
                                 ),
                         )
                         .arg(
@@ -189,8 +187,8 @@ impl AddressLookupTableSubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .validator(is_valid_signer)
                                 .help(
-                                    "Lookup table authority \
-                                    [default: the default configured keypair]",
+                                    "Lookup table authority [default: the default configured \
+                                     keypair]",
                                 ),
                         )
                         .arg(
@@ -229,8 +227,8 @@ impl AddressLookupTableSubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .validator(is_valid_signer)
                                 .help(
-                                    "Lookup table authority \
-                                    [default: the default configured keypair]",
+                                    "Lookup table authority [default: the default configured \
+                                     keypair]",
                                 ),
                         ),
                 )

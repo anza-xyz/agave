@@ -10,42 +10,64 @@ pub struct PrecompileSignatureDetails {
     pub num_secp256r1_instruction_signatures: u64,
 }
 
-/// Get transaction signature details.
-pub fn get_precompile_signature_details<'a>(
-    instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
-) -> PrecompileSignatureDetails {
-    let mut filter = SignatureDetailsFilter::new();
+pub(crate) struct PrecompileSignatureDetailsBuilder {
+    filter: SignatureDetailsFilter,
+    value: PrecompileSignatureDetails,
+}
 
-    // Wrapping arithmetic is safe below because the maximum number of signatures
-    // per instruction is 255, and the maximum number of instructions per transaction
-    // is low enough that the sum of all signatures will not overflow a u64.
-    let mut num_secp256k1_instruction_signatures: u64 = 0;
-    let mut num_ed25519_instruction_signatures: u64 = 0;
-    let mut num_secp256r1_instruction_signatures: u64 = 0;
-    for (program_id, instruction) in instructions {
+impl Default for PrecompileSignatureDetailsBuilder {
+    fn default() -> Self {
+        Self {
+            filter: SignatureDetailsFilter::new(),
+            value: PrecompileSignatureDetails {
+                num_secp256k1_instruction_signatures: 0,
+                num_ed25519_instruction_signatures: 0,
+                num_secp256r1_instruction_signatures: 0,
+            },
+        }
+    }
+}
+
+impl PrecompileSignatureDetailsBuilder {
+    pub fn process_instruction(&mut self, program_id: &Pubkey, instruction: &SVMInstruction) {
         let program_id_index = instruction.program_id_index;
-        match filter.is_signature(program_id_index, program_id) {
+        match self.filter.is_signature(program_id_index, program_id) {
             ProgramIdStatus::NotSignature => {}
             ProgramIdStatus::Secp256k1 => {
-                num_secp256k1_instruction_signatures = num_secp256k1_instruction_signatures
-                    .wrapping_add(get_num_signatures_in_instruction(&instruction));
+                self.value.num_secp256k1_instruction_signatures = self
+                    .value
+                    .num_secp256k1_instruction_signatures
+                    .wrapping_add(get_num_signatures_in_instruction(instruction));
             }
             ProgramIdStatus::Ed25519 => {
-                num_ed25519_instruction_signatures = num_ed25519_instruction_signatures
-                    .wrapping_add(get_num_signatures_in_instruction(&instruction));
+                self.value.num_ed25519_instruction_signatures = self
+                    .value
+                    .num_ed25519_instruction_signatures
+                    .wrapping_add(get_num_signatures_in_instruction(instruction));
             }
             ProgramIdStatus::Secp256r1 => {
-                num_secp256r1_instruction_signatures = num_secp256r1_instruction_signatures
-                    .wrapping_add(get_num_signatures_in_instruction(&instruction));
+                self.value.num_secp256r1_instruction_signatures = self
+                    .value
+                    .num_secp256r1_instruction_signatures
+                    .wrapping_add(get_num_signatures_in_instruction(instruction));
             }
         }
     }
 
-    PrecompileSignatureDetails {
-        num_secp256k1_instruction_signatures,
-        num_ed25519_instruction_signatures,
-        num_secp256r1_instruction_signatures,
+    pub fn build(self) -> PrecompileSignatureDetails {
+        self.value
     }
+}
+
+/// Get transaction signature details.
+pub fn get_precompile_signature_details<'a>(
+    instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
+) -> PrecompileSignatureDetails {
+    let mut builder = PrecompileSignatureDetailsBuilder::default();
+    for (program_id, instruction) in instructions {
+        builder.process_instruction(program_id, &instruction);
+    }
+    builder.build()
 }
 
 #[inline]
@@ -90,9 +112,9 @@ impl SignatureDetailsFilter {
 
     #[inline]
     fn check_program_id(program_id: &Pubkey) -> ProgramIdStatus {
-        if program_id == &solana_sdk::secp256k1_program::ID {
+        if program_id == &solana_sdk_ids::secp256k1_program::ID {
             ProgramIdStatus::Secp256k1
-        } else if program_id == &solana_sdk::ed25519_program::ID {
+        } else if program_id == &solana_sdk_ids::ed25519_program::ID {
             ProgramIdStatus::Ed25519
         } else if program_id == &solana_sdk_ids::secp256r1_program::ID {
             ProgramIdStatus::Secp256r1
@@ -148,8 +170,8 @@ mod tests {
     fn test_get_signature_details_signatures_mixed() {
         let program_ids = [
             Pubkey::new_unique(),
-            solana_sdk::secp256k1_program::ID,
-            solana_sdk::ed25519_program::ID,
+            solana_sdk_ids::secp256k1_program::ID,
+            solana_sdk_ids::ed25519_program::ID,
             solana_sdk_ids::secp256r1_program::ID,
         ];
         let instructions = [
@@ -172,8 +194,8 @@ mod tests {
     #[test]
     fn test_get_signature_details_missing_num_signatures() {
         let program_ids = [
-            solana_sdk::secp256k1_program::ID,
-            solana_sdk::ed25519_program::ID,
+            solana_sdk_ids::secp256k1_program::ID,
+            solana_sdk_ids::ed25519_program::ID,
             solana_sdk_ids::secp256r1_program::ID,
         ];
         let instructions = [

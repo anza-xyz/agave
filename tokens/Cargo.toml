@@ -1,9 +1,9 @@
 [package]
 name = "solana-tokens"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-tokens"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
@@ -23,14 +23,29 @@ serde_derive = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
+solana-cli-output = { workspace = true }
+solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
+solana-message = { workspace = true }
+solana-native-token = { workspace = true }
+solana-program-error = { workspace = true }
+solana-program-pack = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
-solana-sdk = { workspace = true }
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
+solana-stake-interface = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
-spl-associated-token-account = { workspace = true }
-spl-token = { workspace = true, features = ["no-entrypoint"] }
+spl-associated-token-account-interface = { version = "=2.0.0" }
+spl-token-interface = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 
@@ -40,3 +55,4 @@ bincode = { workspace = true }
 solana-logger = { workspace = true }
 solana-streamer = { workspace = true }
 solana-test-validator = { workspace = true }
+solana-transaction-error = { workspace = true }

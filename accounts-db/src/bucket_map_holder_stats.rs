@@ -3,7 +3,8 @@ use {
         accounts_index::{in_mem_accounts_index::InMemAccountsIndex, DiskIndexValue, IndexValue},
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
     },
-    solana_sdk::timing::AtomicInterval,
+    solana_clock::Slot,
+    solana_time_utils::AtomicInterval,
     std::{
         fmt::Debug,
         sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -47,7 +48,7 @@ pub struct BucketMapHolderStats {
     pub bg_waiting_us: AtomicU64,
     pub bg_throttling_wait_us: AtomicU64,
     pub count_in_mem: AtomicUsize,
-    pub per_bucket_count: Vec<AtomicUsize>,
+    pub capacity_in_mem: AtomicUsize,
     pub flush_entries_updated_on_disk: AtomicU64,
     pub flush_entries_evicted_from_mem: AtomicU64,
     pub active_threads: AtomicU64,
@@ -68,7 +69,6 @@ impl BucketMapHolderStats {
     pub fn new(bins: usize) -> BucketMapHolderStats {
         BucketMapHolderStats {
             bins: bins as u64,
-            per_bucket_count: (0..bins).map(|_| AtomicUsize::default()).collect(),
             ..BucketMapHolderStats::default()
         }
     }
@@ -87,24 +87,37 @@ impl BucketMapHolderStats {
         self.count.fetch_sub(1, Ordering::Relaxed);
     }
 
-    pub fn inc_mem_count(&self, bin: usize) {
-        self.add_mem_count(bin, 1);
+    pub fn inc_mem_count(&self) {
+        self.add_mem_count(1);
     }
 
-    pub fn dec_mem_count(&self, bin: usize) {
-        self.sub_mem_count(bin, 1);
+    pub fn dec_mem_count(&self) {
+        self.sub_mem_count(1);
     }
 
-    pub fn add_mem_count(&self, bin: usize, count: usize) {
-        let per_bucket = self.per_bucket_count.get(bin);
+    pub fn add_mem_count(&self, count: usize) {
         self.count_in_mem.fetch_add(count, Ordering::Relaxed);
-        per_bucket.map(|stat| stat.fetch_add(count, Ordering::Relaxed));
     }
 
-    pub fn sub_mem_count(&self, bin: usize, count: usize) {
-        let per_bucket = self.per_bucket_count.get(bin);
+    pub fn sub_mem_count(&self, count: usize) {
         self.count_in_mem.fetch_sub(count, Ordering::Relaxed);
-        per_bucket.map(|stat| stat.fetch_sub(count, Ordering::Relaxed));
+    }
+
+    /// Updates the 'in-mem capacity' stat, given a bin's pre and post values
+    pub fn update_in_mem_capacity(&self, pre: usize, post: usize) {
+        match post.cmp(&pre) {
+            std::cmp::Ordering::Equal => {
+                // nothing to do here
+            }
+            std::cmp::Ordering::Greater => {
+                self.capacity_in_mem
+                    .fetch_add(post - pre, Ordering::Relaxed);
+            }
+            std::cmp::Ordering::Less => {
+                self.capacity_in_mem
+                    .fetch_sub(pre - post, Ordering::Relaxed);
+            }
+        }
     }
 
     fn ms_per_age<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(
@@ -166,14 +179,6 @@ impl BucketMapHolderStats {
         self.count.load(Ordering::Relaxed)
     }
 
-    pub fn count_in_bucket(&self, bucket: usize) -> usize {
-        if bucket < self.per_bucket_count.len() {
-            self.per_bucket_count[bucket].load(Ordering::Relaxed)
-        } else {
-            0
-        }
-    }
-
     /// This is an estimate of the # of items in mem that are awaiting flushing to disk.
     /// returns (# items in mem) - (# items we intend to hold in mem for performance heuristics)
     /// The result is also an estimate because 'held_in_mem' is based on a stat that is swapped out when stats are reported.
@@ -200,11 +205,6 @@ impl BucketMapHolderStats {
 
         let ms_per_age = self.ms_per_age(storage, elapsed_ms);
 
-        let in_mem_per_bucket_counts = self
-            .per_bucket_count
-            .iter()
-            .map(|count| count.load(Ordering::Relaxed))
-            .collect::<Vec<_>>();
         let disk = storage.disk.as_ref();
         let disk_per_bucket_counts = disk
             .map(|disk| {
@@ -213,7 +213,6 @@ impl BucketMapHolderStats {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let in_mem_stats = Self::get_stats(in_mem_per_bucket_counts);
         let disk_stats = Self::get_stats(disk_per_bucket_counts);
 
         const US_PER_MS: u64 = 1_000;
@@ -222,9 +221,12 @@ impl BucketMapHolderStats {
         let startup = storage.get_startup();
         let was_startup = self.last_was_startup.swap(startup, Ordering::Relaxed);
 
+        let count_in_mem = self.count_in_mem.load(Ordering::Relaxed);
+        let capacity_in_mem = self.capacity_in_mem.load(Ordering::Relaxed);
+
         // sum of elapsed time in each thread
         let mut thread_time_elapsed_ms = elapsed_ms * storage.threads as u64;
-        if disk.is_some() {
+        if storage.is_disk_index_enabled() {
             if was_startup {
                 // these stats only apply at startup
                 datapoint_info!(
@@ -253,6 +255,20 @@ impl BucketMapHolderStats {
                     ),
                 );
             }
+            let held_in_mem_ref_count = self.held_in_mem.ref_count.swap(0, Ordering::Relaxed);
+            let held_in_mem_slot_list_len =
+                self.held_in_mem.slot_list_len.swap(0, Ordering::Relaxed);
+            // If an entry is held in-mem due to ref count or slot list length,
+            // then assume it has two slot list entries.
+            // Since `approx_size_of_one_entry()` assumes 'regular' entries
+            // (aka ref count == 1 and slot list len == 1), and the single slot list entry is
+            // stored inline in the slot list itself, then when we have larger slot lists,
+            // account for them here.
+            let estimate_mem_bytes = count_in_mem
+                * InMemAccountsIndex::<T, U>::approx_size_of_one_entry()
+                + (held_in_mem_ref_count + held_in_mem_slot_list_len) as usize
+                    * size_of::<(Slot, T)>() // <-- size of one slot list entry
+                    * 2; // <-- and assume there are two entries
             datapoint_info!(
                 if startup || was_startup {
                     thread_time_elapsed_ms *= 2; // more threads are allocated during startup
@@ -260,22 +276,14 @@ impl BucketMapHolderStats {
                 } else {
                     "accounts_index"
                 },
-                (
-                    "estimate_mem_bytes",
-                    self.count_in_mem.load(Ordering::Relaxed)
-                        * InMemAccountsIndex::<T, U>::approx_size_of_one_entry(),
-                    i64
-                ),
+                ("estimate_mem_bytes", estimate_mem_bytes, i64),
                 (
                     "flush_should_evict_us",
                     self.flush_should_evict_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
-                (
-                    "count_in_mem",
-                    self.count_in_mem.load(Ordering::Relaxed),
-                    i64
-                ),
+                ("count_in_mem", count_in_mem, i64),
+                ("capacity_in_mem", capacity_in_mem, i64),
                 ("count", self.total_count(), i64),
                 (
                     "bg_waiting_percent",
@@ -293,25 +301,13 @@ impl BucketMapHolderStats {
                     ),
                     f64
                 ),
-                (
-                    "slot_list_len",
-                    self.held_in_mem.slot_list_len.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "ref_count",
-                    self.held_in_mem.ref_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
+                ("slot_list_len", held_in_mem_slot_list_len, i64),
+                ("ref_count", held_in_mem_ref_count, i64),
                 (
                     "slot_list_cached",
                     self.held_in_mem.slot_list_cached.swap(0, Ordering::Relaxed),
                     i64
                 ),
-                ("min_in_bin_mem", in_mem_stats.0, i64),
-                ("max_in_bin_mem", in_mem_stats.1, i64),
-                ("count_from_bins_mem", in_mem_stats.2, i64),
-                ("median_from_bins_mem", in_mem_stats.3, i64),
                 ("min_in_bin_disk", disk_stats.0, i64),
                 ("max_in_bin_disk", disk_stats.1, i64),
                 ("count_from_bins_disk", disk_stats.2, i64),
@@ -564,10 +560,13 @@ impl BucketMapHolderStats {
                     "accounts_index"
                 },
                 (
-                    "count_in_mem",
-                    self.count_in_mem.load(Ordering::Relaxed),
+                    "estimate_mem_bytes",
+                    self.count_in_mem.load(Ordering::Relaxed)
+                        * InMemAccountsIndex::<T, U>::approx_size_of_one_entry(),
                     i64
                 ),
+                ("count_in_mem", count_in_mem, i64),
+                ("capacity_in_mem", capacity_in_mem, i64),
                 ("count", self.total_count(), i64),
                 (
                     "bg_waiting_percent",
@@ -585,10 +584,6 @@ impl BucketMapHolderStats {
                     ),
                     f64
                 ),
-                ("min_in_bin_mem", in_mem_stats.0, i64),
-                ("max_in_bin_mem", in_mem_stats.1, i64),
-                ("count_from_bins_mem", in_mem_stats.2, i64),
-                ("median_from_bins_mem", in_mem_stats.3, i64),
                 (
                     "gets_from_mem",
                     self.gets_from_mem.swap(0, Ordering::Relaxed),

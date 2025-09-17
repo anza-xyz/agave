@@ -2,24 +2,23 @@
 pub(crate) mod tests {
     use {
         rand::Rng,
+        solana_account::{AccountSharedData, WritableAccount},
+        solana_clock::Clock,
+        solana_instruction::Instruction,
+        solana_keypair::Keypair,
+        solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            account::AccountSharedData,
-            clock::Clock,
-            instruction::Instruction,
-            pubkey::Pubkey,
-            signature::{Keypair, Signer},
-            signers::Signers,
-            stake::{
-                instruction as stake_instruction,
-                state::{Authorized, Lockup},
-            },
-            transaction::Transaction,
+        solana_signer::{signers::Signers, Signer},
+        solana_stake_interface::{
+            program as stake_program,
+            stake_flags::StakeFlags,
+            state::{Authorized, Delegation, Meta, Stake, StakeStateV2},
         },
+        solana_transaction::Transaction,
         solana_vote::vote_account::{VoteAccount, VoteAccounts},
         solana_vote_program::{
             vote_instruction,
-            vote_state::{VoteInit, VoteState, VoteStateVersions},
+            vote_state::{VoteInit, VoteStateV3, VoteStateVersions},
         },
     };
 
@@ -55,7 +54,7 @@ pub(crate) mod tests {
                 },
                 amount,
                 vote_instruction::CreateVoteAccountConfig {
-                    space: VoteStateVersions::vote_state_size_of(true) as u64,
+                    space: VoteStateV3::size_of() as u64,
                     ..vote_instruction::CreateVoteAccountConfig::default()
                 },
             ),
@@ -64,30 +63,43 @@ pub(crate) mod tests {
         let stake_account_keypair = Keypair::new();
         let stake_account_pubkey = stake_account_keypair.pubkey();
 
-        process_instructions(
-            bank,
-            &[from_account, &stake_account_keypair],
-            &stake_instruction::create_account_and_delegate_stake(
-                &from_account.pubkey(),
-                &stake_account_pubkey,
-                &vote_pubkey,
-                &Authorized::auto(&stake_account_pubkey),
-                &Lockup::default(),
-                amount,
-            ),
+        let stake_account = StakeStateV2::Stake(
+            Meta {
+                authorized: Authorized::auto(&stake_account_pubkey),
+                ..Meta::default()
+            },
+            Stake {
+                delegation: Delegation {
+                    voter_pubkey: vote_pubkey,
+                    stake: amount,
+                    ..Delegation::default()
+                },
+                ..Stake::default()
+            },
+            StakeFlags::default(),
         );
+
+        let account = AccountSharedData::create(
+            1,
+            bincode::serialize(&stake_account).unwrap(),
+            stake_program::id(),
+            false,
+            u64::MAX,
+        );
+
+        bank.store_account(&stake_account_pubkey, &account);
     }
 
     #[test]
     fn test_to_staked_nodes() {
         let mut stakes = Vec::new();
-        let node1 = solana_sdk::pubkey::new_rand();
+        let node1 = solana_pubkey::new_rand();
 
         // Node 1 has stake of 3
         for i in 0..3 {
             stakes.push((
                 i,
-                VoteState::new(
+                VoteStateV3::new(
                     &VoteInit {
                         node_pubkey: node1,
                         ..VoteInit::default()
@@ -98,11 +110,11 @@ pub(crate) mod tests {
         }
 
         // Node 1 has stake of 5
-        let node2 = solana_sdk::pubkey::new_rand();
+        let node2 = solana_pubkey::new_rand();
 
         stakes.push((
             5,
-            VoteState::new(
+            VoteStateV3::new(
                 &VoteInit {
                     node_pubkey: node2,
                     ..VoteInit::default()
@@ -114,7 +126,7 @@ pub(crate) mod tests {
         let vote_accounts = stakes.into_iter().map(|(stake, vote_state)| {
             let account = AccountSharedData::new_data(
                 rng.gen(), // lamports
-                &VoteStateVersions::new_current(vote_state),
+                &VoteStateVersions::new_v3(vote_state),
                 &solana_vote_program::id(), // owner
             )
             .unwrap();

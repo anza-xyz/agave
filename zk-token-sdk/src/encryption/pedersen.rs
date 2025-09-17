@@ -24,13 +24,12 @@ const PEDERSEN_OPENING_LEN: usize = SCALAR_LEN;
 /// Byte length of a Pedersen commitment.
 pub(crate) const PEDERSEN_COMMITMENT_LEN: usize = RISTRETTO_POINT_LEN;
 
-lazy_static::lazy_static! {
-    /// Pedersen base point for encoding messages to be committed.
-    pub static ref G: RistrettoPoint = RISTRETTO_BASEPOINT_POINT;
-    /// Pedersen base point for encoding the commitment openings.
-    pub static ref H: RistrettoPoint =
-        RistrettoPoint::hash_from_bytes::<Sha3_512>(RISTRETTO_BASEPOINT_COMPRESSED.as_bytes());
-}
+/// Pedersen base point for encoding messages to be committed.
+pub const G: RistrettoPoint = RISTRETTO_BASEPOINT_POINT;
+/// Pedersen base point for encoding the commitment openings.
+pub static H: std::sync::LazyLock<RistrettoPoint> = std::sync::LazyLock::new(|| {
+    RistrettoPoint::hash_from_bytes::<Sha3_512>(RISTRETTO_BASEPOINT_COMPRESSED.as_bytes())
+});
 
 /// Algorithm handle for the Pedersen commitment scheme.
 pub struct Pedersen;
@@ -57,7 +56,7 @@ impl Pedersen {
         let x: Scalar = amount.into();
         let r = opening.get_scalar();
 
-        PedersenCommitment(RistrettoPoint::multiscalar_mul(&[x, *r], &[*G, *H]))
+        PedersenCommitment(RistrettoPoint::multiscalar_mul(&[x, *r], &[G, *H]))
     }
 
     /// On input a message (numeric amount), the function returns a Pedersen commitment with zero
@@ -65,7 +64,7 @@ impl Pedersen {
     ///
     /// This function is deterministic.
     pub fn encode<T: Into<Scalar>>(amount: T) -> PedersenCommitment {
-        PedersenCommitment(amount.into() * &(*G))
+        PedersenCommitment(amount.into() * &G)
     }
 }
 
@@ -118,7 +117,7 @@ impl ConstantTimeEq for PedersenOpening {
     }
 }
 
-impl<'a, 'b> Add<&'b PedersenOpening> for &'a PedersenOpening {
+impl<'b> Add<&'b PedersenOpening> for &PedersenOpening {
     type Output = PedersenOpening;
 
     fn add(self, opening: &'b PedersenOpening) -> PedersenOpening {
@@ -132,7 +131,7 @@ define_add_variants!(
     Output = PedersenOpening
 );
 
-impl<'a, 'b> Sub<&'b PedersenOpening> for &'a PedersenOpening {
+impl<'b> Sub<&'b PedersenOpening> for &PedersenOpening {
     type Output = PedersenOpening;
 
     fn sub(self, opening: &'b PedersenOpening) -> PedersenOpening {
@@ -146,7 +145,7 @@ define_sub_variants!(
     Output = PedersenOpening
 );
 
-impl<'a, 'b> Mul<&'b Scalar> for &'a PedersenOpening {
+impl<'b> Mul<&'b Scalar> for &PedersenOpening {
     type Output = PedersenOpening;
 
     fn mul(self, scalar: &'b Scalar) -> PedersenOpening {
@@ -160,7 +159,7 @@ define_mul_variants!(
     Output = PedersenOpening
 );
 
-impl<'a, 'b> Mul<&'b PedersenOpening> for &'a Scalar {
+impl<'b> Mul<&'b PedersenOpening> for &Scalar {
     type Output = PedersenOpening;
 
     fn mul(self, opening: &'b PedersenOpening) -> PedersenOpening {
@@ -202,7 +201,7 @@ impl PedersenCommitment {
     }
 }
 
-impl<'a, 'b> Add<&'b PedersenCommitment> for &'a PedersenCommitment {
+impl<'b> Add<&'b PedersenCommitment> for &PedersenCommitment {
     type Output = PedersenCommitment;
 
     fn add(self, commitment: &'b PedersenCommitment) -> PedersenCommitment {
@@ -216,7 +215,7 @@ define_add_variants!(
     Output = PedersenCommitment
 );
 
-impl<'a, 'b> Sub<&'b PedersenCommitment> for &'a PedersenCommitment {
+impl<'b> Sub<&'b PedersenCommitment> for &PedersenCommitment {
     type Output = PedersenCommitment;
 
     fn sub(self, commitment: &'b PedersenCommitment) -> PedersenCommitment {
@@ -230,7 +229,7 @@ define_sub_variants!(
     Output = PedersenCommitment
 );
 
-impl<'a, 'b> Mul<&'b Scalar> for &'a PedersenCommitment {
+impl<'b> Mul<&'b Scalar> for &PedersenCommitment {
     type Output = PedersenCommitment;
 
     fn mul(self, scalar: &'b Scalar) -> PedersenCommitment {
@@ -244,7 +243,7 @@ define_mul_variants!(
     Output = PedersenCommitment
 );
 
-impl<'a, 'b> Mul<&'b PedersenCommitment> for &'a Scalar {
+impl<'b> Mul<&'b PedersenCommitment> for &Scalar {
     type Output = PedersenCommitment;
 
     fn mul(self, commitment: &'b PedersenCommitment) -> PedersenCommitment {

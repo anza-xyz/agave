@@ -13,13 +13,13 @@ use {
     solana_measure::measure::Measure,
     solana_perf::{
         deduper::{self, Deduper},
-        packet::{Packet, PacketBatch},
+        packet::PacketBatch,
         sigverify::{
             count_discarded_packets, count_packets_in_batches, count_valid_packets, shrink_batches,
         },
     },
-    solana_sdk::timing,
     solana_streamer::streamer::{self, StreamerError},
+    solana_time_utils as timing,
     std::{
         thread::{self, Builder, JoinHandle},
         time::Instant,
@@ -57,15 +57,6 @@ pub struct SigVerifyStage {
 pub trait SigVerifier {
     type SendType: std::fmt::Debug;
     fn verify_batches(&self, batches: Vec<PacketBatch>, valid_packets: usize) -> Vec<PacketBatch>;
-    fn process_received_packet(
-        &mut self,
-        _packet: &mut Packet,
-        _removed_before_sigverify_stage: bool,
-        _is_dup: bool,
-    ) {
-    }
-    fn process_excess_packet(&mut self, _packet: &Packet) {}
-    fn process_passed_sigverify_packet(&mut self, _packet: &Packet) {}
     fn send_packets(&mut self, packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType>;
 }
 
@@ -251,11 +242,7 @@ impl SigVerifyStage {
         Self { thread_hdl }
     }
 
-    pub fn discard_excess_packets(
-        batches: &mut [PacketBatch],
-        mut max_packets: usize,
-        mut process_excess_packet: impl FnMut(&Packet),
-    ) {
+    pub fn discard_excess_packets(batches: &mut [PacketBatch], mut max_packets: usize) {
         // Group packets by their incoming IP address.
         let mut addrs = batches
             .iter_mut()
@@ -268,33 +255,36 @@ impl SigVerifyStage {
         while max_packets > 0 && !addrs.is_empty() {
             let num_addrs = addrs.len();
             addrs.retain(|_, packets| {
-                let cap = (max_packets + num_addrs - 1) / num_addrs;
+                let cap = max_packets.div_ceil(num_addrs);
                 max_packets -= packets.len().min(cap);
                 packets.truncate(packets.len().saturating_sub(cap));
                 !packets.is_empty()
             });
         }
         // Discard excess packets from each address.
-        for packet in addrs.into_values().flatten() {
-            process_excess_packet(packet);
+        for mut packet in addrs.into_values().flatten() {
             packet.meta_mut().set_discard(true);
         }
     }
 
     /// make this function public so that it is available for benchmarking
-    pub fn maybe_shrink_batches(packet_batches: &mut Vec<PacketBatch>) -> (u64, usize) {
+    pub fn maybe_shrink_batches(
+        packet_batches: Vec<PacketBatch>,
+    ) -> (u64, usize, Vec<PacketBatch>) {
         let mut shrink_time = Measure::start("sigverify_shrink_time");
-        let num_packets = count_packets_in_batches(packet_batches);
-        let num_discarded_packets = count_discarded_packets(packet_batches);
+        let num_packets = count_packets_in_batches(&packet_batches);
+        let num_discarded_packets = count_discarded_packets(&packet_batches);
         let pre_packet_batches_len = packet_batches.len();
         let discarded_packet_rate = (num_discarded_packets as f64) / (num_packets as f64);
-        if discarded_packet_rate >= MAX_DISCARDED_PACKET_RATE {
-            shrink_batches(packet_batches);
-        }
+        let packet_batches = if discarded_packet_rate >= MAX_DISCARDED_PACKET_RATE {
+            shrink_batches(packet_batches)
+        } else {
+            packet_batches
+        };
         let post_packet_batches_len = packet_batches.len();
         let shrink_total = pre_packet_batches_len.saturating_sub(post_packet_batches_len);
         shrink_time.stop();
-        (shrink_time.as_us(), shrink_total)
+        (shrink_time.as_us(), shrink_total, packet_batches)
     }
 
     fn verifier<const K: usize, T: SigVerifier>(
@@ -322,49 +312,30 @@ impl SigVerifyStage {
         discard_random_time.stop();
 
         let mut dedup_time = Measure::start("sigverify_dedup_time");
-        let discard_or_dedup_fail = deduper::dedup_packets_and_count_discards(
-            deduper,
-            &mut batches,
-            #[inline(always)]
-            |received_packet, removed_before_sigverify_stage, is_dup| {
-                verifier.process_received_packet(
-                    received_packet,
-                    removed_before_sigverify_stage,
-                    is_dup,
-                );
-            },
-        ) as usize;
+        let discard_or_dedup_fail =
+            deduper::dedup_packets_and_count_discards(deduper, &mut batches) as usize;
         dedup_time.stop();
         let num_unique = non_discarded_packets.saturating_sub(discard_or_dedup_fail);
 
         let mut discard_time = Measure::start("sigverify_discard_time");
         let mut num_packets_to_verify = num_unique;
         if num_unique > MAX_SIGVERIFY_BATCH {
-            Self::discard_excess_packets(
-                &mut batches,
-                MAX_SIGVERIFY_BATCH,
-                #[inline(always)]
-                |excess_packet| verifier.process_excess_packet(excess_packet),
-            );
+            Self::discard_excess_packets(&mut batches, MAX_SIGVERIFY_BATCH);
             num_packets_to_verify = MAX_SIGVERIFY_BATCH;
         }
         let excess_fail = num_unique.saturating_sub(MAX_SIGVERIFY_BATCH);
         discard_time.stop();
 
         // Pre-shrink packet batches if many packets are discarded from dedup / discard
-        let (pre_shrink_time_us, pre_shrink_total) = Self::maybe_shrink_batches(&mut batches);
+        let (pre_shrink_time_us, pre_shrink_total, batches) = Self::maybe_shrink_batches(batches);
 
         let mut verify_time = Measure::start("sigverify_batch_time");
-        let mut batches = verifier.verify_batches(batches, num_packets_to_verify);
-        let num_valid_packets = count_valid_packets(
-            &batches,
-            #[inline(always)]
-            |valid_packet| verifier.process_passed_sigverify_packet(valid_packet),
-        );
+        let batches = verifier.verify_batches(batches, num_packets_to_verify);
+        let num_valid_packets = count_valid_packets(&batches);
         verify_time.stop();
 
         // Post-shrink packet batches if many packets are discarded from sigverify
-        let (post_shrink_time_us, post_shrink_total) = Self::maybe_shrink_batches(&mut batches);
+        let (post_shrink_time_us, post_shrink_total, batches) = Self::maybe_shrink_batches(batches);
 
         verifier.send_packets(batches)?;
 
@@ -444,7 +415,7 @@ impl SigVerifyStage {
                             SigVerifyServiceError::Send(_) => {
                                 break;
                             }
-                            _ => error!("{:?}", e),
+                            _ => error!("{e:?}"),
                         }
                     }
                     if last_print.elapsed().as_secs() > 2 {
@@ -469,10 +440,9 @@ mod tests {
         crate::{banking_trace::BankingTracer, sigverify::TransactionSigVerifier},
         crossbeam_channel::unbounded,
         solana_perf::{
-            packet::{to_packet_batches, Packet},
+            packet::{to_packet_batches, Packet, PinnedPacketBatch},
             test_tx::test_tx,
         },
-        solana_sdk::packet::PacketFlags,
     };
 
     fn count_non_discard(packet_batches: &[PacketBatch]) -> usize {
@@ -487,36 +457,20 @@ mod tests {
     fn test_packet_discard() {
         solana_logger::setup();
         let batch_size = 10;
-        let mut batch = PacketBatch::with_capacity(batch_size);
-        let mut tracer_packet = Packet::default();
-        tracer_packet.meta_mut().flags |= PacketFlags::TRACER_PACKET;
-        batch.resize(batch_size, tracer_packet);
+        let mut batch = PinnedPacketBatch::with_capacity(batch_size);
+        let packet = Packet::default();
+        batch.resize(batch_size, packet);
         batch[3].meta_mut().addr = std::net::IpAddr::from([1u16; 8]);
         batch[3].meta_mut().set_discard(true);
-        let num_discarded_before_filter = 1;
         batch[4].meta_mut().addr = std::net::IpAddr::from([2u16; 8]);
-        let total_num_packets = batch.len();
-        let mut batches = vec![batch];
+        let mut batches = vec![PacketBatch::from(batch)];
         let max = 3;
-        let mut total_tracer_packets_discarded = 0;
-        SigVerifyStage::discard_excess_packets(&mut batches, max, |packet| {
-            if packet.meta().is_tracer_packet() {
-                total_tracer_packets_discarded += 1;
-            }
-        });
+        SigVerifyStage::discard_excess_packets(&mut batches, max);
         let total_non_discard = count_non_discard(&batches);
-        let total_discarded = total_num_packets - total_non_discard;
-        // Every packet except the packets already marked `discard` before the call
-        // to `discard_excess_packets()` should count towards the
-        // `total_tracer_packets_discarded`
-        assert_eq!(
-            total_tracer_packets_discarded,
-            total_discarded - num_discarded_before_filter
-        );
         assert_eq!(total_non_discard, max);
-        assert!(!batches[0][0].meta().discard());
-        assert!(batches[0][3].meta().discard());
-        assert!(!batches[0][4].meta().discard());
+        assert!(!batches[0].get(0).unwrap().meta().discard());
+        assert!(batches[0].get(3).unwrap().meta().discard());
+        assert!(!batches[0].get(4).unwrap().meta().discard());
     }
 
     fn gen_batches(
@@ -548,7 +502,7 @@ mod tests {
         trace!("start");
         let (packet_s, packet_r) = unbounded();
         let (verified_s, verified_r) = BankingTracer::channel_for_test();
-        let verifier = TransactionSigVerifier::new(verified_s);
+        let verifier = TransactionSigVerifier::new(verified_s, None);
         let stage = SigVerifyStage::new(packet_r, verifier, "solSigVerTest", "test");
 
         let now = Instant::now();
@@ -565,69 +519,38 @@ mod tests {
         );
 
         let mut sent_len = 0;
-        for mut batch in batches.into_iter() {
+        for batch in batches.into_iter() {
             sent_len += batch.len();
-            batch
-                .iter_mut()
-                .for_each(|packet| packet.meta_mut().flags |= PacketFlags::TRACER_PACKET);
             assert_eq!(batch.len(), packets_per_batch);
             packet_s.send(batch).unwrap();
         }
-        let mut received = 0;
-        let mut total_tracer_packets_received_in_sigverify_stage = 0;
-        trace!("sent: {}", sent_len);
+        let mut packet_s = Some(packet_s);
+        let mut valid_received = 0;
+        trace!("sent: {sent_len}");
         loop {
-            if let Ok(message) = verified_r.recv() {
-                let (verifieds, tracer_packet_stats) = (&message.0, message.1.as_ref().unwrap());
-                total_tracer_packets_received_in_sigverify_stage +=
-                    tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage;
-                assert_eq!(
-                    tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage
-                        % packets_per_batch,
-                    0,
-                );
-
-                if use_same_tx {
-                    // Every transaction other than the very first one in the very first batch
-                    // should be deduped.
-
-                    // Also have to account for the fact that deduper could be cleared periodically,
-                    // in which case the first transaction in the next batch won't be deduped
-                    assert!(
-                        (tracer_packet_stats.total_tracer_packets_deduped
-                            == tracer_packet_stats
-                                .total_tracer_packets_received_in_sigverify_stage
-                                - 1)
-                            || (tracer_packet_stats.total_tracer_packets_deduped
-                                == tracer_packet_stats
-                                    .total_tracer_packets_received_in_sigverify_stage)
-                    );
-                    assert!(
-                        (tracer_packet_stats.total_tracker_packets_passed_sigverify == 1)
-                            || (tracer_packet_stats.total_tracker_packets_passed_sigverify == 0)
-                    );
-                } else {
-                    assert_eq!(tracer_packet_stats.total_tracer_packets_deduped, 0);
-                    assert!(
-                        (tracer_packet_stats.total_tracker_packets_passed_sigverify
-                            == tracer_packet_stats
-                                .total_tracer_packets_received_in_sigverify_stage)
-                    );
-                }
-                assert_eq!(tracer_packet_stats.total_excess_tracer_packets, 0);
-                received += verifieds.iter().map(|batch| batch.len()).sum::<usize>();
-            }
-
-            if total_tracer_packets_received_in_sigverify_stage >= sent_len {
+            if let Ok(verifieds) = verified_r.recv() {
+                valid_received += verifieds
+                    .iter()
+                    .map(|batch| batch.iter().filter(|p| !p.meta().discard()).count())
+                    .sum::<usize>();
+            } else {
                 break;
             }
+
+            // Check if all the sent batches have been picked up by sigverify stage.
+            // Drop sender to exit the loop on next receive call, once the channel is
+            // drained.
+            if packet_s.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+                packet_s.take();
+            }
         }
-        trace!("received: {}", received);
-        assert_eq!(
-            total_tracer_packets_received_in_sigverify_stage,
-            total_packets
-        );
-        drop(packet_s);
+        trace!("received: {valid_received}");
+
+        if use_same_tx {
+            assert_eq!(valid_received, 1);
+        } else {
+            assert_eq!(valid_received, total_packets);
+        }
         stage.join().unwrap();
     }
 
@@ -635,16 +558,17 @@ mod tests {
     fn test_maybe_shrink_batches() {
         let packets_per_batch = 128;
         let total_packets = 4096;
-        let mut batches = gen_batches(true, packets_per_batch, total_packets);
+        let batches = gen_batches(true, packets_per_batch, total_packets);
         let num_generated_batches = batches.len();
         let num_packets = count_packets_in_batches(&batches);
-        assert_eq!(SigVerifyStage::maybe_shrink_batches(&mut batches).1, 0);
+        let (_, num_shrunk_batches, mut batches) = SigVerifyStage::maybe_shrink_batches(batches);
+        assert_eq!(num_shrunk_batches, 0);
 
         // discard until the threshold is met but not exceeded
         {
             let mut index = 0;
             batches.iter_mut().for_each(|batch| {
-                batch.iter_mut().for_each(|p| {
+                batch.iter_mut().for_each(|mut p| {
                     if ((index + 1) as f64 / num_packets as f64) < MAX_DISCARDED_PACKET_RATE {
                         p.meta_mut().set_discard(true);
                     }
@@ -653,17 +577,22 @@ mod tests {
             });
         }
 
-        assert_eq!(SigVerifyStage::maybe_shrink_batches(&mut batches).1, 0);
+        let (_, num_shrunk_batches, mut batches) = SigVerifyStage::maybe_shrink_batches(batches);
+        assert_eq!(num_shrunk_batches, 0);
 
         // discard one more to exceed shrink threshold
-        batches.last_mut().unwrap()[0].meta_mut().set_discard(true);
+        batches
+            .last_mut()
+            .unwrap()
+            .first_mut()
+            .unwrap()
+            .meta_mut()
+            .set_discard(true);
 
         let expected_num_shrunk_batches =
             1.max((num_generated_batches as f64 * MAX_DISCARDED_PACKET_RATE) as usize);
-        assert_eq!(
-            SigVerifyStage::maybe_shrink_batches(&mut batches).1,
-            expected_num_shrunk_batches
-        );
+        let (_, num_shrunk_batches, batches) = SigVerifyStage::maybe_shrink_batches(batches);
+        assert_eq!(num_shrunk_batches, expected_num_shrunk_batches);
         let expected_remaining_batches = num_generated_batches - expected_num_shrunk_batches;
         assert_eq!(batches.len(), expected_remaining_batches);
     }

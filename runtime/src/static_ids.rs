@@ -1,15 +1,14 @@
 use {
-    solana_inline_spl::{associated_token_account, token, token_2022},
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
+    spl_generic_token::{associated_token_account, token, token_2022},
 };
 
-lazy_static! {
-    /// Vector of static token & mint IDs
-    pub static ref STATIC_IDS: Vec<Pubkey> = vec![
+/// Vector of static token & mint IDs
+pub static STATIC_IDS: std::sync::LazyLock<Vec<Pubkey>> = std::sync::LazyLock::new(|| {
+    vec![
         associated_token_account::id(),
-        associated_token_account::program_v1_1_0::id(),
         token::id(),
         token::native_mint::id(),
         token_2022::id(),
-    ];
-}
+    ]
+});

@@ -1,0 +1,19 @@
+[package]
+name = "solana-svm-callback"
+description = "Solana SVM callback"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+readme = false
+
+[dependencies]
+solana-account = { workspace = true }
+solana-clock = { workspace = true }
+solana-precompile-error = { workspace = true }
+solana-pubkey = { workspace = true }
+
+[lints]
+workspace = true

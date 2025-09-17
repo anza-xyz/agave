@@ -1,6 +1,8 @@
 use {
     crate::consensus::latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey},
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
     std::collections::{BTreeMap, HashMap},
 };
 

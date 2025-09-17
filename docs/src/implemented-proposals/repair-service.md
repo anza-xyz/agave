@@ -28,7 +28,7 @@ Each validator advertises separately on gossip the various parts of an
 
 - The `stash`: An epoch-long compressed set of all completed slots.
 - The `cache`: The Run-length Encoding (RLE) of the latest `N` completed
-  slots starting from some some slot `M`, where `N` is the number of slots
+  slots starting from some slot `M`, where `N` is the number of slots
   that will fit in an MTU-sized packet.
 
 `Epoch Slots` in gossip are updated every time a validator receives a

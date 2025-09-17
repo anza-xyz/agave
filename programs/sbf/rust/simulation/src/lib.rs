@@ -1,21 +1,18 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    solana_program::{
-        account_info::{next_account_info, AccountInfo},
-        clock::Clock,
-        declare_id,
-        entrypoint::ProgramResult,
-        msg,
-        pubkey::Pubkey,
-        sysvar::Sysvar,
-    },
+    solana_account_info::{next_account_info, AccountInfo},
+    solana_clock::Clock,
+    solana_msg::msg,
+    solana_program_error::ProgramResult,
+    solana_pubkey::{declare_id, Pubkey},
+    solana_sysvar::{Sysvar, SysvarSerialize},
     std::convert::TryInto,
 };
 
 declare_id!("Sim1jD5C35odT8mzctm8BWnjic8xW5xgeb5MbcbErTo");
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 
 pub fn process_instruction(
     _program_id: &Pubkey,

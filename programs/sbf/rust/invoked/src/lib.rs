@@ -3,21 +3,20 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
+    solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE},
+    solana_msg::msg,
     solana_program::{
-        account_info::AccountInfo,
-        bpf_loader_upgradeable,
-        entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
         log::sol_log_64,
-        msg,
         program::{get_return_data, invoke, invoke_signed, set_return_data},
-        program_error::ProgramError,
-        pubkey::Pubkey,
-        system_instruction,
     },
+    solana_program_error::{ProgramError, ProgramResult},
+    solana_pubkey::Pubkey,
     solana_sbf_rust_invoked_dep::*,
+    solana_sdk_ids::loader_v4,
+    solana_system_interface::instruction as system_instruction,
 };
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 #[allow(clippy::cognitive_complexity)]
 fn process_instruction(
     program_id: &Pubkey,
@@ -48,7 +47,6 @@ fn process_instruction(
             assert_eq!(accounts[ARGUMENT_INDEX].data_len(), 100);
             assert!(accounts[ARGUMENT_INDEX].is_signer);
             assert!(accounts[ARGUMENT_INDEX].is_writable);
-            assert_eq!(accounts[ARGUMENT_INDEX].rent_epoch, u64::MAX);
             assert!(!accounts[ARGUMENT_INDEX].executable);
             {
                 let data = accounts[ARGUMENT_INDEX].try_borrow_data()?;
@@ -61,21 +59,16 @@ fn process_instruction(
                 accounts[INVOKED_ARGUMENT_INDEX].owner,
                 accounts[INVOKED_PROGRAM_INDEX].key
             );
-            assert_eq!(accounts[INVOKED_ARGUMENT_INDEX].lamports(), 10);
+            assert_eq!(accounts[INVOKED_ARGUMENT_INDEX].lamports(), 20);
             assert_eq!(accounts[INVOKED_ARGUMENT_INDEX].data_len(), 10);
             assert!(accounts[INVOKED_ARGUMENT_INDEX].is_signer);
             assert!(accounts[INVOKED_ARGUMENT_INDEX].is_writable);
-            assert_eq!(accounts[INVOKED_ARGUMENT_INDEX].rent_epoch, u64::MAX);
             assert!(!accounts[INVOKED_ARGUMENT_INDEX].executable);
 
             assert_eq!(accounts[INVOKED_PROGRAM_INDEX].key, program_id);
-            assert_eq!(
-                accounts[INVOKED_PROGRAM_INDEX].owner,
-                &bpf_loader_upgradeable::id()
-            );
+            assert_eq!(accounts[INVOKED_PROGRAM_INDEX].owner, &loader_v4::id());
             assert!(!accounts[INVOKED_PROGRAM_INDEX].is_signer);
             assert!(!accounts[INVOKED_PROGRAM_INDEX].is_writable);
-            assert_eq!(accounts[INVOKED_PROGRAM_INDEX].rent_epoch, u64::MAX);
             assert!(accounts[INVOKED_PROGRAM_INDEX].executable);
 
             assert_eq!(
@@ -98,10 +91,13 @@ fn process_instruction(
                 accounts[INVOKED_PROGRAM_INDEX].is_writable,
                 accounts[INVOKED_PROGRAM_DUP_INDEX].is_writable
             );
-            assert_eq!(
-                accounts[INVOKED_PROGRAM_INDEX].rent_epoch,
-                accounts[INVOKED_PROGRAM_DUP_INDEX].rent_epoch
-            );
+            #[allow(deprecated)]
+            {
+                assert_eq!(
+                    accounts[INVOKED_PROGRAM_INDEX]._unused,
+                    accounts[INVOKED_PROGRAM_DUP_INDEX]._unused
+                );
+            }
             assert_eq!(
                 accounts[INVOKED_PROGRAM_INDEX].executable,
                 accounts[INVOKED_PROGRAM_DUP_INDEX].executable
@@ -257,7 +253,7 @@ fn process_instruction(
                 let from_lamports = accounts[FROM_INDEX].lamports();
                 let to_lamports = accounts[DERIVED_KEY2_INDEX].lamports();
                 assert_eq!(accounts[DERIVED_KEY2_INDEX].data_len(), 0);
-                assert!(solana_program::system_program::check_id(
+                assert!(solana_system_interface::program::check_id(
                     accounts[DERIVED_KEY2_INDEX].owner
                 ));
 

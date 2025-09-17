@@ -47,7 +47,7 @@ pub struct RecyclerX<T> {
 impl<T: Default> Default for RecyclerX<T> {
     fn default() -> RecyclerX<T> {
         let id = thread_rng().gen_range(0..1000);
-        trace!("new recycler..{}", id);
+        trace!("new recycler..{id}");
         RecyclerX {
             gc: Mutex::default(),
             stats: RecyclerStats::default(),
@@ -74,9 +74,7 @@ pub trait Reset {
         Self: std::marker::Sized;
 }
 
-lazy_static! {
-    static ref WARM_RECYCLERS: AtomicBool = AtomicBool::new(false);
-}
+static WARM_RECYCLERS: AtomicBool = AtomicBool::new(false);
 
 pub fn enable_recycler_warming() {
     WARM_RECYCLERS.store(true, Ordering::Relaxed);

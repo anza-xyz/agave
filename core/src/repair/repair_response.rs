@@ -1,9 +1,10 @@
 use {
+    solana_clock::Slot,
     solana_ledger::{
         blockstore::Blockstore,
         shred::{Nonce, SIZE_OF_NONCE},
     },
-    solana_sdk::{clock::Slot, packet::Packet},
+    solana_packet::Packet,
     std::{io, net::SocketAddr},
 };
 
@@ -23,10 +24,11 @@ pub fn repair_response_packet(
 }
 
 pub fn repair_response_packet_from_bytes(
-    bytes: Vec<u8>,
+    bytes: impl AsRef<[u8]>,
     dest: &SocketAddr,
     nonce: Nonce,
 ) -> Option<Packet> {
+    let bytes = bytes.as_ref();
     let mut packet = Packet::default();
     let size = bytes.len() + SIZE_OF_NONCE;
     if size > packet.buffer_mut().len() {
@@ -34,33 +36,23 @@ pub fn repair_response_packet_from_bytes(
     }
     packet.meta_mut().size = size;
     packet.meta_mut().set_socket_addr(dest);
-    packet.buffer_mut()[..bytes.len()].copy_from_slice(&bytes);
+    packet.buffer_mut()[..bytes.len()].copy_from_slice(bytes);
     let mut wr = io::Cursor::new(&mut packet.buffer_mut()[bytes.len()..]);
     bincode::serialize_into(&mut wr, &nonce).expect("Buffer not large enough to fit nonce");
     Some(packet)
-}
-
-pub(crate) fn nonce(packet: &Packet) -> Option<Nonce> {
-    // Nonces are attached to both repair and ancestor hashes responses.
-    let data = packet.data(..)?;
-    let offset = data.len().checked_sub(SIZE_OF_NONCE)?;
-    <[u8; SIZE_OF_NONCE]>::try_from(&data[offset..])
-        .map(Nonce::from_le_bytes)
-        .ok()
 }
 
 #[cfg(test)]
 mod test {
     use {
         super::*,
+        solana_keypair::Keypair,
         solana_ledger::{
-            shred::{Shred, ShredFlags},
-            sigverify_shreds::{verify_shred_cpu, LruCache},
+            shred::Shredder,
+            sigverify_shreds::{verify_shred_cpu, LruCache, SlotPubkeys},
         },
-        solana_sdk::{
-            packet::PacketFlags,
-            signature::{Keypair, Signer},
-        },
+        solana_packet::PacketFlags,
+        solana_signer::Signer,
         std::{
             collections::HashMap,
             net::{IpAddr, Ipv4Addr},
@@ -71,19 +63,9 @@ mod test {
     fn run_test_sigverify_shred_cpu_repair(slot: Slot) {
         solana_logger::setup();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-        let mut shred = Shred::new_from_data(
-            slot,
-            0xc0de,
-            0xdead,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            0xc0de,
-        );
-        assert_eq!(shred.slot(), slot);
         let keypair = Keypair::new();
-        shred.sign(&keypair);
+        let shred = Shredder::single_shred_for_tests(slot, &keypair);
+
         trace!("signature {}", shred.signature());
         let nonce = 9;
         let mut packet = repair_response_packet_from_bytes(
@@ -94,15 +76,15 @@ mod test {
         .unwrap();
         packet.meta_mut().flags |= PacketFlags::REPAIR;
 
-        let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
-        assert!(verify_shred_cpu(&packet, &leader_slots, &cache));
+        let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
+        assert!(verify_shred_cpu((&packet).into(), &leader_slots, &cache));
 
         let wrong_keypair = Keypair::new();
-        let leader_slots = HashMap::from([(slot, wrong_keypair.pubkey())]);
-        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
+        let leader_slots: SlotPubkeys = [(slot, wrong_keypair.pubkey())].into_iter().collect();
+        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
 
-        let leader_slots = HashMap::new();
-        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
+        let leader_slots: SlotPubkeys = HashMap::default();
+        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
     }
 
     #[test]

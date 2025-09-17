@@ -4,7 +4,8 @@ use {
     crate::tiered_storage::owners::OwnerOffset,
     bytemuck_derive::{Pod, Zeroable},
     modular_bitfield::prelude::*,
-    solana_sdk::{pubkey::Pubkey, stake_history::Epoch},
+    solana_clock::Epoch,
+    solana_pubkey::Pubkey,
 };
 
 /// The struct that handles the account meta flags.
@@ -26,7 +27,7 @@ const _: () = assert!(std::mem::size_of::<AccountMetaFlags>() == 4);
 /// A trait that allows different implementations of the account meta that
 /// support different tiers of the accounts storage.
 pub trait TieredAccountMeta: Sized {
-    /// Constructs a TieredAcountMeta instance.
+    /// Constructs a TieredAccountMeta instance.
     fn new() -> Self;
 
     /// A builder function that initializes lamports.
@@ -264,7 +265,7 @@ pub mod tests {
 
     #[test]
     fn test_pubkey_range_update_single() {
-        let address = solana_sdk::pubkey::new_rand();
+        let address = solana_pubkey::new_rand();
         let mut address_range = AccountAddressRange::default();
 
         address_range.update(&address);
@@ -285,7 +286,7 @@ pub mod tests {
 
         // Generate random addresses and track expected min and max indices
         for i in 0..NUM_PUBKEYS {
-            let address = solana_sdk::pubkey::new_rand();
+            let address = solana_pubkey::new_rand();
             addresses.push(address);
 
             // Update expected min and max indices

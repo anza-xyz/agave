@@ -9,18 +9,19 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[dependencies]
-log = { workspace = true }
-solana-file-download = { workspace = true }
-solana-runtime = { workspace = true }
-solana-sdk = { workspace = true }
-
-[dev-dependencies]
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lib]
 crate-type = ["lib"]
 name = "solana_download_utils"
 
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[dependencies]
+log = { workspace = true }
+solana-clock = { workspace = true }
+solana-file-download = { workspace = true }
+solana-genesis-config = { workspace = true }
+solana-runtime = { workspace = true }
+
+[dev-dependencies]
+solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }

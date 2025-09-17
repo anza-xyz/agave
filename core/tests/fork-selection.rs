@@ -1,6 +1,6 @@
 //! Fork Selection Simulation
 //!
-//! Description of the algorithm can be found in [Managing Forks](https://docs.solanalabs.com/consensus/managing-forks).
+//! Description of the algorithm can be found in [Managing Forks](https://docs.anza.xyz/consensus/managing-forks).
 //!
 //! A test library function exists for configuring networks.
 //! ```

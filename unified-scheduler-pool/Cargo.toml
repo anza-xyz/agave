@@ -9,28 +9,46 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+dev-context-only-utils = []
+
 [dependencies]
+agave-banking-stage-ingress-types = { workspace = true }
+aquamarine = { workspace = true }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 derive-where = { workspace = true }
+derive_more = { workspace = true }
+dyn-clone = { workspace = true }
 log = { workspace = true }
 qualifier_attr = { workspace = true }
 scopeguard = { workspace = true }
+solana-clock = { workspace = true }
+solana-cost-model = { workspace = true }
 solana-ledger = { workspace = true }
+solana-metrics = { workspace = true }
+solana-poh = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
-solana-sdk = { workspace = true }
-solana-timings = { workspace = true }
+solana-svm = { workspace = true }
+solana-svm-timings = { workspace = true }
+solana-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 static_assertions = { workspace = true }
+trait-set = { workspace = true }
+unwrap_none = { workspace = true }
 vec_extract_if_polyfill = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-lazy_static = { workspace = true }
+solana-clock = { workspace = true }
+solana-entry = { workspace = true }
+solana-hash = { workspace = true }
+solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-
-[features]
-dev-context-only-utils = []
+solana-system-transaction = { workspace = true }
+test-case = { workspace = true }

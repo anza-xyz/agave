@@ -17,10 +17,10 @@ jobs:
     if: github.repository == 'anza-xyz/agave'
     outputs:
       continue: ${{ steps.check.outputs.need_to_build }}
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -74,15 +74,15 @@ jobs:
       needs.check.outputs.continue == 1
     # the name is used by .mergify.yml as well
     name: build & deploy docs
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Build
         working-directory: docs

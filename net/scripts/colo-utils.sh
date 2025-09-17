@@ -198,7 +198,7 @@ colo_node_requisition() {
 SOLANA_LOCK_FILE="${SOLANA_LOCK_FILE}"
 INSTANCE_NAME="${INSTANCE_NAME}"
 PREEMPTIBLE="${PREEMPTIBLE}"
-SSH_AUTHORIZED_KEYS='$("${__colo_here}"/add-datacenter-solana-user-authorized_keys.sh 2> /dev/null)'
+SSH_AUTHORIZED_KEYS=''
 SSH_PRIVATE_KEY_TEXT="$(<"${SSH_PRIVATE_KEY}")"
 SSH_PUBLIC_KEY_TEXT="$(<"${SSH_PRIVATE_KEY}.pub")"
 NETWORK_INFO="$(printNetworkInfo 2>/dev/null)"
@@ -244,7 +244,7 @@ colo_node_free() {
   colo_instance_run "${IP}" "$(cat <<EOF
 SOLANA_LOCK_FILE="${SOLANA_LOCK_FILE}"
 SECONDARY_DISK_MOUNT_POINT="${SECONDARY_DISK_MOUNT_POINT}"
-SSH_AUTHORIZED_KEYS='$("${__colo_here}"/add-datacenter-solana-user-authorized_keys.sh 2> /dev/null)'
+SSH_AUTHORIZED_KEYS=''
 FORCE_DELETE="${FORCE_DELETE}"
 $(<"${__colo_here}"/colo-node-onfree.sh)
 EOF

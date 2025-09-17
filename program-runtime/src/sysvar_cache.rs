@@ -12,10 +12,11 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::sysvar,
     solana_slot_hashes::SlotHashes,
-    solana_sysvar::{stake_history::StakeHistory, Sysvar},
+    solana_stake_interface::stake_history::StakeHistory,
+    solana_svm_type_overrides::sync::Arc,
+    solana_sysvar::SysvarSerialize,
     solana_sysvar_id::SysvarId,
-    solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
-    solana_type_overrides::sync::Arc,
+    solana_transaction_context::{IndexOfAccount, InstructionContext},
 };
 
 #[cfg(feature = "frozen-abi")]
@@ -59,7 +60,7 @@ const RECENT_BLOCKHASHES_ID: Pubkey =
 impl SysvarCache {
     /// Overwrite a sysvar. For testing purposes only.
     #[allow(deprecated)]
-    pub fn set_sysvar_for_tests<T: Sysvar + SysvarId>(&mut self, sysvar: &T) {
+    pub fn set_sysvar_for_tests<T: SysvarSerialize + SysvarId>(&mut self, sysvar: &T) {
         let data = bincode::serialize(sysvar).expect("Failed to serialize sysvar.");
         let sysvar_id = T::id();
         match sysvar_id {
@@ -278,20 +279,18 @@ impl SysvarCache {
 
 /// These methods facilitate a transition from fetching sysvars from keyed
 /// accounts to fetching from the sysvar cache without breaking consensus. In
-/// order to keep consistent behavior, they continue to enforce the same checks
-/// as `solana_sdk::keyed_account::from_keyed_account` despite dynamically
-/// loading them instead of deserializing from account data.
+/// order to keep consistent behavior, they continue to enforce legacy checks
+/// despite dynamically loading them instead of deserializing from account data.
 pub mod get_sysvar_with_account_check {
     use super::*;
 
-    fn check_sysvar_account<S: Sysvar>(
-        transaction_context: &TransactionContext,
+    fn check_sysvar_account<S: SysvarId>(
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<(), InstructionError> {
-        let index_in_transaction = instruction_context
-            .get_index_of_instruction_account_in_transaction(instruction_account_index)?;
-        if !S::check_id(transaction_context.get_key_of_account_at_index(index_in_transaction)?) {
+        if !S::check_id(
+            instruction_context.get_key_of_instruction_account(instruction_account_index)?,
+        ) {
             return Err(InstructionError::InvalidArgument);
         }
         Ok(())
@@ -302,11 +301,7 @@ pub mod get_sysvar_with_account_check {
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<Clock>, InstructionError> {
-        check_sysvar_account::<Clock>(
-            invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
+        check_sysvar_account::<Clock>(instruction_context, instruction_account_index)?;
         invoke_context.get_sysvar_cache().get_clock()
     }
 
@@ -315,11 +310,7 @@ pub mod get_sysvar_with_account_check {
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<Rent>, InstructionError> {
-        check_sysvar_account::<Rent>(
-            invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
+        check_sysvar_account::<Rent>(instruction_context, instruction_account_index)?;
         invoke_context.get_sysvar_cache().get_rent()
     }
 
@@ -328,11 +319,7 @@ pub mod get_sysvar_with_account_check {
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<SlotHashes>, InstructionError> {
-        check_sysvar_account::<SlotHashes>(
-            invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
+        check_sysvar_account::<SlotHashes>(instruction_context, instruction_account_index)?;
         invoke_context.get_sysvar_cache().get_slot_hashes()
     }
 
@@ -342,11 +329,7 @@ pub mod get_sysvar_with_account_check {
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<RecentBlockhashes>, InstructionError> {
-        check_sysvar_account::<RecentBlockhashes>(
-            invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
+        check_sysvar_account::<RecentBlockhashes>(instruction_context, instruction_account_index)?;
         invoke_context.get_sysvar_cache().get_recent_blockhashes()
     }
 
@@ -355,11 +338,7 @@ pub mod get_sysvar_with_account_check {
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<StakeHistory>, InstructionError> {
-        check_sysvar_account::<StakeHistory>(
-            invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
+        check_sysvar_account::<StakeHistory>(instruction_context, instruction_account_index)?;
         invoke_context.get_sysvar_cache().get_stake_history()
     }
 
@@ -368,11 +347,7 @@ pub mod get_sysvar_with_account_check {
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<LastRestartSlot>, InstructionError> {
-        check_sysvar_account::<LastRestartSlot>(
-            invoke_context.transaction_context,
-            instruction_context,
-            instruction_account_index,
-        )?;
+        check_sysvar_account::<LastRestartSlot>(instruction_context, instruction_account_index)?;
         invoke_context.get_sysvar_cache().get_last_restart_slot()
     }
 }
@@ -395,7 +370,7 @@ mod tests {
     #[test_case(SlotHashes::default(); "slot_hashes")]
     #[test_case(StakeHistory::default(); "stake_history")]
     #[test_case(LastRestartSlot::default(); "last_restart_slot")]
-    fn test_sysvar_cache_preserves_bytes<T: Sysvar>(_: T) {
+    fn test_sysvar_cache_preserves_bytes<T: SysvarSerialize>(_: T) {
         let id = T::id();
         let size = T::size_of().saturating_mul(2);
         let in_buf = vec![0; size];

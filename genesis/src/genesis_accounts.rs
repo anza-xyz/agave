@@ -3,10 +3,9 @@ use {
         stakes::{create_and_add_stakes, StakerInfo},
         unlocks::UnlockInfo,
     },
-    solana_sdk::{
-        genesis_config::{ClusterType, GenesisConfig},
-        native_token::LAMPORTS_PER_SOL,
-    },
+    solana_cluster_type::ClusterType,
+    solana_genesis_config::GenesisConfig,
+    solana_native_token::LAMPORTS_PER_SOL,
 };
 
 // 9 month schedule is 100% after 9 months
@@ -230,7 +229,7 @@ fn add_stakes(
         .sum::<u64>()
 }
 
-/// Add acounts that should be present in genesis; skip for development clusters
+/// Add accounts that should be present in genesis; skip for development clusters
 pub fn add_genesis_accounts(genesis_config: &mut GenesisConfig, mut issued_lamports: u64) {
     if genesis_config.cluster_type == ClusterType::Development {
         return;

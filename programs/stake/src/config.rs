@@ -1,24 +1,37 @@
 //! config for staking
 //!  carries variables that the stake program cares about
-#[allow(deprecated)]
-use solana_sdk::stake::config;
 #[deprecated(
     since = "1.8.0",
-    note = "Please use `solana_sdk::stake::config` or `solana_program::stake::config` instead"
+    note = "Please use `solana_stake_interface::config` instead"
 )]
-pub use solana_sdk::stake::config::*;
+pub use solana_stake_interface::config::*;
 use {
-    bincode::deserialize,
-    solana_config_program::{create_config_account, get_config_data},
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        genesis_config::GenesisConfig,
-        transaction_context::BorrowedAccount,
-    },
+    bincode::{deserialize, serialize},
+    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+    solana_config_interface::state::{get_config_data, ConfigKeys},
+    solana_genesis_config::GenesisConfig,
+    solana_pubkey::Pubkey,
+    solana_transaction_context::BorrowedInstructionAccount,
 };
 
 #[allow(deprecated)]
-pub fn from(account: &BorrowedAccount) -> Option<Config> {
+fn create_config_account(
+    keys: Vec<(Pubkey, bool)>,
+    config_data: &Config,
+    lamports: u64,
+) -> AccountSharedData {
+    let mut data = serialize(&ConfigKeys { keys }).unwrap();
+    data.extend_from_slice(&serialize(config_data).unwrap());
+    AccountSharedData::from(Account {
+        lamports,
+        data,
+        owner: solana_sdk_ids::config::id(),
+        ..Account::default()
+    })
+}
+
+#[allow(deprecated)]
+pub fn from(account: &BorrowedInstructionAccount) -> Option<Config> {
     get_config_data(account.get_data())
         .ok()
         .and_then(|data| deserialize(data).ok())
@@ -32,11 +45,11 @@ pub fn create_account(lamports: u64, config: &Config) -> AccountSharedData {
 #[allow(deprecated)]
 pub fn add_genesis_account(genesis_config: &mut GenesisConfig) -> u64 {
     let mut account = create_config_account(vec![], &Config::default(), 0);
-    let lamports = genesis_config.rent.minimum_balance(account.data().len());
+    let lamports = std::cmp::max(genesis_config.rent.minimum_balance(account.data().len()), 1);
 
-    account.set_lamports(lamports.max(1));
+    account.set_lamports(lamports);
 
-    genesis_config.add_account(config::id(), account);
+    genesis_config.add_account(solana_stake_interface::config::id(), account);
 
     lamports
 }

@@ -1,7 +1,7 @@
 use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
-        signature_details::get_precompile_signature_details,
+        instruction_meta::InstructionMeta,
         transaction_meta::{StaticMeta, TransactionMeta},
         transaction_with_meta::TransactionWithMeta,
     },
@@ -9,20 +9,20 @@ use {
         resolved_transaction_view::ResolvedTransactionView, transaction_data::TransactionData,
         transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
     },
-    solana_pubkey::Pubkey,
-    solana_sdk::{
-        instruction::CompiledInstruction,
-        message::{
-            v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
-            LegacyMessage, MessageHeader, SanitizedMessage, TransactionSignatureDetails,
-            VersionedMessage,
-        },
-        simple_vote_transaction_checker::is_simple_vote_transaction_impl,
-        transaction::{
-            MessageHash, Result, SanitizedTransaction, TransactionError, VersionedTransaction,
-        },
+    solana_message::{
+        compiled_instruction::CompiledInstruction,
+        v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
+        LegacyMessage, MessageHeader, SanitizedMessage, TransactionSignatureDetails,
+        VersionedMessage,
     },
+    solana_pubkey::Pubkey,
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction},
+        simple_vote_transaction_checker::is_simple_vote_transaction_impl,
+        versioned::VersionedTransaction,
+    },
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::{borrow::Cow, collections::HashSet},
 };
 
@@ -51,8 +51,11 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
         let is_simple_vote_tx =
             is_simple_vote_tx.unwrap_or_else(|| is_simple_vote_transaction(&transaction));
 
-        let precompile_signature_details =
-            get_precompile_signature_details(transaction.program_instructions_iter());
+        let InstructionMeta {
+            precompile_signature_details,
+            instruction_data_len,
+        } = InstructionMeta::try_new(transaction.program_instructions_iter())?;
+
         let signature_details = TransactionSignatureDetails::new(
             u64::from(transaction.num_required_signatures()),
             precompile_signature_details.num_secp256k1_instruction_signatures,
@@ -69,6 +72,7 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
                 is_simple_vote_transaction: is_simple_vote_tx,
                 signature_details,
                 compute_budget_instruction_details,
+                instruction_data_len,
             },
         })
     }
@@ -158,14 +162,14 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
 
         let message = match self.version() {
             TransactionVersion::Legacy => {
-                VersionedMessage::Legacy(solana_sdk::message::legacy::Message {
+                VersionedMessage::Legacy(solana_message::legacy::Message {
                     header,
                     account_keys: static_account_keys,
                     recent_blockhash,
                     instructions,
                 })
             }
-            TransactionVersion::V0 => VersionedMessage::V0(solana_sdk::message::v0::Message {
+            TransactionVersion::V0 => VersionedMessage::V0(solana_message::v0::Message {
                 header,
                 account_keys: static_account_keys,
                 recent_blockhash,
@@ -192,14 +196,13 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
 mod tests {
     use {
         super::*,
-        solana_sdk::{
-            address_lookup_table::AddressLookupTableAccount,
-            hash::Hash,
-            message::{v0, SimpleAddressLoader},
-            reserved_account_keys::ReservedAccountKeys,
-            signature::{Keypair, Signature},
-            system_instruction, system_transaction,
-        },
+        agave_reserved_account_keys::ReservedAccountKeys,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::{v0, AddressLookupTableAccount, SimpleAddressLoader},
+        solana_signature::Signature,
+        solana_system_interface::instruction as system_instruction,
+        solana_system_transaction as system_transaction,
     };
 
     #[test]

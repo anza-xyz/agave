@@ -1,5 +1,3 @@
-use crate::replay_stage::DUPLICATE_THRESHOLD;
-
 pub mod fork_choice;
 pub mod heaviest_subtree_fork_choice;
 pub(crate) mod latest_validator_votes_for_frozen_banks;
@@ -7,6 +5,7 @@ pub mod progress_map;
 mod tower1_14_11;
 mod tower1_7_14;
 pub mod tower_storage;
+pub(crate) mod tower_vote_state;
 pub mod tree_diff;
 pub mod vote_stake_tracker;
 
@@ -18,25 +17,28 @@ use {
         tower1_14_11::Tower1_14_11,
         tower1_7_14::Tower1_7_14,
         tower_storage::{SavedTower, SavedTowerVersions, TowerStorage},
+        tower_vote_state::TowerVoteState,
     },
+    crate::replay_stage::DUPLICATE_THRESHOLD,
     chrono::prelude::*,
-    solana_ledger::{ancestor_iterator::AncestorIterator, blockstore::Blockstore, blockstore_db},
-    solana_runtime::{bank::Bank, bank_forks::BankForks, commitment::VOTE_THRESHOLD_SIZE},
-    solana_sdk::{
-        clock::{Slot, UnixTimestamp},
-        hash::Hash,
-        instruction::Instruction,
-        pubkey::Pubkey,
-        signature::Keypair,
-        slot_history::{Check, SlotHistory},
+    solana_clock::{Slot, UnixTimestamp},
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_keypair::Keypair,
+    solana_ledger::{
+        ancestor_iterator::AncestorIterator,
+        blockstore::{self, Blockstore},
     },
-    solana_vote::vote_account::VoteAccountsHashMap,
+    solana_pubkey::Pubkey,
+    solana_runtime::{bank::Bank, bank_forks::BankForks, commitment::VOTE_THRESHOLD_SIZE},
+    solana_slot_history::{Check, SlotHistory},
+    solana_vote::{vote_account::VoteAccountsHashMap, vote_transaction::VoteTransaction},
     solana_vote_program::{
+        vote_error::VoteError,
         vote_instruction,
         vote_state::{
-            process_slot_vote_unchecked, process_vote_unchecked, BlockTimestamp, LandedVote,
-            Lockout, TowerSync, Vote, VoteState, VoteState1_14_11, VoteStateUpdate,
-            VoteStateVersions, VoteTransaction, MAX_LOCKOUT_HISTORY,
+            BlockTimestamp, Lockout, TowerSync, Vote, VoteState1_14_11, VoteStateUpdate,
+            MAX_LOCKOUT_HISTORY,
         },
     },
     std::{
@@ -175,9 +177,10 @@ pub(crate) struct ComputedBankState {
     pub my_latest_landed_vote: Option<Slot>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum TowerVersions {
-    V1_17_14(Tower1_7_14),
+    V1_7_14(Tower1_7_14),
     V1_14_11(Tower1_14_11),
     Current(Tower),
 }
@@ -189,34 +192,8 @@ impl TowerVersions {
 
     pub fn convert_to_current(self) -> Tower {
         match self {
-            TowerVersions::V1_17_14(tower) => {
-                let box_last_vote = VoteTransaction::from(tower.last_vote.clone());
-
-                Tower {
-                    node_pubkey: tower.node_pubkey,
-                    threshold_depth: tower.threshold_depth,
-                    threshold_size: tower.threshold_size,
-                    vote_state: VoteStateVersions::V1_14_11(Box::new(tower.vote_state))
-                        .convert_to_current(),
-                    last_vote: box_last_vote,
-                    last_vote_tx_blockhash: tower.last_vote_tx_blockhash,
-                    last_timestamp: tower.last_timestamp,
-                    stray_restored_slot: tower.stray_restored_slot,
-                    last_switch_threshold_check: tower.last_switch_threshold_check,
-                }
-            }
-            TowerVersions::V1_14_11(tower) => Tower {
-                node_pubkey: tower.node_pubkey,
-                threshold_depth: tower.threshold_depth,
-                threshold_size: tower.threshold_size,
-                vote_state: VoteStateVersions::V1_14_11(Box::new(tower.vote_state))
-                    .convert_to_current(),
-                last_vote: tower.last_vote,
-                last_vote_tx_blockhash: tower.last_vote_tx_blockhash,
-                last_timestamp: tower.last_timestamp,
-                stray_restored_slot: tower.stray_restored_slot,
-                last_switch_threshold_check: tower.last_switch_threshold_check,
-            },
+            TowerVersions::V1_7_14(tower) => tower.into(),
+            TowerVersions::V1_14_11(tower) => tower.into(),
             TowerVersions::Current(tower) => tower,
         }
     }
@@ -236,19 +213,13 @@ pub(crate) enum BlockhashStatus {
     Blockhash(Hash),
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "9ziHa1vA7WG5RCvXiE3g1f2qjSTNa47FB7e2czo7en7a")
-)]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Tower {
     pub node_pubkey: Pubkey,
     pub(crate) threshold_depth: usize,
     threshold_size: f64,
-    pub(crate) vote_state: VoteState,
+    pub(crate) vote_state: TowerVoteState,
     last_vote: VoteTransaction,
-    #[serde(skip)]
     // The blockhash used in the last vote transaction, may or may not equal the
     // blockhash of the voted block itself, depending if the vote slot was refreshed.
     // For instance, a vote for slot 5, may be refreshed/resubmitted for inclusion in
@@ -256,7 +227,6 @@ pub struct Tower {
     // For non voting validators this is NonVoting
     last_vote_tx_blockhash: BlockhashStatus,
     last_timestamp: BlockTimestamp,
-    #[serde(skip)]
     // Restored last voted slot which cannot be found in SlotHistory at replayed root
     // (This is a special field for slashing-free validator restart with edge cases).
     // This could be emptied after some time; but left intact indefinitely for easier
@@ -264,7 +234,6 @@ pub struct Tower {
     // Further, stray slot can be stale or not. `Stale` here means whether given
     // bank_forks (=~ ledger) lacks the slot or not.
     stray_restored_slot: Option<Slot>,
-    #[serde(skip)]
     pub last_switch_threshold_check: Option<(Slot, SwitchForkDecision)>,
 }
 
@@ -274,7 +243,7 @@ impl Default for Tower {
             node_pubkey: Pubkey::default(),
             threshold_depth: VOTE_THRESHOLD_DEPTH,
             threshold_size: VOTE_THRESHOLD_SIZE,
-            vote_state: VoteState::default(),
+            vote_state: TowerVoteState::default(),
             last_vote: VoteTransaction::from(TowerSync::default()),
             last_timestamp: BlockTimestamp::default(),
             last_vote_tx_blockhash: BlockhashStatus::default(),
@@ -284,6 +253,60 @@ impl Default for Tower {
         // VoteState::root_slot is ensured to be Some in Tower
         tower.vote_state.root_slot = Some(Slot::default());
         tower
+    }
+}
+
+// Tower1_14_11 is the persisted data format for the Tower,
+// decoupling it from VoteState::Current.
+impl From<Tower> for Tower1_14_11 {
+    fn from(tower: Tower) -> Self {
+        Self {
+            node_pubkey: tower.node_pubkey,
+            threshold_depth: tower.threshold_depth,
+            threshold_size: tower.threshold_size,
+            vote_state: VoteState1_14_11::from(tower.vote_state),
+            last_vote: tower.last_vote,
+            last_vote_tx_blockhash: tower.last_vote_tx_blockhash,
+            last_timestamp: tower.last_timestamp,
+            stray_restored_slot: tower.stray_restored_slot,
+            last_switch_threshold_check: tower.last_switch_threshold_check,
+        }
+    }
+}
+
+// Tower1_14_11 is the persisted data format for the Tower,
+// decoupling it from VoteState::Current.
+impl From<Tower1_14_11> for Tower {
+    fn from(tower: Tower1_14_11) -> Self {
+        Self {
+            node_pubkey: tower.node_pubkey,
+            threshold_depth: tower.threshold_depth,
+            threshold_size: tower.threshold_size,
+            vote_state: TowerVoteState::from(tower.vote_state),
+            last_vote: tower.last_vote,
+            last_vote_tx_blockhash: tower.last_vote_tx_blockhash,
+            last_timestamp: tower.last_timestamp,
+            stray_restored_slot: tower.stray_restored_slot,
+            last_switch_threshold_check: tower.last_switch_threshold_check,
+        }
+    }
+}
+
+impl From<Tower1_7_14> for Tower {
+    fn from(tower: Tower1_7_14) -> Self {
+        let box_last_vote = VoteTransaction::from(tower.last_vote.clone());
+
+        Self {
+            node_pubkey: tower.node_pubkey,
+            threshold_depth: tower.threshold_depth,
+            threshold_size: tower.threshold_size,
+            vote_state: TowerVoteState::from(tower.vote_state),
+            last_vote: box_last_vote,
+            last_vote_tx_blockhash: tower.last_vote_tx_blockhash,
+            last_timestamp: tower.last_timestamp,
+            stray_restored_slot: tower.stray_restored_slot,
+            last_switch_threshold_check: tower.last_switch_threshold_check,
+        }
     }
 }
 
@@ -313,11 +336,11 @@ impl Tower {
 
     #[cfg(test)]
     pub fn new_random(node_pubkey: Pubkey) -> Self {
-        use rand::Rng;
+        use {rand::Rng, solana_vote_program::vote_state::VoteStateV3};
 
         let mut rng = rand::thread_rng();
         let root_slot = rng.gen();
-        let vote_state = VoteState::new_rand_for_tests(node_pubkey, root_slot);
+        let vote_state = VoteStateV3::new_rand_for_tests(node_pubkey, root_slot);
         let last_vote = TowerSync::from(
             vote_state
                 .votes
@@ -327,7 +350,7 @@ impl Tower {
         );
         Self {
             node_pubkey,
-            vote_state,
+            vote_state: TowerVoteState::from(vote_state),
             last_vote: VoteTransaction::from(last_vote),
             ..Tower::default()
         }
@@ -339,10 +362,14 @@ impl Tower {
         vote_account: &Pubkey,
     ) -> Self {
         let root_bank = bank_forks.root_bank();
+        let frozen_banks: Vec<_> = bank_forks
+            .frozen_banks()
+            .map(|(_slot, bank)| bank)
+            .collect();
         let (_progress, heaviest_subtree_fork_choice) =
             crate::replay_stage::ReplayStage::initialize_progress_and_fork_choice(
                 root_bank.deref(),
-                bank_forks.frozen_banks().values().cloned().collect(),
+                frozen_banks,
                 node_pubkey,
                 vote_account,
                 vec![],
@@ -380,18 +407,18 @@ impl Tower {
             if voted_stake == 0 {
                 continue;
             }
-            trace!("{} {} with stake {}", vote_account_pubkey, key, voted_stake);
-            let mut vote_state = account.vote_state().clone();
+            trace!("{vote_account_pubkey} {key} with stake {voted_stake}");
+            let mut vote_state = TowerVoteState::from(account.vote_state_view());
             for vote in &vote_state.votes {
                 lockout_intervals
-                    .entry(vote.lockout.last_locked_out_slot())
+                    .entry(vote.last_locked_out_slot())
                     .or_default()
                     .push((vote.slot(), key));
             }
 
             if key == *vote_account_pubkey {
                 my_latest_landed_vote = vote_state.nth_recent_lockout(0).map(|l| l.slot());
-                debug!("vote state {:?}", vote_state);
+                debug!("vote state {vote_state:?}");
                 debug!(
                     "observed slot {}",
                     vote_state
@@ -425,7 +452,7 @@ impl Tower {
                 );
             }
 
-            process_slot_vote_unchecked(&mut vote_state, bank_slot);
+            vote_state.process_next_vote_slot(bank_slot);
 
             for vote in &vote_state.votes {
                 vote_slots.insert(vote.slot());
@@ -551,8 +578,8 @@ impl Tower {
         if let Some(last_voted_slot) = self.last_vote.last_voted_slot() {
             if heaviest_slot_on_same_fork <= last_voted_slot {
                 warn!(
-                    "Trying to refresh timestamp for vote on {last_voted_slot}
-                     using smaller heaviest bank {heaviest_slot_on_same_fork}"
+                    "Trying to refresh timestamp for vote on {last_voted_slot} using smaller \
+                     heaviest bank {heaviest_slot_on_same_fork}"
                 );
                 return;
             }
@@ -563,8 +590,8 @@ impl Tower {
             self.last_vote.set_timestamp(Some(timestamp));
         } else {
             warn!(
-                "Trying to refresh timestamp for last vote on heaviest bank on same fork
-                   {heaviest_slot_on_same_fork}, but there is no vote to refresh"
+                "Trying to refresh timestamp for last vote on heaviest bank on same fork \
+                 {heaviest_slot_on_same_fork}, but there is no vote to refresh"
             );
         }
     }
@@ -583,8 +610,7 @@ impl Tower {
 
     pub fn last_voted_slot_in_bank(bank: &Bank, vote_account_pubkey: &Pubkey) -> Option<Slot> {
         let vote_account = bank.get_vote_account(vote_account_pubkey)?;
-        let vote_state = vote_account.vote_state();
-        vote_state.last_voted_slot()
+        vote_account.vote_state_view().last_voted_slot()
     }
 
     pub fn record_bank_vote(&mut self, bank: &Bank) -> Option<Slot> {
@@ -601,7 +627,7 @@ impl Tower {
             bank.slot(),
             bank.hash(),
             bank.feature_set
-                .is_active(&solana_feature_set::enable_tower_sync_ix::id()),
+                .is_active(&agave_feature_set::enable_tower_sync_ix::id()),
             block_id,
         )
     }
@@ -616,22 +642,14 @@ impl Tower {
     ) {
         let mut new_vote = if enable_tower_sync_ix {
             VoteTransaction::from(TowerSync::new(
-                self.vote_state
-                    .votes
-                    .iter()
-                    .map(|vote| vote.lockout)
-                    .collect(),
+                self.vote_state.votes.clone(),
                 self.vote_state.root_slot,
                 vote_hash,
                 block_id,
             ))
         } else {
             VoteTransaction::from(VoteStateUpdate::new(
-                self.vote_state
-                    .votes
-                    .iter()
-                    .map(|vote| vote.lockout)
-                    .collect(),
+                self.vote_state.votes.clone(),
                 self.vote_state.root_slot,
                 vote_hash,
             ))
@@ -648,17 +666,21 @@ impl Tower {
         enable_tower_sync_ix: bool,
         block_id: Hash,
     ) -> Option<Slot> {
+        if let Some(last_voted_slot) = self.vote_state.last_voted_slot() {
+            if vote_slot <= last_voted_slot {
+                panic!(
+                    "Error while recording vote {} {} in local tower {:?}",
+                    vote_slot,
+                    vote_hash,
+                    VoteError::VoteTooOld
+                );
+            }
+        }
+
         trace!("{} record_vote for {}", self.node_pubkey, vote_slot);
         let old_root = self.root();
 
-        let vote = Vote::new(vec![vote_slot], vote_hash);
-        let result = process_vote_unchecked(&mut self.vote_state, vote);
-        if result.is_err() {
-            panic!(
-                "Error while recording vote {} {} in local tower {:?}",
-                vote_slot, vote_hash, result
-            );
-        }
+        self.vote_state.process_next_vote_slot(vote_slot);
         self.update_last_vote_from_vote_state(vote_hash, enable_tower_sync_ix, block_id);
 
         let new_root = self.root();
@@ -683,8 +705,7 @@ impl Tower {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn increase_lockout(&mut self, confirmation_count_increase: u32) {
         for vote in self.vote_state.votes.iter_mut() {
-            vote.lockout
-                .increase_confirmation_count(confirmation_count_increase);
+            vote.increase_confirmation_count(confirmation_count_increase);
         }
     }
 
@@ -776,7 +797,7 @@ impl Tower {
         // remaining voted slots are on a different fork from the checked slot,
         // it's still locked out.
         let mut vote_state = self.vote_state.clone();
-        process_slot_vote_unchecked(&mut vote_state, slot);
+        vote_state.process_next_vote_slot(slot);
         for vote in &vote_state.votes {
             if slot != vote.slot() && !ancestors.contains(&vote.slot()) {
                 return true;
@@ -940,7 +961,7 @@ impl Tower {
                      vote({last_voted_slot}), meaning some inconsistency between saved tower and \
                      ledger."
                 );
-                warn!("{}", message);
+                warn!("{message}");
                 datapoint_warn!("tower_warn", ("warn", message, String));
             }
             &empty_ancestors
@@ -1095,8 +1116,8 @@ impl Tower {
                             last_vote_ancestors,
                         )
                         .expect(
-                            "candidate_slot and switch_slot exist in descendants map,
-                        so they must exist in ancestors map",
+                            "candidate_slot and switch_slot exist in descendants map, so they \
+                             must exist in ancestors map",
                         )
                 }
             {
@@ -1234,11 +1255,7 @@ impl Tower {
         );
         let new_check = Some((switch_slot, decision.clone()));
         if new_check != self.last_switch_threshold_check {
-            trace!(
-                "new switch threshold check: slot {}: {:?}",
-                switch_slot,
-                decision,
-            );
+            trace!("new switch threshold check: slot {switch_slot}: {decision:?}",);
             self.last_switch_threshold_check = new_check;
         }
         decision
@@ -1255,11 +1272,11 @@ impl Tower {
     // would have rolled up to earlier votes in the tower, which presumably
     // could have helped us pass the threshold check. Worst case, we'll just
     // recheck later without having increased lockouts.
-    fn optimistically_bypass_vote_stake_threshold_check(
-        vote_state_before_applying_vote: &VoteState,
+    fn optimistically_bypass_vote_stake_threshold_check<'a>(
+        tower_before_applying_vote: impl Iterator<Item = &'a Lockout>,
         threshold_vote: &Lockout,
     ) -> bool {
-        for old_vote in &vote_state_before_applying_vote.votes {
+        for old_vote in tower_before_applying_vote {
             if old_vote.slot() == threshold_vote.slot()
                 && old_vote.confirmation_count() == threshold_vote.confirmation_count()
             {
@@ -1270,9 +1287,9 @@ impl Tower {
     }
 
     /// Checks a single vote threshold for `slot`
-    fn check_vote_stake_threshold(
+    fn check_vote_stake_threshold<'a>(
         threshold_vote: Option<&Lockout>,
-        vote_state_before_applying_vote: &VoteState,
+        tower_before_applying_vote: impl Iterator<Item = &'a Lockout>,
         threshold_depth: usize,
         threshold_size: f64,
         slot: Slot,
@@ -1299,7 +1316,7 @@ impl Tower {
             total_stake
         );
         if Self::optimistically_bypass_vote_stake_threshold_check(
-            vote_state_before_applying_vote,
+            tower_before_applying_vote,
             threshold_vote,
         ) || lockout > threshold_size
         {
@@ -1318,7 +1335,7 @@ impl Tower {
         let mut threshold_decisions = vec![];
         // Generate the vote state assuming this vote is included.
         let mut vote_state = self.vote_state.clone();
-        process_slot_vote_unchecked(&mut vote_state, slot);
+        vote_state.process_next_vote_slot(slot);
 
         // Assemble all the vote thresholds and depths to check.
         let vote_thresholds_and_depths = vec![
@@ -1336,7 +1353,7 @@ impl Tower {
             if let ThresholdDecision::FailedThreshold(vote_depth, stake) =
                 Self::check_vote_stake_threshold(
                     vote_state.nth_recent_lockout(threshold_depth),
-                    &self.vote_state,
+                    self.vote_state.votes.iter(),
                     threshold_depth,
                     threshold_size,
                     slot,
@@ -1451,7 +1468,7 @@ impl Tower {
                     "For some reason, we're REPROCESSING slots which has already been voted and \
                      ROOTED by us; VOTING will be SUSPENDED UNTIL {last_voted_slot}!",
                 );
-                error!("{}", message);
+                error!("{message}");
                 datapoint_error!("tower_error", ("error", message, String));
 
                 // Let's pass-through adjust_lockouts_with_slot_history just for sanitization,
@@ -1550,7 +1567,7 @@ impl Tower {
         }
 
         // Check for errors if not anchored
-        info!("adjusted tower's anchored slot: {:?}", anchored_slot);
+        info!("adjusted tower's anchored slot: {anchored_slot:?}");
         if anchored_slot.is_none() {
             // this error really shouldn't happen unless ledger/tower is corrupted
             return Err(TowerError::FatallyInconsistent(
@@ -1598,14 +1615,9 @@ impl Tower {
         bank: &Bank,
     ) {
         if let Some(vote_account) = bank.get_vote_account(vote_account_pubkey) {
-            self.vote_state = vote_account.vote_state().clone();
+            self.vote_state = TowerVoteState::from(vote_account.vote_state_view());
             self.initialize_root(root);
             self.initialize_lockouts(|v| v.slot() > root);
-            trace!(
-                "Lockouts in tower for {} is initialized using bank {}",
-                self.vote_state.node_pubkey,
-                bank.slot(),
-            );
         } else {
             self.initialize_root(root);
             info!(
@@ -1616,7 +1628,7 @@ impl Tower {
         }
     }
 
-    fn initialize_lockouts<F: FnMut(&LandedVote) -> bool>(&mut self, should_retain: F) {
+    fn initialize_lockouts<F: FnMut(&Lockout) -> bool>(&mut self, should_retain: F) {
         self.vote_state.votes.retain(should_retain);
     }
 
@@ -1664,25 +1676,6 @@ pub enum TowerError {
     HardFork(Slot),
 }
 
-// Tower1_14_11 is the persisted data format for the Tower, decoupling it from VoteState::Current
-// From Tower1_14_11 to Tower is not implemented because it is not an expected conversion
-#[allow(clippy::from_over_into)]
-impl Into<Tower1_14_11> for Tower {
-    fn into(self) -> Tower1_14_11 {
-        Tower1_14_11 {
-            node_pubkey: self.node_pubkey,
-            threshold_depth: self.threshold_depth,
-            threshold_size: self.threshold_size,
-            vote_state: VoteState1_14_11::from(self.vote_state.clone()),
-            last_vote: self.last_vote.clone(),
-            last_vote_tx_blockhash: self.last_vote_tx_blockhash,
-            last_timestamp: self.last_timestamp,
-            stray_restored_slot: self.stray_restored_slot,
-            last_switch_threshold_check: self.last_switch_threshold_check,
-        }
-    }
-}
-
 impl TowerError {
     pub fn is_file_missing(&self) -> bool {
         if let TowerError::IoError(io_err) = &self {
@@ -1722,7 +1715,7 @@ pub fn reconcile_blockstore_roots_with_external_source(
     // blockstore.max_root() might have been updated already.
     // so take a &mut param both to input (and output iff we update root)
     last_blockstore_root: &mut Slot,
-) -> blockstore_db::Result<()> {
+) -> blockstore::Result<()> {
     let external_root = external_source.root();
     if *last_blockstore_root < external_root {
         // Ensure external_root itself to exist and be marked as rooted in the blockstore
@@ -1740,9 +1733,8 @@ pub fn reconcile_blockstore_roots_with_external_source(
             .collect();
         if !new_roots.is_empty() {
             info!(
-                "Reconciling slots as root based on external root: {:?} (external: {:?}, \
-                 blockstore: {})",
-                new_roots, external_source, last_blockstore_root
+                "Reconciling slots as root based on external root: {new_roots:?} (external: \
+                 {external_source:?}, blockstore: {last_blockstore_root})"
             );
 
             // Unfortunately, we can't supply duplicate-confirmed hashes,
@@ -1764,10 +1756,9 @@ pub fn reconcile_blockstore_roots_with_external_source(
             // That's because we might have a chance of recovering properly with
             // newer snapshot.
             warn!(
-                "Couldn't find any ancestor slots from external source ({:?}) towards blockstore \
-                 root ({}); blockstore pruned or only tower moved into new ledger or just hard \
-                 fork?",
-                external_source, last_blockstore_root,
+                "Couldn't find any ancestor slots from external source ({external_source:?}) \
+                 towards blockstore root ({last_blockstore_root}); blockstore pruned or only \
+                 tower moved into new ledger or just hard fork?",
             );
         }
     }
@@ -1787,18 +1778,18 @@ pub mod test {
             vote_simulator::VoteSimulator,
         },
         itertools::Itertools,
+        solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        solana_clock::Slot,
+        solana_hash::Hash,
         solana_ledger::{blockstore::make_slot_entries, get_tmp_ledger_path_auto_delete},
+        solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-            clock::Slot,
-            hash::Hash,
-            pubkey::Pubkey,
-            signature::Signer,
-            slot_history::SlotHistory,
-        },
+        solana_signer::Signer,
+        solana_slot_history::SlotHistory,
         solana_vote::vote_account::VoteAccount,
-        solana_vote_program::vote_state::{Vote, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+        solana_vote_program::vote_state::{
+            process_slot_vote_unchecked, Vote, VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+        },
         std::{
             collections::{HashMap, VecDeque},
             fs::{remove_file, OpenOptions},
@@ -1815,22 +1806,22 @@ pub mod test {
             .iter()
             .map(|(lamports, votes)| {
                 let mut account = AccountSharedData::from(Account {
-                    data: vec![0; VoteState::size_of()],
+                    data: vec![0; VoteStateV3::size_of()],
                     lamports: *lamports,
                     owner: solana_vote_program::id(),
                     ..Account::default()
                 });
-                let mut vote_state = VoteState::default();
+                let mut vote_state = VoteStateV3::default();
                 for slot in *votes {
                     process_slot_vote_unchecked(&mut vote_state, *slot);
                 }
-                VoteState::serialize(
-                    &VoteStateVersions::new_current(vote_state),
+                VoteStateV3::serialize(
+                    &VoteStateVersions::new_v3(vote_state),
                     account.data_as_mut_slice(),
                 )
                 .expect("serialize state");
                 (
-                    solana_sdk::pubkey::new_rand(),
+                    solana_pubkey::new_rand(),
                     (*lamports, VoteAccount::try_from(account).unwrap()),
                 )
             })
@@ -1988,6 +1979,7 @@ pub mod test {
         let duplicate_ancestor1 = 44;
         let duplicate_ancestor2 = 45;
         vote_simulator
+            .tbft_structs
             .heaviest_subtree_fork_choice
             .mark_fork_invalid_candidate(&(
                 duplicate_ancestor1,
@@ -2000,6 +1992,7 @@ pub mod test {
                     .hash(),
             ));
         vote_simulator
+            .tbft_structs
             .heaviest_subtree_fork_choice
             .mark_fork_invalid_candidate(&(
                 duplicate_ancestor2,
@@ -2020,7 +2013,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchDuplicateRollback(duplicate_ancestor2)
         );
@@ -2034,6 +2027,7 @@ pub mod test {
         }
         for (i, duplicate_ancestor) in confirm_ancestors.into_iter().enumerate() {
             vote_simulator
+                .tbft_structs
                 .heaviest_subtree_fork_choice
                 .mark_fork_valid_candidate(&(
                     duplicate_ancestor,
@@ -2053,7 +2047,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             );
             if i == 0 {
                 assert_eq!(
@@ -2085,7 +2079,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SameFork
         );
@@ -2100,7 +2094,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2117,7 +2111,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2134,7 +2128,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2151,7 +2145,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2170,7 +2164,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2187,7 +2181,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SwitchProof(Hash::default())
         );
@@ -2205,7 +2199,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SwitchProof(Hash::default())
         );
@@ -2227,7 +2221,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2255,7 +2249,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, num_validators * 10000)
         );
@@ -2271,7 +2265,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2304,7 +2298,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SwitchProof(Hash::default())
         );
@@ -2324,7 +2318,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -2448,8 +2442,8 @@ pub mod test {
             .unwrap()
             .get_vote_account(&vote_pubkey)
             .unwrap();
-        let state = observed.vote_state();
-        info!("observed tower: {:#?}", state.votes);
+        let state = observed.vote_state_view();
+        info!("observed tower: {:#?}", state.votes_iter().collect_vec());
 
         let num_slots_to_try = 200;
         cluster_votes
@@ -3044,7 +3038,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SameFork
         );
@@ -3059,7 +3053,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -3075,7 +3069,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SwitchProof(Hash::default())
         );
@@ -3135,7 +3129,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -3151,7 +3145,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20000)
         );
@@ -3167,7 +3161,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::SwitchProof(Hash::default())
         );
@@ -3255,11 +3249,11 @@ pub mod test {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-        let (shreds, _) = make_slot_entries(1, 0, 42, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(1, 0, 42);
         blockstore.insert_shreds(shreds, None, false).unwrap();
-        let (shreds, _) = make_slot_entries(3, 1, 42, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(3, 1, 42);
         blockstore.insert_shreds(shreds, None, false).unwrap();
-        let (shreds, _) = make_slot_entries(4, 1, 42, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(4, 1, 42);
         blockstore.insert_shreds(shreds, None, false).unwrap();
         assert!(!blockstore.is_root(0));
         assert!(!blockstore.is_root(1));
@@ -3291,11 +3285,11 @@ pub mod test {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-        let (shreds, _) = make_slot_entries(1, 0, 42, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(1, 0, 42);
         blockstore.insert_shreds(shreds, None, false).unwrap();
-        let (shreds, _) = make_slot_entries(3, 1, 42, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(3, 1, 42);
         blockstore.insert_shreds(shreds, None, false).unwrap();
-        let (shreds, _) = make_slot_entries(4, 1, 42, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(4, 1, 42);
         blockstore.insert_shreds(shreds, None, false).unwrap();
         blockstore.set_roots(std::iter::once(&3)).unwrap();
         assert!(!blockstore.is_root(0));
@@ -3319,9 +3313,9 @@ pub mod test {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-        let (shreds, _) = make_slot_entries(1, 0, 42, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(1, 0, 42);
         blockstore.insert_shreds(shreds, None, false).unwrap();
-        let (shreds, _) = make_slot_entries(3, 1, 42, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(3, 1, 42);
         blockstore.insert_shreds(shreds, None, false).unwrap();
         assert!(!blockstore.is_root(0));
         assert!(!blockstore.is_root(1));
@@ -3416,7 +3410,7 @@ pub mod test {
 
     #[test]
     fn test_adjust_lockouts_after_replay_all_rooted_with_too_old() {
-        use solana_sdk::slot_history::MAX_ENTRIES;
+        use solana_slot_history::MAX_ENTRIES;
 
         let mut tower = Tower::new_for_tests(10, 0.9);
         tower.record_vote(0, Hash::default());
@@ -3542,7 +3536,7 @@ pub mod test {
 
     #[test]
     fn test_adjust_lockouts_after_replay_too_old_tower() {
-        use solana_sdk::slot_history::MAX_ENTRIES;
+        use solana_slot_history::MAX_ENTRIES;
 
         let mut tower = Tower::new_for_tests(10, 0.9);
         tower.record_vote(0, Hash::default());
@@ -3562,14 +3556,8 @@ pub mod test {
     #[test]
     fn test_adjust_lockouts_after_replay_time_warped() {
         let mut tower = Tower::new_for_tests(10, 0.9);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(1)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(0)));
+        tower.vote_state.votes.push_back(Lockout::new(1));
+        tower.vote_state.votes.push_back(Lockout::new(0));
         let vote = Vote::new(vec![0], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3586,14 +3574,8 @@ pub mod test {
     #[test]
     fn test_adjust_lockouts_after_replay_diverged_ancestor() {
         let mut tower = Tower::new_for_tests(10, 0.9);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(1)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(2)));
+        tower.vote_state.votes.push_back(Lockout::new(1));
+        tower.vote_state.votes.push_back(Lockout::new(2));
         let vote = Vote::new(vec![2], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3610,21 +3592,15 @@ pub mod test {
 
     #[test]
     fn test_adjust_lockouts_after_replay_out_of_order() {
-        use solana_sdk::slot_history::MAX_ENTRIES;
+        use solana_slot_history::MAX_ENTRIES;
 
         let mut tower = Tower::new_for_tests(10, 0.9);
         tower
             .vote_state
             .votes
-            .push_back(LandedVote::from(Lockout::new(MAX_ENTRIES - 1)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(0)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(1)));
+            .push_back(Lockout::new(MAX_ENTRIES - 1));
+        tower.vote_state.votes.push_back(Lockout::new(0));
+        tower.vote_state.votes.push_back(Lockout::new(1));
         let vote = Vote::new(vec![1], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3643,14 +3619,8 @@ pub mod test {
     #[should_panic(expected = "slot_in_tower(2) < checked_slot(1)")]
     fn test_adjust_lockouts_after_replay_reversed_votes() {
         let mut tower = Tower::new_for_tests(10, 0.9);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(2)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(1)));
+        tower.vote_state.votes.push_back(Lockout::new(2));
+        tower.vote_state.votes.push_back(Lockout::new(1));
         let vote = Vote::new(vec![1], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3667,18 +3637,9 @@ pub mod test {
     #[should_panic(expected = "slot_in_tower(3) < checked_slot(3)")]
     fn test_adjust_lockouts_after_replay_repeated_non_root_votes() {
         let mut tower = Tower::new_for_tests(10, 0.9);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(2)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(3)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(3)));
+        tower.vote_state.votes.push_back(Lockout::new(2));
+        tower.vote_state.votes.push_back(Lockout::new(3));
+        tower.vote_state.votes.push_back(Lockout::new(3));
         let vote = Vote::new(vec![3], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3695,18 +3656,9 @@ pub mod test {
     fn test_adjust_lockouts_after_replay_vote_on_root() {
         let mut tower = Tower::new_for_tests(10, 0.9);
         tower.vote_state.root_slot = Some(42);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(42)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(43)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(44)));
+        tower.vote_state.votes.push_back(Lockout::new(42));
+        tower.vote_state.votes.push_back(Lockout::new(43));
+        tower.vote_state.votes.push_back(Lockout::new(44));
         let vote = Vote::new(vec![44], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3720,10 +3672,7 @@ pub mod test {
     #[test]
     fn test_adjust_lockouts_after_replay_vote_on_genesis() {
         let mut tower = Tower::new_for_tests(10, 0.9);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(0)));
+        tower.vote_state.votes.push_back(Lockout::new(0));
         let vote = Vote::new(vec![0], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
 
@@ -3736,14 +3685,8 @@ pub mod test {
     #[test]
     fn test_adjust_lockouts_after_replay_future_tower() {
         let mut tower = Tower::new_for_tests(10, 0.9);
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(13)));
-        tower
-            .vote_state
-            .votes
-            .push_back(LandedVote::from(Lockout::new(14)));
+        tower.vote_state.votes.push_back(Lockout::new(13));
+        tower.vote_state.votes.push_back(Lockout::new(14));
         let vote = Vote::new(vec![14], Hash::default());
         tower.last_vote = VoteTransaction::from(vote);
         tower.initialize_root(12);
@@ -3823,7 +3766,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20_000)
         );
@@ -3841,7 +3784,7 @@ pub mod test {
                     total_stake,
                     bank0.epoch_vote_accounts(0).unwrap(),
                     &vote_simulator.latest_validator_votes_for_frozen_banks,
-                    &vote_simulator.heaviest_subtree_fork_choice,
+                    &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
                 ),
                 SwitchForkDecision::SwitchProof(Hash::default())
             );
@@ -3879,7 +3822,7 @@ pub mod test {
                 total_stake,
                 bank0.epoch_vote_accounts(0).unwrap(),
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
-                &vote_simulator.heaviest_subtree_fork_choice,
+                &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
             ),
             SwitchForkDecision::FailedSwitchThreshold(0, 20_000)
         );
@@ -3899,7 +3842,7 @@ pub mod test {
                     total_stake,
                     bank0.epoch_vote_accounts(0).unwrap(),
                     &vote_simulator.latest_validator_votes_for_frozen_banks,
-                    &vote_simulator.heaviest_subtree_fork_choice,
+                    &vote_simulator.tbft_structs.heaviest_subtree_fork_choice,
                 ),
                 SwitchForkDecision::SwitchProof(Hash::default())
             );

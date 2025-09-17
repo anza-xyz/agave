@@ -1,7 +1,4 @@
-use {
-    super::*,
-    spl_token_2022::solana_program::{program_option::COption, pubkey::Pubkey},
-};
+use {super::*, solana_program_option::COption, solana_pubkey::Pubkey};
 
 pub(in crate::parse_token) fn parse_initialize_mint_close_authority_instruction(
     close_authority: COption<Pubkey>,
@@ -21,10 +18,8 @@ pub(in crate::parse_token) fn parse_initialize_mint_close_authority_instruction(
 #[cfg(test)]
 mod test {
     use {
-        super::*,
-        serde_json::Value,
-        solana_sdk::pubkey::Pubkey,
-        spl_token_2022::{instruction::*, solana_program::message::Message},
+        super::*, serde_json::Value, solana_message::Message, solana_pubkey::Pubkey,
+        spl_token_2022_interface::instruction::*,
     };
 
     #[test]
@@ -32,7 +27,7 @@ mod test {
         let mint_pubkey = Pubkey::new_unique();
         let close_authority = Pubkey::new_unique();
         let mint_close_authority_ix = initialize_mint_close_authority(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &mint_pubkey,
             Some(&close_authority),
         )
@@ -55,7 +50,8 @@ mod test {
         );
 
         let mint_close_authority_ix =
-            initialize_mint_close_authority(&spl_token_2022::id(), &mint_pubkey, None).unwrap();
+            initialize_mint_close_authority(&spl_token_2022_interface::id(), &mint_pubkey, None)
+                .unwrap();
         let message = Message::new(&[mint_close_authority_ix], None);
         let compiled_instruction = &message.instructions[0];
         assert_eq!(

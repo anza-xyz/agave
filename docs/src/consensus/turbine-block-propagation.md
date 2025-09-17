@@ -85,8 +85,8 @@ reconstructed, and the validator has to rely on repair to fixup the blocks.
 
 The probability of the shred group failing can be computed using the binomial
 distribution. If the FEC rate is `16:4`, then the group size is 20, and at least
-4 of the shreds must fail for the group to fail. Which is equal to the sum of
-the probability of 4 or more trials failing out of 20.
+5 of the shreds must fail for the group to fail. Which is equal to the sum of
+the probability of 5 or more trials failing out of 20.
 
 Probability of a block succeeding in turbine:
 

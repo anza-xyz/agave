@@ -127,7 +127,7 @@ impl RemoteWalletManager {
                         Ok(info) => {
                             ledger.pretty_path = info.get_pretty_path();
                             let path = device_info.path().to_str().unwrap().to_string();
-                            trace!("Found device: {:?}", info);
+                            trace!("Found device: {info:?}");
                             detected_devices.push(Device {
                                 path,
                                 info,
@@ -135,12 +135,12 @@ impl RemoteWalletManager {
                             })
                         }
                         Err(err) => {
-                            error!("Error connecting to ledger device to read info: {}", err);
+                            error!("Error connecting to ledger device to read info: {err}");
                             errors.push(err)
                         }
                     }
                 }
-                Err(err) => error!("Error connecting to ledger device to read info: {}", err),
+                Err(err) => error!("Error connecting to ledger device to read info: {err}"),
             }
         }
 
@@ -198,7 +198,7 @@ impl RemoteWalletManager {
         while start_time.elapsed() <= *max_polling_duration {
             if let Ok(num_devices) = self.update_devices() {
                 let plural = if num_devices == 1 { "" } else { "s" };
-                trace!("{} Remote Wallet{} found", num_devices, plural);
+                trace!("{num_devices} Remote Wallet{plural} found");
                 return true;
             }
         }

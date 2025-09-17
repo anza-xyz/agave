@@ -1,7 +1,7 @@
 use {
-    crate::{blockstore::*, blockstore_db::Result, blockstore_meta::SlotMeta},
+    crate::{blockstore::*, blockstore_meta::SlotMeta},
     log::*,
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
 };
 
 pub struct RootedSlotIterator<'a> {
@@ -23,7 +23,7 @@ impl<'a> RootedSlotIterator<'a> {
         }
     }
 }
-impl<'a> Iterator for RootedSlotIterator<'a> {
+impl Iterator for RootedSlotIterator<'_> {
     type Item = (Slot, Option<SlotMeta>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -78,8 +78,7 @@ impl<'a> Iterator for RootedSlotIterator<'a> {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::blockstore_processor::fill_blockstore_slot_with_ticks,
-        solana_sdk::hash::Hash,
+        super::*, crate::blockstore_processor::fill_blockstore_slot_with_ticks, solana_hash::Hash,
     };
 
     #[test]

@@ -1,4 +1,4 @@
-use solana_sdk::clock::Slot;
+use solana_clock::Slot;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -19,5 +19,6 @@ impl Default for CompressionType {
 pub(crate) struct EpochIncompleteSlots {
     first: Slot,
     compression: CompressionType,
+    #[serde(with = "serde_bytes")]
     compressed_list: Vec<u8>,
 }

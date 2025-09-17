@@ -4,22 +4,18 @@
 extern crate test;
 
 use {
-    solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_genesis_config::create_genesis_config,
+    solana_instruction::error::LamportsError,
+    solana_pubkey::Pubkey,
     solana_runtime::bank::*,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        genesis_config::create_genesis_config,
-        hash::Hash,
-        lamports::LamportsError,
-        pubkey::Pubkey,
-    },
     std::{path::PathBuf, sync::Arc},
     test::Bencher,
 };
 
 fn deposit_many(bank: &Bank, pubkeys: &mut Vec<Pubkey>, num: usize) -> Result<(), LamportsError> {
     for t in 0..num {
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let account =
             AccountSharedData::new((t + 1) as u64, 0, AccountSharedData::default().owner());
         pubkeys.push(pubkey);
@@ -42,8 +38,7 @@ fn bench_accounts_create(bencher: &mut Bencher) {
 
 #[bench]
 fn bench_accounts_squash(bencher: &mut Bencher) {
-    let (mut genesis_config, _) = create_genesis_config(100_000);
-    genesis_config.rent.burn_percent = 100; // Avoid triggering an assert in Bank::distribute_rent_to_validators()
+    let (genesis_config, _) = create_genesis_config(100_000);
     let mut prev_bank = Arc::new(Bank::new_with_paths_for_benches(
         &genesis_config,
         vec![PathBuf::from("bench_a1")],
@@ -51,15 +46,6 @@ fn bench_accounts_squash(bencher: &mut Bencher) {
     let mut pubkeys: Vec<Pubkey> = vec![];
     deposit_many(&prev_bank, &mut pubkeys, 250_000).unwrap();
     prev_bank.freeze();
-
-    // Need to set the EAH to Valid so that `Bank::new_from_parent()` doesn't panic during
-    // freeze when parent is in the EAH calculation window.
-    prev_bank
-        .rc
-        .accounts
-        .accounts_db
-        .epoch_accounts_hash_manager
-        .set_valid(EpochAccountsHash::new(Hash::new_unique()), 0);
 
     // Measures the performance of the squash operation.
     // This mainly consists of the freeze operation which calculates the

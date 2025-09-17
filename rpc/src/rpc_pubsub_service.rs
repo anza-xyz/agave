@@ -13,7 +13,7 @@ use {
     soketto::handshake::{server, Server},
     solana_metrics::TokenCounter,
     solana_rayon_threadlimit::get_thread_count,
-    solana_sdk::timing::AtomicInterval,
+    solana_time_utils::AtomicInterval,
     std::{
         io,
         net::SocketAddr,
@@ -37,7 +37,7 @@ pub const DEFAULT_TEST_QUEUE_CAPACITY_ITEMS: usize = 100;
 pub const DEFAULT_QUEUE_CAPACITY_BYTES: usize = 256 * 1024 * 1024;
 pub const DEFAULT_WORKER_THREADS: usize = 1;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PubSubConfig {
     pub enable_block_subscription: bool,
     pub enable_vote_subscription: bool,
@@ -83,11 +83,11 @@ pub struct PubSubService {
 impl PubSubService {
     pub fn new(
         pubsub_config: PubSubConfig,
-        subscriptions: &Arc<RpcSubscriptions>,
+        subscriptions: &RpcSubscriptions,
         pubsub_addr: SocketAddr,
     ) -> (Trigger, Self) {
         let subscription_control = subscriptions.control().clone();
-        info!("rpc_pubsub bound to {:?}", pubsub_addr);
+        info!("rpc_pubsub bound to {pubsub_addr:?}");
 
         let (trigger, tripwire) = Tripwire::new();
         let thread_hdl = Builder::new()
@@ -375,7 +375,10 @@ async fn handle_connection(
         protocol: None,
     };
     server.send_response(&accept).await?;
-    let (mut sender, mut receiver) = server.into_builder().finish();
+    let mut builder = server.into_builder();
+    builder.set_max_message_size(4_096);
+    builder.set_max_frame_size(4_096);
+    let (mut sender, mut receiver) = builder.finish();
 
     let mut broadcast_receiver = subscription_control.broadcast_receiver();
     let mut data = Vec::new();
@@ -398,6 +401,12 @@ async fn handle_connection(
             pin!(receive_future);
             loop {
                 select! {
+                    biased; // See [prioritization] note below.
+
+                    // [prioritization]
+                    // This block must come FIRST in the `select!` macro. This prioritizes
+                    // processing received messages over sending messages. This ensures the timely
+                    // processing of new subscriptions and time-sensitive opcodes like `PING`.
                     result = &mut receive_future => match result {
                         Ok(_) => break,
                         Err(soketto::connection::Error::Closed) => return Ok(()),
@@ -445,7 +454,7 @@ async fn listen(
         select! {
             result = listener.accept() => match result {
                 Ok((socket, addr)) => {
-                    debug!("new client ({:?})", addr);
+                    debug!("new client ({addr:?})");
                     let subscription_control = subscription_control.clone();
                     let config = config.clone();
                     let tripwire = tripwire.clone();
@@ -455,13 +464,13 @@ async fn listen(
                             socket, subscription_control, config, tripwire
                         );
                         match handle.await {
-                            Ok(()) => debug!("connection closed ({:?})", addr),
-                            Err(err) => warn!("connection handler error ({:?}): {}", addr, err),
+                            Ok(()) => debug!("connection closed ({addr:?})"),
+                            Err(err) => warn!("connection handler error ({addr:?}): {err}"),
                         }
                         drop(counter_token); // Force moving token into the task.
                     });
                 }
-                Err(e) => error!("couldn't accept connection: {:?}", e),
+                Err(e) => error!("couldn't accept connection: {e:?}"),
             },
             _ = &mut tripwire => return Ok(()),
         }
@@ -493,7 +502,6 @@ mod tests {
         let pubsub_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
         let exit = Arc::new(AtomicBool::new(false));
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let max_complete_rewards_slot = Arc::new(AtomicU64::default());
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -502,7 +510,6 @@ mod tests {
         let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
             exit,
             max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
             bank_forks,
             Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests())),
             optimistically_confirmed_bank,

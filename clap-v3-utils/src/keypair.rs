@@ -9,6 +9,8 @@
 //! sources supported by the Solana CLI. Many other functions here are
 //! variations on, or delegate to, `signer_from_path`.
 
+#[cfg(feature = "elgamal")]
+use solana_zk_sdk::encryption::{auth_encryption::AeKey, elgamal::ElGamalKeypair};
 use {
     crate::{
         input_parsers::signer::{try_pubkeys_sigs_of, SignerSource, SignerSourceKind},
@@ -21,8 +23,8 @@ use {
     solana_derivation_path::DerivationPath,
     solana_hash::Hash,
     solana_keypair::{read_keypair, read_keypair_file, Keypair},
+    solana_message::Message,
     solana_presigner::Presigner,
-    solana_program::message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::{
         remote_keypair::generate_remote_keypair,
@@ -32,7 +34,6 @@ use {
     solana_seed_phrase::generate_seed_from_seed_phrase_and_passphrase,
     solana_signature::Signature,
     solana_signer::{null_signer::NullSigner, EncodableKey, EncodableKeypair, Signer},
-    solana_zk_token_sdk::encryption::{auth_encryption::AeKey, elgamal::ElGamalKeypair},
     std::{
         cell::RefCell,
         error,
@@ -170,13 +171,11 @@ impl DefaultSigner {
                     }
                 })
                 .map_err(|_| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!(
-                        "No default signer found, run \"solana-keygen new -o {}\" to create a new one",
+                    std::io::Error::other(format!(
+                        "No default signer found, run \"solana-keygen new -o {}\" to create a new \
+                         one",
                         self.path
-                    ),
-                    )
+                    ))
                 })?;
             *self.is_path_checked.borrow_mut() = true;
         }
@@ -424,7 +423,7 @@ pub struct SignerFromPathConfig {
 /// the following schemes are supported:
 ///
 /// - `file:` &mdash; Read the keypair from a JSON keypair file. The path portion
-///    of the URI is the file path.
+///   of the URI is the file path.
 ///
 /// - `stdin:` &mdash; Read the keypair from stdin, in the JSON format used by
 ///   the keypair file.
@@ -652,10 +651,10 @@ pub fn signer_from_source_with_config(
             )?))
         }
         SignerSourceKind::Filepath(path) => match read_keypair_file(path) {
-            Err(e) => Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("could not read keypair file \"{path}\". Run \"solana-keygen new\" to create a keypair file: {e}"),
-            )
+            Err(e) => Err(std::io::Error::other(format!(
+                "could not read keypair file \"{path}\". Run \"solana-keygen new\" to create a \
+                 keypair file: {e}"
+            ))
             .into()),
             Ok(file) => Ok(Box::new(file)),
         },
@@ -681,18 +680,21 @@ pub fn signer_from_source_with_config(
             }
         }
         SignerSourceKind::Pubkey(pubkey) => {
-            let presigner = try_pubkeys_sigs_of(matches, SIGNER_ARG.name)?
+            let presigner = try_pubkeys_sigs_of(matches, SIGNER_ARG.name)
+                .ok()
+                .flatten()
                 .as_ref()
                 .and_then(|presigners| presigner_from_pubkey_sigs(pubkey, presigners));
             if let Some(presigner) = presigner {
                 Ok(Box::new(presigner))
-            } else if config.allow_null_signer || matches.try_contains_id(SIGN_ONLY_ARG.name)? {
+            } else if config.allow_null_signer
+                || matches.try_contains_id(SIGN_ONLY_ARG.name).unwrap_or(false)
+            {
                 Ok(Box::new(NullSigner::new(pubkey)))
             } else {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("missing signature for supplied pubkey: {pubkey}"),
-                )
+                Err(std::io::Error::other(format!(
+                    "missing signature for supplied pubkey: {pubkey}"
+                ))
                 .into())
             }
         }
@@ -794,13 +796,10 @@ pub fn resolve_signer_from_source(
             .map(|_| None)
         }
         SignerSourceKind::Filepath(path) => match read_keypair_file(path) {
-            Err(e) => Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "could not read keypair file \"{path}\". \
-                    Run \"solana-keygen new\" to create a keypair file: {e}"
-                ),
-            )
+            Err(e) => Err(std::io::Error::other(format!(
+                "could not read keypair file \"{path}\". Run \"solana-keygen new\" to create a \
+                 keypair file: {e}"
+            ))
             .into()),
             Ok(_) => Ok(Some(path.to_string())),
         },
@@ -839,7 +838,8 @@ pub const ASK_KEYWORD: &str = "ASK";
 pub const SKIP_SEED_PHRASE_VALIDATION_ARG: ArgConstant<'static> = ArgConstant {
     long: "skip-seed-phrase-validation",
     name: "skip_seed_phrase_validation",
-    help: "Skip validation of seed phrases. Use this if your phrase does not use the BIP39 official English word list",
+    help: "Skip validation of seed phrases. Use this if your phrase does not use the BIP39 \
+           official English word list",
 };
 
 /// Prompts user for a passphrase and then asks for confirmirmation to check for mistakes
@@ -956,6 +956,7 @@ pub fn keypair_from_source(
 /// )?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+#[cfg(feature = "elgamal")]
 pub fn elgamal_keypair_from_path(
     matches: &ArgMatches,
     path: &str,
@@ -970,6 +971,7 @@ pub fn elgamal_keypair_from_path(
     Ok(elgamal_keypair)
 }
 
+#[cfg(feature = "elgamal")]
 pub fn elgamal_keypair_from_source(
     matches: &ArgMatches,
     source: &SignerSource,
@@ -1026,6 +1028,7 @@ fn confirm_encodable_keypair_pubkey<K: EncodableKeypair>(keypair: &K, pubkey_lab
 /// )?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+#[cfg(feature = "elgamal")]
 pub fn ae_key_from_path(
     matches: &ArgMatches,
     path: &str,
@@ -1035,6 +1038,7 @@ pub fn ae_key_from_path(
     encodable_key_from_path(path, key_name, skip_validation)
 }
 
+#[cfg(feature = "elgamal")]
 pub fn ae_key_from_source(
     matches: &ArgMatches,
     source: &SignerSource,
@@ -1071,13 +1075,10 @@ fn encodable_key_from_source<K: EncodableKey + SeedDerivable>(
             *legacy,
         )?),
         SignerSourceKind::Filepath(path) => match K::read_from_file(path) {
-            Err(e) => Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "could not read keypair file \"{path}\". \
-                    Run \"solana-keygen new\" to create a keypair file: {e}"
-                ),
-            )
+            Err(e) => Err(std::io::Error::other(format!(
+                "could not read keypair file \"{path}\". Run \"solana-keygen new\" to create a \
+                 keypair file: {e}"
+            ))
             .into()),
             Ok(file) => Ok(file),
         },
@@ -1085,10 +1086,9 @@ fn encodable_key_from_source<K: EncodableKey + SeedDerivable>(
             let mut stdin = std::io::stdin();
             Ok(K::read(&mut stdin)?)
         }
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("signer of type `{kind:?}` does not support Keypair output"),
-        )
+        _ => Err(std::io::Error::other(format!(
+            "signer of type `{kind:?}` does not support Keypair output"
+        ))
         .into()),
     }
 }
@@ -1116,6 +1116,7 @@ pub fn keypair_from_seed_phrase(
 /// derivation.
 ///
 /// Optionally skips validation of seed phrase. Optionally confirms recovered public key.
+#[cfg(feature = "elgamal")]
 pub fn elgamal_keypair_from_seed_phrase(
     elgamal_keypair_name: &str,
     skip_validation: bool,
@@ -1137,6 +1138,7 @@ pub fn elgamal_keypair_from_seed_phrase(
 
 /// Reads user input from stdin to retrieve a seed phrase and passphrase for an authenticated
 /// encryption keypair derivation.
+#[cfg(feature = "elgamal")]
 pub fn ae_key_from_seed_phrase(
     keypair_name: &str,
     skip_validation: bool,
@@ -1155,7 +1157,8 @@ fn encodable_key_from_seed_phrase<K: EncodableKey + SeedDerivable>(
     let seed_phrase = prompt_password(format!("[{key_name}] seed phrase: "))?;
     let seed_phrase = seed_phrase.trim();
     let passphrase_prompt = format!(
-        "[{key_name}] If this seed phrase has an associated passphrase, enter it now. Otherwise, press ENTER to continue: ",
+        "[{key_name}] If this seed phrase has an associated passphrase, enter it now. Otherwise, \
+         press ENTER to continue: ",
     );
 
     let key = if skip_validation {
@@ -1211,8 +1214,8 @@ mod tests {
         crate::offline::OfflineArgs,
         clap::{Arg, Command},
         solana_keypair::write_keypair_file,
-        solana_program::system_instruction,
         solana_remote_wallet::remote_wallet::initialize_wallet_manager,
+        solana_system_interface::instruction::transfer,
         tempfile::TempDir,
     };
 
@@ -1233,11 +1236,7 @@ mod tests {
         let nonsigner2 = Keypair::new();
         let recipient = Pubkey::new_unique();
         let message = Message::new(
-            &[system_instruction::transfer(
-                &source.pubkey(),
-                &recipient,
-                42,
-            )],
+            &[transfer(&source.pubkey(), &recipient, 42)],
             Some(&fee_payer.pubkey()),
         );
         let signers = vec![
@@ -1292,5 +1291,169 @@ mod tests {
         assert_eq!(keypair.pubkey(), signer.pubkey());
 
         Ok(())
+    }
+
+    #[test]
+    fn test_signer_from_source_can_parse_null_signer() {
+        let pubkey = Pubkey::new_unique();
+        let source = SignerSource {
+            kind: SignerSourceKind::Pubkey(pubkey),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        // Note offline args not passes. UnknownArgument should be handled internally.
+        let clap_app = Command::new("test_app");
+        let matches = clap_app.get_matches_from(Vec::<&str>::new());
+
+        let config = SignerFromPathConfig {
+            allow_null_signer: true,
+        };
+
+        // This will be a NullSigner
+        let signer =
+            signer_from_source_with_config(&matches, &source, "test_key", &mut None, &config)
+                .unwrap();
+        assert_eq!(signer.pubkey(), pubkey);
+    }
+
+    #[test]
+    fn test_signer_from_source_pubkey_error_on_missing_sig() {
+        let pubkey = Pubkey::new_unique();
+        let source = SignerSource {
+            kind: SignerSourceKind::Pubkey(pubkey),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        // Note offline args not passes. UnknownArgument should be handled internally.
+        let clap_app = Command::new("test_app");
+        let matches = clap_app.get_matches_from(Vec::<&str>::new());
+
+        // Should gracefully pass through the NullSigner conditional branch
+        // and end up in the error clause at the end.
+        let config = SignerFromPathConfig {
+            allow_null_signer: false,
+        };
+
+        let result =
+            signer_from_source_with_config(&matches, &source, "test_key", &mut None, &config);
+        assert!(result.is_err());
+        let err_string = result.err().unwrap().to_string();
+        assert!(err_string.contains(&format!("missing signature for supplied pubkey: {pubkey}")));
+    }
+    #[test]
+    fn test_signer_from_source_pubkey_presigner_match() {
+        let keypair = Keypair::new();
+        let pubkey = keypair.pubkey();
+        let message = b"test message for presigner match";
+        let signature = keypair.sign_message(message);
+
+        let source = SignerSource {
+            kind: SignerSourceKind::Pubkey(pubkey),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        let signer_arg = format!("{pubkey}={signature}");
+
+        let clap_app = Command::new("test").arg(
+            Arg::new(SIGNER_ARG.name)
+                .long(SIGNER_ARG.long)
+                .value_name("PUBKEY=SIGNATURE"),
+        );
+        let matches = clap_app.get_matches_from(vec!["test", "--signer", &signer_arg]);
+
+        let config = SignerFromPathConfig {
+            allow_null_signer: false,
+        };
+
+        // Should have matched to a Presigner
+        let signer = signer_from_source_with_config(
+            &matches,
+            &source,
+            "test_key_presigner",
+            &mut None,
+            &config,
+        )
+        .unwrap();
+
+        assert_eq!(signer.pubkey(), pubkey);
+    }
+
+    #[test]
+    fn test_signer_from_source_pubkey_presigner_no_match() {
+        let keypair = Keypair::new();
+        let pubkey = keypair.pubkey();
+        let message = b"test message for presigner match";
+        let signature = keypair.sign_message(message);
+
+        // In this case, should not match a presigner
+        let unrelated_pubkey = Pubkey::new_unique();
+        let source = SignerSource {
+            kind: SignerSourceKind::Pubkey(unrelated_pubkey),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        let signer_arg = format!("{pubkey}={signature}");
+
+        let clap_app = Command::new("test").arg(
+            Arg::new(SIGNER_ARG.name)
+                .long(SIGNER_ARG.long)
+                .value_name("PUBKEY=SIGNATURE"),
+        );
+        let matches = clap_app.get_matches_from(vec!["test", "--signer", &signer_arg]);
+
+        let config = SignerFromPathConfig {
+            allow_null_signer: false,
+        };
+
+        let result = signer_from_source_with_config(
+            &matches,
+            &source,
+            "test_key_presigner",
+            &mut None,
+            &config,
+        );
+        assert!(result.is_err());
+        let err_string = result.err().unwrap().to_string();
+        assert!(err_string.contains(&format!(
+            "missing signature for supplied pubkey: {unrelated_pubkey}"
+        )));
+    }
+
+    #[test]
+    fn test_signer_from_source_pubkey_sign_only_match() {
+        let pubkey = Pubkey::new_unique();
+        let source = SignerSource {
+            kind: SignerSourceKind::Pubkey(pubkey),
+            derivation_path: None,
+            legacy: false,
+        };
+
+        let clap_app = Command::new("test_sign_only_match").offline_args();
+        let matches = clap_app.get_matches_from(vec![
+            "test_sign_only_match",
+            "--sign-only",
+            "--blockhash",
+            &Hash::new_unique().to_string(),
+        ]);
+
+        // Given this is false, should check for sign-only arg
+        let config = SignerFromPathConfig {
+            allow_null_signer: false,
+        };
+
+        // Result should be a NullSigner
+        let signer = signer_from_source_with_config(
+            &matches,
+            &source,
+            "test_key_sign_only",
+            &mut None,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(signer.pubkey(), pubkey);
     }
 }

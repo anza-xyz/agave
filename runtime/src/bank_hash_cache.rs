@@ -8,8 +8,12 @@
 //! contend for the local lock during slot dumping due to duplicate blocks which should be extremely rare.
 
 use {
-    crate::{bank::Bank, bank_forks::BankForks, root_bank_cache::RootBankCache},
-    solana_sdk::{clock::Slot, hash::Hash},
+    crate::{
+        bank::Bank,
+        bank_forks::{BankForks, SharableBanks},
+    },
+    solana_clock::Slot,
+    solana_hash::Hash,
     std::{
         collections::BTreeMap,
         sync::{Arc, Mutex, MutexGuard, RwLock},
@@ -22,14 +26,14 @@ pub type DumpedSlotSubscription = Arc<Mutex<bool>>;
 pub struct BankHashCache {
     hashes: BTreeMap<Slot, Hash>,
     bank_forks: Arc<RwLock<BankForks>>,
-    root_bank_cache: RootBankCache,
+    sharable_banks: SharableBanks,
     last_root: Slot,
     dumped_slot_subscription: DumpedSlotSubscription,
 }
 
 impl BankHashCache {
     pub fn new(bank_forks: Arc<RwLock<BankForks>>) -> Self {
-        let root_bank_cache = RootBankCache::new(bank_forks.clone());
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let dumped_slot_subscription = DumpedSlotSubscription::default();
         bank_forks
             .write()
@@ -38,7 +42,7 @@ impl BankHashCache {
         Self {
             hashes: BTreeMap::default(),
             bank_forks,
-            root_bank_cache,
+            sharable_banks,
             last_root: 0,
             dumped_slot_subscription,
         }
@@ -51,7 +55,7 @@ impl BankHashCache {
     /// Should only be used after `slots_dumped` is acquired from `dumped_slot_subscription` to
     /// guarantee synchronicity with `self.bank_forks`. Multiple calls to `hash` will only be
     /// consistent with each other if `slots_dumped` was not released in between, as otherwise a dump
-    /// could have occured inbetween.
+    /// could have occurred inbetween.
     pub fn hash(&mut self, slot: Slot, slots_dumped: &mut MutexGuard<bool>) -> Option<Hash> {
         if **slots_dumped {
             // We could be smarter and keep a fork cache to only clear affected slots from the cache,
@@ -78,8 +82,8 @@ impl BankHashCache {
         let prev_hash = self.hashes.insert(slot, hash);
         debug_assert!(
             prev_hash.is_none(),
-            "Programmer error, this indicates we have dumped and replayed \
-             a block however the cache was not invalidated"
+            "Programmer error, this indicates we have dumped and replayed a block however the \
+             cache was not invalidated"
         );
         Some(hash)
     }
@@ -90,7 +94,7 @@ impl BankHashCache {
 
     /// Returns the root bank and also prunes cache of any slots < root
     pub fn get_root_bank_and_prune_cache(&mut self) -> Arc<Bank> {
-        let root_bank = self.root_bank_cache.root_bank();
+        let root_bank = self.sharable_banks.root();
         if root_bank.slot() != self.last_root {
             self.last_root = root_bank.slot();
             self.hashes = self.hashes.split_off(&self.last_root);

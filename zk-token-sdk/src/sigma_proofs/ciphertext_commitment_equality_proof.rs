@@ -94,9 +94,8 @@ impl CiphertextCommitmentEqualityProof {
         let mut y_r = Scalar::random(&mut OsRng);
 
         let Y_0 = (&y_s * P_source).compress();
-        let Y_1 =
-            RistrettoPoint::multiscalar_mul(vec![&y_x, &y_s], vec![&(*G), D_source]).compress();
-        let Y_2 = RistrettoPoint::multiscalar_mul(vec![&y_x, &y_r], vec![&(*G), &(*H)]).compress();
+        let Y_1 = RistrettoPoint::multiscalar_mul(vec![&y_x, &y_s], vec![&G, D_source]).compress();
+        let Y_2 = RistrettoPoint::multiscalar_mul(vec![&y_x, &y_r], vec![&G, &(*H)]).compress();
 
         // record masking factors in the transcript
         transcript.append_point(b"Y_0", &Y_0);
@@ -191,11 +190,11 @@ impl CiphertextCommitmentEqualityProof {
                 P_source,      // P_source
                 &(*H),         // H
                 &Y_0,          // Y_0
-                &(*G),         // G
+                &G,            // G
                 D_source,      // D_source
                 C_source,      // C_source
                 &Y_1,          // Y_1
-                &(*G),         // G
+                &G,            // G
                 &(*H),         // H
                 C_destination, // C_destination
                 &Y_2,          // Y_2

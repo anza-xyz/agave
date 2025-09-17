@@ -3,14 +3,12 @@ use {
         consumer::LeaderProcessedTransactionCounts,
         leader_slot_timing_metrics::{LeaderExecuteAndCommitTimings, LeaderSlotTimingMetrics},
         packet_deserializer::PacketReceiverStats,
-        unprocessed_transaction_storage::{
-            InsertPacketBatchSummary, UnprocessedTransactionStorage,
-        },
+        vote_storage::VoteBatchInsertionMetrics,
     },
-    solana_poh::poh_recorder::BankStart,
-    solana_sdk::{clock::Slot, saturating_add_assign},
+    solana_clock::Slot,
+    solana_runtime::bank::Bank,
     solana_svm::transaction_error_metrics::*,
-    std::time::Instant,
+    std::{num::Saturating, sync::Arc},
 };
 
 /// A summary of what happened to transactions passed to the processing pipeline.
@@ -47,23 +45,20 @@ pub(crate) struct ProcessTransactionsSummary {
     /// Breakdown of all the transaction errors from transactions passed for
     /// execution
     pub error_counters: TransactionErrorMetrics,
-
-    pub min_prioritization_fees: u64,
-    pub max_prioritization_fees: u64,
 }
 
 #[derive(Debug, Default, PartialEq)]
 pub struct CommittedTransactionsCounts {
     /// Total number of transactions that were passed as candidates for processing
-    pub attempted_processing_count: u64,
+    pub attempted_processing_count: Saturating<u64>,
     /// Total number of transactions that made it into the block
-    pub committed_transactions_count: u64,
+    pub committed_transactions_count: Saturating<u64>,
     /// Total number of transactions that made it into the block where the transactions
     /// output from processing was success/no error.
-    pub committed_transactions_with_successful_result_count: u64,
+    pub committed_transactions_with_successful_result_count: Saturating<u64>,
     /// All transactions that were processed but then failed record because the
     /// slot ended
-    pub processed_but_failed_commit: u64,
+    pub processed_but_failed_commit: Saturating<u64>,
 }
 
 impl CommittedTransactionsCounts {
@@ -72,69 +67,14 @@ impl CommittedTransactionsCounts {
         transaction_counts: &LeaderProcessedTransactionCounts,
         committed: bool,
     ) {
-        saturating_add_assign!(
-            self.attempted_processing_count,
-            transaction_counts.attempted_processing_count
-        );
+        self.attempted_processing_count += transaction_counts.attempted_processing_count;
         if committed {
-            saturating_add_assign!(
-                self.committed_transactions_count,
-                transaction_counts.processed_count
-            );
-            saturating_add_assign!(
-                self.committed_transactions_with_successful_result_count,
-                transaction_counts.processed_with_successful_result_count
-            );
+            self.committed_transactions_count += transaction_counts.processed_count;
+            self.committed_transactions_with_successful_result_count +=
+                transaction_counts.processed_with_successful_result_count;
         } else {
-            saturating_add_assign!(
-                self.processed_but_failed_commit,
-                transaction_counts.processed_count
-            );
+            self.processed_but_failed_commit += transaction_counts.processed_count;
         }
-    }
-}
-
-// Metrics describing prioritization fee information for each transaction storage before processing transactions
-#[derive(Debug, Default)]
-struct LeaderPrioritizationFeesMetrics {
-    // minimum prioritization fees in the MinMaxHeap
-    min_prioritization_fees_per_cu: u64,
-    // maximum prioritization fees in the MinMaxHeap
-    max_prioritization_fees_per_cu: u64,
-}
-
-impl LeaderPrioritizationFeesMetrics {
-    fn new(unprocessed_transaction_storage: Option<&UnprocessedTransactionStorage>) -> Self {
-        if let Some(unprocessed_transaction_storage) = unprocessed_transaction_storage {
-            Self {
-                min_prioritization_fees_per_cu: unprocessed_transaction_storage
-                    .get_min_priority()
-                    .unwrap_or_default(),
-                max_prioritization_fees_per_cu: unprocessed_transaction_storage
-                    .get_max_priority()
-                    .unwrap_or_default(),
-            }
-        } else {
-            Self::default()
-        }
-    }
-
-    fn report(&self, id: &str, slot: Slot) {
-        datapoint_info!(
-            "banking_stage-leader_prioritization_fees_info",
-            "id" => id,
-            ("slot", slot, i64),
-            (
-                "min_prioritization_fees_per_cu",
-                self.min_prioritization_fees_per_cu,
-                i64
-            ),
-            (
-                "max_prioritization_fees_per_cu",
-                self.max_prioritization_fees_per_cu,
-                i64
-            )
-        );
     }
 }
 
@@ -154,12 +94,6 @@ struct LeaderSlotPacketCountMetrics {
     // total number of packets filtered due to prioritization failures during receiving from sigverify
     failed_prioritization_count: u64,
 
-    // total number of packets filtered due to insufficient compute limits during receiving from sigverify
-    insufficient_compute_limit_count: u64,
-
-    // total number of packets filtered due to excessive precompile signatures during receiving from sigverify
-    excessive_precompile_count: u64,
-
     // total number of invalid vote packets filtered out during receiving from sigverify
     invalid_votes_count: u64,
 
@@ -176,19 +110,19 @@ struct LeaderSlotPacketCountMetrics {
     // total number of transactions that attempted processing in this slot. Should equal the sum
     // of `committed_transactions_count`, `retryable_errored_transaction_count`, and
     // `nonretryable_errored_transactions_count`.
-    transactions_attempted_processing_count: u64,
+    transactions_attempted_processing_count: Saturating<u64>,
 
     // total number of transactions that were executed and committed into the block
     // on this thread
-    committed_transactions_count: u64,
+    committed_transactions_count: Saturating<u64>,
 
     // total number of transactions that were executed, got a successful execution output/no error,
     // and were then committed into the block
-    committed_transactions_with_successful_result_count: u64,
+    committed_transactions_with_successful_result_count: Saturating<u64>,
 
     // total number of transactions that were not executed or failed commit, BUT were added back to the buffered
     // queue because they were retryable errors
-    retryable_errored_transaction_count: u64,
+    retryable_errored_transaction_count: Saturating<u64>,
 
     // The size of the unprocessed buffer at the end of the slot
     end_of_slot_unprocessed_buffer_len: u64,
@@ -199,49 +133,27 @@ struct LeaderSlotPacketCountMetrics {
 
     // total number of transactions that attempted execution due to some fatal error (too old, duplicate signature, etc.)
     // AND were dropped from the buffered queue
-    nonretryable_errored_transactions_count: u64,
+    nonretryable_errored_transactions_count: Saturating<u64>,
 
     // total number of transactions that were executed, but failed to be committed into the Poh stream because
     // the block ended. Some of these may be already counted in `nonretryable_errored_transactions_count` if they
     // then hit the age limit after failing to be committed.
-    executed_transactions_failed_commit_count: u64,
+    executed_transactions_failed_commit_count: Saturating<u64>,
 
     // total number of transactions that were excluded from the block because there were concurrent write locks active.
     // These transactions are added back to the buffered queue and are already counted in
     // `self.retrayble_errored_transaction_count`.
-    account_lock_throttled_transactions_count: u64,
+    account_lock_throttled_transactions_count: Saturating<u64>,
 
     // total number of transactions that were excluded from the block because their write
     // account locks exceed the limit.
     // These transactions are not retried.
-    account_locks_limit_throttled_transactions_count: u64,
+    account_locks_limit_throttled_transactions_count: Saturating<u64>,
 
     // total number of transactions that were excluded from the block because they were too expensive
     // according to the cost model. These transactions are added back to the buffered queue and are
     // already counted in `self.retrayble_errored_transaction_count`.
-    cost_model_throttled_transactions_count: u64,
-
-    // total number of forwardsable packets that failed forwarding
-    failed_forwarded_packets_count: u64,
-
-    // total number of forwardsable packets that were successfully forwarded
-    successful_forwarded_packets_count: u64,
-
-    // total number of attempted forwards that failed. Note this is not a count of the number of packets
-    // that failed, just the total number of batches of packets that failed forwarding
-    packet_batch_forward_failure_count: u64,
-
-    // total number of valid unprocessed packets in the buffer that were removed after being forwarded
-    cleared_from_buffer_after_forward_count: u64,
-
-    // total number of forwardable batches that were attempted for forwarding. A forwardable batch
-    // is defined in `ForwardPacketBatchesByAccounts` in `forward_packet_batches_by_accounts.rs`
-    forwardable_batches_count: u64,
-
-    // min prioritization fees for scheduled transactions
-    min_prioritization_fees: u64,
-    // max prioritization fees for scheduled transactions
-    max_prioritization_fees: u64,
+    cost_model_throttled_transactions_count: Saturating<u64>,
 }
 
 impl LeaderSlotPacketCountMetrics {
@@ -249,159 +161,124 @@ impl LeaderSlotPacketCountMetrics {
         Self::default()
     }
 
-    fn report(&self, id: &str, slot: Slot) {
+    fn report(&self, slot: Slot) {
+        let &Self {
+            total_new_valid_packets,
+            newly_failed_sigverify_count,
+            failed_sanitization_count,
+            failed_prioritization_count,
+            invalid_votes_count,
+            exceeded_buffer_limit_dropped_packets_count,
+            newly_buffered_packets_count,
+            retryable_packets_filtered_count,
+            transactions_attempted_processing_count:
+                Saturating(transactions_attempted_processing_count),
+            committed_transactions_count: Saturating(committed_transactions_count),
+            committed_transactions_with_successful_result_count:
+                Saturating(committed_transactions_with_successful_result_count),
+            retryable_errored_transaction_count: Saturating(retryable_errored_transaction_count),
+            retryable_packets_count,
+            nonretryable_errored_transactions_count:
+                Saturating(nonretryable_errored_transactions_count),
+            executed_transactions_failed_commit_count:
+                Saturating(executed_transactions_failed_commit_count),
+            account_lock_throttled_transactions_count:
+                Saturating(account_lock_throttled_transactions_count),
+            account_locks_limit_throttled_transactions_count:
+                Saturating(account_locks_limit_throttled_transactions_count),
+            cost_model_throttled_transactions_count:
+                Saturating(cost_model_throttled_transactions_count),
+            end_of_slot_unprocessed_buffer_len,
+        } = self;
         datapoint_info!(
-            "banking_stage-leader_slot_packet_counts",
-            "id" => id,
+            "banking_stage-vote_slot_packet_counts",
             ("slot", slot, i64),
-            (
-                "total_new_valid_packets",
-                self.total_new_valid_packets,
-                i64
-            ),
+            ("total_new_valid_packets", total_new_valid_packets, i64),
             (
                 "newly_failed_sigverify_count",
-                self.newly_failed_sigverify_count,
+                newly_failed_sigverify_count,
                 i64
             ),
-            (
-                "failed_sanitization_count",
-                self.failed_sanitization_count,
-                i64
-            ),
+            ("failed_sanitization_count", failed_sanitization_count, i64),
             (
                 "failed_prioritization_count",
-                self.failed_prioritization_count,
+                failed_prioritization_count,
                 i64
             ),
-            (
-                "insufficient_compute_limit_count",
-                self.insufficient_compute_limit_count,
-                i64
-            ),
-            (
-                "excessive_precompile_count",
-                self.excessive_precompile_count,
-                i64
-            ),
-            (
-                "invalid_votes_count",
-                self.invalid_votes_count,
-                i64
-            ),
+            ("invalid_votes_count", invalid_votes_count, i64),
             (
                 "exceeded_buffer_limit_dropped_packets_count",
-                self.exceeded_buffer_limit_dropped_packets_count,
+                exceeded_buffer_limit_dropped_packets_count,
                 i64
             ),
             (
                 "newly_buffered_packets_count",
-                self.newly_buffered_packets_count,
+                newly_buffered_packets_count,
                 i64
             ),
             (
                 "retryable_packets_filtered_count",
-                self.retryable_packets_filtered_count,
+                retryable_packets_filtered_count,
                 i64
             ),
             (
                 "transactions_attempted_processing_count",
-                self.transactions_attempted_processing_count,
+                transactions_attempted_processing_count,
                 i64
             ),
             (
                 "committed_transactions_count",
-                self.committed_transactions_count,
+                committed_transactions_count,
                 i64
             ),
             (
                 "committed_transactions_with_successful_result_count",
-                self.committed_transactions_with_successful_result_count,
+                committed_transactions_with_successful_result_count,
                 i64
             ),
             (
                 "retryable_errored_transaction_count",
-                self.retryable_errored_transaction_count,
+                retryable_errored_transaction_count,
                 i64
             ),
-            (
-                "retryable_packets_count",
-                self.retryable_packets_count,
-                i64
-            ),
+            ("retryable_packets_count", retryable_packets_count, i64),
             (
                 "nonretryable_errored_transactions_count",
-                self.nonretryable_errored_transactions_count,
+                nonretryable_errored_transactions_count,
                 i64
             ),
             (
                 "executed_transactions_failed_commit_count",
-                self.executed_transactions_failed_commit_count,
+                executed_transactions_failed_commit_count,
                 i64
             ),
             (
                 "account_lock_throttled_transactions_count",
-                self.account_lock_throttled_transactions_count,
+                account_lock_throttled_transactions_count,
                 i64
             ),
             (
                 "account_locks_limit_throttled_transactions_count",
-                self.account_locks_limit_throttled_transactions_count,
+                account_locks_limit_throttled_transactions_count,
                 i64
             ),
             (
                 "cost_model_throttled_transactions_count",
-                self.cost_model_throttled_transactions_count,
-                i64
-            ),
-            (
-                "failed_forwarded_packets_count",
-                self.failed_forwarded_packets_count,
-                i64
-            ),
-            (
-                "successful_forwarded_packets_count",
-                self.successful_forwarded_packets_count,
-                i64
-            ),
-            (
-                "packet_batch_forward_failure_count",
-                self.packet_batch_forward_failure_count,
-                i64
-            ),
-            (
-                "cleared_from_buffer_after_forward_count",
-                self.cleared_from_buffer_after_forward_count,
-                i64
-            ),
-            (
-                "forwardable_batches_count",
-                self.forwardable_batches_count,
+                cost_model_throttled_transactions_count,
                 i64
             ),
             (
                 "end_of_slot_unprocessed_buffer_len",
-                self.end_of_slot_unprocessed_buffer_len,
-                i64
-            ),
-            (
-                "min_prioritization_fees",
-                self.min_prioritization_fees,
-                i64
-            ),
-            (
-                "max_prioritization_fees",
-                self.max_prioritization_fees,
+                end_of_slot_unprocessed_buffer_len,
                 i64
             ),
         );
     }
 }
 
-fn report_transaction_error_metrics(errors: &TransactionErrorMetrics, id: &str, slot: Slot) {
+fn report_transaction_error_metrics(errors: &TransactionErrorMetrics, slot: Slot) {
     datapoint_info!(
-        "banking_stage-leader_slot_transaction_errors",
-        "id" => id,
+        "banking_stage-vote_slot_transaction_errors",
         ("slot", slot as i64, i64),
         ("total", errors.total.0 as i64, i64),
         ("account_in_use", errors.account_in_use.0 as i64, i64),
@@ -416,12 +293,24 @@ fn report_transaction_error_metrics(errors: &TransactionErrorMetrics, id: &str, 
             i64
         ),
         ("account_not_found", errors.account_not_found.0 as i64, i64),
-        ("blockhash_not_found", errors.blockhash_not_found.0 as i64, i64),
+        (
+            "blockhash_not_found",
+            errors.blockhash_not_found.0 as i64,
+            i64
+        ),
         ("blockhash_too_old", errors.blockhash_too_old.0 as i64, i64),
-        ("call_chain_too_deep", errors.call_chain_too_deep.0 as i64, i64),
+        (
+            "call_chain_too_deep",
+            errors.call_chain_too_deep.0 as i64,
+            i64
+        ),
         ("already_processed", errors.already_processed.0 as i64, i64),
         ("instruction_error", errors.instruction_error.0 as i64, i64),
-        ("insufficient_funds", errors.insufficient_funds.0 as i64, i64),
+        (
+            "insufficient_funds",
+            errors.insufficient_funds.0 as i64,
+            i64
+        ),
         (
             "invalid_account_for_fee",
             errors.invalid_account_for_fee.0 as i64,
@@ -492,11 +381,6 @@ fn report_transaction_error_metrics(errors: &TransactionErrorMetrics, id: &str, 
 
 #[derive(Debug)]
 pub(crate) struct LeaderSlotMetrics {
-    // banking_stage creates one QosService instance per working threads, that is uniquely
-    // identified by id. This field allows to categorize metrics for gossip votes, TPU votes
-    // and other transactions.
-    id: String,
-
     // aggregate metrics per slot
     slot: Slot,
 
@@ -508,29 +392,18 @@ pub(crate) struct LeaderSlotMetrics {
 
     timing_metrics: LeaderSlotTimingMetrics,
 
-    prioritization_fees_metric: LeaderPrioritizationFeesMetrics,
-
     // Used by tests to check if the `self.report()` method was called
     is_reported: bool,
 }
 
 impl LeaderSlotMetrics {
-    pub(crate) fn new(
-        id: u32,
-        slot: Slot,
-        bank_creation_time: &Instant,
-        unprocessed_transaction_storage: Option<&UnprocessedTransactionStorage>,
-    ) -> Self {
+    pub(crate) fn new(slot: Slot) -> Self {
         Self {
-            id: id.to_string(),
             slot,
             packet_count_metrics: LeaderSlotPacketCountMetrics::new(),
             transaction_error_metrics: TransactionErrorMetrics::new(),
             vote_packet_count_metrics: VotePacketCountMetrics::new(),
-            timing_metrics: LeaderSlotTimingMetrics::new(bank_creation_time),
-            prioritization_fees_metric: LeaderPrioritizationFeesMetrics::new(
-                unprocessed_transaction_storage,
-            ),
+            timing_metrics: LeaderSlotTimingMetrics::new(),
             is_reported: false,
         }
     }
@@ -538,11 +411,10 @@ impl LeaderSlotMetrics {
     pub(crate) fn report(&mut self) {
         self.is_reported = true;
 
-        self.timing_metrics.report(&self.id, self.slot);
-        report_transaction_error_metrics(&self.transaction_error_metrics, &self.id, self.slot);
-        self.packet_count_metrics.report(&self.id, self.slot);
-        self.vote_packet_count_metrics.report(&self.id, self.slot);
-        self.prioritization_fees_metric.report(&self.id, self.slot);
+        self.timing_metrics.report(self.slot);
+        report_transaction_error_metrics(&self.transaction_error_metrics, self.slot);
+        self.packet_count_metrics.report(self.slot);
+        self.vote_packet_count_metrics.report(self.slot);
     }
 
     /// Returns `Some(self.slot)` if the metrics have been reported, otherwise returns None
@@ -575,10 +447,9 @@ impl VotePacketCountMetrics {
         Self::default()
     }
 
-    fn report(&self, id: &str, slot: Slot) {
+    fn report(&self, slot: Slot) {
         datapoint_info!(
             "banking_stage-vote_packet_counts",
-            "id" => id,
             ("slot", slot, i64),
             ("dropped_gossip_votes", self.dropped_gossip_votes, i64),
             ("dropped_tpu_votes", self.dropped_tpu_votes, i64)
@@ -594,29 +465,20 @@ pub(crate) enum MetricsTrackerAction {
     ReportAndNewTracker(Option<LeaderSlotMetrics>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct LeaderSlotMetricsTracker {
     // Only `Some` if BankingStage detects it's time to construct our leader slot,
     // otherwise `None`
     leader_slot_metrics: Option<LeaderSlotMetrics>,
-    id: u32,
 }
 
 impl LeaderSlotMetricsTracker {
-    pub fn new(id: u32) -> Self {
-        Self {
-            leader_slot_metrics: None,
-            id,
-        }
-    }
-
     // Check leader slot, return MetricsTrackerAction to be applied by apply_action()
     pub(crate) fn check_leader_slot_boundary(
         &mut self,
-        bank_start: Option<&BankStart>,
-        unprocessed_transaction_storage: Option<&UnprocessedTransactionStorage>,
+        bank: Option<&Arc<Bank>>,
     ) -> MetricsTrackerAction {
-        match (self.leader_slot_metrics.as_mut(), bank_start) {
+        match (self.leader_slot_metrics.as_mut(), bank) {
             (None, None) => MetricsTrackerAction::Noop,
 
             (Some(leader_slot_metrics), None) => {
@@ -625,24 +487,16 @@ impl LeaderSlotMetricsTracker {
             }
 
             // Our leader slot has begain, time to create a new slot tracker
-            (None, Some(bank_start)) => {
-                MetricsTrackerAction::NewTracker(Some(LeaderSlotMetrics::new(
-                    self.id,
-                    bank_start.working_bank.slot(),
-                    &bank_start.bank_creation_time,
-                    unprocessed_transaction_storage,
-                )))
+            (None, Some(bank)) => {
+                MetricsTrackerAction::NewTracker(Some(LeaderSlotMetrics::new(bank.slot())))
             }
 
-            (Some(leader_slot_metrics), Some(bank_start)) => {
-                if leader_slot_metrics.slot != bank_start.working_bank.slot() {
+            (Some(leader_slot_metrics), Some(bank)) => {
+                if leader_slot_metrics.slot != bank.slot() {
                     // Last slot has ended, new slot has began
                     leader_slot_metrics.mark_slot_end_detected();
                     MetricsTrackerAction::ReportAndNewTracker(Some(LeaderSlotMetrics::new(
-                        self.id,
-                        bank_start.working_bank.slot(),
-                        &bank_start.bank_creation_time,
-                        unprocessed_transaction_storage,
+                        bank.slot(),
                     )))
                 } else {
                     MetricsTrackerAction::Noop
@@ -684,108 +538,72 @@ impl LeaderSlotMetricsTracker {
         process_transactions_summary: &ProcessTransactionsSummary,
     ) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            let ProcessTransactionsSummary {
-                transaction_counts,
+            let &ProcessTransactionsSummary {
+                transaction_counts:
+                    CommittedTransactionsCounts {
+                        attempted_processing_count: Saturating(attempted_processing_count),
+                        committed_transactions_count: Saturating(committed_transactions_count),
+                        committed_transactions_with_successful_result_count:
+                            Saturating(committed_transactions_with_successful_result_count),
+                        processed_but_failed_commit: Saturating(processed_but_failed_commit),
+                    },
                 ref retryable_transaction_indexes,
                 cost_model_throttled_transactions_count,
                 cost_model_us,
                 ref execute_and_commit_timings,
-                error_counters,
-                min_prioritization_fees,
-                max_prioritization_fees,
+                ref error_counters,
                 ..
             } = process_transactions_summary;
 
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .transactions_attempted_processing_count,
-                transaction_counts.attempted_processing_count
-            );
-
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .committed_transactions_count,
-                transaction_counts.committed_transactions_count
-            );
-
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .committed_transactions_with_successful_result_count,
-                transaction_counts.committed_transactions_with_successful_result_count
-            );
-
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .executed_transactions_failed_commit_count,
-                transaction_counts.processed_but_failed_commit
-            );
-
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .retryable_errored_transaction_count,
-                retryable_transaction_indexes.len() as u64
-            );
-
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .nonretryable_errored_transactions_count,
-                transaction_counts
-                    .attempted_processing_count
-                    .saturating_sub(transaction_counts.committed_transactions_count)
-                    .saturating_sub(retryable_transaction_indexes.len() as u64)
-            );
-
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .account_lock_throttled_transactions_count,
-                error_counters.account_in_use.0 as u64
-            );
-
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .account_locks_limit_throttled_transactions_count,
-                error_counters.too_many_account_locks.0 as u64
-            );
-
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .cost_model_throttled_transactions_count,
-                *cost_model_throttled_transactions_count
-            );
-
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_packets_timings
-                    .cost_model_us,
-                *cost_model_us
-            );
+            leader_slot_metrics
+                .packet_count_metrics
+                .transactions_attempted_processing_count += attempted_processing_count;
 
             leader_slot_metrics
                 .packet_count_metrics
-                .min_prioritization_fees = std::cmp::min(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .min_prioritization_fees,
-                *min_prioritization_fees,
-            );
+                .committed_transactions_count += committed_transactions_count;
+
             leader_slot_metrics
                 .packet_count_metrics
-                .max_prioritization_fees = std::cmp::min(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .max_prioritization_fees,
-                *max_prioritization_fees,
-            );
+                .committed_transactions_with_successful_result_count +=
+                committed_transactions_with_successful_result_count;
+
+            leader_slot_metrics
+                .packet_count_metrics
+                .executed_transactions_failed_commit_count += processed_but_failed_commit;
+
+            leader_slot_metrics
+                .packet_count_metrics
+                .retryable_errored_transaction_count += retryable_transaction_indexes.len() as u64;
+
+            leader_slot_metrics
+                .packet_count_metrics
+                .nonretryable_errored_transactions_count += attempted_processing_count
+                .saturating_sub(committed_transactions_count)
+                .saturating_sub(retryable_transaction_indexes.len() as u64);
+
+            leader_slot_metrics
+                .packet_count_metrics
+                .account_lock_throttled_transactions_count +=
+                error_counters.account_in_use.0 as u64;
+
+            leader_slot_metrics
+                .packet_count_metrics
+                .account_locks_limit_throttled_transactions_count +=
+                error_counters.too_many_account_locks.0 as u64;
+
+            leader_slot_metrics
+                .packet_count_metrics
+                .cost_model_throttled_transactions_count += cost_model_throttled_transactions_count;
+
+            leader_slot_metrics
+                .packet_count_metrics
+                .cost_model_throttled_transactions_count += cost_model_throttled_transactions_count;
+
+            leader_slot_metrics
+                .timing_metrics
+                .process_packets_timings
+                .cost_model_us += cost_model_us;
 
             leader_slot_metrics
                 .timing_metrics
@@ -794,18 +612,18 @@ impl LeaderSlotMetricsTracker {
         }
     }
 
-    pub(crate) fn accumulate_insert_packet_batches_summary(
+    pub(crate) fn accumulate_vote_batch_insertion_metrics(
         &mut self,
-        insert_packet_batches_summary: &InsertPacketBatchSummary,
+        vote_batch_insertion_metrics: &VoteBatchInsertionMetrics,
     ) {
         self.increment_exceeded_buffer_limit_dropped_packets_count(
-            insert_packet_batches_summary.total_dropped_packets() as u64,
+            vote_batch_insertion_metrics.total_dropped_packets() as u64,
         );
         self.increment_dropped_gossip_vote_count(
-            insert_packet_batches_summary.dropped_gossip_packets() as u64,
+            vote_batch_insertion_metrics.dropped_gossip_packets() as u64,
         );
         self.increment_dropped_tpu_vote_count(
-            insert_packet_batches_summary.dropped_tpu_packets() as u64
+            vote_batch_insertion_metrics.dropped_tpu_packets() as u64
         );
     }
 
@@ -825,130 +643,50 @@ impl LeaderSlotMetricsTracker {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
             let metrics = &mut leader_slot_metrics.packet_count_metrics;
             let PacketReceiverStats {
-                passed_sigverify_count,
-                failed_sigverify_count,
-                invalid_vote_count,
-                failed_prioritization_count,
-                failed_sanitization_count,
-                excessive_precompile_count,
-                insufficient_compute_limit_count,
+                passed_sigverify_count: Saturating(passed_sigverify_count),
+                failed_sigverify_count: Saturating(failed_sigverify_count),
+                invalid_vote_count: Saturating(invalid_vote_count),
+                failed_prioritization_count: Saturating(failed_prioritization_count),
+                failed_sanitization_count: Saturating(failed_sanitization_count),
             } = stats;
 
-            saturating_add_assign!(metrics.total_new_valid_packets, passed_sigverify_count);
-            saturating_add_assign!(metrics.newly_failed_sigverify_count, failed_sigverify_count);
-            saturating_add_assign!(metrics.invalid_votes_count, invalid_vote_count);
-            saturating_add_assign!(
-                metrics.failed_prioritization_count,
-                failed_prioritization_count
-            );
-            saturating_add_assign!(metrics.failed_sanitization_count, failed_sanitization_count);
-            saturating_add_assign!(
-                metrics.excessive_precompile_count,
-                excessive_precompile_count
-            );
-            saturating_add_assign!(
-                metrics.insufficient_compute_limit_count,
-                insufficient_compute_limit_count
-            );
+            metrics.total_new_valid_packets += passed_sigverify_count;
+            metrics.newly_failed_sigverify_count += failed_sigverify_count;
+            metrics.invalid_votes_count += invalid_vote_count;
+            metrics.failed_prioritization_count += failed_prioritization_count;
+            metrics.failed_sanitization_count += failed_sanitization_count;
         }
     }
 
     pub(crate) fn increment_exceeded_buffer_limit_dropped_packets_count(&mut self, count: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .exceeded_buffer_limit_dropped_packets_count,
-                count
-            );
+            leader_slot_metrics
+                .packet_count_metrics
+                .exceeded_buffer_limit_dropped_packets_count += count;
         }
     }
 
     pub(crate) fn increment_newly_buffered_packets_count(&mut self, count: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .newly_buffered_packets_count,
-                count
-            );
+            leader_slot_metrics
+                .packet_count_metrics
+                .newly_buffered_packets_count += count;
         }
     }
 
     pub(crate) fn increment_retryable_packets_filtered_count(&mut self, count: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .retryable_packets_filtered_count,
-                count
-            );
-        }
-    }
-
-    pub(crate) fn increment_failed_forwarded_packets_count(&mut self, count: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .failed_forwarded_packets_count,
-                count
-            );
-        }
-    }
-
-    pub(crate) fn increment_successful_forwarded_packets_count(&mut self, count: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .successful_forwarded_packets_count,
-                count
-            );
-        }
-    }
-
-    pub(crate) fn increment_packet_batch_forward_failure_count(&mut self, count: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .packet_batch_forward_failure_count,
-                count
-            );
-        }
-    }
-
-    pub(crate) fn increment_cleared_from_buffer_after_forward_count(&mut self, count: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .cleared_from_buffer_after_forward_count,
-                count
-            );
-        }
-    }
-
-    pub(crate) fn increment_forwardable_batches_count(&mut self, count: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .forwardable_batches_count,
-                count
-            );
+            leader_slot_metrics
+                .packet_count_metrics
+                .retryable_packets_filtered_count += count;
         }
     }
 
     pub(crate) fn increment_retryable_packets_count(&mut self, count: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .packet_count_metrics
-                    .retryable_packets_count,
-                count
-            );
+            leader_slot_metrics
+                .packet_count_metrics
+                .retryable_packets_count += count;
         }
     }
 
@@ -963,152 +701,96 @@ impl LeaderSlotMetricsTracker {
     // Outermost banking thread's loop timing metrics
     pub(crate) fn increment_process_buffered_packets_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .outer_loop_timings
-                    .process_buffered_packets_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .outer_loop_timings
+                .process_buffered_packets_us += us;
         }
     }
 
     pub(crate) fn increment_receive_and_buffer_packets_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .outer_loop_timings
-                    .receive_and_buffer_packets_us,
-                us
-            );
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .outer_loop_timings
-                    .receive_and_buffer_packets_invoked_count,
-                1
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .outer_loop_timings
+                .receive_and_buffer_packets_us += us;
+
+            leader_slot_metrics
+                .timing_metrics
+                .outer_loop_timings
+                .receive_and_buffer_packets_invoked_count += 1;
         }
     }
 
     // Processing buffer timing metrics
     pub(crate) fn increment_make_decision_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_buffered_packets_timings
-                    .make_decision_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .process_buffered_packets_timings
+                .make_decision_us += us;
         }
     }
 
     pub(crate) fn increment_consume_buffered_packets_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_buffered_packets_timings
-                    .consume_buffered_packets_us,
-                us
-            );
-        }
-    }
-
-    pub(crate) fn increment_forward_us(&mut self, us: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_buffered_packets_timings
-                    .forward_us,
-                us
-            );
-        }
-    }
-
-    pub(crate) fn increment_forward_and_hold_us(&mut self, us: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_buffered_packets_timings
-                    .forward_and_hold_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .process_buffered_packets_timings
+                .consume_buffered_packets_us += us;
         }
     }
 
     pub(crate) fn increment_process_packets_transactions_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .consume_buffered_packets_timings
-                    .process_packets_transactions_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .consume_buffered_packets_timings
+                .process_packets_transactions_us += us
         }
     }
 
     // Processing packets timing metrics
     pub(crate) fn increment_transactions_from_packets_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_packets_timings
-                    .transactions_from_packets_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .process_packets_timings
+                .transactions_from_packets_us += us;
         }
     }
 
     pub(crate) fn increment_process_transactions_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_packets_timings
-                    .process_transactions_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .process_packets_timings
+                .process_transactions_us += us;
         }
     }
 
     pub(crate) fn increment_filter_retryable_packets_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_packets_timings
-                    .filter_retryable_packets_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .process_packets_timings
+                .filter_retryable_packets_us += us;
         }
     }
 
     pub(crate) fn increment_dropped_gossip_vote_count(&mut self, count: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .vote_packet_count_metrics
-                    .dropped_gossip_votes,
-                count
-            );
+            leader_slot_metrics
+                .vote_packet_count_metrics
+                .dropped_gossip_votes += count;
         }
     }
 
     pub(crate) fn increment_dropped_tpu_vote_count(&mut self, count: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .vote_packet_count_metrics
-                    .dropped_tpu_votes,
-                count
-            );
+            leader_slot_metrics
+                .vote_packet_count_metrics
+                .dropped_tpu_votes += count;
         }
     }
 }
@@ -1117,26 +799,20 @@ impl LeaderSlotMetricsTracker {
 mod tests {
     use {
         super::*,
+        solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, genesis_utils::create_genesis_config},
-        solana_sdk::pubkey::Pubkey,
         std::{mem, sync::Arc},
     };
 
     struct TestSlotBoundaryComponents {
         first_bank: Arc<Bank>,
-        first_poh_recorder_bank: BankStart,
         next_bank: Arc<Bank>,
-        next_poh_recorder_bank: BankStart,
         leader_slot_metrics_tracker: LeaderSlotMetricsTracker,
     }
 
     fn setup_test_slot_boundary_banks() -> TestSlotBoundaryComponents {
         let genesis = create_genesis_config(10);
         let first_bank = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
-        let first_poh_recorder_bank = BankStart {
-            working_bank: first_bank.clone(),
-            bank_creation_time: Arc::new(Instant::now()),
-        };
 
         // Create a child descended from the first bank
         let next_bank = Arc::new(Bank::new_from_parent(
@@ -1144,19 +820,12 @@ mod tests {
             &Pubkey::new_unique(),
             first_bank.slot() + 1,
         ));
-        let next_poh_recorder_bank = BankStart {
-            working_bank: next_bank.clone(),
-            bank_creation_time: Arc::new(Instant::now()),
-        };
 
-        let banking_stage_thread_id = 0;
-        let leader_slot_metrics_tracker = LeaderSlotMetricsTracker::new(banking_stage_thread_id);
+        let leader_slot_metrics_tracker = LeaderSlotMetricsTracker::default();
 
         TestSlotBoundaryComponents {
             first_bank,
-            first_poh_recorder_bank,
             next_bank,
-            next_poh_recorder_bank,
             leader_slot_metrics_tracker,
         }
     }
@@ -1168,7 +837,7 @@ mod tests {
             ..
         } = setup_test_slot_boundary_banks();
         // Test that with no bank being tracked, and no new bank being tracked, nothing is reported
-        let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None, None);
+        let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None);
         assert_eq!(
             mem::discriminant(&MetricsTrackerAction::Noop),
             mem::discriminant(&action)
@@ -1180,7 +849,7 @@ mod tests {
     #[test]
     pub fn test_update_on_leader_slot_boundary_not_leader_to_leader() {
         let TestSlotBoundaryComponents {
-            first_poh_recorder_bank,
+            first_bank,
             mut leader_slot_metrics_tracker,
             ..
         } = setup_test_slot_boundary_banks();
@@ -1188,8 +857,7 @@ mod tests {
         // Test case where the thread has not detected a leader bank, and now sees a leader bank.
         // Metrics should not be reported because leader slot has not ended
         assert!(leader_slot_metrics_tracker.leader_slot_metrics.is_none());
-        let action = leader_slot_metrics_tracker
-            .check_leader_slot_boundary(Some(&first_poh_recorder_bank), None);
+        let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_bank));
         assert_eq!(
             mem::discriminant(&MetricsTrackerAction::NewTracker(None)),
             mem::discriminant(&action)
@@ -1202,7 +870,6 @@ mod tests {
     pub fn test_update_on_leader_slot_boundary_leader_to_not_leader() {
         let TestSlotBoundaryComponents {
             first_bank,
-            first_poh_recorder_bank,
             mut leader_slot_metrics_tracker,
             ..
         } = setup_test_slot_boundary_banks();
@@ -1212,13 +879,12 @@ mod tests {
         // because that leader slot has just ended.
         {
             // Setup first_bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank), None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_bank));
             assert!(leader_slot_metrics_tracker.apply_action(action).is_none());
         }
         {
             // Assert reporting if slot has ended
-            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None, None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None);
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndResetTracker),
                 mem::discriminant(&action)
@@ -1231,7 +897,7 @@ mod tests {
         }
         {
             // Assert no-op if still no new bank
-            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None, None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None);
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::Noop),
                 mem::discriminant(&action)
@@ -1243,7 +909,6 @@ mod tests {
     pub fn test_update_on_leader_slot_boundary_leader_to_leader_same_slot() {
         let TestSlotBoundaryComponents {
             first_bank,
-            first_poh_recorder_bank,
             mut leader_slot_metrics_tracker,
             ..
         } = setup_test_slot_boundary_banks();
@@ -1252,14 +917,12 @@ mod tests {
         // implying the slot is still running. Metrics should not be reported
         {
             // Setup with first_bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank), None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_bank));
             assert!(leader_slot_metrics_tracker.apply_action(action).is_none());
         }
         {
             // Assert nop-op if same bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank), None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_bank));
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::Noop),
                 mem::discriminant(&action)
@@ -1268,7 +931,7 @@ mod tests {
         }
         {
             // Assert reporting if slot has ended
-            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None, None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None);
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndResetTracker),
                 mem::discriminant(&action)
@@ -1285,9 +948,7 @@ mod tests {
     pub fn test_update_on_leader_slot_boundary_leader_to_leader_bigger_slot() {
         let TestSlotBoundaryComponents {
             first_bank,
-            first_poh_recorder_bank,
             next_bank,
-            next_poh_recorder_bank,
             mut leader_slot_metrics_tracker,
         } = setup_test_slot_boundary_banks();
 
@@ -1296,14 +957,12 @@ mod tests {
         // smaller slot
         {
             // Setup with first_bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank), None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_bank));
             assert!(leader_slot_metrics_tracker.apply_action(action).is_none());
         }
         {
             // Assert reporting if new bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&next_poh_recorder_bank), None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&next_bank));
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndNewTracker(None)),
                 mem::discriminant(&action)
@@ -1316,7 +975,7 @@ mod tests {
         }
         {
             // Assert reporting if slot has ended
-            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None, None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None);
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndResetTracker),
                 mem::discriminant(&action)
@@ -1333,9 +992,7 @@ mod tests {
     pub fn test_update_on_leader_slot_boundary_leader_to_leader_smaller_slot() {
         let TestSlotBoundaryComponents {
             first_bank,
-            first_poh_recorder_bank,
             next_bank,
-            next_poh_recorder_bank,
             mut leader_slot_metrics_tracker,
         } = setup_test_slot_boundary_banks();
         // Test case where the thread has a leader bank, and now detects there's a new leader bank
@@ -1343,14 +1000,12 @@ mod tests {
         // bigger slot
         {
             // Setup with next_bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&next_poh_recorder_bank), None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&next_bank));
             assert!(leader_slot_metrics_tracker.apply_action(action).is_none());
         }
         {
             // Assert reporting if new bank
-            let action = leader_slot_metrics_tracker
-                .check_leader_slot_boundary(Some(&first_poh_recorder_bank), None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(Some(&first_bank));
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndNewTracker(None)),
                 mem::discriminant(&action)
@@ -1363,7 +1018,7 @@ mod tests {
         }
         {
             // Assert reporting if slot has ended
-            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None, None);
+            let action = leader_slot_metrics_tracker.check_leader_slot_boundary(None);
             assert_eq!(
                 mem::discriminant(&MetricsTrackerAction::ReportAndResetTracker),
                 mem::discriminant(&action)

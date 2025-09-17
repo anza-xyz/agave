@@ -26,7 +26,7 @@ to your machine by fetching the transaction count:
 solana transaction-count
 ```
 
-View the [metrics dashboard](https://metrics.solana.com:3000/d/monitor/cluster-telemetry) for more
+View the [metrics dashboard](https://metrics.solana.com:3000/d/monitor-edge/cluster-telemetry) for more
 detail on cluster activity.
 
 ## Enabling CUDA
@@ -70,6 +70,7 @@ Add
 
 ```
 LimitNOFILE=1000000
+LimitMEMLOCK=2000000000
 ```
 
 to the `[Service]` section of your systemd service file, if you use one,
@@ -77,6 +78,7 @@ otherwise add
 
 ```
 DefaultLimitNOFILE=1000000
+DefaultLimitMEMLOCK=2000000000
 ```
 
 to the `[Manager]` section of `/etc/systemd/system.conf`.
@@ -89,6 +91,8 @@ sudo systemctl daemon-reload
 sudo bash -c "cat >/etc/security/limits.d/90-solana-nofiles.conf <<EOF
 # Increase process file descriptor count limit
 * - nofile 1000000
+# Increase memory locked limit (kB)
+* - memlock 2000000
 EOF"
 ```
 
@@ -216,7 +220,7 @@ Or to see in finer detail:
 solana balance --lamports
 ```
 
-Read more about the [difference between SOL and lamports here](https://solana.com/docs/intro#what-are-sols).
+Read more about the difference between SOL and lamports here: [What is SOL?](https://solana.com/docs/references/terminology#sol), [What is a lamport?](https://solana.com/docs/references/terminology#lamport).
 
 ## Create Authorized Withdrawer Account
 
@@ -314,11 +318,11 @@ the validator to ports 11000-11020.
 ### Limiting ledger size to conserve disk space
 
 The `--limit-ledger-size` parameter allows you to specify how many ledger
-[shreds](https://solana.com/docs/terminology#shred) your node retains on disk. If you do not
-include this parameter, the validator will keep all received ledger data
-until it runs out of disk space. Otherwise, the validator will continually
-purge the oldest data once to stay under the specified `--limit-ledger-size`
-value.
+[shreds](https://solana.com/docs/terminology#shred) your node retains on disk.
+If you do not include this parameter, the validator will keep all received
+ledger data until it runs out of disk space. Otherwise, the validator will
+periodically purge the oldest data (FIFO) to remain under the specified
+`--limit-ledger-size` value.
 
 The default value attempts to keep the blockstore (data within the rocksdb
 directory) disk usage under 500 GB. More or less disk usage may be requested
@@ -332,6 +336,11 @@ These items may include (but are not limited to):
 - Persistent accounts data
 - Persistent accounts index
 - Snapshots
+
+Additionally, specifying `--enable-rpc-transaction-history` will store extra
+block and transaction metadata. The space required to store this data varies
+with cluster activity, and is hard to account for. Thus, using this flag will
+likely cause the 500 GB target to be exceeded.
 
 ### Systemd Unit
 
@@ -353,6 +362,7 @@ Restart=always
 RestartSec=1
 User=sol
 LimitNOFILE=1000000
+LimitMEMLOCK=2000000000
 LogRateLimitIntervalSec=0
 Environment="PATH=/bin:/usr/bin:/home/sol/.local/share/solana/install/active_release/bin"
 ExecStart=/home/sol/bin/validator.sh
@@ -429,40 +439,6 @@ which starts the solana validator process uses "exec" to do so (example: "exec
 agave-validator ..."); otherwise, when logrotate sends its signal to the
 validator, the enclosing script will die and take the validator process with
 it.
-
-### Using a ramdisk with spill-over into swap for the accounts database to reduce SSD wear
-
-If your machine has plenty of RAM, a tmpfs ramdisk
-([tmpfs](https://man7.org/linux/man-pages/man5/tmpfs.5.html)) may be used to hold
-the accounts database
-
-When using tmpfs it's essential to also configure swap on your machine as well to
-avoid running out of tmpfs space periodically.
-
-A 300GB tmpfs partition is recommended, with an accompanying 250GB swap
-partition.
-
-Example configuration:
-
-1. `sudo mkdir /mnt/solana-accounts`
-2. Add a 300GB tmpfs partition by adding a new line containing `tmpfs /mnt/solana-accounts tmpfs rw,size=300G,user=sol 0 0` to `/etc/fstab`
-   (assuming your validator is running under the user "sol"). **CAREFUL: If you
-   incorrectly edit /etc/fstab your machine may no longer boot**
-3. Create at least 250GB of swap space
-
-- Choose a device to use in place of `SWAPDEV` for the remainder of these instructions.
-  Ideally select a free disk partition of 250GB or greater on a fast disk. If one is not
-  available, create a swap file with `sudo dd if=/dev/zero of=/swapfile bs=1MiB count=250KiB`,
-  set its permissions with `sudo chmod 0600 /swapfile` and use `/swapfile` as `SWAPDEV` for
-  the remainder of these instructions
-- Format the device for usage as swap with `sudo mkswap SWAPDEV`
-
-4. Add the swap file to `/etc/fstab` with a new line containing `SWAPDEV swap swap defaults 0 0`
-5. Enable swap with `sudo swapon -a` and mount the tmpfs with `sudo mount /mnt/solana-accounts/`
-6. Confirm swap is active with `free -g` and the tmpfs is mounted with `mount`
-
-Now add the `--accounts /mnt/solana-accounts` argument to your `agave-validator`
-command-line arguments and restart the validator.
 
 ### Account indexing
 

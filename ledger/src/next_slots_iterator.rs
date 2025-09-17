@@ -1,6 +1,6 @@
 use {
     crate::{blockstore::*, blockstore_meta::SlotMeta},
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
 };
 
 pub struct NextSlotsIterator<'a> {
@@ -17,7 +17,7 @@ impl<'a> NextSlotsIterator<'a> {
     }
 }
 
-impl<'a> Iterator for NextSlotsIterator<'a> {
+impl Iterator for NextSlotsIterator<'_> {
     type Item = (Slot, SlotMeta);
     fn next(&mut self) -> Option<Self::Item> {
         if self.pending_slots.is_empty() {
@@ -37,8 +37,8 @@ impl<'a> Iterator for NextSlotsIterator<'a> {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::blockstore_processor::fill_blockstore_slot_with_ticks,
-        solana_sdk::hash::Hash, std::collections::HashSet,
+        super::*, crate::blockstore_processor::fill_blockstore_slot_with_ticks, solana_hash::Hash,
+        std::collections::HashSet,
     };
 
     #[test]

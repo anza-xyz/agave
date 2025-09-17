@@ -1,6 +1,6 @@
 use {
     super::*,
-    spl_token_2022::{
+    spl_token_2022_interface::{
         extension::confidential_transfer::instruction::*,
         instruction::{decode_instruction_data, decode_instruction_type},
         solana_zk_sdk::encryption::pod::elgamal::PodElGamalPubkey,
@@ -597,24 +597,24 @@ mod test {
     use {
         super::*,
         bytemuck::Zeroable,
-        solana_sdk::{
-            instruction::{AccountMeta, Instruction},
-            pubkey::Pubkey,
-        },
-        spl_token_2022::{
+        solana_instruction::{AccountMeta, Instruction},
+        solana_message::Message,
+        solana_pubkey::Pubkey,
+        spl_token_2022_interface::{
             extension::confidential_transfer::instruction::{
                 initialize_mint, inner_configure_account, inner_empty_account, update_mint,
             },
-            solana_program::message::Message,
             solana_zk_sdk::{
-                encryption::pod::auth_encryption::PodAeCiphertext,
+                encryption::pod::{
+                    auth_encryption::PodAeCiphertext, elgamal::PodElGamalCiphertext,
+                },
                 zk_elgamal_proof_program::proof_data::{
                     BatchedGroupedCiphertext3HandlesValidityProofData, BatchedRangeProofU128Data,
                     CiphertextCommitmentEqualityProofData, ZeroCiphertextProofData,
                 },
             },
         },
-        spl_token_confidential_transfer_proof_extraction::instruction::{ProofData, ProofLocation},
+        spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation,
         std::num::NonZero,
     };
 
@@ -634,7 +634,7 @@ mod test {
     #[test]
     fn test_initialize() {
         let instruction = initialize_mint(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &Pubkey::new_unique(),
             Some(Pubkey::new_unique()),
             true,
@@ -647,7 +647,7 @@ mod test {
     #[test]
     fn test_approve() {
         let instruction = approve_account(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &Pubkey::new_unique(),
             &Pubkey::new_unique(),
             &Pubkey::new_unique(),
@@ -660,7 +660,7 @@ mod test {
     #[test]
     fn test_update() {
         let instruction = update_mint(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &Pubkey::new_unique(),
             &Pubkey::new_unique(),
             &[],
@@ -676,19 +676,15 @@ mod test {
         for location in [
             ProofLocation::InstructionOffset(
                 NonZero::new(1).unwrap(),
-                ProofData::InstructionData(&PubkeyValidityProofData::zeroed()),
-            ),
-            ProofLocation::InstructionOffset(
-                NonZero::new(1).unwrap(),
-                ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                &PubkeyValidityProofData::zeroed(),
             ),
             ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
         ] {
             let instruction = inner_configure_account(
-                &spl_token_2022::id(),
+                &spl_token_2022_interface::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
-                PodAeCiphertext::default(),
+                &PodAeCiphertext::default(),
                 10_000,
                 &Pubkey::new_unique(),
                 &[],
@@ -704,16 +700,12 @@ mod test {
         for location in [
             ProofLocation::InstructionOffset(
                 NonZero::new(1).unwrap(),
-                ProofData::InstructionData(&ZeroCiphertextProofData::zeroed()),
-            ),
-            ProofLocation::InstructionOffset(
-                NonZero::new(1).unwrap(),
-                ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                &ZeroCiphertextProofData::zeroed(),
             ),
             ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
         ] {
             let instruction = inner_empty_account(
-                &spl_token_2022::id(),
+                &spl_token_2022_interface::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 &[],
@@ -730,21 +722,11 @@ mod test {
             (
                 ProofLocation::InstructionOffset(
                     NonZero::new(1).unwrap(),
-                    ProofData::InstructionData(&CiphertextCommitmentEqualityProofData::zeroed()),
+                    &CiphertextCommitmentEqualityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(3).unwrap(),
-                    ProofData::InstructionData(&BatchedRangeProofU64Data::zeroed()),
-                ),
-            ),
-            (
-                ProofLocation::InstructionOffset(
-                    NonZero::new(1).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(2).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                    &BatchedRangeProofU64Data::zeroed(),
                 ),
             ),
             (
@@ -753,12 +735,12 @@ mod test {
             ),
         ] {
             let instruction = inner_withdraw(
-                &spl_token_2022::id(),
+                &spl_token_2022_interface::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 1,
                 2,
-                PodAeCiphertext::default(),
+                &PodAeCiphertext::default(),
                 &Pubkey::new_unique(),
                 &[],
                 equality_proof_location,
@@ -775,31 +757,15 @@ mod test {
             (
                 ProofLocation::InstructionOffset(
                     NonZero::new(1).unwrap(),
-                    ProofData::InstructionData(&CiphertextCommitmentEqualityProofData::zeroed()),
+                    &CiphertextCommitmentEqualityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(2).unwrap(),
-                    ProofData::InstructionData(
-                        &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
-                    ),
+                    &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(3).unwrap(),
-                    ProofData::InstructionData(&BatchedRangeProofU128Data::zeroed()),
-                ),
-            ),
-            (
-                ProofLocation::InstructionOffset(
-                    NonZero::new(1).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(2).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(3).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                    &BatchedRangeProofU128Data::zeroed(),
                 ),
             ),
             (
@@ -809,11 +775,13 @@ mod test {
             ),
         ] {
             let instruction = inner_transfer(
-                &spl_token_2022::id(),
+                &spl_token_2022_interface::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
-                PodAeCiphertext::default(),
+                &PodAeCiphertext::default(),
+                &PodElGamalCiphertext::default(),
+                &PodElGamalCiphertext::default(),
                 &Pubkey::new_unique(),
                 &[],
                 equality_proof_location,
@@ -837,49 +805,23 @@ mod test {
             (
                 ProofLocation::InstructionOffset(
                     NonZero::new(1).unwrap(),
-                    ProofData::InstructionData(&CiphertextCommitmentEqualityProofData::zeroed()),
+                    &CiphertextCommitmentEqualityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(2).unwrap(),
-                    ProofData::InstructionData(
-                        &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
-                    ),
+                    &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(3).unwrap(),
-                    ProofData::InstructionData(&PercentageWithCapProofData::zeroed()),
+                    &PercentageWithCapProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(4).unwrap(),
-                    ProofData::InstructionData(
-                        &BatchedGroupedCiphertext2HandlesValidityProofData::zeroed(),
-                    ),
+                    &BatchedGroupedCiphertext2HandlesValidityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(5).unwrap(),
-                    ProofData::InstructionData(&BatchedRangeProofU256Data::zeroed()),
-                ),
-            ),
-            (
-                ProofLocation::InstructionOffset(
-                    NonZero::new(1).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(2).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(3).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(4).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(5).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                    &BatchedRangeProofU256Data::zeroed(),
                 ),
             ),
             (
@@ -891,11 +833,13 @@ mod test {
             ),
         ] {
             let instruction = inner_transfer_with_fee(
-                &spl_token_2022::id(),
+                &spl_token_2022_interface::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
-                PodAeCiphertext::default(),
+                &PodAeCiphertext::default(),
+                &PodElGamalCiphertext::default(),
+                &PodElGamalCiphertext::default(),
                 &Pubkey::new_unique(),
                 &[],
                 equality_proof_location,

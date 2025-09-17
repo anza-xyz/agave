@@ -69,7 +69,8 @@ anchor() {
   patch_crates_io_solana Cargo.toml "$solana_dir"
   patch_spl_crates . Cargo.toml "$spl_dir"
 
-  $cargo test
+  # Exclude `avm` tests because they don't depend on Solana or SPL
+  $cargo test --workspace --exclude avm
   # serum_dex and mpl-token-metadata are using caret versions of solana and SPL dependencies
   # rather pull and patch those as well, ignore for now
   # (cd spl && $cargo_build_sbf --features dex metadata stake)

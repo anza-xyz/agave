@@ -1,6 +1,7 @@
 use {
     crate::parse_account_data::{ParsableAccount, ParseAccountError},
-    solana_sdk::{address_lookup_table::state::AddressLookupTable, instruction::InstructionError},
+    solana_address_lookup_table_interface::state::AddressLookupTable,
+    solana_instruction::error::InstructionError,
 };
 
 pub fn parse_address_lookup_table(
@@ -36,7 +37,7 @@ pub struct UiLookupTable {
     pub addresses: Vec<String>,
 }
 
-impl<'a> From<AddressLookupTable<'a>> for UiLookupTable {
+impl From<AddressLookupTable<'_>> for UiLookupTable {
     fn from(address_lookup_table: AddressLookupTable) -> Self {
         Self {
             deactivation_slot: address_lookup_table.meta.deactivation_slot.to_string(),
@@ -61,10 +62,8 @@ impl<'a> From<AddressLookupTable<'a>> for UiLookupTable {
 mod test {
     use {
         super::*,
-        solana_sdk::{
-            address_lookup_table::state::{LookupTableMeta, LOOKUP_TABLE_META_SIZE},
-            pubkey::Pubkey,
-        },
+        solana_address_lookup_table_interface::state::{LookupTableMeta, LOOKUP_TABLE_META_SIZE},
+        solana_pubkey::Pubkey,
         std::borrow::Cow,
     };
 

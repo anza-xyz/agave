@@ -3,7 +3,7 @@
 //! Formal documentation and security proofs for the sigma proofs in this module can be found in
 //! [`ZK Token proof`] program documentation.
 //!
-//! [`ZK Token proof`]: https://docs.solanalabs.com/runtime/zk-token-proof
+//! [`ZK Token proof`]: https://docs.anza.xyz/runtime/zk-elgamal-proof
 
 pub mod errors;
 

@@ -1,6 +1,6 @@
 use {
     super::*,
-    spl_token_2022::{
+    spl_token_2022_interface::{
         extension::confidential_mint_burn::instruction::*,
         instruction::{decode_instruction_data, decode_instruction_type},
     },
@@ -254,6 +254,25 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                 info: value,
             })
         }
+        ConfidentialMintBurnInstruction::ApplyPendingBurn => {
+            check_num_token_accounts(account_indexes, 2)?;
+            let mut value = json!({
+                "mint": account_keys[account_indexes[0] as usize].to_string(),
+            });
+            let map = value.as_object_mut().unwrap();
+            parse_signers(
+                map,
+                1,
+                account_keys,
+                account_indexes,
+                "owner",
+                "multisigOwner",
+            );
+            Ok(ParsedInstructionEnum {
+                instruction_type: "applyPendingBurn".to_string(),
+                info: value,
+            })
+        }
     }
 }
 
@@ -262,21 +281,18 @@ mod test {
     use {
         super::*,
         bytemuck::Zeroable,
-        solana_sdk::{
-            instruction::{AccountMeta, Instruction},
-            pubkey::Pubkey,
-        },
-        spl_token_2022::{
+        solana_instruction::{AccountMeta, Instruction},
+        solana_message::Message,
+        solana_pubkey::Pubkey,
+        spl_token_2022_interface::{
             extension::confidential_mint_burn::instruction::{
                 confidential_burn_with_split_proofs, confidential_mint_with_split_proofs,
                 initialize_mint,
             },
-            solana_program::message::Message,
             solana_zk_sdk::{
-                encryption::{
-                    auth_encryption::AeCiphertext,
-                    elgamal::ElGamalPubkey,
-                    pod::{auth_encryption::PodAeCiphertext, elgamal::PodElGamalPubkey},
+                encryption::pod::{
+                    auth_encryption::PodAeCiphertext,
+                    elgamal::{PodElGamalCiphertext, PodElGamalPubkey},
                 },
                 zk_elgamal_proof_program::proof_data::{
                     BatchedGroupedCiphertext3HandlesValidityProofData, BatchedRangeProofU128Data,
@@ -284,7 +300,7 @@ mod test {
                 },
             },
         },
-        spl_token_confidential_transfer_proof_extraction::instruction::{ProofData, ProofLocation},
+        spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation,
         std::num::NonZero,
     };
 
@@ -304,10 +320,10 @@ mod test {
     #[test]
     fn test_initialize() {
         let instruction = initialize_mint(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &Pubkey::new_unique(),
-            PodElGamalPubkey::default(),
-            PodAeCiphertext::default(),
+            &PodElGamalPubkey::default(),
+            &PodAeCiphertext::default(),
         )
         .unwrap();
         check_no_panic(instruction);
@@ -316,11 +332,11 @@ mod test {
     #[test]
     fn test_update() {
         let instruction = update_decryptable_supply(
-            &spl_token_2022::id(),
+            &spl_token_2022_interface::id(),
             &Pubkey::new_unique(),
             &Pubkey::new_unique(),
             &[],
-            AeCiphertext::default(),
+            &PodAeCiphertext::default(),
         )
         .unwrap();
         check_no_panic(instruction);
@@ -331,20 +347,16 @@ mod test {
         for location in [
             ProofLocation::InstructionOffset(
                 NonZero::new(1).unwrap(),
-                ProofData::InstructionData(&CiphertextCiphertextEqualityProofData::zeroed()),
-            ),
-            ProofLocation::InstructionOffset(
-                NonZero::new(1).unwrap(),
-                ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                &CiphertextCiphertextEqualityProofData::zeroed(),
             ),
             ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
         ] {
             let instructions = rotate_supply_elgamal_pubkey(
-                &spl_token_2022::id(),
+                &spl_token_2022_interface::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 &[],
-                ElGamalPubkey::default(),
+                &PodElGamalPubkey::default(),
                 location,
             )
             .unwrap();
@@ -358,31 +370,15 @@ mod test {
             (
                 ProofLocation::InstructionOffset(
                     NonZero::new(1).unwrap(),
-                    ProofData::InstructionData(&CiphertextCommitmentEqualityProofData::zeroed()),
+                    &CiphertextCommitmentEqualityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(2).unwrap(),
-                    ProofData::InstructionData(
-                        &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
-                    ),
+                    &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(3).unwrap(),
-                    ProofData::InstructionData(&BatchedRangeProofU128Data::zeroed()),
-                ),
-            ),
-            (
-                ProofLocation::InstructionOffset(
-                    NonZero::new(1).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(2).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(3).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                    &BatchedRangeProofU128Data::zeroed(),
                 ),
             ),
             (
@@ -392,16 +388,17 @@ mod test {
             ),
         ] {
             let instructions = confidential_mint_with_split_proofs(
-                &spl_token_2022::id(),
+                &spl_token_2022_interface::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
-                None,
+                &PodElGamalCiphertext::default(),
+                &PodElGamalCiphertext::default(),
                 &Pubkey::new_unique(),
                 &[],
                 equality_proof_location,
                 ciphertext_validity_proof_location,
                 range_proof_location,
-                AeCiphertext::default(),
+                &PodAeCiphertext::default(),
             )
             .unwrap();
             check_no_panic(instructions[0].clone());
@@ -414,31 +411,15 @@ mod test {
             (
                 ProofLocation::InstructionOffset(
                     NonZero::new(1).unwrap(),
-                    ProofData::InstructionData(&CiphertextCommitmentEqualityProofData::zeroed()),
+                    &CiphertextCommitmentEqualityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(2).unwrap(),
-                    ProofData::InstructionData(
-                        &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
-                    ),
+                    &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
                 ),
                 ProofLocation::InstructionOffset(
                     NonZero::new(3).unwrap(),
-                    ProofData::InstructionData(&BatchedRangeProofU128Data::zeroed()),
-                ),
-            ),
-            (
-                ProofLocation::InstructionOffset(
-                    NonZero::new(1).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(2).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
-                ),
-                ProofLocation::InstructionOffset(
-                    NonZero::new(3).unwrap(),
-                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                    &BatchedRangeProofU128Data::zeroed(),
                 ),
             ),
             (
@@ -448,11 +429,12 @@ mod test {
             ),
         ] {
             let instructions = confidential_burn_with_split_proofs(
-                &spl_token_2022::id(),
+                &spl_token_2022_interface::id(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
-                None,
-                PodAeCiphertext::default(),
+                &PodAeCiphertext::default(),
+                &PodElGamalCiphertext::default(),
+                &PodElGamalCiphertext::default(),
                 &Pubkey::new_unique(),
                 &[],
                 equality_proof_location,

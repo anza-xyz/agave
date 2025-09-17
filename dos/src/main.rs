@@ -55,24 +55,25 @@ use {
         contact_info::{ContactInfo, Protocol},
         gossip_service::{discover, get_client},
     },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_measure::measure::Measure,
+    solana_message::{compiled_instruction::CompiledInstruction, Message},
     solana_net_utils::bind_to_unspecified,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{
-        hash::Hash,
-        instruction::CompiledInstruction,
-        message::Message,
-        pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer},
-        stake,
-        system_instruction::{self, SystemInstruction},
-        system_program,
-        timing::timestamp,
-        transaction::Transaction,
-    },
+    solana_signature::Signature,
+    solana_signer::Signer,
+    solana_stake_interface as stake,
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_interface::{
+        instruction::{self as system_instruction, SystemInstruction},
+        program as system_program,
+    },
+    solana_time_utils::timestamp,
     solana_tps_client::TpsClient,
     solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
+    solana_transaction::Transaction,
     std::{
         net::SocketAddr,
         process::exit,
@@ -433,16 +434,16 @@ fn get_target(
     let mut target = None;
     if nodes.is_empty() {
         // skip-gossip case
-        target = Some((solana_sdk::pubkey::new_rand(), entrypoint_addr));
+        target = Some((solana_pubkey::new_rand(), entrypoint_addr));
     } else {
         info!("************ NODE ***********");
         for node in nodes {
-            info!("{:?}", node);
+            info!("{node:?}");
         }
-        info!("ADDR = {}", entrypoint_addr);
+        info!("ADDR = {entrypoint_addr}");
 
         for node in nodes {
-            if node.gossip().ok() == Some(entrypoint_addr) {
+            if node.gossip() == Some(entrypoint_addr) {
                 info!("{:?}", node.gossip());
                 target = match mode {
                     Mode::Gossip => Some((*node.pubkey(), node.gossip().unwrap())),
@@ -475,7 +476,7 @@ fn get_rpc_client(
 
     // find target node
     for node in nodes {
-        if node.gossip().ok() == Some(entrypoint_addr) {
+        if node.gossip() == Some(entrypoint_addr) {
             info!("{:?}", node.gossip());
             return Ok(RpcClient::new_socket(node.rpc().unwrap()));
         }
@@ -651,7 +652,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
         && params.transaction_params.unique_transactions
     {
         let (_, target_addr) = target.expect("should have target");
-        info!("Targeting {}", target_addr);
+        info!("Targeting {target_addr}");
         run_dos_transactions(
             target_addr,
             iterations,
@@ -663,7 +664,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
         );
     } else {
         let (target_id, target_addr) = target.expect("should have target");
-        info!("Targeting {}", target_addr);
+        info!("Targeting {target_addr}");
         let mut data = match params.data_type {
             DataType::RepairHighest => {
                 let slot = 100;
@@ -699,7 +700,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
             }
             DataType::Transaction => {
                 let tp = params.transaction_params;
-                info!("{:?}", tp);
+                info!("{tp:?}");
 
                 let valid_blockhash = tp.valid_blockhash;
                 let payers: Vec<Option<Keypair>> =
@@ -719,7 +720,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
 
                 let mut transaction_generator = TransactionGenerator::new(tp);
                 let tx = transaction_generator.generate(payer, keypairs_chunk, client.as_ref());
-                info!("{:?}", tx);
+                info!("{tx:?}");
                 bincode::serialize(&tx).unwrap()
             }
             _ => panic!("Unsupported data_type detected"),
@@ -760,7 +761,18 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
 
 fn main() {
     solana_logger::setup_with_default_filter();
-    let cmd_params = build_cli_parameters();
+    let mut cmd_params = build_cli_parameters();
+
+    if !cmd_params.skip_gossip && cmd_params.shred_version.is_none() {
+        // Try to get shred version from the entrypoint
+        cmd_params.shred_version = Some(
+            solana_net_utils::get_cluster_shred_version(&cmd_params.entrypoint_addr)
+                .unwrap_or_else(|err| {
+                    eprintln!("Failed to get shred version: {err}");
+                    exit(1);
+                }),
+        );
+    }
 
     let (nodes, client) = if !cmd_params.skip_gossip {
         info!("Finding cluster entry: {:?}", cmd_params.entrypoint_addr);
@@ -773,7 +785,7 @@ fn main() {
             None,                              // find_nodes_by_pubkey
             Some(&cmd_params.entrypoint_addr), // find_node_by_gossip_addr
             None,                              // my_gossip_addr
-            0,                                 // my_shred_version
+            cmd_params.shred_version.unwrap(), // my_shred_version
             socket_addr_space,
         )
         .unwrap_or_else(|err| {
@@ -819,7 +831,7 @@ pub mod test {
     use {
         super::*,
         solana_core::validator::ValidatorConfig,
-        solana_faucet::faucet::run_local_faucet,
+        solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
         solana_local_cluster::{
             cluster::Cluster,
             local_cluster::{ClusterConfig, LocalCluster},
@@ -827,7 +839,7 @@ pub mod test {
         },
         solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
         solana_rpc::rpc::JsonRpcConfig,
-        solana_sdk::timing::timestamp,
+        solana_time_utils::timestamp,
         solana_tpu_client::tpu_client::TpuClient,
     };
 
@@ -844,7 +856,7 @@ pub mod test {
     #[test]
     fn test_dos() {
         let nodes = [ContactInfo::new_localhost(
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             timestamp(),
         )];
         let entrypoint_addr = nodes[0].gossip().unwrap();
@@ -859,6 +871,7 @@ pub mod test {
                 data_type: DataType::Random,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams::default(),
@@ -880,6 +893,7 @@ pub mod test {
                 data_type: DataType::RepairHighest,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams::default(),
@@ -898,6 +912,7 @@ pub mod test {
                 data_type: DataType::RepairShred,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams::default(),
@@ -916,6 +931,7 @@ pub mod test {
                 data_type: DataType::GetAccountInfo,
                 data_input: Some(Pubkey::default()),
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams::default(),
@@ -949,6 +965,7 @@ pub mod test {
                 data_type: DataType::Random,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams::default(),
@@ -970,9 +987,13 @@ pub mod test {
         let node = cluster.get_contact_info(&nodes[0]).unwrap().clone();
         let nodes_slice = [node];
 
-        let client = Arc::new(cluster.build_tpu_quic_client().unwrap_or_else(|err| {
-            panic!("Could not create TpuClient with Quic Cache {err:?}");
-        }));
+        let client = Arc::new(
+            cluster
+                .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+                .unwrap_or_else(|err| {
+                    panic!("Could not create TpuClient with Quic Cache {err:?}");
+                }),
+        );
 
         // creates one transaction with 8 valid signatures and sends it 10 times
         run_dos(
@@ -986,6 +1007,7 @@ pub mod test {
                 data_type: DataType::Transaction,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams {
@@ -1013,6 +1035,7 @@ pub mod test {
                 data_type: DataType::Transaction,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams {
@@ -1040,6 +1063,7 @@ pub mod test {
                 data_type: DataType::Transaction,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams {
@@ -1062,7 +1086,7 @@ pub mod test {
         // 1. Create faucet thread
         let faucet_keypair = Keypair::new();
         let faucet_pubkey = faucet_keypair.pubkey();
-        let faucet_addr = run_local_faucet(faucet_keypair, None);
+        let faucet_addr = run_local_faucet_with_unique_port_for_tests(faucet_keypair);
         let mut validator_config = ValidatorConfig::default_for_test();
         validator_config.rpc_config = JsonRpcConfig {
             faucet_addr: Some(faucet_addr),
@@ -1071,11 +1095,10 @@ pub mod test {
 
         // 2. Create a local cluster which is aware of faucet
         let num_nodes = 1;
-        let native_instruction_processors = vec![];
         let cluster = LocalCluster::new(
             &mut ClusterConfig {
                 node_stakes: vec![999_990; num_nodes],
-                cluster_lamports: 200_000_000,
+                mint_lamports: 200_000_000,
                 validator_configs: make_identical_validator_configs(
                     &ValidatorConfig {
                         rpc_config: JsonRpcConfig {
@@ -1086,7 +1109,6 @@ pub mod test {
                     },
                     num_nodes,
                 ),
-                native_instruction_processors,
                 ..ClusterConfig::default()
             },
             SocketAddrSpace::Unspecified,
@@ -1100,9 +1122,13 @@ pub mod test {
         let node = cluster.get_contact_info(&nodes[0]).unwrap().clone();
         let nodes_slice = [node];
 
-        let client = Arc::new(cluster.build_tpu_quic_client().unwrap_or_else(|err| {
-            panic!("Could not create TpuClient with Quic Cache {err:?}");
-        }));
+        let client = Arc::new(
+            cluster
+                .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+                .unwrap_or_else(|err| {
+                    panic!("Could not create TpuClient with Quic Cache {err:?}");
+                }),
+        );
 
         // creates one transaction and sends it 10 times
         // this is done in single thread
@@ -1117,6 +1143,7 @@ pub mod test {
                 data_type: DataType::Transaction,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams {
@@ -1146,6 +1173,7 @@ pub mod test {
                 data_type: DataType::Transaction,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams {
@@ -1174,6 +1202,7 @@ pub mod test {
                 data_type: DataType::Transaction,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams {
@@ -1202,6 +1231,7 @@ pub mod test {
                 data_type: DataType::Transaction,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams {

@@ -1,4 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
+// Allow deprecated warnings since this crate will be removed along with
+// `solana-zk-token-sdk` will be removed
+#![allow(deprecated)]
 use {
     criterion::{criterion_group, criterion_main, Criterion},
     curve25519_dalek::scalar::Scalar,

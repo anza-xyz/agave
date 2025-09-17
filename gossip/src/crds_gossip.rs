@@ -11,25 +11,26 @@ use {
         crds::{Crds, GossipRoute},
         crds_data::CrdsData,
         crds_gossip_error::CrdsGossipError,
-        crds_gossip_pull::{CrdsFilter, CrdsGossipPull, CrdsTimeouts, ProcessPullStats},
+        crds_gossip_pull::{
+            CrdsFilter, CrdsGossipPull, CrdsTimeouts, ProcessPullStats, PullRequest,
+        },
         crds_gossip_push::CrdsGossipPush,
         crds_value::CrdsValue,
         duplicate_shred::{self, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
-        ping_pong::PingCache,
-        protocol::Ping,
+        protocol::{Ping, PingCache},
     },
     itertools::Itertools,
     rand::{CryptoRng, Rng},
     rayon::ThreadPool,
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::shred::Shred,
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        timing::timestamp,
-    },
+    solana_pubkey::Pubkey,
+    solana_runtime::bank::Bank,
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_time_utils::timestamp,
     std::{
         collections::{HashMap, HashSet},
         net::SocketAddr,
@@ -75,12 +76,15 @@ impl CrdsGossip {
         pubkey: &Pubkey, // This node.
         now: u64,
         stakes: &HashMap<Pubkey, u64>,
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool,
     ) -> (
-        HashMap<Pubkey, Vec<CrdsValue>>,
-        usize, // number of values
+        Vec<CrdsValue>, // unique CrdsValues pushed out to peers
+        // map of pubkeys to indices in Vec<CrdsValue> pushed to that peer
+        HashMap<Pubkey, Vec</*index:*/ usize>>,
         usize, // number of push messages
     ) {
-        self.push.new_push_messages(pubkey, &self.crds, now, stakes)
+        self.push
+            .new_push_messages(pubkey, &self.crds, now, stakes, should_retain_crds_value)
     }
 
     pub(crate) fn push_duplicate_shred<F>(
@@ -145,7 +149,7 @@ impl CrdsGossip {
         let now = timestamp();
         for entry in entries {
             if let Err(err) = crds.insert(entry, now, GossipRoute::LocalMessage) {
-                error!("push_duplicate_shred failed: {:?}", err);
+                error!("push_duplicate_shred failed: {err:?}");
             }
         }
         Ok(())
@@ -183,6 +187,7 @@ impl CrdsGossip {
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
+        maybe_bank_ref: Option<&Bank>,
     ) {
         self.push.refresh_push_active_set(
             &self.crds,
@@ -193,6 +198,7 @@ impl CrdsGossip {
             ping_cache,
             pings,
             socket_addr_space,
+            maybe_bank_ref,
         )
     }
 
@@ -210,7 +216,7 @@ impl CrdsGossip {
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
-    ) -> Result<Vec<(ContactInfo, Vec<CrdsFilter>)>, CrdsGossipError> {
+    ) -> Result<impl Iterator<Item = (SocketAddr, CrdsFilter)> + Clone, CrdsGossipError> {
         self.pull.new_pull_request(
             thread_pool,
             &self.crds,
@@ -229,17 +235,21 @@ impl CrdsGossip {
     pub fn generate_pull_responses(
         &self,
         thread_pool: &ThreadPool,
-        filters: &[(CrdsValue, CrdsFilter)],
+        requests: &[PullRequest],
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
+        should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
+        self_shred_version: u16,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         CrdsGossipPull::generate_pull_responses(
             thread_pool,
             &self.crds,
-            filters,
+            requests,
             output_size_limit,
             now,
+            should_retain_crds_value,
+            self_shred_version,
             stats,
         )
     }
@@ -294,12 +304,9 @@ impl CrdsGossip {
         now: u64,
         timeouts: &CrdsTimeouts,
     ) -> usize {
-        let mut rv = 0;
-        if now > self.pull.crds_timeout {
-            debug_assert_eq!(timeouts[self_pubkey], u64::MAX);
-            debug_assert_ne!(timeouts[&Pubkey::default()], 0u64);
-            rv = CrdsGossipPull::purge_active(thread_pool, &self.crds, now, timeouts);
-        }
+        debug_assert_eq!(timeouts[self_pubkey], u64::MAX);
+        debug_assert_ne!(timeouts[&Pubkey::default()], 0u64);
+        let rv = CrdsGossipPull::purge_active(thread_pool, &self.crds, now, timeouts);
         self.crds
             .write()
             .unwrap()
@@ -315,8 +322,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     now: u64,
     pubkey: &Pubkey, // This node.
     // By default, should only push to or pull from gossip nodes with the same
-    // shred-version. Except for spy nodes (shred_version == 0u16) which can
-    // pull from any node.
+    // shred-version.
     verify_shred_version: impl Fn(/*shred_version:*/ u16) -> bool,
     crds: &RwLock<Crds>,
     gossip_validators: Option<&HashSet<Pubkey>>,
@@ -364,7 +370,7 @@ pub(crate) fn dedup_gossip_addresses(
 ) -> HashMap</*gossip:*/ SocketAddr, (/*stake:*/ u64, ContactInfo)> {
     nodes
         .into_iter()
-        .filter_map(|node| Some((node.gossip().ok()?, node)))
+        .filter_map(|node| Some((node.gossip()?, node)))
         .into_grouping_map()
         .aggregate(|acc, _node_gossip, node| {
             let stake = stakes.get(node.pubkey()).copied().unwrap_or_default();
@@ -386,17 +392,16 @@ pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
     pings: &mut Vec<(SocketAddr, Ping)>,
 ) -> Vec<ContactInfo> {
     let mut ping_cache = ping_cache.lock().unwrap();
-    let mut pingf = move || Ping::new_rand(rng, keypair).ok();
     let now = Instant::now();
     nodes
         .into_iter()
         .filter(|node| {
-            let Ok(node_gossip) = node.gossip() else {
+            let Some(node_gossip) = node.gossip() else {
                 return false;
             };
             let (check, ping) = {
                 let node = (*node.pubkey(), node_gossip);
-                ping_cache.check(now, node, &mut pingf)
+                ping_cache.check(rng, keypair, now, node)
             };
             if let Some(ping) = ping {
                 pings.push((node_gossip, ping));
@@ -408,10 +413,7 @@ pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
 
 #[cfg(test)]
 mod test {
-    use {
-        super::*,
-        solana_sdk::{hash::hash, timing::timestamp},
-    };
+    use {super::*, solana_sha256_hasher::hash, solana_time_utils::timestamp};
 
     #[test]
     fn test_prune_errors() {
@@ -425,12 +427,14 @@ mod test {
             .write()
             .unwrap()
             .insert(
-                CrdsValue::new_unsigned(CrdsData::ContactInfo(ci.clone())),
+                CrdsValue::new_unsigned(CrdsData::from(&ci)),
                 0,
                 GossipRoute::LocalMessage,
             )
             .unwrap();
         let ping_cache = PingCache::new(
+            &mut rand::thread_rng(),
+            Instant::now(),
             Duration::from_secs(20 * 60),      // ttl
             Duration::from_secs(20 * 60) / 64, // rate_limit_delay
             128,                               // capacity
@@ -444,6 +448,7 @@ mod test {
             &ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
+            None,
         );
         let now = timestamp();
         //incorrect dest

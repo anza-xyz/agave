@@ -1,6 +1,6 @@
 use {
     crate::{contact_info, duplicate_shred},
-    crossbeam_channel::{RecvTimeoutError, SendError},
+    crossbeam_channel::{RecvError, SendError},
     std::io,
     thiserror::Error,
 };
@@ -16,7 +16,7 @@ pub enum GossipError {
     #[error(transparent)]
     Io(#[from] io::Error),
     #[error(transparent)]
-    RecvTimeoutError(#[from] RecvTimeoutError),
+    RecvError(#[from] RecvError),
     #[error("send error")]
     SendError,
     #[error("serialization error")]

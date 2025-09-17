@@ -5,7 +5,7 @@
 //! the program as well as the technical details of some of the proof instructions can be found in
 //! the [`ZK Token proof`] documentation.
 //!
-//! [`ZK Token proof`]: https://docs.solanalabs.com/runtime/zk-token-proof
+//! [`ZK Token proof`]: https://docs.anza.xyz/runtime/zk-elgamal-proof
 
 // Program Id of the ZkToken Proof program
 pub use solana_sdk_ids::zk_token_proof_program::{check_id, id, ID};

@@ -1,15 +1,13 @@
 use {
+    solana_borsh::v1::try_from_slice_unchecked,
     solana_clap_utils::compute_budget::ComputeUnitLimit,
-    solana_compute_budget::compute_budget_limits::MAX_COMPUTE_UNIT_LIMIT,
+    solana_compute_budget_interface::{self as compute_budget, ComputeBudgetInstruction},
+    solana_instruction::Instruction,
+    solana_message::Message,
+    solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcSimulateTransactionConfig,
-    solana_sdk::{
-        borsh1::try_from_slice_unchecked,
-        compute_budget::{self, ComputeBudgetInstruction},
-        instruction::Instruction,
-        message::Message,
-        transaction::Transaction,
-    },
+    solana_transaction::Transaction,
 };
 
 /// Enum capturing the possible results of updating a message based on the
@@ -100,9 +98,18 @@ pub(crate) fn simulate_and_update_compute_unit_limit(
     };
 
     match compute_unit_limit {
-        ComputeUnitLimit::Simulated => {
-            let compute_unit_limit =
+        ComputeUnitLimit::Simulated | ComputeUnitLimit::SimulatedWithExtraPercentage(_) => {
+            let base_compute_unit_limit =
                 simulate_for_compute_unit_limit_unchecked(rpc_client, message)?;
+
+            let compute_unit_limit =
+                if let ComputeUnitLimit::SimulatedWithExtraPercentage(n) = compute_unit_limit {
+                    (base_compute_unit_limit as u64)
+                        .saturating_mul(100_u64.saturating_add(*n as u64))
+                        .saturating_div(100) as u32
+                } else {
+                    base_compute_unit_limit
+                };
 
             // Overwrite the compute unit limit instruction with the actual units consumed
             message.instructions[compute_unit_limit_ix_index].data =
@@ -140,7 +147,7 @@ impl WithComputeUnitConfig for Vec<Instruction> {
                         compute_unit_limit,
                     ));
                 }
-                ComputeUnitLimit::Simulated => {
+                ComputeUnitLimit::Simulated | ComputeUnitLimit::SimulatedWithExtraPercentage(_) => {
                     // Default to the max compute unit limit because later transactions will be
                     // simulated to get the exact compute units consumed.
                     self.push(ComputeBudgetInstruction::set_compute_unit_limit(

@@ -1,22 +1,19 @@
 use {
+    crate::vote_state_view::VoteStateView,
     itertools::Itertools,
     serde::{
         de::{MapAccess, Visitor},
         ser::{Serialize, Serializer},
     },
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        instruction::InstructionError,
-        pubkey::Pubkey,
-        vote::state::VoteState,
-    },
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_instruction::error::InstructionError,
+    solana_pubkey::Pubkey,
     std::{
         cmp::Ordering,
         collections::{hash_map::Entry, HashMap},
         fmt,
         iter::FromIterator,
-        mem::{self, MaybeUninit},
-        ptr::addr_of_mut,
+        mem,
         sync::{Arc, OnceLock},
     },
     thiserror::Error,
@@ -38,7 +35,7 @@ pub enum Error {
 #[derive(Debug)]
 struct VoteAccountInner {
     account: AccountSharedData,
-    vote_state: VoteState,
+    vote_state_view: VoteStateView,
 }
 
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
@@ -85,23 +82,21 @@ impl VoteAccount {
         self.0.account.owner()
     }
 
-    pub fn vote_state(&self) -> &VoteState {
-        &self.0.vote_state
+    pub fn vote_state_view(&self) -> &VoteStateView {
+        &self.0.vote_state_view
     }
 
     /// VoteState.node_pubkey of this vote-account.
     pub fn node_pubkey(&self) -> &Pubkey {
-        &self.0.vote_state.node_pubkey
+        self.0.vote_state_view.node_pubkey()
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_random() -> VoteAccount {
         use {
             rand::Rng as _,
-            solana_sdk::{
-                clock::Clock,
-                vote::state::{VoteInit, VoteStateVersions},
-            },
+            solana_clock::Clock,
+            solana_vote_interface::state::{VoteInit, VoteStateV3, VoteStateVersions},
         };
 
         let mut rng = rand::thread_rng();
@@ -119,11 +114,11 @@ impl VoteAccount {
             leader_schedule_epoch: rng.gen(),
             unix_timestamp: rng.gen(),
         };
-        let vote_state = VoteState::new(&vote_init, &clock);
+        let vote_state = VoteStateV3::new(&vote_init, &clock);
         let account = AccountSharedData::new_data(
             rng.gen(), // lamports
-            &VoteStateVersions::new_current(vote_state.clone()),
-            &solana_sdk::vote::program::id(), // owner
+            &VoteStateVersions::new_v3(vote_state.clone()),
+            &solana_sdk_ids::vote::id(), // owner
         )
         .unwrap();
 
@@ -316,6 +311,12 @@ impl Serialize for VoteAccount {
     }
 }
 
+impl<'a> From<&'a VoteAccount> for AccountSharedData {
+    fn from(account: &'a VoteAccount) -> Self {
+        account.0.account.clone()
+    }
+}
+
 impl From<VoteAccount> for AccountSharedData {
     fn from(account: VoteAccount) -> Self {
         account.0.account.clone()
@@ -325,51 +326,15 @@ impl From<VoteAccount> for AccountSharedData {
 impl TryFrom<AccountSharedData> for VoteAccount {
     type Error = Error;
     fn try_from(account: AccountSharedData) -> Result<Self, Self::Error> {
-        if !solana_sdk::vote::program::check_id(account.owner()) {
+        if !solana_sdk_ids::vote::check_id(account.owner()) {
             return Err(Error::InvalidOwner(*account.owner()));
         }
 
-        // Allocate as Arc<MaybeUninit<VoteAccountInner>> so we can initialize in place.
-        let mut inner = Arc::new(MaybeUninit::<VoteAccountInner>::uninit());
-        let inner_ptr = Arc::get_mut(&mut inner)
-            .expect("we're the only ref")
-            .as_mut_ptr();
-
-        // Safety:
-        // - All the addr_of_mut!(...).write(...) calls are valid since we just allocated and so
-        // the field pointers are valid.
-        // - We use write() so that the old values aren't dropped since they're still
-        // uninitialized.
-        unsafe {
-            let vote_state = addr_of_mut!((*inner_ptr).vote_state);
-            // Safety:
-            // - vote_state is non-null and MaybeUninit<VoteState> is guaranteed to have same layout
-            // and alignment as VoteState.
-            // - Here it is safe to create a reference to MaybeUninit<VoteState> since the value is
-            // aligned and MaybeUninit<T> is valid for all possible bit values.
-            let vote_state = &mut *(vote_state as *mut MaybeUninit<VoteState>);
-
-            // Try to deserialize in place
-            if let Err(e) = VoteState::deserialize_into_uninit(account.data(), vote_state) {
-                // Safety:
-                // - Deserialization failed so at this point vote_state is uninitialized and must
-                // not be dropped. We're ok since `vote_state` is a subfield of `inner`  which is
-                // still MaybeUninit - which isn't dropped by definition - and so neither are its
-                // subfields.
-                return Err(e.into());
-            }
-
-            // Write the account field which completes the initialization of VoteAccountInner.
-            addr_of_mut!((*inner_ptr).account).write(account);
-
-            // Safety:
-            // - At this point both `inner.vote_state` and `inner.account`` are initialized, so it's safe to
-            // transmute the MaybeUninit<VoteAccountInner> to VoteAccountInner.
-            Ok(VoteAccount(mem::transmute::<
-                Arc<MaybeUninit<VoteAccountInner>>,
-                Arc<VoteAccountInner>,
-            >(inner)))
-        }
+        Ok(Self(Arc::new(VoteAccountInner {
+            vote_state_view: VoteStateView::try_new(account.data_clone())
+                .map_err(|_| Error::InstructionError(InstructionError::InvalidAccountData))?,
+            account,
+        })))
     }
 }
 
@@ -377,7 +342,7 @@ impl PartialEq<VoteAccountInner> for VoteAccountInner {
     fn eq(&self, other: &Self) -> bool {
         let Self {
             account,
-            vote_state: _,
+            vote_state_view: _,
         } = self;
         account == &other.account
     }
@@ -485,19 +450,17 @@ mod tests {
         super::*,
         bincode::Options,
         rand::Rng,
-        solana_sdk::{
-            account::WritableAccount,
-            pubkey::Pubkey,
-            sysvar::clock::Clock,
-            vote::state::{VoteInit, VoteStateVersions},
-        },
+        solana_account::WritableAccount,
+        solana_clock::Clock,
+        solana_pubkey::Pubkey,
+        solana_vote_interface::state::{VoteInit, VoteStateV3, VoteStateVersions},
         std::iter::repeat_with,
     };
 
     fn new_rand_vote_account<R: Rng>(
         rng: &mut R,
         node_pubkey: Option<Pubkey>,
-    ) -> (AccountSharedData, VoteState) {
+    ) -> AccountSharedData {
         let vote_init = VoteInit {
             node_pubkey: node_pubkey.unwrap_or_else(Pubkey::new_unique),
             authorized_voter: Pubkey::new_unique(),
@@ -511,14 +474,13 @@ mod tests {
             leader_schedule_epoch: rng.gen(),
             unix_timestamp: rng.gen(),
         };
-        let vote_state = VoteState::new(&vote_init, &clock);
-        let account = AccountSharedData::new_data(
+        let vote_state = VoteStateV3::new(&vote_init, &clock);
+        AccountSharedData::new_data(
             rng.gen(), // lamports
-            &VoteStateVersions::new_current(vote_state.clone()),
-            &solana_sdk::vote::program::id(), // owner
+            &VoteStateVersions::new_v3(vote_state.clone()),
+            &solana_sdk_ids::vote::id(), // owner
         )
-        .unwrap();
-        (account, vote_state)
+        .unwrap()
     }
 
     fn new_rand_vote_accounts<R: Rng>(
@@ -528,7 +490,7 @@ mod tests {
         let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(num_nodes).collect();
         repeat_with(move || {
             let node = nodes[rng.gen_range(0..nodes.len())];
-            let (account, _) = new_rand_vote_account(rng, Some(node));
+            let account = new_rand_vote_account(rng, Some(node));
             let stake = rng.gen_range(0..997);
             let vote_account = VoteAccount::try_from(account).unwrap();
             (Pubkey::new_unique(), (stake, vote_account))
@@ -555,11 +517,10 @@ mod tests {
     #[test]
     fn test_vote_account_try_from() {
         let mut rng = rand::thread_rng();
-        let (account, vote_state) = new_rand_vote_account(&mut rng, None);
+        let account = new_rand_vote_account(&mut rng, None);
         let lamports = account.lamports();
         let vote_account = VoteAccount::try_from(account.clone()).unwrap();
         assert_eq!(lamports, vote_account.lamports());
-        assert_eq!(vote_state, *vote_account.vote_state());
         assert_eq!(&account, vote_account.account());
     }
 
@@ -567,7 +528,7 @@ mod tests {
     #[should_panic(expected = "InvalidOwner")]
     fn test_vote_account_try_from_invalid_owner() {
         let mut rng = rand::thread_rng();
-        let (mut account, _) = new_rand_vote_account(&mut rng, None);
+        let mut account = new_rand_vote_account(&mut rng, None);
         account.set_owner(Pubkey::new_unique());
         VoteAccount::try_from(account).unwrap();
     }
@@ -576,16 +537,15 @@ mod tests {
     #[should_panic(expected = "InvalidAccountData")]
     fn test_vote_account_try_from_invalid_account() {
         let mut account = AccountSharedData::default();
-        account.set_owner(solana_sdk::vote::program::id());
+        account.set_owner(solana_sdk_ids::vote::id());
         VoteAccount::try_from(account).unwrap();
     }
 
     #[test]
     fn test_vote_account_serialize() {
         let mut rng = rand::thread_rng();
-        let (account, vote_state) = new_rand_vote_account(&mut rng, None);
+        let account = new_rand_vote_account(&mut rng, None);
         let vote_account = VoteAccount::try_from(account.clone()).unwrap();
-        assert_eq!(vote_state, *vote_account.vote_state());
         // Assert that VoteAccount has the same wire format as Account.
         assert_eq!(
             bincode::serialize(&account).unwrap(),
@@ -635,13 +595,12 @@ mod tests {
         // the valid one after deserialiation
         let mut vote_accounts_hash_map = HashMap::<Pubkey, (u64, AccountSharedData)>::new();
 
-        let (valid_account, _) = new_rand_vote_account(&mut rng, None);
+        let valid_account = new_rand_vote_account(&mut rng, None);
         vote_accounts_hash_map.insert(Pubkey::new_unique(), (0xAA, valid_account.clone()));
 
         // bad data
         let invalid_account_data =
-            AccountSharedData::new_data(42, &vec![0xFF; 42], &solana_sdk::vote::program::id())
-                .unwrap();
+            AccountSharedData::new_data(42, &vec![0xFF; 42], &solana_sdk_ids::vote::id()).unwrap();
         vote_accounts_hash_map.insert(Pubkey::new_unique(), (0xBB, invalid_account_data));
 
         // wrong owner
@@ -720,7 +679,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let pubkey = Pubkey::new_unique();
         let node_pubkey = Pubkey::new_unique();
-        let (account1, _) = new_rand_vote_account(&mut rng, Some(node_pubkey));
+        let account1 = new_rand_vote_account(&mut rng, Some(node_pubkey));
         let vote_account1 = VoteAccount::try_from(account1).unwrap();
 
         // first insert
@@ -740,7 +699,7 @@ mod tests {
         assert_eq!(vote_accounts.staked_nodes().get(&node_pubkey), Some(&42));
 
         // update with changed state, same node pubkey
-        let (account2, _) = new_rand_vote_account(&mut rng, Some(node_pubkey));
+        let account2 = new_rand_vote_account(&mut rng, Some(node_pubkey));
         let vote_account2 = VoteAccount::try_from(account2).unwrap();
         let ret = vote_accounts.insert(pubkey, vote_account2.clone(), || {
             panic!("should not be called")
@@ -753,7 +712,7 @@ mod tests {
 
         // update with new node pubkey, stake must be moved
         let new_node_pubkey = Pubkey::new_unique();
-        let (account3, _) = new_rand_vote_account(&mut rng, Some(new_node_pubkey));
+        let account3 = new_rand_vote_account(&mut rng, Some(new_node_pubkey));
         let vote_account3 = VoteAccount::try_from(account3).unwrap();
         let ret = vote_accounts.insert(pubkey, vote_account3.clone(), || {
             panic!("should not be called")
@@ -773,7 +732,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let pubkey = Pubkey::new_unique();
         let node_pubkey = Pubkey::new_unique();
-        let (account1, _) = new_rand_vote_account(&mut rng, Some(node_pubkey));
+        let account1 = new_rand_vote_account(&mut rng, Some(node_pubkey));
         let vote_account1 = VoteAccount::try_from(account1).unwrap();
 
         // we call this here to initialize VoteAccounts::staked_nodes which is a OnceLock
@@ -786,7 +745,7 @@ mod tests {
 
         // update with new node pubkey, stake is 0 and should remain 0
         let new_node_pubkey = Pubkey::new_unique();
-        let (account2, _) = new_rand_vote_account(&mut rng, Some(new_node_pubkey));
+        let account2 = new_rand_vote_account(&mut rng, Some(new_node_pubkey));
         let vote_account2 = VoteAccount::try_from(account2).unwrap();
         let ret = vote_accounts.insert(pubkey, vote_account2.clone(), || {
             panic!("should not be called")

@@ -6,7 +6,6 @@ use {
     bincode::{deserialize, serialize},
     prost::Message,
     solana_runtime::bank::RewardType,
-    solana_sdk::pubkey,
     solana_transaction_status::{Reward, Rewards},
     test::Bencher,
 };
@@ -14,7 +13,7 @@ use {
 fn create_rewards() -> Rewards {
     (0..100)
         .map(|i| Reward {
-            pubkey: pubkey::new_rand().to_string(),
+            pubkey: solana_pubkey::new_rand().to_string(),
             lamports: 42 + i,
             post_balance: u64::MAX,
             reward_type: Some(RewardType::Fee),

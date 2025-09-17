@@ -45,17 +45,17 @@ impl GeyserPluginService {
     /// Creates and returns the GeyserPluginService.
     /// # Arguments
     /// * `confirmed_bank_receiver` - The receiver for confirmed bank notification
-    /// * `geyser_plugin_always_enabled` -- Subscribe on all types of notifiactions, even if
-    ///    no config files are passed
+    /// * `geyser_plugin_always_enabled` -- Subscribe on all types of notifications, even if
+    ///   no config files are passed
     /// * `geyser_plugin_config_file` - The config file path for the plugin. The
-    ///    config file controls the plugin responsible
-    ///    for transporting the data to external data stores. It is defined in JSON format.
-    ///    The `libpath` field should be pointed to the full path of the dynamic shared library
-    ///    (.so file) to be loaded. The shared library must implement the `GeyserPlugin`
-    ///    trait. And the shared library shall export a `C` function `_create_plugin` which
-    ///    shall create the implementation of `GeyserPlugin` and returns to the caller.
-    ///    The rest of the JSON fields' definition is up to to the concrete plugin implementation
-    ///    It is usually used to configure the connection information for the external data store.
+    ///   config file controls the plugin responsible
+    ///   for transporting the data to external data stores. It is defined in JSON format.
+    ///   The `libpath` field should be pointed to the full path of the dynamic shared library
+    ///   (.so file) to be loaded. The shared library must implement the `GeyserPlugin`
+    ///   trait. And the shared library shall export a `C` function `_create_plugin` which
+    ///   shall create the implementation of `GeyserPlugin` and returns to the caller.
+    ///   The rest of the JSON fields' definition is up to to the concrete plugin implementation
+    ///   It is usually used to configure the connection information for the external data store.
     pub fn new(
         confirmed_bank_receiver: Receiver<SlotNotification>,
         geyser_plugin_always_enabled: bool,
@@ -78,11 +78,8 @@ impl GeyserPluginService {
             Arc<AtomicBool>,
         )>,
     ) -> Result<Self, GeyserPluginServiceError> {
-        info!(
-            "Starting GeyserPluginService from config files: {:?}",
-            geyser_plugin_config_files
-        );
-        let mut plugin_manager = GeyserPluginManager::new();
+        info!("Starting GeyserPluginService from config files: {geyser_plugin_config_files:?}");
+        let mut plugin_manager = GeyserPluginManager::default();
 
         for geyser_plugin_config_file in geyser_plugin_config_files {
             Self::load_plugin(&mut plugin_manager, geyser_plugin_config_file)?;
@@ -90,6 +87,8 @@ impl GeyserPluginService {
 
         let account_data_notifications_enabled =
             plugin_manager.account_data_notifications_enabled() || geyser_plugin_always_enabled;
+        let account_data_snapshot_notifications_enabled =
+            plugin_manager.account_data_snapshot_notifications_enabled();
         let transaction_notifications_enabled =
             plugin_manager.transaction_notifications_enabled() || geyser_plugin_always_enabled;
         let entry_notifications_enabled =
@@ -98,8 +97,10 @@ impl GeyserPluginService {
 
         let accounts_update_notifier: Option<AccountsUpdateNotifier> =
             if account_data_notifications_enabled {
-                let accounts_update_notifier =
-                    AccountsUpdateNotifierImpl::new(plugin_manager.clone());
+                let accounts_update_notifier = AccountsUpdateNotifierImpl::new(
+                    plugin_manager.clone(),
+                    account_data_snapshot_notifications_enabled,
+                );
                 Some(Arc::new(accounts_update_notifier))
             } else {
                 None

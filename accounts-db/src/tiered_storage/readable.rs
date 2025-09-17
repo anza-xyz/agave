@@ -1,8 +1,7 @@
 use {
     crate::{
-        account_storage::meta::StoredAccountMeta,
-        accounts_file::MatchAccountOwnerError,
-        append_vec::IndexInfo,
+        account_info::Offset,
+        account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         tiered_storage::{
             file::TieredReadableFile,
             footer::{AccountMetaFormat, TieredStorageFooter},
@@ -11,7 +10,8 @@ use {
             TieredStorageResult,
         },
     },
-    solana_sdk::{account::AccountSharedData, pubkey::Pubkey},
+    solana_account::AccountSharedData,
+    solana_pubkey::Pubkey,
     std::path::Path,
 };
 
@@ -38,7 +38,7 @@ impl TieredStorageReader {
         }
     }
 
-    /// Returns whether the nderlying storage is empty.
+    /// Returns whether the underlying storage is empty.
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Hot(hot) => hot.is_empty(),
@@ -75,38 +75,37 @@ impl TieredStorageReader {
         }
     }
 
-    /// calls `callback` with the account located at the specified index offset.
-    pub fn get_stored_account_meta_callback<Ret>(
+    /// Calls `callback` with the stored account at `offset`.
+    ///
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
+    ///
+    /// This fn does *not* load the account's data, just the data length.  If the data is needed,
+    /// use `get_stored_account_callback()` instead.  However, prefer this fn when possible.
+    pub fn get_stored_account_without_data_callback<Ret>(
         &self,
         index_offset: IndexOffset,
-        callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> Ret,
+        callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
     ) -> TieredStorageResult<Option<Ret>> {
         match self {
-            Self::Hot(hot) => hot.get_stored_account_meta_callback(index_offset, callback),
+            Self::Hot(hot) => hot.get_stored_account_without_data_callback(index_offset, callback),
         }
     }
 
-    /// Returns Ok(index_of_matching_owner) if the account owner at
-    /// `account_offset` is one of the pubkeys in `owners`.
+    /// Calls `callback` with the stored account at `offset`.
     ///
-    /// Returns Err(MatchAccountOwnerError::NoMatch) if the account has 0
-    /// lamports or the owner is not one of the pubkeys in `owners`.
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
     ///
-    /// Returns Err(MatchAccountOwnerError::UnableToLoad) if there is any internal
-    /// error that causes the data unable to load, including `account_offset`
-    /// causes a data overrun.
-    pub fn account_matches_owners(
+    /// This fn *does* load the account's data.  If the data is not needed,
+    /// use `get_stored_account_without_data_callback()` instead.
+    pub fn get_stored_account_callback<Ret>(
         &self,
         index_offset: IndexOffset,
-        owners: &[Pubkey],
-    ) -> Result<usize, MatchAccountOwnerError> {
+        callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
+    ) -> TieredStorageResult<Option<Ret>> {
         match self {
-            Self::Hot(hot) => {
-                let account_offset = hot
-                    .get_account_offset(index_offset)
-                    .map_err(|_| MatchAccountOwnerError::UnableToLoad)?;
-                hot.account_matches_owners(account_offset, owners)
-            }
+            Self::Hot(hot) => hot.get_stored_account_callback(index_offset, callback),
         }
     }
 
@@ -117,30 +116,54 @@ impl TieredStorageReader {
         }
     }
 
-    /// iterate over all entries to put in index
-    pub(crate) fn scan_index(&self, callback: impl FnMut(IndexInfo)) -> TieredStorageResult<()> {
+    /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// `callback` parameters:
+    /// * Offset: the offset within the file of this account
+    /// * StoredAccountInfoWithoutData: the account itself, without account data
+    ///
+    /// Note that account data is not read/passed to the callback.
+    pub fn scan_accounts_without_data(
+        &self,
+        callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
+    ) -> TieredStorageResult<()> {
         match self {
-            Self::Hot(hot) => hot.scan_index(callback),
+            Self::Hot(hot) => hot.scan_accounts_without_data(callback),
         }
     }
 
     /// Iterate over all accounts and call `callback` with each account.
-    pub(crate) fn scan_accounts(
+    ///
+    /// `callback` parameters:
+    /// * Offset: the offset within the file of this account
+    /// * StoredAccountInfo: the account itself, with account data
+    ///
+    /// Prefer scan_accounts_without_data() when account data is not needed,
+    /// as it can potentially read less and be faster.
+    pub fn scan_accounts(
         &self,
-        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+        callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
     ) -> TieredStorageResult<()> {
         match self {
             Self::Hot(hot) => hot.scan_accounts(callback),
         }
     }
 
-    /// for each offset in `sorted_offsets`, return the account size
-    pub(crate) fn get_account_sizes(
+    /// Calculate the amount of storage required for an account with the passed
+    /// in data_len
+    pub(crate) fn calculate_stored_size(&self, data_len: usize) -> usize {
+        match self {
+            Self::Hot(_) => HotStorageReader::calculate_stored_size(data_len),
+        }
+    }
+
+    /// for each offset in `sorted_offsets`, return the length of data stored in the account
+    pub(crate) fn get_account_data_lens(
         &self,
         sorted_offsets: &[usize],
     ) -> TieredStorageResult<Vec<usize>> {
         match self {
-            Self::Hot(hot) => hot.get_account_sizes(sorted_offsets),
+            Self::Hot(hot) => hot.get_account_data_lens(sorted_offsets),
         }
     }
 

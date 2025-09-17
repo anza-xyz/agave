@@ -10,8 +10,8 @@ use {
 
 // Implement for the "reference" `SanitizedMessage` type.
 impl SVMMessage for SanitizedMessage {
-    fn num_total_signatures(&self) -> u64 {
-        SanitizedMessage::num_total_signatures(self)
+    fn num_transaction_signatures(&self) -> u64 {
+        u64::from(self.header().num_required_signatures)
     }
 
     fn num_write_locks(&self) -> u64 {
@@ -35,6 +35,10 @@ impl SVMMessage for SanitizedMessage {
     fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
         SanitizedMessage::program_instructions_iter(self)
             .map(|(pubkey, ix)| (pubkey, SVMInstruction::from(ix)))
+    }
+
+    fn static_account_keys(&self) -> &[Pubkey] {
+        SanitizedMessage::static_account_keys(self)
     }
 
     fn account_keys(&self) -> AccountKeys {

@@ -3,7 +3,8 @@
 use {
     super::StoredMeta,
     rand::{distributions::Alphanumeric, Rng},
-    solana_sdk::{account::AccountSharedData, pubkey::Pubkey},
+    solana_account::AccountSharedData,
+    solana_pubkey::Pubkey,
     std::path::PathBuf,
 };
 

@@ -2,14 +2,19 @@ use {
     criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
     itertools::iproduct,
     solana_accounts_db::{accounts::Accounts, accounts_db::AccountsDb},
-    solana_sdk::{
-        instruction::{AccountMeta, Instruction},
-        pubkey::Pubkey,
-        system_program,
-        transaction::{SanitizedTransaction, Transaction, MAX_TX_ACCOUNT_LOCKS},
+    solana_instruction::{AccountMeta, Instruction},
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::system_program,
+    solana_transaction::{
+        sanitized::{SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
+        Transaction,
     },
     std::sync::Arc,
 };
+
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 // simultaneous transactions locked
 const BATCH_SIZES: [usize; 3] = [1, 32, 64];
@@ -33,7 +38,7 @@ fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<Sani
         #[allow(clippy::needless_range_loop)]
         for i in 0..lock_count {
             // `lock_accounts()` distinguishes writable from readonly, so give transactions an even split
-            // signer doesnt matter for locking but `sanitize()` expects to see at least one
+            // signer doesn't matter for locking but `sanitize()` expects to see at least one
             let account_meta = if i == 0 {
                 AccountMeta::new(Pubkey::new_unique(), true)
             } else if i % 2 == 0 {
@@ -61,16 +66,21 @@ fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<Sani
 fn bench_entry_lock_accounts(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_lock_accounts");
 
-    for (batch_size, lock_count, read_conflicts) in
-        iproduct!(BATCH_SIZES, LOCK_COUNTS, [false, true])
+    for (batch_size, lock_count, read_conflicts, relax_intrabatch_account_locks) in
+        iproduct!(BATCH_SIZES, LOCK_COUNTS, [false, true], [false, true])
     {
         let name = format!(
-            "batch_size_{batch_size}_locks_count_{lock_count}{}",
+            "batch_size_{batch_size}_locks_count_{lock_count}{}{}",
             if read_conflicts {
                 "_read_conflicts"
             } else {
                 ""
-            }
+            },
+            if relax_intrabatch_account_locks {
+                "_simd83"
+            } else {
+                "_old"
+            },
         );
 
         let accounts_db = AccountsDb::new_single_for_tests();
@@ -79,12 +89,17 @@ fn bench_entry_lock_accounts(c: &mut Criterion) {
         let transactions = create_test_transactions(lock_count, read_conflicts);
         group.throughput(Throughput::Elements(transactions.len() as u64));
         let transaction_batches: Vec<_> = transactions.chunks(batch_size).collect();
+        let batch_results = vec![Ok(()); batch_size].into_iter();
 
         group.bench_function(name.as_str(), move |b| {
             b.iter(|| {
                 for batch in &transaction_batches {
-                    let results =
-                        accounts.lock_accounts(black_box(batch.iter()), MAX_TX_ACCOUNT_LOCKS);
+                    let results = accounts.lock_accounts(
+                        black_box(batch.iter()),
+                        batch_results.clone(),
+                        MAX_TX_ACCOUNT_LOCKS,
+                        relax_intrabatch_account_locks,
+                    );
                     accounts.unlock_accounts(batch.iter().zip(&results));
                 }
             })

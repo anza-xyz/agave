@@ -1,27 +1,22 @@
 #![cfg(feature = "shuttle-test")]
 
 use {
-    crate::{
-        mock_bank::{create_custom_loader, deploy_program, register_builtins, MockForkGraph},
-        transaction_builder::SanitizedTransactionBuilder,
-    },
+    crate::mock_bank::{create_custom_loader, deploy_program, register_builtins, MockForkGraph},
     assert_matches::assert_matches,
     mock_bank::MockBankCallback,
     shuttle::{
         sync::{Arc, RwLock},
         thread, Runner,
     },
-    solana_program_runtime::loaded_programs::ProgramCacheEntryType,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader_upgradeable,
-        hash::Hash,
-        instruction::AccountMeta,
-        pubkey::Pubkey,
-        signature::Signature,
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_instruction::{AccountMeta, Instruction},
+    solana_program_runtime::{
+        execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
+        loaded_programs::{ProgramCacheEntryType, ProgramCacheForTxBatch},
     },
+    solana_pubkey::Pubkey,
     solana_svm::{
-        account_loader::{CheckedTransactionDetails, TransactionCheckResult},
+        account_loader::{AccountLoader, CheckedTransactionDetails, TransactionCheckResult},
         transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResultExtensions,
         },
@@ -30,13 +25,15 @@ use {
             TransactionProcessingEnvironment,
         },
     },
-    solana_timings::ExecuteTimings,
-    std::collections::HashMap,
+    solana_svm_feature_set::SVMFeatureSet,
+    solana_svm_timings::ExecuteTimings,
+    solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+    std::collections::HashSet,
 };
 
 mod mock_bank;
 
-mod transaction_builder;
+const MAX_ITERATIONS: usize = 10_000;
 
 fn program_cache_execution(threads: usize) {
     let mut mock_bank = MockBankCallback::default();
@@ -44,18 +41,13 @@ fn program_cache_execution(threads: usize) {
     let batch_processor =
         TransactionBatchProcessor::new(5, 5, Arc::downgrade(&fork_graph), None, None);
 
-    const LOADER: Pubkey = bpf_loader_upgradeable::id();
     let programs = vec![
         deploy_program("hello-solana".to_string(), 0, &mut mock_bank),
         deploy_program("simple-transfer".to_string(), 0, &mut mock_bank),
         deploy_program("clock-sysvar".to_string(), 0, &mut mock_bank),
     ];
 
-    let account_maps: HashMap<Pubkey, (&Pubkey, u64)> = programs
-        .iter()
-        .enumerate()
-        .map(|(idx, key)| (*key, (&LOADER, idx as u64)))
-        .collect();
+    let account_maps: HashSet<Pubkey> = programs.iter().copied().collect();
 
     let ths: Vec<_> = (0..threads)
         .map(|_| {
@@ -68,11 +60,28 @@ fn program_cache_execution(threads: usize) {
             let maps = account_maps.clone();
             let programs = programs.clone();
             thread::spawn(move || {
-                let result = processor.replenish_program_cache(
+                let feature_set = SVMFeatureSet::all_enabled();
+                let account_loader = AccountLoader::new_with_loaded_accounts_capacity(
+                    None,
                     &local_bank,
+                    &feature_set,
+                    0,
+                );
+                let mut result = {
+                    let global_program_cache = processor.global_program_cache.read().unwrap();
+                    ProgramCacheForTxBatch::new_from_cache(
+                        processor.slot,
+                        processor.epoch,
+                        &global_program_cache,
+                    )
+                };
+                processor.replenish_program_cache(
+                    &account_loader,
                     &maps,
+                    &mut result,
                     &mut ExecuteTimings::default(),
                     false,
+                    true,
                     true,
                 );
                 for key in &programs {
@@ -104,7 +113,7 @@ fn test_program_cache_with_probabilistic_scheduler() {
         move || {
             program_cache_execution(4);
         },
-        300,
+        MAX_ITERATIONS,
         5,
     );
 }
@@ -112,7 +121,7 @@ fn test_program_cache_with_probabilistic_scheduler() {
 // In this case, the scheduler is random and may preempt threads at any point and any time.
 #[test]
 fn test_program_cache_with_random_scheduler() {
-    shuttle::check_random(move || program_cache_execution(4), 300);
+    shuttle::check_random(move || program_cache_execution(4), MAX_ITERATIONS);
 }
 
 // This test explores all the possible thread scheduling patterns that might affect the program
@@ -123,7 +132,7 @@ fn test_program_cache_with_exhaustive_scheduler() {
     // values in a thread.
     // Since this is not the case for the execution of jitted program, we can still run the test
     // but with decreased accuracy.
-    let scheduler = shuttle::scheduler::DfsScheduler::new(Some(500), true);
+    let scheduler = shuttle::scheduler::DfsScheduler::new(Some(MAX_ITERATIONS), true);
     let runner = Runner::new(scheduler, Default::default());
     runner.run(move || program_cache_execution(4));
 }
@@ -144,9 +153,8 @@ fn svm_concurrent() {
 
     mock_bank.configure_sysvars();
     batch_processor.fill_missing_sysvar_cache_entries(&*mock_bank);
-    register_builtins(&mock_bank, &batch_processor);
+    register_builtins(&mock_bank, &batch_processor, false);
 
-    let mut transaction_builder = SanitizedTransactionBuilder::default();
     let program_id = deploy_program("transfer-from-account".to_string(), 0, &mock_bank);
 
     const THREADS: usize = 4;
@@ -191,40 +199,34 @@ fn svm_concurrent() {
             shared_data.insert(fee_payer, account_data);
         }
 
-        transaction_builder.create_instruction(
-            program_id,
-            vec![
-                AccountMeta {
-                    pubkey: sender,
-                    is_signer: true,
-                    is_writable: true,
-                },
-                AccountMeta {
-                    pubkey: recipient,
-                    is_signer: false,
-                    is_writable: true,
-                },
-                AccountMeta {
-                    pubkey: read_account,
-                    is_signer: false,
-                    is_writable: false,
-                },
-                AccountMeta {
-                    pubkey: system_account,
-                    is_signer: false,
-                    is_writable: false,
-                },
-            ],
-            HashMap::from([(sender, Signature::new_unique())]),
-            vec![0],
-        );
+        let accounts = vec![
+            AccountMeta {
+                pubkey: sender,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: recipient,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: read_account,
+                is_signer: false,
+                is_writable: false,
+            },
+            AccountMeta {
+                pubkey: system_account,
+                is_signer: false,
+                is_writable: false,
+            },
+        ];
 
-        let sanitized_transaction = transaction_builder.build(
-            Hash::default(),
-            (fee_payer, Signature::new_unique()),
-            true,
-            false,
-        );
+        let instruction = Instruction::new_with_bytes(program_id, &[0], accounts);
+        let legacy_transaction = Transaction::new_with_payer(&[instruction], Some(&fee_payer));
+
+        let sanitized_transaction =
+            SanitizedTransaction::try_from_legacy_transaction(legacy_transaction, &HashSet::new());
         transactions[idx % THREADS].push(sanitized_transaction.unwrap());
         check_data[idx % THREADS].push(CheckTxData {
             fee_payer,
@@ -238,18 +240,23 @@ fn svm_concurrent() {
             let local_batch = batch_processor.clone();
             let local_bank = mock_bank.clone();
             let th_txs = std::mem::take(&mut transactions[idx]);
-            let check_results = vec![
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 20
-                }) as TransactionCheckResult;
-                TRANSACTIONS_PER_THREAD
-            ];
+            let check_results = th_txs
+                .iter()
+                .map(|tx| {
+                    Ok(CheckedTransactionDetails::new(
+                        None,
+                        Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+                            MockBankCallback::calculate_fee_details(tx, 0),
+                        )),
+                    )) as TransactionCheckResult
+                })
+                .collect();
             let processing_config = TransactionProcessingConfig {
                 recording_config: ExecutionRecordingConfig {
                     enable_log_recording: true,
                     enable_return_data_recording: false,
                     enable_cpi_recording: false,
+                    enable_transaction_balance_recording: false,
                 },
                 ..Default::default()
             };
@@ -295,7 +302,7 @@ fn test_svm_with_probabilistic_scheduler() {
         move || {
             svm_concurrent();
         },
-        300,
+        MAX_ITERATIONS,
         5,
     );
 }

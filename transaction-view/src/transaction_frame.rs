@@ -9,7 +9,9 @@ use {
         static_account_keys_frame::StaticAccountKeysFrame,
         transaction_version::TransactionVersion,
     },
-    solana_sdk::{hash::Hash, pubkey::Pubkey, signature::Signature},
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
 };
 
 #[derive(Debug)]
@@ -227,12 +229,16 @@ impl TransactionFrame {
     /// - This function must be called with the same `bytes` slice that was
     ///   used to create the `TransactionFrame` instance.
     #[inline]
-    pub(crate) unsafe fn instructions_iter<'a>(&self, bytes: &'a [u8]) -> InstructionsIterator<'a> {
+    pub(crate) unsafe fn instructions_iter<'a>(
+        &'a self,
+        bytes: &'a [u8],
+    ) -> InstructionsIterator<'a> {
         InstructionsIterator {
             bytes,
             offset: usize::from(self.instructions.offset),
             num_instructions: self.instructions.num_instructions,
             index: 0,
+            frames: &self.instructions.frames,
         }
     }
 
@@ -258,14 +264,11 @@ impl TransactionFrame {
 mod tests {
     use {
         super::*,
-        solana_sdk::{
-            address_lookup_table::AddressLookupTableAccount,
-            message::{v0, Message, MessageHeader, VersionedMessage},
-            pubkey::Pubkey,
-            signature::Signature,
-            system_instruction::{self, SystemInstruction},
-            transaction::VersionedTransaction,
-        },
+        solana_message::{v0, AddressLookupTableAccount, Message, MessageHeader, VersionedMessage},
+        solana_pubkey::Pubkey,
+        solana_signature::Signature,
+        solana_system_interface::instruction::{self as system_instruction, SystemInstruction},
+        solana_transaction::versioned::VersionedTransaction,
     };
 
     fn verify_transaction_view_frame(tx: &VersionedTransaction) {

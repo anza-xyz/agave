@@ -185,7 +185,7 @@ all_test_steps() {
   command_step dcou-2-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 2/3" 20 check
   command_step dcou-3-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 3/3" 20 check
   command_step miri "ci/docker-run-default-image.sh ci/test-miri.sh" 5 check
-  command_step frozen-abi "ci/docker-run-default-image.sh ./test-abi.sh" 15 check
+  command_step frozen-abi "ci/docker-run-default-image.sh ci/test-abi.sh" 15 check
   wait_step
 
   # Full test suite
@@ -217,8 +217,8 @@ all_test_steps() {
              ^ci/test-local-cluster.sh \
              ^core/build.rs \
              ^fetch-perf-libs.sh \
+             ^platform-tools-sdk/ \
              ^programs/ \
-             ^sdk/ \
              cargo-build-sbf$ \
              cargo-test-sbf$ \
       ; then
@@ -226,7 +226,6 @@ all_test_steps() {
   - command: "ci/docker-run-default-image.sh ci/test-stable-sbf.sh"
     name: "stable-sbf"
     timeout_in_minutes: 35
-    artifact_paths: "sbf-dumps.tar.bz2"
     agents:
       queue: "solana"
 EOF
@@ -246,42 +245,6 @@ EOF
   else
     annotate --style info \
       "test-shuttle skipped as no relevant files were modified"
-  fi
-
-  # Downstream backwards compatibility
-  if affects \
-             .rs$ \
-             Cargo.lock$ \
-             Cargo.toml$ \
-             ^ci/rust-version.sh \
-             ^ci/test-stable-perf.sh \
-             ^ci/test-stable.sh \
-             ^ci/test-local-cluster.sh \
-             ^core/build.rs \
-             ^fetch-perf-libs.sh \
-             ^programs/ \
-             ^sdk/ \
-             cargo-build-sbf$ \
-             cargo-test-sbf$ \
-             ^ci/downstream-projects \
-             .buildkite/scripts/build-downstream-projects.sh \
-      ; then
-    .buildkite/scripts/build-downstream-projects.sh >> "$output_file"
-  else
-    annotate --style info \
-      "downstream-projects skipped as no relevant files were modified"
-  fi
-
-  # Wasm support
-  if affects \
-             ^ci/test-wasm.sh \
-             ^ci/test-stable.sh \
-             ^sdk/ \
-      ; then
-    command_step wasm "ci/docker-run-default-image.sh ci/test-wasm.sh" 20
-  else
-    annotate --style info \
-      "wasm skipped as no relevant files were modified"
   fi
 
   # Coverage...

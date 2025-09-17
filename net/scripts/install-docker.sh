@@ -53,6 +53,7 @@ StartLimitInterval=60s
 LimitNOFILE=infinity
 LimitNPROC=infinity
 LimitCORE=infinity
+LimitMEMLOCK=infinity
 
 # Comment TasksMax if your systemd version does not support it.
 # Only systemd 226 and above support this option.

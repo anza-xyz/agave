@@ -8,28 +8,29 @@ use {
             heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
             latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
             progress_map::{ForkProgress, ProgressMap},
+            tower_vote_state::TowerVoteState,
             Tower,
         },
         repair::cluster_slot_state_verifier::{
             DuplicateConfirmedSlots, DuplicateSlotsTracker, EpochSlotsFrozenSlots,
         },
-        replay_stage::{HeaviestForkFailures, ReplayStage},
+        replay_stage::{HeaviestForkFailures, ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
     crossbeam_channel::unbounded,
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
     solana_runtime::{
-        accounts_background_service::AbsRequestSender,
         bank::Bank,
         bank_forks::BankForks,
         genesis_utils::{
             create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
     },
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, signature::Signer},
-    solana_vote_program::{
-        vote_state::{process_vote_unchecked, Lockout, TowerSync},
-        vote_transaction,
-    },
+    solana_signer::Signer,
+    solana_vote::vote_transaction,
+    solana_vote_program::vote_state::{Lockout, TowerSync},
     std::{
         collections::{HashMap, HashSet, VecDeque},
         sync::{Arc, RwLock},
@@ -43,8 +44,8 @@ pub struct VoteSimulator {
     pub vote_pubkeys: Vec<Pubkey>,
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub progress: ProgressMap,
-    pub heaviest_subtree_fork_choice: HeaviestSubtreeForkChoice,
     pub latest_validator_votes_for_frozen_banks: LatestValidatorVotesForFrozenBanks,
+    pub tbft_structs: TowerBFTStructures,
 }
 
 impl VoteSimulator {
@@ -63,8 +64,14 @@ impl VoteSimulator {
             vote_pubkeys,
             bank_forks,
             progress,
-            heaviest_subtree_fork_choice,
             latest_validator_votes_for_frozen_banks: LatestValidatorVotesForFrozenBanks::default(),
+            tbft_structs: TowerBFTStructures {
+                heaviest_subtree_fork_choice,
+                duplicate_slots_tracker: DuplicateSlotsTracker::default(),
+                duplicate_confirmed_slots: DuplicateConfirmedSlots::default(),
+                unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes::default(),
+                epoch_slots_frozen_slots: EpochSlotsFrozenSlots::default(),
+            },
         }
     }
 
@@ -104,17 +111,10 @@ impl VoteSimulator {
                     let tower_sync = if let Some(vote_account) =
                         parent_bank.get_vote_account(&keypairs.vote_keypair.pubkey())
                     {
-                        let mut vote_state = vote_account.vote_state().clone();
-                        process_vote_unchecked(
-                            &mut vote_state,
-                            solana_vote_program::vote_state::Vote::new(
-                                vec![parent],
-                                parent_bank.hash(),
-                            ),
-                        )
-                        .unwrap();
+                        let mut vote_state = TowerVoteState::from(vote_account.vote_state_view());
+                        vote_state.process_next_vote_slot(parent);
                         TowerSync::new(
-                            vote_state.votes.iter().map(|vote| vote.lockout).collect(),
+                            vote_state.votes,
                             vote_state.root_slot,
                             parent_bank.hash(),
                             Hash::default(),
@@ -142,13 +142,14 @@ impl VoteSimulator {
                     let vote_account = new_bank
                         .get_vote_account(&keypairs.vote_keypair.pubkey())
                         .unwrap();
-                    let state = vote_account.vote_state();
-                    assert!(state.votes.iter().any(|lockout| lockout.slot() == parent));
+                    let vote_state_view = vote_account.vote_state_view();
+                    assert!(vote_state_view
+                        .votes_iter()
+                        .any(|lockout| lockout.slot() == parent));
                 }
             }
-            while new_bank.tick_height() < new_bank.max_tick_height() {
-                new_bank.register_unique_tick();
-            }
+
+            new_bank.fill_bank_with_ticks_for_tests();
             if !visit.node().has_no_child() || is_frozen {
                 new_bank.set_block_id(Some(Hash::new_unique()));
                 new_bank.freeze();
@@ -156,10 +157,12 @@ impl VoteSimulator {
                     .get_fork_stats_mut(new_bank.slot())
                     .expect("All frozen banks must exist in the Progress map")
                     .bank_hash = Some(new_bank.hash());
-                self.heaviest_subtree_fork_choice.add_new_leaf_slot(
-                    (new_bank.slot(), new_bank.hash()),
-                    Some((new_bank.parent_slot(), new_bank.parent_hash())),
-                );
+                self.tbft_structs
+                    .heaviest_subtree_fork_choice
+                    .add_new_leaf_slot(
+                        (new_bank.slot(), new_bank.hash()),
+                        Some((new_bank.parent_slot(), new_bank.parent_hash())),
+                    );
             }
 
             walk.forward();
@@ -179,8 +182,7 @@ impl VoteSimulator {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
 
         let _ = ReplayStage::compute_bank_stats(
@@ -190,9 +192,9 @@ impl VoteSimulator {
             tower,
             &mut self.progress,
             &VoteTracker::default(),
-            &ClusterSlots::default(),
+            &ClusterSlots::default_for_tests(),
             &self.bank_forks,
-            &mut self.heaviest_subtree_fork_choice,
+            &mut self.tbft_structs.heaviest_subtree_fork_choice,
             &mut self.latest_validator_votes_for_frozen_banks,
         );
 
@@ -216,7 +218,7 @@ impl VoteSimulator {
             &self.progress,
             tower,
             &self.latest_validator_votes_for_frozen_banks,
-            &self.heaviest_subtree_fork_choice,
+            &self.tbft_structs.heaviest_subtree_fork_choice,
         );
 
         // Make sure this slot isn't locked out or failing threshold
@@ -239,16 +241,12 @@ impl VoteSimulator {
             new_root,
             &self.bank_forks,
             &mut self.progress,
-            &AbsRequestSender::default(),
+            None, // snapshot_controller
             None,
-            &mut self.heaviest_subtree_fork_choice,
-            &mut DuplicateSlotsTracker::default(),
-            &mut DuplicateConfirmedSlots::default(),
-            &mut UnfrozenGossipVerifiedVoteHashes::default(),
             &mut true,
             &mut Vec::new(),
-            &mut EpochSlotsFrozenSlots::default(),
             &drop_bank_sender,
+            &mut self.tbft_structs,
         )
         .unwrap()
     }
@@ -403,9 +401,7 @@ pub fn initialize_state(
         bank0.transfer(10_000, &mint_keypair, pubkey).unwrap();
     }
 
-    while bank0.tick_height() < bank0.max_tick_height() {
-        bank0.register_unique_tick();
-    }
+    bank0.fill_bank_with_ticks_for_tests();
     bank0.freeze();
     let mut progress = ProgressMap::default();
     progress.insert(

@@ -3,8 +3,9 @@ use {
         consensus::{heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice, tree_diff::TreeDiff},
         repair::{repair_service::RepairService, serve_repair::ShredRepairType},
     },
+    solana_clock::Slot,
+    solana_hash::Hash,
     solana_ledger::{blockstore::Blockstore, blockstore_meta::SlotMeta},
-    solana_sdk::{clock::Slot, hash::Hash},
     std::collections::{HashMap, HashSet},
 };
 
@@ -38,7 +39,7 @@ impl<'a> RepairWeightTraversal<'a> {
     }
 }
 
-impl<'a> Iterator for RepairWeightTraversal<'a> {
+impl Iterator for RepairWeightTraversal<'_> {
     type Item = Visit;
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.pending.pop();
@@ -78,6 +79,7 @@ pub fn get_best_repair_shreds(
     slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
     repairs: &mut Vec<ShredRepairType>,
     max_new_shreds: usize,
+    outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
 ) {
     let initial_len = repairs.len();
     let max_repairs = initial_len + max_new_shreds;
@@ -103,6 +105,7 @@ pub fn get_best_repair_shreds(
                         slot,
                         slot_meta,
                         max_repairs - repairs.len(),
+                        outstanding_repairs,
                     );
                     repairs.extend(new_repairs);
                     visited_set.insert(slot);
@@ -122,6 +125,7 @@ pub fn get_best_repair_shreds(
                                 repairs,
                                 max_repairs,
                                 *new_child_slot,
+                                outstanding_repairs,
                             );
                         }
                         visited_set.insert(*new_child_slot);
@@ -137,12 +141,13 @@ pub mod test {
     use {
         super::*,
         crate::repair::repair_service::sleep_shred_deferment_period,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::{
             get_tmp_ledger_path,
-            shred::{Shred, ShredFlags},
+            shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
         },
         solana_runtime::bank_utils,
-        solana_sdk::hash::Hash,
         trees::tr,
     };
 
@@ -219,6 +224,7 @@ pub mod test {
         // `blockstore` and `heaviest_subtree_fork_choice` match exactly, so should
         // return repairs for all slots (none are completed) in order of traversal
         let mut repairs = vec![];
+        let mut outstanding_repairs = HashMap::new();
         let mut slot_meta_cache = HashMap::default();
         let last_shred = blockstore.meta(0).unwrap().unwrap().received;
 
@@ -229,6 +235,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut repairs,
             6,
+            &mut outstanding_repairs,
         );
         assert_eq!(
             repairs,
@@ -237,10 +244,12 @@ pub mod test {
                 .map(|slot| ShredRepairType::HighestShred(*slot, last_shred))
                 .collect::<Vec<_>>()
         );
+        assert_eq!(repairs.len(), outstanding_repairs.len());
 
         // Add some leaves to blockstore, attached to the current best leaf, should prioritize
         // repairing those new leaves before trying other branches
         repairs = vec![];
+        outstanding_repairs = HashMap::new();
         slot_meta_cache = HashMap::default();
         let best_overall_slot = heaviest_subtree_fork_choice.best_overall_slot().0;
         assert_eq!(best_overall_slot, 4);
@@ -258,6 +267,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut repairs,
             6,
+            &mut outstanding_repairs,
         );
         assert_eq!(
             repairs,
@@ -266,26 +276,30 @@ pub mod test {
                 .map(|slot| ShredRepairType::HighestShred(*slot, last_shred))
                 .collect::<Vec<_>>()
         );
+        assert_eq!(repairs.len(), outstanding_repairs.len());
 
         // Completing slots should remove them from the repair list
         repairs = vec![];
+        outstanding_repairs = HashMap::new();
         slot_meta_cache = HashMap::default();
+        let keypair = Keypair::new();
+        let reed_solomon_cache = ReedSolomonCache::default();
+
         let completed_shreds: Vec<Shred> = [0, 2, 4, 6]
             .iter()
-            .map(|slot| {
-                let parent_offset = u16::from(*slot != 0);
-                let shred = Shred::new_from_data(
-                    *slot,
-                    last_shred as u32, // index
-                    parent_offset,
-                    &[0u8; 8], // data
-                    ShredFlags::LAST_SHRED_IN_SLOT,
-                    8,                 // reference_tick
-                    0,                 // version
-                    last_shred as u32, // fec_set_index
+            .flat_map(|slot| {
+                let shredder = Shredder::new(*slot, slot.saturating_sub(1), 0, 42).unwrap();
+                let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
+                    &keypair,
+                    &[],
+                    true,
+                    Some(Hash::default()),
+                    last_shred as u32,
+                    last_shred as u32,
+                    &reed_solomon_cache,
+                    &mut ProcessShredsStats::default(),
                 );
-                assert!(shred.sanitize().is_ok());
-                shred
+                shreds
             })
             .collect();
         blockstore
@@ -298,6 +312,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut repairs,
             4,
+            &mut outstanding_repairs,
         );
         assert_eq!(
             repairs,
@@ -306,10 +321,12 @@ pub mod test {
                 .map(|slot| ShredRepairType::HighestShred(*slot, last_shred))
                 .collect::<Vec<_>>()
         );
+        assert_eq!(repairs.len(), outstanding_repairs.len());
 
         // Adding incomplete children with higher weighted parents, even if
         // the parents are complete should still be repaired
         repairs = vec![];
+        outstanding_repairs = HashMap::new();
         slot_meta_cache = HashMap::default();
         blockstore.add_tree(tr(2) / (tr(8)), true, false, 2, Hash::default());
         sleep_shred_deferment_period();
@@ -318,15 +335,27 @@ pub mod test {
             &blockstore,
             &mut slot_meta_cache,
             &mut repairs,
-            4,
+            5,
+            &mut outstanding_repairs,
         );
-        assert_eq!(
-            repairs,
-            [1, 7, 8, 3]
-                .iter()
-                .map(|slot| ShredRepairType::HighestShred(*slot, last_shred))
-                .collect::<Vec<_>>()
+        let expected_repairs = [1, 7, 8, 3, 5]
+            .iter()
+            .map(|slot| ShredRepairType::HighestShred(*slot, last_shred))
+            .collect::<Vec<_>>();
+        assert_eq!(repairs, expected_repairs);
+        assert_eq!(repairs.len(), outstanding_repairs.len());
+
+        // Ensure redundant repairs are not generated.
+        get_best_repair_shreds(
+            &heaviest_subtree_fork_choice,
+            &blockstore,
+            &mut slot_meta_cache,
+            &mut repairs,
+            1,
+            &mut outstanding_repairs,
         );
+        assert_eq!(repairs, expected_repairs);
+        assert_eq!(repairs.len(), outstanding_repairs.len());
     }
 
     #[test]
@@ -338,6 +367,7 @@ pub mod test {
 
         sleep_shred_deferment_period();
         let mut repairs = vec![];
+        let mut outstanding_repairs = HashMap::new();
         let mut slot_meta_cache = HashMap::default();
         get_best_repair_shreds(
             &heaviest_subtree_fork_choice,
@@ -345,6 +375,7 @@ pub mod test {
             &mut slot_meta_cache,
             &mut repairs,
             usize::MAX,
+            &mut outstanding_repairs,
         );
         let last_shred = blockstore.meta(0).unwrap().unwrap().received;
         assert_eq!(
@@ -354,6 +385,7 @@ pub mod test {
                 .map(|slot| ShredRepairType::HighestShred(*slot, last_shred))
                 .collect::<Vec<_>>()
         );
+        assert_eq!(repairs.len(), outstanding_repairs.len());
     }
 
     fn setup_forks() -> (Blockstore, HeaviestSubtreeForkChoice) {

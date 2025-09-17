@@ -9,4 +9,5 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+solana-msg = { workspace = true }
 solana-program = { workspace = true }

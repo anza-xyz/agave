@@ -71,7 +71,7 @@ fn ledger_tool_copy_test() {
         "-l",
         ledger_path,
         "copy",
-        "--target-db",
+        "--target-ledger",
         target_ledger_path,
         "--ending-slot",
         &(LEDGER_TOOL_COPY_TEST_ENDING_SLOT).to_string(),

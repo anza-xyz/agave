@@ -1,35 +1,37 @@
 use {
     crate::bank::Bank,
     crossbeam_channel::{unbounded, Receiver, Sender},
-    solana_sdk::{
-        account::Account,
-        client::{AsyncClient, Client, SyncClient},
-        commitment_config::CommitmentConfig,
-        epoch_info::EpochInfo,
-        hash::Hash,
-        instruction::Instruction,
-        message::{Message, SanitizedMessage},
-        pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer},
-        signers::Signers,
-        system_instruction,
-        sysvar::{Sysvar, SysvarId},
-        transaction::{self, Transaction, VersionedTransaction},
-        transport::{Result, TransportError},
-    },
+    solana_account::Account,
+    solana_client_traits::{AsyncClient, Client, SyncClient},
+    solana_commitment_config::CommitmentConfig,
+    solana_epoch_info::EpochInfo,
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_keypair::Keypair,
+    solana_message::{Message, SanitizedMessage},
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
+    solana_signer::{signers::Signers, Signer},
+    solana_system_interface::instruction as system_instruction,
+    solana_sysvar::SysvarSerialize,
+    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction_error::{TransportError, TransportResult as Result},
     std::{
         io,
-        sync::{Arc, Mutex},
+        sync::Arc,
         thread::{sleep, Builder},
         time::{Duration, Instant},
     },
 };
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
 #[cfg(feature = "dev-context-only-utils")]
-use {crate::bank_forks::BankForks, solana_sdk::clock, std::sync::RwLock};
+use {crate::bank_forks::BankForks, solana_clock as clock, std::sync::RwLock};
 
 pub struct BankClient {
     bank: Arc<Bank>,
-    transaction_sender: Mutex<Sender<VersionedTransaction>>,
+    transaction_sender: Sender<VersionedTransaction>,
 }
 
 impl Client for BankClient {
@@ -44,7 +46,7 @@ impl AsyncClient for BankClient {
         transaction: VersionedTransaction,
     ) -> Result<Signature> {
         let signature = transaction.signatures.first().cloned().unwrap_or_default();
-        let transaction_sender = self.transaction_sender.lock().unwrap();
+        let transaction_sender = self.transaction_sender.clone();
         transaction_sender.send(transaction).unwrap();
         Ok(signature)
     }
@@ -159,7 +161,11 @@ impl SyncClient for BankClient {
         min_confirmed_blocks: usize,
     ) -> Result<usize> {
         // https://github.com/solana-labs/solana/issues/7199
-        assert_eq!(min_confirmed_blocks, 1, "BankClient cannot observe the passage of multiple blocks, so min_confirmed_blocks must be 1");
+        assert_eq!(
+            min_confirmed_blocks, 1,
+            "BankClient cannot observe the passage of multiple blocks, so min_confirmed_blocks \
+             must be 1"
+        );
         let now = Instant::now();
         let confirmed_blocks;
         loop {
@@ -168,13 +174,10 @@ impl SyncClient for BankClient {
                 break;
             }
             if now.elapsed().as_secs() > 15 {
-                return Err(TransportError::IoError(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "signature not found after {} seconds",
-                        now.elapsed().as_secs()
-                    ),
-                )));
+                return Err(TransportError::IoError(io::Error::other(format!(
+                    "signature not found after {} seconds",
+                    now.elapsed().as_secs()
+                ))));
             }
             sleep(Duration::from_millis(250));
         }
@@ -191,13 +194,10 @@ impl SyncClient for BankClient {
                 }
             }
             if now.elapsed().as_secs() > 15 {
-                return Err(TransportError::IoError(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "signature not found after {} seconds",
-                        now.elapsed().as_secs()
-                    ),
-                )));
+                return Err(TransportError::IoError(io::Error::other(format!(
+                    "signature not found after {} seconds",
+                    now.elapsed().as_secs()
+                ))));
             }
             sleep(Duration::from_millis(250));
         }
@@ -239,9 +239,7 @@ impl SyncClient for BankClient {
         )
         .ok()
         .and_then(|sanitized_message| self.bank.get_fee_for_message(&sanitized_message))
-        .ok_or_else(|| {
-            TransportError::IoError(io::Error::new(io::ErrorKind::Other, "Unable calculate fee"))
-        })
+        .ok_or_else(|| TransportError::IoError(io::Error::other("Unable calculate fee")))
     }
 }
 
@@ -258,7 +256,6 @@ impl BankClient {
 
     pub fn new_shared(bank: Arc<Bank>) -> Self {
         let (transaction_sender, transaction_receiver) = unbounded();
-        let transaction_sender = Mutex::new(transaction_sender);
         let thread_bank = bank.clone();
         Builder::new()
             .name("solBankClient".to_string())
@@ -274,7 +271,7 @@ impl BankClient {
         Self::new_shared(Arc::new(bank))
     }
 
-    pub fn set_sysvar_for_tests<T: Sysvar + SysvarId>(&self, sysvar: &T) {
+    pub fn set_sysvar_for_tests<T: SysvarSerialize>(&self, sysvar: &T) {
         self.bank.set_sysvar_for_tests(sysvar);
     }
 
@@ -307,16 +304,13 @@ impl BankClient {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        solana_sdk::{
-            genesis_config::create_genesis_config, instruction::AccountMeta,
-            native_token::sol_to_lamports,
-        },
+        super::*, solana_genesis_config::create_genesis_config, solana_instruction::AccountMeta,
+        solana_native_token::LAMPORTS_PER_SOL,
     };
 
     #[test]
     fn test_bank_client_new_with_keypairs() {
-        let (genesis_config, john_doe_keypair) = create_genesis_config(sol_to_lamports(1.0));
+        let (genesis_config, john_doe_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
         let john_pubkey = john_doe_keypair.pubkey();
         let jane_doe_keypair = Keypair::new();
         let jane_pubkey = jane_doe_keypair.pubkey();
@@ -326,7 +320,7 @@ mod tests {
         let amount = genesis_config.rent.minimum_balance(0);
 
         // Create 2-2 Multisig Transfer instruction.
-        let bob_pubkey = solana_sdk::pubkey::new_rand();
+        let bob_pubkey = solana_pubkey::new_rand();
         let mut transfer_instruction =
             system_instruction::transfer(&john_pubkey, &bob_pubkey, amount);
         transfer_instruction

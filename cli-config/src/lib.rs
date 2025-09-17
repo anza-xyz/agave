@@ -6,13 +6,12 @@
 //! and signer.
 //!
 //! The default path to the configuration file can be retrieved from
-//! [`CONFIG_FILE`], which is a [lazy_static] of `Option<String>`, the value of
+//! [`CONFIG_FILE`], which is a [LazyLock] of `Option<String>`, the value of
 //! which is
 //!
 //! > `~/.config/solana/cli/config.yml`
 //!
 //! [`CONFIG_FILE`]: struct@CONFIG_FILE
-//! [lazy_static]: https://docs.rs/lazy_static
 //!
 //! `CONFIG_FILE` will only be `None` if it is unable to identify the user's
 //! home directory, which should not happen under typical OS environments.
@@ -51,9 +50,6 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-#[macro_use]
-extern crate lazy_static;
-
 mod config;
 mod config_input;
 use std::{
@@ -82,8 +78,8 @@ where
     P: AsRef<Path>,
 {
     let file = File::open(config_file)?;
-    let config = serde_yaml::from_reader(file)
-        .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{err:?}")))?;
+    let config =
+        serde_yaml::from_reader(file).map_err(|err| io::Error::other(format!("{err:?}")))?;
     Ok(config)
 }
 
@@ -105,8 +101,8 @@ where
     T: serde::ser::Serialize,
     P: AsRef<Path>,
 {
-    let serialized = serde_yaml::to_string(config)
-        .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{err:?}")))?;
+    let serialized =
+        serde_yaml::to_string(config).map_err(|err| io::Error::other(format!("{err:?}")))?;
 
     if let Some(outdir) = config_file.as_ref().parent() {
         create_dir_all(outdir)?;

@@ -7,28 +7,27 @@ use {
         iter::IndexedParallelIterator,
         prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
     },
+    solana_account::{Account, ReadableAccount},
+    solana_clock::Epoch,
     solana_core::banking_stage::{
         committer::Committer, consumer::Consumer, qos_service::QosService,
     },
     solana_entry::entry::Entry,
+    solana_keypair::Keypair,
     solana_ledger::{
         blockstore::Blockstore,
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
     },
     solana_poh::{
-        poh_recorder::{create_test_recorder, PohRecorder},
-        poh_service::PohService,
+        poh_recorder::create_test_recorder, poh_service::PohService,
+        transaction_recorder::TransactionRecorder,
     },
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        account::{Account, ReadableAccount},
-        signature::Keypair,
-        signer::Signer,
-        stake_history::Epoch,
-        system_program, system_transaction,
-        transaction::SanitizedTransaction,
-    },
+    solana_signer::Signer,
+    solana_system_interface::program as system_program,
+    solana_system_transaction as system_transaction,
+    solana_transaction::sanitized::SanitizedTransaction,
     std::sync::{
         atomic::{AtomicBool, Ordering},
         Arc, RwLock,
@@ -81,10 +80,9 @@ fn create_transactions(bank: &Bank, num: usize) -> Vec<RuntimeTransaction<Saniti
         .collect()
 }
 
-fn create_consumer(poh_recorder: &RwLock<PohRecorder>) -> Consumer {
+fn create_consumer(transaction_recorder: TransactionRecorder) -> Consumer {
     let (replay_vote_sender, _replay_vote_receiver) = unbounded();
     let committer = Committer::new(None, replay_vote_sender, Arc::default());
-    let transaction_recorder = poh_recorder.read().unwrap().new_recorder();
     Consumer::new(committer, transaction_recorder, QosService::new(0), None)
 }
 
@@ -93,7 +91,7 @@ struct BenchFrame {
     _bank_forks: Arc<RwLock<BankForks>>,
     ledger_path: TempDir,
     exit: Arc<AtomicBool>,
-    poh_recorder: Arc<RwLock<PohRecorder>>,
+    transaction_recorder: TransactionRecorder,
     poh_service: PohService,
     signal_receiver: Receiver<(Arc<Bank>, (Entry, u64))>,
 }
@@ -123,7 +121,7 @@ fn setup() -> BenchFrame {
     let blockstore = Arc::new(
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
     );
-    let (exit, poh_recorder, poh_service, signal_receiver) =
+    let (exit, _poh_recorder, _poh_controller, transaction_recorder, poh_service, signal_receiver) =
         create_test_recorder(bank.clone(), blockstore, None, None);
 
     BenchFrame {
@@ -131,7 +129,7 @@ fn setup() -> BenchFrame {
         _bank_forks: bank_forks,
         ledger_path,
         exit,
-        poh_recorder,
+        transaction_recorder,
         poh_service,
         signal_receiver,
     }
@@ -152,21 +150,18 @@ fn bench_process_and_record_transactions(bencher: &mut Bencher, batch_size: usiz
         _bank_forks,
         ledger_path: _ledger_path,
         exit,
-        poh_recorder,
+        transaction_recorder,
         poh_service,
         signal_receiver: _signal_receiver,
     } = setup();
-    let consumer = create_consumer(&poh_recorder);
+    let consumer = create_consumer(transaction_recorder);
     let transactions = create_transactions(&bank, 2_usize.pow(20));
     let mut transaction_iter = transactions.chunks(batch_size);
 
     bencher.iter(move || {
         for _ in 0..batches_per_iteration {
-            let summary = consumer.process_and_record_transactions(
-                &bank,
-                transaction_iter.next().unwrap(),
-                0,
-            );
+            let summary =
+                consumer.process_and_record_transactions(&bank, transaction_iter.next().unwrap());
             assert!(summary
                 .execute_and_commit_transactions_output
                 .commit_transactions_result

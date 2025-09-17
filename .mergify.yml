@@ -2,7 +2,7 @@
 pull_request_rules:
   - name: label changes from community
     conditions:
-      - author≠@core-contributors
+      - author≠@anza
       - author≠@monorepo-maintainers
       - author≠@monorepo-write
       - author≠@monorepo-triage
@@ -16,7 +16,7 @@ pull_request_rules:
           - need:merge-assist
   - name: request review for community changes
     conditions:
-      - author≠@core-contributors
+      - author≠@anza
       - author≠@monorepo-maintainers
       - author≠@monorepo-write
       - author≠@monorepo-triage
@@ -36,7 +36,7 @@ pull_request_rules:
           - "@anza-xyz/community-pr-subscribers"
   - name: label changes from monorepo-triage
     conditions:
-      - author≠@core-contributors
+      - author≠@anza
       - author≠mergify[bot]
       - author≠dependabot[bot]
       - author≠github-actions[bot]
@@ -66,15 +66,26 @@ pull_request_rules:
         - or:
           - -files~=(\.rs|Cargo\.toml|Cargo\.lock|cargo-build-sbf|cargo-test-sbf|ci/downstream-projects/run-spl\.sh|\.github/workflows/downstream-project-spl\.yml)$
           - and:
-            - status-success=cargo-test-sbf (token/program)
-            - status-success=cargo-test-sbf (instruction-padding/program, token/program-2022, token/program-2022-test)
-            - status-success=cargo-test-sbf (associated-token-account/program, associated-token-account/program-test)
-            - status-success=cargo-test-sbf (token-upgrade/program)
-            - status-success=cargo-test-sbf (feature-proposal/program)
-            - status-success=cargo-test-sbf (governance/addin-mock/program, governance/program)
-            - status-success=cargo-test-sbf (name-service/program)
-            - status-success=cargo-test-sbf (stake-pool/program)
-            - status-success=cargo-test-sbf (single-pool/program)
+            - status-success=check (associated-token-account)
+            - status-success=check (feature-proposal)
+            - status-success=check (instruction-padding)
+            - status-success=check (memo)
+            - status-success=check (record)
+            - status-success=check (single-pool)
+            - status-success=check (slashing)
+            - status-success=check (stake-pool)
+            - status-success=check (token-2022)
+            - status-success=test_cli (single-pool)
+            - status-success=test_cli (token-2022)
+            - status-success=cargo-test-sbf (associated-token-account)
+            - status-success=cargo-test-sbf (feature-proposal)
+            - status-success=cargo-test-sbf (instruction-padding)
+            - status-success=cargo-test-sbf (memo)
+            - status-success=cargo-test-sbf (record)
+            - status-success=cargo-test-sbf (single-pool)
+            - status-success=cargo-test-sbf (slashing)
+            - status-success=cargo-test-sbf (stake-pool)
+            - status-success=cargo-test-sbf (token-2022)
         - or:
           - -files~=(Cargo\.toml|.github/workflows/crate-check\.yml|ci/check-crates\.sh)$
           - check-success=crate check
@@ -93,9 +104,9 @@ pull_request_rules:
           - automerge
       comment:
         message: automerge label removed due to a CI failure
-  - name: v2.0 feature-gate backport
+  - name: v2.3 feature-gate backport
     conditions:
-      - label=v2.0
+      - label=v2.3
       - label=feature-gate
     actions:
       backport:
@@ -106,10 +117,10 @@ pull_request_rules:
         labels:
           - feature-gate
         branches:
-          - v2.0
-  - name: v2.0 non-feature-gate backport
+          - v2.3
+  - name: v2.3 non-feature-gate backport
     conditions:
-      - label=v2.0
+      - label=v2.3
       - label!=feature-gate
     actions:
       backport:
@@ -117,10 +128,10 @@ pull_request_rules:
         title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
         ignore_conflicts: true
         branches:
-          - v2.0
-  - name: v2.0 backport warning comment
+          - v2.3
+  - name: v2.3 backport warning comment
     conditions:
-      - label=v2.0
+      - label=v2.3
     actions:
       comment:
         message: >
@@ -131,9 +142,9 @@ pull_request_rules:
           refactoring, plumbing, cleanup, etc that are not strictly
           necessary to achieve the goal. Any of the latter should go only
           into master and ride the normal stabilization schedule.
-  - name: v2.1 feature-gate backport
+  - name: v3.0 feature-gate backport
     conditions:
-      - label=v2.1
+      - label=v3.0
       - label=feature-gate
     actions:
       backport:
@@ -143,10 +154,10 @@ pull_request_rules:
         labels:
           - feature-gate
         branches:
-          - v2.1
-  - name: v2.1 non-feature-gate backport
+          - v3.0
+  - name: v3.0 non-feature-gate backport
     conditions:
-      - label=v2.1
+      - label=v3.0
       - label!=feature-gate
     actions:
       backport:
@@ -154,10 +165,10 @@ pull_request_rules:
         title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
         ignore_conflicts: true
         branches:
-          - v2.1
-  - name: v2.1 backport warning comment
+          - v3.0
+  - name: v3.0 backport warning comment
     conditions:
-      - label=v2.1
+      - label=v3.0
     actions:
       comment:
         message: >
@@ -182,10 +193,10 @@ pull_request_rules:
           If this PR represents a change to the public RPC API:
 
           1. Make sure it includes a complementary update to `rpc-client/` ([example](https://github.com/solana-labs/solana/pull/29558/files))
-          2. Open a follow-up PR to update the JavaScript client `@solana/web3.js` ([example](https://github.com/solana-labs/solana-web3.js/pull/2868/files))
+          2. Open a follow-up PR to update the JavaScript client `@solana/kit` ([example](https://github.com/solana-labs/solana-web3.js/pull/2868/files))
 
           Thank you for keeping the RPC clients in sync with the server API @{{author}}.
-  - name: Reminder to add Firedancer team to changes in `programs/` and `sdk/`
+  - name: Reminder to add Firedancer team to changes in `programs/`
     conditions:
       - or:
         - files~=^programs/address-lookup-table/src/.*\.rs$
@@ -197,8 +208,6 @@ pull_request_rules:
         - files~=^programs/system/src/.*\.rs$
         - files~=^programs/vote/src/.*\.rs$
         - files~=^programs/zk-elgamal-proof/src/.*\.rs$
-        - files~=^sdk/program/src/stake.*\.rs$  # includes stake_history.rs
-        - files~=^sdk/program/src/vote/.*\.rs$
     actions:
       comment:
         message: |
@@ -208,10 +217,20 @@ pull_request_rules:
           If this PR represents a change to a native program implementation (not
           tests), please include a reviewer from the Firedancer team. And please
           keep refactors to a minimum.
+  - name: Notify about the deprecation of zk-token-sdk
+    conditions:
+      - or:
+        - files~=^zk-token-sdk/
+    actions:
+      comment:
+        message: |
+          For your information, the `solana-zk-token-sdk` is deprecated, and this
+          directory will be removed in a future version. Please take this in mind
+          when making modifications.
 
 commands_restrictions:
   # The author of copied PRs is the Mergify user.
   # Restrict `copy` access to Core Contributors
   copy:
     conditions:
-    - author=@core-contributors
+    - author=@anza

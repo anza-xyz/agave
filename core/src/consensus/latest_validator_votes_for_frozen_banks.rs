@@ -1,6 +1,8 @@
 use {
     crate::consensus::heaviest_subtree_fork_choice::SlotHashKey,
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey},
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
     std::collections::{hash_map::Entry, HashMap},
 };
 

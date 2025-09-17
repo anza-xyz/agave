@@ -3,7 +3,7 @@
 use {
     crate::{
         packet::{Meta, Packet},
-        recvmmsg::NUM_RCVMMSGS,
+        recvmmsg::PACKETS_PER_BATCH,
     },
     std::{cmp, io},
     tokio::net::UdpSocket,
@@ -16,7 +16,7 @@ pub async fn recv_mmsg(
     packets: &mut [Packet],
 ) -> io::Result</*num packets:*/ usize> {
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
-    let count = cmp::min(NUM_RCVMMSGS, packets.len());
+    let count = cmp::min(PACKETS_PER_BATCH, packets.len());
     socket.readable().await?;
     let mut i = 0;
     for p in packets.iter_mut().take(count) {
@@ -57,7 +57,7 @@ pub async fn recv_mmsg_exact(
 mod tests {
     use {
         crate::{nonblocking::recvmmsg::*, packet::PACKET_DATA_SIZE},
-        solana_net_utils::{bind_to_async, bind_to_localhost_async},
+        solana_net_utils::sockets::{bind_to_async, bind_to_localhost_async},
         std::{net::SocketAddr, time::Instant},
         tokio::net::UdpSocket,
     };
@@ -68,9 +68,9 @@ mod tests {
         let sock_addr: SocketAddr = ip_str
             .parse()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let reader = bind_to_async(sock_addr.ip(), sock_addr.port(), /*reuseport:*/ false).await?;
+        let reader = bind_to_async(sock_addr.ip(), sock_addr.port()).await?;
         let addr = reader.local_addr()?;
-        let sender = bind_to_async(sock_addr.ip(), sock_addr.port(), /*reuseport:*/ false).await?;
+        let sender = bind_to_async(sock_addr.ip(), sock_addr.port()).await?;
         let saddr = sender.local_addr()?;
         Ok((reader, addr, sender, saddr))
     }
@@ -99,7 +99,7 @@ mod tests {
 
         match test_setup_reader_sender("::1:0").await {
             Ok(config) => test_one_iter(config).await,
-            Err(e) => warn!("Failed to configure IPv6: {:?}", e),
+            Err(e) => warn!("Failed to configure IPv6: {e:?}"),
         }
     }
 
@@ -136,7 +136,7 @@ mod tests {
 
         match test_setup_reader_sender("::1:0").await {
             Ok(config) => test_multi_iter(config).await,
-            Err(e) => warn!("Failed to configure IPv6: {:?}", e),
+            Err(e) => warn!("Failed to configure IPv6: {e:?}"),
         }
     }
 

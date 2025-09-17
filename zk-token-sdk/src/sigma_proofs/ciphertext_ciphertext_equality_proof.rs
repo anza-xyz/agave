@@ -91,9 +91,8 @@ impl CiphertextCiphertextEqualityProof {
         let mut y_r = Scalar::random(&mut OsRng);
 
         let Y_0 = (&y_s * P_source).compress();
-        let Y_1 =
-            RistrettoPoint::multiscalar_mul(vec![&y_x, &y_s], vec![&(*G), D_source]).compress();
-        let Y_2 = RistrettoPoint::multiscalar_mul(vec![&y_x, &y_r], vec![&(*G), &(*H)]).compress();
+        let Y_1 = RistrettoPoint::multiscalar_mul(vec![&y_x, &y_s], vec![&G, D_source]).compress();
+        let Y_2 = RistrettoPoint::multiscalar_mul(vec![&y_x, &y_r], vec![&G, &(*H)]).compress();
         let Y_3 = (&y_r * P_destination).compress();
 
         // record masking factors in the transcript
@@ -198,7 +197,7 @@ impl CiphertextCiphertextEqualityProof {
                 &(&ww * &self.z_r),   // ww * z_r
                 &(&ww_negated * &c),  // -ww * c
                 &ww_negated,          // -ww
-                &(&www * &self.z_r),  // z_r
+                &(&www * &self.z_r),  // www * z_r
                 &(&www_negated * &c), // -www * c
                 &www_negated,
             ],
@@ -206,11 +205,11 @@ impl CiphertextCiphertextEqualityProof {
                 P_source,      // P_source
                 &(*H),         // H
                 &Y_0,          // Y_0
-                &(*G),         // G
+                &G,            // G
                 D_source,      // D_source
                 C_source,      // C_source
                 &Y_1,          // Y_1
-                &(*G),         // G
+                &G,            // G
                 &(*H),         // H
                 C_destination, // C_destination
                 &Y_2,          // Y_2

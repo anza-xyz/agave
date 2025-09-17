@@ -9,24 +9,29 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_storage_proto"
+
 [dependencies]
 bincode = { workspace = true }
 bs58 = { workspace = true }
 prost = { workspace = true }
 serde = { workspace = true }
 solana-account-decoder = { workspace = true }
-solana-sdk = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-message = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-serde = { workspace = true }
+solana-signature = { workspace = true, features = ["std"] }
+solana-transaction = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["serde"] }
+solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
-
-[dev-dependencies]
-enum-iterator = { workspace = true }
-
-[lib]
-crate-type = ["lib"]
-name = "solana_storage_proto"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
 
 [build-dependencies]
 tonic-build = { workspace = true }
@@ -35,3 +40,7 @@ tonic-build = { workspace = true }
 # envar to point to the installed binary
 [target."cfg(not(windows))".build-dependencies]
 protobuf-src = { workspace = true }
+
+[dev-dependencies]
+enum-iterator = { workspace = true }
+test-case = { workspace = true }

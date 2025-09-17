@@ -5,12 +5,10 @@ use {
     },
     bincode::deserialize,
     serde_json::Value,
-    solana_config_program::{get_config_data, ConfigKeys},
-    solana_sdk::{
-        pubkey::Pubkey,
-        stake::config::{
-            Config as StakeConfig, {self as stake_config},
-        },
+    solana_config_interface::state::{get_config_data, ConfigKeys},
+    solana_pubkey::Pubkey,
+    solana_stake_interface::config::{
+        Config as StakeConfig, {self as stake_config},
     },
 };
 
@@ -70,7 +68,7 @@ pub struct UiConfigKey {
 
 #[deprecated(
     since = "1.16.7",
-    note = "Please use `solana_sdk::stake::state::warmup_cooldown_rate()` instead"
+    note = "Please use `solana_stake_interface::state::warmup_cooldown_rate()` instead"
 )]
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -98,9 +96,27 @@ pub struct UiConfig<T> {
 #[cfg(test)]
 mod test {
     use {
-        super::*, crate::validator_info::ValidatorInfo, serde_json::json,
-        solana_config_program::create_config_account, solana_sdk::account::ReadableAccount,
+        super::*,
+        crate::validator_info::ValidatorInfo,
+        bincode::serialize,
+        serde_json::json,
+        solana_account::{Account, AccountSharedData, ReadableAccount},
     };
+
+    fn create_config_account<T: serde::Serialize>(
+        keys: Vec<(Pubkey, bool)>,
+        config_data: &T,
+        lamports: u64,
+    ) -> AccountSharedData {
+        let mut data = serialize(&ConfigKeys { keys }).unwrap();
+        data.extend_from_slice(&serialize(config_data).unwrap());
+        AccountSharedData::from(Account {
+            lamports,
+            data,
+            owner: solana_sdk_ids::config::id(),
+            ..Account::default()
+        })
+    }
 
     #[test]
     fn test_parse_config() {
@@ -123,7 +139,7 @@ mod test {
             }))
             .unwrap(),
         };
-        let info_pubkey = solana_sdk::pubkey::new_rand();
+        let info_pubkey = solana_pubkey::new_rand();
         let validator_info_config_account = create_config_account(
             vec![(validator_info::id(), false), (info_pubkey, true)],
             &validator_info,

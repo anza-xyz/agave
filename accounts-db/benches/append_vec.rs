@@ -3,18 +3,15 @@ extern crate test;
 
 use {
     rand::{thread_rng, Rng},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
-        account_storage::meta::StoredMeta,
-        accounts_file::StoredAccountsInfo,
+        accounts_file::{StorageAccess, StoredAccountsInfo},
         append_vec::{
             test_utils::{create_test_account, get_append_vec_path},
-            AppendVec,
+            AppendVec, StoredMeta,
         },
     },
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::Slot,
-    },
+    solana_clock::Slot,
     std::{
         sync::{Arc, Mutex},
         thread::{sleep, spawn},
@@ -22,6 +19,10 @@ use {
     },
     test::Bencher,
 };
+
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 /// Copy the account metadata, account and hash to the internal buffer.
 /// Return the starting offset of the account metadata.
@@ -38,16 +39,25 @@ fn append_account(
     vec.append_accounts(&storable_accounts, 0)
 }
 
-#[bench]
-fn append_vec_append(bencher: &mut Bencher) {
+fn append_vec_append(bencher: &mut Bencher, storage_access: StorageAccess) {
     let path = get_append_vec_path("bench_append");
-    let vec = AppendVec::new(&path.path, true, 64 * 1024);
+    let vec = AppendVec::new(&path.path, true, 64 * 1024, storage_access);
     bencher.iter(|| {
         let (meta, account) = create_test_account(0);
         if append_account(&vec, meta, &account).is_none() {
             vec.reset();
         }
     });
+}
+
+#[bench]
+fn append_vec_append_file(bencher: &mut Bencher) {
+    append_vec_append(bencher, StorageAccess::File);
+}
+
+#[bench]
+fn append_vec_append_mmap(bencher: &mut Bencher) {
+    append_vec_append(bencher, StorageAccess::Mmap);
 }
 
 fn add_test_accounts(vec: &AppendVec, size: usize) -> Vec<(usize, usize)> {
@@ -59,10 +69,9 @@ fn add_test_accounts(vec: &AppendVec, size: usize) -> Vec<(usize, usize)> {
         .collect()
 }
 
-#[bench]
-fn append_vec_sequential_read(bencher: &mut Bencher) {
+fn append_vec_sequential_read(bencher: &mut Bencher, storage_access: StorageAccess) {
     let path = get_append_vec_path("seq_read");
-    let vec = AppendVec::new(&path.path, true, 64 * 1024);
+    let vec = AppendVec::new(&path.path, true, 64 * 1024, storage_access);
     let size = 1_000;
     let mut indexes = add_test_accounts(&vec, size);
     bencher.iter(|| {
@@ -75,10 +84,20 @@ fn append_vec_sequential_read(bencher: &mut Bencher) {
         });
     });
 }
+
 #[bench]
-fn append_vec_random_read(bencher: &mut Bencher) {
+fn append_vec_sequential_read_file(bencher: &mut Bencher) {
+    append_vec_sequential_read(bencher, StorageAccess::File);
+}
+
+#[bench]
+fn append_vec_sequential_read_mmap(bencher: &mut Bencher) {
+    append_vec_sequential_read(bencher, StorageAccess::Mmap);
+}
+
+fn append_vec_random_read(bencher: &mut Bencher, storage_access: StorageAccess) {
     let path = get_append_vec_path("random_read");
-    let vec = AppendVec::new(&path.path, true, 64 * 1024);
+    let vec = AppendVec::new(&path.path, true, 64 * 1024, storage_access);
     let size = 1_000;
     let indexes = add_test_accounts(&vec, size);
     bencher.iter(|| {
@@ -92,9 +111,23 @@ fn append_vec_random_read(bencher: &mut Bencher) {
 }
 
 #[bench]
-fn append_vec_concurrent_append_read(bencher: &mut Bencher) {
+fn append_vec_random_read_file(bencher: &mut Bencher) {
+    append_vec_random_read(bencher, StorageAccess::File);
+}
+
+#[bench]
+fn append_vec_random_read_mmap(bencher: &mut Bencher) {
+    append_vec_random_read(bencher, StorageAccess::Mmap);
+}
+
+fn append_vec_concurrent_append_read(bencher: &mut Bencher, storage_access: StorageAccess) {
     let path = get_append_vec_path("concurrent_read");
-    let vec = Arc::new(AppendVec::new(&path.path, true, 1024 * 1024));
+    let vec = Arc::new(AppendVec::new(
+        &path.path,
+        true,
+        1024 * 1024,
+        storage_access,
+    ));
     let vec1 = vec.clone();
     let indexes: Arc<Mutex<Vec<(usize, usize)>>> = Arc::new(Mutex::new(vec![]));
     let indexes1 = indexes.clone();
@@ -122,9 +155,23 @@ fn append_vec_concurrent_append_read(bencher: &mut Bencher) {
 }
 
 #[bench]
-fn append_vec_concurrent_read_append(bencher: &mut Bencher) {
+fn append_vec_concurrent_append_read_file(bencher: &mut Bencher) {
+    append_vec_concurrent_append_read(bencher, StorageAccess::File);
+}
+
+#[bench]
+fn append_vec_concurrent_append_read_mmap(bencher: &mut Bencher) {
+    append_vec_concurrent_append_read(bencher, StorageAccess::Mmap);
+}
+
+fn append_vec_concurrent_read_append(bencher: &mut Bencher, storage_access: StorageAccess) {
     let path = get_append_vec_path("concurrent_read");
-    let vec = Arc::new(AppendVec::new(&path.path, true, 1024 * 1024));
+    let vec = Arc::new(AppendVec::new(
+        &path.path,
+        true,
+        1024 * 1024,
+        storage_access,
+    ));
     let vec1 = vec.clone();
     let indexes: Arc<Mutex<Vec<(usize, usize)>>> = Arc::new(Mutex::new(vec![]));
     let indexes1 = indexes.clone();
@@ -133,8 +180,12 @@ fn append_vec_concurrent_read_append(bencher: &mut Bencher) {
         if len == 0 {
             continue;
         }
-        let random_index: usize = thread_rng().gen_range(0..len + 1);
-        let (sample, pos) = *indexes1.lock().unwrap().get(random_index % len).unwrap();
+        let random_index: usize = thread_rng().gen_range(0..len.wrapping_add(1));
+        let (sample, pos) = *indexes1
+            .lock()
+            .unwrap()
+            .get(random_index.checked_rem(len).unwrap())
+            .unwrap();
         vec1.get_stored_account_meta_callback(pos, |account| {
             let (_meta, test) = create_test_account(sample);
             assert_eq!(account.data(), test.data());
@@ -147,4 +198,14 @@ fn append_vec_concurrent_read_append(bencher: &mut Bencher) {
             indexes.lock().unwrap().push((sample, info.offsets[0]))
         }
     });
+}
+
+#[bench]
+fn append_vec_concurrent_read_append_file(bencher: &mut Bencher) {
+    append_vec_concurrent_read_append(bencher, StorageAccess::File);
+}
+
+#[bench]
+fn append_vec_concurrent_read_append_mmap(bencher: &mut Bencher) {
+    append_vec_concurrent_read_append(bencher, StorageAccess::Mmap);
 }

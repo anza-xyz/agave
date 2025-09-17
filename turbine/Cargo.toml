@@ -1,15 +1,20 @@
 [package]
 name = "solana-turbine"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-turbine"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+agave-unstable-api = []
+
 [dependencies]
+agave-feature-set = { workspace = true }
+agave-xdp = { workspace = true }
 bincode = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -23,39 +28,58 @@ rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
 rustls = { workspace = true }
+solana-clock = { workspace = true }
+solana-cluster-type = { workspace = true }
 solana-entry = { workspace = true }
-solana-feature-set = { workspace = true }
-solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
-solana-ledger = { workspace = true }
+solana-hash = { workspace = true }
+solana-keypair = { workspace = true }
+solana-ledger = { workspace = true, features = ["agave-unstable-api"] }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
+solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
+solana-nohash-hasher = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk = { workspace = true }
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
+solana-system-transaction = { workspace = true }
+solana-time-utils = { workspace = true }
 solana-tls-utils = { workspace = true }
+solana-transaction-error = { workspace = true }
 static_assertions = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+caps = { workspace = true }
+
 [dev-dependencies]
 assert_matches = { workspace = true }
+bencher = { workspace = true }
+bs58 = { workspace = true }
+conditional-mod = { workspace = true }
+solana-genesis-config = { workspace = true }
+solana-ledger = { workspace = true, features = ["agave-unstable-api","dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-signature = { workspace = true, features = ["rand"] }
+solana-transaction = { workspace = true }
+solana-turbine = { path = ".", features = ["agave-unstable-api"] }
 test-case = { workspace = true }
 
 [[bench]]
 name = "cluster_info"
+harness = false
 
 [[bench]]
 name = "cluster_nodes"
-
-[[bench]]
-name = "retransmit_stage"
+harness = false

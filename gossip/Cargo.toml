@@ -1,15 +1,44 @@
 [package]
 name = "solana-gossip"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-gossip"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+bench = false
+
+[[bin]]
+name = "solana-gossip"
+path = "src/main.rs"
+bench = false
+
+[features]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-bloom/frozen-abi",
+    "solana-ledger/frozen-abi",
+    "solana-perf/frozen-abi",
+    "solana-runtime/frozen-abi",
+    "solana-short-vec/frozen-abi",
+    "solana-version/frozen-abi",
+    "solana-vote/frozen-abi",
+    "solana-vote-program/frozen-abi",
+]
+agave-unstable-api = ["agave-low-pass-filter/agave-unstable-api"]
+
 [dependencies]
+agave-feature-set = { workspace = true }
+agave-low-pass-filter = { workspace = true, features = ["agave-unstable-api"] }
+arrayvec = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
@@ -25,35 +54,50 @@ rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
+serde-big-array = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
+siphasher = { workspace = true }
+solana-account = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
+solana-clock = "=3.0.0"
+solana-cluster-type = "=3.0.0"
 solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
-solana-feature-set = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true, features = [
+solana-epoch-schedule = "=3.0.0"
+solana-frozen-abi = { version = "=3.0.0", optional = true, features = [
     "frozen-abi",
 ] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+solana-frozen-abi-macro = { version = "=3.0.0", optional = true, features = [
     "frozen-abi",
 ] }
-solana-ledger = { workspace = true }
-solana-logger = { workspace = true }
+solana-hash = "=3.0.0"
+solana-keypair = "=3.0.1"
+solana-ledger = { workspace = true, features = ["agave-unstable-api"] }
+solana-logger = "=3.0.0"
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
-solana-net-utils = { workspace = true }
+solana-native-token = "=3.0.0"
+solana-net-utils = { workspace = true, features = ["agave-unstable-api"] }
+solana-packet = "=3.0.0"
 solana-perf = { workspace = true }
+solana-pubkey = { version = "=3.0.0", features = ["rand"] }
+solana-quic-definitions = "=3.0.0"
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sanitize = { workspace = true }
-solana-sdk = { workspace = true }
-solana-serde-varint = { workspace = true }
-solana-short-vec = { workspace = true }
+solana-sanitize = "=3.0.1"
+solana-serde-varint = "=3.0.0"
+solana-sha256-hasher = "=3.0.0"
+solana-short-vec = "=3.0.0"
+solana-signature = { version = "=3.1.0", default-features = false }
+solana-signer = "=3.0.0"
 solana-streamer = { workspace = true }
+solana-time-utils = "=3.0.0"
 solana-tpu-client = { workspace = true }
+solana-transaction = "=3.0.1"
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
@@ -61,45 +105,37 @@ static_assertions = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+anyhow = { workspace = true }
 bs58 = { workspace = true }
+criterion = { workspace = true }
 num_cpus = { workspace = true }
 rand0-7 = { workspace = true }
 rand_chacha0-2 = { workspace = true }
 serial_test = { workspace = true }
+solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-signature = { version = "=3.1.0", features = ["rand"] }
+solana-system-transaction = { workspace = true }
+solana-vote-interface = { workspace = true }
+static_assertions = { workspace = true }
 test-case = { workspace = true }
-
-[features]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-bloom/frozen-abi",
-    "solana-ledger/frozen-abi",
-    "solana-perf/frozen-abi",
-    "solana-runtime/frozen-abi",
-    "solana-sdk/frozen-abi",
-    "solana-short-vec/frozen-abi",
-    "solana-version/frozen-abi",
-    "solana-vote/frozen-abi",
-    "solana-vote-program/frozen-abi",
-]
 
 [[bench]]
 name = "crds"
+harness = false
 
 [[bench]]
 name = "crds_gossip_pull"
+harness = false
 
 [[bench]]
 name = "crds_shards"
+harness = false
 
-[[bin]]
-name = "solana-gossip"
-path = "src/main.rs"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[[bench]]
+name = "weighted_shuffle"
+harness = false
 
 [lints]
 workspace = true

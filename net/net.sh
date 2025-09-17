@@ -87,6 +87,9 @@ Operate a configured testnet
                                         in genesis config for external nodes
    --no-snapshot-fetch
                                       - If set, disables booting validators from a snapshot
+   --copy-program URL_OR_MONIKER PUBKEY
+                                      - Copies a program PUBKEY from URL_OR_MONIKER.
+                                      For example, --copy-program t recr1L3PCGKLbckBqMNcJhuuyU1zgo8nBhfLVsJNwr5
    --skip-poh-verify
                                       - If set, validators will skip verifying
                                         the ledger they already have saved to disk at
@@ -130,12 +133,6 @@ Operate a configured testnet
 
  logs-specific options:
    none
-
- netem-specific options:
-   --config            - Netem configuration (as a double quoted string)
-   --parition          - Percentage of network that should be configured with netem
-   --config-file       - Configuration file for partition and netem configuration
-   --netem-cmd         - Optional command argument to netem. Default is "add". Use "cleanup" to remove rules.
 
  update-specific options:
    --platform linux|osx|windows       - Deploy the tarball using 'agave-install deploy ...' for the
@@ -189,9 +186,8 @@ annotateBlockexplorerUrl() {
 }
 
 build() {
-  supported=("22.04")
   declare MAYBE_DOCKER=
-  if [[ $(uname) != Linux || ! " ${supported[*]} " =~ $(lsb_release -sr) ]]; then
+  if [[ $(uname) != Linux ]]; then
     # shellcheck source=ci/docker/env.sh
     source "$SOLANA_ROOT"/ci/docker/env.sh
     MAYBE_DOCKER="ci/docker-run.sh ${CI_DOCKER_IMAGE:?}"
@@ -282,7 +278,7 @@ syncScripts() {
   local remoteSolanaHome="${remoteHome}/solana"
   rsync -vPrc -e "ssh ${sshOptions[*]}" \
     --exclude 'net/log*' \
-    "$SOLANA_ROOT"/{fetch-perf-libs.sh,fetch-spl.sh,scripts,net,multinode-demo} \
+    "$SOLANA_ROOT"/{fetch-perf-libs.sh,fetch-programs.sh,fetch-core-bpf.sh,fetch-spl.sh,scripts,net,multinode-demo} \
     "$ipAddress":"$remoteSolanaHome"/ > /dev/null
 }
 
@@ -625,6 +621,13 @@ deploy() {
   echo "Deployment started at $(date)"
   $metricsWriteDatapoint "testnet-deploy net-start-begin=1"
 
+  if [[ -n "$copyProgramPubkey" ]]; then
+      echo "Copying program from ${copyProgramUrl}"
+      solana -u "${copyProgramUrl}" program dump "${copyProgramPubkey}" "${copyProgramPubkey}".so || exit 1
+
+      genesisOptions="${genesisOptions} --bpf-program ${copyProgramPubkey} BPFLoader2111111111111111111111111111111111 /home/solana/solana/net/${copyProgramPubkey}.so"
+  fi
+
   declare bootstrapLeader=true
   for nodeAddress in "${validatorIpList[@]}" "${blockstreamerIpList[@]}"; do
     nodeType=
@@ -816,6 +819,8 @@ externalPrimordialAccountsFile=
 remoteExternalPrimordialAccountsFile=
 internalNodesStakeLamports=
 internalNodesLamports=
+copyProgramUrl=""
+copyProgramPubkey=""
 maybeNoSnapshot=""
 maybeLimitLedgerSize=""
 maybeSkipLedgerVerify=""
@@ -827,10 +832,6 @@ debugBuild=false
 profileBuild=false
 doBuild=true
 gpuMode=auto
-netemPartition=""
-netemConfig=""
-netemConfigFile=""
-netemCommand="add"
 clientDelayStart=0
 netLogDir=
 maybeWarpSlot=
@@ -906,6 +907,10 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --internal-nodes-lamports ]]; then
       internalNodesLamports="$2"
       shift 2
+    elif [[ $1 = --copy-program ]]; then
+      copyProgramUrl="$2"
+      copyProgramPubkey="$3"
+      shift 3
     elif [[ $1 = --external-accounts-file ]]; then
       externalPrimordialAccountsFile="$2"
       remoteExternalPrimordialAccountsFile=/tmp/external-primordial-accounts.yml
@@ -919,18 +924,6 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --profile ]]; then
       profileBuild=true
       shift 1
-    elif [[ $1 = --partition ]]; then
-      netemPartition=$2
-      shift 2
-    elif [[ $1 = --config ]]; then
-      netemConfig=$2
-      shift 2
-    elif [[ $1 == --config-file ]]; then
-      netemConfigFile=$2
-      shift 2
-    elif [[ $1 == --netem-cmd ]]; then
-      netemCommand=$2
-      shift 2
     elif [[ $1 = --gpu-mode ]]; then
       gpuMode=$2
       case "$gpuMode" in
@@ -1207,40 +1200,6 @@ logs)
   for ipAddress in "${blockstreamerIpList[@]}"; do
     fetchRemoteLog "$ipAddress" validator
   done
-  ;;
-netem)
-  if [[ -n $netemConfigFile ]]; then
-    remoteNetemConfigFile="$(basename "$netemConfigFile")"
-    if [[ $netemCommand = "add" ]]; then
-      for ipAddress in "${validatorIpList[@]}"; do
-        remoteHome=$(remoteHomeDir "$ipAddress")
-        remoteSolanaHome="${remoteHome}/solana"
-        "$here"/scp.sh "$netemConfigFile" solana@"$ipAddress":"$remoteSolanaHome"
-      done
-    fi
-    for i in "${!validatorIpList[@]}"; do
-      "$here"/ssh.sh solana@"${validatorIpList[$i]}" 'solana/scripts/net-shaper.sh' \
-      "$netemCommand" ~solana/solana/"$remoteNetemConfigFile" "${#validatorIpList[@]}" "$i"
-    done
-  else
-    num_nodes=$((${#validatorIpList[@]}*netemPartition/100))
-    if [[ $((${#validatorIpList[@]}*netemPartition%100)) -gt 0 ]]; then
-      num_nodes=$((num_nodes+1))
-    fi
-    if [[ "$num_nodes" -gt "${#validatorIpList[@]}" ]]; then
-      num_nodes=${#validatorIpList[@]}
-    fi
-
-    # Stop netem on all nodes
-    for ipAddress in "${validatorIpList[@]}"; do
-      "$here"/ssh.sh solana@"$ipAddress" 'solana/scripts/netem.sh delete < solana/netem.cfg || true'
-    done
-
-    # Start netem on required nodes
-    for ((i=0; i<num_nodes; i++ )); do :
-      "$here"/ssh.sh solana@"${validatorIpList[$i]}" "echo $netemConfig > solana/netem.cfg; solana/scripts/netem.sh add \"$netemConfig\""
-    done
-  fi
   ;;
 *)
   echo "Internal error: Unknown command: $command"

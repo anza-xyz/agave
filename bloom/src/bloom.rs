@@ -399,7 +399,7 @@ mod test {
         // Round-trip with no inserts.
         let bloom: ConcurrentBloom<_> = bloom.into();
         assert_eq!(bloom.num_bits, 9731);
-        assert_eq!(bloom.bits.len(), (9731 + 63) / 64);
+        assert_eq!(bloom.bits.len(), 9731_usize.div_ceil(64));
         for hash_value in &hash_values {
             assert!(bloom.contains(hash_value));
         }
@@ -428,7 +428,7 @@ mod test {
             .collect();
         let bloom: ConcurrentBloom<_> = bloom.into();
         assert_eq!(bloom.num_bits, 9731);
-        assert_eq!(bloom.bits.len(), (9731 + 63) / 64);
+        assert_eq!(bloom.bits.len(), 9731_usize.div_ceil(64));
         more_hash_values.par_iter().for_each(|v| {
             bloom.add(v);
         });

@@ -1,5 +1,5 @@
 use {
-    solana_sdk::clock::{Epoch, Slot},
+    solana_clock::{Epoch, Slot},
     std::fmt::Display,
 };
 

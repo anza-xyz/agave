@@ -4,15 +4,15 @@ use {
         ProgressBar,
     },
     console::style,
+    solana_clock::Slot,
+    solana_commitment_config::CommitmentConfig,
     solana_core::validator::ValidatorStartProgress,
+    solana_native_token::Sol,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{client_error, request, response::RpcContactInfo},
-    solana_sdk::{
-        clock::Slot, commitment_config::CommitmentConfig, exit::Exit, native_token::Sol,
-        pubkey::Pubkey,
-    },
+    solana_validator_exit::Exit,
     std::{
-        io,
         net::SocketAddr,
         path::{Path, PathBuf},
         sync::{
@@ -35,7 +35,7 @@ impl Dashboard {
         ledger_path: &Path,
         log_path: Option<&Path>,
         validator_exit: Option<&mut Exit>,
-    ) -> Result<Self, io::Error> {
+    ) -> Self {
         println_name_value("Ledger location:", &format!("{}", ledger_path.display()));
         if let Some(log_path) = log_path {
             println_name_value("Log:", &format!("{}", log_path.display()));
@@ -50,11 +50,11 @@ impl Dashboard {
             validator_exit.register_exit(Box::new(move || exit.store(true, Ordering::Relaxed)));
         }
 
-        Ok(Self {
+        Self {
             exit,
             ledger_path: ledger_path.to_path_buf(),
             progress_bar,
-        })
+        }
     }
 
     pub fn run(self, refresh_interval: Duration) {
@@ -278,7 +278,7 @@ fn get_validator_stats(
                     request::RpcResponseErrorData::NodeUnhealthy {
                         num_slots_behind: Some(num_slots_behind),
                     },
-            }) = &err.kind
+            }) = err.kind()
             {
                 format!("{num_slots_behind} slots behind")
             } else {

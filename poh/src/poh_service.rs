@@ -1,12 +1,16 @@
 //! The `poh_service` module implements a service that records the passing of
 //! "ticks", a measure of time in the PoH stream
 use {
-    crate::poh_recorder::{PohRecorder, Record},
+    crate::{
+        poh_controller::{PohServiceMessage, PohServiceMessageGuard, PohServiceMessageReceiver},
+        poh_recorder::{PohRecorder, Record},
+    },
     crossbeam_channel::Receiver,
     log::*,
+    solana_clock::DEFAULT_HASHES_PER_SECOND,
     solana_entry::poh::Poh,
     solana_measure::{measure::Measure, measure_us},
-    solana_sdk::poh_config::PohConfig,
+    solana_poh_config::PohConfig,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -21,13 +25,15 @@ pub struct PohService {
     tick_producer: JoinHandle<()>,
 }
 
-// Number of hashes to batch together.
+// Amount of time to hash continuously.
+//
 // * If this number is too small, PoH hash rate will suffer.
-// * The larger this number is from 1, the speed of recording transactions will suffer due to lock
-//   contention with the PoH hashing within `tick_producer()`.
+// * If this number is too large, PoH will be less responsive to record requests.
 //
 // Can use test_poh_service to calibrate this
-pub const DEFAULT_HASHES_PER_BATCH: u64 = 64;
+const TARGET_HASH_BATCH_TIME_US: u64 = 50;
+pub const DEFAULT_HASHES_PER_BATCH: u64 =
+    TARGET_HASH_BATCH_TIME_US * DEFAULT_HASHES_PER_SECOND / 1_000_000;
 
 pub const DEFAULT_PINNED_CPU_CORE: usize = 0;
 
@@ -102,6 +108,7 @@ impl PohService {
         pinned_cpu_core: usize,
         hashes_per_batch: u64,
         record_receiver: Receiver<Record>,
+        poh_service_receiver: PohServiceMessageReceiver,
     ) -> Self {
         let poh_config = poh_config.clone();
         let tick_producer = Builder::new()
@@ -114,6 +121,7 @@ impl PohService {
                             &poh_config,
                             &poh_exit,
                             record_receiver,
+                            poh_service_receiver,
                         );
                     } else {
                         Self::short_lived_low_power_tick_producer(
@@ -121,6 +129,7 @@ impl PohService {
                             &poh_config,
                             &poh_exit,
                             record_receiver,
+                            poh_service_receiver,
                         );
                     }
                 } else {
@@ -136,6 +145,7 @@ impl PohService {
                         ticks_per_slot,
                         hashes_per_batch,
                         record_receiver,
+                        poh_service_receiver,
                         Self::target_ns_per_tick(
                             ticks_per_slot,
                             poh_config.target_tick_duration.as_nanos() as u64,
@@ -165,9 +175,12 @@ impl PohService {
         poh_config: &PohConfig,
         poh_exit: &AtomicBool,
         record_receiver: Receiver<Record>,
+        poh_service_receiver: PohServiceMessageReceiver,
     ) {
         let mut last_tick = Instant::now();
         while !poh_exit.load(Ordering::Relaxed) {
+            let service_message = poh_service_receiver.try_recv();
+
             let remaining_tick_time = poh_config
                 .target_tick_duration
                 .saturating_sub(last_tick.elapsed());
@@ -179,6 +192,10 @@ impl PohService {
             if remaining_tick_time.is_zero() {
                 last_tick = Instant::now();
                 poh_recorder.write().unwrap().tick();
+            }
+
+            if let Ok(service_message) = service_message {
+                Self::handle_service_message(&poh_recorder, service_message);
             }
         }
     }
@@ -192,11 +209,13 @@ impl PohService {
         if let Ok(record) = record {
             if record
                 .sender
-                .send(poh_recorder.write().unwrap().record(
-                    record.slot,
-                    record.mixin,
-                    record.transactions,
-                ))
+                .send(
+                    poh_recorder
+                        .write()
+                        .unwrap()
+                        .record(record.slot, record.mixins, record.transaction_batches)
+                        .map(|summary| summary.starting_transaction_index),
+                )
                 .is_err()
             {
                 panic!("Error returning mixin hash");
@@ -209,12 +228,15 @@ impl PohService {
         poh_config: &PohConfig,
         poh_exit: &AtomicBool,
         record_receiver: Receiver<Record>,
+        poh_service_receiver: PohServiceMessageReceiver,
     ) {
         let mut warned = false;
         let mut elapsed_ticks = 0;
         let mut last_tick = Instant::now();
         let num_ticks = poh_config.target_tick_count.unwrap();
         while elapsed_ticks < num_ticks {
+            let service_message = poh_service_receiver.try_recv();
+
             let remaining_tick_time = poh_config
                 .target_tick_duration
                 .saturating_sub(last_tick.elapsed());
@@ -231,6 +253,10 @@ impl PohService {
             if poh_exit.load(Ordering::Relaxed) && !warned {
                 warned = true;
                 warn!("exit signal is ignored because PohService is scheduled to exit soon");
+            }
+
+            if let Ok(service_message) = service_message {
+                Self::handle_service_message(&poh_recorder, service_message);
             }
         }
     }
@@ -257,10 +283,12 @@ impl PohService {
                 loop {
                     let res = poh_recorder_l.record(
                         record.slot,
-                        record.mixin,
-                        std::mem::take(&mut record.transactions),
+                        record.mixins,
+                        std::mem::take(&mut record.transaction_batches),
                     );
-                    let (send_res, send_record_result_us) = measure_us!(record.sender.send(res));
+                    let (send_res, send_record_result_us) = measure_us!(record
+                        .sender
+                        .send(res.map(|summary| summary.starting_transaction_index)));
                     debug_assert!(send_res.is_ok(), "Record wasn't sent.");
 
                     timing.total_send_record_result_us += send_record_result_us;
@@ -330,12 +358,15 @@ impl PohService {
         ticks_per_slot: u64,
         hashes_per_batch: u64,
         record_receiver: Receiver<Record>,
+        poh_service_receiver: PohServiceMessageReceiver,
         target_ns_per_tick: u64,
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut timing = PohTiming::new();
         let mut next_record = None;
+
         loop {
+            let service_message = poh_service_receiver.try_recv();
             let should_tick = Self::record_or_hash(
                 &mut next_record,
                 &poh_recorder,
@@ -364,6 +395,30 @@ impl PohService {
                     break;
                 }
             }
+
+            if let Ok(service_message) = service_message {
+                Self::handle_service_message(&poh_recorder, service_message);
+            }
+        }
+    }
+
+    fn handle_service_message(
+        poh_recorder: &RwLock<PohRecorder>,
+        mut service_message: PohServiceMessageGuard,
+    ) {
+        {
+            let mut recorder = poh_recorder.write().unwrap();
+            match service_message.take() {
+                PohServiceMessage::Reset {
+                    reset_bank,
+                    next_leader_slot,
+                } => {
+                    recorder.reset(reset_bank, next_leader_slot);
+                }
+                PohServiceMessage::SetBank { bank } => {
+                    recorder.set_bank(bank);
+                }
+            }
         }
     }
 
@@ -376,7 +431,10 @@ impl PohService {
 mod tests {
     use {
         super::*,
+        crate::{poh_controller::PohController, poh_recorder::PohRecorderError::MaxHeightReached},
+        crossbeam_channel::unbounded,
         rand::{thread_rng, Rng},
+        solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_MS_PER_SLOT},
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
@@ -386,7 +444,8 @@ mod tests {
         solana_measure::measure::Measure,
         solana_perf::test_tx::test_tx,
         solana_runtime::bank::Bank,
-        solana_sdk::{clock, hash::hash, transaction::VersionedTransaction},
+        solana_sha256_hasher::hash,
+        solana_transaction::versioned::VersionedTransaction,
         std::{thread::sleep, time::Duration},
     };
 
@@ -394,7 +453,11 @@ mod tests {
     #[ignore]
     fn test_poh_service() {
         solana_logger::setup();
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(2);
+        let hashes_per_tick = Some(DEFAULT_HASHES_PER_TICK);
+        genesis_config.poh_config.hashes_per_tick = hashes_per_tick;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let prev_hash = bank.last_blockhash();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -405,7 +468,7 @@ mod tests {
             PohConfig::default().target_tick_duration.as_micros() as u64;
         let target_tick_duration = Duration::from_micros(default_target_tick_duration);
         let poh_config = PohConfig {
-            hashes_per_tick: Some(clock::DEFAULT_HASHES_PER_TICK),
+            hashes_per_tick,
             target_tick_duration,
             target_tick_count: None,
         };
@@ -414,11 +477,13 @@ mod tests {
         let ticks_per_slot = bank.ticks_per_slot();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let blockstore = Arc::new(blockstore);
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
+        // Just set something very far in the future that we won't reach.
+        let next_leader_slot = Some((1_000_000, 1_000_000));
+        let (poh_recorder, entry_receiver) = PohRecorder::new(
             bank.tick_height(),
             prev_hash,
             bank.clone(),
-            Some((4, 4)),
+            next_leader_slot,
             ticks_per_slot,
             blockstore,
             &leader_schedule_cache,
@@ -427,7 +492,6 @@ mod tests {
         );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let ticks_per_slot = bank.ticks_per_slot();
-        let bank_slot = bank.slot();
 
         // specify RUN_TIME to run in a benchmark-like mode
         // to calibrate batch size
@@ -439,6 +503,7 @@ mod tests {
         let entry_producer = {
             let poh_recorder = poh_recorder.clone();
             let exit = exit.clone();
+            let mut bank = bank.clone();
 
             Builder::new()
                 .name("solPohEntryProd".to_string())
@@ -451,11 +516,27 @@ mod tests {
                     loop {
                         // send some data
                         let mut time = Measure::start("record");
-                        let _ =
+                        let res = poh_recorder.write().unwrap().record(
+                            bank.slot(),
+                            vec![h1],
+                            vec![vec![tx.clone()]],
+                        );
+                        if let Err(MaxHeightReached) = res {
+                            // Advance to the next slot.
                             poh_recorder
                                 .write()
                                 .unwrap()
-                                .record(bank_slot, h1, vec![tx.clone()]);
+                                .reset(bank.clone(), next_leader_slot);
+                            bank = Arc::new(Bank::new_from_parent(
+                                bank.clone(),
+                                &solana_pubkey::new_rand(),
+                                bank.slot() + 1,
+                            ));
+                            poh_recorder
+                                .write()
+                                .unwrap()
+                                .set_bank_for_test(bank.clone());
+                        }
                         time.stop();
                         total_us += time.as_us();
                         total_times += 1;
@@ -480,6 +561,8 @@ mod tests {
         let hashes_per_batch = std::env::var("HASHES_PER_BATCH")
             .map(|x| x.parse().unwrap())
             .unwrap_or(DEFAULT_HASHES_PER_BATCH);
+        let (_record_sender, record_receiver) = unbounded();
+        let (_poh_controller, poh_service_message_receiver) = PohController::new();
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &poh_config,
@@ -488,6 +571,7 @@ mod tests {
             DEFAULT_PINNED_CPU_CORE,
             hashes_per_batch,
             record_receiver,
+            poh_service_message_receiver,
         );
         poh_recorder.write().unwrap().set_bank_for_test(bank);
 
@@ -500,7 +584,9 @@ mod tests {
 
         let time = Instant::now();
         while run_time != 0 || need_tick || need_entry || need_partial {
-            let (_bank, (entry, _tick_height)) = entry_receiver.recv().unwrap();
+            let (_bank, (entry, _tick_height)) = entry_receiver
+                .recv_timeout(Duration::from_millis(DEFAULT_MS_PER_SLOT))
+                .expect("Expected to receive an entry");
 
             if entry.is_tick() {
                 num_ticks += 1;

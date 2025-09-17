@@ -9,42 +9,36 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+name = "solana_net_utils"
+
+[features]
+agave-unstable-api = []
+default = []
+dev-context-only-utils = ["dep:pcap-file", "dep:hxdmp"]
+
 [dependencies]
+anyhow = { workspace = true }
 bincode = { workspace = true }
-clap = { version = "3.1.5", features = ["cargo"], optional = true }
-crossbeam-channel = { workspace = true }
+bytes = { workspace = true }
+hxdmp = { version = "0.2.1", optional = true }
+itertools = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true, features = ["socket"] }
+pcap-file = { version = "2.0.0", optional = true }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 socket2 = { workspace = true }
-solana-logger = { workspace = true, optional = true }
 solana-serde = { workspace = true }
-solana-version = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
 
 [dev-dependencies]
 solana-logger = { workspace = true }
 
-[features]
-default = []
-clap = ["dep:clap", "dep:solana-logger", "dep:solana-version"]
-dev-context-only-utils = []
-
-[lib]
-name = "solana_net_utils"
-
-[[bin]]
-name = "solana-ip-address"
-path = "src/bin/ip_address.rs"
-required-features = ["clap"]
-
-[[bin]]
-name = "solana-ip-address-server"
-path = "src/bin/ip_address_server.rs"
-required-features = ["clap"]
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[lints]
+workspace = true

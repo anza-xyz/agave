@@ -9,7 +9,15 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_storage_bigtable"
+
 [dependencies]
+agave-reserved-account-keys = { workspace = true }
 backoff = { workspace = true, features = ["tokio"] }
 bincode = { workspace = true }
 bytes = { workspace = true }
@@ -30,18 +38,25 @@ prost-types = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 smpl_jwt = { workspace = true }
+solana-clock = { workspace = true }
+solana-message = { workspace = true }
 solana-metrics = { workspace = true }
-solana-sdk = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-serde = { workspace = true }
+solana-signature = { workspace = true }
 solana-storage-proto = { workspace = true }
+solana-time-utils = { workspace = true }
+solana-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tonic = { workspace = true, features = ["tls", "transport"] }
 zstd = { workspace = true }
 
-[lib]
-crate-type = ["lib"]
-name = "solana_storage_bigtable"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[dev-dependencies]
+solana-hash = { workspace = true }
+solana-keypair = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
+solana-system-transaction = { workspace = true }
+solana-transaction-context = { workspace = true }

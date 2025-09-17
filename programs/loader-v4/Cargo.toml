@@ -8,26 +8,42 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[dependencies]
-log = { workspace = true }
-solana-bpf-loader-program = { workspace = true }
-solana-compute-budget = { workspace = true }
-solana-log-collector = { workspace = true }
-solana-measure = { workspace = true }
-solana-program-runtime = { workspace = true }
-solana-sdk = { workspace = true }
-solana-type-overrides = { workspace = true }
-solana_rbpf = { workspace = true }
-
-[dev-dependencies]
-bincode = { workspace = true }
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lib]
 crate-type = ["lib"]
 name = "solana_loader_v4_program"
 
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-
 [features]
-shuttle-test = ["solana-type-overrides/shuttle-test", "solana-program-runtime/shuttle-test", "solana_rbpf/shuttle-test"]
+agave-unstable-api = []
+shuttle-test = [
+    "solana-program-runtime/shuttle-test",
+    "solana-sbpf/shuttle-test",
+    "solana-svm-type-overrides/shuttle-test",
+]
+svm-internal = []
+
+[dependencies]
+log = { workspace = true }
+qualifier_attr = { workspace = true }
+solana-account = { workspace = true }
+solana-bincode = { workspace = true }
+solana-bpf-loader-program = { workspace = true, features = ["svm-internal"] }
+solana-instruction = { workspace = true }
+solana-loader-v3-interface = { workspace = true }
+solana-loader-v4-interface = { workspace = true, features = ["serde"] }
+solana-packet = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-sbpf = { workspace = true, features = ["jit"] }
+solana-sdk-ids = { workspace = true }
+solana-svm-log-collector = { workspace = true }
+solana-svm-measure = { workspace = true }
+solana-svm-type-overrides = { workspace = true }
+solana-transaction-context = { workspace = true }
+
+[dev-dependencies]
+bincode = { workspace = true }
+solana-clock = { workspace = true }
+solana-sysvar = { workspace = true }

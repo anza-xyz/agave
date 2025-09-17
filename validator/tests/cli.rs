@@ -1,6 +1,6 @@
 use {
     assert_cmd::prelude::*,
-    solana_sdk::signer::keypair::{write_keypair_file, Keypair},
+    solana_keypair::{write_keypair_file, Keypair},
     std::process::Command,
     tempfile::TempDir,
 };
@@ -31,6 +31,6 @@ fn test_use_the_same_path_for_accounts_and_snapshots() {
         temp_dir_str,
     ]);
     cmd.assert().failure().stderr(predicates::str::contains(
-        "The --accounts and --snapshots paths must be unique",
+        "the --accounts and --snapshots paths must be unique",
     ));
 }

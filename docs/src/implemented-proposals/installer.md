@@ -70,7 +70,7 @@ An update manifest is used to advertise the deployment of new release tarballs o
 The update tarball itself is hosted elsewhere, off-chain and can be fetched from the specified `download_url`.
 
 ```text
-use solana_sdk::signature::Signature;
+use solana_signature::Signature;
 
 /// Information required to download and apply a given update
 pub struct UpdateManifest {
@@ -113,9 +113,15 @@ A release archive is expected to be a tar file compressed with bzip2 with the fo
 
 The `agave-install` tool is used by the user to install and update their cluster software.
 
+:::info
+As of v3.0 `agave-install` does not install the `agave-validator` binary, which is required to run a validator node.
+Validator operators are required to [build from source](../cli/install.md#build-from-source).
+
+:::
+
 It manages the following files and directories in the user's home directory:
 
-- `~/.config/solana/install/config.yml` - user configuration and information about currently installed software version
+- `~/.config/solana/install/config.yml` - user configuration and information about the currently installed software version
 - `~/.local/share/solana/install/bin` - a symlink to the current release. eg, `~/.local/share/solana-update/<update-pubkey>-<manifest_signature>/bin`
 - `~/.local/share/solana/install/releases/<download_sha256>/` - contents of a release
 

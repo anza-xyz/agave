@@ -1,7 +1,7 @@
 use {
     crate::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
+    solana_clock::Slot,
     solana_ledger::blockstore::Blockstore,
-    solana_sdk::clock::Slot,
     std::sync::{
         atomic::{AtomicBool, Ordering},
         Arc, RwLock,
@@ -20,7 +20,6 @@ pub struct RpcHealth {
     blockstore: Arc<Blockstore>,
     health_check_slot_distance: u64,
     override_health_check: Arc<AtomicBool>,
-    startup_verification_complete: Arc<AtomicBool>,
     #[cfg(test)]
     stub_health_status: std::sync::RwLock<Option<RpcHealthStatus>>,
 }
@@ -31,14 +30,12 @@ impl RpcHealth {
         blockstore: Arc<Blockstore>,
         health_check_slot_distance: u64,
         override_health_check: Arc<AtomicBool>,
-        startup_verification_complete: Arc<AtomicBool>,
     ) -> Self {
         Self {
             optimistically_confirmed_bank,
             blockstore,
             health_check_slot_distance,
             override_health_check,
-            startup_verification_complete,
             #[cfg(test)]
             stub_health_status: std::sync::RwLock::new(None),
         }
@@ -54,9 +51,6 @@ impl RpcHealth {
 
         if self.override_health_check.load(Ordering::Relaxed) {
             return RpcHealthStatus::Ok;
-        }
-        if !self.startup_verification_complete.load(Ordering::Acquire) {
-            return RpcHealthStatus::Unknown;
         }
 
         // A node can observe votes by both replaying blocks and observing gossip.
@@ -104,9 +98,9 @@ impl RpcHealth {
             let num_slots = cluster_latest_optimistically_confirmed_slot
                 .saturating_sub(my_latest_optimistically_confirmed_slot);
             warn!(
-                "health check: behind by {num_slots} \
-                slots: me={my_latest_optimistically_confirmed_slot}, \
-                latest cluster={cluster_latest_optimistically_confirmed_slot}",
+                "health check: behind by {num_slots} slots: \
+                 me={my_latest_optimistically_confirmed_slot}, latest \
+                 cluster={cluster_latest_optimistically_confirmed_slot}",
             );
             RpcHealthStatus::Behind { num_slots }
         }
@@ -122,7 +116,6 @@ impl RpcHealth {
             blockstore,
             42,
             Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(true)),
         ))
     }
 
@@ -136,12 +129,14 @@ impl RpcHealth {
 pub mod tests {
     use {
         super::*,
+        solana_clock::UnixTimestamp,
+        solana_hash::Hash,
         solana_ledger::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,
         },
+        solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
-        solana_sdk::{clock::UnixTimestamp, hash::Hash, pubkey::Pubkey},
     };
 
     #[test]
@@ -158,25 +153,19 @@ pub mod tests {
 
         let health_check_slot_distance = 10;
         let override_health_check = Arc::new(AtomicBool::new(true));
-        let startup_verification_complete = Arc::clone(bank0.get_startup_verification_complete());
         let health = RpcHealth::new(
             optimistically_confirmed_bank.clone(),
             blockstore.clone(),
             health_check_slot_distance,
             override_health_check.clone(),
-            startup_verification_complete,
         );
 
         // Override health check set to true - status is ok
         assert_eq!(health.check(), RpcHealthStatus::Ok);
 
-        // Remove the override - status now unknown with incomplete startup verification
-        override_health_check.store(false, Ordering::Relaxed);
-        assert_eq!(health.check(), RpcHealthStatus::Unknown);
-
-        // Mark startup verification complete - status still unknown as no slots have been
+        // Remove the override - status now unknown as no slots have been
         // optimistically confirmed yet
-        bank0.set_startup_verification_complete();
+        override_health_check.store(false, Ordering::Relaxed);
         assert_eq!(health.check(), RpcHealthStatus::Unknown);
 
         // Mark slot 15 as being optimistically confirmed in the Blockstore, this could
