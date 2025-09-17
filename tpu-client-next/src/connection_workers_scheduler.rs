@@ -149,6 +149,7 @@ pub trait WorkersBroadcaster {
     /// encounters an unrecoverable error. In this case, it will trigger
     /// stopping the scheduler and cleaning all the data.
     async fn send_to_workers(
+        &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
@@ -192,7 +193,7 @@ impl ConnectionWorkersScheduler {
         self,
         config: ConnectionWorkersSchedulerConfig,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
-        self.run_with_broadcaster::<NonblockingBroadcaster>(config)
+        self.run_with_broadcaster(config, NonblockingBroadcaster)
             .await
     }
 
@@ -216,6 +217,7 @@ impl ConnectionWorkersScheduler {
             max_reconnect_attempts,
             leaders_fanout,
         }: ConnectionWorkersSchedulerConfig,
+        broadcaster: Broadcaster,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
         let ConnectionWorkersScheduler {
             mut leader_updater,
@@ -285,8 +287,9 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
-            if let Err(error) =
-                Broadcaster::send_to_workers(&mut workers, &send_leaders, transaction_batch).await
+            if let Err(error) = broadcaster
+                .send_to_workers(&mut workers, &send_leaders, transaction_batch)
+                .await
             {
                 last_error = Some(error);
                 break;
@@ -331,6 +334,7 @@ struct NonblockingBroadcaster;
 #[async_trait]
 impl WorkersBroadcaster for NonblockingBroadcaster {
     async fn send_to_workers(
+        &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
