@@ -94,7 +94,6 @@ pub fn execute(
     let run_args = RunArgs::from_clap_arg_match(matches)?;
 
     let cli::thread_args::NumThreadConfig {
-        accounts_db_foreground_threads,
         block_production_num_workers,
         ip_echo_server_threads,
         rayon_global_threads,
@@ -313,7 +312,7 @@ pub fn execute(
             .scan_filter_for_shrinking
             .clone(),
         num_background_threads: run_args.accounts_db_config.num_background_threads.clone(),
-        num_foreground_threads: Some(accounts_db_foreground_threads),
+        num_foreground_threads: run_args.accounts_db_config.num_foreground_threads.clone(),
         mark_obsolete_accounts,
         memlock_budget_size: solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
         ..AccountsDbConfig::default()
