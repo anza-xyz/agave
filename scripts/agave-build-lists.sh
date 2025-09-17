@@ -14,6 +14,7 @@
 AGAVE_BINS_DEV=(
   cargo-build-sbf
   cargo-test-sbf
+  solana-faucet
   solana-test-validator
 )
 
