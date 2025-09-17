@@ -137,6 +137,8 @@ impl FromClapArgMatches for RunArgs {
 
         let socket_addr_space = SocketAddrSpace::new(matches.is_present("allow_private_addr"));
 
+        let accounts_db_config = accounts_db_config::new_accounts_db_config(matches, &ledger_path)?;
+
         Ok(RunArgs {
             identity_keypair,
             ledger_path,
@@ -151,7 +153,7 @@ impl FromClapArgMatches for RunArgs {
             send_transaction_service_config: SendTransactionServiceConfig::from_clap_arg_match(
                 matches,
             )?,
-            accounts_db_config: AccountsDbConfig::from_clap_arg_match(matches)?,
+            accounts_db_config,
         })
     }
 }
@@ -1715,7 +1717,7 @@ mod tests {
 
             RunArgs {
                 identity_keypair,
-                ledger_path,
+                ledger_path: ledger_path.clone(),
                 logfile,
                 entrypoints,
                 known_validators,
@@ -1747,6 +1749,7 @@ mod tests {
                         ..AccountsIndexConfig::default()
                     }),
                     account_indexes: Some(AccountSecondaryIndexes::default()),
+                    base_working_path: Some(ledger_path.clone()),
                     num_background_threads: Some(
                         NonZeroUsize::new(solana_accounts_db::accounts_db::quarter_thread_count())
                             .unwrap(),
