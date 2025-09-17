@@ -95,8 +95,53 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
         caps::raise(None, CapSet::Effective, cap).unwrap();
     }
 
-    let Ok((mut socket, tx)) = Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) else {
-        panic!("failed to create AF_XDP socket on queue {queue_id:?}");
+    // Get interface info to show device type
+    let router = atomic_router.load();
+    let interface_info = router.get_interface(dev.if_index());
+    let dev_type_str = match interface_info {
+        Some(info) => match info.dev_type {
+            libc::ARPHRD_ETHER => "ETHERNET",
+            libc::ARPHRD_IPGRE => "GRE_TUNNEL", 
+            libc::ARPHRD_LOOPBACK => "LOOPBACK",
+            _ => "UNKNOWN",
+        },
+        None => "UNKNOWN",
+    };
+    
+    log::info!(
+        "greg: Creating XDP socket for interface {} (if_index: {}, type: {}) queue {queue_id:?} zero_copy: {}",
+        dev.name(),
+        dev.if_index(),
+        dev_type_str,
+        zero_copy
+    );
+    
+    // Show GRE tunnel info if available
+    if let Some(info) = interface_info {
+        if let Some(gre_tunnel) = &info.gre_tunnel {
+            log::info!(
+                "greg: GRE tunnel endpoints: {} -> {}",
+                gre_tunnel.src_ip,
+                gre_tunnel.dst_ip
+            );
+        }
+    }
+    
+    let (mut socket, tx) = match Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) {
+        Ok((socket, tx)) => {
+            log::info!("greg: Successfully created XDP socket for interface {}", dev.name());
+            (socket, tx)
+        }
+        Err(error) => {
+            log::error!(
+                "greg: Failed to create AF_XDP socket on queue {} for interface {} (if_index: {}): {}",
+                queue_id.0,
+                dev.name(),
+                dev.if_index(),
+                error
+            );
+            panic!("greg: failed to create AF_XDP socket on queue {queue_id:?}");
+        }
     };
 
     let umem = socket.umem();
@@ -210,7 +255,10 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                     let mut skip = false;
 
                     // sanity check that the address is routable through our NIC
-                    if next_hop.if_index != dev.if_index() {
+                    // For GRE tunnels, we allow routing through the physical interface
+                    // even if the route points to the GRE tunnel interface
+                    let is_gre_route = interface_info.dev_type == ARPHRD_IPGRE;
+                    if next_hop.if_index != dev.if_index() && !is_gre_route {
                         log::warn!(
                             "dropping packet: turbine peer {addr} must be routed through \
                              if_index: {} our if_index: {}",
@@ -221,7 +269,15 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                     }
 
                     // we need the MAC address to send the packet
-                    if next_hop.mac_addr.is_none() {
+                    // For GRE routes, we use the physical interface's MAC address
+                    let mac_addr = if is_gre_route {
+                        // For GRE tunnels, use the physical interface's MAC address
+                        Some(src_mac)
+                    } else {
+                        next_hop.mac_addr
+                    };
+                    
+                    if mac_addr.is_none() {
                         log::warn!(
                             "dropping packet: turbine peer {addr} must be routed through {} which \
                              has no known MAC address",
@@ -276,7 +332,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                             gre_src_ip,
                             gre_dst_ip,
                             &src_mac.0,
-                            &next_hop.mac_addr.unwrap().0,
+                            &mac_addr.unwrap().0,
                         );
 
                         // Update frame length and submit packet
@@ -292,7 +348,7 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
                         continue;
                     }
 
-                    next_hop.mac_addr.unwrap()
+                    mac_addr.unwrap()
                 };
 
                 const PACKET_HEADER_SIZE: usize =

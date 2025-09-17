@@ -171,14 +171,34 @@ impl<U: Umem> Socket<U> {
                 sxdp_shared_umem_fd: 0,
             };
 
+            log::info!(
+                "greg: Attempting to bind XDP socket to if_index: {}, queue_id: {}, flags: 0x{:x}",
+                sxdp.sxdp_ifindex,
+                sxdp.sxdp_queue_id,
+                sxdp.sxdp_flags
+            );
+            
             if bind(
                 fd.as_raw_fd(),
                 &sxdp as *const _ as *const sockaddr,
                 mem::size_of::<sockaddr_xdp>() as socklen_t,
             ) < 0
             {
-                return Err(io::Error::last_os_error());
+                let error = io::Error::last_os_error();
+                log::error!(
+                    "greg: XDP socket bind failed for if_index: {}, queue_id: {}: {}",
+                    sxdp.sxdp_ifindex,
+                    sxdp.sxdp_queue_id,
+                    error
+                );
+                return Err(error);
             }
+            
+            log::info!(
+                "greg: Successfully bound XDP socket to if_index: {}, queue_id: {}",
+                sxdp.sxdp_ifindex,
+                sxdp.sxdp_queue_id
+            );
 
             let tx = Tx {
                 completion: tx_completion_ring,
