@@ -16,142 +16,140 @@ use {
     std::{num::NonZeroUsize, path::PathBuf},
 };
 
-impl FromClapArgMatches for AccountsDbConfig {
-    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
-        let accounts_index_config = AccountsIndexConfig::from_clap_arg_match(matches)?;
+pub fn new_accounts_db_config(
+    matches: &ArgMatches,
+    ledger_path: &PathBuf,
+) -> Result<AccountsDbConfig> {
+    let accounts_index_config = AccountsIndexConfig::from_clap_arg_match(matches)?;
 
-        let account_indexes = AccountSecondaryIndexes::from_clap_arg_match(matches)?;
+    let account_indexes = AccountSecondaryIndexes::from_clap_arg_match(matches)?;
 
-        let (account_shrink_run_paths, _) = parse_account_shrink_paths(matches)?;
+    let (account_shrink_run_paths, _) = parse_account_shrink_paths(matches)?;
 
-        let accounts_shrink_optimize_total_space =
-            value_t!(matches, "accounts_shrink_optimize_total_space", bool)?;
-        let shrink_ratio = value_t!(matches, "accounts_shrink_ratio", f64)?;
-        if !(0.0..=1.0).contains(&shrink_ratio) {
-            return Err(crate::commands::Error::Dynamic(
-                Box::<dyn std::error::Error>::from(format!(
-                    "the specified account-shrink-ratio is invalid, it must be between 0. and 1.0 \
+    let accounts_shrink_optimize_total_space =
+        value_t!(matches, "accounts_shrink_optimize_total_space", bool)?;
+    let shrink_ratio = value_t!(matches, "accounts_shrink_ratio", f64)?;
+    if !(0.0..=1.0).contains(&shrink_ratio) {
+        return Err(crate::commands::Error::Dynamic(
+            Box::<dyn std::error::Error>::from(format!(
+                "the specified account-shrink-ratio is invalid, it must be between 0. and 1.0 \
              inclusive: {shrink_ratio}"
-                )),
-            ));
-        }
-
-        let shrink_ratio = if accounts_shrink_optimize_total_space {
-            AccountShrinkThreshold::TotalSpace { shrink_ratio }
-        } else {
-            AccountShrinkThreshold::IndividualStore { shrink_ratio }
-        };
-
-        const MIB: usize = 1_024 * 1_024;
-
-        let read_cache_limit_bytes = values_of::<usize>(matches, "accounts_db_read_cache_limit")
-            .map(|limits| {
-                match limits.len() {
-                    2 => (limits[0], limits[1]),
-                    _ => {
-                        // clap will enforce two values are given
-                        unreachable!(
-                            "invalid number of values given to accounts-db-read-cache-limit"
-                        )
-                    }
-                }
-            });
-        // accounts-db-read-cache-limit-mb was deprecated in v3.0.0
-        let read_cache_limit_mb = values_of::<usize>(matches, "accounts_db_read_cache_limit_mb")
-            .map(|limits| {
-                match limits.len() {
-                    // we were given explicit low and high watermark values, so use them
-                    2 => (limits[0] * MIB, limits[1] * MIB),
-                    // we were given a single value, so use it for both low and high watermarks
-                    1 => (limits[0] * MIB, limits[0] * MIB),
-                    _ => {
-                        // clap will enforce either one or two values is given
-                        unreachable!(
-                            "invalid number of values given to accounts-db-read-cache-limit-mb"
-                        )
-                    }
-                }
-            });
-        // clap will enforce only one cli arg is provided, so pick whichever is Some
-        let read_cache_limit_bytes = read_cache_limit_bytes.or(read_cache_limit_mb);
-
-        let write_cache_limit_bytes = value_t!(matches, "accounts_db_cache_limit_mb", u64)
-            .ok()
-            .map(|mb| mb * MIB as u64);
-
-        let ancient_append_vec_offset =
-            value_t!(matches, "accounts_db_ancient_append_vecs", i64).ok();
-
-        let ancient_storage_ideal_size =
-            value_t!(matches, "accounts_db_ancient_storage_ideal_size", u64).ok();
-
-        let max_ancient_storages =
-            value_t!(matches, "accounts_db_max_ancient_storages", usize).ok();
-
-        let exhaustively_verify_refcounts = matches.is_present("accounts_db_verify_refcounts");
-
-        let storage_access = matches
-            .value_of("accounts_db_access_storages_method")
-            .map(|method| match method {
-                "mmap" => StorageAccess::Mmap,
-                "file" => StorageAccess::File,
-                _ => {
-                    // clap will enforce one of the above values is given
-                    unreachable!("invalid value given to accounts-db-access-storages-method")
-                }
-            })
-            .unwrap_or_default();
-
-        let scan_filter_for_shrinking = matches
-            .value_of("accounts_db_scan_filter_for_shrinking")
-            .map(|filter| match filter {
-                "all" => ScanFilter::All,
-                "only-abnormal" => ScanFilter::OnlyAbnormal,
-                "only-abnormal-with-verify" => ScanFilter::OnlyAbnormalWithVerify,
-                _ => {
-                    // clap will enforce one of the above values is given
-                    unreachable!("invalid value given to accounts_db_scan_filter_for_shrinking")
-                }
-            })
-            .unwrap_or_default();
-
-        let accounts_db_background_threads = {
-            if matches.is_present("accounts_db_clean_threads") {
-                value_t!(matches, "accounts_db_clean_threads", NonZeroUsize)?
-            } else {
-                value_t!(matches, AccountsDbBackgroundThreadsArg::NAME, NonZeroUsize)?
-            }
-        };
-
-        let accounts_db_foreground_threads =
-            value_t!(matches, AccountsDbForegroundThreadsArg::NAME, NonZeroUsize)?;
-
-        let mark_obsolete_accounts = if matches.is_present("accounts_db_mark_obsolete_accounts") {
-            MarkObsoleteAccounts::Enabled
-        } else {
-            MarkObsoleteAccounts::Disabled
-        };
-
-        Ok(AccountsDbConfig {
-            index: Some(accounts_index_config),
-            account_indexes: Some(account_indexes),
-            shrink_paths: account_shrink_run_paths,
-            shrink_ratio,
-            read_cache_limit_bytes,
-            write_cache_limit_bytes,
-            ancient_append_vec_offset,
-            ancient_storage_ideal_size,
-            max_ancient_storages,
-            exhaustively_verify_refcounts,
-            storage_access,
-            scan_filter_for_shrinking,
-            num_background_threads: Some(accounts_db_background_threads),
-            num_foreground_threads: Some(accounts_db_foreground_threads),
-            mark_obsolete_accounts,
-            memlock_budget_size: solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
-            ..Default::default()
-        })
+            )),
+        ));
     }
+
+    let shrink_ratio = if accounts_shrink_optimize_total_space {
+        AccountShrinkThreshold::TotalSpace { shrink_ratio }
+    } else {
+        AccountShrinkThreshold::IndividualStore { shrink_ratio }
+    };
+
+    const MIB: usize = 1_024 * 1_024;
+
+    let read_cache_limit_bytes =
+        values_of::<usize>(matches, "accounts_db_read_cache_limit").map(|limits| {
+            match limits.len() {
+                2 => (limits[0], limits[1]),
+                _ => {
+                    // clap will enforce two values are given
+                    unreachable!("invalid number of values given to accounts-db-read-cache-limit")
+                }
+            }
+        });
+    // accounts-db-read-cache-limit-mb was deprecated in v3.0.0
+    let read_cache_limit_mb =
+        values_of::<usize>(matches, "accounts_db_read_cache_limit_mb").map(|limits| {
+            match limits.len() {
+                // we were given explicit low and high watermark values, so use them
+                2 => (limits[0] * MIB, limits[1] * MIB),
+                // we were given a single value, so use it for both low and high watermarks
+                1 => (limits[0] * MIB, limits[0] * MIB),
+                _ => {
+                    // clap will enforce either one or two values is given
+                    unreachable!(
+                        "invalid number of values given to accounts-db-read-cache-limit-mb"
+                    )
+                }
+            }
+        });
+    // clap will enforce only one cli arg is provided, so pick whichever is Some
+    let read_cache_limit_bytes = read_cache_limit_bytes.or(read_cache_limit_mb);
+
+    let write_cache_limit_bytes = value_t!(matches, "accounts_db_cache_limit_mb", u64)
+        .ok()
+        .map(|mb| mb * MIB as u64);
+
+    let ancient_append_vec_offset = value_t!(matches, "accounts_db_ancient_append_vecs", i64).ok();
+
+    let ancient_storage_ideal_size =
+        value_t!(matches, "accounts_db_ancient_storage_ideal_size", u64).ok();
+
+    let max_ancient_storages = value_t!(matches, "accounts_db_max_ancient_storages", usize).ok();
+
+    let exhaustively_verify_refcounts = matches.is_present("accounts_db_verify_refcounts");
+
+    let storage_access = matches
+        .value_of("accounts_db_access_storages_method")
+        .map(|method| match method {
+            "mmap" => StorageAccess::Mmap,
+            "file" => StorageAccess::File,
+            _ => {
+                // clap will enforce one of the above values is given
+                unreachable!("invalid value given to accounts-db-access-storages-method")
+            }
+        })
+        .unwrap_or_default();
+
+    let scan_filter_for_shrinking = matches
+        .value_of("accounts_db_scan_filter_for_shrinking")
+        .map(|filter| match filter {
+            "all" => ScanFilter::All,
+            "only-abnormal" => ScanFilter::OnlyAbnormal,
+            "only-abnormal-with-verify" => ScanFilter::OnlyAbnormalWithVerify,
+            _ => {
+                // clap will enforce one of the above values is given
+                unreachable!("invalid value given to accounts_db_scan_filter_for_shrinking")
+            }
+        })
+        .unwrap_or_default();
+
+    let accounts_db_background_threads = {
+        if matches.is_present("accounts_db_clean_threads") {
+            value_t!(matches, "accounts_db_clean_threads", NonZeroUsize)?
+        } else {
+            value_t!(matches, AccountsDbBackgroundThreadsArg::NAME, NonZeroUsize)?
+        }
+    };
+
+    let accounts_db_foreground_threads =
+        value_t!(matches, AccountsDbForegroundThreadsArg::NAME, NonZeroUsize)?;
+
+    let mark_obsolete_accounts = if matches.is_present("accounts_db_mark_obsolete_accounts") {
+        MarkObsoleteAccounts::Enabled
+    } else {
+        MarkObsoleteAccounts::Disabled
+    };
+
+    Ok(AccountsDbConfig {
+        index: Some(accounts_index_config),
+        account_indexes: Some(account_indexes),
+        base_working_path: Some(ledger_path.clone()),
+        shrink_paths: account_shrink_run_paths,
+        shrink_ratio,
+        read_cache_limit_bytes,
+        write_cache_limit_bytes,
+        ancient_append_vec_offset,
+        ancient_storage_ideal_size,
+        max_ancient_storages,
+        exhaustively_verify_refcounts,
+        storage_access,
+        scan_filter_for_shrinking,
+        num_background_threads: Some(accounts_db_background_threads),
+        num_foreground_threads: Some(accounts_db_foreground_threads),
+        mark_obsolete_accounts,
+        memlock_budget_size: solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
+        ..Default::default()
+    })
 }
 
 pub fn parse_account_shrink_paths(
