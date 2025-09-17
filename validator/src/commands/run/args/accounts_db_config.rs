@@ -148,7 +148,7 @@ pub fn new_accounts_db_config(
         num_foreground_threads: Some(accounts_db_foreground_threads),
         mark_obsolete_accounts,
         memlock_budget_size: solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
-        ..Default::default()
+        ..AccountsDbConfig::default()
     })
 }
 
