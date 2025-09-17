@@ -170,10 +170,10 @@ fn parse_matches() -> ArgMatches<'static> {
 
 /// Determine bind address by checking these sources in order:
 /// 1. cli args:
-///     1. bind-address
-///     1. gossip-host
-/// 1. connect to entrypoints to determine my public IP address
-/// 1. default to localhost
+///     a. bind-address
+///     b. gossip-host
+/// 2. connect to entrypoints to determine my public IP address
+/// 3. default to localhost
 fn parse_bind_address(matches: &ArgMatches, entrypoint_addrs: &[SocketAddr]) -> IpAddr {
     if let Some(bind_address) = matches.value_of("bind_address") {
         solana_net_utils::parse_host(bind_address).unwrap_or_else(|e| {
