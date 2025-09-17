@@ -619,22 +619,22 @@ impl VoteStateHandler {
         clock: &Clock,
         target_version: VoteStateTargetVersion,
     ) -> Result<(), InstructionError> {
-        let state = match target_version {
+        match target_version {
             VoteStateTargetVersion::V3 => {
-                VoteStateVersions::V3(Box::new(VoteStateV3::new(vote_init, clock)))
+                VoteStateV3::new(vote_init, clock).set_vote_account_state(vote_account)
             }
-        };
-        vote_account.set_state(&state)
+        }
     }
 
     pub fn deinitialize_vote_account_state(
         vote_account: &mut BorrowedInstructionAccount,
         target_version: VoteStateTargetVersion,
     ) -> Result<(), InstructionError> {
-        let state = match target_version {
-            VoteStateTargetVersion::V3 => VoteStateVersions::V3(Box::<VoteStateV3>::default()),
-        };
-        vote_account.set_state(&state)
+        match target_version {
+            VoteStateTargetVersion::V3 => {
+                VoteStateV3::default().set_vote_account_state(vote_account)
+            }
+        }
     }
 
     pub fn check_vote_account_length(
@@ -712,14 +712,41 @@ pub(crate) fn compute_vote_latency(voted_for_slot: Slot, current_slot: Slot) -> 
 mod tests {
     use {
         super::*,
+        crate::id,
+        solana_account::AccountSharedData,
         solana_clock::Clock,
         solana_epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
         solana_pubkey::Pubkey,
+        solana_rent::Rent,
+        solana_sdk_ids::native_loader,
+        solana_transaction_context::{InstructionAccount, TransactionContext},
         solana_vote_interface::{
             authorized_voters::AuthorizedVoters,
             state::{BlockTimestamp, VoteInit, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
         },
     };
+
+    fn mock_transaction_context(
+        vote_pubkey: Pubkey,
+        vote_account: AccountSharedData,
+        rent: Rent,
+    ) -> TransactionContext {
+        let program_account = AccountSharedData::new(0, 0, &native_loader::id());
+        let mut transaction_context = TransactionContext::new(
+            vec![(id(), program_account), (vote_pubkey, vote_account)],
+            rent,
+            0,
+            0,
+        );
+        transaction_context
+            .configure_next_instruction_for_tests(
+                0,
+                vec![InstructionAccount::new(1, false, true)],
+                &[],
+            )
+            .unwrap();
+        transaction_context
+    }
 
     fn get_max_sized_vote_state() -> VoteStateV3 {
         let mut authorized_voters = AuthorizedVoters::default();
@@ -1070,5 +1097,218 @@ mod tests {
         // Test initial vote
         vote_state.last_timestamp = BlockTimestamp::default();
         assert_eq!(vote_state.process_timestamp(0, timestamp), Ok(()));
+    }
+
+    enum ExpectedVoteStateVersion {
+        V1_14_11,
+        V3,
+    }
+
+    fn init_vote_account_state_v3_and_assert(
+        vote_pubkey: Pubkey,
+        vote_account: AccountSharedData,
+        vote_init: &VoteInit,
+        clock: &Clock,
+        rent: Rent,
+        expected_version: ExpectedVoteStateVersion,
+    ) {
+        let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent);
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let mut vote_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        // Initialize.
+        VoteStateHandler::init_vote_account_state(
+            &mut vote_account,
+            vote_init,
+            clock,
+            VoteStateTargetVersion::V3,
+        )
+        .unwrap();
+
+        let vote_state_versions = vote_account.get_state::<VoteStateVersions>().unwrap();
+
+        match expected_version {
+            ExpectedVoteStateVersion::V1_14_11 => {
+                assert!(matches!(
+                    vote_state_versions,
+                    VoteStateVersions::V1_14_11(_)
+                ));
+                assert!(!vote_state_versions.is_uninitialized());
+
+                // Verify fields.
+                if let VoteStateVersions::V1_14_11(v1_14_11) = vote_state_versions {
+                    assert_eq!(v1_14_11.node_pubkey, vote_init.node_pubkey);
+                    assert_eq!(
+                        v1_14_11.authorized_voters.get_authorized_voter(0),
+                        Some(vote_init.authorized_voter)
+                    );
+                    assert_eq!(
+                        v1_14_11.authorized_withdrawer,
+                        vote_init.authorized_withdrawer
+                    );
+                    assert_eq!(v1_14_11.commission, vote_init.commission);
+                } else {
+                    panic!("should be v1_14_11");
+                }
+            }
+            ExpectedVoteStateVersion::V3 => {
+                assert!(matches!(vote_state_versions, VoteStateVersions::V3(_)));
+                assert!(!vote_state_versions.is_uninitialized());
+
+                // Verify fields.
+                if let VoteStateVersions::V3(v3) = vote_state_versions {
+                    assert_eq!(v3.node_pubkey, vote_init.node_pubkey);
+                    assert_eq!(
+                        v3.authorized_voters.get_authorized_voter(0),
+                        Some(vote_init.authorized_voter)
+                    );
+                    assert_eq!(v3.authorized_withdrawer, vote_init.authorized_withdrawer);
+                    assert_eq!(v3.commission, vote_init.commission);
+                } else {
+                    panic!("should be v3");
+                }
+            }
+        }
+    }
+
+    fn deinit_vote_account_state_v3_and_assert(
+        vote_pubkey: Pubkey,
+        vote_account: AccountSharedData,
+        rent: Rent,
+        expected_version: ExpectedVoteStateVersion,
+    ) {
+        let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent.clone());
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let mut vote_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        // Deinitialize.
+        VoteStateHandler::deinitialize_vote_account_state(
+            &mut vote_account,
+            VoteStateTargetVersion::V3,
+        )
+        .unwrap();
+
+        let vote_state_versions = vote_account.get_state::<VoteStateVersions>().unwrap();
+
+        match expected_version {
+            ExpectedVoteStateVersion::V1_14_11 => {
+                assert!(matches!(
+                    vote_state_versions,
+                    VoteStateVersions::V1_14_11(_)
+                ));
+                assert!(vote_state_versions.is_uninitialized());
+            }
+            ExpectedVoteStateVersion::V3 => {
+                assert!(matches!(vote_state_versions, VoteStateVersions::V3(_)));
+                assert!(vote_state_versions.is_uninitialized());
+            }
+        }
+    }
+
+    #[test]
+    fn test_init_vote_account_state_v3() {
+        let vote_pubkey = Pubkey::new_unique();
+        let vote_init = VoteInit {
+            node_pubkey: Pubkey::new_unique(),
+            authorized_voter: Pubkey::new_unique(),
+            authorized_withdrawer: Pubkey::new_unique(),
+            commission: 5,
+        };
+        let clock = Clock::default();
+        let rent = Rent::default();
+
+        // First create a vote account that's too small for v3.
+        let v1_14_11_size = VoteState1_14_11::size_of();
+        let lamports = rent.minimum_balance(v1_14_11_size);
+        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+
+        // Initialize - should default to v1_14_11.
+        init_vote_account_state_v3_and_assert(
+            vote_pubkey,
+            vote_account,
+            &vote_init,
+            &clock,
+            rent.clone(),
+            ExpectedVoteStateVersion::V1_14_11,
+        );
+
+        // Create a vote account that's too small for v3, but has enough
+        // lamports for resize.
+        let v3_size = VoteStateV3::size_of();
+        let lamports = rent.minimum_balance(v3_size);
+        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+
+        // Initialize - should resize and create v3.
+        init_vote_account_state_v3_and_assert(
+            vote_pubkey,
+            vote_account,
+            &vote_init,
+            &clock,
+            rent.clone(),
+            ExpectedVoteStateVersion::V3,
+        );
+
+        // Now create a vote account that's large enough for v3.
+        let lamports = rent.minimum_balance(v3_size);
+        let vote_account = AccountSharedData::new(lamports, v3_size, &id());
+
+        // Initialize - should create v3.
+        init_vote_account_state_v3_and_assert(
+            vote_pubkey,
+            vote_account,
+            &vote_init,
+            &clock,
+            rent,
+            ExpectedVoteStateVersion::V3,
+        );
+    }
+
+    #[test]
+    fn test_deinitialize_vote_account_state_v3() {
+        let vote_pubkey = Pubkey::new_unique();
+        let rent = Rent::default();
+
+        // First create a vote account that's too small for v3.
+        let v1_14_11_size = VoteState1_14_11::size_of();
+        let lamports = rent.minimum_balance(v1_14_11_size);
+        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+
+        // Deinitialize - should default to v1_14_11.
+        deinit_vote_account_state_v3_and_assert(
+            vote_pubkey,
+            vote_account,
+            rent.clone(),
+            ExpectedVoteStateVersion::V1_14_11,
+        );
+
+        // Create a vote account that's too small for v3, but has enough
+        // lamports for resize.
+        let v3_size = VoteStateV3::size_of();
+        let lamports = rent.minimum_balance(v3_size);
+        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+
+        // Deinitialize - should resize and create v3.
+        deinit_vote_account_state_v3_and_assert(
+            vote_pubkey,
+            vote_account,
+            rent.clone(),
+            ExpectedVoteStateVersion::V3,
+        );
+
+        // Now create a vote account that's large enough for v3.
+        let lamports = rent.minimum_balance(v3_size);
+        let vote_account = AccountSharedData::new(lamports, v3_size, &id());
+
+        // Deinitialize - should create v3.
+        deinit_vote_account_state_v3_and_assert(
+            vote_pubkey,
+            vote_account,
+            rent,
+            ExpectedVoteStateVersion::V3,
+        );
     }
 }
