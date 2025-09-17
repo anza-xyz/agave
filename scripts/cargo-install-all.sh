@@ -88,37 +88,34 @@ SECONDS=0
 
 source "$SOLANA_ROOT"/scripts/agave-build-lists.sh
 
-binArgs=()
-dcouBinArgs=()
+BINS=()
+DCOU_BINS=()
 if [[ -n "$validatorOnly" ]]; then
   echo "Building binaries for net.sh deploys: ${AGAVE_BINS_NET_SH[*]}"
-
-  for bin in "${AGAVE_BINS_NET_SH[@]}"; do
-    binArgs+=(--bin "$bin")
-  done
+  BINS+=("${AGAVE_BINS_NET_SH[@]}")
 else
   echo "Building binaries for all platforms: ${AGAVE_BINS_DEV[*]}, ${AGAVE_BINS_END_USER[*]}"
-
-  for bin in "${AGAVE_BINS_DEV[@]}" "${AGAVE_BINS_END_USER[@]}"; do
-    binArgs+=(--bin "$bin")
-  done
+  BINS+=("${AGAVE_BINS_DEV[@]}" "${AGAVE_BINS_END_USER[@]}")
 
   if [[ $CI_OS_NAME != windows ]]; then
     echo "Building binaries for linux and osx only: ${AGAVE_BINS_VAL_OP[*]}, ${AGAVE_BINS_DCOU[*]}"
-    for bin in "${AGAVE_BINS_DCOU[@]}"; do
-      dcouBinArgs+=(--bin "$bin")
-    done
-
-    for bin in "${AGAVE_BINS_VAL_OP[@]}"; do
-      binArgs+=(--bin "$bin")
-    done
+    BINS+=("${AGAVE_BINS_VAL_OP[@]}")
+    DCOU_BINS+=("${AGAVE_BINS_DCOU[@]}")
   fi
 fi
 
-source "$SOLANA_ROOT"/scripts/dcou-tainted-packages.sh
+binArgs=()
+for bin in "${BINS[@]}"; do
+  binArgs+=(--bin "$bin")
+done
+
+dcouBinArgs=()
+for bin in "${DCOU_BINS[@]}"; do
+  dcouBinArgs+=(--bin "$bin")
+done
 
 excludeArgs=()
-for package in "${dcou_tainted_packages[@]}"; do
+for package in "${DCOU_TAINTED_PACKAGES[@]}"; do
   excludeArgs+=(--exclude "$package")
 done
 
@@ -175,10 +172,8 @@ check_dcou() {
   fi
 )
 
-for bin in "${binArgs[@]}" "${dcouBinArgs[@]}"; do
-  if [[ "$bin" != "--bin" ]]; then
-    cp -fv "target/$buildProfile/$bin" "$installDir"/bin
-  fi
+for bin in "${BINS[@]}" "${DCOU_BINS[@]}"; do
+  cp -fv "target/$buildProfile/$bin" "$installDir"/bin
 done
 
 if [[ $CI_OS_NAME != windows ]]; then

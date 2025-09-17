@@ -43,3 +43,16 @@ AGAVE_BINS_NET_SH=(
   solana-stake-accounts
   solana-test-validator
 )
+
+DCOU_TAINTED_PACKAGES=(
+  agave-ledger-tool
+  agave-store-histogram
+  agave-store-tool
+  solana-accounts-cluster-bench
+  solana-banking-bench
+  solana-bench-tps
+  solana-dos
+  solana-local-cluster
+  solana-transaction-dos
+  solana-vortexor
+)
