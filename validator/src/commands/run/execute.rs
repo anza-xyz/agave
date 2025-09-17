@@ -11,7 +11,7 @@ use {
     log::*,
     rand::{seq::SliceRandom, thread_rng},
     solana_accounts_db::{
-        accounts_db::{AccountsDbConfig, MarkObsoleteAccounts},
+        accounts_db::MarkObsoleteAccounts,
         accounts_index::AccountsIndexConfig,
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::{
@@ -279,27 +279,6 @@ pub fn execute(
         accounts_index_config.drives = Some(vec![ledger_path.join("accounts_index")]);
     }
 
-    let accounts_db_config = AccountsDbConfig {
-        index: run_args.accounts_db_config.index.clone(),
-        account_indexes: run_args.accounts_db_config.account_indexes.clone(),
-        base_working_path: Some(ledger_path.clone()),
-        shrink_paths: run_args.accounts_db_config.shrink_paths.clone(),
-        shrink_ratio: run_args.accounts_db_config.shrink_ratio,
-        read_cache_limit_bytes: run_args.accounts_db_config.read_cache_limit_bytes,
-        write_cache_limit_bytes: run_args.accounts_db_config.write_cache_limit_bytes,
-        ancient_append_vec_offset: run_args.accounts_db_config.ancient_append_vec_offset,
-        ancient_storage_ideal_size: run_args.accounts_db_config.ancient_storage_ideal_size,
-        max_ancient_storages: run_args.accounts_db_config.max_ancient_storages,
-        exhaustively_verify_refcounts: run_args.accounts_db_config.exhaustively_verify_refcounts,
-        storage_access: run_args.accounts_db_config.storage_access,
-        scan_filter_for_shrinking: run_args.accounts_db_config.scan_filter_for_shrinking,
-        num_background_threads: run_args.accounts_db_config.num_background_threads,
-        num_foreground_threads: run_args.accounts_db_config.num_foreground_threads,
-        mark_obsolete_accounts: run_args.accounts_db_config.mark_obsolete_accounts,
-        memlock_budget_size: run_args.accounts_db_config.memlock_budget_size,
-        ..AccountsDbConfig::default()
-    };
-
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
         Some(
             values_t_or_exit!(matches, "geyser_plugin_config", String)
@@ -434,7 +413,7 @@ pub fn execute(
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),
         account_paths: account_run_paths,
         account_snapshot_paths,
-        accounts_db_config,
+        accounts_db_config: run_args.accounts_db_config,
         accounts_db_skip_shrink: true,
         accounts_db_force_initial_clean: matches.is_present("no_skip_initial_accounts_db_clean"),
         snapshot_config,
