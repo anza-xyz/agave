@@ -76,9 +76,6 @@ pub trait VoteStateHandle {
 
     fn current_epoch(&self) -> Epoch;
 
-    /// Number of "credits" owed to this account from the mining pool
-    fn credits(&self) -> u64;
-
     fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)>;
 
     /// Returns the credits to award for a vote at the given lockout slot index
@@ -246,14 +243,6 @@ impl VoteStateHandle for VoteStateV3 {
             0
         } else {
             self.epoch_credits.last().unwrap().0
-        }
-    }
-
-    fn credits(&self) -> u64 {
-        if self.epoch_credits.is_empty() {
-            0
-        } else {
-            self.epoch_credits.last().unwrap().1
         }
     }
 
@@ -554,12 +543,6 @@ impl VoteStateHandle for VoteStateHandler {
         }
     }
 
-    fn credits(&self) -> u64 {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => v3.credits(),
-        }
-    }
-
     fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.epoch_credits_last(),
@@ -685,6 +668,19 @@ impl VoteStateHandler {
     pub fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
         match &self.target_state {
             TargetVoteState::V3(v3) => &v3.epoch_credits,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn credits(&self) -> u64 {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => {
+                if v3.epoch_credits.is_empty() {
+                    0
+                } else {
+                    v3.epoch_credits.last().unwrap().1
+                }
+            }
         }
     }
 
