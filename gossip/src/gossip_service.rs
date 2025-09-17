@@ -165,7 +165,7 @@ pub fn discover_validators(
     Ok(validators)
 }
 
-#[deprecated(since = "3.0.0", note = "use `discover_peers` instead")]
+#[deprecated(since = "3.1.0", note = "use `discover_peers` instead")]
 pub fn discover(
     keypair: Option<Keypair>,
     entrypoint: Option<&SocketAddr>,
@@ -381,7 +381,7 @@ fn spy(
 
 /// Makes a spy or gossip node based on whether or not a gossip_addr was passed in
 /// Pass in a gossip addr to fully participate in gossip instead of relying on just pulls
-#[deprecated(since = "3.0.0", note = "use `make_node` instead")]
+#[deprecated(since = "3.1.0", note = "use `make_node` instead")]
 pub fn make_gossip_node(
     keypair: Keypair,
     entrypoint: Option<&SocketAddr>,
