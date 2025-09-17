@@ -2,6 +2,7 @@
 //! structures provide mechanisms for caching workers, sending transaction
 //! batches, and gathering send transaction statistics.
 
+use crate::transaction_batch::WorkerPayload;
 #[cfg(feature = "agave-unstable-api")]
 use qualifier_attr::qualifiers;
 use {
@@ -24,18 +25,17 @@ use {
 
 /// [`WorkerInfo`] holds information about a worker responsible for sending
 /// transaction batches.
-pub struct WorkerInfo {
-    sender: mpsc::Sender<TransactionBatch>,
+pub struct WorkerInfo<T: WorkerPayload> {
+    sender: mpsc::Sender<T>,
     handle: JoinHandle<()>,
     cancel: CancellationToken,
 }
 
-impl WorkerInfo {
-    pub fn new(
-        sender: mpsc::Sender<TransactionBatch>,
-        handle: JoinHandle<()>,
-        cancel: CancellationToken,
-    ) -> Self {
+impl<T> WorkerInfo<T>
+where
+    T: WorkerPayload,
+{
+    pub fn new(sender: mpsc::Sender<T>, handle: JoinHandle<()>, cancel: CancellationToken) -> Self {
         Self {
             sender,
             handle,
@@ -43,7 +43,7 @@ impl WorkerInfo {
         }
     }
 
-    fn try_send_transactions(&self, txs_batch: TransactionBatch) -> Result<(), WorkersCacheError> {
+    fn try_send_transactions(&self, txs_batch: T) -> Result<(), WorkersCacheError> {
         self.sender.try_send(txs_batch).map_err(|err| match err {
             TrySendError::Full(_) => WorkersCacheError::FullChannel,
             TrySendError::Closed(_) => WorkersCacheError::ReceiverDropped,
@@ -51,10 +51,7 @@ impl WorkerInfo {
         Ok(())
     }
 
-    async fn send_transactions(
-        &self,
-        txs_batch: TransactionBatch,
-    ) -> Result<(), WorkersCacheError> {
+    async fn send_transactions(&self, txs_batch: T) -> Result<(), WorkersCacheError> {
         self.sender
             .send(txs_batch)
             .await
@@ -82,7 +79,7 @@ impl WorkerInfo {
 
 /// Spawns a worker to handle communication with a given peer.
 #[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
-pub(crate) fn spawn_worker(
+pub(crate) fn spawn_worker<T>(
     endpoint: &Endpoint,
     peer: &SocketAddr,
     worker_channel_size: usize,
@@ -90,7 +87,10 @@ pub(crate) fn spawn_worker(
     max_reconnect_attempts: usize,
     handshake_timeout: Duration,
     stats: Arc<SendTransactionStats>,
-) -> WorkerInfo {
+) -> WorkerInfo<T>
+where
+    T: WorkerPayload,
+{
     let (txs_sender, txs_receiver) = mpsc::channel(worker_channel_size);
     let endpoint = endpoint.clone();
     let peer = *peer;
@@ -113,8 +113,8 @@ pub(crate) fn spawn_worker(
 
 /// [`WorkersCache`] manages and caches workers. It uses an LRU cache to store and
 /// manage workers. It also tracks transaction statistics for each peer.
-pub struct WorkersCache {
-    workers: LruCache<SocketAddr, WorkerInfo>,
+pub struct WorkersCache<T: WorkerPayload> {
+    workers: LruCache<SocketAddr, WorkerInfo<T>>,
 
     /// Indicates that the `WorkersCache` is been `shutdown()`, interrupting any outstanding
     /// `send_transactions_to_address()` invocations.
@@ -140,7 +140,10 @@ pub enum WorkersCacheError {
     WorkerNotFound,
 }
 
-impl WorkersCache {
+impl<T> WorkersCache<T>
+where
+    T: WorkerPayload,
+{
     #[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
     pub(crate) fn new(capacity: usize, cancel: CancellationToken) -> Self {
         Self {
@@ -159,8 +162,8 @@ impl WorkersCache {
     pub(crate) fn push(
         &mut self,
         leader: SocketAddr,
-        peer_worker: WorkerInfo,
-    ) -> Option<ShutdownWorker> {
+        peer_worker: WorkerInfo<T>,
+    ) -> Option<ShutdownWorker<T>> {
         if let Some((leader, popped_worker)) = self.workers.push(leader, peer_worker) {
             return Some(ShutdownWorker {
                 leader,
@@ -170,7 +173,7 @@ impl WorkersCache {
         None
     }
 
-    pub fn pop(&mut self, leader: SocketAddr) -> Option<ShutdownWorker> {
+    pub fn pop(&mut self, leader: SocketAddr) -> Option<ShutdownWorker<T>> {
         if let Some(popped_worker) = self.workers.pop(&leader) {
             return Some(ShutdownWorker {
                 leader,
@@ -192,7 +195,7 @@ impl WorkersCache {
         max_reconnect_attempts: usize,
         handshake_timeout: Duration,
         stats: Arc<SendTransactionStats>,
-    ) -> Option<ShutdownWorker> {
+    ) -> Option<ShutdownWorker<T>> {
         if let Some(worker) = self.workers.peek(&peer) {
             // if worker is active, we will reuse it. Otherwise, we will spawn
             // the new one and the existing will be popped out.
@@ -202,7 +205,7 @@ impl WorkersCache {
         }
         trace!("No active worker for peer {peer}, respawning.");
 
-        let worker = spawn_worker(
+        let worker = spawn_worker::<T>(
             endpoint,
             &peer,
             worker_channel_size,
@@ -233,7 +236,7 @@ impl WorkersCache {
     pub fn try_send_transactions_to_address(
         &mut self,
         peer: &SocketAddr,
-        txs_batch: TransactionBatch,
+        txs_batch: T,
     ) -> Result<(), WorkersCacheError> {
         let Self {
             workers, cancel, ..
@@ -275,7 +278,7 @@ impl WorkersCache {
     pub async fn send_transactions_to_address(
         &mut self,
         peer: &SocketAddr,
-        txs_batch: TransactionBatch,
+        txs_batch: T,
     ) -> Result<(), WorkersCacheError> {
         let Self {
             workers, cancel, ..
@@ -344,12 +347,15 @@ impl WorkersCache {
 /// [`ShutdownWorker`] takes care of stopping the worker. It's method
 /// `shutdown()` should be executed in a separate task to hide the latency of
 /// finishing worker gracefully.
-pub struct ShutdownWorker {
+pub struct ShutdownWorker<T: WorkerPayload> {
     leader: SocketAddr,
-    worker: WorkerInfo,
+    worker: WorkerInfo<T>,
 }
 
-impl ShutdownWorker {
+impl<T> ShutdownWorker<T>
+where
+    T: WorkerPayload,
+{
     pub(crate) fn leader(&self) -> SocketAddr {
         self.leader
     }
@@ -359,7 +365,7 @@ impl ShutdownWorker {
     }
 }
 
-pub fn shutdown_worker(worker: ShutdownWorker) {
+pub fn shutdown_worker<T: WorkerPayload>(worker: ShutdownWorker<T>) {
     tokio::spawn(async move {
         let leader = worker.leader();
         let res = worker.shutdown().await;
@@ -413,7 +419,7 @@ mod tests {
         let skip_check_transaction_age = true;
         let max_reconnect_attempts = 0;
         let stats = Arc::new(SendTransactionStats::default());
-        let worker_info = spawn_worker(
+        let worker_info = spawn_worker::<TransactionBatch>(
             &endpoint,
             &peer,
             worker_channel_size,
@@ -447,7 +453,7 @@ mod tests {
         let skip_check_transaction_age = true;
         let max_reconnect_attempts = 0;
         let stats = Arc::new(SendTransactionStats::default());
-        let worker_info = spawn_worker(
+        let worker_info = spawn_worker::<TransactionBatch>(
             &endpoint,
             &peer,
             worker_channel_size,

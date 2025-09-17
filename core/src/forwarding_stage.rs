@@ -601,7 +601,7 @@ impl TpuClientNextClient {
 
         let config = Self::create_config(bind_socket, stake_identity);
         let (update_certificate_sender, update_certificate_receiver) = watch::channel(None);
-        let scheduler: ConnectionWorkersScheduler = ConnectionWorkersScheduler::new(
+        let scheduler = ConnectionWorkersScheduler::new(
             Box::new(leader_updater),
             receiver,
             update_certificate_receiver,

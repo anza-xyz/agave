@@ -2,6 +2,17 @@
 
 use {solana_time_utils::timestamp, tokio_util::bytes::Bytes};
 
+type WiredTransaction = Bytes;
+
+pub trait WorkerPayload:
+    IntoIterator<Item = WiredTransaction, IntoIter = std::vec::IntoIter<WiredTransaction>>
+    + Clone
+    + Send
+    + 'static
+{
+    fn timestamp(&self) -> u64;
+}
+
 /// Batch of generated transactions timestamp is used to discard batches which
 /// are too old to have valid blockhash.
 #[derive(Clone, PartialEq)]
@@ -10,8 +21,6 @@ pub struct TransactionBatch {
     // Time of creation of this batch, used for batch timeouts
     timestamp: u64,
 }
-
-type WiredTransaction = Bytes;
 
 impl IntoIterator for TransactionBatch {
     type Item = Bytes;
@@ -37,6 +46,12 @@ impl TransactionBatch {
         }
     }
     pub fn timestamp(&self) -> u64 {
+        self.timestamp
+    }
+}
+
+impl WorkerPayload for TransactionBatch {
+    fn timestamp(&self) -> u64 {
         self.timestamp
     }
 }

@@ -1,6 +1,7 @@
 //! This module defines [`ConnectionWorker`] which encapsulates the functionality
 //! needed to handle one connection within the scope of task.
 
+use crate::transaction_batch::WorkerPayload;
 use {
     super::SendTransactionStats,
     crate::{
@@ -77,10 +78,10 @@ impl Drop for ConnectionState {
 /// `max_reconnect_attempts` times. If connection is in `Active` state, it sends
 /// transactions received from `transactions_receiver`. Additionally, it
 /// accumulates statistics about connections and streams failures.
-pub(crate) struct ConnectionWorker {
+pub(crate) struct ConnectionWorker<T: WorkerPayload> {
     endpoint: Endpoint,
     peer: SocketAddr,
-    transactions_receiver: mpsc::Receiver<TransactionBatch>,
+    transactions_receiver: mpsc::Receiver<T>,
     connection: ConnectionState,
     skip_check_transaction_age: bool,
     max_reconnect_attempts: usize,
@@ -89,7 +90,10 @@ pub(crate) struct ConnectionWorker {
     handshake_timeout: Duration,
 }
 
-impl ConnectionWorker {
+impl<T> ConnectionWorker<T>
+where
+    T: WorkerPayload,
+{
     /// Constructs a [`ConnectionWorker`].
     ///
     /// [`ConnectionWorker`] maintains a connection to a `peer` and processes
@@ -103,7 +107,7 @@ impl ConnectionWorker {
     pub fn new(
         endpoint: Endpoint,
         peer: SocketAddr,
-        transactions_receiver: mpsc::Receiver<TransactionBatch>,
+        transactions_receiver: mpsc::Receiver<T>,
         skip_check_transaction_age: bool,
         max_reconnect_attempts: usize,
         send_txs_stats: Arc<SendTransactionStats>,
@@ -266,7 +270,7 @@ impl ConnectionWorker {
     /// The method checks connection health before sending each transaction to
     /// avoid operations on a closed connection. In case of error, it doesn't
     /// retry to send the same transactions again but transitions to retry state.
-    async fn send_transactions(&mut self, connection: Connection, transactions: TransactionBatch) {
+    async fn send_transactions(&mut self, connection: Connection, transactions: T) {
         let now = timestamp();
         if !self.skip_check_transaction_age
             && now.saturating_sub(transactions.timestamp()) > MAX_PROCESSING_AGE_MS
