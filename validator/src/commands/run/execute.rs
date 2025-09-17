@@ -1,18 +1,18 @@
 use {
     crate::{
-        admin_rpc_service::{self, load_staked_nodes_overrides, StakedNodesOverrides},
+        admin_rpc_service::{self, StakedNodesOverrides, load_staked_nodes_overrides},
         bootstrap,
         cli::{self},
-        commands::{run::args::RunArgs, FromClapArgMatches},
+        commands::{FromClapArgMatches, run::args::RunArgs},
         ledger_lockfile, lock_ledger,
     },
-    clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
+    clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
     rand::{seq::SliceRandom, thread_rng},
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, MarkObsoleteAccounts},
-        accounts_index::{AccountsIndexConfig, ScanFilter},
+        accounts_index::AccountsIndexConfig,
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
@@ -22,7 +22,7 @@ use {
     solana_clap_utils::input_parsers::{
         keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of,
     },
-    solana_clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
+    solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
     solana_core::{
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
@@ -30,13 +30,13 @@ use {
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
         validator::{
-            is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
-            TransactionStructure, Validator, ValidatorConfig, ValidatorError,
-            ValidatorStartProgress, ValidatorTpuConfig,
+            BlockProductionMethod, BlockVerificationMethod, TransactionStructure, Validator,
+            ValidatorConfig, ValidatorError, ValidatorStartProgress, ValidatorTpuConfig,
+            is_snapshot_config_valid,
         },
     },
     solana_gossip::{
-        cluster_info::{NodeConfig, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS},
+        cluster_info::{DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS, NodeConfig},
         contact_info::ContactInfo,
         node::Node,
     },
@@ -55,15 +55,15 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_utils::{
-            self, ArchiveFormat, SnapshotInterval, SnapshotVersion, BANK_SNAPSHOTS_DIR,
+            self, ArchiveFormat, BANK_SNAPSHOTS_DIR, SnapshotInterval, SnapshotVersion,
         },
     },
     solana_signer::Signer,
-    solana_streamer::quic::{QuicServerParams, DEFAULT_TPU_COALESCE},
+    solana_streamer::quic::{DEFAULT_TPU_COALESCE, QuicServerParams},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
-        xdp::{set_cpu_affinity, XdpConfig},
+        xdp::{XdpConfig, set_cpu_affinity},
     },
     solana_validator_exit::Exit,
     std::{
@@ -74,7 +74,7 @@ use {
         path::{Path, PathBuf},
         process::exit,
         str::FromStr,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
         time::Duration,
     },
 };
@@ -280,19 +280,6 @@ pub fn execute(
         accounts_index_config.drives = Some(vec![ledger_path.join("accounts_index")]);
     }
 
-    let scan_filter_for_shrinking = matches
-        .value_of("accounts_db_scan_filter_for_shrinking")
-        .map(|filter| match filter {
-            "all" => ScanFilter::All,
-            "only-abnormal" => ScanFilter::OnlyAbnormal,
-            "only-abnormal-with-verify" => ScanFilter::OnlyAbnormalWithVerify,
-            _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts_db_scan_filter_for_shrinking")
-            }
-        })
-        .unwrap_or_default();
-
     let mark_obsolete_accounts = if matches.is_present("accounts_db_mark_obsolete_accounts") {
         MarkObsoleteAccounts::Enabled
     } else {
@@ -307,12 +294,24 @@ pub fn execute(
         shrink_ratio: run_args.accounts_db_config.shrink_ratio.clone(),
         read_cache_limit_bytes: run_args.accounts_db_config.read_cache_limit_bytes.clone(),
         write_cache_limit_bytes: run_args.accounts_db_config.write_cache_limit_bytes.clone(),
-        ancient_append_vec_offset: run_args.accounts_db_config.ancient_append_vec_offset.clone(),
-        ancient_storage_ideal_size: run_args.accounts_db_config.ancient_storage_ideal_size.clone(),
+        ancient_append_vec_offset: run_args
+            .accounts_db_config
+            .ancient_append_vec_offset
+            .clone(),
+        ancient_storage_ideal_size: run_args
+            .accounts_db_config
+            .ancient_storage_ideal_size
+            .clone(),
         max_ancient_storages: run_args.accounts_db_config.max_ancient_storages.clone(),
-        exhaustively_verify_refcounts: run_args.accounts_db_config.exhaustively_verify_refcounts.clone(),
+        exhaustively_verify_refcounts: run_args
+            .accounts_db_config
+            .exhaustively_verify_refcounts
+            .clone(),
         storage_access: run_args.accounts_db_config.storage_access.clone(),
-        scan_filter_for_shrinking,
+        scan_filter_for_shrinking: run_args
+            .accounts_db_config
+            .scan_filter_for_shrinking
+            .clone(),
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         mark_obsolete_accounts,
