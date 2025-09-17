@@ -63,7 +63,7 @@ pub trait VoteStateHandle {
 
     fn set_votes(&mut self, votes: VecDeque<LandedVote>);
 
-    /// Returns if the vote state contains a slot `candidate_slot`
+    /// Returns if the vote state contains a vote for the slot `candidate_slot`
     fn contains_slot(&self, candidate_slot: Slot) -> bool;
 
     fn last_lockout(&self) -> Option<&Lockout>;
