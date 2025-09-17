@@ -178,6 +178,11 @@ impl<U: Umem> Socket<U> {
                 sxdp.sxdp_flags
             );
             
+            // Check if this is a GRE interface and log additional info
+            if sxdp.sxdp_ifindex == 31 { // doublezero0
+                log::info!("greg: Binding to GRE interface doublezero0, queue_id: {}", sxdp.sxdp_queue_id);
+            }
+            
             if bind(
                 fd.as_raw_fd(),
                 &sxdp as *const _ as *const sockaddr,
@@ -185,12 +190,23 @@ impl<U: Umem> Socket<U> {
             ) < 0
             {
                 let error = io::Error::last_os_error();
+                let error_code = error.raw_os_error().unwrap_or(0);
                 log::error!(
-                    "greg: XDP socket bind failed for if_index: {}, queue_id: {}: {}",
+                    "greg: XDP socket bind failed for if_index: {}, queue_id: {}: {} (error code: {})",
                     sxdp.sxdp_ifindex,
                     sxdp.sxdp_queue_id,
-                    error
+                    error,
+                    error_code
                 );
+                
+                // Log specific error meanings
+                match error_code {
+                    22 => log::error!("greg: EINVAL - Invalid argument, possibly queue not supported or already in use"),
+                    16 => log::error!("greg: EBUSY - Device or resource busy, queue might be in use"),
+                    19 => log::error!("greg: ENODEV - No such device, interface might not support XDP"),
+                    _ => log::error!("greg: Unknown error code: {}", error_code),
+                }
+                
                 return Err(error);
             }
             

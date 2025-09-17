@@ -116,6 +116,12 @@ pub fn tx_loop<T: AsRef<[u8]>, A: AsRef<[SocketAddr]>>(
         zero_copy
     );
     
+    // Check interface state for GRE interfaces
+    if dev.if_index() == 31 { // doublezero0
+        log::info!("greg: Checking GRE interface state before XDP socket creation");
+        // We could add interface state checking here if needed
+    }
+    
     // Show GRE tunnel info if available
     if let Some(info) = interface_info {
         if let Some(gre_tunnel) = &info.gre_tunnel {
