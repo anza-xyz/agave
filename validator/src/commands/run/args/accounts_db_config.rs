@@ -4,7 +4,7 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_file::StorageAccess,
-        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig},
+        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, ScanFilter},
         utils::{create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories},
     },
     solana_clap_utils::input_parsers::values_of,
@@ -97,6 +97,19 @@ impl FromClapArgMatches for AccountsDbConfig {
             })
             .unwrap_or_default();
 
+        let scan_filter_for_shrinking = matches
+            .value_of("accounts_db_scan_filter_for_shrinking")
+            .map(|filter| match filter {
+                "all" => ScanFilter::All,
+                "only-abnormal" => ScanFilter::OnlyAbnormal,
+                "only-abnormal-with-verify" => ScanFilter::OnlyAbnormalWithVerify,
+                _ => {
+                    // clap will enforce one of the above values is given
+                    unreachable!("invalid value given to accounts_db_scan_filter_for_shrinking")
+                }
+            })
+            .unwrap_or_default();
+
         Ok(AccountsDbConfig {
             index: Some(accounts_index_config),
             account_indexes: Some(account_indexes),
@@ -109,6 +122,7 @@ impl FromClapArgMatches for AccountsDbConfig {
             max_ancient_storages,
             exhaustively_verify_refcounts,
             storage_access,
+            scan_filter_for_shrinking,
             ..Default::default()
         })
     }
@@ -352,6 +366,31 @@ mod tests {
             vec![
                 "--accounts-db-access-storages-method",
                 accounts_db_access_storages_method,
+            ],
+            expected_args,
+        );
+    }
+
+    #[test_case("all", ScanFilter::All)]
+    #[test_case("only-abnormal", ScanFilter::OnlyAbnormal)]
+    #[test_case("only-abnormal-with-verify", ScanFilter::OnlyAbnormalWithVerify)]
+    fn verify_args_struct_by_command_run_with_accounts_db_scan_filter_for_shrinking(
+        accounts_db_scan_filter_for_shrinking: &str,
+        expected_scan_filter_for_shrinking: ScanFilter,
+    ) {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            accounts_db_config: AccountsDbConfig {
+                scan_filter_for_shrinking: expected_scan_filter_for_shrinking,
+                ..default_run_args.accounts_db_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![
+                "--accounts-db-scan-filter-for-shrinking",
+                accounts_db_scan_filter_for_shrinking,
             ],
             expected_args,
         );

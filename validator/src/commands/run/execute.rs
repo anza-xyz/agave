@@ -12,7 +12,7 @@ use {
     rand::{seq::SliceRandom, thread_rng},
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, MarkObsoleteAccounts},
-        accounts_index::{AccountsIndexConfig, ScanFilter},
+        accounts_index::AccountsIndexConfig,
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
@@ -281,19 +281,6 @@ pub fn execute(
         accounts_index_config.drives = Some(vec![ledger_path.join("accounts_index")]);
     }
 
-    let scan_filter_for_shrinking = matches
-        .value_of("accounts_db_scan_filter_for_shrinking")
-        .map(|filter| match filter {
-            "all" => ScanFilter::All,
-            "only-abnormal" => ScanFilter::OnlyAbnormal,
-            "only-abnormal-with-verify" => ScanFilter::OnlyAbnormalWithVerify,
-            _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts_db_scan_filter_for_shrinking")
-            }
-        })
-        .unwrap_or_default();
-
     let mark_obsolete_accounts = if matches.is_present("accounts_db_mark_obsolete_accounts") {
         MarkObsoleteAccounts::Enabled
     } else {
@@ -308,12 +295,24 @@ pub fn execute(
         shrink_ratio: run_args.accounts_db_config.shrink_ratio.clone(),
         read_cache_limit_bytes: run_args.accounts_db_config.read_cache_limit_bytes.clone(),
         write_cache_limit_bytes: run_args.accounts_db_config.write_cache_limit_bytes.clone(),
-        ancient_append_vec_offset: run_args.accounts_db_config.ancient_append_vec_offset.clone(),
-        ancient_storage_ideal_size: run_args.accounts_db_config.ancient_storage_ideal_size.clone(),
+        ancient_append_vec_offset: run_args
+            .accounts_db_config
+            .ancient_append_vec_offset
+            .clone(),
+        ancient_storage_ideal_size: run_args
+            .accounts_db_config
+            .ancient_storage_ideal_size
+            .clone(),
         max_ancient_storages: run_args.accounts_db_config.max_ancient_storages.clone(),
-        exhaustively_verify_refcounts: run_args.accounts_db_config.exhaustively_verify_refcounts.clone(),
+        exhaustively_verify_refcounts: run_args
+            .accounts_db_config
+            .exhaustively_verify_refcounts
+            .clone(),
         storage_access: run_args.accounts_db_config.storage_access.clone(),
-        scan_filter_for_shrinking,
+        scan_filter_for_shrinking: run_args
+            .accounts_db_config
+            .scan_filter_for_shrinking
+            .clone(),
         num_background_threads: Some(accounts_db_background_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         mark_obsolete_accounts,
