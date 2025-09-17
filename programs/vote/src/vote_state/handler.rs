@@ -762,7 +762,6 @@ mod tests {
             .set_new_authorized_voter(&new_voter, 0, epoch_offset, |_| Ok(()))
             .unwrap();
 
-        // assert_eq!(vote_state.prior_voters.idx, 0); TODO: Field `idx` is private.
         assert_eq!(
             vote_state.prior_voters.last(),
             Some(&(original_voter, 0, epoch_offset))
@@ -784,7 +783,6 @@ mod tests {
         vote_state
             .set_new_authorized_voter(&new_voter2, 3, 3 + epoch_offset, |_| Ok(()))
             .unwrap();
-        // assert_eq!(vote_state.prior_voters.idx, 1); TODO: Field `idx` is private.
         assert_eq!(
             vote_state.prior_voters.last(),
             Some(&(new_voter, epoch_offset, 3 + epoch_offset))
@@ -794,7 +792,6 @@ mod tests {
         vote_state
             .set_new_authorized_voter(&new_voter3, 6, 6 + epoch_offset, |_| Ok(()))
             .unwrap();
-        // assert_eq!(vote_state.prior_voters.idx, 2); TODO: Field `idx` is private.
         assert_eq!(
             vote_state.prior_voters.last(),
             Some(&(new_voter2, 3 + epoch_offset, 6 + epoch_offset))
