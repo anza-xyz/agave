@@ -8459,7 +8459,6 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "serde",
- "serde_bytes",
  "solana-address",
  "solana-entry",
  "solana-hash",

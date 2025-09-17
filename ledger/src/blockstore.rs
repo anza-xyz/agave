@@ -3737,7 +3737,7 @@ impl Blockstore {
                         )))
                     })
                     .and_then(|payload| {
-                        bincode::deserialize::<Vec<Entry>>(&payload).map_err(|e| {
+                        Entry::deserialize::<Vec<Entry>>(&payload).map_err(|e| {
                             BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
                                 format!("could not reconstruct entries: {e:?}"),
                             )))
@@ -5828,7 +5828,7 @@ pub mod tests {
         let num_slots = 5_u64;
         let shreds_per_slot = 5_u64;
         let entry_serialized_size =
-            bincode::serialized_size(&create_ticks(1, 0, Hash::default())).unwrap();
+            Entry::serialized_size(&create_ticks(1, 0, Hash::default())).unwrap();
         let entries_per_slot = (shreds_per_slot * PACKET_DATA_SIZE as u64) / entry_serialized_size;
 
         // Write entries

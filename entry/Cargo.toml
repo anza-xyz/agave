@@ -28,7 +28,6 @@ num_cpus = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
-serde_bytes = { workspace = true }
 solana-address = { workspace = true }
 solana-hash = { workspace = true }
 solana-measure = { workspace = true }
