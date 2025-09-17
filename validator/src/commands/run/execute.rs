@@ -279,12 +279,6 @@ pub fn execute(
         accounts_index_config.drives = Some(vec![ledger_path.join("accounts_index")]);
     }
 
-    let mark_obsolete_accounts = if matches.is_present("accounts_db_mark_obsolete_accounts") {
-        MarkObsoleteAccounts::Enabled
-    } else {
-        MarkObsoleteAccounts::Disabled
-    };
-
     let accounts_db_config = AccountsDbConfig {
         index: run_args.accounts_db_config.index.clone(),
         account_indexes: run_args.accounts_db_config.account_indexes.clone(),
@@ -313,7 +307,7 @@ pub fn execute(
             .clone(),
         num_background_threads: run_args.accounts_db_config.num_background_threads.clone(),
         num_foreground_threads: run_args.accounts_db_config.num_foreground_threads.clone(),
-        mark_obsolete_accounts,
+        mark_obsolete_accounts: run_args.accounts_db_config.mark_obsolete_accounts.clone(),
         memlock_budget_size: solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
         ..AccountsDbConfig::default()
     };
@@ -386,7 +380,7 @@ pub fn execute(
         UseSnapshotArchivesAtStartup
     );
 
-    if mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
+    if run_args.accounts_db_config.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled
         && use_snapshot_archives_at_startup != UseSnapshotArchivesAtStartup::Always
     {
         Err(format!(
