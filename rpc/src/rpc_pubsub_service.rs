@@ -454,7 +454,8 @@ async fn listen(
         }
         Err(e) => {
             error!(
-                "failed to bind rpc_pubsub listener on {listen_address:?}: {e}. Hint: is the port already in use?"
+                "failed to bind rpc_pubsub listener on {listen_address:?}: {e}. Hint: is the port \
+                 already in use?"
             );
             return Err(e);
         }
