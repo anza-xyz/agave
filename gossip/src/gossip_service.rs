@@ -341,9 +341,9 @@ fn spy(
             false
         };
 
-        // if find_nodes_by_gossip_addr is not empty and all_peers contains
+        // if find_nodes_by_gossip_addr is not empty and all_peers contain
         // all the nodes from find_nodes_by_gossip_addr
-        let found_node_by_gossip_addr = !find_nodes_by_gossip_addr.is_empty()
+        let found_nodes_by_gossip_addr = !find_nodes_by_gossip_addr.is_empty()
             && find_nodes_by_gossip_addr.iter().all(|node_addr| {
                 all_peers
                     .iter()
@@ -357,7 +357,7 @@ fn spy(
             nodes.dedup();
 
             if nodes.len() >= num {
-                if found_nodes_by_pubkey || found_node_by_gossip_addr {
+                if found_nodes_by_pubkey || found_nodes_by_gossip_addr {
                     met_criteria = true;
                 }
 
@@ -365,7 +365,7 @@ fn spy(
                     met_criteria = true;
                 }
             }
-        } else if found_nodes_by_pubkey || found_node_by_gossip_addr {
+        } else if found_nodes_by_pubkey || found_nodes_by_gossip_addr {
             met_criteria = true;
         }
         if i % 20 == 0 {
