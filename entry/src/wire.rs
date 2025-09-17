@@ -36,14 +36,17 @@
 
 use {
     crate::entry::Entry,
+    solana_address::ADDRESS_BYTES,
+    solana_hash::HASH_BYTES,
     solana_message::{
         legacy::Message as LegacyMessage,
         v0::{Message as V0Message, MessageAddressTableLookup},
         MessageHeader, VersionedMessage, MESSAGE_VERSION_PREFIX,
     },
     solana_short_vec::decode_shortu16_len,
+    solana_signature::SIGNATURE_BYTES,
     solana_transaction::{versioned::VersionedTransaction, CompiledInstruction},
-    std::{mem::MaybeUninit, ptr},
+    std::{borrow::Borrow, mem::MaybeUninit, ops::Add, ptr},
 };
 
 /// Behavior for heterogenous sequence length encoding.
@@ -83,6 +86,24 @@ fn short_u16_bytes_needed(len: u16) -> usize {
     1 + (len >= 0x80) as usize + (len >= 0x4000) as usize
 }
 
+#[cold]
+fn error_invalid_short_u16() -> bincode::Error {
+    bincode::ErrorKind::Custom("length exceeds u16::MAX".to_string()).into()
+}
+
+#[cold]
+fn error_size_limit() -> bincode::Error {
+    bincode::ErrorKind::SizeLimit.into()
+}
+
+#[inline(always)]
+fn try_short_u16_bytes_needed<T: TryInto<u16>>(len: T) -> bincode::Result<usize> {
+    match len.try_into() {
+        Ok(len) => Ok(short_u16_bytes_needed(len)),
+        Err(_) => Err(error_invalid_short_u16()),
+    }
+}
+
 /// Encode a short u16 into the given buffer.
 ///
 /// # Safety
@@ -109,8 +130,9 @@ unsafe fn encode_short_u16(dst: *mut u8, needed: usize, len: u16) {
 impl SeqLen for ShortU16Len {
     #[inline(always)]
     fn get_len(cursor: &mut Reader) -> bincode::Result<usize> {
-        let (len, read) = decode_shortu16_len(&cursor.cursor[cursor.pos..])
-            .map_err(|_| Box::new(bincode::ErrorKind::Custom("Invalid short u16".to_string())))?;
+        let Ok((len, read)) = decode_shortu16_len(&cursor.cursor[cursor.pos..]) else {
+            return Err(error_invalid_short_u16());
+        };
         cursor.pos += read;
         Ok(len)
     }
@@ -118,9 +140,7 @@ impl SeqLen for ShortU16Len {
     #[inline(always)]
     fn encode_len(writer: &mut Writer, len: usize) -> bincode::Result<()> {
         if len > u16::MAX as usize {
-            return Err(Box::new(bincode::ErrorKind::Custom(
-                "length exceeds u16::MAX".to_string(),
-            )));
+            return Err(error_invalid_short_u16());
         }
 
         let len = len as u16;
@@ -128,7 +148,7 @@ impl SeqLen for ShortU16Len {
         let cap = writer.buffer.capacity();
         let free = cap.wrapping_sub(writer.pos);
         if free < needed {
-            return Err(bincode::ErrorKind::SizeLimit.into());
+            return Err(error_size_limit());
         }
 
         // SAFETY: `writer.buffer` is valid for `needed` bytes
@@ -159,7 +179,7 @@ impl<'a> Reader<'a> {
     #[inline]
     fn read_exact(&mut self, buf: *mut u8, len: usize) -> bincode::Result<()> {
         if self.pos + len > self.cursor.len() {
-            return Err(bincode::ErrorKind::SizeLimit.into());
+            return Err(error_size_limit());
         }
         unsafe {
             ptr::copy_nonoverlapping(self.cursor.as_ptr().add(self.pos), buf, len);
@@ -343,6 +363,11 @@ fn de_versioned_message(cursor: &mut Reader, ptr: *mut VersionedMessage) -> binc
     // format.
     let variant = cursor.get_t::<u8>()?;
 
+    #[cold]
+    fn invalid_version(version: u8) -> bincode::Error {
+        bincode::ErrorKind::InvalidTagEncoding(version as usize).into()
+    }
+
     if variant & MESSAGE_VERSION_PREFIX != 0 {
         let version = variant & !MESSAGE_VERSION_PREFIX;
         match version {
@@ -351,7 +376,7 @@ fn de_versioned_message(cursor: &mut Reader, ptr: *mut VersionedMessage) -> binc
                 let msg_ptr = msg.as_mut_ptr();
                 let num_required_signatures_ptr =
                     unsafe { &raw mut (*msg_ptr).header.num_required_signatures };
-                // header is serialized as 3 contiguous bytes, we can grab them all in one go.
+                // header is serialized as 3 contiguous bytes.
                 cursor.read_t(num_required_signatures_ptr as *mut [u8; 3])?;
                 de_v0_message(cursor, msg_ptr)?;
                 unsafe {
@@ -359,10 +384,10 @@ fn de_versioned_message(cursor: &mut Reader, ptr: *mut VersionedMessage) -> binc
                 }
             }
             127 => {
-                return Err(bincode::ErrorKind::InvalidTagEncoding(127).into());
+                return Err(invalid_version(127));
             }
             _ => {
-                return Err(bincode::ErrorKind::InvalidTagEncoding(version as usize).into());
+                return Err(invalid_version(version));
             }
         }
     } else {
@@ -377,7 +402,7 @@ fn de_versioned_message(cursor: &mut Reader, ptr: *mut VersionedMessage) -> binc
         unsafe {
             ptr::write(num_required_signatures_ptr, variant);
         }
-        // read the next 2 contiguous bytes
+        // read the next 2 contiguous bytes.
         cursor.read_t(num_readonly_signed_accounts_ptr as *mut [u8; 2])?;
         de_legacy_message(cursor, msg_ptr)?;
         unsafe {
@@ -399,7 +424,6 @@ fn de_versioned_transaction(
     Ok(())
 }
 
-#[inline(always)]
 fn de_entry(cursor: &mut Reader, ptr: *mut Entry) -> bincode::Result<()> {
     let (num_hashes_ptr, hash_ptr, txs_ptr) = unsafe {
         (
@@ -436,7 +460,6 @@ impl Deserialize for Vec<Entry> {
     }
 }
 
-#[inline(always)]
 pub fn deserialize_entry(bytes: &[u8]) -> bincode::Result<Entry> {
     let mut cursor = Reader::new(bytes);
     let mut entry = MaybeUninit::<Entry>::uninit();
@@ -445,7 +468,6 @@ pub fn deserialize_entry(bytes: &[u8]) -> bincode::Result<Entry> {
     Ok(unsafe { entry.assume_init() })
 }
 
-#[inline(always)]
 pub fn deserialize_entry_multi(slice: &[u8]) -> bincode::Result<Vec<Entry>> {
     let mut cursor = Reader::new(slice);
     let mut entries = MaybeUninit::<Vec<Entry>>::uninit();
@@ -473,7 +495,7 @@ impl<'a> Writer<'a> {
     #[inline(always)]
     fn write(&mut self, buf: *const u8, len: usize) -> bincode::Result<()> {
         if self.pos + len > self.buffer.capacity() {
-            return Err(bincode::ErrorKind::SizeLimit.into());
+            return Err(error_size_limit());
         }
         unsafe {
             ptr::copy_nonoverlapping(buf, self.buffer.as_mut_ptr().add(self.pos), len);
@@ -616,12 +638,21 @@ fn se_entry(writer: &mut Writer, value: &Entry) -> bincode::Result<()> {
 
 pub trait Serialize {
     fn serialize(&self) -> bincode::Result<Vec<u8>>;
+    fn serialized_size(&self) -> bincode::Result<u64>;
 }
 
-impl Serialize for Entry {
+impl<E> Serialize for E
+where
+    E: Borrow<Entry>,
+{
     #[inline(always)]
     fn serialize(&self) -> bincode::Result<Vec<u8>> {
-        serialize_entry(self)
+        serialize_entry(self.borrow())
+    }
+
+    #[inline(always)]
+    fn serialized_size(&self) -> bincode::Result<u64> {
+        serialized_size(self.borrow())
     }
 }
 
@@ -630,10 +661,111 @@ impl Serialize for &[Entry] {
     fn serialize(&self) -> bincode::Result<Vec<u8>> {
         serialize_entry_multi(self)
     }
+
+    #[inline(always)]
+    fn serialized_size(&self) -> bincode::Result<u64> {
+        serialized_size_multi(self)
+    }
+}
+
+trait TrySum<T, E> {
+    fn try_sum(self) -> Result<T, E>;
+}
+
+impl<I, T, E> TrySum<T, E> for I
+where
+    T: Add<Output = T> + Default,
+    I: Iterator<Item = Result<T, E>>,
+{
+    #[inline(always)]
+    fn try_sum(mut self) -> Result<T, E> {
+        self.try_fold(T::default(), |acc, x| Ok(acc + x?))
+    }
+}
+
+fn size_of_instruction(instruction: &CompiledInstruction) -> bincode::Result<usize> {
+    Ok(size_of::<u8>()
+        + try_short_u16_bytes_needed(instruction.accounts.len())?
+        + instruction.accounts.len()
+        + try_short_u16_bytes_needed(instruction.data.len())?
+        + instruction.data.len())
+}
+
+fn size_of_legacy_message(message: &LegacyMessage) -> bincode::Result<usize> {
+    Ok(size_of::<MessageHeader>()
+        + try_short_u16_bytes_needed(message.account_keys.len())?
+        + message.account_keys.len() * ADDRESS_BYTES
+        + HASH_BYTES
+        + try_short_u16_bytes_needed(message.instructions.len())?
+        + message
+            .instructions
+            .iter()
+            .map(size_of_instruction)
+            .try_sum()?)
+}
+
+fn size_of_address_table_lookup(lookup: &MessageAddressTableLookup) -> bincode::Result<usize> {
+    Ok(ADDRESS_BYTES
+        + try_short_u16_bytes_needed(lookup.writable_indexes.len())?
+        + lookup.writable_indexes.len()
+        + try_short_u16_bytes_needed(lookup.readonly_indexes.len())?
+        + lookup.readonly_indexes.len())
+}
+
+fn size_of_v0_message(message: &V0Message) -> bincode::Result<usize> {
+    Ok(size_of::<MessageHeader>()
+        + try_short_u16_bytes_needed(message.account_keys.len())?
+        + message.account_keys.len() * ADDRESS_BYTES
+        + HASH_BYTES
+        + try_short_u16_bytes_needed(message.instructions.len())?
+        + message
+            .instructions
+            .iter()
+            .map(size_of_instruction)
+            .try_sum()?
+        + try_short_u16_bytes_needed(message.address_table_lookups.len())?
+        + message
+            .address_table_lookups
+            .iter()
+            .map(size_of_address_table_lookup)
+            .try_sum()?)
+}
+
+pub fn serialized_size(value: &Entry) -> bincode::Result<u64> {
+    // num_hashes
+    let mut size = size_of::<u64>();
+    // hash
+    size += HASH_BYTES;
+    // bincode encoded length of transactions
+    size += size_of::<u64>();
+    for tx in &value.transactions {
+        // short_len encoded length of signatures
+        size += try_short_u16_bytes_needed(tx.signatures.len())?;
+        size += tx.signatures.len() * SIGNATURE_BYTES;
+        match &tx.message {
+            VersionedMessage::Legacy(message) => {
+                size += size_of_legacy_message(message)?;
+            }
+            VersionedMessage::V0(message) => {
+                // version prefix
+                size += 1;
+                size += size_of_v0_message(message)?;
+            }
+        }
+    }
+    Ok(size as u64)
+}
+
+pub fn serialized_size_multi(entries: &[Entry]) -> bincode::Result<u64> {
+    let mut size = size_of::<u64>() as u64;
+    for entry in entries {
+        size += serialized_size(entry)?;
+    }
+    Ok(size)
 }
 
 pub fn serialize_entry(entry: &Entry) -> bincode::Result<Vec<u8>> {
-    let size = bincode::serialized_size(entry)?;
+    let size = serialized_size(entry)?;
     let mut buffer = Vec::with_capacity(size as usize);
     let mut writer = Writer::new(&mut buffer);
     se_entry(&mut writer, entry)?;
@@ -642,7 +774,7 @@ pub fn serialize_entry(entry: &Entry) -> bincode::Result<Vec<u8>> {
 }
 
 pub fn serialize_entry_multi(entries: &[Entry]) -> bincode::Result<Vec<u8>> {
-    let size = bincode::serialized_size(entries)?;
+    let size = serialized_size_multi(entries)?;
     let mut buffer = Vec::with_capacity(size as usize);
     let mut writer = Writer::new(&mut buffer);
     writer.write_seq(entries, BincodeLen, se_entry)?;
@@ -793,6 +925,21 @@ mod tests {
             let our = our_short_u16_encode(len);
             let bincode = bincode::serialize(&ShortU16(len)).unwrap();
             prop_assert_eq!(our, bincode);
+        }
+
+        #[test]
+        fn serialized_size_equivalence(entry in strat_entry()) {
+            let serialized = bincode::serialized_size(&entry).unwrap();
+            let size = serialized_size(&entry).unwrap();
+            prop_assert_eq!(serialized, size);
+
+        }
+
+        #[test]
+        fn serialized_size_multi_equivalence(entries in strat_entries()) {
+            let serialized = bincode::serialized_size(&entries).unwrap();
+            let size = serialized_size_multi(&entries).unwrap();
+            prop_assert_eq!(serialized, size);
         }
 
         #[test]

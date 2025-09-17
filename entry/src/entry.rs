@@ -218,6 +218,12 @@ impl Entry {
         value.serialize()
     }
 
+    /// Get the serialized size of an `Entry` or `&[Entry]` using the optimized implementation.
+    #[inline(always)]
+    pub fn serialized_size<T: wire::Serialize>(value: T) -> bincode::Result<u64> {
+        value.serialized_size()
+    }
+
     /// Deserialize an `Entry` or `Vec<Entry>` using the optimized implementation.
     ///
     /// See [`wire::Deserialize`] for more details.
