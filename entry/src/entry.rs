@@ -4,10 +4,6 @@
 //! represents an approximate amount of time since the last Entry was created.
 use {
     crate::{poh::Poh, wire},
-    bincode::{
-        config::{AllowTrailing, FixintEncoding, WithOtherIntEncoding, WithOtherTrailing},
-        Options,
-    },
     crossbeam_channel::{Receiver, Sender},
     dlopen2::symbor::{Container, SymBorApi, Symbol},
     log::*,
@@ -151,12 +147,6 @@ impl From<&Entry> for EntrySummary {
     }
 }
 
-/// The default options bincode uses when calling [`bincode::serialize`] or [`bincode::deserialize`].
-///
-/// These are the options currently used when serializing and deserializing [`Entry`].
-type DefaultBincodeOptions =
-    WithOtherTrailing<WithOtherIntEncoding<bincode::DefaultOptions, FixintEncoding>, AllowTrailing>;
-
 /// Typed entry to distinguish between transaction and tick entries
 pub enum EntryType<Tx: TransactionWithMeta> {
     Transactions(Vec<Tx>),
@@ -220,24 +210,12 @@ impl Entry {
         self.transactions.is_empty()
     }
 
-    #[inline(always)]
-    fn get_bincode_options() -> DefaultBincodeOptions {
-        bincode::DefaultOptions::new()
-            .with_fixint_encoding()
-            .allow_trailing_bytes()
-    }
-
-    #[inline(always)]
-    pub fn serialized_size<T: Serialize>(value: &T) -> bincode::Result<u64> {
-        Self::get_bincode_options().serialized_size(value)
-    }
-
     /// Serialize an `Entry` or `&[Entry]` using the optimized implementation.
     ///
     /// See [`wire::Serialize`] for more details.
     #[inline(always)]
     pub fn serialize<T: wire::Serialize>(value: T) -> bincode::Result<Vec<u8>> {
-        value.serialize(Self::get_bincode_options())
+        value.serialize()
     }
 
     /// Deserialize an `Entry` or `Vec<Entry>` using the optimized implementation.
@@ -245,7 +223,7 @@ impl Entry {
     /// See [`wire::Deserialize`] for more details.
     #[inline(always)]
     pub fn deserialize<T: wire::Deserialize>(slice: &[u8]) -> bincode::Result<T> {
-        T::deserialize(slice, Self::get_bincode_options())
+        T::deserialize(slice)
     }
 }
 

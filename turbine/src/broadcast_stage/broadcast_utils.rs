@@ -1,5 +1,6 @@
 use {
     super::{Error, Result},
+    bincode::serialized_size,
     crossbeam_channel::Receiver,
     solana_clock::Slot,
     solana_entry::entry::Entry,
@@ -105,7 +106,7 @@ pub(super) fn recv_slot_entries(
         assert!(last_tick_height <= bank.max_tick_height());
     }
 
-    let mut serialized_batch_byte_count = Entry::serialized_size(&entries)?;
+    let mut serialized_batch_byte_count = serialized_size(&entries)?;
     let next_full_batch_byte_count = serialized_batch_byte_count
         .div_ceil(get_data_shred_bytes_per_batch_typical())
         .saturating_mul(get_data_shred_bytes_per_batch_typical());
@@ -140,7 +141,7 @@ pub(super) fn recv_slot_entries(
         }
         last_tick_height = tick_height;
 
-        let entry_bytes = Entry::serialized_size(&entry)?;
+        let entry_bytes = serialized_size(&entry)?;
         if serialized_batch_byte_count + entry_bytes > max_batch_byte_count {
             // This entry will push us over the batch byte limit. Save it for
             // the next batch.

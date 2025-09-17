@@ -43,34 +43,8 @@ use {
     },
     solana_short_vec::decode_shortu16_len,
     solana_transaction::{versioned::VersionedTransaction, CompiledInstruction},
-    std::{marker::PhantomData, mem::MaybeUninit, ptr},
+    std::{mem::MaybeUninit, ptr},
 };
-
-/// Behavior for Bincode's endianness configuration.
-///
-/// Bincode hides all its endianness functionality from exported modules, so
-/// this provides a small utility that can be used to access the configured
-/// endianness on the [`bincode::Options`] trait.
-///
-/// Because the wire format is fixed, we don't necessarily need this abstraction;
-/// we could simply follow the default little endian implementation. That being
-/// said, this also prevents anyone from trying to serialize / deserialize
-/// with a different endianness at compile time, which is a safety precaution.
-pub trait BincodeEndian {
-    fn u64(ptr: &mut u64);
-}
-
-// Wire format uses little endian, so we only provide a little endian implementation.
-// This prevents serialization of [`Entry`] with BE encoding.
-impl BincodeEndian for bincode::config::LittleEndian {
-    #[inline(always)]
-    fn u64(_ptr: &mut u64) {
-        #[cfg(not(target_endian = "little"))]
-        {
-            *_ptr = _ptr.swap_bytes();
-        }
-    }
-}
 
 /// Behavior for heterogenous sequence length encoding.
 ///
@@ -82,65 +56,59 @@ impl BincodeEndian for bincode::config::LittleEndian {
 ///
 /// This trait abstracts over these two different encoding schemes, which simpifies
 /// serialization / deserialization over sequences.
-pub trait SeqLen<O> {
-    fn get_len(reader: &mut Reader<O>) -> bincode::Result<usize>;
-    fn encode_len(writer: &mut Writer<O>, len: usize) -> bincode::Result<()>;
+pub trait SeqLen {
+    fn get_len(reader: &mut Reader) -> bincode::Result<usize>;
+    fn encode_len(writer: &mut Writer, len: usize) -> bincode::Result<()>;
 }
 
-// Wire format uses bincode's default fixint length encoding for non-solana-sdk sequences.
-impl<O> SeqLen<O> for bincode::config::FixintEncoding
-where
-    O: bincode::Options,
-    O::Endian: BincodeEndian,
-{
+struct BincodeLen;
+
+impl SeqLen for BincodeLen {
     #[inline(always)]
-    fn get_len(reader: &mut Reader<O>) -> bincode::Result<usize> {
-        // bincode fixint encodes length as a literal u64
-        Ok(reader.get_u64()? as usize)
+    fn get_len(reader: &mut Reader) -> bincode::Result<usize> {
+        reader.get_u64().map(|len| len as usize)
     }
 
     #[inline(always)]
-    fn encode_len(writer: &mut Writer<O>, len: usize) -> bincode::Result<()> {
-        // bincode fixint encodes length as a literal u64
-        writer.write_u64(len as u64)?;
-        Ok(())
+    fn encode_len(writer: &mut Writer, len: usize) -> bincode::Result<()> {
+        writer.write_u64(len as u64)
     }
 }
 
-/// Helper that extracts the `bincode::Options::IntEncoding` type from the given
-/// [`bincode::Options`] type.
-struct BincodeLen<O>(PhantomData<O>);
+struct ShortU16Len;
 
-impl<O> SeqLen<O> for BincodeLen<O>
-where
-    O: bincode::Options,
-    O::Endian: BincodeEndian,
-    O::IntEncoding: SeqLen<O>,
-{
-    #[inline(always)]
-    fn get_len(reader: &mut Reader<O>) -> bincode::Result<usize> {
-        <O::IntEncoding as SeqLen<O>>::get_len(reader)
-    }
-
-    #[inline(always)]
-    fn encode_len(writer: &mut Writer<O>, len: usize) -> bincode::Result<()> {
-        <O::IntEncoding as SeqLen<O>>::encode_len(writer, len)
-    }
-}
-
-/// Helper that can be passed to [`Reader::read_seq`] and [`Writer::write_seq`] to
-/// specify that the sequence's length should be encoded according to bincode's
-/// length encoding.
+/// Branchless computation of the number of bytes needed to encode a short u16.
 #[inline(always)]
-fn len_bincode<O>() -> BincodeLen<O> {
-    BincodeLen(PhantomData)
+fn short_u16_bytes_needed(len: u16) -> usize {
+    1 + (len >= 0x80) as usize + (len >= 0x4000) as usize
 }
 
-struct ShortU16Len<O>(PhantomData<O>);
+/// Encode a short u16 into the given buffer.
+///
+/// # Safety
+///
+/// - `dst` must be a valid for writes
+/// - `dst` must be valid for `needed` bytes
+#[inline(always)]
+unsafe fn encode_short_u16(dst: *mut u8, needed: usize, len: u16) {
+    match needed {
+        1 => std::ptr::write(dst, len as u8),
+        2 => {
+            std::ptr::write(dst, ((len & 0x7f) as u8) | 0x80);
+            std::ptr::write(dst.add(1), (len >> 7) as u8);
+        }
+        3 => {
+            std::ptr::write(dst, ((len & 0x7f) as u8) | 0x80);
+            std::ptr::write(dst.add(1), (((len >> 7) & 0x7f) as u8) | 0x80);
+            std::ptr::write(dst.add(2), (len >> 14) as u8);
+        }
+        _ => unreachable!(),
+    }
+}
 
-impl<O> SeqLen<O> for ShortU16Len<O> {
+impl SeqLen for ShortU16Len {
     #[inline(always)]
-    fn get_len(cursor: &mut Reader<O>) -> bincode::Result<usize> {
+    fn get_len(cursor: &mut Reader) -> bincode::Result<usize> {
         let (len, read) = decode_shortu16_len(&cursor.cursor[cursor.pos..])
             .map_err(|_| Box::new(bincode::ErrorKind::Custom("Invalid short u16".to_string())))?;
         cursor.pos += read;
@@ -148,66 +116,42 @@ impl<O> SeqLen<O> for ShortU16Len<O> {
     }
 
     #[inline(always)]
-    fn encode_len(writer: &mut Writer<O>, len: usize) -> bincode::Result<()> {
+    fn encode_len(writer: &mut Writer, len: usize) -> bincode::Result<()> {
         if len > u16::MAX as usize {
             return Err(Box::new(bincode::ErrorKind::Custom(
-                "Invalid short u16".to_string(),
+                "length exceeds u16::MAX".to_string(),
             )));
         }
 
-        let rem = len as u16;
-
-        let needed = 1 + (rem >= 0x80) as usize + (rem >= 0x4000) as usize;
+        let len = len as u16;
+        let needed = short_u16_bytes_needed(len);
         let cap = writer.buffer.capacity();
         let free = cap.wrapping_sub(writer.pos);
         if free < needed {
             return Err(bincode::ErrorKind::SizeLimit.into());
         }
 
+        // SAFETY: `writer.buffer` is valid for `needed` bytes
         unsafe {
             let dst = writer.buffer.as_mut_ptr().add(writer.pos);
-
-            match needed {
-                1 => std::ptr::write(dst, rem as u8),
-                2 => {
-                    std::ptr::write(dst, ((rem & 0x7f) as u8) | 0x80);
-                    std::ptr::write(dst.add(1), (rem >> 7) as u8);
-                }
-                3 => {
-                    std::ptr::write(dst, ((rem & 0x7f) as u8) | 0x80);
-                    std::ptr::write(dst.add(1), (((rem >> 7) & 0x7f) as u8) | 0x80);
-                    std::ptr::write(dst.add(2), (rem >> 14) as u8);
-                }
-                _ => unreachable!(),
-            }
-        }
-
-        writer.set_pos(writer.pos + needed);
+            encode_short_u16(dst, needed, len);
+        };
+        writer.pos += needed;
 
         Ok(())
     }
 }
 
-/// Helper that can be passed to [`Reader::read_seq`] and [`Writer::write_seq`] to
-/// specify that the sequence's length should be encoded according to the
-/// [`solana_short_vec`] encoding.
-#[inline(always)]
-fn len_short_u16<O>() -> ShortU16Len<O> {
-    ShortU16Len(PhantomData)
-}
-
-pub struct Reader<'a, O> {
+pub struct Reader<'a> {
     cursor: &'a [u8],
     pos: usize,
-    _phantom: PhantomData<O>,
 }
 
-impl<'a, O> Reader<'a, O> {
+impl<'a> Reader<'a> {
     fn new(bytes: &'a [u8]) -> Self {
         Self {
             cursor: bytes,
             pos: 0,
-            _phantom: PhantomData,
         }
     }
 
@@ -238,6 +182,28 @@ impl<'a, O> Reader<'a, O> {
         Ok(unsafe { t.assume_init() })
     }
 
+    #[inline(always)]
+    fn read_u64(&mut self, ptr: *mut u64) -> bincode::Result<()> {
+        self.read_t(ptr)?;
+        // bincode defaults to little endian encoding
+        #[cfg(target_endian = "big")]
+        {
+            // SAFETY: ptr is initialized by read_t
+            let val = unsafe { &mut *ptr };
+            *val = val.swap_bytes();
+        }
+
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn get_u64(&mut self) -> bincode::Result<u64> {
+        let mut u64 = MaybeUninit::<u64>::uninit();
+        self.read_u64(u64.as_mut_ptr())?;
+        // SAFETY: u64 is initialized by read_u64
+        Ok(unsafe { u64.assume_init() })
+    }
+
     /// Read a sequence of `T`s from the cursor into `ptr`.
     ///
     /// This provides a `*mut T` for each slot in the allocated Vec
@@ -253,8 +219,8 @@ impl<'a, O> Reader<'a, O> {
         parse_t: F,
     ) -> bincode::Result<()>
     where
-        F: Fn(&mut Reader<'a, O>, *mut T) -> bincode::Result<()>,
-        Len: SeqLen<O>,
+        F: Fn(&mut Reader<'a>, *mut T) -> bincode::Result<()>,
+        Len: SeqLen,
     {
         let len = Len::get_len(self)?;
         let mut vec: Vec<T> = Vec::with_capacity(len);
@@ -285,7 +251,7 @@ impl<'a, O> Reader<'a, O> {
     /// Length encoding can be configured via the `Len` parameter.
     fn read_byte_seq<T, Len>(&mut self, ptr: *mut Vec<T>, _len: Len) -> bincode::Result<()>
     where
-        Len: SeqLen<O>,
+        Len: SeqLen,
     {
         let len = Len::get_len(self)?;
         let mut vec: Vec<T> = Vec::with_capacity(len);
@@ -299,30 +265,8 @@ impl<'a, O> Reader<'a, O> {
     }
 }
 
-impl<O> Reader<'_, O>
-where
-    O: bincode::Options,
-    O::Endian: BincodeEndian,
-{
-    #[inline(always)]
-    fn read_u64(&mut self, ptr: *mut u64) -> bincode::Result<()> {
-        self.read_t(ptr)?;
-        // SAFETY: ptr is initialized by read_t
-        <O::Endian as BincodeEndian>::u64(unsafe { &mut *ptr });
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn get_u64(&mut self) -> bincode::Result<u64> {
-        let mut u64 = MaybeUninit::<u64>::uninit();
-        self.read_u64(u64.as_mut_ptr())?;
-        // SAFETY: u64 is initialized by read_u64
-        Ok(unsafe { u64.assume_init() })
-    }
-}
-
-fn de_compiled_instruction<O>(
-    cursor: &mut Reader<'_, O>,
+fn de_compiled_instruction(
+    cursor: &mut Reader,
     ptr: *mut CompiledInstruction,
 ) -> bincode::Result<()> {
     let (program_id_index_ptr, accounts_ptr, data_ptr) = unsafe {
@@ -333,15 +277,12 @@ fn de_compiled_instruction<O>(
         )
     };
     cursor.read_t(program_id_index_ptr)?;
-    cursor.read_byte_seq(accounts_ptr, len_short_u16())?;
-    cursor.read_byte_seq(data_ptr, len_short_u16())?;
+    cursor.read_byte_seq(accounts_ptr, ShortU16Len)?;
+    cursor.read_byte_seq(data_ptr, ShortU16Len)?;
     Ok(())
 }
 
-fn de_legacy_message<O>(
-    cursor: &mut Reader<'_, O>,
-    ptr: *mut LegacyMessage,
-) -> bincode::Result<()> {
+fn de_legacy_message(cursor: &mut Reader, ptr: *mut LegacyMessage) -> bincode::Result<()> {
     let (account_keys_ptr, recent_blockhash_ptr, instructions_ptr) = unsafe {
         (
             &raw mut (*ptr).account_keys,
@@ -349,14 +290,14 @@ fn de_legacy_message<O>(
             &raw mut (*ptr).instructions,
         )
     };
-    cursor.read_byte_seq(account_keys_ptr, len_short_u16())?;
+    cursor.read_byte_seq(account_keys_ptr, ShortU16Len)?;
     cursor.read_t(recent_blockhash_ptr)?;
-    cursor.read_seq(instructions_ptr, len_short_u16(), de_compiled_instruction)?;
+    cursor.read_seq(instructions_ptr, ShortU16Len, de_compiled_instruction)?;
     Ok(())
 }
 
-fn de_address_table_lookup<O>(
-    cursor: &mut Reader<'_, O>,
+fn de_address_table_lookup(
+    cursor: &mut Reader,
     ptr: *mut MessageAddressTableLookup,
 ) -> bincode::Result<()> {
     let (account_key_ptr, writable_indexes_ptr, readonly_indexes_ptr) = unsafe {
@@ -367,12 +308,12 @@ fn de_address_table_lookup<O>(
         )
     };
     cursor.read_t(account_key_ptr)?;
-    cursor.read_byte_seq(writable_indexes_ptr, len_short_u16())?;
-    cursor.read_byte_seq(readonly_indexes_ptr, len_short_u16())?;
+    cursor.read_byte_seq(writable_indexes_ptr, ShortU16Len)?;
+    cursor.read_byte_seq(readonly_indexes_ptr, ShortU16Len)?;
     Ok(())
 }
 
-fn de_v0_message<O>(cursor: &mut Reader<'_, O>, ptr: *mut V0Message) -> bincode::Result<()> {
+fn de_v0_message(cursor: &mut Reader, ptr: *mut V0Message) -> bincode::Result<()> {
     let (account_keys_ptr, recent_blockhash_ptr, instructions_ptr, address_table_lookups_ptr) = unsafe {
         (
             &raw mut (*ptr).account_keys,
@@ -381,22 +322,19 @@ fn de_v0_message<O>(cursor: &mut Reader<'_, O>, ptr: *mut V0Message) -> bincode:
             &raw mut (*ptr).address_table_lookups,
         )
     };
-    cursor.read_byte_seq(account_keys_ptr, len_short_u16())?;
+    cursor.read_byte_seq(account_keys_ptr, ShortU16Len)?;
     cursor.read_t(recent_blockhash_ptr)?;
-    cursor.read_seq(instructions_ptr, len_short_u16(), de_compiled_instruction)?;
+    cursor.read_seq(instructions_ptr, ShortU16Len, de_compiled_instruction)?;
     cursor.read_seq(
         address_table_lookups_ptr,
-        len_short_u16(),
+        ShortU16Len,
         de_address_table_lookup,
     )?;
     Ok(())
 }
 
 /// See [`solana_message::VersionedMessage`] for more details.
-fn de_versioned_message<O>(
-    cursor: &mut Reader<'_, O>,
-    ptr: *mut VersionedMessage,
-) -> bincode::Result<()> {
+fn de_versioned_message(cursor: &mut Reader, ptr: *mut VersionedMessage) -> bincode::Result<()> {
     // From `solana_message`:
     //
     // If the first bit is set, the remaining 7 bits will be used to determine
@@ -450,24 +388,19 @@ fn de_versioned_message<O>(
     Ok(())
 }
 
-fn de_versioned_transaction<O>(
-    cursor: &mut Reader<'_, O>,
+fn de_versioned_transaction(
+    cursor: &mut Reader,
     ptr: *mut VersionedTransaction,
 ) -> bincode::Result<()> {
     let (signatures_ptr, message_ptr) =
         unsafe { (&raw mut (*ptr).signatures, &raw mut (*ptr).message) };
-    cursor.read_byte_seq(signatures_ptr, len_short_u16())?;
+    cursor.read_byte_seq(signatures_ptr, ShortU16Len)?;
     de_versioned_message(cursor, message_ptr)?;
     Ok(())
 }
 
 #[inline(always)]
-fn de_entry<O>(cursor: &mut Reader<'_, O>, ptr: *mut Entry) -> bincode::Result<()>
-where
-    O: bincode::Options,
-    O::Endian: BincodeEndian,
-    O::IntEncoding: SeqLen<O>,
-{
+fn de_entry(cursor: &mut Reader, ptr: *mut Entry) -> bincode::Result<()> {
     let (num_hashes_ptr, hash_ptr, txs_ptr) = unsafe {
         (
             &raw mut (*ptr).num_hashes,
@@ -478,50 +411,34 @@ where
 
     cursor.read_u64(num_hashes_ptr)?;
     cursor.read_t(hash_ptr)?;
-    cursor.read_seq(txs_ptr, len_bincode(), de_versioned_transaction)?;
+    cursor.read_seq(txs_ptr, BincodeLen, de_versioned_transaction)?;
 
     Ok(())
 }
 
 pub trait Deserialize {
-    fn deserialize<O>(bytes: &[u8], options: O) -> bincode::Result<Self>
+    fn deserialize(bytes: &[u8]) -> bincode::Result<Self>
     where
-        Self: Sized,
-        O: bincode::Options,
-        O::Endian: BincodeEndian,
-        O::IntEncoding: SeqLen<O>;
+        Self: Sized;
 }
 
 impl Deserialize for Entry {
-    fn deserialize<O>(bytes: &[u8], options: O) -> bincode::Result<Self>
-    where
-        O: bincode::Options,
-        O::Endian: BincodeEndian,
-        O::IntEncoding: SeqLen<O>,
-    {
-        deserialize_entry(bytes, options)
+    #[inline(always)]
+    fn deserialize(bytes: &[u8]) -> bincode::Result<Self> {
+        deserialize_entry(bytes)
     }
 }
 
 impl Deserialize for Vec<Entry> {
-    fn deserialize<O>(bytes: &[u8], options: O) -> bincode::Result<Self>
-    where
-        O: bincode::Options,
-        O::Endian: BincodeEndian,
-        O::IntEncoding: SeqLen<O>,
-    {
-        deserialize_entry_multi(bytes, options)
+    #[inline(always)]
+    fn deserialize(bytes: &[u8]) -> bincode::Result<Self> {
+        deserialize_entry_multi(bytes)
     }
 }
 
 #[inline(always)]
-pub fn deserialize_entry<O>(bytes: &[u8], _options: O) -> bincode::Result<Entry>
-where
-    O: bincode::Options,
-    O::Endian: BincodeEndian,
-    O::IntEncoding: SeqLen<O>,
-{
-    let mut cursor: Reader<'_, O> = Reader::new(bytes);
+pub fn deserialize_entry(bytes: &[u8]) -> bincode::Result<Entry> {
+    let mut cursor = Reader::new(bytes);
     let mut entry = MaybeUninit::<Entry>::uninit();
     let entry_ptr = entry.as_mut_ptr();
     de_entry(&mut cursor, entry_ptr)?;
@@ -529,38 +446,26 @@ where
 }
 
 #[inline(always)]
-pub fn deserialize_entry_multi<O>(slice: &[u8], _options: O) -> bincode::Result<Vec<Entry>>
-where
-    O: bincode::Options,
-    O::Endian: BincodeEndian,
-    O::IntEncoding: SeqLen<O>,
-{
-    let mut cursor: Reader<'_, O> = Reader::new(slice);
+pub fn deserialize_entry_multi(slice: &[u8]) -> bincode::Result<Vec<Entry>> {
+    let mut cursor = Reader::new(slice);
     let mut entries = MaybeUninit::<Vec<Entry>>::uninit();
-    cursor.read_seq(entries.as_mut_ptr(), len_bincode(), de_entry)?;
+    cursor.read_seq(entries.as_mut_ptr(), BincodeLen, de_entry)?;
     Ok(unsafe { entries.assume_init() })
 }
 
-pub struct Writer<'a, O> {
+pub struct Writer<'a> {
     buffer: &'a mut Vec<u8>,
     pos: usize,
-    _phantom: PhantomData<O>,
 }
 
-impl<'a, O> Writer<'a, O> {
+impl<'a> Writer<'a> {
     fn new(buffer: &'a mut Vec<u8>) -> Self {
-        Self {
-            buffer,
-            pos: 0,
-            _phantom: PhantomData,
-        }
+        Self { buffer, pos: 0 }
     }
 
-    #[inline(always)]
-    fn set_pos(&mut self, pos: usize) {
-        self.pos = pos;
+    fn finish(&mut self) {
         unsafe {
-            self.buffer.set_len(pos);
+            self.buffer.set_len(self.pos);
         }
     }
 
@@ -573,7 +478,7 @@ impl<'a, O> Writer<'a, O> {
         unsafe {
             ptr::copy_nonoverlapping(buf, self.buffer.as_mut_ptr().add(self.pos), len);
         }
-        self.set_pos(self.pos + len);
+        self.pos += len;
         Ok(())
     }
 
@@ -581,6 +486,15 @@ impl<'a, O> Writer<'a, O> {
     #[inline(always)]
     fn write_t<T>(&mut self, value: &T) -> bincode::Result<()> {
         self.write(value as *const T as *const u8, size_of::<T>())
+    }
+
+    #[inline(always)]
+    fn write_u64(&mut self, value: u64) -> bincode::Result<()> {
+        // bincode defaults to little endian encoding
+        let val = value.to_le_bytes();
+
+        self.write_t(&val)?;
+        Ok(())
     }
 
     /// Write a byte slice into the internal buffer.
@@ -597,8 +511,8 @@ impl<'a, O> Writer<'a, O> {
     #[inline(always)]
     fn write_seq<T, F, Len>(&mut self, value: &[T], _len: Len, write_t: F) -> bincode::Result<()>
     where
-        F: Fn(&mut Writer<'a, O>, &T) -> bincode::Result<()>,
-        Len: SeqLen<O>,
+        F: Fn(&mut Writer<'a>, &T) -> bincode::Result<()>,
+        Len: SeqLen,
     {
         Len::encode_len(self, value.len())?;
         for item in value {
@@ -617,38 +531,25 @@ impl<'a, O> Writer<'a, O> {
     #[inline(always)]
     fn write_byte_seq<T, Len>(&mut self, value: &[T], _len: Len) -> bincode::Result<()>
     where
-        Len: SeqLen<O>,
+        Len: SeqLen,
     {
         Len::encode_len(self, value.len())?;
         self.write(value.as_ptr() as *const u8, size_of_val(value))
     }
 }
 
-impl<O> Writer<'_, O>
-where
-    O: bincode::Options,
-    O::Endian: BincodeEndian,
-{
-    #[inline(always)]
-    fn write_u64(&mut self, mut value: u64) -> bincode::Result<()> {
-        <O::Endian as BincodeEndian>::u64(&mut value);
-        self.write_t(&value)?;
-        Ok(())
-    }
-}
-
-fn se_compiled_instruction<O>(
-    writer: &mut Writer<'_, O>,
+fn se_compiled_instruction(
+    writer: &mut Writer,
     value: &CompiledInstruction,
 ) -> bincode::Result<()> {
     writer.write_t(&value.program_id_index)?;
-    writer.write_byte_seq(&value.accounts, len_short_u16())?;
-    writer.write_byte_seq(&value.data, len_short_u16())?;
+    writer.write_byte_seq(&value.accounts, ShortU16Len)?;
+    writer.write_byte_seq(&value.data, ShortU16Len)?;
     Ok(())
 }
 
 #[inline(always)]
-fn se_header<O>(writer: &mut Writer<'_, O>, value: &MessageHeader) -> bincode::Result<()> {
+fn se_header(writer: &mut Writer, value: &MessageHeader) -> bincode::Result<()> {
     writer.write_bytes(&[
         value.num_required_signatures,
         value.num_readonly_signed_accounts,
@@ -657,131 +558,95 @@ fn se_header<O>(writer: &mut Writer<'_, O>, value: &MessageHeader) -> bincode::R
     Ok(())
 }
 
-fn se_legacy_message<O>(writer: &mut Writer<'_, O>, value: &LegacyMessage) -> bincode::Result<()> {
+fn se_legacy_message(writer: &mut Writer, value: &LegacyMessage) -> bincode::Result<()> {
     se_header(writer, &value.header)?;
-    writer.write_byte_seq(&value.account_keys, len_short_u16())?;
+    writer.write_byte_seq(&value.account_keys, ShortU16Len)?;
     writer.write_bytes(value.recent_blockhash.as_ref())?;
-    writer.write_seq(
-        &value.instructions,
-        len_short_u16(),
-        se_compiled_instruction,
-    )?;
+    writer.write_seq(&value.instructions, ShortU16Len, se_compiled_instruction)?;
     Ok(())
 }
 
-fn se_address_table_lookup<O>(
-    writer: &mut Writer<'_, O>,
+fn se_address_table_lookup(
+    writer: &mut Writer,
     value: &MessageAddressTableLookup,
 ) -> bincode::Result<()> {
     writer.write_bytes(value.account_key.as_ref())?;
-    writer.write_byte_seq(&value.writable_indexes, len_short_u16())?;
-    writer.write_byte_seq(&value.readonly_indexes, len_short_u16())?;
+    writer.write_byte_seq(&value.writable_indexes, ShortU16Len)?;
+    writer.write_byte_seq(&value.readonly_indexes, ShortU16Len)?;
     Ok(())
 }
 
-fn se_v0_message<O>(writer: &mut Writer<'_, O>, value: &V0Message) -> bincode::Result<()> {
+fn se_v0_message(writer: &mut Writer, value: &V0Message) -> bincode::Result<()> {
     writer.write_t(&MESSAGE_VERSION_PREFIX)?;
     se_header(writer, &value.header)?;
-    writer.write_byte_seq(&value.account_keys, len_short_u16())?;
+    writer.write_byte_seq(&value.account_keys, ShortU16Len)?;
     writer.write_bytes(value.recent_blockhash.as_ref())?;
-    writer.write_seq(
-        &value.instructions,
-        len_short_u16(),
-        se_compiled_instruction,
-    )?;
+    writer.write_seq(&value.instructions, ShortU16Len, se_compiled_instruction)?;
     writer.write_seq(
         &value.address_table_lookups,
-        len_short_u16(),
+        ShortU16Len,
         se_address_table_lookup,
     )?;
     Ok(())
 }
 
 #[inline(always)]
-fn se_versioned_message<O>(
-    writer: &mut Writer<'_, O>,
-    value: &VersionedMessage,
-) -> bincode::Result<()> {
+fn se_versioned_message(writer: &mut Writer, value: &VersionedMessage) -> bincode::Result<()> {
     match value {
         VersionedMessage::Legacy(message) => se_legacy_message(writer, message),
         VersionedMessage::V0(message) => se_v0_message(writer, message),
     }
 }
 
-fn se_versioned_transaction<O>(
-    writer: &mut Writer<'_, O>,
+fn se_versioned_transaction(
+    writer: &mut Writer,
     value: &VersionedTransaction,
 ) -> bincode::Result<()> {
-    writer.write_byte_seq(&value.signatures, len_short_u16())?;
+    writer.write_byte_seq(&value.signatures, ShortU16Len)?;
     se_versioned_message(writer, &value.message)?;
     Ok(())
 }
 
-fn se_entry<O>(writer: &mut Writer<'_, O>, value: &Entry) -> bincode::Result<()>
-where
-    O: bincode::Options,
-    O::Endian: BincodeEndian,
-    O::IntEncoding: SeqLen<O>,
-{
+fn se_entry(writer: &mut Writer, value: &Entry) -> bincode::Result<()> {
     writer.write_u64(value.num_hashes)?;
     writer.write_bytes(value.hash.as_ref())?;
-    writer.write_seq(&value.transactions, len_bincode(), se_versioned_transaction)?;
+    writer.write_seq(&value.transactions, BincodeLen, se_versioned_transaction)?;
     Ok(())
 }
 
 pub trait Serialize {
-    fn serialize<O>(&self, options: O) -> bincode::Result<Vec<u8>>
-    where
-        O: bincode::Options,
-        O::Endian: BincodeEndian,
-        O::IntEncoding: SeqLen<O>;
+    fn serialize(&self) -> bincode::Result<Vec<u8>>;
 }
 
 impl Serialize for Entry {
-    fn serialize<O>(&self, options: O) -> bincode::Result<Vec<u8>>
-    where
-        O: bincode::Options,
-        O::Endian: BincodeEndian,
-        O::IntEncoding: SeqLen<O>,
-    {
-        serialize_entry(self, options)
+    #[inline(always)]
+    fn serialize(&self) -> bincode::Result<Vec<u8>> {
+        serialize_entry(self)
     }
 }
 
 impl Serialize for &[Entry] {
-    fn serialize<O>(&self, options: O) -> bincode::Result<Vec<u8>>
-    where
-        O: bincode::Options,
-        O::Endian: BincodeEndian,
-        O::IntEncoding: SeqLen<O>,
-    {
-        serialize_entry_multi(self, options)
+    #[inline(always)]
+    fn serialize(&self) -> bincode::Result<Vec<u8>> {
+        serialize_entry_multi(self)
     }
 }
 
-pub fn serialize_entry<O>(entry: &Entry, options: O) -> bincode::Result<Vec<u8>>
-where
-    O: bincode::Options,
-    O::Endian: BincodeEndian,
-    O::IntEncoding: SeqLen<O>,
-{
-    let size = options.serialized_size(entry)?;
+pub fn serialize_entry(entry: &Entry) -> bincode::Result<Vec<u8>> {
+    let size = bincode::serialized_size(entry)?;
     let mut buffer = Vec::with_capacity(size as usize);
-    let mut writer: Writer<'_, O> = Writer::new(&mut buffer);
+    let mut writer = Writer::new(&mut buffer);
     se_entry(&mut writer, entry)?;
+    writer.finish();
     Ok(buffer)
 }
 
-pub fn serialize_entry_multi<O>(entries: &[Entry], options: O) -> bincode::Result<Vec<u8>>
-where
-    O: bincode::Options,
-    O::Endian: BincodeEndian,
-    O::IntEncoding: SeqLen<O>,
-{
-    let size = options.serialized_size(entries)?;
+pub fn serialize_entry_multi(entries: &[Entry]) -> bincode::Result<Vec<u8>> {
+    let size = bincode::serialized_size(entries)?;
     let mut buffer = Vec::with_capacity(size as usize);
-    let mut writer: Writer<'_, O> = Writer::new(&mut buffer);
-    writer.write_seq(entries, len_bincode(), se_entry)?;
+    let mut writer = Writer::new(&mut buffer);
+    writer.write_seq(entries, BincodeLen, se_entry)?;
+    writer.finish();
     Ok(buffer)
 }
 
@@ -789,11 +654,11 @@ where
 mod tests {
     use {
         super::*,
-        bincode::Options,
         proptest::prelude::*,
         solana_address::{Address, ADDRESS_BYTES},
         solana_hash::{Hash, HASH_BYTES},
         solana_message::MessageHeader,
+        solana_short_vec::ShortU16,
         solana_signature::{Signature, SIGNATURE_BYTES},
     };
 
@@ -912,50 +777,61 @@ mod tests {
         proptest::collection::vec(strat_entry(), 0..=4)
     }
 
+    fn our_short_u16_encode(len: u16) -> Vec<u8> {
+        let needed = short_u16_bytes_needed(len);
+        let mut buf = Vec::with_capacity(needed);
+        unsafe {
+            encode_short_u16(buf.as_mut_ptr(), needed, len);
+            buf.set_len(needed);
+        }
+        buf
+    }
+
     proptest! {
         #[test]
+        fn encode_u16_equivalence(len in 0..=u16::MAX) {
+            let our = our_short_u16_encode(len);
+            let bincode = bincode::serialize(&ShortU16(len)).unwrap();
+            prop_assert_eq!(our, bincode);
+        }
+
+        #[test]
         fn de_equivalence(entry in strat_entry()) {
-            let options = bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes();
-            let serialized = options.serialize(&entry).unwrap();
-            let deserialized: Entry = deserialize_entry(&serialized, options).unwrap();
+            let serialized = bincode::serialize(&entry).unwrap();
+            let deserialized: Entry = deserialize_entry(&serialized).unwrap();
             prop_assert_eq!(entry, deserialized);
         }
 
         #[test]
         fn de_multi_equivalence(entries in strat_entries()) {
-            let options = bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes();
-            let serialized = options.serialize(&entries).unwrap();
-            let deserialized: Vec<Entry> = deserialize_entry_multi(&serialized, options).unwrap();
+            let serialized = bincode::serialize(&entries).unwrap();
+            let deserialized: Vec<Entry> = deserialize_entry_multi(&serialized).unwrap();
             prop_assert_eq!(entries, deserialized);
         }
 
         #[test]
         fn ser_equivalence(entry in strat_entry()) {
-            let options = bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes();
-            let serialized = serialize_entry(&entry, options).unwrap();
-            prop_assert_eq!(serialized, options.serialize(&entry).unwrap());
+            let serialized = serialize_entry(&entry).unwrap();
+            prop_assert_eq!(serialized, bincode::serialize(&entry).unwrap());
         }
 
         #[test]
         fn ser_multi_equivalence(entries in strat_entries()) {
-            let options = bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes();
-            let serialized = serialize_entry_multi(&entries, options).unwrap();
-            prop_assert_eq!(serialized, options.serialize(&entries).unwrap());
+            let serialized = serialize_entry_multi(&entries).unwrap();
+            prop_assert_eq!(serialized, bincode::serialize(&entries).unwrap());
         }
 
         #[test]
         fn roundtrip(entry in strat_entry()) {
-            let options = bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes();
-            let serialized = serialize_entry(&entry, options).unwrap();
-            let deserialized: Entry = deserialize_entry(&serialized, options).unwrap();
+            let serialized = serialize_entry(&entry).unwrap();
+            let deserialized: Entry = deserialize_entry(&serialized).unwrap();
             prop_assert_eq!(&entry, &deserialized);
         }
 
         #[test]
         fn roundtrip_multi(entries in strat_entries()) {
-            let options = bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes();
-            let serialized = serialize_entry_multi(&entries, options).unwrap();
-            let deserialized: Vec<Entry> = deserialize_entry_multi(&serialized, options).unwrap();
+            let serialized = serialize_entry_multi(&entries).unwrap();
+            let deserialized: Vec<Entry> = deserialize_entry_multi(&serialized).unwrap();
             prop_assert_eq!(entries, deserialized);
         }
     }

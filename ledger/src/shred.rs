@@ -917,8 +917,8 @@ pub fn max_entries_per_n_shred_last_or_not(
         /*proof_size:*/ 6, /*chained:*/ true, /*resigned:*/ true,
     ));
 
-    let vec_size = Entry::serialized_size(&[entry]).unwrap();
-    let entry_size = Entry::serialized_size(entry).unwrap();
+    let vec_size = bincode::serialized_size(&vec![entry]).unwrap();
+    let entry_size = bincode::serialized_size(entry).unwrap();
     let count_size = vec_size - entry_size;
 
     if !is_last_in_slot {
@@ -948,8 +948,8 @@ pub fn max_entries_per_n_shred(
     ));
     let data_buffer_size = ShredData::capacity(merkle_variant).unwrap();
     let shred_data_size = shred_data_size.unwrap_or(data_buffer_size) as u64;
-    let vec_size = Entry::serialized_size(&[entry]).unwrap();
-    let entry_size = Entry::serialized_size(entry).unwrap();
+    let vec_size = bincode::serialized_size(&vec![entry]).unwrap();
+    let entry_size = bincode::serialized_size(entry).unwrap();
     let count_size = vec_size - entry_size;
 
     (shred_data_size * num_shreds - count_size) / entry_size
