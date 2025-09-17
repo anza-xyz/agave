@@ -42,7 +42,7 @@ struct ifinfomsg {
 fn is_valid_route(route: &RouteEntry) -> bool {
     // Filter out cloned routes
     if route.flags & RTM_F_CLONED != 0 {
-        log::info!("greg: Filtered out cloned route: {:?}", route.destination);
+        // log::info!("greg: Filtered out cloned route: {:?}", route.destination);
         return false;
     }
 
@@ -788,6 +788,9 @@ pub fn parse_rtm_newroute(msg: NetlinkMessage) -> Option<RouteEntry> {
     if let Some(gateway_attr) = attrs.get(&RTA_GATEWAY) {
         route.gateway = parse_ip_address(gateway_attr.data, rt_msg.rtm_family);
     }
+
+    
+
 
     let u32_from_ne_bytes = |data: &[u8]| -> Option<u32> {
         data.get(..4)
