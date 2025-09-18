@@ -1362,35 +1362,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             } else {
                 // not using disk buckets, so just write to in-mem
                 // this is no longer the default case
-                let mut duplicates_from_in_memory = vec![];
-                for &index in indices {
+                let entries_iter = indices.iter().map(|&index| {
                     let (pubkey, account_info) = &items[index];
-                    let new_entry =
-                        PreAllocatedAccountMapEntry::new(slot, account_info, storage, use_disk);
-                    match r_account_maps.insert_new_entry_if_missing_with_lock(pubkey, new_entry) {
-                        InsertNewEntryResults::DidNotExist => {
-                            num_did_not_exist += 1;
-                        }
-                        InsertNewEntryResults::Existed {
-                            other_slot,
-                            location,
-                        } => {
-                            if let Some(other_slot) = other_slot {
-                                duplicates_from_in_memory.push((other_slot, pubkey));
-                            }
-                            duplicates_from_in_memory.push((slot, pubkey));
-
-                            match location {
-                                ExistedLocation::InMem => {
-                                    num_existed_in_mem += 1;
-                                }
-                                ExistedLocation::OnDisk => {
-                                    num_existed_on_disk += 1;
-                                }
-                            }
-                        }
-                    }
-                }
+                    let new_entry = PreAllocatedAccountMapEntry::new(slot, *account_info, storage, use_disk);
+                    (*pubkey, new_entry)
+                });
+                
+                let (duplicates_from_in_memory, batch_num_did_not_exist, batch_num_existed_in_mem) = 
+                    r_account_maps.batch_insert_new_entries_if_missing_with_lock_in_mem(entries_iter);
+                
+                num_did_not_exist += batch_num_did_not_exist;
+                num_existed_in_mem += batch_num_existed_in_mem;
 
                 r_account_maps
                     .startup_update_duplicates_from_in_memory_only(duplicates_from_in_memory);
