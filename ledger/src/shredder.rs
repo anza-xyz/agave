@@ -83,7 +83,7 @@ impl Shredder {
             keypair,
             &entries,
             is_last_in_slot,
-            Some(chained_merkle_root),
+            chained_merkle_root,
             next_shred_index,
             next_code_index,
             reed_solomon_cache,
