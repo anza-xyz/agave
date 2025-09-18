@@ -13,7 +13,10 @@ pub mod connection_workers_scheduler;
 pub mod send_transaction_stats;
 pub mod workers_cache;
 pub use crate::{
-    connection_workers_scheduler::{ConnectionWorkersScheduler, ConnectionWorkersSchedulerError},
+    connection_workers_scheduler::{
+        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, NonblockingBroadcaster,
+        WorkersBroadcaster,
+    },
     send_transaction_stats::SendTransactionStats,
 };
 pub(crate) mod quic_networking;
