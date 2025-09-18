@@ -4312,7 +4312,7 @@ mod tests {
             // Successful request
             io.add_method("getFeeForMessage", move |params: Params| match params {
                 Params::Array(p) => {
-                    let first_element = p.first.unwrap();
+                    let first_element = p.first().unwrap();
                     if let Value::String(actual_serialized_message) = first_element {
                         assert_eq!(actual_serialized_message, &serialized_message_base64);
                         return future::ok(json!(Response {
