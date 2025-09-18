@@ -1928,7 +1928,6 @@ pub mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Accounts may only be stored once per slot:")]
     fn test_insert_duplicates() {
         let key = solana_pubkey::new_rand();
         let pubkey = &key;
