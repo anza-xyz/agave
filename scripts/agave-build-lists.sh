@@ -14,7 +14,7 @@
 AGAVE_BINS_DEV=(
   cargo-build-sbf
   cargo-test-sbf
-  solana-faucet
+  solana-stake-accounts
   solana-test-validator
 )
 
@@ -30,19 +30,11 @@ AGAVE_BINS_VAL_OP=(
   agave-watchtower
   solana-gossip
   solana-genesis
+  solana-faucet
 )
 
 AGAVE_BINS_DCOU=(
   agave-ledger-tool
-)
-
-# Speed up net.sh deploys by excluding unused binaries
-AGAVE_BINS_NET_SH=(
-  cargo-build-sbf
-  cargo-test-sbf
-  agave-install-init
-  solana-stake-accounts
-  solana-test-validator
 )
 
 DCOU_TAINTED_PACKAGES=(

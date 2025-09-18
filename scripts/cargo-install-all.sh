@@ -91,8 +91,9 @@ source "$SOLANA_ROOT"/scripts/agave-build-lists.sh
 BINS=()
 DCOU_BINS=()
 if [[ -n "$validatorOnly" ]]; then
-  echo "Building binaries for net.sh deploys: ${AGAVE_BINS_NET_SH[*]}"
-  BINS+=("${AGAVE_BINS_NET_SH[@]}")
+  echo "Building binaries for net.sh deploys: ${AGAVE_BINS_END_USER[*]} ${AGAVE_BINS_VAL_OP[*]} ${AGAVE_BINS_DCOU[*]}"
+  BINS+=("${AGAVE_BINS_END_USER[@]}" "${AGAVE_BINS_VAL_OP[@]}")
+  DCOU_BINS+=("${AGAVE_BINS_DCOU[@]}")
 else
   echo "Building binaries for all platforms: ${AGAVE_BINS_DEV[*]}, ${AGAVE_BINS_END_USER[*]}"
   BINS+=("${AGAVE_BINS_DEV[@]}" "${AGAVE_BINS_END_USER[@]}")
