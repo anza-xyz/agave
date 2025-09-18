@@ -10145,7 +10145,7 @@ pub mod tests {
             parent_slot,
             num_entries,
             fec_set_index,
-            Some(chained_merkle_root),
+            chained_merkle_root,
             true,
         )
     }
@@ -10165,7 +10165,7 @@ pub mod tests {
             &leader_keypair,
             &entries,
             is_last_in_slot,
-            chained_merkle_root,
+            Some(chained_merkle_root),
             fec_set_index, // next_shred_index
             fec_set_index, // next_code_index
             &ReedSolomonCache::default(),
