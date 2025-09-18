@@ -6978,13 +6978,10 @@ impl AccountsDb {
         self.accounts_index.scan(
             pubkeys.iter(),
             |_pubkey, slots_refs, _entry| {
-                if slots_refs.is_none() {
-                    println!("no slots_refs for pubkey {_pubkey}");
-                }
-                let (slot_list, ref_count) = slots_refs.unwrap();
+                let (slot_list, ref_count) = slots_refs.unwrap(); // safe to unwrap because these pubkeys are known to be in the index
                 if ref_count == 1 {
                     assert_eq!(slot_list.len(), 1);
-                    let (slot_alive, account_info) = slot_list.first().unwrap();
+                    let (slot_alive, account_info) = slot_list.first().unwrap(); // safe to unwrap because ref_count == 1
                     assert!(!account_info.is_cached());
                     if account_info.is_zero_lamport() {
                         slot_offsets
