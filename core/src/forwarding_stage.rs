@@ -236,25 +236,12 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 self.buffer_packet_batches(packet_batches, tpu_vote_batch, bank);
 
                 // Drain the channel up to timeout
-                let timed_out = loop {
-                    if now.elapsed() >= TIMEOUT {
-                        break true;
-                    }
+                while now.elapsed() < TIMEOUT {
                     match self.receiver.try_recv() {
                         Ok((packet_batches, tpu_vote_batch)) => {
                             self.buffer_packet_batches(packet_batches, tpu_vote_batch, bank)
                         }
-                        Err(_) => break false,
-                    }
-                };
-
-                // If timeout was reached, prevent backup by draining all
-                // packets in the channel.
-                if timed_out {
-                    warn!("ForwardingStage is backed up, dropping packets");
-                    while let Ok((packet_batch, _)) = self.receiver.try_recv() {
-                        self.metrics.dropped_on_timeout +=
-                            packet_batch.iter().map(|b| b.len()).sum::<usize>();
+                        Err(_) => break,
                     }
                 }
 
@@ -722,8 +709,6 @@ struct ForwardingStageMetrics {
     non_votes_dropped_on_data_budget: usize,
     non_votes_forwarded: usize,
     non_votes_dropped_on_send: usize,
-
-    dropped_on_timeout: usize,
 }
 
 impl ForwardingStageMetrics {
@@ -803,7 +788,6 @@ impl Default for ForwardingStageMetrics {
             non_votes_dropped_on_data_budget: 0,
             non_votes_forwarded: 0,
             non_votes_dropped_on_send: 0,
-            dropped_on_timeout: 0,
         }
     }
 }
