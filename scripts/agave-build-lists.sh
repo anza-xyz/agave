@@ -15,13 +15,10 @@ AGAVE_BINS_DEV=(
   cargo-build-sbf
   cargo-test-sbf
   solana-test-validator
-  solana-stake-accounts
-  solana-tokens
 )
 
 AGAVE_BINS_END_USER=(
   agave-install
-  agave-install-init
   solana
   solana-keygen
 )
@@ -36,6 +33,13 @@ AGAVE_BINS_VAL_OP=(
 
 AGAVE_BINS_DCOU=(
   agave-ledger-tool
+)
+
+# These bins are deprecated and will be removed in a future release
+AGAVE_BINS_DEPRECATED=(
+  solana-stake-accounts
+  solana-tokens
+  agave-install-init
 )
 
 DCOU_TAINTED_PACKAGES=(

@@ -95,7 +95,7 @@ if [[ -n "$validatorOnly" ]]; then
   BINS+=("${AGAVE_BINS_END_USER[@]}" "${AGAVE_BINS_VAL_OP[@]}")
   DCOU_BINS+=("${AGAVE_BINS_DCOU[@]}")
 else
-  echo "Building binaries for all platforms: ${AGAVE_BINS_DEV[*]}, ${AGAVE_BINS_END_USER[*]}"
+  echo "Building binaries for all platforms: ${AGAVE_BINS_DEV[*]} ${AGAVE_BINS_END_USER[*]} ${AGAVE_BINS_DEPRECATED[*]}"
   BINS+=("${AGAVE_BINS_DEV[@]}" "${AGAVE_BINS_END_USER[@]}")
 
   if [[ $CI_OS_NAME != windows ]]; then
