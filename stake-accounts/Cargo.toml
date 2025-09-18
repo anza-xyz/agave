@@ -1,9 +1,9 @@
 [package]
 name = "solana-stake-accounts"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-stake-accounts"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }

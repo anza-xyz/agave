@@ -1,10 +1,10 @@
 [package]
 name = "agave-validator"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/agave-validator"
 default-run = "agave-validator"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }

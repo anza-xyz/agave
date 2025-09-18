@@ -1643,10 +1643,10 @@ mod tests {
         let snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
         assert_eq!(snapshot.slot, 4);
 
-        let complete_flag_file = snapshot
+        let version_file = snapshot
             .snapshot_dir
-            .join(snapshot_utils::SNAPSHOT_STATE_COMPLETE_FILENAME);
-        fs::remove_file(complete_flag_file).unwrap();
+            .join(snapshot_utils::SNAPSHOT_VERSION_FILENAME);
+        fs::remove_file(version_file).unwrap();
         // The incomplete snapshot dir should still exist
         let snapshot_dir_4 = snapshot.snapshot_dir;
         assert!(snapshot_dir_4.exists());
@@ -1743,12 +1743,11 @@ mod tests {
             should_flush_and_hard_link_storages,
         );
 
-        // remove the "state complete" files so the snapshots will be purged
+        // remove the "version" files so the snapshots will be purged
         for slot in [1, 2] {
             let bank_snapshot_dir = get_bank_snapshot_dir(&bank_snapshots_dir, slot);
-            let state_complete_file =
-                bank_snapshot_dir.join(snapshot_utils::SNAPSHOT_STATE_COMPLETE_FILENAME);
-            fs::remove_file(state_complete_file).unwrap();
+            let version_file = bank_snapshot_dir.join(snapshot_utils::SNAPSHOT_VERSION_FILENAME);
+            fs::remove_file(version_file).unwrap();
         }
 
         purge_incomplete_bank_snapshots(&bank_snapshots_dir);

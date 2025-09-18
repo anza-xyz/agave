@@ -147,6 +147,7 @@ resolver = "2"
 [workspace.package]
 version = "3.1.0"
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
+description = "Blockchain, Rebuilt for Scale"
 repository = "https://github.com/anza-xyz/agave"
 homepage = "https://anza.xyz/"
 license = "Apache-2.0"
@@ -255,7 +256,6 @@ ed25519-dalek = "=1.0.1"
 ed25519-dalek-bip32 = "0.2.0"
 enum-iterator = "1.5.0"
 env_logger = "0.11.8"
-etcd-client = "0.11.1"
 fast-math = "0.1"
 fd-lock = "3.0.13"
 five8_const = "0.1.4"
@@ -278,14 +278,14 @@ humantime = "2.3.0"
 hyper = "0.14.32"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
-indexmap = "2.11.1"
+indexmap = "2.11.3"
 indicatif = "0.18.0"
 io-uring = "0.7.10"
 itertools = "0.12.1"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
-js-sys = "0.3.78"
+js-sys = "0.3.79"
 json5 = "0.4.1"
 jsonrpc-core = "18.0.0"
 jsonrpc-core-client = "18.0.0"
@@ -350,13 +350,13 @@ rolling-file = "0.2.0"
 rpassword = "7.4"
 rustls = { version = "0.23.31", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
-semver = "1.0.26"
+semver = "1.0.27"
 seqlock = "0.2.0"
-serde = "1.0.219" # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde = "1.0.224" # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
 serde-big-array = "0.5.1"
 serde_bytes = "0.11.17"
-serde_derive = "1.0.219" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
-serde_json = "1.0.143"
+serde_derive = "1.0.224" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde_json = "1.0.145"
 serde_with = { version = "3.14.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "2.0.0"
@@ -554,7 +554,7 @@ solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=3
 solana-validator-exit = "3.0.0"
 solana-version = { path = "version", version = "=3.1.0" }
 solana-vote = { path = "vote", version = "=3.1.0" }
-solana-vote-interface = "4.0.0"
+solana-vote-interface = "4.0.2"
 solana-vote-program = { path = "programs/vote", version = "=3.1.0", default-features = false }
 solana-votor-messages = { path = "votor-messages", version = "=3.1.0" }
 solana-wen-restart = { path = "wen-restart", version = "=3.1.0" }
