@@ -184,10 +184,10 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
     assert!(!db.accounts_index.contains(&pubkey));
     let storage_info = StorageSizeAndCountMap::default();
     let storage = db.get_storage_for_slot(slot0).unwrap();
-    
+
     // Set accounts index to startup mode to enable the startup_insert_only path
     db.accounts_index.set_startup(Startup::Startup);
-    
+
     let mut reader = append_vec::new_scan_accounts_reader();
     db.generate_index_for_slot(
         &mut reader,
@@ -196,7 +196,7 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
         storage.id(),
         &storage_info,
     );
-    
+
     // Return to normal mode
     db.accounts_index.set_startup(Startup::Normal);
 }
