@@ -925,13 +925,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let mut map = self.map_internal.write().unwrap();
 
         for (pubkey, new_entry) in entries {
-            // Extract slot before consuming new_entry
-            let (slot, account_info) = new_entry.into();
             let entry = map.entry(pubkey);
             let mut other_slot = None;
-            let already_existed = match entry {
+            let (slot, already_existed) = match entry {
                 Entry::Occupied(occupied) => {
                     // in cache, so merge into cache
+                    let (slot, account_info) = new_entry.into();
+                    
                     let slot_list = occupied.get().slot_list.read().unwrap();
 
                     // If there is only one entry in the slot list, it means that
@@ -964,16 +964,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         other_slot = None;
                     }
 
-                    true /* already existed */
+                    (slot, true /* already existed */)
                 }
                 Entry::Vacant(vacant) => {
                     // This batch function is only used for in-memory insertions (not using disk buckets).
                     // Skip disk lookup and directly insert new entry.
-                    let new_account_map_entry = PreAllocatedAccountMapEntry::new(slot, account_info, &self.storage, false)
-                        .into_account_map_entry(&self.storage);
+                    let slot = new_entry.slot();
+                    let new_account_map_entry = new_entry.into_account_map_entry(&self.storage);
                     assert!(new_account_map_entry.dirty());
                     vacant.insert(new_account_map_entry);
-                    false /* already existed */
+                    (slot, false /* already existed */)
                 }
             };
 
