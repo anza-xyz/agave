@@ -139,7 +139,7 @@ impl From<StakeIdentity> for QuicClientCertificate {
 /// [`ConnectionWorkersScheduler`] to distribute transactions to workers
 /// accordingly.
 #[async_trait]
-pub trait WorkersBroadcaster {
+pub trait WorkersBroadcaster: Send + Sync {
     /// Sends a `transaction_batch` to workers associated with the given
     /// `leaders` addresses.
     ///
@@ -147,6 +147,7 @@ pub trait WorkersBroadcaster {
     /// encounters an unrecoverable error. In this case, it will trigger
     /// stopping the scheduler and cleaning all the data.
     async fn send_to_workers(
+        &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
@@ -190,20 +191,20 @@ impl ConnectionWorkersScheduler {
         self,
         config: ConnectionWorkersSchedulerConfig,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
-        self.run_with_broadcaster::<NonblockingBroadcaster>(config)
+        self.run_with_broadcaster(config, Box::new(NonblockingBroadcaster))
             .await
     }
 
-    /// Starts the scheduler, which manages the distribution of transactions to
-    /// the network's upcoming leaders. `Broadcaster` allows to customize the
-    /// way transactions are send to the leaders, see [`WorkersBroadcaster`].
+    /// Starts the scheduler, which manages the distribution of transactions to the network's
+    /// upcoming leaders. `broadcaster` allows to customize the way transactions are send to the
+    /// leaders, see [`WorkersBroadcaster`].
     ///
-    /// Runs the main loop that handles worker scheduling and management for
-    /// connections. Returns [`SendTransactionStats`] or an error.
+    /// Runs the main loop that handles worker scheduling and management for connections. Returns
+    /// [`SendTransactionStats`] or an error.
     ///
-    /// Importantly, if some transactions were not delivered due to network
-    /// problems, they will not be retried when the problem is resolved.
-    pub async fn run_with_broadcaster<Broadcaster: WorkersBroadcaster>(
+    /// Importantly, if some transactions were not delivered due to network problems, they will not
+    /// be retried when the problem is resolved.
+    pub async fn run_with_broadcaster(
         self,
         ConnectionWorkersSchedulerConfig {
             bind,
@@ -214,6 +215,7 @@ impl ConnectionWorkersScheduler {
             max_reconnect_attempts,
             leaders_fanout,
         }: ConnectionWorkersSchedulerConfig,
+        broadcaster: Box<dyn WorkersBroadcaster>,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
         let ConnectionWorkersScheduler {
             mut leader_updater,
@@ -283,8 +285,9 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
-            if let Err(error) =
-                Broadcaster::send_to_workers(&mut workers, &send_leaders, transaction_batch).await
+            if let Err(error) = broadcaster
+                .send_to_workers(&mut workers, &send_leaders, transaction_batch)
+                .await
             {
                 last_error = Some(error);
                 break;
@@ -328,6 +331,7 @@ pub struct NonblockingBroadcaster;
 #[async_trait]
 impl WorkersBroadcaster for NonblockingBroadcaster {
     async fn send_to_workers(
+        &self,
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
