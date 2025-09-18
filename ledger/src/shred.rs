@@ -839,6 +839,14 @@ where
                 stats.shred_flags_bad_deserialize += 1;
                 return true;
             };
+
+            if shred_flags.contains(ShredFlags::DATA_COMPLETE_SHRED)
+                && index != fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32 - 1
+            {
+                stats.unexpected_data_complete_shred += 1;
+                return true;
+            }
+
             if shred_flags.contains(ShredFlags::LAST_SHRED_IN_SLOT)
                 && !check_last_data_shred_index(index)
             {
