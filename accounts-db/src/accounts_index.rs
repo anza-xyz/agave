@@ -15,9 +15,7 @@ use {
         rolling_bit_field::RollingBitField,
     },
     account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry},
-    in_mem_accounts_index::{
-        ExistedLocation, InMemAccountsIndex, InsertNewEntryResults, StartupStats,
-    },
+    in_mem_accounts_index::{InMemAccountsIndex, StartupStats},
     iter::{AccountsIndexPubkeyIterOrder, AccountsIndexPubkeyIterator},
     log::*,
     rand::{thread_rng, Rng},
@@ -1325,13 +1323,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // accumulated stats after inserting pubkeys into the index
         let mut num_did_not_exist = 0;
         let mut num_existed_in_mem = 0;
-        let mut num_existed_on_disk = 0;
 
         // Group items by bin first to enable batch processing
         let bins = self.bins();
         let random_bin_offset = thread_rng().gen_range(0..bins);
         let bin_calc = self.bin_calculator;
-        
+
         // Group items into bins using a Vec<Vec<usize>> where each inner Vec contains indices
         let mut bin_groups: Vec<Vec<usize>> = vec![Vec::new(); bins];
         for (index, (pubkey, _)) in items.iter().enumerate() {
@@ -1340,12 +1337,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }
 
         let storage = self.storage.storage.as_ref();
-        
+
         // Process each bin in randomized order to avoid lock contention
         for bin_offset in 0..bins {
             let actual_bin = (bin_offset + random_bin_offset) % bins;
             let indices = &bin_groups[actual_bin];
-            
+
             if indices.is_empty() {
                 continue;
             }
@@ -1364,13 +1361,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 // this is no longer the default case
                 let entries_iter = indices.iter().map(|&index| {
                     let (pubkey, account_info) = &items[index];
-                    let new_entry = PreAllocatedAccountMapEntry::new(slot, *account_info, storage, use_disk);
+                    let new_entry =
+                        PreAllocatedAccountMapEntry::new(slot, *account_info, storage, use_disk);
                     (*pubkey, new_entry)
                 });
-                
-                let (duplicates_from_in_memory, batch_num_did_not_exist, batch_num_existed_in_mem) = 
-                    r_account_maps.batch_insert_new_entries_if_missing_with_lock_in_mem(entries_iter);
-                
+
+                let (duplicates_from_in_memory, batch_num_did_not_exist, batch_num_existed_in_mem) =
+                    r_account_maps
+                        .batch_insert_new_entries_if_missing_with_lock_in_mem(entries_iter);
+
                 num_did_not_exist += batch_num_did_not_exist;
                 num_existed_in_mem += batch_num_existed_in_mem;
 
@@ -1384,9 +1383,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             insert_time.as_us(),
             InsertNewIfMissingIntoPrimaryIndexInfo {
                 count,
-                num_did_not_exist,
-                num_existed_in_mem,
-                num_existed_on_disk,
+                num_did_not_exist: num_did_not_exist as u64,
+                num_existed_in_mem: num_existed_in_mem as u64,
+                num_existed_on_disk: 0, // not tracked in this code path
             },
         )
     }
