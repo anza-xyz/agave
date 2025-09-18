@@ -429,7 +429,7 @@ impl SystemMonitorService {
         }
 
         fn normalize_err<E: std::fmt::Display>(key: &str, error: E) -> String {
-            format!("Failed to query value for {}: {}", key, error)
+            format!("Failed to query value for {key}: {error}")
         }
         INTERESTING_LIMITS
             .iter()
@@ -438,7 +438,7 @@ impl SystemMonitorService {
                     .map_err(|e| normalize_err(key, e))
                     .and_then(|val| val.parse::<i64>().map_err(|e| normalize_err(key, e)))
                     .unwrap_or_else(|e| {
-                        error!("{}", e);
+                        error!("{e}");
                         -1
                     });
                 (*key, interesting_limit, current_value)
@@ -498,7 +498,7 @@ impl SystemMonitorService {
                 }
                 *net_stats = Some(new_stats);
             }
-            Err(e) => warn!("read_net_stats: {}", e),
+            Err(e) => warn!("read_net_stats: {e}"),
         }
     }
 
@@ -833,7 +833,7 @@ impl SystemMonitorService {
                 }
                 *disk_stats = Some(new_stats);
             }
-            Err(e) => warn!("read_disk_stats: {}", e),
+            Err(e) => warn!("read_disk_stats: {e}"),
         }
     }
 

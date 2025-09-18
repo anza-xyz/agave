@@ -192,7 +192,7 @@ impl VoteSimulator {
             tower,
             &mut self.progress,
             &VoteTracker::default(),
-            &ClusterSlots::default(),
+            &ClusterSlots::default_for_tests(),
             &self.bank_forks,
             &mut self.tbft_structs.heaviest_subtree_fork_choice,
             &mut self.latest_validator_votes_for_frozen_banks,

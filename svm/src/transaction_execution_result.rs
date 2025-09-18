@@ -1,11 +1,6 @@
-// Re-exported since these have moved to `solana_message`.
-#[deprecated(
-    since = "1.18.0",
-    note = "Please use `solana_message::inner_instruction` types instead"
-)]
-pub use solana_message::inner_instruction::{InnerInstruction, InnerInstructionsList};
 use {
     crate::account_loader::LoadedTransaction,
+    solana_message::inner_instruction::InnerInstructionsList,
     solana_program_runtime::loaded_programs::ProgramCacheEntry,
     solana_pubkey::Pubkey,
     solana_transaction_context::TransactionReturnData,

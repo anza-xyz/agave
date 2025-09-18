@@ -13,7 +13,7 @@ use {
     },
 };
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct AccountSecondaryIndexes {
     pub keys: Option<AccountSecondaryIndexesIncludeExclude>,
     pub indexes: HashSet<AccountIndex>,

@@ -1,4 +1,5 @@
 use {
+    ahash::{HashMap, HashMapExt as _},
     log::*,
     rand::{thread_rng, Rng},
     serde::Serialize,
@@ -6,7 +7,7 @@ use {
     solana_clock::{Slot, MAX_RECENT_BLOCKHASHES},
     solana_hash::Hash,
     std::{
-        collections::{hash_map::Entry, HashMap, HashSet},
+        collections::{hash_map::Entry, HashSet},
         sync::{Arc, Mutex},
     },
 };
@@ -16,7 +17,7 @@ const CACHED_KEY_SIZE: usize = 20;
 
 // Store forks in a single chunk of memory to avoid another lookup.
 pub type ForkStatus<T> = Vec<(Slot, T)>;
-type KeySlice = [u8; CACHED_KEY_SIZE];
+pub(crate) type KeySlice = [u8; CACHED_KEY_SIZE];
 type KeyMap<T> = HashMap<KeySlice, ForkStatus<T>>;
 // Map of Hash and status
 pub type Status<T> = Arc<Mutex<HashMap<Hash, (usize, Vec<(KeySlice, T)>)>>>;

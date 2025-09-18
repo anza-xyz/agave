@@ -82,7 +82,7 @@ use {
         sanitized::{MessageHash, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
         versioned::VersionedTransaction,
     },
-    solana_transaction_context::TransactionAccount,
+    solana_transaction_context::transaction_accounts::TransactionAccount,
     solana_transaction_error::TransactionError,
     solana_transaction_status::{
         map_inner_instructions, BlockEncodingOptions, ConfirmedBlock,
@@ -159,7 +159,7 @@ fn is_finalized(
         && (blockstore.is_root(slot) || bank.status_cache_ancestors().contains(&slot))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct JsonRpcConfig {
     pub enable_rpc_transaction_history: bool,
     pub enable_extended_tx_metadata_storage: bool,
@@ -211,7 +211,7 @@ impl JsonRpcConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RpcBigtableConfig {
     pub enable_bigtable_ledger_upload: bool,
     pub bigtable_instance_name: String,
@@ -494,7 +494,6 @@ impl JsonRpcRequestProcessor {
         );
 
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
         let slot = bank.slot();
         let optimistically_confirmed_bank =
             Arc::new(RwLock::new(OptimisticallyConfirmedBank { bank }));
@@ -514,7 +513,6 @@ impl JsonRpcRequestProcessor {
                 blockstore,
                 0,
                 exit,
-                startup_verification_complete,
             )),
             cluster_info,
             genesis_hash,
@@ -3454,7 +3452,7 @@ pub mod rpc_full {
     use {
         super::*,
         solana_message::{SanitizedVersionedMessage, VersionedMessage},
-        solana_transaction_status::parse_ui_inner_instructions,
+        solana_transaction_status::{parse_ui_inner_instructions, UiLoadedAddresses},
     };
     #[rpc]
     pub trait Full {
@@ -3891,6 +3889,11 @@ pub mod rpc_full {
                     loaded_accounts_data_size,
                     return_data,
                     inner_instructions: _, // Always `None` due to `enable_cpi_recording = false`
+                    fee,
+                    pre_balances: _,
+                    post_balances: _,
+                    pre_token_balances: _,
+                    post_token_balances: _,
                 } = preflight_bank.simulate_transaction(&transaction, false)
                 {
                     match err {
@@ -3912,6 +3915,12 @@ pub mod rpc_full {
                             return_data: return_data.map(|return_data| return_data.into()),
                             inner_instructions: None,
                             replacement_blockhash: None,
+                            fee,
+                            pre_balances: None,
+                            post_balances: None,
+                            pre_token_balances: None,
+                            post_token_balances: None,
+                            loaded_addresses: None,
                         },
                     }
                     .into());
@@ -3993,6 +4002,11 @@ pub mod rpc_full {
                 loaded_accounts_data_size,
                 return_data,
                 inner_instructions,
+                fee,
+                pre_balances,
+                post_balances,
+                pre_token_balances,
+                post_token_balances,
             } = bank.simulate_transaction(&transaction, enable_cpi_recording);
 
             let account_keys = transaction.message().account_keys();
@@ -4061,6 +4075,16 @@ pub mod rpc_full {
                     return_data: return_data.map(|return_data| return_data.into()),
                     inner_instructions,
                     replacement_blockhash: blockhash,
+                    fee,
+                    pre_balances,
+                    post_balances,
+                    pre_token_balances: pre_token_balances.map(|balances| {
+                        balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
+                    }),
+                    post_token_balances: post_token_balances.map(|balances| {
+                        balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
+                    }),
+                    loaded_addresses: Some(UiLoadedAddresses::from(&transaction.get_loaded_addresses())),
                 },
             ))
         }
@@ -4546,7 +4570,7 @@ pub mod tests {
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             TransactionDetails,
         },
-        solana_vote_interface::state::VoteState,
+        solana_vote_interface::state::VoteStateV3,
         solana_vote_program::{
             vote_instruction,
             vote_state::{self, TowerSync, VoteInit, VoteStateVersions, MAX_LOCKOUT_HISTORY},
@@ -4649,15 +4673,9 @@ pub mod tests {
         ic_logger_msg!(log_collector, "I am logging from a builtin program!");
         ic_logger_msg!(log_collector, "I am about to CPI to System!");
 
-        let from_pubkey = *transaction_context.get_key_of_account_at_index(
-            instruction_context.get_index_of_instruction_account_in_transaction(0)?,
-        )?;
-        let to_pubkey = *transaction_context.get_key_of_account_at_index(
-            instruction_context.get_index_of_instruction_account_in_transaction(1)?,
-        )?;
-        let owner_pubkey = *transaction_context.get_key_of_account_at_index(
-            instruction_context.get_index_of_instruction_account_in_transaction(2)?,
-        )?;
+        let from_pubkey = *instruction_context.get_key_of_instruction_account(0)?;
+        let to_pubkey = *instruction_context.get_key_of_instruction_account(1)?;
+        let owner_pubkey = *instruction_context.get_key_of_instruction_account(2)?;
 
         invoke_context.native_invoke(
             system_instruction::create_account(
@@ -5006,10 +5024,10 @@ pub mod tests {
             bank
         }
 
-        fn store_vote_account(&self, vote_pubkey: &Pubkey, vote_state: VoteState) {
+        fn store_vote_account(&self, vote_pubkey: &Pubkey, vote_state: VoteStateV3) {
             let bank = self.working_bank();
-            let versioned = VoteStateVersions::new_current(vote_state);
-            let space = VoteState::size_of();
+            let versioned = VoteStateVersions::new_v3(vote_state);
+            let space = VoteStateV3::size_of();
             let balance = bank.get_minimum_balance_for_rent_exemption(space);
             let mut vote_account =
                 AccountSharedData::new(balance, space, &solana_vote_program::id());
@@ -6016,6 +6034,12 @@ pub mod tests {
                     "err":null,
                     "innerInstructions": null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 5000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1],
+                    "postBalances": [999982200, 12800, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6103,6 +6127,12 @@ pub mod tests {
                     "err":null,
                     "innerInstructions":null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 5000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1],
+                    "postBalances": [999982200, 12800, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6134,6 +6164,12 @@ pub mod tests {
                     "err":null,
                     "innerInstructions":null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 5000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1],
+                    "postBalances": [999982200, 12800, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6189,6 +6225,12 @@ pub mod tests {
                     "accounts":null,
                     "innerInstructions":null,
                     "loadedAccountsDataSize":0,
+                    "fee": null,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1],
+                    "postBalances": [1000000000, 0, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[],
                     "replacementBlockhash": null,
                     "returnData": null,
@@ -6223,6 +6265,12 @@ pub mod tests {
                     "err":null,
                     "innerInstructions":null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 5000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1],
+                    "postBalances": [999982200, 12800, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6374,6 +6422,12 @@ pub mod tests {
                     "err": null,
                     "innerInstructions": null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 5000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 29300, 1],
+                    "postBalances": [999994999, 29301, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6453,6 +6507,12 @@ pub mod tests {
                     "err":null,
                     "innerInstructions": null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 10000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1, 0, 1],
+                    "postBalances": [999977200, 12800, 1, 0, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program TestProgram11111111111111111111111111111111 invoke [1]",
                         "I am logging from a builtin program!",
@@ -6496,6 +6556,12 @@ pub mod tests {
                     "err":null,
                     "innerInstructions": null,
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 10000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1, 0, 1],
+                    "postBalances": [999977200, 12800, 1, 0, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program TestProgram11111111111111111111111111111111 invoke [1]",
                         "I am logging from a builtin program!",
@@ -6560,6 +6626,12 @@ pub mod tests {
                         }
                     ],
                     "loadedAccountsDataSize": loaded_accounts_data_size,
+                    "fee": 10000,
+                    "loadedAddresses": {"readonly": [], "writable": []},
+                    "preBalances": [1000000000, 0, 1, 0, 1],
+                    "postBalances": [999977200, 12800, 1, 0, 1],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
                     "logs":[
                         "Program TestProgram11111111111111111111111111111111 invoke [1]",
                         "I am logging from a builtin program!",
@@ -6820,7 +6892,7 @@ pub mod tests {
         assert_eq!(
             res,
             Some(
-                r#"{"jsonrpc":"2.0","error":{"code":-32002,"message":"Transaction simulation failed: Blockhash not found","data":{"accounts":null,"err":"BlockhashNotFound","innerInstructions":null,"loadedAccountsDataSize":0,"logs":[],"replacementBlockhash":null,"returnData":null,"unitsConsumed":0}},"id":1}"#.to_string(),
+                r#"{"jsonrpc":"2.0","error":{"code":-32002,"message":"Transaction simulation failed: Blockhash not found","data":{"accounts":null,"err":"BlockhashNotFound","fee":null,"innerInstructions":null,"loadedAccountsDataSize":0,"loadedAddresses":null,"logs":[],"postBalances":null,"postTokenBalances":null,"preBalances":null,"preTokenBalances":null,"replacementBlockhash":null,"returnData":null,"unitsConsumed":0}},"id":1}"#.to_string(),
             )
         );
 
@@ -7571,7 +7643,7 @@ pub mod tests {
 
         // Create a vote account with no stake.
         let alice_vote_keypair = Keypair::new();
-        let alice_vote_state = VoteState::new(
+        let alice_vote_state = VoteStateV3::new(
             &VoteInit {
                 node_pubkey: mint_keypair.pubkey(),
                 authorized_voter: alice_vote_keypair.pubkey(),
@@ -8809,7 +8881,7 @@ pub mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::OptimisticallyConfirmed(2),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
@@ -8833,7 +8905,7 @@ pub mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::OptimisticallyConfirmed(1),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
@@ -8857,7 +8929,7 @@ pub mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::OptimisticallyConfirmed(3),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
@@ -8882,7 +8954,7 @@ pub mod tests {
         OptimisticallyConfirmedBankTracker::process_notification(
             (
                 BankNotification::Frozen(bank3),
-                None, /* no work sequence */
+                None, /* no dependency work */
             ),
             &bank_forks,
             &optimistically_confirmed_bank,

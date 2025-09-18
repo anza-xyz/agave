@@ -20,7 +20,7 @@ use {
     solana_inflation::Inflation,
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_logger::redirect_stderr_to_file,
-    solana_native_token::sol_to_lamports,
+    solana_native_token::sol_str_to_lamports,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{
@@ -324,7 +324,10 @@ fn main() {
         None
     };
 
-    let faucet_lamports = sol_to_lamports(value_of(&matches, "faucet_sol").unwrap());
+    let faucet_lamports = matches
+        .value_of("faucet_sol")
+        .and_then(sol_str_to_lamports)
+        .unwrap();
     let faucet_keypair_file = ledger_path.join("faucet-keypair.json");
     if !faucet_keypair_file.exists() {
         write_keypair_file(&Keypair::new(), faucet_keypair_file.to_str().unwrap()).unwrap_or_else(
@@ -351,12 +354,12 @@ fn main() {
     let faucet_pubkey = faucet_keypair.pubkey();
 
     let faucet_time_slice_secs = value_t_or_exit!(matches, "faucet_time_slice_secs", u64);
-    let faucet_per_time_cap = value_t!(matches, "faucet_per_time_sol_cap", f64)
-        .ok()
-        .map(sol_to_lamports);
-    let faucet_per_request_cap = value_t!(matches, "faucet_per_request_sol_cap", f64)
-        .ok()
-        .map(sol_to_lamports);
+    let faucet_per_time_cap = matches
+        .value_of("faucet_per_time_sol_cap")
+        .and_then(sol_str_to_lamports);
+    let faucet_per_request_cap = matches
+        .value_of("faucet_per_request_sol_cap")
+        .and_then(sol_str_to_lamports);
 
     let (sender, receiver) = unbounded();
     run_local_faucet_with_port(

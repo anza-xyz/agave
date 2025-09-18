@@ -20,7 +20,7 @@ use {
     solana_svm_log_collector::{ic_logger_msg, LogCollector},
     solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::sync::Arc,
-    solana_transaction_context::{BorrowedAccount, InstructionContext},
+    solana_transaction_context::{BorrowedInstructionAccount, InstructionContext},
     std::{cell::RefCell, rc::Rc},
 };
 
@@ -58,7 +58,7 @@ fn get_state_mut(data: &mut [u8]) -> Result<&mut LoaderV4State, InstructionError
 fn check_program_account(
     log_collector: &Option<Rc<RefCell<LogCollector>>>,
     instruction_context: &InstructionContext,
-    program: &BorrowedAccount,
+    program: &BorrowedInstructionAccount,
     authority_address: &Pubkey,
 ) -> Result<LoaderV4State, InstructionError> {
     if !loader_v4::check_id(program.get_owner()) {
@@ -93,13 +93,11 @@ fn process_instruction_write(
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let mut program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let mut program = instruction_context.try_borrow_instruction_account(0)?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
     let state = check_program_account(
         &log_collector,
-        instruction_context,
+        &instruction_context,
         &program,
         authority_address,
     )?;
@@ -128,15 +126,12 @@ fn process_instruction_copy(
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let mut program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
-    let source_program =
-        instruction_context.try_borrow_instruction_account(transaction_context, 2)?;
+    let mut program = instruction_context.try_borrow_instruction_account(0)?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
+    let source_program = instruction_context.try_borrow_instruction_account(2)?;
     let state = check_program_account(
         &log_collector,
-        instruction_context,
+        &instruction_context,
         &program,
         authority_address,
     )?;
@@ -185,10 +180,8 @@ fn process_instruction_set_program_length(
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let mut program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let mut program = instruction_context.try_borrow_instruction_account(0)?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
     let is_initialization = program.get_data().len() < LoaderV4State::program_data_offset();
     if is_initialization {
         if !loader_v4::check_id(program.get_owner()) {
@@ -206,7 +199,7 @@ fn process_instruction_set_program_length(
     } else {
         let state = check_program_account(
             &log_collector,
-            instruction_context,
+            &instruction_context,
             &program,
             authority_address,
         )?;
@@ -232,9 +225,7 @@ fn process_instruction_set_program_length(
             return Err(InstructionError::InsufficientFunds);
         }
         std::cmp::Ordering::Greater => {
-            let recipient = instruction_context
-                .try_borrow_instruction_account(transaction_context, 2)
-                .ok();
+            let recipient = instruction_context.try_borrow_instruction_account(2).ok();
             if let Some(mut recipient) = recipient {
                 if !instruction_context.is_instruction_account_writable(2)? {
                     ic_logger_msg!(log_collector, "Recipient is not writeable");
@@ -274,13 +265,11 @@ fn process_instruction_deploy(invoke_context: &mut InvokeContext) -> Result<(), 
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let mut program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let mut program = instruction_context.try_borrow_instruction_account(0)?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
     let state = check_program_account(
         &log_collector,
-        instruction_context,
+        &instruction_context,
         &program,
         authority_address,
     )?;
@@ -324,14 +313,12 @@ fn process_instruction_retract(invoke_context: &mut InvokeContext) -> Result<(),
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let mut program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+    let mut program = instruction_context.try_borrow_instruction_account(0)?;
 
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
     let state = check_program_account(
         &log_collector,
-        instruction_context,
+        &instruction_context,
         &program,
         authority_address,
     )?;
@@ -368,16 +355,12 @@ fn process_instruction_transfer_authority(
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let mut program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
-    let new_authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(2)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let mut program = instruction_context.try_borrow_instruction_account(0)?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
+    let new_authority_address = instruction_context.get_key_of_instruction_account(2)?;
     let state = check_program_account(
         &log_collector,
-        instruction_context,
+        &instruction_context,
         &program,
         authority_address,
     )?;
@@ -400,13 +383,11 @@ fn process_instruction_finalize(
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-    let authority_address = instruction_context
-        .get_index_of_instruction_account_in_transaction(1)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let program = instruction_context.try_borrow_instruction_account(0)?;
+    let authority_address = instruction_context.get_key_of_instruction_account(1)?;
     let state = check_program_account(
         &log_collector,
-        instruction_context,
+        &instruction_context,
         &program,
         authority_address,
     )?;
@@ -415,8 +396,7 @@ fn process_instruction_finalize(
         return Err(InstructionError::InvalidArgument);
     }
     drop(program);
-    let next_version =
-        instruction_context.try_borrow_instruction_account(transaction_context, 2)?;
+    let next_version = instruction_context.try_borrow_instruction_account(2)?;
     if !loader_v4::check_id(next_version.get_owner()) {
         ic_logger_msg!(log_collector, "Next version is not owned by loader");
         return Err(InstructionError::InvalidAccountOwner);
@@ -432,7 +412,7 @@ fn process_instruction_finalize(
     }
     let address_of_next_version = *next_version.get_key();
     drop(next_version);
-    let mut program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+    let mut program = instruction_context.try_borrow_instruction_account(0)?;
     let state = get_state_mut(program.get_data_mut()?)?;
     state.authority_address_or_next_version = address_of_next_version;
     state.status = LoaderV4Status::Finalized;
@@ -461,7 +441,7 @@ fn process_instruction_inner(
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
-    let program_id = instruction_context.get_program_key(transaction_context)?;
+    let program_id = instruction_context.get_program_key()?;
     if loader_v4::check_id(program_id) {
         invoke_context.consume_checked(DEFAULT_COMPUTE_UNITS)?;
         match limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)? {
@@ -487,18 +467,16 @@ fn process_instruction_inner(
         }
         .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
     } else {
-        let program = instruction_context.try_borrow_program_account(transaction_context)?;
         let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
         let loaded_program = invoke_context
             .program_cache_for_tx_batch
-            .find(program.get_key())
+            .find(program_id)
             .ok_or_else(|| {
                 ic_logger_msg!(log_collector, "Program is not cached");
                 InstructionError::UnsupportedProgramId
             })?;
         get_or_create_executor_time.stop();
         invoke_context.timings.get_or_create_executor_us += get_or_create_executor_time.as_us();
-        drop(program);
         match &loaded_program.program {
             ProgramCacheEntryType::FailedVerification(_)
             | ProgramCacheEntryType::Closed
@@ -640,7 +618,7 @@ mod tests {
             &instruction,
             transaction_accounts.clone(),
             &[],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Error: Missing authority account
@@ -649,7 +627,7 @@ mod tests {
             &instruction,
             transaction_accounts.clone(),
             &[(0, false, true)],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Error: Program not owned by loader
@@ -1450,7 +1428,7 @@ mod tests {
             &bincode::serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
             transaction_accounts.clone(),
             &[(0, false, true), (3, true, false)],
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::MissingAccount),
         );
 
         // Error: Program is uninitialized

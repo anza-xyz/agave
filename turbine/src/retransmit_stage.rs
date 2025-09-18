@@ -4,7 +4,7 @@ use {
     crate::{
         addr_cache::AddrCache,
         cluster_nodes::{self, ClusterNodes, ClusterNodesCache, Error, MAX_NUM_TURBINE_HOPS},
-        xdp::{XdpSender, XdpShredPayload},
+        xdp::XdpSender,
     },
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvError, TryRecvError},
@@ -163,7 +163,7 @@ impl RetransmitStats {
                 i64
             ),
         );
-        // slot_stats are submited at a different cadence.
+        // slot_stats are submitted at a different cadence.
         let old = std::mem::replace(self, Self::new(Instant::now()));
         self.slot_stats = old.slot_stats;
     }
@@ -217,6 +217,58 @@ impl<const K: usize> ShredDeduper<K> {
 enum RetransmitSocket<'a> {
     Socket(&'a UdpSocket),
     Xdp(&'a XdpSender),
+    Multihomed {
+        sockets: &'a [UdpSocket],
+        interface_offset: usize,
+        sockets_per_interface: usize,
+        thread_index: usize,
+    },
+}
+
+impl<'a> RetransmitSocket<'a> {
+    pub fn new(
+        thread_index: usize,
+        retransmit_sockets: &'a [UdpSocket],
+        xdp_sender: Option<&'a XdpSender>,
+        cluster_info: &'a ClusterInfo,
+    ) -> Self {
+        if let Some(xdp_sender) = xdp_sender {
+            RetransmitSocket::Xdp(xdp_sender)
+        } else if cluster_info.bind_ip_addrs().multihoming_enabled() {
+            let sockets_per_interface =
+                retransmit_sockets.len() / cluster_info.bind_ip_addrs().len();
+            let active_index = cluster_info.bind_ip_addrs().active_index();
+            let interface_offset = sockets_per_interface.saturating_mul(active_index);
+
+            RetransmitSocket::Multihomed {
+                sockets: retransmit_sockets,
+                interface_offset,
+                sockets_per_interface,
+                thread_index,
+            }
+        } else {
+            let socket: &UdpSocket = &retransmit_sockets[thread_index % retransmit_sockets.len()];
+            RetransmitSocket::Socket(socket)
+        }
+    }
+
+    pub fn get_socket(&self) -> &'a UdpSocket {
+        match self {
+            RetransmitSocket::Socket(socket) => socket,
+            RetransmitSocket::Multihomed {
+                sockets,
+                interface_offset,
+                sockets_per_interface,
+                thread_index,
+            } => {
+                let socket_index = interface_offset + (thread_index % sockets_per_interface);
+                &sockets[socket_index]
+            }
+            RetransmitSocket::Xdp(_) => {
+                unreachable!("get_socket() should not be called for XDP variants")
+            }
+        }
+    }
 }
 
 /// The number of shreds to pull from the retransmit_receiver at a time.
@@ -342,12 +394,8 @@ fn retransmit(
         )
     };
 
-    let retransmit_socket = |index| {
-        let socket = xdp_sender.map(RetransmitSocket::Xdp).unwrap_or_else(|| {
-            RetransmitSocket::Socket(&retransmit_sockets[index % retransmit_sockets.len()])
-        });
-        socket
-    };
+    let retransmit_socket =
+        |index: usize| RetransmitSocket::new(index, retransmit_sockets, xdp_sender, cluster_info);
 
     let slot_stats = if num_shreds < PAR_ITER_MIN_NUM_SHREDS {
         stats.num_small_batches += 1;
@@ -420,7 +468,7 @@ fn retransmit_shred(
     let num_addrs = addrs.len();
     let num_nodes = match cluster_nodes::get_broadcast_protocol(&key) {
         Protocol::QUIC => {
-            let shred = Bytes::from(shred::Payload::unwrap_or_clone(shred));
+            let shred = shred.bytes;
             addrs
                 .iter()
                 .filter_map(|&addr| quic_endpoint_sender.try_send((addr, shred.clone())).ok())
@@ -430,11 +478,7 @@ fn retransmit_shred(
             RetransmitSocket::Xdp(sender) => {
                 let mut sent = num_addrs;
                 if num_addrs > 0 {
-                    if let Err(e) = sender.try_send(
-                        key.index() as usize,
-                        addrs.to_vec(),
-                        XdpShredPayload::Owned(shred),
-                    ) {
+                    if let Err(e) = sender.try_send(key.index() as usize, addrs.to_vec(), shred) {
                         log::warn!("xdp channel full: {e:?}");
                         stats
                             .num_shreds_dropped_xdp_full
@@ -444,16 +488,19 @@ fn retransmit_shred(
                 }
                 sent
             }
-            RetransmitSocket::Socket(socket) => match multi_target_send(socket, shred, &addrs) {
-                Ok(()) => num_addrs,
-                Err(SendPktsError::IoError(ioerr, num_failed)) => {
-                    error!(
-                        "retransmit_to multi_target_send error: {ioerr:?}, \
-                         {num_failed}/{num_addrs} packets failed"
-                    );
-                    num_addrs - num_failed
+            RetransmitSocket::Socket(_) | RetransmitSocket::Multihomed { .. } => {
+                let socket = socket.get_socket();
+                match multi_target_send(socket, shred, &addrs) {
+                    Ok(()) => num_addrs,
+                    Err(SendPktsError::IoError(ioerr, num_failed)) => {
+                        error!(
+                            "retransmit_to multi_target_send error: {ioerr:?}, \
+                             {num_failed}/{num_addrs} packets failed"
+                        );
+                        num_addrs - num_failed
+                    }
                 }
-            },
+            }
         },
     };
     retransmit_time.stop();
@@ -853,7 +900,7 @@ mod tests {
         bs58::decode(KEYPAIR)
             .into_vec()
             .as_deref()
-            .map(Keypair::from_bytes)
+            .map(Keypair::try_from)
             .unwrap()
             .unwrap()
     }
@@ -906,7 +953,7 @@ mod tests {
         // first shred passed through
         assert!(
             !shred_deduper.dedup(shred_dup.id(), shred_dup.payload(), MAX_DUPLICATE_COUNT),
-            "First time seeing shred X with differnt parent slot (3 instead of 4) => Not dup \
+            "First time seeing shred X with different parent slot (3 instead of 4) => Not dup \
              because common header is unique & shred ID only seen once"
         );
         // then blocked

@@ -20,7 +20,6 @@ pub struct RpcHealth {
     blockstore: Arc<Blockstore>,
     health_check_slot_distance: u64,
     override_health_check: Arc<AtomicBool>,
-    startup_verification_complete: Arc<AtomicBool>,
     #[cfg(test)]
     stub_health_status: std::sync::RwLock<Option<RpcHealthStatus>>,
 }
@@ -31,14 +30,12 @@ impl RpcHealth {
         blockstore: Arc<Blockstore>,
         health_check_slot_distance: u64,
         override_health_check: Arc<AtomicBool>,
-        startup_verification_complete: Arc<AtomicBool>,
     ) -> Self {
         Self {
             optimistically_confirmed_bank,
             blockstore,
             health_check_slot_distance,
             override_health_check,
-            startup_verification_complete,
             #[cfg(test)]
             stub_health_status: std::sync::RwLock::new(None),
         }
@@ -54,9 +51,6 @@ impl RpcHealth {
 
         if self.override_health_check.load(Ordering::Relaxed) {
             return RpcHealthStatus::Ok;
-        }
-        if !self.startup_verification_complete.load(Ordering::Acquire) {
-            return RpcHealthStatus::Unknown;
         }
 
         // A node can observe votes by both replaying blocks and observing gossip.
@@ -122,7 +116,6 @@ impl RpcHealth {
             blockstore,
             42,
             Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(true)),
         ))
     }
 
@@ -160,25 +153,19 @@ pub mod tests {
 
         let health_check_slot_distance = 10;
         let override_health_check = Arc::new(AtomicBool::new(true));
-        let startup_verification_complete = Arc::clone(bank0.get_startup_verification_complete());
         let health = RpcHealth::new(
             optimistically_confirmed_bank.clone(),
             blockstore.clone(),
             health_check_slot_distance,
             override_health_check.clone(),
-            startup_verification_complete,
         );
 
         // Override health check set to true - status is ok
         assert_eq!(health.check(), RpcHealthStatus::Ok);
 
-        // Remove the override - status now unknown with incomplete startup verification
-        override_health_check.store(false, Ordering::Relaxed);
-        assert_eq!(health.check(), RpcHealthStatus::Unknown);
-
-        // Mark startup verification complete - status still unknown as no slots have been
+        // Remove the override - status now unknown as no slots have been
         // optimistically confirmed yet
-        bank0.set_initial_accounts_hash_verification_completed();
+        override_health_check.store(false, Ordering::Relaxed);
         assert_eq!(health.check(), RpcHealthStatus::Unknown);
 
         // Mark slot 15 as being optimistically confirmed in the Blockstore, this could

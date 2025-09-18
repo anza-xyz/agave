@@ -60,12 +60,6 @@ pub struct GeyserPluginManager {
 }
 
 impl GeyserPluginManager {
-    pub fn new() -> Self {
-        GeyserPluginManager {
-            plugins: Vec::default(),
-        }
-    }
-
     /// Unload all plugins and loaded plugin libraries, making sure to fire
     /// their `on_plugin_unload()` methods so they can do any necessary cleanup.
     pub fn unload(&mut self) {
@@ -497,7 +491,7 @@ mod tests {
     #[test]
     fn test_geyser_reload() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
+        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::default()));
 
         // No plugins are loaded, this should fail
         let mut plugin_manager_lock = plugin_manager.write().unwrap();
@@ -536,7 +530,7 @@ mod tests {
     #[test]
     fn test_plugin_list() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
+        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::default()));
         let mut plugin_manager_lock = plugin_manager.write().unwrap();
 
         // Load two plugins
@@ -558,7 +552,7 @@ mod tests {
     #[test]
     fn test_plugin_load_unload() {
         // Initialize empty manager
-        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
+        let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::default()));
         let mut plugin_manager_lock = plugin_manager.write().unwrap();
 
         // Load rpc call

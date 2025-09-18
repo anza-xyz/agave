@@ -39,7 +39,9 @@ impl<T: IndexValue> AccountMapEntry<T> {
     }
 
     pub fn addref(&self) {
-        self.ref_count.fetch_add(1, Ordering::Release);
+        let previous = self.ref_count.fetch_add(1, Ordering::Release);
+        // ensure ref count does not overflow
+        assert_ne!(previous, RefCount::MAX);
         self.set_dirty(true);
     }
 
@@ -52,7 +54,7 @@ impl<T: IndexValue> AccountMapEntry<T> {
 
     /// decrement the ref count by the passed in amount
     /// return the refcount prior to the ref count change
-    pub fn unref_by_count(&self, count: u64) -> RefCount {
+    pub fn unref_by_count(&self, count: RefCount) -> RefCount {
         let previous = self.ref_count.fetch_sub(count, Ordering::Release);
         self.set_dirty(true);
         assert!(
@@ -109,7 +111,7 @@ pub struct AccountMapEntryMeta {
 
 impl AccountMapEntryMeta {
     pub fn new_dirty<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(
-        storage: &Arc<BucketMapHolder<T, U>>,
+        storage: &BucketMapHolder<T, U>,
         is_cached: bool,
     ) -> Self {
         AccountMapEntryMeta {
@@ -118,7 +120,7 @@ impl AccountMapEntryMeta {
         }
     }
     pub fn new_clean<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(
-        storage: &Arc<BucketMapHolder<T, U>>,
+        storage: &BucketMapHolder<T, U>,
     ) -> Self {
         AccountMapEntryMeta {
             dirty: AtomicBool::new(false),
@@ -162,7 +164,7 @@ impl<T: IndexValue> PreAllocatedAccountMapEntry<T> {
     pub fn new<U: DiskIndexValue + From<T> + Into<T>>(
         slot: Slot,
         account_info: T,
-        storage: &Arc<BucketMapHolder<T, U>>,
+        storage: &BucketMapHolder<T, U>,
         store_raw: bool,
     ) -> PreAllocatedAccountMapEntry<T> {
         if store_raw {
@@ -175,13 +177,13 @@ impl<T: IndexValue> PreAllocatedAccountMapEntry<T> {
     fn allocate<U: DiskIndexValue + From<T> + Into<T>>(
         slot: Slot,
         account_info: T,
-        storage: &Arc<BucketMapHolder<T, U>>,
+        storage: &BucketMapHolder<T, U>,
     ) -> Arc<AccountMapEntry<T>> {
         let is_cached = account_info.is_cached();
         let ref_count = RefCount::from(!is_cached);
         let meta = AccountMapEntryMeta::new_dirty(storage, is_cached);
         Arc::new(AccountMapEntry::new(
-            vec![(slot, account_info)],
+            SlotList::from([(slot, account_info)]),
             ref_count,
             meta,
         ))
@@ -189,7 +191,7 @@ impl<T: IndexValue> PreAllocatedAccountMapEntry<T> {
 
     pub fn into_account_map_entry<U: DiskIndexValue + From<T> + Into<T>>(
         self,
-        storage: &Arc<BucketMapHolder<T, U>>,
+        storage: &BucketMapHolder<T, U>,
     ) -> Arc<AccountMapEntry<T>> {
         match self {
             Self::Entry(entry) => entry,

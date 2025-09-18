@@ -438,9 +438,9 @@ fn get_target(
     } else {
         info!("************ NODE ***********");
         for node in nodes {
-            info!("{:?}", node);
+            info!("{node:?}");
         }
-        info!("ADDR = {}", entrypoint_addr);
+        info!("ADDR = {entrypoint_addr}");
 
         for node in nodes {
             if node.gossip() == Some(entrypoint_addr) {
@@ -652,7 +652,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
         && params.transaction_params.unique_transactions
     {
         let (_, target_addr) = target.expect("should have target");
-        info!("Targeting {}", target_addr);
+        info!("Targeting {target_addr}");
         run_dos_transactions(
             target_addr,
             iterations,
@@ -664,7 +664,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
         );
     } else {
         let (target_id, target_addr) = target.expect("should have target");
-        info!("Targeting {}", target_addr);
+        info!("Targeting {target_addr}");
         let mut data = match params.data_type {
             DataType::RepairHighest => {
                 let slot = 100;
@@ -700,7 +700,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
             }
             DataType::Transaction => {
                 let tp = params.transaction_params;
-                info!("{:?}", tp);
+                info!("{tp:?}");
 
                 let valid_blockhash = tp.valid_blockhash;
                 let payers: Vec<Option<Keypair>> =
@@ -720,7 +720,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
 
                 let mut transaction_generator = TransactionGenerator::new(tp);
                 let tx = transaction_generator.generate(payer, keypairs_chunk, client.as_ref());
-                info!("{:?}", tx);
+                info!("{tx:?}");
                 bincode::serialize(&tx).unwrap()
             }
             _ => panic!("Unsupported data_type detected"),
@@ -768,7 +768,7 @@ fn main() {
         cmd_params.shred_version = Some(
             solana_net_utils::get_cluster_shred_version(&cmd_params.entrypoint_addr)
                 .unwrap_or_else(|err| {
-                    eprintln!("Failed to get shred version: {}", err);
+                    eprintln!("Failed to get shred version: {err}");
                     exit(1);
                 }),
         );
@@ -831,7 +831,7 @@ pub mod test {
     use {
         super::*,
         solana_core::validator::ValidatorConfig,
-        solana_faucet::faucet::run_local_faucet,
+        solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
         solana_local_cluster::{
             cluster::Cluster,
             local_cluster::{ClusterConfig, LocalCluster},
@@ -1086,7 +1086,7 @@ pub mod test {
         // 1. Create faucet thread
         let faucet_keypair = Keypair::new();
         let faucet_pubkey = faucet_keypair.pubkey();
-        let faucet_addr = run_local_faucet(faucet_keypair, None);
+        let faucet_addr = run_local_faucet_with_unique_port_for_tests(faucet_keypair);
         let mut validator_config = ValidatorConfig::default_for_test();
         validator_config.rpc_config = JsonRpcConfig {
             faucet_addr: Some(faucet_addr),
@@ -1095,7 +1095,6 @@ pub mod test {
 
         // 2. Create a local cluster which is aware of faucet
         let num_nodes = 1;
-        let native_instruction_processors = vec![];
         let cluster = LocalCluster::new(
             &mut ClusterConfig {
                 node_stakes: vec![999_990; num_nodes],
@@ -1110,7 +1109,6 @@ pub mod test {
                     },
                     num_nodes,
                 ),
-                native_instruction_processors,
                 ..ClusterConfig::default()
             },
             SocketAddrSpace::Unspecified,

@@ -49,6 +49,35 @@ fn arch_read_at(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<
     file.seek_read(buffer, offset)
 }
 
+#[cfg(unix)]
+fn arch_write_at(file: &File, buffer: &[u8], offset: u64) -> io::Result<usize> {
+    use std::os::unix::prelude::FileExt;
+    file.write_at(buffer, offset)
+}
+
+#[cfg(windows)]
+fn arch_write_at(file: &File, buffer: &[u8], offset: u64) -> io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    // Note: as opposed to unix `write_at` this call will update the internal file offset,
+    // so all callers should consistently use the file only through this module
+    file.seek_write(buffer, offset)
+}
+
+/// Write, starting at `offset`, the whole buffer to a file irrespective of the file's current length.
+///
+/// After this operation file size may be extended and the file cursor may be moved (platform-dependent).
+pub fn write_buffer_to_file(file: &File, mut buffer: &[u8], mut offset: u64) -> io::Result<()> {
+    while !buffer.is_empty() {
+        let wrote_len = arch_write_at(file, buffer, offset)?;
+        if wrote_len == 0 {
+            return Err(io::ErrorKind::WriteZero.into());
+        }
+        buffer = &buffer[wrote_len..];
+        offset += wrote_len as u64;
+    }
+    Ok(())
+}
+
 /// Read, starting at `start_offset`, until `buffer` is full or we read past `valid_file_len`/eof.
 /// `valid_file_len` is # of valid bytes in the file. This may be <= file length.
 /// return # bytes read
@@ -118,9 +147,11 @@ pub fn file_creator<'a>(
     if agave_io_uring::io_uring_supported() {
         use crate::io_uring::file_creator::{IoUringFileCreator, DEFAULT_WRITE_SIZE};
 
-        let buf_size = buf_size.max(DEFAULT_WRITE_SIZE);
-        let io_uring_creator = IoUringFileCreator::with_buffer_capacity(buf_size, file_complete)?;
-        return Ok(Box::new(io_uring_creator));
+        if buf_size >= DEFAULT_WRITE_SIZE {
+            let io_uring_creator =
+                IoUringFileCreator::with_buffer_capacity(buf_size, file_complete)?;
+            return Ok(Box::new(io_uring_creator));
+        }
     }
     Ok(Box::new(SyncIoFileCreator::new(buf_size, file_complete)))
 }
@@ -175,6 +206,20 @@ impl FileCreator for SyncIoFileCreator<'_> {
     }
 
     fn drain(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+pub fn validate_memlock_limit_for_disk_io(required_size: usize) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        // memory locked requirement is only necessary on linux where io_uring is used
+        use crate::io_uring::memory::adjust_ulimit_memlock;
+        adjust_ulimit_memlock(required_size)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = required_size;
         Ok(())
     }
 }

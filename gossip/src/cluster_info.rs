@@ -19,7 +19,7 @@ use {
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
         crds::{Crds, Cursor, GossipRoute},
         crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, SnapshotHashes, Vote, MAX_VOTES},
-        crds_filter::{should_retain_crds_value, GossipFilterDirection, MIN_STAKE_TO_SKIP_PING},
+        crds_filter::{should_retain_crds_value, GossipFilterDirection},
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
@@ -53,6 +53,7 @@ use {
     solana_ledger::shred::Shred,
     solana_net_utils::{
         bind_in_range,
+        multihomed_sockets::BindIpAddrs,
         sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
         PortRange, VALIDATOR_PORT_RANGE,
     },
@@ -62,12 +63,11 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
-    solana_runtime::bank_forks::BankForks,
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sanitize::Sanitize,
     solana_signature::Signature,
     solana_signer::Signer,
     solana_streamer::{
-        atomic_udp_socket::AtomicUdpSocket,
         packet,
         socket::SocketAddrSpace,
         streamer::{ChannelSend, PacketBatchReceiver},
@@ -84,7 +84,7 @@ use {
         iter::repeat,
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
         num::NonZeroUsize,
-        ops::{Deref, Div},
+        ops::Div,
         path::{Path, PathBuf},
         rc::Rc,
         result::Result,
@@ -130,6 +130,8 @@ pub const DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS: u64 = 10_000;
 pub const DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS: u64 = 60_000;
 // Limit number of unique pubkeys in the crds table.
 pub(crate) const CRDS_UNIQUE_PUBKEY_CAPACITY: usize = 8192;
+// Interval between push active set refreshes.
+pub const REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS: u64 = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2;
 
 // Must have at least one socket to monitor the TVU port
 pub const MINIMUM_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
@@ -167,6 +169,7 @@ pub struct ClusterInfo {
     contact_save_interval: u64,  // milliseconds, 0 = disabled
     contact_info_path: PathBuf,
     socket_addr_space: SocketAddrSpace,
+    bind_ip_addrs: Arc<BindIpAddrs>,
 }
 
 impl ClusterInfo {
@@ -195,6 +198,7 @@ impl ClusterInfo {
             contact_info_path: PathBuf::default(),
             contact_save_interval: 0, // disabled
             socket_addr_space,
+            bind_ip_addrs: Arc::new(BindIpAddrs::default()),
         };
         me.refresh_my_gossip_contact_info();
         me
@@ -208,12 +212,21 @@ impl ClusterInfo {
         &self.socket_addr_space
     }
 
+    pub fn set_bind_ip_addrs(&mut self, ip_addrs: Arc<BindIpAddrs>) {
+        self.bind_ip_addrs = ip_addrs;
+    }
+
+    pub fn bind_ip_addrs(&self) -> Arc<BindIpAddrs> {
+        self.bind_ip_addrs.clone()
+    }
+
     fn refresh_push_active_set(
         &self,
         recycler: &PacketBatchRecycler,
         stakes: &HashMap<Pubkey, u64>,
         gossip_validators: Option<&HashSet<Pubkey>>,
         sender: &impl ChannelSend<PacketBatch>,
+        maybe_bank_ref: Option<&Bank>,
     ) {
         let shred_version = self.my_contact_info.read().unwrap().shred_version();
         let self_keypair: Arc<Keypair> = self.keypair().clone();
@@ -226,6 +239,7 @@ impl ClusterInfo {
             &self.ping_cache,
             &mut pings,
             &self.socket_addr_space,
+            maybe_bank_ref,
         );
         let pings = pings
             .into_iter()
@@ -395,6 +409,15 @@ impl ClusterInfo {
         Ok(())
     }
 
+    pub fn set_tvu_socket(&self, tvu_addr: SocketAddr) -> Result<(), ContactInfoError> {
+        self.my_contact_info
+            .write()
+            .unwrap()
+            .set_tvu(contact_info::Protocol::UDP, tvu_addr)?;
+        self.refresh_my_gossip_contact_info();
+        Ok(())
+    }
+
     pub fn set_tpu(&self, tpu_addr: SocketAddr) -> Result<(), ContactInfoError> {
         self.my_contact_info.write().unwrap().set_tpu(tpu_addr)?;
         self.refresh_my_gossip_contact_info();
@@ -406,6 +429,19 @@ impl ClusterInfo {
             .write()
             .unwrap()
             .set_tpu_forwards(tpu_forwards_addr)?;
+        self.refresh_my_gossip_contact_info();
+        Ok(())
+    }
+
+    pub fn set_tpu_vote(
+        &self,
+        protocol: contact_info::Protocol,
+        tpu_vote_addr: SocketAddr,
+    ) -> Result<(), ContactInfoError> {
+        self.my_contact_info
+            .write()
+            .unwrap()
+            .set_tpu_vote(protocol, tpu_vote_addr)?;
         self.refresh_my_gossip_contact_info();
         Ok(())
     }
@@ -1021,15 +1057,6 @@ impl ClusterInfo {
             .unwrap_or_default()
     }
 
-    /// all validators that have a valid rpc port regardless of `shred_version`.
-    #[deprecated(
-        since = "3.0.0",
-        note = "use `rpc_peers` instead to ensure shred version is the same"
-    )]
-    pub fn all_rpc_peers(&self) -> Vec<ContactInfo> {
-        self.rpc_peers()
-    }
-
     /// all validators that have a valid rpc port and are on the same `shred_version`.
     pub fn rpc_peers(&self) -> Vec<ContactInfo> {
         let self_pubkey = self.id();
@@ -1448,7 +1475,7 @@ impl ClusterInfo {
             .thread_name(|i| format!("solGossipRun{i:02}"))
             .build()
             .unwrap();
-        let mut epoch_specs = bank_forks.map(EpochSpecs::from);
+        let mut epoch_specs = bank_forks.clone().map(EpochSpecs::from);
         Builder::new()
             .name("solGossip".to_string())
             .spawn(move || {
@@ -1504,13 +1531,19 @@ impl ClusterInfo {
                     entrypoints_processed = entrypoints_processed || self.process_entrypoints();
                     //TODO: possibly tune this parameter
                     //we saw a deadlock passing an self.read().unwrap().timeout into sleep
-                    if start - last_push > CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS / 2 {
+                    if start - last_push > REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS {
+                        let maybe_bank = bank_forks
+                            .as_ref()
+                            .and_then(|bf| bf.read().ok())
+                            .map(|forks| forks.root_bank());
+                        let maybe_bank_ref = maybe_bank.as_deref();
                         self.refresh_my_gossip_contact_info();
                         self.refresh_push_active_set(
                             &recycler,
                             &stakes,
                             gossip_validators.as_ref(),
                             &sender,
+                            maybe_bank_ref,
                         );
                         last_push = timestamp();
                     }
@@ -1992,7 +2025,6 @@ impl ClusterInfo {
                 &mut rng,
                 &keypair,
                 value,
-                stakes,
                 &self.socket_addr_space,
                 &self.ping_cache,
                 &mut pings,
@@ -2336,7 +2368,7 @@ impl ClusterInfo {
 
 #[derive(Debug)]
 pub struct Sockets {
-    pub gossip: AtomicUdpSocket,
+    pub gossip: Arc<[UdpSocket]>,
     pub ip_echo: Option<TcpListener>,
     pub tvu: Vec<UdpSocket>,
     pub tvu_quic: UdpSocket,
@@ -2364,7 +2396,7 @@ pub struct Sockets {
     /// Client-side socket for ForwardingStage vote transactions
     pub tpu_vote_forwarding_client: UdpSocket,
     /// Client-side socket for ForwardingStage non-vote transactions
-    pub tpu_transaction_forwarding_client: UdpSocket,
+    pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>,
     /// Socket for alpenglow consensus logic
     pub alpenglow: Option<UdpSocket>,
     /// Connection cache endpoint for QUIC-based Vote
@@ -2381,7 +2413,7 @@ pub struct NodeConfig {
     pub gossip_port: u16,
     pub port_range: PortRange,
     /// Multihoming: The IP addresses the node can bind to
-    pub bind_ip_addrs: BindIpAddrs,
+    pub bind_ip_addrs: Arc<BindIpAddrs>,
     pub public_tpu_addr: Option<SocketAddr>,
     pub public_tpu_forwards_addr: Option<SocketAddr>,
     pub vortexor_receiver_addr: Option<SocketAddr>,
@@ -2392,57 +2424,6 @@ pub struct NodeConfig {
     pub num_tvu_retransmit_sockets: NonZeroUsize,
     /// The number of QUIC tpu endpoints
     pub num_quic_endpoints: NonZeroUsize,
-}
-
-#[derive(Debug, Clone)]
-pub struct BindIpAddrs {
-    /// The IP addresses this node may bind to
-    /// Index 0 is the primary address
-    /// Index 1+ are secondary addresses
-    addrs: Vec<IpAddr>,
-}
-
-impl BindIpAddrs {
-    pub fn new(addrs: Vec<IpAddr>) -> Result<Self, String> {
-        if addrs.is_empty() {
-            return Err(
-                "BindIpAddrs requires at least one IP address (--bind-address)".to_string(),
-            );
-        }
-        if addrs.len() > 1 {
-            for ip in &addrs {
-                if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
-                    return Err(format!(
-                        "Invalid configuration: {ip:?} is not allowed with multiple \
-                         --bind-address values (loopback, unspecified, or multicast)"
-                    ));
-                }
-            }
-        }
-
-        Ok(Self { addrs })
-    }
-
-    #[inline]
-    pub fn primary(&self) -> IpAddr {
-        self.addrs[0]
-    }
-}
-
-// Makes BindIpAddrs behave like &[IpAddr]
-impl Deref for BindIpAddrs {
-    type Target = [IpAddr];
-
-    fn deref(&self) -> &Self::Target {
-        &self.addrs
-    }
-}
-
-// For generic APIs expecting something like AsRef<[IpAddr]>
-impl AsRef<[IpAddr]> for BindIpAddrs {
-    fn as_ref(&self) -> &[IpAddr] {
-        &self.addrs
-    }
 }
 
 pub fn push_messages_to_peer_for_tests(
@@ -2527,7 +2508,6 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     rng: &mut R,
     keypair: &Keypair,
     value: &CrdsValue,
-    stakes: &HashMap<Pubkey, u64>,
     socket_addr_space: &SocketAddrSpace,
     ping_cache: &Mutex<PingCache>,
     pings: &mut Vec<(SocketAddr, Ping)>,
@@ -2537,10 +2517,6 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
         CrdsData::LegacyContactInfo(node) => (node.pubkey(), node.gossip()),
         _ => return true, // If not a contact-info, nothing to verify.
     };
-    // For (sufficiently) staked nodes, don't bother with ping/pong.
-    if stakes.get(pubkey).copied() >= Some(MIN_STAKE_TO_SKIP_PING) {
-        return true;
-    }
     // Invalid addresses are not verifiable.
     let Some(addr) = addr.filter(|addr| socket_addr_space.check(addr)) else {
         return false;
@@ -2631,6 +2607,7 @@ mod tests {
         std::{
             iter::repeat_with,
             net::{IpAddr, Ipv4Addr},
+            ops::Deref,
             panic,
             sync::Arc,
         },
@@ -2831,6 +2808,7 @@ mod tests {
             &cluster_info.ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
+            None,
         );
         let mut reqs = cluster_info.generate_new_gossip_requests(
             &thread_pool,
@@ -2869,26 +2847,33 @@ mod tests {
         assert!(x < range.1);
     }
 
-    fn check_sockets(sockets: &[UdpSocket], ip: IpAddr, range: (u16, u16)) {
+    fn check_sockets<T>(sockets: &[T], ip: IpAddr, range: (u16, u16))
+    where
+        T: Borrow<UdpSocket>,
+    {
         assert!(!sockets.is_empty());
-        let port = sockets[0].local_addr().unwrap().port();
-        for socket in sockets.iter() {
-            check_socket(socket, ip, range);
-            assert_eq!(socket.local_addr().unwrap().port(), port);
+        let port = sockets[0].borrow().local_addr().unwrap().port();
+        for s in sockets {
+            let s = s.borrow();
+            let local_addr = s.local_addr().unwrap();
+            assert_eq!(local_addr.ip(), ip);
+            assert_in_range(local_addr.port(), range);
+            assert_eq!(local_addr.port(), port);
         }
     }
 
-    fn check_socket(socket: &UdpSocket, ip: IpAddr, range: (u16, u16)) {
-        let local_addr = socket.local_addr().unwrap();
-        assert_eq!(local_addr.ip(), ip);
-        assert_in_range(local_addr.port(), range);
+    fn check_socket<T>(socket: &T, ip: IpAddr, range: (u16, u16))
+    where
+        T: Borrow<UdpSocket>,
+    {
+        check_sockets(std::slice::from_ref(socket), ip, range);
     }
 
     fn check_node_sockets(node: &Node, ip: IpAddr, range: (u16, u16)) {
-        check_socket(&node.sockets.gossip.load(), ip, range);
         check_socket(&node.sockets.repair, ip, range);
         check_socket(&node.sockets.tvu_quic, ip, range);
 
+        check_sockets(&node.sockets.gossip, ip, range);
         check_sockets(&node.sockets.tvu, ip, range);
         check_sockets(&node.sockets.tpu, ip, range);
     }
@@ -2901,7 +2886,7 @@ mod tests {
             advertised_ip: IpAddr::V4(ip),
             gossip_port: 0,
             port_range,
-            bind_ip_addrs: BindIpAddrs::new(vec![IpAddr::V4(ip)]).unwrap(),
+            bind_ip_addrs: Arc::new(BindIpAddrs::new(vec![IpAddr::V4(ip)]).unwrap()),
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
@@ -2926,7 +2911,7 @@ mod tests {
             advertised_ip: ip,
             gossip_port: port,
             port_range,
-            bind_ip_addrs: BindIpAddrs::new(vec![ip]).unwrap(),
+            bind_ip_addrs: Arc::new(BindIpAddrs::new(vec![ip]).unwrap()),
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
@@ -2938,8 +2923,7 @@ mod tests {
         let node = Node::new_with_external_ip(&solana_pubkey::new_rand(), config);
 
         check_node_sockets(&node, ip, port_range);
-
-        assert_eq!(node.sockets.gossip.local_addr().unwrap().port(), port);
+        check_sockets(&node.sockets.gossip, ip, port_range);
     }
 
     //test that all cluster_info objects only generate signed messages
@@ -2972,6 +2956,7 @@ mod tests {
             &cluster_info.ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
+            None,
         );
         //check that all types of gossip messages are signed correctly
         cluster_info.flush_push_queue();
@@ -3793,21 +3778,27 @@ mod tests {
     fn test_contact_trace() {
         solana_logger::setup();
         let keypair43 = Arc::new(
-            Keypair::from_bytes(&[
-                198, 203, 8, 178, 196, 71, 119, 152, 31, 96, 221, 142, 115, 224, 45, 34, 173, 138,
-                254, 39, 181, 238, 168, 70, 183, 47, 210, 91, 221, 179, 237, 153, 14, 58, 154, 59,
-                67, 220, 235, 106, 241, 99, 4, 72, 60, 245, 53, 30, 225, 122, 145, 225, 8, 40, 30,
-                174, 26, 228, 125, 127, 125, 21, 96, 28,
-            ])
+            Keypair::try_from(
+                [
+                    198, 203, 8, 178, 196, 71, 119, 152, 31, 96, 221, 142, 115, 224, 45, 34, 173,
+                    138, 254, 39, 181, 238, 168, 70, 183, 47, 210, 91, 221, 179, 237, 153, 14, 58,
+                    154, 59, 67, 220, 235, 106, 241, 99, 4, 72, 60, 245, 53, 30, 225, 122, 145,
+                    225, 8, 40, 30, 174, 26, 228, 125, 127, 125, 21, 96, 28,
+                ]
+                .as_ref(),
+            )
             .unwrap(),
         );
         let keypair44 = Arc::new(
-            Keypair::from_bytes(&[
-                66, 88, 3, 70, 228, 215, 125, 64, 130, 183, 180, 98, 22, 166, 201, 234, 89, 80,
-                135, 24, 228, 35, 20, 52, 105, 130, 50, 51, 46, 229, 244, 108, 70, 57, 45, 247, 57,
-                177, 39, 126, 190, 238, 50, 96, 186, 208, 28, 168, 148, 56, 9, 106, 92, 213, 63,
-                205, 252, 225, 244, 101, 77, 182, 4, 2,
-            ])
+            Keypair::try_from(
+                [
+                    66, 88, 3, 70, 228, 215, 125, 64, 130, 183, 180, 98, 22, 166, 201, 234, 89, 80,
+                    135, 24, 228, 35, 20, 52, 105, 130, 50, 51, 46, 229, 244, 108, 70, 57, 45, 247,
+                    57, 177, 39, 126, 190, 238, 50, 96, 186, 208, 28, 168, 148, 56, 9, 106, 92,
+                    213, 63, 205, 252, 225, 244, 101, 77, 182, 4, 2,
+                ]
+                .as_ref(),
+            )
             .unwrap(),
         );
 

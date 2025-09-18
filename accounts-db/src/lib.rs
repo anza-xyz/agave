@@ -42,10 +42,9 @@ pub mod stake_rewards;
 pub mod storable_accounts;
 pub mod tiered_storage;
 pub mod utils;
-mod verify_accounts_hash_in_background;
 pub mod waitable_condvar;
 
-pub use buffered_reader::large_file_buf_reader;
+pub use {buffered_reader::large_file_buf_reader, file_io::validate_memlock_limit_for_disk_io};
 
 #[macro_use]
 extern crate solana_metrics;

@@ -11,13 +11,14 @@ use {
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{Slot, DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT},
+    solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_core::{
         consensus::tower_storage::FileTowerStorage,
         validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
     solana_epoch_schedule::EpochSchedule,
-    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_genesis_config::GenesisConfig,
     solana_gossip::{
         contact_info::{ContactInfo, Protocol},
         gossip_service::{discover, discover_validators},
@@ -29,7 +30,9 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::sockets::bind_to_localhost_unique,
     solana_poh_config::PohConfig,
+    solana_program_binaries::core_bpf_programs,
     solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::{
         genesis_utils::{
@@ -37,6 +40,7 @@ use {
             ValidatorVoteKeypairs,
         },
         snapshot_config::SnapshotConfig,
+        snapshot_utils::BANK_SNAPSHOTS_DIR,
     },
     solana_signer::{signers::Signers, Signer},
     solana_stake_interface::{
@@ -91,7 +95,6 @@ pub struct ClusterConfig {
     pub slots_per_epoch: u64,
     pub stakers_slot_offset: u64,
     pub skip_warmup_slots: bool,
-    pub native_instruction_processors: Vec<(String, Pubkey)>,
     pub cluster_type: ClusterType,
     pub poh_config: PohConfig,
     pub additional_accounts: Vec<(Pubkey, AccountSharedData)>,
@@ -130,7 +133,6 @@ impl Default for ClusterConfig {
             ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
             slots_per_epoch: DEFAULT_DEV_SLOTS_PER_EPOCH,
             stakers_slot_offset: DEFAULT_DEV_SLOTS_PER_EPOCH,
-            native_instruction_processors: vec![],
             cluster_type: ClusterType::Development,
             poh_config: PohConfig::default(),
             skip_warmup_slots: false,
@@ -190,7 +192,7 @@ impl LocalCluster {
             snapshot_config.full_snapshot_archives_dir = ledger_path.to_path_buf();
         }
         if snapshot_config.bank_snapshots_dir == dummy {
-            snapshot_config.bank_snapshots_dir = ledger_path.join("snapshot");
+            snapshot_config.bank_snapshots_dir = ledger_path.join(BANK_SNAPSHOTS_DIR);
         }
     }
 
@@ -249,6 +251,12 @@ impl LocalCluster {
                     .collect()
             }
         };
+
+        for core_program_account in &core_bpf_programs(&Rent::default(), |_| true) {
+            config
+                .additional_accounts
+                .push(core_program_account.clone());
+        }
 
         // Mint used to fund validator identities for non-genesis accounts.
         // Verify we have enough lamports in the mint address to do those transfers.
@@ -318,9 +326,6 @@ impl LocalCluster {
             !config.skip_warmup_slots,
         );
         genesis_config.poh_config = config.poh_config.clone();
-        genesis_config
-            .native_instruction_processors
-            .extend_from_slice(&config.native_instruction_processors);
 
         let mut leader_config = safe_clone_config(&config.validator_configs[0]);
         let (leader_ledger_path, _blockhash) = create_new_tmp_ledger_with_size!(
@@ -815,7 +820,7 @@ impl LocalCluster {
                 },
                 amount,
                 vote_instruction::CreateVoteAccountConfig {
-                    space: vote_state::VoteStateVersions::vote_state_size_of(true) as u64,
+                    space: vote_state::VoteStateV3::size_of() as u64,
                     ..vote_instruction::CreateVoteAccountConfig::default()
                 },
             );
@@ -973,7 +978,7 @@ fn create_connection_cache(
         Arc::new(ConnectionCache::new_with_client_options(
             "connection_cache_local_cluster_quic_staked",
             tpu_connection_pool_size,
-            None,
+            Some(solana_net_utils::sockets::bind_to_localhost_unique().unwrap()),
             Some((
                 &config.client_keypair,
                 IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),

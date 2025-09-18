@@ -1,7 +1,6 @@
 use {
     crate::commands,
     clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
-    log::warn,
     solana_accounts_db::{
         accounts_db::{
             DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE, DEFAULT_ACCOUNTS_SHRINK_RATIO,
@@ -21,8 +20,7 @@ use {
     solana_hash::Hash,
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_quic_definitions::QUIC_PORT_OFFSET,
-    solana_rayon_threadlimit::get_thread_count,
-    solana_rpc::{rpc::MAX_REQUEST_BODY_SIZE, rpc_pubsub_service::PubSubConfig},
+    solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
     solana_rpc_client_api::request::{DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_MULTIPLE_ACCOUNTS},
     solana_runtime::snapshot_utils::{
         SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION, DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
@@ -74,7 +72,8 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::set_log_filter::command())
         .subcommand(commands::staked_nodes_overrides::command())
         .subcommand(commands::wait_for_restart_window::command())
-        .subcommand(commands::set_public_address::command());
+        .subcommand(commands::set_public_address::command())
+        .subcommand(commands::manage_block_production::command());
 
     commands::run::add_args(app, default_args)
         .args(&thread_args(&default_args.thread_args))
@@ -128,6 +127,45 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
 
     add_arg!(
         // deprecated in v3.0.0
+        Arg::with_name("accounts_db_clean_threads")
+            .long("accounts-db-clean-threads")
+            .takes_value(true)
+            .value_name("NUMBER")
+            .conflicts_with("accounts_db_background_threads"),
+        replaced_by: "accounts-db-background-threads",
+    );
+    add_arg!(
+        // deprecated in v3.1.0
+        Arg::with_name("accounts_db_hash_threads")
+            .long("accounts-db-hash-threads")
+            .takes_value(true)
+            .value_name("NUMBER"),
+        usage_warning: "There is no more startup background accounts hash calculation",
+    );
+    add_arg!(
+        // deprecated in v3.0.0
+        Arg::with_name("accounts_db_read_cache_limit_mb")
+            .long("accounts-db-read-cache-limit-mb")
+            .value_name("MAX | LOW,HIGH")
+            .takes_value(true)
+            .min_values(1)
+            .max_values(2)
+            .multiple(false)
+            .require_delimiter(true)
+            .help("How large the read cache for account data can become, in mebibytes")
+            .long_help(
+                "How large the read cache for account data can become, in mebibytes. \
+                 If given a single value, it will be the maximum size for the cache. \
+                 If given a pair of values, they will be the low and high watermarks \
+                 for the cache. When the cache exceeds the high watermark, entries will \
+                 be evicted until the size reaches the low watermark."
+            )
+            .hidden(hidden_unless_forced())
+            .conflicts_with("accounts_db_read_cache_limit"),
+            replaced_by: "accounts-db-read-cache-limit",
+    );
+    add_arg!(
+        // deprecated in v3.0.0
         Arg::with_name("accounts_hash_cache_path")
             .long("accounts-hash-cache-path")
             .value_name("PATH")
@@ -142,6 +180,32 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .long("disable-accounts-disk-index")
         .help("Disable the disk-based accounts index if it is enabled by default."));
 
+    add_arg!(
+        // deprecated in v3.0.0
+        Arg::with_name("gossip_host")
+            .long("gossip-host")
+            .value_name("HOST")
+            .takes_value(true)
+            .validator(solana_net_utils::is_host),
+            replaced_by : "bind-address",
+            usage_warning:"Use --bind-address instead",
+    );
+    add_arg!(
+        // deprecated in v3.0.0
+        Arg::with_name("tpu_disable_quic")
+            .long("tpu-disable-quic")
+            .takes_value(false)
+            .help("Do not use QUIC to send transactions."),
+        usage_warning: "UDP support will be dropped"
+    );
+    add_arg!(
+        // deprecated in v3.0.0
+        Arg::with_name("tpu_enable_udp")
+            .long("tpu-enable-udp")
+            .takes_value(false)
+            .help("Enable UDP for receiving/sending transactions."),
+        usage_warning: "UDP support will be dropped"
+    );
     res
 }
 
@@ -177,7 +241,8 @@ pub fn warn_for_deprecated_arguments(matches: &ArgMatches) {
                     msg.push('.');
                 }
             }
-            warn!("{}", msg);
+            // this can not rely on logger since it is not initialized at the time of call
+            eprintln!("{msg}");
         }
     }
 }
@@ -194,9 +259,6 @@ pub struct DefaultArgs {
     pub send_transaction_service_config: send_transaction_service::Config,
 
     pub rpc_max_multiple_accounts: String,
-    pub rpc_pubsub_max_active_subscriptions: String,
-    pub rpc_pubsub_queue_capacity_items: String,
-    pub rpc_pubsub_queue_capacity_bytes: String,
     pub rpc_send_transaction_retry_ms: String,
     pub rpc_send_transaction_batch_ms: String,
     pub rpc_send_transaction_leader_forward_count: String,
@@ -211,8 +273,6 @@ pub struct DefaultArgs {
     pub rpc_bigtable_app_profile_id: String,
     pub rpc_bigtable_max_message_size: String,
     pub rpc_max_request_body_size: String,
-    pub rpc_pubsub_worker_threads: String,
-    pub rpc_pubsub_notification_threads: String,
 
     pub maximum_local_snapshot_age: String,
     pub maximum_full_snapshot_archives_to_retain: String,
@@ -269,15 +329,6 @@ impl DefaultArgs {
             health_check_slot_distance: DELINQUENT_VALIDATOR_SLOT_DISTANCE.to_string(),
             tower_storage: "file".to_string(),
             etcd_domain_name: "localhost".to_string(),
-            rpc_pubsub_max_active_subscriptions: PubSubConfig::default()
-                .max_active_subscriptions
-                .to_string(),
-            rpc_pubsub_queue_capacity_items: PubSubConfig::default()
-                .queue_capacity_items
-                .to_string(),
-            rpc_pubsub_queue_capacity_bytes: PubSubConfig::default()
-                .queue_capacity_bytes
-                .to_string(),
             send_transaction_service_config: send_transaction_service::Config::default(),
             rpc_send_transaction_retry_ms: default_send_transaction_service_config
                 .retry_rate_ms
@@ -306,8 +357,6 @@ impl DefaultArgs {
                 .to_string(),
             rpc_bigtable_max_message_size: solana_storage_bigtable::DEFAULT_MAX_MESSAGE_SIZE
                 .to_string(),
-            rpc_pubsub_worker_threads: "4".to_string(),
-            rpc_pubsub_notification_threads: get_thread_count().to_string(),
             maximum_full_snapshot_archives_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN
                 .to_string(),
             maximum_incremental_snapshot_archives_to_retain:
@@ -415,8 +464,8 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(is_url_or_moniker)
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): \
-                     [mainnet-beta, testnet, devnet, localhost]",
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                     testnet, devnet, localhost]",
                 ),
         )
         .arg(
@@ -427,8 +476,8 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .help(
                     "Address of the mint account that will receive tokens created at genesis. If \
-                     the ledger already exists then this parameter is silently ignored \
-                     [default: client keypair]",
+                     the ledger already exists then this parameter is silently ignored [default: \
+                     client keypair]",
                 ),
         )
         .arg(
@@ -659,15 +708,15 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                         .parse::<f64>()
                         .map_err(|err| format!("error parsing '{value}': {err}"))
                         .and_then(|rate| match rate.partial_cmp(&0.0) {
-			    Some(Ordering::Greater) | Some(Ordering::Equal) => Ok(()),
-			    Some(Ordering::Less) | None => Err(String::from("value must be >= 0")),
+                            Some(Ordering::Greater) | Some(Ordering::Equal) => Ok(()),
+                            Some(Ordering::Less) | None => Err(String::from("value must be >= 0")),
                         })
                 })
                 .takes_value(true)
                 .allow_hyphen_values(true)
                 .help(
-                    "Override default inflation with fixed rate. If the ledger already exists then \
-                     this parameter is silently ignored",
+                    "Override default inflation with fixed rate. If the ledger already exists \
+                     then this parameter is silently ignored",
                 ),
         )
         .arg(
@@ -676,15 +725,6 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .value_name("PORT")
                 .takes_value(true)
                 .help("Gossip port number for the validator"),
-        )
-        .arg(
-            Arg::with_name("gossip_host")
-                .long("gossip-host")
-                .value_name("HOST")
-                .takes_value(true)
-                .validator(solana_net_utils::is_host)
-                .hidden(hidden_unless_forced())
-                .help("DEPRECATED: Use --bind-address instead."),
         )
         .arg(
             Arg::with_name("dynamic_port_range")
@@ -701,7 +741,18 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
                 .default_value("127.0.0.1")
-                .help("IP address to bind the validator ports [default: 127.0.0.1]"),
+                .help(
+                    "IP address to bind the validator ports. Can be repeated. The first \
+                     --bind-address MUST be your public internet address. ALL protocols (gossip, \
+                     repair, IP echo, TVU, TPU, etc.) bind to this address on startup. Additional \
+                     --bind-address values enable multihoming for Gossip/TVU/TPU - these \
+                     protocols bind to ALL interfaces on startup. Gossip reads/sends from one \
+                     interface at a time. TVU/TPU read from ALL interfaces simultaneously but \
+                     send from only one interface at a time. When switching interfaces via \
+                     AdminRPC: Gossip switches to send/receive from the new interface, while \
+                     TVU/TPU continue receiving from ALL interfaces but send from the new \
+                     interface only.",
+                ),
         )
         .arg(
             Arg::with_name("clone_account")
@@ -726,9 +777,9 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .multiple(true)
                 .requires("json_rpc_url")
                 .help(
-                    "Copy an address lookup table and all accounts it references from the cluster referenced by the --url \
-                     argument in the genesis configuration. If the ledger already exists then this \
-                     parameter is silently ignored",
+                    "Copy an address lookup table and all accounts it references from the cluster \
+                     referenced by the --url argument in the genesis configuration. If the ledger \
+                     already exists then this parameter is silently ignored",
                 ),
         )
         .arg(
@@ -869,9 +920,9 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(false)
                 .requires("json_rpc_url")
                 .help(
-                    "Copy a feature set from the cluster referenced by the --url \
-                     argument in the genesis configuration. If the ledger \
-                     already exists then this parameter is silently ignored",
+                    "Copy a feature set from the cluster referenced by the --url argument in the \
+                     genesis configuration. If the ledger already exists then this parameter is \
+                     silently ignored",
                 ),
         )
 }

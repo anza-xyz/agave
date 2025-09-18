@@ -20,7 +20,7 @@ use {
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     dashmap::{mapref::entry::Entry::Occupied, DashMap},
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
-    solana_genesis_config::ClusterType,
+    solana_cluster_type::ClusterType,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, ping_pong::Pong},
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::blockstore::Blockstore,
@@ -190,7 +190,6 @@ impl AncestorHashesService {
                         ancestor_hashes_response_quic_receiver,
                         PacketFlags::REPAIR,
                         response_sender,
-                        Recycler::default(),
                         exit,
                     )
                 })
@@ -606,7 +605,7 @@ impl AncestorHashesService {
         let serve_repair = {
             ServeRepair::new(
                 repair_info.cluster_info.clone(),
-                repair_info.bank_forks.read().unwrap().sharable_root_bank(),
+                repair_info.bank_forks.read().unwrap().sharable_banks(),
                 repair_info.repair_whitelist.clone(),
                 Box::new(StandardRepairHandler::new(blockstore)),
             )
@@ -1175,7 +1174,7 @@ mod test {
     #[test]
     fn test_ancestor_hashes_service_find_epoch_slots_frozen_dead_slots() {
         let vote_simulator = VoteSimulator::new(3);
-        let cluster_slots = ClusterSlots::default();
+        let cluster_slots = ClusterSlots::default_for_tests();
         let mut dead_slot_pool = HashSet::new();
         let mut repairable_dead_slot_pool = HashSet::new();
         let root_bank = vote_simulator.bank_forks.read().unwrap().root_bank();
@@ -1272,11 +1271,7 @@ mod test {
             let responder_serve_repair = {
                 ServeRepair::new(
                     Arc::new(cluster_info),
-                    vote_simulator
-                        .bank_forks
-                        .read()
-                        .unwrap()
-                        .sharable_root_bank(),
+                    vote_simulator.bank_forks.read().unwrap().sharable_banks(),
                     Arc::<RwLock<HashSet<_>>>::default(), // repair whitelist
                     Box::new(StandardRepairHandler::new(blockstore.clone())),
                 )
@@ -1383,7 +1378,7 @@ mod test {
             let requester_serve_repair = {
                 ServeRepair::new(
                     requester_cluster_info.clone(),
-                    bank_forks.read().unwrap().sharable_root_bank(),
+                    bank_forks.read().unwrap().sharable_banks(),
                     repair_whitelist.clone(),
                     Box::new(StandardRepairHandler::new(blockstore)),
                 )
@@ -1392,7 +1387,7 @@ mod test {
             let repair_info = RepairInfo {
                 bank_forks,
                 cluster_info: requester_cluster_info,
-                cluster_slots: Arc::new(ClusterSlots::default()),
+                cluster_slots: Arc::new(ClusterSlots::default_for_tests()),
                 epoch_schedule,
                 ancestor_duplicate_slots_sender,
                 repair_validators: None,

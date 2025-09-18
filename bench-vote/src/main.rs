@@ -55,6 +55,7 @@ fn sink(
 ) -> JoinHandle<()> {
     spawn(move || {
         let mut last_report = Instant::now();
+        let mut last_count = 0;
         while !exit.load(Ordering::Relaxed) {
             if let Ok(packet_batch) = receiver.recv_timeout(SINK_RECEIVE_TIMEOUT) {
                 received_size.fetch_add(packet_batch.len(), Ordering::Relaxed);
@@ -63,8 +64,11 @@ fn sink(
             let count = received_size.load(Ordering::Relaxed);
 
             if verbose && last_report.elapsed() > SINK_REPORT_INTERVAL {
-                println!("Received txns count: {count}");
+                let change = count - last_count;
+                let rate = change as u64 / SINK_REPORT_INTERVAL.as_secs();
+                println!("Received txns count: total: {count}, rate {rate}/s");
                 last_report = Instant::now();
+                last_count = count;
             }
         }
     })
@@ -83,7 +87,10 @@ fn main() -> Result<()> {
                 .value_name("KEYPAIR")
                 .takes_value(true)
                 .validator(is_keypair_or_ask_keyword)
-                .help("Identity keypair for the QUIC endpoint. If it is not specified a random key is created."),
+                .help(
+                    "Identity keypair for the QUIC endpoint. If it is not specified a random key \
+                     is created.",
+                ),
         )
         .arg(
             Arg::with_name("num-recv-sockets")
@@ -118,7 +125,9 @@ fn main() -> Result<()> {
                 .long("max-connections-per-ipaddr-per-min")
                 .value_name("NUM")
                 .takes_value(true)
-                .help("Maximum client connections per ipaddr per minute allowed on the server side."),
+                .help(
+                    "Maximum client connections per ipaddr per minute allowed on the server side.",
+                ),
         )
         .arg(
             Arg::with_name("connection-pool-size")
@@ -147,7 +156,10 @@ fn main() -> Result<()> {
                 .value_name("HOST:PORT")
                 .takes_value(true)
                 .validator(|arg| solana_net_utils::is_host_port(arg.to_string()))
-                .help("The destination streamer address to which the client will send transactions to"),
+                .help(
+                    "The destination streamer address to which the client will send transactions \
+                     to",
+                ),
         )
         .arg(
             Arg::with_name("use-connection-cache")

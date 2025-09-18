@@ -1182,9 +1182,9 @@ impl BigTableSubCommand for App<'_, '_> {
                                 .validator(is_slot)
                                 .default_value("1000")
                                 .help(
-                                    "Number of transaction signatures to query at once. \
-                                     Smaller: more responsive/lower throughput. \
-                                     Larger: less responsive/higher throughput",
+                                    "Number of transaction signatures to query at once. Smaller: \
+                                     more responsive/lower throughput. Larger: less \
+                                     responsive/higher throughput",
                                 ),
                         )
                         .arg(

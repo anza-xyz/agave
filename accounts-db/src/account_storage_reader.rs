@@ -147,21 +147,25 @@ mod tests {
     fn create_storage_for_storage_reader(
         slot: Slot,
         provider: AccountsFileProvider,
+        storage_access: StorageAccess,
     ) -> (AccountStorageEntry, Vec<tempfile::TempDir>) {
         let id = 0;
         let (temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
         let file_size = 1024 * 1024;
         (
-            AccountStorageEntry::new(&paths[0], slot, id, file_size, provider),
+            AccountStorageEntry::new(&paths[0], slot, id, file_size, provider, storage_access),
             temp_dirs,
         )
     }
 
-    #[test]
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
     #[should_panic(expected = "Obsolete accounts should be empty for TieredStorage")]
-    fn test_account_storage_reader_tiered_storage_one_obsolete_account_should_panic() {
+    fn test_account_storage_reader_tiered_storage_one_obsolete_account_should_panic(
+        storage_access: StorageAccess,
+    ) {
         let (storage, _temp_dirs) =
-            create_storage_for_storage_reader(0, AccountsFileProvider::HotStorage);
+            create_storage_for_storage_reader(0, AccountsFileProvider::HotStorage, storage_access);
 
         let account = AccountSharedData::new(1, 10, &Pubkey::new_unique());
         let account2 = AccountSharedData::new(1, 10, &Pubkey::new_unique());
@@ -182,10 +186,14 @@ mod tests {
         _ = AccountStorageReader::new(&storage, None).unwrap();
     }
 
-    #[test_case(AccountsFileProvider::AppendVec)]
-    #[test_case(AccountsFileProvider::HotStorage)]
-    fn test_account_storage_reader_no_obsolete_accounts(provider: AccountsFileProvider) {
-        let (storage, _temp_dirs) = create_storage_for_storage_reader(0, provider);
+    #[test_case(AccountsFileProvider::AppendVec, StorageAccess::Mmap)]
+    #[test_case(AccountsFileProvider::AppendVec, StorageAccess::File)]
+    #[test_case(AccountsFileProvider::HotStorage, StorageAccess::File)]
+    fn test_account_storage_reader_no_obsolete_accounts(
+        provider: AccountsFileProvider,
+        storage_access: StorageAccess,
+    ) {
+        let (storage, _temp_dirs) = create_storage_for_storage_reader(0, provider, storage_access);
 
         let account = AccountSharedData::new(1, 10, &Pubkey::default());
         let account2 = AccountSharedData::new(1, 10, &Pubkey::default());
@@ -221,7 +229,7 @@ mod tests {
     ) {
         solana_logger::setup();
         let (storage, _temp_dirs) =
-            create_storage_for_storage_reader(0, AccountsFileProvider::AppendVec);
+            create_storage_for_storage_reader(0, AccountsFileProvider::AppendVec, storage_access);
 
         let slot = 0;
 
@@ -318,10 +326,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_account_storage_reader_filter_by_slot() {
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_account_storage_reader_filter_by_slot(storage_access: StorageAccess) {
         let (storage, _temp_dirs) =
-            create_storage_for_storage_reader(10, AccountsFileProvider::AppendVec);
+            create_storage_for_storage_reader(10, AccountsFileProvider::AppendVec, storage_access);
         let total_accounts = 30;
 
         let slot = 0;

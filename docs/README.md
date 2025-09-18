@@ -39,7 +39,7 @@ The build script generates static content into the `build` directory and can be 
 ./build.sh
 ```
 
-Running this build script requires **Docker**, and will auto fetch the [solanalabs/rust](https://hub.docker.com/r/solanalabs/rust) image from Docker hub to compile the desired version of the [Solana CLI](https://docs.solanalabs.com/cli) from source.
+Running this build script requires **Docker**, and will auto fetch the [solanalabs/rust](https://hub.docker.com/r/solanalabs/rust) image from Docker hub to compile the desired version of the [Solana CLI](https://docs.anza.xyz/cli) from source.
 
 This build script will also:
 
@@ -62,13 +62,13 @@ npm run start
 
 ## CI Build Flow
 
-The docs are built and published in Github Actions with the `docs.yml` workflow. On each PR, the docs are built, but not published.
+The docs are built and published in GitHub Actions with the `docs.yml` workflow. On each PR, the docs are built but not published.
 
 In each post-commit build, docs are built and published using `vercel` to their respective domain depending on the build branch.
 
-- Master branch docs are published to `edge.docs.solanalabs.com`
-- Beta branch docs are published to `beta.docs.solanalabs.com`
-- Latest release tag docs are published to `docs.solanalabs.com`
+- Master branch docs are published to `edge.docs.anza.xyz`
+- Beta branch docs are published to `beta.docs.anza.xyz`
+- Latest release tag docs are published to `docs.anza.xyz`
 
 ## Common Issues
 

@@ -6,8 +6,8 @@ pagination_label: Available Solana Clusters
 
 Solana maintains several different clusters with different purposes.
 
-Before you begin make sure you have first
-[installed the Solana command line tools](../cli/install.md)
+Before you begin, make sure you have first built the Solana command line tools.
+See [Installing the Solana Command Line Tools](../cli/install.md#build-from-source).
 
 Explorers:
 
@@ -17,7 +17,7 @@ Explorers:
 ## Devnet
 
 - Devnet serves as a playground for anyone who wants to take Solana for a
-  test drive, as a user, token holder, app developer, or validator.
+  test drive, as a user, token holder, app developer or validator.
 - Application developers should target Devnet.
 - Potential validators should first target Devnet.
 - Key differences between Devnet and Mainnet Beta:

@@ -7,9 +7,8 @@ use {
     },
     solana_clock::Epoch,
     solana_instruction::error::InstructionError,
-    solana_stake_interface::error::StakeError,
+    solana_stake_interface::{error::StakeError, stake_history::StakeHistory},
     solana_stake_program::stake_state::{Stake, StakeStateV2},
-    solana_sysvar::stake_history::StakeHistory,
     solana_vote::vote_state_view::VoteStateView,
 };
 
@@ -22,17 +21,20 @@ struct CalculatedStakeRewards {
     new_credits_observed: u64,
 }
 
-// utility function
-// returns a tuple of (stakers_reward,voters_reward)
+/// Redeems rewards for the given epoch, stake state and vote state.
+/// Returns a tuple of:
+/// * Stakers reward
+/// * Voters reward
+/// * Updated stake information
 pub fn redeem_rewards(
     rewarded_epoch: Epoch,
-    stake_state: &mut StakeStateV2,
+    stake_state: &StakeStateV2,
     vote_state: &VoteStateView,
     point_value: &PointValue,
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
-) -> Result<(u64, u64), InstructionError> {
+) -> Result<(u64, u64, Stake), InstructionError> {
     if let StakeStateV2::Stake(meta, stake, _stake_flags) = stake_state {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
             inflation_point_calc_tracer(
@@ -50,16 +52,17 @@ pub fn redeem_rewards(
             ));
         }
 
+        let mut stake = *stake;
         if let Some((stakers_reward, voters_reward)) = redeem_stake_rewards(
             rewarded_epoch,
-            stake,
+            &mut stake,
             point_value,
             vote_state,
             stake_history,
             inflation_point_calc_tracer,
             new_rate_activation_epoch,
         ) {
-            Ok((stakers_reward, voters_reward))
+            Ok((stakers_reward, voters_reward, stake))
         } else {
             Err(StakeError::NoCreditsToRedeem.into())
         }
@@ -255,7 +258,7 @@ fn commission_split(commission: u8, on: u64) -> (u64, u64, bool) {
 #[cfg(test)]
 mod tests {
     use {
-        self::points::null_tracer, super::*, solana_native_token::sol_to_lamports,
+        self::points::null_tracer, super::*, solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey, solana_stake_interface::state::Delegation,
         solana_vote_program::vote_state::VoteStateV3, test_case::test_case,
     };
@@ -676,7 +679,7 @@ mod tests {
         // bootstrap means fully-vested stake at epoch 0 with
         //  10_000_000 SOL is a big but not unreasaonable stake
         let stake = new_stake(
-            sol_to_lamports(10_000_000f64),
+            10_000_000 * LAMPORTS_PER_SOL,
             &Pubkey::default(),
             &vote_state,
             u64::MAX,

@@ -49,7 +49,7 @@ pub fn init_poh() {
 fn init(name: &OsStr) {
     static INIT_HOOK: Once = Once::new();
 
-    info!("Loading {:?}", name);
+    info!("Loading {name:?}");
     INIT_HOOK.call_once(|| {
         let path;
         let lib_name = if let Some(perf_libs_path) = solana_perf::perf_libs::locate_perf_libs() {
@@ -887,10 +887,8 @@ impl EntrySlice for [Entry] {
             if entry.is_tick() {
                 if *tick_hash_count != hashes_per_tick {
                     warn!(
-                        "invalid tick hash count!: entry: {:#?}, tick_hash_count: {}, hashes_per_tick: {}",
-                        entry,
-                        tick_hash_count,
-                        hashes_per_tick
+                        "invalid tick hash count!: entry: {entry:#?}, tick_hash_count: \
+                         {tick_hash_count}, hashes_per_tick: {hashes_per_tick}"
                     );
                     return false;
                 }
@@ -1406,7 +1404,7 @@ mod tests {
         for _ in 0..100 {
             let mut time = Measure::start("ticks");
             let num_ticks = thread_rng().gen_range(1..100);
-            info!("create {} ticks:", num_ticks);
+            info!("create {num_ticks} ticks:");
             let mut entries = create_random_ticks(num_ticks, 100, Hash::default());
             time.stop();
 
@@ -1417,12 +1415,12 @@ mod tests {
                 entries[modify_idx].hash = hash(&[1, 2, 3]);
             }
 
-            info!("done.. {}", time);
+            info!("done.. {time}");
             let mut time = Measure::start("poh");
             let res = entries.verify(&Hash::default(), &thread_pool_for_tests());
             assert_eq!(res, !modified);
             time.stop();
-            info!("{} {}", time, res);
+            info!("{time} {res}");
         }
     }
 

@@ -28,7 +28,7 @@ pub fn io_uring_supported() -> bool {
                     true
                 }
                 Err(e) => {
-                    log::info!("io_uring NOT supported: {}", e);
+                    log::info!("io_uring NOT supported: {e}");
                     false
                 }
             };

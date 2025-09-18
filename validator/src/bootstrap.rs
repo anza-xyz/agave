@@ -25,10 +25,10 @@ use {
         snapshot_utils,
     },
     solana_signer::Signer,
-    solana_streamer::{atomic_udp_socket::AtomicUdpSocket, socket::SocketAddrSpace},
+    solana_streamer::socket::SocketAddrSpace,
     std::{
         collections::{hash_map::RandomState, HashMap, HashSet},
-        net::{SocketAddr, TcpListener, TcpStream},
+        net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
         path::Path,
         process::exit,
         sync::{
@@ -79,8 +79,8 @@ fn verify_reachable_ports(
             .unwrap_or_default()
     };
 
-    let gossip_socket = node.sockets.gossip.load();
-    let mut udp_sockets = vec![&gossip_socket, &node.sockets.repair];
+    let mut udp_sockets = vec![&node.sockets.repair];
+    udp_sockets.extend(node.sockets.gossip.iter());
 
     if verify_address(&node.info.serve_repair(Protocol::UDP)) {
         udp_sockets.push(&node.sockets.serve_repair);
@@ -144,7 +144,7 @@ fn start_gossip_node(
     cluster_entrypoints: &[ContactInfo],
     ledger_path: &Path,
     gossip_addr: &SocketAddr,
-    gossip_socket: AtomicUdpSocket,
+    gossip_sockets: Arc<[UdpSocket]>,
     expected_shred_version: u16,
     gossip_validators: Option<HashSet<Pubkey>>,
     should_check_duplicate_instance: bool,
@@ -164,7 +164,7 @@ fn start_gossip_node(
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        gossip_socket,
+        gossip_sockets,
         gossip_validators,
         should_check_duplicate_instance,
         None,
@@ -465,8 +465,8 @@ fn get_vetted_rpc_nodes(
             Err(err) => {
                 error!(
                     "Failed to get RPC nodes: {err}. Consider checking system clock, removing \
-                    `--no-port-check`, or adjusting `--known-validator ...` arguments as \
-                    applicable"
+                     `--no-port-check`, or adjusting `--known-validator ...` arguments as \
+                     applicable"
                 );
                 exit(1);
             }
@@ -953,8 +953,7 @@ fn build_known_snapshot_hashes<'a>(
         if is_any_same_slot_and_different_hash(&full_snapshot_hash, known_snapshot_hashes.keys()) {
             warn!(
                 "Ignoring all snapshot hashes from node {node} since we've seen a different full \
-                 snapshot hash with this slot.\
-                 \nfull snapshot hash: {full_snapshot_hash:?}"
+                 snapshot hash with this slot. full snapshot hash: {full_snapshot_hash:?}"
             );
             debug!(
                 "known full snapshot hashes: {:#?}",
@@ -980,9 +979,9 @@ fn build_known_snapshot_hashes<'a>(
             ) {
                 warn!(
                     "Ignoring incremental snapshot hash from node {node} since we've seen a \
-                     different incremental snapshot hash with this slot.\
-                     \nfull snapshot hash: {full_snapshot_hash:?}\
-                     \nincremental snapshot hash: {incremental_snapshot_hash:?}"
+                     different incremental snapshot hash with this slot. full snapshot hash: \
+                     {full_snapshot_hash:?}, incremental snapshot hash: \
+                     {incremental_snapshot_hash:?}"
                 );
                 debug!(
                     "known incremental snapshot hashes based on this slot: {:#?}",

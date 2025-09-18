@@ -58,7 +58,7 @@ pub fn is_renice_allowed(adjustment: i8) -> bool {
     } else {
         nix::unistd::geteuid().is_root()
             || caps::has_cap(None, CapSet::Effective, Capability::CAP_SYS_NICE)
-                .map_err(|err| warn!("Failed to get thread's capabilities: {}", err))
+                .map_err(|err| warn!("Failed to get thread's capabilities: {err}"))
                 .unwrap_or(false)
     }
 }

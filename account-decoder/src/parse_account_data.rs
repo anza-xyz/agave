@@ -165,7 +165,7 @@ mod test {
         },
         solana_vote_interface::{
             program::id as vote_program_id,
-            state::{VoteState, VoteStateVersions},
+            state::{VoteStateV3, VoteStateVersions},
         },
     };
 
@@ -176,10 +176,10 @@ mod test {
         let data = vec![0; 4];
         assert!(parse_account_data_v3(&account_pubkey, &other_program, &data, None).is_err());
 
-        let vote_state = VoteState::default();
-        let mut vote_account_data: Vec<u8> = vec![0; VoteState::size_of()];
-        let versioned = VoteStateVersions::new_current(vote_state);
-        VoteState::serialize(&versioned, &mut vote_account_data).unwrap();
+        let vote_state = VoteStateV3::default();
+        let mut vote_account_data: Vec<u8> = vec![0; VoteStateV3::size_of()];
+        let versioned = VoteStateVersions::new_v3(vote_state);
+        VoteStateV3::serialize(&versioned, &mut vote_account_data).unwrap();
         let parsed = parse_account_data_v3(
             &account_pubkey,
             &vote_program_id(),
@@ -188,7 +188,7 @@ mod test {
         )
         .unwrap();
         assert_eq!(parsed.program, "vote".to_string());
-        assert_eq!(parsed.space, VoteState::size_of() as u64);
+        assert_eq!(parsed.space, VoteStateV3::size_of() as u64);
 
         let nonce_data = Versions::new(State::Initialized(Data::default()));
         let nonce_account_data = bincode::serialize(&nonce_data).unwrap();

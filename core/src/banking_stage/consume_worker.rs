@@ -30,6 +30,7 @@ pub enum ConsumeWorkerError<Tx> {
 }
 
 pub(crate) struct ConsumeWorker<Tx> {
+    exit: Arc<AtomicBool>,
     consume_receiver: Receiver<ConsumeWork<Tx>>,
     consumer: Consumer,
     consumed_sender: Sender<FinishedConsumeWork<Tx>>,
@@ -41,12 +42,14 @@ pub(crate) struct ConsumeWorker<Tx> {
 impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     pub fn new(
         id: u32,
+        exit: Arc<AtomicBool>,
         consume_receiver: Receiver<ConsumeWork<Tx>>,
         consumer: Consumer,
         consumed_sender: Sender<FinishedConsumeWork<Tx>>,
         shared_working_bank: SharedWorkingBank,
     ) -> Self {
         Self {
+            exit,
             consume_receiver,
             consumer,
             consumed_sender,
@@ -60,10 +63,11 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 
     pub fn run(self) -> Result<(), ConsumeWorkerError<Tx>> {
-        loop {
+        while !self.exit.load(Ordering::Relaxed) {
             let work = self.consume_receiver.recv()?;
             self.consume_loop(work)?;
         }
+        Ok(())
     }
 
     fn consume_loop(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
@@ -81,6 +85,13 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             .fetch_add(get_bank_us, Ordering::Relaxed);
 
         for work in try_drain_iter(work, &self.consume_receiver) {
+            self.metrics
+                .count_metrics
+                .max_queue_len
+                .fetch_max(self.consume_receiver.len() as u64, Ordering::Relaxed);
+            if self.exit.load(Ordering::Relaxed) {
+                return Ok(());
+            }
             if bank.is_complete() || {
                 // if working bank has changed, then try to get a new bank.
                 self.working_bank()
@@ -102,6 +113,10 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
                     return self.retry_drain(work);
                 }
             }
+            self.metrics
+                .count_metrics
+                .num_messages_processed
+                .fetch_add(1, Ordering::Relaxed);
             self.consume(&bank, work)?;
         }
 
@@ -154,6 +169,9 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     /// Retry current batch and all outstanding batches.
     fn retry_drain(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
         for work in try_drain_iter(work, &self.consume_receiver) {
+            if self.exit.load(Ordering::Relaxed) {
+                return Ok(());
+            }
             self.retry(work)?;
         }
         Ok(())
@@ -436,6 +454,8 @@ impl ConsumeWorkerMetrics {
 }
 
 struct ConsumeWorkerCountMetrics {
+    max_queue_len: AtomicU64,
+    num_messages_processed: AtomicU64,
     transactions_attempted_processing_count: AtomicU64,
     processed_transactions_count: AtomicU64,
     processed_with_successful_result_count: AtomicU64,
@@ -449,6 +469,8 @@ struct ConsumeWorkerCountMetrics {
 impl Default for ConsumeWorkerCountMetrics {
     fn default() -> Self {
         Self {
+            max_queue_len: AtomicU64::default(),
+            num_messages_processed: AtomicU64::default(),
             transactions_attempted_processing_count: AtomicU64::default(),
             processed_transactions_count: AtomicU64::default(),
             processed_with_successful_result_count: AtomicU64::default(),
@@ -466,6 +488,12 @@ impl ConsumeWorkerCountMetrics {
         datapoint_info!(
             "banking_stage_worker_counts",
             "id" => id,
+            ("max_queue_len", self.max_queue_len.swap(0, Ordering::Relaxed), i64),
+            (
+                "num_messages_processed",
+                self.num_messages_processed.swap(0, Ordering::Relaxed),
+                i64
+            ),
             (
                 "transactions_attempted_processing_count",
                 self.transactions_attempted_processing_count
@@ -851,6 +879,7 @@ mod tests {
         let (consumed_sender, consumed_receiver) = unbounded();
         let worker = ConsumeWorker::new(
             0,
+            Arc::new(AtomicBool::new(false)),
             consume_receiver,
             consumer,
             consumed_sender,

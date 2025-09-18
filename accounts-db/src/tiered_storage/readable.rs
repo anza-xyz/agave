@@ -153,7 +153,7 @@ impl TieredStorageReader {
     /// in data_len
     pub(crate) fn calculate_stored_size(&self, data_len: usize) -> usize {
         match self {
-            Self::Hot(hot) => hot.calculate_stored_size(data_len),
+            Self::Hot(_) => HotStorageReader::calculate_stored_size(data_len),
         }
     }
 

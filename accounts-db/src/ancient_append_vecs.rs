@@ -15,6 +15,7 @@ use {
         },
         active_stats::ActiveStatItem,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
+        u64_align,
     },
     rand::{thread_rng, Rng},
     rayon::prelude::{IntoParallelRefIterator, ParallelIterator},
@@ -162,7 +163,19 @@ impl AncientSlotInfos {
         self.shrink_indexes.sort_unstable_by(|l, r| {
             let amount_shrunk = |index: &usize| {
                 let item = &self.all_infos[*index];
-                item.capacity - item.alive_bytes
+                // alive_bytes assumes the accounts are aligned. `capacity` may
+                // not be aligned for the last account. Therefore, we need to
+                // align it.
+                let aligned_capacity = u64_align!(item.capacity as usize) as u64;
+                if aligned_capacity < item.alive_bytes {
+                    // should not happen, but if it does, submit warn log it and continue
+                    datapoint_warn!(
+                        "aligned_capacity_less_than_alive_bytes",
+                        ("aligned_capacity", aligned_capacity, i64),
+                        ("alive_bytes", item.alive_bytes, i64)
+                    );
+                }
+                item.capacity.saturating_sub(item.alive_bytes)
             };
             amount_shrunk(r).cmp(&amount_shrunk(l))
         });
@@ -655,7 +668,7 @@ impl AccountsDb {
                 Ordering::Relaxed,
             );
 
-        self.thread_pool_clean.install(|| {
+        self.thread_pool_background.install(|| {
             packer.par_iter().for_each(|(target_slot, pack)| {
                 let mut write_ancient_accounts_local = WriteAncientAccounts::default();
                 self.write_one_packed_storage(
@@ -1109,7 +1122,9 @@ pub mod tests {
                 ShrinkCollectRefs,
             },
             accounts_file::StorageAccess,
-            accounts_index::{AccountsIndexScanResult, ScanFilter, UpsertReclaim},
+            accounts_index::{
+                AccountsIndexScanResult, ReclaimsSlotList, RefCount, ScanFilter, UpsertReclaim,
+            },
             append_vec::{self, aligned_stored_size},
             storable_accounts::StorableAccountsBySlot,
         },
@@ -1595,14 +1610,7 @@ pub mod tests {
                             let storage = db.storage.get_slot_storage_entry(slot);
                             if all_slots_shrunk {
                                 assert!(storage.is_some());
-                                // Here we use can_append() as a proxy to assert the backup storage of the accounts after shrinking.
-                                // When storage_access is set to `File`, after shrinking an ancient slot, the backup storage should be
-                                // open as File, which means can_append() will return false.
-                                // When storage_access is set to `Mmap`, backup storage is still Mmap, and can_append() will return true.
-                                assert_eq!(
-                                    storage.unwrap().accounts.can_append(),
-                                    storage_access == StorageAccess::Mmap
-                                );
+                                assert!(!storage.unwrap().has_accounts());
                             } else {
                                 assert!(storage.is_none());
                             }
@@ -1782,10 +1790,10 @@ pub mod tests {
                                         );
                                         assert!(db.accounts_index.purge_exact(
                                             &pk,
-                                            &[storage.slot()]
+                                            [storage.slot()]
                                                 .into_iter()
                                                 .collect::<std::collections::HashSet<Slot>>(),
-                                            &mut Vec::default()
+                                            &mut ReclaimsSlotList::new()
                                         ));
                                     });
                                 }
@@ -3733,8 +3741,8 @@ pub mod tests {
                 .map(|_| solana_pubkey::new_rand())
                 .collect::<Vec<_>>();
             // how many of `many_ref_accounts` should be found in the index with ref_count=1
-            let mut expected_ref_counts_before_unref = HashMap::<Pubkey, u64>::default();
-            let mut expected_ref_counts_after_unref = HashMap::<Pubkey, u64>::default();
+            let mut expected_ref_counts_before_unref = HashMap::<Pubkey, RefCount>::default();
+            let mut expected_ref_counts_after_unref = HashMap::<Pubkey, RefCount>::default();
 
             pubkeys_to_unref.iter().for_each(|k| {
                 for slot in 0..2 {
@@ -3746,7 +3754,7 @@ pub mod tests {
                         &empty_account,
                         &crate::accounts_index::AccountSecondaryIndexes::default(),
                         AccountInfo::default(),
-                        &mut Vec::default(),
+                        &mut ReclaimsSlotList::new(),
                         UpsertReclaim::IgnoreReclaims,
                     );
                 }

@@ -38,7 +38,11 @@ use {
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::bank_forks::BankForks,
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},
-    std::sync::{Arc, RwLock},
+    std::{
+        num::NonZeroUsize,
+        ops::Deref,
+        sync::{Arc, RwLock},
+    },
 };
 
 #[allow(dead_code)]
@@ -49,12 +53,21 @@ pub(crate) fn ensure_banking_stage_setup(
     channels: &Channels,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
     transaction_recorder: TransactionRecorder,
-    num_threads: u32,
+    num_threads: NonZeroUsize,
 ) {
-    let root_bank = bank_forks.read().unwrap().sharable_root_bank();
+    let sharable_banks = bank_forks.read().unwrap().sharable_banks();
     let unified_receiver = channels.unified_receiver().clone();
-    let mut decision_maker = DecisionMaker::new(poh_recorder.clone());
-    let banking_stage_monitor = Box::new(DecisionMakerWrapper::new(decision_maker.clone()));
+
+    let (is_exited, decision_maker) = {
+        let poh_recorder = poh_recorder.read().unwrap();
+        (
+            poh_recorder.is_exited.clone(),
+            DecisionMaker::from(poh_recorder.deref()),
+        )
+    };
+
+    let banking_stage_monitor =
+        Box::new(DecisionMakerWrapper::new(is_exited, decision_maker.clone()));
     let banking_packet_handler = Box::new(
         move |helper: &BankingStageHelper, batches: BankingPacketBatch| {
             let decision = decision_maker.make_consume_or_forward_decision();
@@ -64,7 +77,7 @@ pub(crate) fn ensure_banking_stage_setup(
                 // by solScCleaner.
                 return;
             }
-            let bank = root_bank.load();
+            let bank = sharable_banks.root();
             for batch in batches.iter() {
                 // over-provision nevertheless some of packets could be invalid.
                 let task_id_base = helper.generate_task_ids(batch.len());
@@ -91,7 +104,7 @@ pub(crate) fn ensure_banking_stage_setup(
     );
 
     pool.register_banking_stage(
-        Some(num_threads.try_into().unwrap()),
+        Some(num_threads.get()),
         unified_receiver,
         banking_packet_handler,
         transaction_recorder,

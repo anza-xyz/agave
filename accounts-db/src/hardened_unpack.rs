@@ -93,7 +93,7 @@ pub enum UnpackPath<'a> {
 
 fn unpack_archive<'a, A, C, D>(
     mut archive: Archive<A>,
-    input_archive_size: u64,
+    memlock_budget_size: usize,
     apparent_limit_size: u64,
     actual_limit_size: u64,
     limit_count: u64,
@@ -115,7 +115,7 @@ where
     // Bound the buffer based on provided limit of unpacked data and input archive size
     // (decompression multiplies content size, but buffering more than origin isn't necessary).
     let buf_size =
-        (input_archive_size.min(actual_limit_size) as usize).min(MAX_UNPACK_WRITE_BUF_SIZE);
+        (memlock_budget_size.min(actual_limit_size as usize)).min(MAX_UNPACK_WRITE_BUF_SIZE);
     let mut files_creator = file_creator(buf_size, file_path_processor)?;
 
     for entry in archive.entries()? {
@@ -342,14 +342,14 @@ pub type UnpackedAppendVecMap = HashMap<String, PathBuf>;
 /// Unpacks snapshot and collects AppendVec file names & paths
 pub fn unpack_snapshot<A: Read>(
     archive: Archive<A>,
-    input_archive_size: u64,
+    memlock_budget_size: usize,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
 ) -> Result<UnpackedAppendVecMap> {
     let mut unpacked_append_vec_map = UnpackedAppendVecMap::new();
     unpack_snapshot_with_processors(
         archive,
-        input_archive_size,
+        memlock_budget_size,
         ledger_dir,
         account_paths,
         |file, path| {
@@ -364,14 +364,14 @@ pub fn unpack_snapshot<A: Read>(
 /// sends entry file paths through the `sender` channel
 pub fn streaming_unpack_snapshot<A: Read>(
     archive: Archive<A>,
-    input_archive_size: u64,
+    memlock_budget_size: usize,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
     sender: &Sender<PathBuf>,
 ) -> Result<()> {
     unpack_snapshot_with_processors(
         archive,
-        input_archive_size,
+        memlock_budget_size,
         ledger_dir,
         account_paths,
         |_, _| {},
@@ -389,7 +389,7 @@ pub fn streaming_unpack_snapshot<A: Read>(
 
 fn unpack_snapshot_with_processors<A, F, G>(
     archive: Archive<A>,
-    input_archive_size: u64,
+    memlock_budget_size: usize,
     ledger_dir: &Path,
     account_paths: &[PathBuf],
     mut accounts_path_processor: F,
@@ -404,7 +404,7 @@ where
 
     unpack_archive(
         archive,
-        input_archive_size,
+        memlock_budget_size,
         MAX_SNAPSHOT_ARCHIVE_UNPACKED_APPARENT_SIZE,
         MAX_SNAPSHOT_ARCHIVE_UNPACKED_ACTUAL_SIZE,
         MAX_SNAPSHOT_ARCHIVE_UNPACKED_COUNT,
@@ -524,15 +524,9 @@ pub fn unpack_genesis_archive(
 
     fs::create_dir_all(destination_dir)?;
     let tar_bz2 = File::open(archive_filename)?;
-    let archive_size = tar_bz2.metadata()?.len();
     let tar = BzDecoder::new(BufReader::new(tar_bz2));
     let archive = Archive::new(tar);
-    unpack_genesis(
-        archive,
-        archive_size,
-        destination_dir,
-        max_genesis_archive_unpacked_size,
-    )?;
+    unpack_genesis(archive, destination_dir, max_genesis_archive_unpacked_size)?;
     info!(
         "Extracted {:?} in {:?}",
         archive_filename,
@@ -543,13 +537,12 @@ pub fn unpack_genesis_archive(
 
 fn unpack_genesis<A: Read>(
     archive: Archive<A>,
-    input_archive_size: u64,
     unpack_dir: &Path,
     max_genesis_archive_unpacked_size: u64,
 ) -> Result<()> {
     unpack_archive(
         archive,
-        input_archive_size,
+        0, /* don't provide memlock budget (forces sync IO), since genesis archives are small */
         max_genesis_archive_unpacked_size,
         max_genesis_archive_unpacked_size,
         MAX_GENESIS_ARCHIVE_UNPACKED_COUNT,
@@ -835,7 +828,7 @@ mod tests {
 
     fn finalize_and_unpack_genesis(archive: tar::Builder<Vec<u8>>) -> Result<()> {
         with_finalize_and_unpack(archive, |a, b| {
-            unpack_genesis(a, 256, b, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE)
+            unpack_genesis(a, b, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE)
         })
     }
 

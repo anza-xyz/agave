@@ -1004,13 +1004,11 @@ impl Blockstore {
                 match shred.shred_type() {
                     ShredType::Code => {
                         // Don't need Arc overhead here!
-                        debug_assert_matches!(shred.payload(), shred::Payload::Unique(_));
                         recovered_shreds.push(shred.into_payload());
                         None
                     }
                     ShredType::Data => {
                         // Verify that the cloning is cheap here.
-                        debug_assert_matches!(shred.payload(), shred::Payload::Shared(_));
                         recovered_shreds.push(shred.payload().clone());
                         Some(shred)
                     }
@@ -5262,7 +5260,7 @@ fn adjust_ulimit_nofile(enforce_ulimit_nofile: bool) -> Result<()> {
     // usually not enough
     // AppendVecs and disk Account Index are also heavy users of mmapped files.
     // This should be kept in sync with published validator instructions.
-    // https://docs.solanalabs.com/operations/guides/validator-start#increased-memory-mapped-files-limit
+    // https://docs.anza.xyz/operations/guides/validator-start#system-tuning
     let desired_nofile = 1_000_000;
 
     fn get_nofile() -> libc::rlimit {
@@ -5338,7 +5336,6 @@ pub mod tests {
             InnerInstruction, InnerInstructions, Reward, Rewards, TransactionTokenBalance,
         },
         std::{cmp::Ordering, time::Duration},
-        test_case::test_case,
     };
 
     // used for tests only
@@ -6880,7 +6877,7 @@ pub mod tests {
                         &keypair,
                         &[],
                         false,
-                        None,
+                        Some(Hash::default()), // merkle_root
                         (i * gap) as u32,
                         (i * gap) as u32,
                         &reed_solomon_cache,
@@ -7063,7 +7060,7 @@ pub mod tests {
                 &keypair,
                 &entries,
                 true,
-                None, //chained_merkle_root
+                Some(Hash::default()), // merkle_root
                 0,
                 0,
                 &rsc,
@@ -7091,9 +7088,9 @@ pub mod tests {
                 &keypair,
                 &[],
                 true,
-                None, //chained_merkle_root
-                6,    // next_shred_index,
-                6,    // next_code_index
+                Some(Hash::default()), // merkle_root
+                6,                     // next_shred_index,
+                6,                     // next_code_index
                 &rsc,
                 &mut ProcessShredsStats::default(),
             )
@@ -7154,9 +7151,9 @@ pub mod tests {
                 &Keypair::new(),
                 &entries,
                 true,
-                None,     //chained_merkle_root
-                last_idx, // next_shred_index,
-                last_idx, // next_code_index
+                Some(Hash::default()), // merkle_root
+                last_idx,              // next_shred_index,
+                last_idx,              // next_code_index
                 &rsc,
                 &mut ProcessShredsStats::default(),
             )
@@ -10246,21 +10243,20 @@ pub mod tests {
         assert_eq!(num_coding_in_index, num_coding);
     }
 
-    #[test_case(false)]
-    #[test_case(true)]
-    fn test_duplicate_slot(chained: bool) {
+    #[test]
+    fn test_duplicate_slot() {
         let slot = 0;
         let entries1 = make_slot_entries_with_transactions(1);
         let entries2 = make_slot_entries_with_transactions(1);
         let leader_keypair = Arc::new(Keypair::new());
         let reed_solomon_cache = ReedSolomonCache::default();
         let shredder = Shredder::new(slot, 0, 0, 0).unwrap();
-        let chained_merkle_root = chained.then(|| Hash::new_from_array(rand::thread_rng().gen()));
+        let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
         let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             &leader_keypair,
             &entries1,
             true, // is_last_in_slot
-            chained_merkle_root,
+            merkle_root,
             0, // next_shred_index
             0, // next_code_index,
             &reed_solomon_cache,
@@ -10270,7 +10266,7 @@ pub mod tests {
             &leader_keypair,
             &entries2,
             true, // is_last_in_slot
-            chained_merkle_root,
+            merkle_root,
             0, // next_shred_index
             0, // next_code_index
             &reed_solomon_cache,

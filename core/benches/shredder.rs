@@ -10,7 +10,8 @@ use {
     solana_keypair::Keypair,
     solana_ledger::shred::{
         get_data_shred_bytes_per_batch_typical, max_entries_per_n_shred, max_ticks_per_n_shreds,
-        recover, ProcessShredsStats, ReedSolomonCache, Shred, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
+        recover, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
+        CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_perf::test_tx,
     test::{black_box, Bencher},
@@ -178,7 +179,7 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();
     let reed_solomon_cache = ReedSolomonCache::default();
     let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
-    let (_data_shreds, coding_shreds): (Vec<_>, Vec<_>) = shredder
+    let (_data_shreds, mut coding_shreds): (Vec<_>, Vec<_>) = shredder
         .make_merkle_shreds_from_entries(
             &Keypair::new(),
             &entries,
@@ -190,6 +191,7 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
             &mut ProcessShredsStats::default(),
         )
         .partition(Shred::is_data);
+    coding_shreds.truncate(CODING_SHREDS_PER_FEC_BLOCK);
 
     bencher.iter(|| {
         for shred in recover(coding_shreds.clone(), &reed_solomon_cache).unwrap() {

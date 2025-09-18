@@ -24,9 +24,18 @@ use {
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
     std::{io::Write, option::Option, path::Path},
 };
+
+/// When rent is collected from an exempt account, rent_epoch is set to this
+/// value. The idea is to have a fixed, consistent value for rent_epoch for all accounts that do not collect rent.
+/// This enables us to get rid of the field completely.
+pub const RENT_EXEMPT_RENT_EPOCH: Epoch = Epoch::MAX;
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    RENT_EXEMPT_RENT_EPOCH,
+    solana_svm::rent_calculator::RENT_EXEMPT_RENT_EPOCH
+);
 
 pub const HOT_FORMAT: TieredStorageFormat = TieredStorageFormat {
     meta_entry_size: std::mem::size_of::<HotAccountMeta>(),
@@ -588,7 +597,7 @@ impl HotStorageReader {
 
     /// Calculate the amount of storage required for an account with the passed
     /// in data_len
-    pub(crate) fn calculate_stored_size(&self, data_len: usize) -> usize {
+    pub(crate) fn calculate_stored_size(data_len: usize) -> usize {
         stored_size(data_len)
     }
 

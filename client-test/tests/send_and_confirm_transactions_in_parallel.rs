@@ -9,7 +9,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_keypair::Keypair,
     solana_message::Message,
-    solana_native_token::sol_to_lamports,
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
@@ -21,15 +21,15 @@ use {
 
 const NUM_TRANSACTIONS: usize = 1000;
 
-fn create_messages(from: Pubkey, to: Pubkey) -> (Vec<Message>, f64) {
+fn create_messages(from: Pubkey, to: Pubkey) -> (Vec<Message>, u64) {
     let mut messages = vec![];
-    let mut sum = 0.0;
+    let mut sum = 0u64;
     for i in 1..NUM_TRANSACTIONS {
-        let amount_to_transfer = i as f64;
-        let ix = system_instruction::transfer(&from, &to, sol_to_lamports(amount_to_transfer));
+        let amount_to_transfer = (i as u64).checked_mul(LAMPORTS_PER_SOL).unwrap();
+        let ix = system_instruction::transfer(&from, &to, amount_to_transfer);
         let message = Message::new(&[ix], Some(&from));
         messages.push(message);
-        sum += amount_to_transfer;
+        sum = sum.checked_add(amount_to_transfer).unwrap();
     }
     (messages, sum)
 }
@@ -80,14 +80,14 @@ fn test_send_and_confirm_transactions_in_parallel_without_tpu_client() {
             .get_balance_with_commitment(&bob_pubkey, CommitmentConfig::processed())
             .unwrap()
             .value,
-        sol_to_lamports(sum)
+        sum
     );
     assert_eq!(
         rpc_client
             .get_balance_with_commitment(&alice_pubkey, CommitmentConfig::processed())
             .unwrap()
             .value,
-        original_alice_balance - sol_to_lamports(sum)
+        original_alice_balance - sum
     );
 }
 
@@ -145,13 +145,13 @@ fn test_send_and_confirm_transactions_in_parallel_with_tpu_client() {
             .get_balance_with_commitment(&bob_pubkey, CommitmentConfig::processed())
             .unwrap()
             .value,
-        sol_to_lamports(sum)
+        sum
     );
     assert_eq!(
         rpc_client
             .get_balance_with_commitment(&alice_pubkey, CommitmentConfig::processed())
             .unwrap()
             .value,
-        original_alice_balance - sol_to_lamports(sum)
+        original_alice_balance - sum
     );
 }

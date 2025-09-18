@@ -8,10 +8,10 @@ pub use solana_stake_interface::config::*;
 use {
     bincode::{deserialize, serialize},
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_config_program_client::{get_config_data, ConfigKeys},
+    solana_config_interface::state::{get_config_data, ConfigKeys},
     solana_genesis_config::GenesisConfig,
     solana_pubkey::Pubkey,
-    solana_transaction_context::BorrowedAccount,
+    solana_transaction_context::BorrowedInstructionAccount,
 };
 
 #[allow(deprecated)]
@@ -31,7 +31,7 @@ fn create_config_account(
 }
 
 #[allow(deprecated)]
-pub fn from(account: &BorrowedAccount) -> Option<Config> {
+pub fn from(account: &BorrowedInstructionAccount) -> Option<Config> {
     get_config_data(account.get_data())
         .ok()
         .and_then(|data| deserialize(data).ok())

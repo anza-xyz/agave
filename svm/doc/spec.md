@@ -131,8 +131,6 @@ pub trait TransactionProcessingCallback {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)>;
 
     fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey) {}
-
-    fn get_current_epoch_vote_account_stake(&self, _vote_address: &Pubkey) -> u64;
 }
 ```
 

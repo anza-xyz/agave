@@ -4,7 +4,10 @@
 //! - add_transaction_cost(&tx_cost), mutable function to accumulate tx_cost to tracker.
 //!
 use {
-    crate::{block_cost_limits::*, transaction_cost::TransactionCost},
+    crate::{
+        block_cost_limits::*, cost_tracker_post_analysis::CostTrackerPostAnalysis,
+        transaction_cost::TransactionCost,
+    },
     solana_metrics::datapoint_info,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -239,6 +242,7 @@ impl CostTracker {
         }
 
         let (costliest_account, costliest_account_cost) = self.find_costliest_account();
+        let number_of_contended_accounts = self.find_number_of_contended_accounts();
 
         datapoint_info!(
             "cost_tracker_stats",
@@ -282,6 +286,7 @@ impl CostTracker {
             ),
             ("total_transaction_fee", total_transaction_fee, i64),
             ("total_priority_fee", total_priority_fee, i64),
+            ("number_of_contended_accounts", number_of_contended_accounts, i64),
         );
     }
 
@@ -291,6 +296,19 @@ impl CostTracker {
             .max_by_key(|(_, &cost)| cost)
             .map(|(&pubkey, &cost)| (pubkey, cost))
             .unwrap_or_default()
+    }
+
+    fn find_number_of_contended_accounts(&self) -> usize {
+        // accounts has more than 95% of account_cu_limit is considered as highly contended
+        let contended_cost_mark: u64 = self
+            .account_cost_limit
+            .saturating_mul(95)
+            .saturating_div(100);
+
+        self.cost_by_writable_accounts
+            .values()
+            .filter(|&&cost| cost >= contended_cost_mark)
+            .count()
     }
 
     fn would_fit(
@@ -415,6 +433,15 @@ impl CostTracker {
             .values()
             .filter(|units| **units > 0)
             .count()
+    }
+}
+
+/// Implement the trait for the cost tracker
+/// This is only used for post-analysis to avoid lock contention
+/// Do not use in the hot path
+impl CostTrackerPostAnalysis for CostTracker {
+    fn get_cost_by_writable_accounts(&self) -> &HashMap<Pubkey, u64, ahash::RandomState> {
+        &self.cost_by_writable_accounts
     }
 }
 
@@ -982,5 +1009,21 @@ mod tests {
         assert_eq!(0, cost_tracker.block_cost);
         assert_eq!(0, cost_tracker.vote_cost);
         assert_eq!(0, cost_tracker.allocated_accounts_data_size.0);
+    }
+
+    #[test]
+    fn test_get_cost_by_writable_accounts_post_analysis() {
+        let mut cost_tracker = CostTracker::default();
+        let cost = 100u64;
+        let transaction = WritableKeysTransaction(vec![Pubkey::new_unique()]);
+        let tx_cost = simple_transaction_cost(&transaction, cost);
+        cost_tracker.add_transaction_cost(&tx_cost);
+        let cost_by_writable_accounts = cost_tracker.get_cost_by_writable_accounts();
+        assert_eq!(1, cost_by_writable_accounts.len());
+        assert_eq!(cost, *cost_by_writable_accounts.values().next().unwrap());
+        assert_eq!(
+            *cost_by_writable_accounts,
+            cost_tracker.cost_by_writable_accounts
+        );
     }
 }

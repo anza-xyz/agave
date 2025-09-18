@@ -5,7 +5,6 @@ use {
         account_info::{AccountInfo, Offset},
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_db::AccountsFileId,
-        accounts_update_notifier_interface::AccountForGeyser,
         append_vec::{AppendVec, AppendVecError},
         buffered_reader::RequiredLenBufFileRead,
         storable_accounts::StorableAccounts,
@@ -13,7 +12,7 @@ use {
             error::TieredStorageError, hot::HOT_FORMAT, index::IndexOffset, TieredStorage,
         },
     },
-    solana_account::{AccountSharedData, ReadableAccount as _},
+    solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::{
@@ -96,22 +95,10 @@ impl AccountsFile {
         Ok(Self::AppendVec(av))
     }
 
-    /// true if this storage can possibly be appended to (independent of capacity check)
-    //
-    // NOTE: Only used by ancient append vecs "append" method, which is test-only now.
-    #[cfg(test)]
-    pub(crate) fn can_append(&self) -> bool {
-        match self {
-            Self::AppendVec(av) => av.can_append(),
-            // once created, tiered storages cannot be appended to
-            Self::TieredStorage(_) => false,
-        }
-    }
-
     /// if storage is not readonly, reopen another instance that is read only
     pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
         match self {
-            Self::AppendVec(av) => av.reopen_as_readonly().map(Self::AppendVec),
+            Self::AppendVec(av) => av.reopen_as_readonly_file_io().map(Self::AppendVec),
             Self::TieredStorage(_) => None,
         }
     }
@@ -125,17 +112,11 @@ impl AccountsFile {
         }
     }
 
+    /// Flushes contents to disk
     pub fn flush(&self) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.flush(),
             Self::TieredStorage(_) => Ok(()),
-        }
-    }
-
-    pub fn reset(&self) {
-        match self {
-            Self::AppendVec(av) => av.reset(),
-            Self::TieredStorage(_) => {}
         }
     }
 
@@ -146,6 +127,7 @@ impl AccountsFile {
         }
     }
 
+    /// Returns the number of bytes, *not accounts*, used in the AccountsFile
     pub fn len(&self) -> usize {
         match self {
             Self::AppendVec(av) => av.len(),
@@ -160,6 +142,7 @@ impl AccountsFile {
         }
     }
 
+    /// Returns the total number of bytes, *not accounts*, the AccountsFile can hold
     pub fn capacity(&self) -> u64 {
         match self {
             Self::AppendVec(av) => av.capacity(),
@@ -327,31 +310,11 @@ impl AccountsFile {
         }
     }
 
-    /// Iterate over all accounts and call `callback` with each account.
-    /// Only intended to be used by Geyser.
-    pub(crate) fn scan_accounts_for_geyser<'a>(
-        &'a self,
-        reader: &mut impl RequiredLenBufFileRead<'a>,
-        mut callback: impl for<'local> FnMut(AccountForGeyser<'local>),
-    ) -> Result<()> {
-        self.scan_accounts(reader, |_offset, account| {
-            let account_for_geyser = AccountForGeyser {
-                pubkey: account.pubkey(),
-                lamports: account.lamports(),
-                owner: account.owner(),
-                executable: account.executable(),
-                rent_epoch: account.rent_epoch(),
-                data: account.data(),
-            };
-            callback(account_for_geyser)
-        })
-    }
-
     /// Calculate the amount of storage required for an account with the passed
     /// in data_len
     pub(crate) fn calculate_stored_size(&self, data_len: usize) -> usize {
         match self {
-            Self::AppendVec(av) => av.calculate_stored_size(data_len),
+            Self::AppendVec(_) => AppendVec::calculate_stored_size(data_len),
             Self::TieredStorage(ts) => ts
                 .reader()
                 .expect("Reader must be initialized as stored size is specific to format")
@@ -434,11 +397,19 @@ pub enum AccountsFileProvider {
 }
 
 impl AccountsFileProvider {
-    pub fn new_writable(&self, path: impl Into<PathBuf>, file_size: u64) -> AccountsFile {
+    pub fn new_writable(
+        &self,
+        path: impl Into<PathBuf>,
+        file_size: u64,
+        storage_access: StorageAccess,
+    ) -> AccountsFile {
         match self {
-            Self::AppendVec => {
-                AccountsFile::AppendVec(AppendVec::new(path, true, file_size as usize))
-            }
+            Self::AppendVec => AccountsFile::AppendVec(AppendVec::new(
+                path,
+                true,
+                file_size as usize,
+                storage_access,
+            )),
             Self::HotStorage => AccountsFile::TieredStorage(TieredStorage::new_writable(path)),
         }
     }
@@ -460,17 +431,4 @@ pub struct StoredAccountsInfo {
     pub offsets: Vec<usize>,
     /// total size of all the stored accounts
     pub size: usize,
-}
-
-#[cfg(test)]
-pub mod tests {
-    use crate::accounts_file::AccountsFile;
-    impl AccountsFile {
-        pub(crate) fn set_current_len_for_tests(&self, len: usize) {
-            match self {
-                Self::AppendVec(av) => av.set_current_len_for_tests(len),
-                Self::TieredStorage(_) => {}
-            }
-        }
-    }
 }

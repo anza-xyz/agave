@@ -7,7 +7,7 @@ use {
         cli::{process_command, CliCommand, CliConfig},
     },
     solana_cli_output::{CliAddressLookupTable, CliAddressLookupTableCreated, OutputFormat},
-    solana_faucet::faucet::run_local_faucet,
+    solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_keypair::Keypair,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
@@ -21,7 +21,7 @@ use {
 fn test_cli_create_extend_and_freeze_address_lookup_table() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair, None);
+    let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair);
     let test_validator =
         TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
 
@@ -135,7 +135,7 @@ fn test_cli_create_extend_and_freeze_address_lookup_table() {
 fn test_cli_create_and_deactivate_address_lookup_table() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair, None);
+    let faucet_addr = run_local_faucet_with_unique_port_for_tests(mint_keypair);
     let test_validator =
         TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
 

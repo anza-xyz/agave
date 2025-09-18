@@ -1,10 +1,10 @@
 [package]
 name = "solana-core"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-core"
 readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
@@ -45,6 +45,7 @@ agave-banking-stage-ingress-types = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-verified-packet-receiver = { workspace = true }
+agave-votor = { workspace = true, features = ["agave-unstable-api"] }
 ahash = { workspace = true }
 anyhow = { workspace = true }
 arrayvec = { workspace = true }
@@ -60,7 +61,6 @@ conditional-mod = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 derive_more = { workspace = true }
-etcd-client = { workspace = true, features = ["tls"] }
 futures = { workspace = true }
 histogram = { workspace = true }
 itertools = { workspace = true }
@@ -89,6 +89,7 @@ solana-bloom = { workspace = true }
 solana-builtins-default-costs = { workspace = true }
 solana-client = { workspace = true }
 solana-clock = { workspace = true }
+solana-cluster-type = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
@@ -107,7 +108,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-genesis-config = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
-solana-gossip = { workspace = true }
+solana-gossip = { workspace = true, features = ["agave-unstable-api"] }
 solana-hard-forks = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
@@ -118,7 +119,7 @@ solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
-solana-net-utils = { workspace = true }
+solana-net-utils = { workspace = true, features = ["agave-unstable-api"] }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-packet = { workspace = true }
@@ -158,7 +159,7 @@ solana-tpu-client-next = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
-solana-turbine = { workspace = true }
+solana-turbine = { workspace = true, features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { workspace = true }
 solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
@@ -188,10 +189,11 @@ fs_extra = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["dev-context-only-utils"] }
-# See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-bpf-loader-program = { workspace = true }
+solana-client = { workspace = true, features = ["dev-context-only-utils"] }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
+# See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-core = { path = ".", features = ["dev-context-only-utils"] }
 solana-cost-model = { workspace = true, features = ["dev-context-only-utils"] }
 solana-keypair = { workspace = true }
@@ -199,6 +201,7 @@ solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-poh = { workspace = true, features = ["dev-context-only-utils"] }
+solana-program-binaries = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
 solana-stake-program = { workspace = true }
@@ -211,9 +214,6 @@ solana-vote = { workspace = true, features = ["dev-context-only-utils"] }
 spl-memo-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
-
-[badges]
-codecov = { repository = "solana-labs/solana", branch = "master", service = "github" }
 
 [[bench]]
 name = "banking_stage"

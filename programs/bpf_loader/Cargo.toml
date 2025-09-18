@@ -40,7 +40,7 @@ solana-packet = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-sbpf = { workspace = true }
+solana-sbpf = { workspace = true, features = ["jit"] }
 solana-sdk-ids = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-log-collector = { workspace = true }

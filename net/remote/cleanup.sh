@@ -14,11 +14,6 @@ for pid in solana/*.pid; do
     $sudo kill -- -"$pgid"
   fi
 done
-if [[ -f solana/netem.cfg ]]; then
-  solana/scripts/netem.sh delete < solana/netem.cfg
-  rm -f solana/netem.cfg
-fi
-solana/scripts/net-shaper.sh cleanup
 for pattern in validator.sh boostrap-leader.sh solana- remote- iftop validator client node; do
   echo "killing $pattern"
   pkill -f $pattern

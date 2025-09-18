@@ -20,8 +20,10 @@ use {
         keypair::DefaultSigner,
     },
     solana_cli_output::{CliValidatorInfo, CliValidatorInfoVec},
-    solana_config_interface::instruction::{self as config_instruction},
-    solana_config_program_client::{get_config_data, ConfigKeys},
+    solana_config_interface::{
+        instruction::{self as config_instruction},
+        state::{get_config_data, ConfigKeys},
+    },
     solana_keypair::Keypair,
     solana_message::Message,
     solana_pubkey::Pubkey,
@@ -130,7 +132,7 @@ fn parse_validator_info(
     pubkey: &Pubkey,
     account: &Account,
 ) -> Result<(Pubkey, Map<String, serde_json::value::Value>), Box<dyn error::Error>> {
-    if account.owner != solana_config_program_client::ID {
+    if account.owner != solana_config_interface::id() {
         return Err(format!("{pubkey} is not a validator info account").into());
     }
     let key_list: ConfigKeys = deserialize(&account.data)?;
@@ -303,7 +305,7 @@ pub fn process_set_validator_info(
     }
 
     // Check for existing validator-info account
-    let all_config = rpc_client.get_program_accounts(&solana_config_program_client::ID)?;
+    let all_config = rpc_client.get_program_accounts(&solana_config_interface::id())?;
     let existing_account = all_config
         .iter()
         .filter(
@@ -432,7 +434,7 @@ pub fn process_get_validator_info(
             rpc_client.get_account(&validator_info_pubkey)?,
         )]
     } else {
-        let all_config = rpc_client.get_program_accounts(&solana_config_program_client::ID)?;
+        let all_config = rpc_client.get_program_accounts(&solana_config_interface::id())?;
         all_config
             .into_iter()
             .filter(|(_, validator_info_account)| {
@@ -586,7 +588,7 @@ mod tests {
             parse_validator_info(
                 &Pubkey::default(),
                 &Account {
-                    owner: solana_config_program_client::ID,
+                    owner: solana_config_interface::id(),
                     data,
                     ..Account::default()
                 }
@@ -621,7 +623,7 @@ mod tests {
         assert!(parse_validator_info(
             &Pubkey::default(),
             &Account {
-                owner: solana_config_program_client::ID,
+                owner: solana_config_interface::id(),
                 data,
                 ..Account::default()
             },

@@ -2,9 +2,13 @@
 //! structures provide mechanisms for caching workers, sending transaction
 //! batches, and gathering send transaction statistics.
 
+#[cfg(feature = "agave-unstable-api")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
-        connection_worker::ConnectionWorker, logging::debug, transaction_batch::TransactionBatch,
+        connection_worker::ConnectionWorker,
+        logging::{debug, trace},
+        transaction_batch::TransactionBatch,
         SendTransactionStats,
     },
     lru::LruCache,
@@ -68,9 +72,16 @@ impl WorkerInfo {
             .map_err(|_| WorkersCacheError::TaskJoinFailure)?;
         Ok(())
     }
+
+    /// Returns `true` if the worker is still active and able to send
+    /// transactions.
+    fn is_active(&self) -> bool {
+        !(self.cancel.is_cancelled() || self.sender.is_closed())
+    }
 }
 
 /// Spawns a worker to handle communication with a given peer.
+#[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
 pub(crate) fn spawn_worker(
     endpoint: &Endpoint,
     peer: &SocketAddr,
@@ -124,9 +135,13 @@ pub enum WorkersCacheError {
 
     #[error("The WorkersCache is being shutdown.")]
     ShutdownError,
+
+    #[error("No worker exists for the specified peer.")]
+    WorkerNotFound,
 }
 
 impl WorkersCache {
+    #[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
     pub(crate) fn new(capacity: usize, cancel: CancellationToken) -> Self {
         Self {
             workers: LruCache::new(capacity),
@@ -140,6 +155,7 @@ impl WorkersCache {
         self.workers.contains(peer)
     }
 
+    #[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
     pub(crate) fn push(
         &mut self,
         leader: SocketAddr,
@@ -164,15 +180,56 @@ impl WorkersCache {
         None
     }
 
+    /// Ensures a worker exists for the given peer, creating one if necessary.
+    ///
+    /// Returns any evicted worker that needs shutdown.
+    pub fn ensure_worker(
+        &mut self,
+        peer: SocketAddr,
+        endpoint: &Endpoint,
+        worker_channel_size: usize,
+        skip_check_transaction_age: bool,
+        max_reconnect_attempts: usize,
+        handshake_timeout: Duration,
+        stats: Arc<SendTransactionStats>,
+    ) -> Option<ShutdownWorker> {
+        if let Some(worker) = self.workers.peek(&peer) {
+            // if worker is active, we will reuse it. Otherwise, we will spawn
+            // the new one and the existing will be popped out.
+            if worker.is_active() {
+                return None;
+            }
+        }
+        trace!("No active worker for peer {peer}, respawning.");
+
+        let worker = spawn_worker(
+            endpoint,
+            &peer,
+            worker_channel_size,
+            skip_check_transaction_age,
+            max_reconnect_attempts,
+            handshake_timeout,
+            stats,
+        );
+
+        self.push(peer, worker)
+    }
+
     /// Attempts to send immediately a batch of transactions to the worker for a
     /// given peer.
     ///
     /// This method returns immediately if the channel of worker corresponding
     /// to this peer is full returning error [`WorkersCacheError::FullChannel`].
-    /// If it happens that the peer's worker is stopped, it returns
-    /// [`WorkersCacheError::ShutdownError`]. In case if the worker is not
-    /// stopped but it's channel is unexpectedly dropped, it returns
-    /// [`WorkersCacheError::ReceiverDropped`].
+    /// If no worker exists for the peer, it returns
+    /// [`WorkersCacheError::WorkerNotFound`]. If it happens that the peer's
+    /// worker is stopped, it returns [`WorkersCacheError::ShutdownError`].
+    /// In case if the worker is not stopped but it's channel is unexpectedly
+    /// dropped, it returns [`WorkersCacheError::ReceiverDropped`].
+    ///
+    /// Note: The worker existence check is necessary because workers can fail
+    /// asynchronously between creation and sending. Worker tasks may exit
+    /// due to connection failures, network issues, or cache evictions,
+    /// making a previously created worker unavailable.
     pub fn try_send_transactions_to_address(
         &mut self,
         peer: &SocketAddr,
@@ -185,10 +242,8 @@ impl WorkersCache {
             return Err(WorkersCacheError::ShutdownError);
         }
 
-        let current_worker = workers.get(peer).expect(
-            "Failed to fetch worker for peer {peer}. Peer existence must be checked before this \
-             call using `contains` method.",
-        );
+        let current_worker = workers.get(peer).ok_or(WorkersCacheError::WorkerNotFound)?;
+
         let send_res = current_worker.try_send_transactions(txs_batch);
 
         if let Err(WorkersCacheError::ReceiverDropped) = send_res {
@@ -210,7 +265,8 @@ impl WorkersCache {
     /// Sends a batch of transactions to the worker for a given peer.
     ///
     /// If the worker for the peer is disconnected or fails, it
-    /// is removed from the cache.
+    /// is removed from the cache. If no worker exists for the peer,
+    /// it returns [`WorkersCacheError::WorkerNotFound`].
     #[allow(
         dead_code,
         reason = "This method will be used in the upcoming changes to implement optional \
@@ -226,10 +282,8 @@ impl WorkersCache {
         } = self;
 
         let body = async move {
-            let current_worker = workers.get(peer).expect(
-                "Failed to fetch worker for peer {peer}. Peer existence must be checked before \
-                 this call using `contains` method.",
-            );
+            let current_worker = workers.get(peer).ok_or(WorkersCacheError::WorkerNotFound)?;
+
             let send_res = current_worker.send_transactions(txs_batch).await;
             if let Err(WorkersCacheError::ReceiverDropped) = send_res {
                 // Remove the worker from the cache, if the peer has disconnected.
@@ -266,6 +320,7 @@ impl WorkersCache {
     ///
     /// The method awaits the completion of all shutdown tasks, ensuring that
     /// each worker is properly terminated.
+    #[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
     pub(crate) async fn shutdown(&mut self) {
         // Interrupt any outstanding `send_transactions()` calls.
         self.cancel.cancel();
@@ -444,6 +499,8 @@ mod tests {
             }
             sleep(Duration::from_millis(500)).await;
         }
+
+        assert!(!worker_info.is_active(), "Worker should be inactive");
 
         // try to send to this worker — should fail and remove the worker
         let result = cache

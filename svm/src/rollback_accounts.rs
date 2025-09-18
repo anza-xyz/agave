@@ -3,7 +3,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_transaction_context::TransactionAccount,
+    solana_transaction_context::transaction_accounts::TransactionAccount,
 };
 
 /// Captured account state used to rollback account state for nonce and fee
@@ -96,6 +96,15 @@ impl RollbackAccounts {
             RollbackAccounts::FeePayerOnly {
                 fee_payer: (fee_payer_address, fee_payer_account),
             }
+        }
+    }
+
+    /// Return a reference to the fee payer account.
+    pub fn fee_payer(&self) -> &TransactionAccount {
+        match self {
+            Self::FeePayerOnly { fee_payer } => fee_payer,
+            Self::SameNonceAndFeePayer { nonce } => nonce,
+            Self::SeparateNonceAndFeePayer { fee_payer, .. } => fee_payer,
         }
     }
 

@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(verify, shred.verify(pk));
     }
 
-    fn run_test_data_shredder(slot: Slot, chained: bool, is_last_in_slot: bool) {
+    fn run_test_data_shredder(slot: Slot, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
 
         // Test that parent cannot be > current slot
@@ -308,10 +308,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            start_index, // next_shred_index
-            start_index, // next_code_index
+            Some(Hash::new_from_array(rand::thread_rng().gen())), // chained_merkle_root
+            start_index,                                          // next_shred_index
+            start_index,                                          // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -366,19 +365,13 @@ mod tests {
         assert_eq!(entries, deshred_entries);
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_data_shredder(chained: bool, is_last_in_slot: bool) {
-        run_test_data_shredder(0x1234_5678_9abc_def0, chained, is_last_in_slot);
+    #[test_matrix([true, false])]
+    fn test_data_shredder(is_last_in_slot: bool) {
+        run_test_data_shredder(0x1234_5678_9abc_def0, is_last_in_slot);
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_deserialize_shred_payload(chained: bool, is_last_in_slot: bool) {
+    #[test_matrix([true, false])]
+    fn test_deserialize_shred_payload(is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let shredder = Shredder::new(
             259_241_705, // slot
@@ -401,10 +394,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            369, // next_shred_index
-            776, // next_code_index
+            Some(Hash::new_from_array(rand::thread_rng().gen())), // chained_merkle_root
+            369,                                                  // next_shred_index
+            776,                                                  // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -414,11 +406,8 @@ mod tests {
         }
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_shred_reference_tick(chained: bool, is_last_in_slot: bool) {
+    #[test_matrix([true, false])]
+    fn test_shred_reference_tick(is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let slot = 1;
         let parent_slot = 0;
@@ -437,10 +426,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0, // next_shred_index
-            0, // next_code_index
+            Some(Hash::new_from_array(rand::thread_rng().gen())), // chained_merkle_root
+            0,                                                    // next_shred_index
+            0,                                                    // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -455,11 +443,8 @@ mod tests {
         assert_eq!(deserialized_shred.reference_tick(), 5);
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_shred_reference_tick_overflow(chained: bool, is_last_in_slot: bool) {
+    #[test_matrix([true, false])]
+    fn test_shred_reference_tick_overflow(is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let slot = 1;
         let parent_slot = 0;
@@ -478,10 +463,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0, // next_shred_index
-            0, // next_code_index
+            Some(Hash::new_from_array(rand::thread_rng().gen())), // chained_merkle_root
+            0,                                                    // next_shred_index
+            0,                                                    // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -505,7 +489,7 @@ mod tests {
         );
     }
 
-    fn run_test_data_and_code_shredder(slot: Slot, chained: bool, is_last_in_slot: bool) {
+    fn run_test_data_and_code_shredder(slot: Slot, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let shredder = Shredder::new(slot, slot - 5, 0, 0).unwrap();
         // Create enough entries to make > 1 shred
@@ -526,10 +510,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0, // next_shred_index
-            0, // next_code_index
+            Some(Hash::new_from_array(rand::thread_rng().gen())), // chained_merkle_root
+            0,                                                    // next_shred_index
+            0,                                                    // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -551,19 +534,13 @@ mod tests {
         }
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_data_and_code_shredder(chained: bool, is_last_in_slot: bool) {
-        run_test_data_and_code_shredder(0x1234_5678_9abc_def0, chained, is_last_in_slot);
+    #[test_matrix([true, false])]
+    fn test_data_and_code_shredder(is_last_in_slot: bool) {
+        run_test_data_and_code_shredder(0x1234_5678_9abc_def0, is_last_in_slot);
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_shred_version(chained: bool, is_last_in_slot: bool) {
+    #[test_matrix([true, false])]
+    fn test_shred_version(is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let hash = hash(Hash::default().as_ref());
         let version = shred_version::version_from_hash(&hash);
@@ -583,10 +560,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0, // next_shred_index
-            0, // next_code_index
+            Some(Hash::new_from_array(rand::thread_rng().gen())), // chained_merkle_root
+            0,                                                    // next_shred_index
+            0,                                                    // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -596,11 +572,8 @@ mod tests {
             .any(|s| s.version() != version));
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_shred_fec_set_index(chained: bool, is_last_in_slot: bool) {
+    #[test_matrix([true, false])]
+    fn test_shred_fec_set_index(is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let hash = hash(Hash::default().as_ref());
         let version = shred_version::version_from_hash(&hash);
@@ -621,10 +594,9 @@ mod tests {
             &keypair,
             &entries,
             is_last_in_slot,
-            // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            start_index, // next_shred_index
-            start_index, // next_code_index
+            Some(Hash::new_from_array(rand::thread_rng().gen())), // chained_merkle_root
+            start_index,                                          // next_shred_index
+            start_index,                                          // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );

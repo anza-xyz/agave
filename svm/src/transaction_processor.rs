@@ -364,31 +364,35 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             let builtins = self.builtin_program_ids.read().unwrap().clone();
 
-            self.replenish_program_cache(
-                &account_loader,
-                &builtins,
-                &mut program_cache_for_tx_batch,
-                &mut execute_timings,
-                config.check_program_modification_slot,
-                config.limit_to_load_programs,
-                false, // increment_usage_counter
-            );
-
-            if program_cache_for_tx_batch.hit_max_limit {
-                return LoadAndExecuteSanitizedTransactionsOutput {
-                    error_metrics,
-                    execute_timings,
-                    processing_results: (0..sanitized_txs.len())
-                        .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
-                        .collect(),
-                    // If we abort the batch and balance recording is enabled, no balances should be
-                    // collected. If this is a leader thread, no batch will be committed.
-                    balance_collector: None,
-                };
-            }
+            let ((), program_cache_us) = measure_us!({
+                self.replenish_program_cache(
+                    &account_loader,
+                    &builtins,
+                    &mut program_cache_for_tx_batch,
+                    &mut execute_timings,
+                    config.check_program_modification_slot,
+                    config.limit_to_load_programs,
+                    false, // increment_usage_counter
+                );
+            });
+            execute_timings
+                .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
 
             program_cache_for_tx_batch
         };
+
+        if program_cache_for_tx_batch.hit_max_limit {
+            return LoadAndExecuteSanitizedTransactionsOutput {
+                error_metrics,
+                execute_timings,
+                processing_results: (0..sanitized_txs.len())
+                    .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
+                    .collect(),
+                // If we abort the batch and balance recording is enabled, no balances should be
+                // collected. If this is a leader thread, no batch will be committed.
+                balance_collector: None,
+            };
+        }
 
         let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
 
@@ -455,24 +459,24 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             config.limit_to_load_programs,
                             true, // increment_usage_counter
                         );
-
-                        if program_cache_for_tx_batch.hit_max_limit {
-                            return LoadAndExecuteSanitizedTransactionsOutput {
-                                error_metrics,
-                                execute_timings,
-                                processing_results: (0..sanitized_txs.len())
-                                    .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
-                                    .collect(),
-                                // If we abort the batch and balance recording is enabled, no balances should be
-                                // collected. If this is a leader thread, no batch will be committed.
-                                balance_collector: None,
-                            };
-                        }
                     });
                     execute_timings.saturating_add_in_place(
                         ExecuteTimingType::ProgramCacheUs,
                         program_cache_us,
                     );
+
+                    if program_cache_for_tx_batch.hit_max_limit {
+                        return LoadAndExecuteSanitizedTransactionsOutput {
+                            error_metrics,
+                            execute_timings,
+                            processing_results: (0..sanitized_txs.len())
+                                .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
+                                .collect(),
+                            // If we abort the batch and balance recording is enabled, no balances should be
+                            // collected. If this is a leader thread, no batch will be committed.
+                            balance_collector: None,
+                        };
+                    }
 
                     let executed_tx = self.execute_loaded_transaction(
                         callbacks,
@@ -1051,21 +1055,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     }
 
     /// Add a built-in program
-    pub fn add_builtin<CB: TransactionProcessingCallback>(
-        &self,
-        callbacks: &CB,
-        program_id: Pubkey,
-        name: &str,
-        builtin: ProgramCacheEntry,
-    ) {
-        debug!("Adding program {name} under {program_id:?}");
-        callbacks.add_builtin_account(name, &program_id);
+    pub fn add_builtin(&self, program_id: Pubkey, builtin: ProgramCacheEntry) {
         self.builtin_program_ids.write().unwrap().insert(program_id);
         self.global_program_cache
             .write()
             .unwrap()
             .assign_program(program_id, Arc::new(builtin));
-        debug!("Added program {name} under {program_id:?}");
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -1087,9 +1082,9 @@ mod tests {
                 TRANSACTION_ACCOUNT_BASE_SIZE,
             },
             nonce_info::NonceInfo,
+            rent_calculator::RENT_EXEMPT_RENT_EPOCH,
             rollback_accounts::RollbackAccounts,
         },
-        agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{create_account_shared_data_for_test, WritableAccount},
         solana_clock::Clock,
         solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -1107,7 +1102,6 @@ mod tests {
             loaded_programs::{BlockRelation, ProgramCacheEntryType},
         },
         solana_rent::Rent,
-        solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
         solana_sdk_ids::{bpf_loader, loader_v4, system_program, sysvar},
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
@@ -1119,10 +1113,7 @@ mod tests {
     };
 
     fn new_unchecked_sanitized_message(message: Message) -> SanitizedMessage {
-        SanitizedMessage::Legacy(LegacyMessage::new(
-            message,
-            &ReservedAccountKeys::empty_key_set(),
-        ))
+        SanitizedMessage::Legacy(LegacyMessage::new(message, &HashSet::new()))
     }
 
     struct TestForkGraph {}
@@ -1161,15 +1152,6 @@ mod tests {
                 .unwrap()
                 .get(pubkey)
                 .map(|account| (account.clone(), 0))
-        }
-
-        fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
-            let mut account_data = AccountSharedData::default();
-            account_data.set_data(name.as_bytes().to_vec());
-            self.account_shared_data
-                .write()
-                .unwrap()
-                .insert(*program_id, account_data);
         }
 
         fn inspect_account(
@@ -1276,14 +1258,13 @@ mod tests {
             instruction_trace.len(),
         );
         for (index_in_trace, stack_height) in instruction_trace.into_iter().enumerate() {
-            while stack_height <= transaction_context.get_instruction_context_stack_height() {
+            while stack_height <= transaction_context.get_instruction_stack_height() {
                 transaction_context.pop().unwrap();
             }
-            if stack_height > transaction_context.get_instruction_context_stack_height() {
+            if stack_height > transaction_context.get_instruction_stack_height() {
                 transaction_context
-                    .get_next_instruction_context_mut()
-                    .unwrap()
-                    .configure_for_tests(0, vec![], &[index_in_trace as u8]);
+                    .configure_next_instruction_for_tests(0, vec![], &[index_in_trace as u8])
+                    .unwrap();
                 transaction_context.push().unwrap();
             }
         }
@@ -1885,7 +1866,6 @@ mod tests {
 
     #[test]
     fn test_add_builtin() {
-        let mock_bank = MockBankCallback::default();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
         let batch_processor =
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
@@ -1898,12 +1878,7 @@ mod tests {
             |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
         );
 
-        batch_processor.add_builtin(&mock_bank, key, name, program);
-
-        assert_eq!(
-            mock_bank.account_shared_data.read().unwrap()[&key].data(),
-            name.as_bytes()
-        );
+        batch_processor.add_builtin(key, program);
 
         let mut loaded_programs_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
             0,

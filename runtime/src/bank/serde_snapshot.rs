@@ -33,7 +33,7 @@ mod tests {
             mem,
             ops::RangeFull,
             path::Path,
-            sync::{atomic::Ordering, Arc},
+            sync::{atomic::Ordering, Arc, OnceLock},
         },
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
@@ -160,9 +160,8 @@ mod tests {
             &RuntimeConfig::default(),
             None,
             None,
-            None,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -207,6 +206,7 @@ mod tests {
                 total_stake: 42,
                 node_id_to_vote_accounts: Arc::<NodeIdToVoteAccounts>::default(),
                 epoch_authorized_voters: Arc::<EpochAuthorizedVoters>::default(),
+                bls_pubkey_to_rank_map: OnceLock::new(),
             },
         );
         assert_eq!(bank.epoch_stakes.len(), 3);
@@ -246,9 +246,8 @@ mod tests {
             &RuntimeConfig::default(),
             None,
             None,
-            None,
             false,
-            Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -294,7 +293,7 @@ mod tests {
         .unwrap();
 
         // Deserialize
-        let (dbank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+        let dbank = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
             bank_snapshots_dir.path(),
             &snapshot_archive_info,
@@ -303,11 +302,10 @@ mod tests {
             &RuntimeConfig::default(),
             None,
             None,
-            None,
             false,
             false,
             false,
-            Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
             None,
             Arc::default(),
         )
@@ -352,7 +350,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "CCsPFzrwkgWmiYh25nwNvBSRdgiUW45Rh6jGh1XGcNZt")
+            frozen_abi(digest = "4zSePLuo5DnagjcFySpN2xSmQ1JqYmbQm59vfjS7qKpc")
         )]
         #[derive(Serialize)]
         pub struct BankAbiTestWrapper {

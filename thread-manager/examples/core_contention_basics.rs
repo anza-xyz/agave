@@ -58,7 +58,7 @@ fn main() -> anyhow::Result<()> {
             join_handle.join().expect("Load generator crashed!")
         });
         //print out the results of the bench run
-        info!("Results are: {:?}", results);
+        info!("Results are: {results:?}");
     }
     Ok(())
 }

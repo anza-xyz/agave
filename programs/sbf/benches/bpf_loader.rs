@@ -69,9 +69,8 @@ macro_rules! with_mock_invoke_context {
         );
         $invoke_context
             .transaction_context
-            .get_next_instruction_context_mut()
-            .unwrap()
-            .configure_for_tests(1, instruction_accounts, &[]);
+            .configure_next_instruction_for_tests(1, instruction_accounts, &[])
+            .unwrap();
         $invoke_context.push().unwrap();
     };
 }
@@ -152,7 +151,10 @@ fn bench_program_alu(bencher: &mut Bencher) {
     assert!(0f64 != summary.median);
     let mips = (instructions * (ns_per_s / summary.median as u64)) / one_million;
     println!("  {:?} MIPS", mips);
-    println!("{{ \"type\": \"bench\", \"name\": \"bench_program_alu_interpreted_mips\", \"median\": {:?}, \"deviation\": 0 }}", mips);
+    println!(
+        "{{ \"type\": \"bench\", \"name\": \"bench_program_alu_interpreted_mips\", \"median\": \
+         {mips:?}, \"deviation\": 0 }}",
+    );
 
     println!("JIT to native:");
     assert_eq!(SUCCESS, vm.execute_program(&executable, false).1.unwrap());
@@ -173,7 +175,10 @@ fn bench_program_alu(bencher: &mut Bencher) {
     assert!(0f64 != summary.median);
     let mips = (instructions * (ns_per_s / summary.median as u64)) / one_million;
     println!("  {:?} MIPS", mips);
-    println!("{{ \"type\": \"bench\", \"name\": \"bench_program_alu_jit_to_native_mips\", \"median\": {:?}, \"deviation\": 0 }}", mips);
+    println!(
+        "{{ \"type\": \"bench\", \"name\": \"bench_program_alu_jit_to_native_mips\", \"median\": \
+         {mips:?}, \"deviation\": 0 }}",
+    );
 }
 
 #[bench]
@@ -244,8 +249,7 @@ fn bench_create_vm(bencher: &mut Bencher) {
 
     // Serialize account data
     let (_serialized, regions, account_lengths) = serialize_parameters(
-        invoke_context.transaction_context,
-        invoke_context
+        &invoke_context
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
@@ -280,8 +284,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
 
     // Serialize account data
     let (_serialized, regions, account_lengths) = serialize_parameters(
-        invoke_context.transaction_context,
-        invoke_context
+        &invoke_context
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),

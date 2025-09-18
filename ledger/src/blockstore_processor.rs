@@ -843,7 +843,7 @@ pub struct ProcessOptions {
     pub allow_dead_slots: bool,
     pub accounts_db_skip_shrink: bool,
     pub accounts_db_force_initial_clean: bool,
-    pub accounts_db_config: Option<AccountsDbConfig>,
+    pub accounts_db_config: AccountsDbConfig,
     pub verify_index: bool,
     pub runtime_config: RuntimeConfig,
     /// true if after processing the contents of the blockstore at startup, we should run an accounts hash calc
@@ -900,13 +900,11 @@ pub(crate) fn process_blockstore_for_bank_0(
     exit: Arc<AtomicBool>,
 ) -> result::Result<Arc<RwLock<BankForks>>, BlockstoreProcessorError> {
     // Setup bank for slot 0
-    let bank0 = Bank::new_with_paths(
+    let bank0 = Bank::new_from_genesis(
         genesis_config,
         Arc::new(opts.runtime_config.clone()),
         account_paths,
         opts.debug_keys.clone(),
-        None,
-        false,
         opts.accounts_db_config.clone(),
         accounts_update_notifier,
         None,
@@ -3521,7 +3519,7 @@ pub mod tests {
                 InstructionError::ProgramFailedToCompile,
                 InstructionError::Immutable,
                 InstructionError::IncorrectAuthority,
-                InstructionError::BorshIoError("error".to_string()),
+                InstructionError::BorshIoError,
                 InstructionError::AccountNotRentExempt,
                 InstructionError::InvalidAccountOwner,
                 InstructionError::ArithmeticOverflow,
@@ -3567,10 +3565,11 @@ pub mod tests {
         declare_process_instruction!(MockBuiltinErr, 1, |invoke_context| {
             let instruction_errors = get_instruction_errors();
 
-            let err = invoke_context
+            let instruction_context = invoke_context
                 .transaction_context
                 .get_current_instruction_context()
-                .expect("Failed to get instruction context")
+                .expect("Failed to get instruction context");
+            let err = instruction_context
                 .get_instruction_data()
                 .first()
                 .expect("Failed to get instruction data");
@@ -4848,7 +4847,7 @@ pub mod tests {
                         VoteStateV3::size_of(),
                         &solana_vote_program::id(),
                     );
-                    let versioned = VoteStateVersions::new_current(vote_state);
+                    let versioned = VoteStateVersions::new_v3(vote_state);
                     VoteStateV3::serialize(&versioned, vote_account.data_as_mut_slice()).unwrap();
                     (
                         solana_pubkey::new_rand(),
