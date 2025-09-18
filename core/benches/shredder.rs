@@ -128,7 +128,7 @@ fn bench_deserialize_hdr(bencher: &mut Bencher) {
             &keypair,
             &[],
             true, // is_last_in_slot
-            Some(merkle_root),
+            merkle_root,
             1, // next_shred_index
             0, // next_code_index
             &reed_solomon_cache,
@@ -162,7 +162,7 @@ fn bench_shredder_coding(bencher: &mut Bencher) {
                 &Keypair::new(),
                 &entries,
                 true, // is_last_in_slot
-                Some(merkle_root),
+                merkle_root,
                 0, // next_shred_index
                 0, // next_code_index
                 &reed_solomon_cache,
@@ -184,7 +184,7 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
             &Keypair::new(),
             &entries,
             true, // is_last_in_slot
-            Some(merkle_root),
+            merkle_root,
             0, // next_shred_index
             0, // next_code_index
             &reed_solomon_cache,
