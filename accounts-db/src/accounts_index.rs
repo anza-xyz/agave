@@ -1350,29 +1350,33 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 continue;
             }
 
-            // Extract items for this bin, ensuring no duplicates in the same slot
-            let mut bin_items = Vec::with_capacity(indices.len());
+            // Process items for this bin, ensuring no duplicates in the same slot
             let mut seen_pubkeys = std::collections::HashSet::new();
             
+            // Validate for duplicates first
             for &index in indices {
-                let (pubkey, account_info) = &items[index];
+                let (pubkey, _) = &items[index];
                 assert!(
                     seen_pubkeys.insert(*pubkey),
                     "Accounts may only be stored once per slot: {slot}"
                 );
-                bin_items.push((*pubkey, *account_info));
             }
 
             let r_account_maps = self.account_maps[actual_bin].as_ref();
-            count += bin_items.len();
+            count += indices.len();
 
             if use_disk {
-                r_account_maps.startup_insert_only(slot, bin_items.into_iter());
+                let bin_items_iter = indices.iter().map(|&index| {
+                    let (pubkey, account_info) = &items[index];
+                    (*pubkey, *account_info)
+                });
+                r_account_maps.startup_insert_only(slot, bin_items_iter);
             } else {
                 // not using disk buckets, so just write to in-mem
                 // this is no longer the default case
                 let mut duplicates_from_in_memory = vec![];
-                for (pubkey, account_info) in bin_items {
+                for &index in indices {
+                    let (pubkey, account_info) = &items[index];
                     let new_entry =
                         PreAllocatedAccountMapEntry::new(slot, account_info, storage, use_disk);
                     match r_account_maps.insert_new_entry_if_missing_with_lock(pubkey, new_entry) {
