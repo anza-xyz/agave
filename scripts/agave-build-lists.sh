@@ -14,15 +14,16 @@
 AGAVE_BINS_DEV=(
   cargo-build-sbf
   cargo-test-sbf
-  solana-stake-accounts
   solana-test-validator
+  solana-stake-accounts
+  solana-tokens
 )
 
 AGAVE_BINS_END_USER=(
   agave-install
+  agave-install-init
   solana
   solana-keygen
-  solana-tokens
 )
 
 AGAVE_BINS_VAL_OP=(
