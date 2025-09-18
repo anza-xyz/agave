@@ -2014,4 +2014,75 @@ mod tests {
             assert!(other.is_shred_duplicate(shred));
         }
     }
+
+    #[test]
+    fn test_data_complete_shred_index_validation() {
+        solana_logger::setup();
+        let mut rng = rand::thread_rng();
+        let slot = 18_291;
+        let shreds = make_merkle_shreds_for_tests(
+            &mut rng,
+            slot,
+            1200 * 5, // data_size
+            true,     // chained
+            false,    // is_last_in_slot
+        )
+        .unwrap();
+        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
+
+        let data_shred = shreds
+            .iter()
+            .find(|s| s.shred_type() == ShredType::Data)
+            .unwrap();
+
+        let parent_slot = data_shred.parent().unwrap();
+        let shred_version = data_shred.common_header().version;
+        let root = rng.gen_range(0..parent_slot);
+        let max_slot = slot + rng.gen_range(1..65536);
+
+        // Test case where DATA_COMPLETE_SHRED flag is set but index is not at expected position
+        let mut packet = Packet::default();
+        data_shred.copy_to_packet(&mut packet);
+
+        let fec_set_index = 64u32;
+        let wrong_index = fec_set_index + 10; // Should be fec_set_index + 31 for DATA_COMPLETE_SHRED
+        let data_complete_flags = ShredFlags::DATA_COMPLETE_SHRED;
+
+        // Modify the packet to have DATA_COMPLETE_SHRED flag with wrong index
+        {
+            let mut cursor = Cursor::new(packet.buffer_mut());
+            cursor
+                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                .unwrap();
+            cursor.write_all(&wrong_index.to_le_bytes()).unwrap();
+            cursor
+                .seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64))
+                .unwrap();
+            cursor.write_all(&fec_set_index.to_le_bytes()).unwrap();
+            cursor.seek(SeekFrom::Start(85)).unwrap(); // flags offset
+            cursor.write_all(&[data_complete_flags.bits()]).unwrap();
+        }
+
+        let mut stats = ShredFetchStats::default();
+        let should_discard =
+            should_discard_shred(&packet, root, max_slot, shred_version, |_| true, &mut stats);
+        assert!(should_discard);
+        assert_eq!(stats.unexpected_data_complete_shred, 1);
+
+        // Test case where DATA_COMPLETE_SHRED flag is set with correct index
+        let correct_index = fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32 - 1;
+        {
+            let mut cursor = Cursor::new(packet.buffer_mut());
+            cursor
+                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                .unwrap();
+            cursor.write_all(&correct_index.to_le_bytes()).unwrap();
+        }
+
+        let mut stats = ShredFetchStats::default();
+        let should_discard =
+            should_discard_shred(&packet, root, max_slot, shred_version, |_| true, &mut stats);
+        assert!(!should_discard);
+        assert_eq!(stats.unexpected_data_complete_shred, 0);
+    }
 }
