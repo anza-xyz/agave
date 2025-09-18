@@ -8458,6 +8458,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "serde",
+ "solana-clock",
  "solana-entry",
  "solana-hash",
  "solana-keypair",
