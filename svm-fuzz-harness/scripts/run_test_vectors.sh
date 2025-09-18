@@ -28,12 +28,8 @@ else
 fi
 
 
-# Skip only the programs that have been migrated to Core BPF
-find dump/test-vectors/instr/fixtures -type f -name '*.fix' | \
-  grep -v '/stake/' | \
-  grep -v '/config/' | \
-  grep -v '/address-lookup-table/' | \
-  xargs -P 32 -I {} ../target/release/test_exec_instr {} > "$LOG_PATH/test_exec_instr.log" 2>&1
+find dump/test-vectors/instr/fixtures -type f -name '*.fix' -print0 | \
+  xargs -0 -n 1000 -P 32 -I {} ../target/release/test_exec_instr {} > "$LOG_PATH/test_exec_instr.log" 2>&1
 # Other tests will be included here...
 
 
