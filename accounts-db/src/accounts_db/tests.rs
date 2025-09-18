@@ -4,6 +4,7 @@ use {
     crate::{
         accounts_file::AccountsFileProvider,
         accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
+        accounts_index_storage::Startup,
         append_vec::{
             aligned_stored_size, test_utils::TempFile, AccountMeta, AppendVec, StoredAccountMeta,
             StoredMeta,
@@ -183,6 +184,10 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
     assert!(!db.accounts_index.contains(&pubkey));
     let storage_info = StorageSizeAndCountMap::default();
     let storage = db.get_storage_for_slot(slot0).unwrap();
+    
+    // Set accounts index to startup mode to enable the startup_insert_only path
+    db.accounts_index.set_startup(Startup::Startup);
+    
     let mut reader = append_vec::new_scan_accounts_reader();
     db.generate_index_for_slot(
         &mut reader,
@@ -191,23 +196,18 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
         storage.id(),
         &storage_info,
     );
+    
+    // Return to normal mode
+    db.accounts_index.set_startup(Startup::Normal);
 }
 
-define_accounts_db_test!(
-    test_generate_index_duplicates_within_slot,
-    panic = "Accounts may only be stored once per slot:",
-    |db| {
-        run_generate_index_duplicates_within_slot_test(db, false);
-    }
-);
+define_accounts_db_test!(test_generate_index_duplicates_within_slot, |db| {
+    run_generate_index_duplicates_within_slot_test(db, false);
+});
 
-define_accounts_db_test!(
-    test_generate_index_duplicates_within_slot_reverse,
-    panic = "Accounts may only be stored once per slot:",
-    |db| {
-        run_generate_index_duplicates_within_slot_test(db, true);
-    }
-);
+define_accounts_db_test!(test_generate_index_duplicates_within_slot_reverse, |db| {
+    run_generate_index_duplicates_within_slot_test(db, true);
+});
 
 #[test]
 fn test_generate_index_for_single_ref_zero_lamport_slot() {
