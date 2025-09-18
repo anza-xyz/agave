@@ -213,11 +213,17 @@ impl Router {
         for interface in self.interfaces.iter() {
             log::info!("greg: interface: {interface:?}");
         }
+        // greg: todo: this needs to return doublezero0 interface, not 
+        // currently have 2 gre interfaces, gre0 and doublezero0, we want to return doublezero0
+        // greg: interface: (5, InterfaceInfo { if_index: 5, if_name: "gre0", dev_type: 778, gre_tunnel: Some(GreTunnelInfo { src_ip: 0.0.0.0, dst_ip: 0.0.0.0 }) })
+        // greg: interface: (31, InterfaceInfo { if_index: 31, if_name: "doublezero0", dev_type: 778, gre_tunnel: Some(GreTunnelInfo { src_ip: 147.28.165.79, dst_ip: 195.12.227.250 }) })
         for (i, interface) in self.interfaces.iter() {
-            if interface.dev_type == ARPHRD_IPGRE {
+            if interface.dev_type == ARPHRD_IPGRE && interface.if_name == "doublezero0" {
+                log::info!("greg: returning doublezero0 interface: {interface:?}");
                 return Some(*i);
             }
         }
+        log::info!("greg: no doublezero0 interface found");
         None
     }
 
