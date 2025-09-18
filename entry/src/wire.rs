@@ -4,36 +4,28 @@
 //!
 //! A bincode serialized [`Entry`], whose serialization format and scheme is
 //! defined in large part by the solana-sdk, is the de-facto wire format for
-//! turbine. This makes it quite difficult to change, so any attempt at
-//! improving the performance of serialization / deserialization must operate
-//! on that format, at least until some larger effort is made to overhaul it.
+//! turbine. This makes it quite difficult to change, so any performance
+//! work must remain bit-compatible with it. In particular, sequence lengths
+//! are encoded via `solana_short_vec` (a compact 1–3 byte varint for `u16`),
+//! and fixed-size arrays often go through `serde_big_array`.
 //!
-//! The existing implementation suffers from all the typical serde inefficiencies,
-//! like all the copying that comes with Rust's poor NRVO. Worse, however, is
-//! that byte arrays, byte vectors, and sequences thereof are all encoded as
-//! individual sequence elements. This means at _least_ `N` copies where `N` is
-//! the length of the sequence, not including the implicit copies from lack of
-//! inline initialization / guarantees of RVO. For example, given the following
-//! byte array:
-//!
-//! ```
-//! let signature = [0; 64];
-//! ```
-//!
-//! Each byte will be visited and copied _individually_ rather than as a single
-//! unit. Worse, if this type of byte array is part of a larger sequence, like
-//! a `Vec<Signature>`, that visitation inneficiency is compounded by the
-//! length of the sequence _and_ stack allocated before being written
-//! into the Vec's heap memory.
+//! The baseline serde-driven implementation suffers typical serde inefficiencies:
+//! - Per-element visitation for byte arrays/vectors (e.g., `Signature([u8; 64])`)
+//!   rather than treating them as raw bytes.
+//! - Extra copies due to lack of guaranteed placement initialization for heap
+//!   buffers in safe Rust.
+//! - Compounded overhead when such arrays appear inside `Vec<T>`.
 //!
 //! # This module
 //!
-//! This module provides an efficient implementaton of the serialization and
+//! This module provides an efficient implementation of the serialization and
 //! deserialization of the [`Entry`] wire format. In particular:
-//! - byte arrays / byte vectors (and sequences thereof) are encoded as raw bytes.
-//! - intermediate types are written to in place.
-//! - vec memory is written to in place.
-
+//! - Byte arrays / byte vectors (and sequences thereof) are encoded as raw bytes.
+//! - Vecs and intermediate types of compound types are written to in place.
+//!
+//! # Compatibility
+//!
+//! Bit-for-bit compatible with the existing format.
 use {
     crate::entry::Entry,
     solana_address::ADDRESS_BYTES,
@@ -70,6 +62,7 @@ pub trait SeqLen {
 
 struct BincodeLen;
 
+// Bincode's default fixint encoding writes lengths as u64.
 impl SeqLen for BincodeLen {
     #[inline(always)]
     fn get_len(reader: &mut Reader) -> bincode::Result<usize> {
@@ -90,6 +83,8 @@ impl SeqLen for BincodeLen {
 struct ShortU16Len;
 
 /// Branchless computation of the number of bytes needed to encode a short u16.
+///
+/// See [`solana_short_vec::ShortU16`] for more details.
 #[inline(always)]
 fn short_u16_bytes_needed(len: u16) -> usize {
     1 + (len >= 0x80) as usize + (len >= 0x4000) as usize
@@ -115,12 +110,21 @@ fn try_short_u16_bytes_needed<T: TryInto<u16>>(len: T) -> bincode::Result<usize>
 
 /// Encode a short u16 into the given buffer.
 ///
+/// See [`solana_short_vec::ShortU16`] for more details.
+///
 /// # Safety
 ///
 /// - `dst` must be a valid for writes
 /// - `dst` must be valid for `needed` bytes
 #[inline(always)]
 unsafe fn encode_short_u16(dst: *mut u8, needed: usize, len: u16) {
+    // From `solana_short_vec`:
+    //
+    // u16 serialized with 1 to 3 bytes. If the value is above
+    // 0x7f, the top bit is set and the remaining value is stored in the next
+    // bytes. Each byte follows the same pattern until the 3rd byte. The 3rd
+    // byte may only have the 2 least-significant bits set, otherwise the encoded
+    // value will overflow the u16.
     match needed {
         1 => std::ptr::write(dst, len as u8),
         2 => {
@@ -160,7 +164,7 @@ impl SeqLen for ShortU16Len {
             return Err(error_size_limit());
         }
 
-        // SAFETY: `writer.buffer` is valid for `needed` bytes
+        // SAFETY: `writer.buffer` is valid for writes of `needed` bytes
         unsafe {
             let dst = writer.buffer.as_mut_ptr().add(writer.pos);
             encode_short_u16(dst, needed, len);
