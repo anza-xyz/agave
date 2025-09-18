@@ -1,28 +1,21 @@
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    RwLock, RwLockReadGuard, RwLockWriteGuard,
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use modular_bitfield::{bitfield, prelude::*};
+use static_assertions::const_assert_eq;
 
 #[derive(Debug)]
-pub enum CaterpillarEntryView<'a> {
+pub enum CaterpillarCellView<'a> {
     Inlined(InlinedEntry),
-    HeapRead(RwLockReadGuard<'a, ExpandedEntry>),
-    HeapWrite(RwLockWriteGuard<'a, ExpandedEntry>),
-}
-
-pub struct X {
-    pub foo: std::sync::Arc<u64>,
+    Expanded(&'a ExpandedEntry),
 }
 
 /// Entry that can turn its payload between inlined and expanded states.
-pub struct CaterpillarEntry {
+pub struct CaterpillarCell {
     /// Raw value - either an inline (small) payload or address of a boxed full value
     raw_atomic: AtomicU64,
 }
 
-impl CaterpillarEntry {
+impl CaterpillarCell {
     pub fn from_inlined(inlined: InlinedEntry) -> Self {
         Self::from_unsafe_holder(UnsafeCaterpillarHolder::from_inlined(inlined))
     }
@@ -37,26 +30,16 @@ impl CaterpillarEntry {
         }
     }
 
-    pub fn as_view(&self) -> CaterpillarEntryView {
-        UnsafeCaterpillarHolder::from_raw(self.raw_atomic.load(Ordering::Relaxed))
-            .into_fixed_entry()
+    pub fn as_view(&self) -> CaterpillarCellView {
+        UnsafeCaterpillarHolder::from_raw(self.raw_atomic.load(Ordering::Relaxed)).into_view()
     }
 
-    pub fn as_cocoon(&self) -> CaterpillarCocoon {
-        let x = UnsafeCaterpillarHolder::from_raw(self.raw_atomic.load(Ordering::Relaxed))
-            .into_fixed_entry();
-        CaterpillarCocoon {
-            entry: self,
-            kind: x,
-        }
-    }
-
-    pub fn turn_to_expanded(&self) -> CaterpillarEntryView {
+    pub fn turn_to_expanded(&self) -> CaterpillarCellView {
         let mut current_raw = self.raw_atomic.load(Ordering::Acquire);
         loop {
             let current_holder = UnsafeCaterpillarHolder::from_raw(current_raw);
-            match current_holder.into_fixed_entry() {
-                CaterpillarEntryView::Inlined(inlined) => {
+            match current_holder.into_view() {
+                CaterpillarCellView::Inlined(inlined) => {
                     let new_holder =
                         UnsafeCaterpillarHolder::from_expanded(ExpandedEntry::from(inlined));
                     match self.raw_atomic.compare_exchange(
@@ -65,7 +48,7 @@ impl CaterpillarEntry {
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     ) {
-                        Ok(_) => return new_holder.into_fixed_entry(),
+                        Ok(_) => return new_holder.into_view(),
                         Err(different_raw) => {
                             // entry that we created and tried to store will not be used, so deallocate it
                             new_holder.deallocate_box_when_expanded();
@@ -74,17 +57,16 @@ impl CaterpillarEntry {
                         }
                     }
                 }
-                e @ CaterpillarEntryView::HeapRead(_) => return e,
-                e @ CaterpillarEntryView::HeapWrite(_) => return e,
+                e @ CaterpillarCellView::Expanded(_) => return e,
             }
         }
     }
 
-    pub fn turn_to_inlined(&mut self) -> CaterpillarEntryView {
+    pub fn turn_to_inlined(&mut self) -> CaterpillarCellView {
         let current_raw = self.raw_atomic.load(Ordering::Acquire);
         let current_holder = UnsafeCaterpillarHolder::from_raw(current_raw);
         if current_holder.is_inlined() {
-            return current_holder.into_fixed_entry();
+            return current_holder.into_view();
         }
         let expanded = current_holder
             .deallocate_box_when_expanded()
@@ -93,43 +75,15 @@ impl CaterpillarEntry {
         // We have exclusive (&mut) access to the entry, so no other code is reading or updating
         // the raw atomic. This means we can just store new value without conflict.
         self.raw_atomic.store(new_holder.raw(), Ordering::Release);
-        new_holder.into_fixed_entry()
+        new_holder.into_view()
     }
 }
 
-impl Drop for CaterpillarEntry {
+impl Drop for CaterpillarCell {
     fn drop(&mut self) {
         let previous_raw = self.raw_atomic.swap(0, Ordering::Relaxed);
         if previous_raw != 0 {
             UnsafeCaterpillarHolder::from_raw(previous_raw).deallocate_box_when_expanded();
-        }
-    }
-}
-
-pub struct CaterpillarCocoon<'a> {
-    pub entry: &'a CaterpillarEntry,
-    pub kind: CaterpillarEntryView<'a>,
-}
-
-impl Drop for CaterpillarCocoon<'_> {
-    fn drop(&mut self) {
-        match std::mem::replace(
-            &mut self.kind,
-            CaterpillarEntryView::Inlined(InlinedEntry::default()),
-        ) {
-            CaterpillarEntryView::Inlined(_) => {}
-            CaterpillarEntryView::HeapRead(_) => {}
-            CaterpillarEntryView::HeapWrite(mut write) => {
-                if write.ref_count == 1 && write.slot_list.len() == 1 {
-                    self.entry.raw_atomic.store(
-                        UnsafeCaterpillarHolder::from_inlined(
-                            write.slot_list.drain(..).next().unwrap(),
-                        )
-                        .raw(),
-                        Ordering::Release,
-                    );
-                }
-            }
         }
     }
 }
@@ -209,7 +163,8 @@ impl UnsafeCaterpillarHolder {
     }
 
     fn from_expanded(expanded: ExpandedEntry) -> Self {
-        let expanded_ptr = Box::into_raw(Box::new(RwLock::new(expanded)));
+        const_assert_eq!(align_of::<ExpandedEntry>(), align_of::<u64>());
+        let expanded_ptr = Box::into_raw(Box::new(expanded));
         let expanded = HeapEntryUnsafeAddress::new()
             .with_common_info(CommonEntryInfo::new().with_is_inlined(false))
             .with_shifted_address(Self::make_ptr_shifted_address(expanded_ptr));
@@ -224,13 +179,13 @@ impl UnsafeCaterpillarHolder {
         unsafe { self.inlined.common_info().is_inlined() }
     }
 
-    fn into_fixed_entry<'a>(self) -> CaterpillarEntryView<'a> {
+    fn into_view<'a>(self) -> CaterpillarCellView<'a> {
         unsafe {
             if self.is_inlined() {
-                CaterpillarEntryView::Inlined(self.inlined)
+                CaterpillarCellView::Inlined(self.inlined)
             } else {
                 let ptr = self.get_expanded_ptr();
-                CaterpillarEntryView::HeapRead(ptr.as_ref().unwrap().read().unwrap())
+                CaterpillarCellView::Expanded(ptr.as_ref().unwrap())
             }
         }
     }
@@ -242,30 +197,30 @@ impl UnsafeCaterpillarHolder {
         if !self.is_inlined() {
             unsafe {
                 let ptr = self.get_expanded_mut_ptr();
-                Some(Box::from_raw(ptr).into_inner().unwrap())
+                Some(*Box::from_raw(ptr))
             }
         } else {
             None
         }
     }
 
-    fn make_ptr_shifted_address(ptr: *mut RwLock<ExpandedEntry>) -> u64 {
+    fn make_ptr_shifted_address(ptr: *mut ExpandedEntry) -> u64 {
         (ptr as u64) >> Self::ALIGNED_PTR_SHIFT
     }
 
-    fn get_expanded_ptr(&self) -> *const RwLock<ExpandedEntry> {
+    fn get_expanded_ptr(&self) -> *const ExpandedEntry {
         unsafe {
             assert!(!self.is_inlined());
             let addr = self.expanded.shifted_address() << Self::ALIGNED_PTR_SHIFT;
-            addr as *const RwLock<ExpandedEntry>
+            addr as *const ExpandedEntry
         }
     }
 
-    fn get_expanded_mut_ptr(&self) -> *mut RwLock<ExpandedEntry> {
+    fn get_expanded_mut_ptr(&self) -> *mut ExpandedEntry {
         unsafe {
             assert!(!self.is_inlined());
             let addr = self.expanded.shifted_address() << Self::ALIGNED_PTR_SHIFT;
-            addr as *mut RwLock<ExpandedEntry>
+            addr as *mut ExpandedEntry
         }
     }
 }
@@ -275,15 +230,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_entry_turning() {
-        assert_eq!(size_of::<X>(), 8);
+    fn test_cell_turning() {
         let inlined = InlinedEntry::new()
             .with_common_info(CommonEntryInfo::new().with_is_inlined(true))
             .with_file_id(4534)
             .with_offset_reduced(99)
             .with_is_zero_lamports(true);
-        let inlined_centry = CaterpillarEntry::from_inlined(inlined);
-        let CaterpillarEntryView::Inlined(inlined) = inlined_centry.as_view() else {
+        let inlined_cell = CaterpillarCell::from_inlined(inlined);
+        let CaterpillarCellView::Inlined(inlined) = inlined_cell.as_view() else {
             panic!("Unexpected entry type")
         };
         assert_eq!(inlined.file_id(), 4534);
@@ -293,26 +247,25 @@ mod tests {
             ref_count: 2,
             slot_list: vec![inlined],
         };
-        let expanded_centry = CaterpillarEntry::from_expanded(expanded);
-        let CaterpillarEntryView::HeapRead(expanded) = expanded_centry.as_view() else {
+        let expanded_cell = CaterpillarCell::from_expanded(expanded);
+        let CaterpillarCellView::Expanded(expanded) = expanded_cell.as_view() else {
             panic!("Unexpected entry type")
         };
         assert_eq!(expanded.ref_count, 2);
         assert_eq!(expanded.slot_list[0].file_id(), 4534);
         assert_eq!(expanded.slot_list[0].offset_reduced(), 99);
 
-        let turning_centry = inlined_centry;
-        let CaterpillarEntryView::HeapRead(expanded) = turning_centry.turn_to_expanded() else {
+        let turning_cell = inlined_cell;
+        let CaterpillarCellView::Expanded(expanded) = turning_cell.turn_to_expanded() else {
             panic!("Unexpected entry type")
         };
         assert_eq!(expanded.ref_count, 1);
         assert_eq!(expanded.slot_list[0].file_id(), 4534);
         assert_eq!(expanded.slot_list[0].offset_reduced(), 99);
-        drop(expanded);
 
-        let mut mut_turning_centry = turning_centry;
-        mut_turning_centry.turn_to_inlined();
-        let CaterpillarEntryView::Inlined(inlined) = mut_turning_centry.as_view() else {
+        let mut mut_turning_cell = turning_cell;
+        mut_turning_cell.turn_to_inlined();
+        let CaterpillarCellView::Inlined(inlined) = mut_turning_cell.as_view() else {
             panic!("Unexpected entry type")
         };
         assert_eq!(inlined.file_id(), 4534);
