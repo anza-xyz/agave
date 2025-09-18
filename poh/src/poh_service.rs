@@ -368,7 +368,7 @@ impl PohService {
         let poh_recorder = poh_recorder.read().unwrap();
         poh_recorder
             .bank()
-            .map(|bank| bank.max_tick_height().wrapping_sub(1) == poh_recorder.tick_height())
+            .map(|bank| bank.max_tick_height().wrapping_sub(1) <= poh_recorder.tick_height())
             .unwrap_or(false)
     }
 
