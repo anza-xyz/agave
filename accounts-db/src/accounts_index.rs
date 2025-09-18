@@ -1350,18 +1350,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 continue;
             }
 
-            // Process items for this bin, ensuring no duplicates in the same slot
-            let mut seen_pubkeys = std::collections::HashSet::new();
-            
-            // Validate for duplicates first
-            for &index in indices {
-                let (pubkey, _) = &items[index];
-                assert!(
-                    seen_pubkeys.insert(*pubkey),
-                    "Accounts may only be stored once per slot: {slot}"
-                );
-            }
-
             let r_account_maps = self.account_maps[actual_bin].as_ref();
             count += indices.len();
 
