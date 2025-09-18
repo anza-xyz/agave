@@ -1332,7 +1332,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // Group items into bins using a Vec<Vec<usize>> where each inner Vec contains indices
         let mut bin_groups: Vec<Vec<usize>> = vec![Vec::new(); bins];
         for (index, (pubkey, _)) in items.iter().enumerate() {
-            let pubkey_bin = (bin_calc.bin_from_pubkey(pubkey) + random_bin_offset) % bins;
+            let pubkey_bin = bin_calc.bin_from_pubkey(pubkey);
             bin_groups[pubkey_bin].push(index);
         }
 
