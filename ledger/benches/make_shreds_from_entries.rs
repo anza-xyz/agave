@@ -61,7 +61,7 @@ fn make_shreds_from_entries<R: Rng>(
         keypair,
         entries,
         is_last_in_slot,
-        Some(chained_merkle_root),
+        chained_merkle_root,
         rng.gen_range(0..2_000), // next_shred_index
         rng.gen_range(0..2_000), // next_code_index
         reed_solomon_cache,

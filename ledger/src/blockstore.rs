@@ -2416,7 +2416,7 @@ impl Blockstore {
                 keypair,
                 &slot_entries,
                 is_full_slot,
-                chained_merkle_root,
+                Some(chained_merkle_root),
                 0, // next_shred_index
                 0, // next_code_index
                 &reed_solomon_cache,
@@ -10165,7 +10165,7 @@ pub mod tests {
             &leader_keypair,
             &entries,
             is_last_in_slot,
-            Some(chained_merkle_root),
+            chained_merkle_root,
             fec_set_index, // next_shred_index
             fec_set_index, // next_code_index
             &ReedSolomonCache::default(),
