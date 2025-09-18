@@ -743,6 +743,7 @@ pub fn should_discard_shred<'a, P>(
     max_slot: Slot,
     shred_version: u16,
     enforce_fixed_fec_set: impl Fn(Slot) -> bool,
+    discard_unexpected_data_complete_shreds: impl Fn(Slot) -> bool,
     stats: &mut ShredFetchStats,
 ) -> bool
 where
@@ -844,7 +845,10 @@ where
                 && index != fec_set_index + DATA_SHREDS_PER_FEC_BLOCK as u32 - 1
             {
                 stats.unexpected_data_complete_shred += 1;
-                return true;
+
+                if discard_unexpected_data_complete_shreds(slot) {
+                    return true;
+                }
             }
 
             if shred_flags.contains(ShredFlags::LAST_SHRED_IN_SLOT)
@@ -1203,6 +1207,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| true,
+                |_| false,
                 &mut stats
             ));
         }
@@ -1216,6 +1221,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| true,
+                |_| false,
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 1);
@@ -1227,6 +1233,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| true,
+                |_| false,
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 2);
@@ -1238,6 +1245,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| true,
+                |_| false,
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 3);
@@ -1249,6 +1257,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| true,
+                |_| false,
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 4);
@@ -1260,6 +1269,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| true,
+                |_| false,
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 5);
@@ -1272,6 +1282,7 @@ mod tests {
                 max_slot,
                 shred_version.wrapping_add(1),
                 |_| true,
+                |_| false,
                 &mut stats
             ));
             assert_eq!(stats.shred_version_mismatch, 1);
@@ -1284,6 +1295,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| true,
+                |_| false,
                 &mut stats
             ));
             assert_eq!(stats.slot_out_of_range, 1);
@@ -1306,6 +1318,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| true,
+                |_| false,
                 &mut stats
             ));
             assert_eq!(stats.slot_out_of_range, 1);
@@ -1328,6 +1341,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| true,
+                |_| false,
                 &mut stats
             ));
             assert_eq!(stats.bad_parent_offset, 1);
@@ -1349,6 +1363,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| true,
+                |_| true,
                 &mut stats
             ));
             assert_eq!(stats.index_out_of_bounds, 1);
@@ -1366,6 +1381,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| true,
+                |_| false,
                 &mut stats
             ));
         }
@@ -1377,6 +1393,7 @@ mod tests {
                 max_slot,
                 shred_version.wrapping_add(1),
                 |_| true,
+                |_| false,
                 &mut stats
             ));
             assert_eq!(stats.shred_version_mismatch, 1);
@@ -1388,6 +1405,7 @@ mod tests {
                 slot, // root
                 max_slot,
                 shred_version,
+                |_| true,
                 |_| true,
                 &mut stats
             ));
@@ -1410,6 +1428,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| true,
+                |_| false,
                 &mut stats
             ));
             assert_eq!(stats.index_out_of_bounds, 1);
@@ -1460,6 +1479,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| enforce_fixed_fec_set,
+                |_| false,
                 &mut stats,
             );
             assert_eq!(should_discard, enforce_fixed_fec_set);
@@ -1492,6 +1512,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| enforce_fixed_fec_set,
+                |_| false,
                 &mut stats,
             );
             assert_eq!(should_discard, enforce_fixed_fec_set);
@@ -1523,6 +1544,7 @@ mod tests {
                 max_slot,
                 shred_version,
                 |_| enforce_fixed_fec_set,
+                |_| false,
                 &mut stats,
             );
             assert_eq!(should_discard, enforce_fixed_fec_set);
@@ -1572,6 +1594,7 @@ mod tests {
             max_slot,
             shred_version,
             |_| enforce_fixed_fec_set,
+            |_| false,
             &mut stats,
         );
         assert_eq!(should_discard, enforce_fixed_fec_set);
@@ -2074,8 +2097,15 @@ mod tests {
         }
 
         let mut stats = ShredFetchStats::default();
-        let should_discard =
-            should_discard_shred(&packet, root, max_slot, shred_version, |_| true, &mut stats);
+        let should_discard = should_discard_shred(
+            &packet,
+            root,
+            max_slot,
+            shred_version,
+            |_| true,
+            |_| true,
+            &mut stats,
+        );
         assert!(should_discard);
         assert_eq!(stats.unexpected_data_complete_shred, 1);
 
@@ -2090,8 +2120,15 @@ mod tests {
         }
 
         let mut stats = ShredFetchStats::default();
-        let should_discard =
-            should_discard_shred(&packet, root, max_slot, shred_version, |_| true, &mut stats);
+        let should_discard = should_discard_shred(
+            &packet,
+            root,
+            max_slot,
+            shred_version,
+            |_| true,
+            |_| true,
+            &mut stats,
+        );
         assert!(!should_discard);
         assert_eq!(stats.unexpected_data_complete_shred, 0);
     }

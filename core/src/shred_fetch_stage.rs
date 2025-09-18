@@ -153,6 +153,14 @@ impl ShredFetchStage {
                     &epoch_schedule,
                 )
             };
+            let discard_unexpected_data_complete_shreds = |shred_slot| {
+                check_feature_activation(
+                    &agave_feature_set::discard_unexpected_data_complete_shreds::id(),
+                    shred_slot,
+                    &feature_set,
+                    &epoch_schedule,
+                )
+            };
             let turbine_disabled = turbine_disabled.load(Ordering::Relaxed);
             for mut packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
                 if turbine_disabled
@@ -162,6 +170,7 @@ impl ShredFetchStage {
                         max_slot,
                         shred_version,
                         enforce_fixed_fec_set,
+                        discard_unexpected_data_complete_shreds,
                         &mut stats,
                     )
                 {
