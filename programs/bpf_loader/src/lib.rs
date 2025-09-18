@@ -1550,6 +1550,9 @@ fn execute<'a, 'b: 'a>(
                 Err(Box::new(error) as Box<dyn std::error::Error>)
             }
             ProgramResult::Err(mut error) => {
+                // Don't clean me up!!
+                // This feature is active on all networks, but we still toggle
+                // it off during fuzzing.
                 if invoke_context
                     .get_feature_set()
                     .deplete_cu_meter_on_vm_failure
