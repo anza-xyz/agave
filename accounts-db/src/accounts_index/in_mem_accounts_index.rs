@@ -931,7 +931,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 Entry::Occupied(occupied) => {
                     // in cache, so merge into cache
                     let (slot, account_info) = new_entry.into();
-                    
+
                     let slot_list = occupied.get().slot_list.read().unwrap();
 
                     // If there is only one entry in the slot list, it means that
@@ -964,16 +964,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         other_slot = None;
                     }
 
-                    (slot, true /* already existed */)
+                    (Some(slot), true) /* already existed */
                 }
                 Entry::Vacant(vacant) => {
                     // This batch function is only used for in-memory insertions (not using disk buckets).
                     // Skip disk lookup and directly insert new entry.
-                    let slot = new_entry.slot();
                     let new_account_map_entry = new_entry.into_account_map_entry(&self.storage);
                     assert!(new_account_map_entry.dirty());
                     vacant.insert(new_account_map_entry);
-                    (slot, false /* already existed */)
+                    (None, false) /* did not exist */
                 }
             };
 
@@ -981,7 +980,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 if let Some(other_slot) = other_slot {
                     duplicates_from_in_memory.push((other_slot, pubkey));
                 }
-                duplicates_from_in_memory.push((slot, pubkey));
+                if let Some(slot) = slot {
+                    duplicates_from_in_memory.push((slot, pubkey));
+                }
                 num_existed_in_mem += 1;
             } else {
                 num_did_not_exist += 1;
@@ -990,7 +991,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         drop(map);
 
-        (duplicates_from_in_memory, num_did_not_exist, num_existed_in_mem)
+        (
+            duplicates_from_in_memory,
+            num_did_not_exist,
+            num_existed_in_mem,
+        )
     }
 
     pub fn flush(&self, can_advance_age: bool) {
