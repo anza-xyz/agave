@@ -1,10 +1,10 @@
 [package]
 name = "solana-votor-messages"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/solana-votor-messages"
 readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }

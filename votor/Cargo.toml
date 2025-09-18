@@ -1,10 +1,10 @@
 [package]
 name = "agave-votor"
-description = "Blockchain, Rebuilt for Scale"
 documentation = "https://docs.rs/agave-votor"
 readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
+description = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
@@ -29,7 +29,6 @@ bitvec = { workspace = true }
 bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
-etcd-client = { workspace = true, features = ["tls"] }
 itertools = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }

@@ -33,10 +33,6 @@ pub fn to<T: WritableAccount>(versioned: &VoteStateVersions, account: &mut T) ->
     VoteStateV3::serialize(versioned, account.data_as_mut_slice()).ok()
 }
 
-fn compute_vote_latency(voted_for_slot: Slot, current_slot: Slot) -> u8 {
-    std::cmp::min(current_slot.saturating_sub(voted_for_slot), u8::MAX as u64) as u8
-}
-
 /// Checks the proposed vote state with the current and
 /// slot hashes, making adjustments to the root / filtering
 /// votes as needed.
@@ -576,7 +572,7 @@ pub fn process_new_vote_state(
     // have had their latency initialized to 0 by the above loop.  Those will now be updated to their actual latency.
     for new_vote in new_state.iter_mut() {
         if new_vote.latency == 0 {
-            new_vote.latency = compute_vote_latency(new_vote.slot(), current_slot);
+            new_vote.latency = handler::compute_vote_latency(new_vote.slot(), current_slot);
         }
     }
 
@@ -1084,7 +1080,7 @@ mod tests {
 
     fn create_test_account() -> (Pubkey, RefCell<AccountSharedData>) {
         let rent = Rent::default();
-        let balance = VoteStateV3::get_rent_exempt_reserve(&rent);
+        let balance = rent.minimum_balance(VoteStateV3::size_of());
         let vote_pubkey = solana_pubkey::new_rand();
         (
             vote_pubkey,

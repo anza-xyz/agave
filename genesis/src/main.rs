@@ -254,7 +254,7 @@ fn add_validator_accounts(
             identity_pubkey,
             identity_pubkey,
             commission,
-            VoteStateV3::get_rent_exempt_reserve(rent).max(1),
+            rent.minimum_balance(VoteStateV3::size_of()).max(1),
         );
 
         genesis_config.add_account(
@@ -314,7 +314,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     // vote account
     let default_bootstrap_validator_lamports = &(500 * LAMPORTS_PER_SOL)
-        .max(VoteStateV3::get_rent_exempt_reserve(&rent))
+        .max(rent.minimum_balance(VoteStateV3::size_of()))
         .to_string();
     // stake account
     let default_bootstrap_validator_stake_lamports = &(LAMPORTS_PER_SOL / 2)
