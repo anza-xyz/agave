@@ -6978,6 +6978,9 @@ impl AccountsDb {
         self.accounts_index.scan(
             pubkeys.iter(),
             |_pubkey, slots_refs, _entry| {
+                if slots_refs.is_none() {
+                    println!("no slots_refs for pubkey {_pubkey}");
+                }
                 let (slot_list, ref_count) = slots_refs.unwrap();
                 if ref_count == 1 {
                     assert_eq!(slot_list.len(), 1);
