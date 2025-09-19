@@ -64,6 +64,7 @@ pub struct ShredFetchStats {
     pub(super) misaligned_erasure_config: usize,
     pub(super) shred_flags_bad_deserialize: usize,
     pub(super) misaligned_last_data_index: usize,
+    pub(super) unexpected_data_complete_shred: usize,
     since: Option<Instant>,
     pub overflow_shreds: usize,
 }
@@ -199,14 +200,27 @@ impl ShredFetchStats {
                 self.erasure_config_bad_deserialize,
                 i64
             ),
-            ("misaligned_erasure_config", self.misaligned_erasure_config, i64),
+            (
+                "misaligned_erasure_config",
+                self.misaligned_erasure_config,
+                i64
+            ),
             (
                 "shred_flags_bad_deserialize",
                 self.shred_flags_bad_deserialize,
                 i64
             ),
-            ("misaligned_last_data_index", self.misaligned_last_data_index, i64),
+            (
+                "misaligned_last_data_index",
+                self.misaligned_last_data_index,
+                i64
+            ),
             ("overflow_shreds", self.overflow_shreds, i64),
+            (
+                "unexpected_data_complete_shred",
+                self.unexpected_data_complete_shred,
+                i64
+            )
         );
         *self = Self {
             since: Some(Instant::now()),
