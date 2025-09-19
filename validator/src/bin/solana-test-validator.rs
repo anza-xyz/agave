@@ -38,7 +38,8 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         process::exit,
-        sync::{Arc, RwLock},
+        sync::{Arc, Mutex, RwLock},
+        thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
     },
 };
@@ -362,8 +363,8 @@ fn main() {
         .and_then(sol_str_to_lamports);
 
     let (sender, receiver) = unbounded();
-    std::thread::spawn(move || {
-        let faucet = Arc::new(std::sync::Mutex::new(Faucet::new(
+    thread::spawn(move || {
+        let faucet = Arc::new(Mutex::new(Faucet::new(
             faucet_keypair,
             Some(faucet_time_slice_secs),
             faucet_per_time_cap,
