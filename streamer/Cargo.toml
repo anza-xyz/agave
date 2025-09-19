@@ -36,6 +36,7 @@ nix = { workspace = true, features = ["net", "poll", "signal"] }
 num_cpus = { workspace = true }
 pem = { workspace = true }
 percentage = { workspace = true }
+qualifier_attr = { workspace = true }
 quinn = { workspace = true }
 quinn-proto = { workspace = true }
 rand = { workspace = true }
