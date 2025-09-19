@@ -1108,7 +1108,7 @@ mod tests {
 
     fn create_test_account() -> (Pubkey, RefCell<AccountSharedData>) {
         let rent = Rent::default();
-        let balance = VoteStateV3::get_rent_exempt_reserve(&rent);
+        let balance = rent.minimum_balance(VoteStateV3::size_of());
         let vote_pubkey = solana_pubkey::new_rand();
         (
             vote_pubkey,
@@ -1247,7 +1247,7 @@ mod tests {
         // Test that when the feature is enabled, if the vote account does have sufficient lamports, the
         // new vote state is written out
         assert_eq!(
-            borrowed_account.set_lamports(rent.minimum_balance(VoteStateV3::size_of()),),
+            borrowed_account.set_lamports(rent.minimum_balance(VoteStateV3::size_of())),
             Ok(())
         );
         assert_eq!(
