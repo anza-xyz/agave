@@ -1687,77 +1687,48 @@ mod test {
 
     #[test_matrix(
         [0, 15600, 31200, 46800],
-        [true, false],
         [true, false]
     )]
-    fn test_make_shreds_from_data(data_size: usize, chained: bool, is_last_in_slot: bool) {
+    fn test_make_shreds_from_data(data_size: usize, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let data_size = data_size.saturating_sub(16);
         let reed_solomon_cache = ReedSolomonCache::default();
         for data_size in data_size..data_size + 32 {
-            run_make_shreds_from_data(
-                &mut rng,
-                data_size,
-                chained,
-                is_last_in_slot,
-                &reed_solomon_cache,
-            );
+            run_make_shreds_from_data(&mut rng, data_size, is_last_in_slot, &reed_solomon_cache);
         }
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_make_shreds_from_data_rand(chained: bool, is_last_in_slot: bool) {
+    #[test_case(true)]
+    #[test_case(false)]
+    fn test_make_shreds_from_data_rand(is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let reed_solomon_cache = ReedSolomonCache::default();
         for _ in 0..32 {
             let data_size = rng.gen_range(0..31200 * 7);
-            run_make_shreds_from_data(
-                &mut rng,
-                data_size,
-                chained,
-                is_last_in_slot,
-                &reed_solomon_cache,
-            );
+            run_make_shreds_from_data(&mut rng, data_size, is_last_in_slot, &reed_solomon_cache);
         }
     }
 
     #[ignore]
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_make_shreds_from_data_paranoid(chained: bool, is_last_in_slot: bool) {
+    #[test_case(true)]
+    #[test_case(false)]
+    fn test_make_shreds_from_data_paranoid(is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let reed_solomon_cache = ReedSolomonCache::default();
         for data_size in 0..=PACKET_DATA_SIZE * 4 * 64 {
-            run_make_shreds_from_data(
-                &mut rng,
-                data_size,
-                chained,
-                is_last_in_slot,
-                &reed_solomon_cache,
-            );
+            run_make_shreds_from_data(&mut rng, data_size, is_last_in_slot, &reed_solomon_cache);
         }
     }
 
     fn run_make_shreds_from_data<R: Rng>(
         rng: &mut R,
         data_size: usize,
-        chained: bool,
         is_last_in_slot: bool,
         reed_solomon_cache: &ReedSolomonCache,
     ) {
         let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let keypair = Keypair::new();
-        let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
-
-        // only sign last batch if it is chained and is the last in slot
-        // let resigned = chained && is_last_in_slot;
-        let sign_last_fec_set = chained && is_last_in_slot;
-
+        let chained_merkle_root = Hash::new_from_array(rng.gen());
         let slot = 149_745_689;
         let parent_slot = slot - rng.gen_range(1..65536);
         let shred_version = rng.gen();
@@ -1769,7 +1740,7 @@ mod test {
         let shreds = make_shreds_from_data(
             &thread_pool,
             &keypair,
-            chained_merkle_root,
+            Some(chained_merkle_root),
             &data[..],
             slot,
             parent_slot,
@@ -1812,12 +1783,8 @@ mod test {
             let shred_type = ShredType::from(shred_variant);
             let key = ShredId::new(slot, index, shred_type);
             let merkle_root = shred.merkle_root().unwrap();
-            let chained_merkle_root = if chained {
-                Some(shred.chained_merkle_root().unwrap())
-            } else {
-                assert_matches!(shred.chained_merkle_root(), Err(Error::InvalidShredVariant));
-                None
-            };
+            let chained_merkle_root = shred.chained_merkle_root().unwrap();
+
             assert!(signature.verify(pubkey.as_ref(), merkle_root.as_ref()));
             // Verify shred::layout api.
             let shred = shred.payload();
@@ -1834,7 +1801,7 @@ mod test {
             assert_eq!(shred::layout::get_merkle_root(shred), Some(merkle_root));
             assert_eq!(
                 shred::layout::get_chained_merkle_root(shred),
-                chained_merkle_root
+                Some(chained_merkle_root)
             );
             let data = shred::layout::get_signed_data(shred).unwrap();
             assert_eq!(data, merkle_root);
@@ -1845,7 +1812,7 @@ mod test {
         let mut num_coding_shreds = 0;
         for (index, shred) in shreds.iter().enumerate() {
             let common_header = shred.common_header();
-            let resigned = sign_last_fec_set && index >= shreds.len() - 64;
+            let resigned = is_last_in_slot && index >= shreds.len() - 64;
 
             assert_eq!(common_header.slot, slot);
             assert_eq!(common_header.version, shred_version);
@@ -1857,7 +1824,7 @@ mod test {
                         common_header.shred_variant,
                         ShredVariant::MerkleCode {
                             proof_size,
-                            chained,
+                            chained: true,
                             resigned
                         }
                     );
@@ -1875,7 +1842,7 @@ mod test {
                         common_header.shred_variant,
                         ShredVariant::MerkleData {
                             proof_size,
-                            chained,
+                            chained: true,
                             resigned
                         }
                     );
@@ -1911,25 +1878,22 @@ mod test {
         }
         assert!(num_coding_shreds >= num_data_shreds);
         // Verify chained Merkle roots.
-        if let Some(chained_merkle_root) = chained_merkle_root {
-            let chained_merkle_roots: HashMap<u32, Hash> =
-                std::iter::once((0, chained_merkle_root))
-                    .chain(
-                        shreds
-                            .iter()
-                            .sorted_unstable_by_key(|shred| shred.fec_set_index())
-                            .dedup_by(|shred, other| shred.fec_set_index() == other.fec_set_index())
-                            .map(|shred| (shred.fec_set_index(), shred.merkle_root().unwrap())),
-                    )
-                    .tuple_windows()
-                    .map(|((_, merkle_root), (fec_set_index, _))| (fec_set_index, merkle_root))
-                    .collect();
-            for shred in &shreds {
-                assert_eq!(
-                    shred.chained_merkle_root().unwrap(),
-                    chained_merkle_roots[&shred.fec_set_index()]
-                );
-            }
+        let chained_merkle_roots: HashMap<u32, Hash> = std::iter::once((0, chained_merkle_root))
+            .chain(
+                shreds
+                    .iter()
+                    .sorted_unstable_by_key(|shred| shred.fec_set_index())
+                    .dedup_by(|shred, other| shred.fec_set_index() == other.fec_set_index())
+                    .map(|shred| (shred.fec_set_index(), shred.merkle_root().unwrap())),
+            )
+            .tuple_windows()
+            .map(|((_, merkle_root), (fec_set_index, _))| (fec_set_index, merkle_root))
+            .collect();
+        for shred in &shreds {
+            assert_eq!(
+                shred.chained_merkle_root().unwrap(),
+                chained_merkle_roots[&shred.fec_set_index()]
+            );
         }
         // Assert that only the last shred is LAST_SHRED_IN_SLOT.
         assert_eq!(
