@@ -17,11 +17,8 @@ Release channels have their own copy of this changelog:
 ### RPC
 #### Breaking
 #### Changes
-
 ### Validator
-
 #### Breaking
-
 #### Deprecations
 * The `--monitor` flag with `agave-validator exit` is now deprecated. Operators can use the `monitor` command after `exit` instead.
 * The `--disable-accounts-disk-index` flag is now deprecated.
