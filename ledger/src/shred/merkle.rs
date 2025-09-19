@@ -1023,7 +1023,7 @@ pub(crate) fn make_shreds_from_data(
     thread_pool: &ThreadPool,
     keypair: &Keypair,
     // The Merkle root of the previous erasure batch if chained.
-    chained_merkle_root: Option<Hash>,
+    chained_merkle_root: Hash,
     data: &[u8], // Serialized &[Entry]
     slot: Slot,
     parent_slot: Slot,
@@ -1036,19 +1036,16 @@ pub(crate) fn make_shreds_from_data(
     stats: &mut ProcessShredsStats,
 ) -> Result<Vec<Shred>, Error> {
     let now = Instant::now();
-    let chained = chained_merkle_root.is_some();
-
-    // only sign if last fec set in slot and is chained
-    let sign_last_fec_set = chained && is_last_in_slot;
     let proof_size = PROOF_ENTRIES_FOR_32_32_BATCH;
 
     // unsigned data_buffer size
-    let data_buffer_per_shred_size = ShredData::capacity(proof_size, chained, false)?;
+    let data_buffer_per_shred_size =
+        ShredData::capacity(proof_size, true /* chained */, false)?;
     let data_buffer_total_size = DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size;
 
     // signed data_buffer size
-    let data_buffer_per_shred_size_signed = if sign_last_fec_set {
-        ShredData::capacity(proof_size, chained, true)?
+    let data_buffer_per_shred_size_signed = if is_last_in_slot {
+        ShredData::capacity(proof_size, true /* chained */, true)?
     } else {
         0
     };
@@ -1060,7 +1057,7 @@ pub(crate) fn make_shreds_from_data(
         signature: Signature::default(),
         shred_variant: ShredVariant::MerkleData {
             proof_size,
-            chained,
+            chained: true,
             resigned: false,
         },
         slot,
@@ -1073,7 +1070,7 @@ pub(crate) fn make_shreds_from_data(
     let mut common_header_code = ShredCommonHeader {
         shred_variant: ShredVariant::MerkleCode {
             proof_size,
-            chained,
+            chained: true,
             resigned: false,
         },
         index: next_code_index,
@@ -1094,7 +1091,7 @@ pub(crate) fn make_shreds_from_data(
         }
     };
 
-    let (mut unsigned_data, signed_data) = if sign_last_fec_set {
+    let (mut unsigned_data, signed_data) = if is_last_in_slot {
         // Reserve at least one signed batch (may be empty) at the end.
         if data.len() > data_buffer_total_size_signed {
             // sign everything except the last batch
@@ -1111,7 +1108,7 @@ pub(crate) fn make_shreds_from_data(
     stats.data_bytes += unsigned_data.len() + signed_data.len();
 
     let unsigned_sets = unsigned_data.len().div_ceil(data_buffer_total_size);
-    let number_of_fec_sets = if sign_last_fec_set {
+    let number_of_fec_sets = if is_last_in_slot {
         unsigned_sets + 1
     } else {
         unsigned_sets
@@ -1147,11 +1144,11 @@ pub(crate) fn make_shreds_from_data(
     // 2.) Shreds is_empty, which only happens when we entered w/ zero data.
     //
     // In either case, we want to generate empty data shreds.
-    if !unsigned_data.is_empty() || (shreds.is_empty() && !sign_last_fec_set) {
+    if !unsigned_data.is_empty() || (shreds.is_empty() && !is_last_in_slot) {
         stats.padding_bytes += data_buffer_total_size - unsigned_data.len();
         shred_leftover_data(
             proof_size,
-            chained,
+            true, /* chained */
             false,
             unsigned_data,
             data_buffer_per_shred_size,
@@ -1161,11 +1158,11 @@ pub(crate) fn make_shreds_from_data(
             &mut shreds,
         );
     }
-    if !signed_data.is_empty() || (shreds.is_empty() && sign_last_fec_set) {
+    if !signed_data.is_empty() || (shreds.is_empty() && is_last_in_slot) {
         stats.padding_bytes += data_buffer_total_size_signed - signed_data.len();
         shred_leftover_data(
             proof_size,
-            chained,
+            true, /* chained */
             true,
             signed_data,
             data_buffer_per_shred_size_signed,
@@ -1200,45 +1197,21 @@ pub(crate) fn make_shreds_from_data(
     let batches: Vec<&mut [Shred]> = shreds
         .chunk_by_mut(|a, b| a.fec_set_index() == b.fec_set_index())
         .collect();
-    if let Some(chained_merkle_root) = chained_merkle_root {
-        // We have to process erasure batches serially because the Merkle tree
-        // (and so the signature) cannot be computed without the Merkle root of
-        // the previous erasure batch.
-        batches
-            .into_iter()
-            .try_fold(chained_merkle_root, |chained_merkle_root, batch| {
-                finish_erasure_batch(
-                    Some(thread_pool),
-                    keypair,
-                    batch,
-                    Some(chained_merkle_root),
-                    reed_solomon_cache,
-                )
-            })?;
-    } else if batches.len() <= 1 {
-        for batch in batches {
+
+    // We have to process erasure batches serially because the Merkle tree
+    // (and so the signature) cannot be computed without the Merkle root of
+    // the previous erasure batch.
+    batches
+        .into_iter()
+        .try_fold(chained_merkle_root, |chained_merkle_root, batch| {
             finish_erasure_batch(
                 Some(thread_pool),
                 keypair,
                 batch,
-                None, // chained_merkle_root
+                Some(chained_merkle_root),
                 reed_solomon_cache,
-            )?;
-        }
-    } else {
-        thread_pool.install(|| {
-            batches.into_par_iter().try_for_each(|batch| {
-                finish_erasure_batch(
-                    None, // thread_pool
-                    keypair,
-                    batch,
-                    None, // chained_merkle_root
-                    reed_solomon_cache,
-                )
-                .map(|_| ())
-            })
+            )
         })?;
-    }
     stats.gen_coding_elapsed += now.elapsed().as_micros() as u64;
     Ok(shreds)
 }
@@ -1740,7 +1713,7 @@ mod test {
         let shreds = make_shreds_from_data(
             &thread_pool,
             &keypair,
-            Some(chained_merkle_root),
+            chained_merkle_root,
             &data[..],
             slot,
             parent_slot,

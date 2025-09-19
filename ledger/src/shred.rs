@@ -1026,7 +1026,7 @@ mod tests {
         merkle::make_shreds_from_data(
             &thread_pool,
             &Keypair::new(),
-            Some(chained_merkle_root),
+            chained_merkle_root,
             &data[..],
             slot,
             parent_slot,

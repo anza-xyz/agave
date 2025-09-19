@@ -108,7 +108,7 @@ impl Shredder {
         let shreds = shred::merkle::make_shreds_from_data(
             thread_pool,
             keypair,
-            Some(chained_merkle_root),
+            chained_merkle_root,
             data,
             self.slot,
             self.parent_slot,
