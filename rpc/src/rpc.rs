@@ -4243,6 +4243,16 @@ pub mod rpc_full {
             config: Option<RpcContextConfig>,
         ) -> Result<RpcResponse<Option<u64>>> {
             debug!("get_fee_for_message rpc request received");
+            
+            // Validate input size before attempting to decode
+            if data.len() > MAX_BASE64_SIZE {
+                return Err(Error::invalid_params(format!(
+                    "base64 encoded message too large: {} bytes (max: {} bytes)",
+                    data.len(),
+                    MAX_BASE64_SIZE,
+                )));
+            }
+            
             let (_, message) = decode_and_deserialize::<VersionedMessage>(
                 data,
                 TransactionBinaryEncoding::Base64,
@@ -9198,6 +9208,27 @@ pub mod tests {
             let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));
             assert_eq!(response.value, TEST_SIGNATURE_FEE);
         }
+    }
+
+    #[test]
+    fn test_get_fee_for_message_input_validation() {
+        let rpc = RpcHandler::start();
+        
+        // Test with oversized input data
+        let oversized_data = "A".repeat(MAX_BASE64_SIZE + 1);
+        let request = create_test_request(
+            "getFeeForMessage",
+            Some(json!([oversized_data])),
+        );
+        let response = rpc.handle_request_sync(request);
+        assert!(response.is_error());
+        
+        // Verify the error message contains the size information
+        let error_response: jsonrpc_core::Response = serde_json::from_str(&response).unwrap();
+        let error_msg = error_response.error.as_ref().unwrap().message.as_str();
+        assert!(error_msg.contains("too large"));
+        assert!(error_msg.contains(&format!("{} bytes", MAX_BASE64_SIZE + 1)));
+        assert!(error_msg.contains(&format!("{} bytes", MAX_BASE64_SIZE)));
     }
 
     #[test]
