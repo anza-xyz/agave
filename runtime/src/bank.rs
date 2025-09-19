@@ -1638,6 +1638,14 @@ impl Bank {
                 &mut rewards_metrics,
             ));
 
+        let (program_runtime_environment_v1, program_runtime_environment_v2) =
+            self.create_program_runtime_environments(&self.feature_set);
+        self.transaction_processor
+            .configure_program_runtime_environments(
+                program_runtime_environment_v1,
+                program_runtime_environment_v2,
+            );
+
         report_new_epoch_metrics(
             epoch,
             slot,
