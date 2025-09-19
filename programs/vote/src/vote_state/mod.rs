@@ -1040,6 +1040,24 @@ pub fn create_account_with_authorized(
     vote_account
 }
 
+// TODO(wen): when we have VoteStateV4::new(), switch all users there.
+pub fn new_v4_vote_state(
+    node_pubkey: &Pubkey,
+    authorized_voter: &Pubkey,
+    authorized_withdrawer: &Pubkey,
+    bls_pubkey_compressed: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
+    inflation_rewards_commission_bps: u16,
+) -> VoteStateV4 {
+    VoteStateV4 {
+        node_pubkey: *node_pubkey,
+        authorized_voters: AuthorizedVoters::new(0, *authorized_voter),
+        authorized_withdrawer: *authorized_withdrawer,
+        bls_pubkey_compressed,
+        inflation_rewards_commission_bps,
+        ..VoteStateV4::default()
+    }
+}
+
 pub fn create_v4_account_with_authorized(
     node_pubkey: &Pubkey,
     authorized_voter: &Pubkey,
@@ -1050,14 +1068,13 @@ pub fn create_v4_account_with_authorized(
 ) -> AccountSharedData {
     let mut vote_account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &id());
 
-    let vote_state = VoteStateV4 {
-        node_pubkey: *node_pubkey,
-        authorized_voters: AuthorizedVoters::new(0, *authorized_voter),
-        authorized_withdrawer: *authorized_withdrawer,
+    let vote_state = new_v4_vote_state(
+        node_pubkey,
+        authorized_voter,
+        authorized_withdrawer,
         bls_pubkey_compressed,
         inflation_rewards_commission_bps,
-        ..VoteStateV4::default()
-    };
+    );
 
     VoteStateV4::serialize(
         &VoteStateVersions::V4(Box::new(vote_state)),
