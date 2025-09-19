@@ -6004,6 +6004,10 @@ impl AccountsDb {
         // should skip handle_reclaims only when reclaims is empty. No need to
         // check the elements of reclaims are empty.
         if !reclaims.is_empty() {
+            let reclaims_len = reclaims.iter().map(|r| r.len()).sum::<usize>();
+            self.stats
+                .num_reclaims
+                .fetch_add(reclaims_len as u64, Ordering::Relaxed);
             let purge_stats = PurgeStats::default();
             let mut handle_reclaims_time = Measure::start("handle_reclaims");
             self.handle_reclaims(
@@ -6213,6 +6217,11 @@ impl AccountsDb {
                 (
                     "total_data",
                     self.stats.store_total_data.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "num_reclaims",
+                    self.stats.num_reclaims.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
