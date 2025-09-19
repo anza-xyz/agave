@@ -152,6 +152,7 @@ impl Tpu {
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
+        block_production_pacing_fill_time_millis: u64,
         transaction_struct: TransactionStructure,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
@@ -328,6 +329,7 @@ impl Tpu {
             tpu_vote_receiver,
             gossip_vote_receiver,
             block_production_num_workers,
+            block_production_pacing_fill_time_millis,
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,

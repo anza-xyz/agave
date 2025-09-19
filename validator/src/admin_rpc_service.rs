@@ -269,6 +269,7 @@ pub trait AdminRpc {
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
         num_workers: NonZeroUsize,
+        pacing_fill_time_millis: u64,
     ) -> Result<()>;
 }
 
@@ -757,6 +758,7 @@ impl AdminRpc for AdminRpcImpl {
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
         num_workers: NonZeroUsize,
+        pacing_fill_time_millis: u64,
     ) -> Result<()> {
         debug!("manage_block_production rpc request received");
 
@@ -776,7 +778,12 @@ impl AdminRpc for AdminRpcImpl {
             };
 
             banking_stage
-                .spawn_threads(transaction_struct, block_production_method, num_workers)
+                .spawn_threads(
+                    transaction_struct,
+                    block_production_method,
+                    num_workers,
+                    pacing_fill_time_millis,
+                )
                 .map_err(|err| {
                     error!("Failed to spawn new non-vote threads: {err:?}");
                     jsonrpc_core::error::Error::internal_error()
