@@ -1462,7 +1462,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("enable_accounts_disk_index")
             .long("enable-accounts-disk-index")
             .help("Enables the disk-based accounts index")
-            .hidden(hidden_unless_forced()),
+            .long_help(
+                "Enables the disk-based accounts index. Reduce the memory footprint of the \
+                 accounts index at the cost of index performance.",
+            ),
     )
     .arg(
         Arg::with_name("accounts_shrink_optimize_total_space")
