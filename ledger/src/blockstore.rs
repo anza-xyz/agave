@@ -2375,7 +2375,7 @@ impl Blockstore {
         let mut all_shreds = vec![];
         let mut slot_entries = vec![];
         let reed_solomon_cache = ReedSolomonCache::default();
-        let mut chained_merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
+        let mut chained_merkle_root = Hash::new_from_array(rand::thread_rng().gen());
         // Find all the entries for start_slot
         for entry in entries.into_iter() {
             if remaining_ticks_in_slot == 0 {
@@ -2403,7 +2403,7 @@ impl Blockstore {
                     );
                 all_shreds.append(&mut data_shreds);
                 all_shreds.append(&mut coding_shreds);
-                chained_merkle_root = Some(coding_shreds.last().unwrap().merkle_root().unwrap());
+                chained_merkle_root = coding_shreds.last().unwrap().merkle_root().unwrap();
                 shredder = Shredder::new(
                     current_slot,
                     parent_slot,
@@ -4862,7 +4862,7 @@ pub fn create_new_ledger(
         &entries,
         true, // is_last_in_slot
         // chained_merkle_root
-        Some(Hash::new_from_array(rand::thread_rng().gen())),
+        Hash::new_from_array(rand::thread_rng().gen()),
         0, // next_shred_index
         0, // next_code_index
         &ReedSolomonCache::default(),
@@ -5094,10 +5094,9 @@ pub fn entries_to_test_shreds(
             &Keypair::new(),
             entries,
             is_full_slot,
-            // chained_merkle_root
-            Some(Hash::new_from_array(rand::thread_rng().gen())),
-            0, // next_shred_index,
-            0, // next_code_index
+            Hash::new_from_array(rand::thread_rng().gen()), // chained_merkle_root
+            0,                                              // next_shred_index,
+            0,                                              // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
@@ -6877,7 +6876,7 @@ pub mod tests {
                         &keypair,
                         &[],
                         false,
-                        Some(Hash::default()), // merkle_root
+                        Hash::default(), // merkle_root
                         (i * gap) as u32,
                         (i * gap) as u32,
                         &reed_solomon_cache,
@@ -7060,7 +7059,7 @@ pub mod tests {
                 &keypair,
                 &entries,
                 true,
-                Some(Hash::default()), // merkle_root
+                Hash::default(), // merkle_root
                 0,
                 0,
                 &rsc,
@@ -7088,9 +7087,9 @@ pub mod tests {
                 &keypair,
                 &[],
                 true,
-                Some(Hash::default()), // merkle_root
-                6,                     // next_shred_index,
-                6,                     // next_code_index
+                Hash::default(), // merkle_root
+                6,               // next_shred_index,
+                6,               // next_code_index
                 &rsc,
                 &mut ProcessShredsStats::default(),
             )
@@ -7151,9 +7150,9 @@ pub mod tests {
                 &Keypair::new(),
                 &entries,
                 true,
-                Some(Hash::default()), // merkle_root
-                last_idx,              // next_shred_index,
-                last_idx,              // next_code_index
+                Hash::default(), // merkle_root
+                last_idx,        // next_shred_index,
+                last_idx,        // next_code_index
                 &rsc,
                 &mut ProcessShredsStats::default(),
             )
@@ -7544,7 +7543,7 @@ pub mod tests {
                 &keypair,
                 &[3, 3, 3],
                 false,
-                Some(Hash::default()),
+                Hash::default(),
                 new_index,
                 new_index,
                 &reed_solomon_cache,
@@ -7618,7 +7617,12 @@ pub mod tests {
         let slot = 1;
         let (_data_shreds, code_shreds, _) =
             setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
-                slot, 0, 10, 0, None, true,
+                slot,
+                0,
+                10,
+                0,
+                Hash::default(),
+                true,
             );
         let coding_shred = code_shreds[0].clone();
 
@@ -7655,7 +7659,12 @@ pub mod tests {
         let slot = 1;
         let (_data_shreds, code_shreds, _) =
             setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
-                slot, 0, 10, 0, None, true,
+                slot,
+                0,
+                10,
+                0,
+                Hash::default(),
+                true,
             );
         let coding_shred = code_shreds[0].clone();
 
@@ -7877,7 +7886,7 @@ pub mod tests {
                 &keypair,
                 &[1, 1, 1],
                 true,
-                Some(Hash::default()),
+                Hash::default(),
                 next_shred_index as u32,
                 next_shred_index as u32,
                 &reed_solomon_cache,
@@ -10155,7 +10164,7 @@ pub mod tests {
             parent_slot,
             num_entries,
             fec_set_index,
-            Some(Hash::new_from_array(rand::thread_rng().gen())),
+            Hash::new_from_array(rand::thread_rng().gen()),
         )
     }
 
@@ -10164,7 +10173,7 @@ pub mod tests {
         parent_slot: u64,
         num_entries: u64,
         fec_set_index: u32,
-        chained_merkle_root: Option<Hash>,
+        chained_merkle_root: Hash,
     ) -> (Vec<Shred>, Vec<Shred>, Arc<LeaderScheduleCache>) {
         setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
             slot,
@@ -10181,7 +10190,7 @@ pub mod tests {
         parent_slot: u64,
         num_entries: u64,
         fec_set_index: u32,
-        chained_merkle_root: Option<Hash>,
+        chained_merkle_root: Hash,
         is_last_in_slot: bool,
     ) -> (Vec<Shred>, Vec<Shred>, Arc<LeaderScheduleCache>) {
         let entries = make_slot_entries_with_transactions(num_entries);
@@ -10251,7 +10260,7 @@ pub mod tests {
         let leader_keypair = Arc::new(Keypair::new());
         let reed_solomon_cache = ReedSolomonCache::default();
         let shredder = Shredder::new(slot, 0, 0, 0).unwrap();
-        let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
+        let merkle_root = Hash::new_from_array(rand::thread_rng().gen());
         let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             &leader_keypair,
             &entries1,
@@ -10611,7 +10620,7 @@ pub mod tests {
         let version = version_from_hash(&entries[0].hash);
         let shredder = Shredder::new(slot, 0, 0, version).unwrap();
         let reed_solomon_cache = ReedSolomonCache::default();
-        let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
+        let merkle_root = Hash::new_from_array(rand::thread_rng().gen());
         let kp = Keypair::new();
         // produce normal shreds
         let (data1, coding1) = shredder.entries_to_merkle_shreds_for_tests(
@@ -10726,10 +10735,10 @@ pub mod tests {
             .make_merkle_shreds_from_entries(
                 &leader_keypair,
                 &entries,
-                true, // is_last_in_slot
-                Some(Hash::new_unique()),
-                0, // next_shred_index
-                0, // next_code_index,
+                true,               // is_last_in_slot
+                Hash::new_unique(), // chained_merkle_root
+                0,                  // next_shred_index
+                0,                  // next_code_index,
                 &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             )
@@ -10742,7 +10751,7 @@ pub mod tests {
                 &leader_keypair,
                 &entries,
                 true, // is_last_in_slot
-                Some(last_data1.chained_merkle_root().unwrap()),
+                last_data1.chained_merkle_root().unwrap(),
                 last_data1.index() + 1, // next_shred_index
                 last_code1.index() + 1, // next_code_index,
                 &reed_solomon_cache,
@@ -11142,7 +11151,7 @@ pub mod tests {
             parent_slot,
             10,
             next_fec_set_index,
-            Some(merkle_root),
+            merkle_root,
         );
         let data_shred = data_shreds[0].clone();
         let coding_shred = coding_shreds[0].clone();
@@ -11175,7 +11184,7 @@ pub mod tests {
             parent_slot,
             10,
             next_fec_set_index,
-            Some(merkle_root),
+            merkle_root,
         );
         let next_coding_shred = next_coding_shreds[0].clone();
 
@@ -11214,7 +11223,7 @@ pub mod tests {
                 slot,
                 10,
                 fec_set_index,
-                Some(merkle_root),
+                merkle_root,
             );
         let next_slot_data_shred = next_slot_data_shreds[0].clone();
         let next_slot_coding_shred = next_slot_coding_shreds[0].clone();
@@ -11247,7 +11256,7 @@ pub mod tests {
                 slot,
                 10,
                 fec_set_index,
-                Some(merkle_root),
+                merkle_root,
             );
         let next_slot_data_shred = next_slot_data_shreds[0].clone();
 
@@ -11288,7 +11297,7 @@ pub mod tests {
                 parent_slot,
                 10,
                 next_fec_set_index,
-                Some(merkle_root),
+                merkle_root,
             );
         let data_shred = data_shreds[0].clone();
         let coding_shred = coding_shreds[0].clone();
@@ -11336,7 +11345,7 @@ pub mod tests {
                 parent_slot,
                 10,
                 next_fec_set_index,
-                Some(merkle_root),
+                merkle_root,
             );
         let data_shred = data_shreds[0].clone();
         let coding_shred = coding_shreds[0].clone();
@@ -11380,7 +11389,7 @@ pub mod tests {
                 parent_slot,
                 10,
                 next_fec_set_index,
-                Some(merkle_root),
+                merkle_root,
             );
         let next_data_shred = next_data_shreds[0].clone();
 
@@ -11427,7 +11436,7 @@ pub mod tests {
                 parent_slot,
                 10,
                 fec_set_index,
-                Some(merkle_root),
+                merkle_root,
             );
         let data_shred = data_shreds[0].clone();
         let coding_shred = coding_shreds[0].clone();
@@ -11442,7 +11451,7 @@ pub mod tests {
                 parent_slot,
                 10,
                 next_fec_set_index,
-                Some(merkle_root),
+                merkle_root,
             );
         let next_data_shred = next_data_shreds[0].clone();
 
@@ -11532,7 +11541,7 @@ pub mod tests {
                 parent_slot,
                 10,
                 next_fec_set_index,
-                Some(merkle_root),
+                merkle_root,
             );
         let data_shred = data_shreds[0].clone();
         let coding_shred = coding_shreds[0].clone();
@@ -11567,7 +11576,7 @@ pub mod tests {
                 parent_slot,
                 10,
                 next_fec_set_index,
-                Some(merkle_root),
+                merkle_root,
             );
         let next_data_shred = next_data_shreds[0].clone();
 
@@ -11661,7 +11670,7 @@ pub mod tests {
                 parent_slot,
                 10,
                 fec_set_index,
-                None,
+                Hash::default(),
                 false,
             );
         let merkle_root = first_data_shreds[0].merkle_root().unwrap();
@@ -11672,7 +11681,7 @@ pub mod tests {
                 parent_slot,
                 40,
                 fec_set_index,
-                Some(merkle_root),
+                merkle_root,
                 false,
             );
         let last_index = last_data_shreds.last().unwrap().index();
@@ -11702,7 +11711,7 @@ pub mod tests {
                 parent_slot,
                 100,
                 fec_set_index,
-                None,
+                Hash::default(),
                 false,
             );
         let merkle_root = first_data_shreds[0].merkle_root().unwrap();
@@ -11713,7 +11722,7 @@ pub mod tests {
                 parent_slot,
                 100,
                 fec_set_index,
-                Some(merkle_root),
+                merkle_root,
                 false,
             );
         let last_index = last_data_shreds.last().unwrap().index();
@@ -11733,28 +11742,6 @@ pub mod tests {
         blockstore.put_meta(slot, &slot_meta).unwrap();
         let results = blockstore.check_last_fec_set(slot).unwrap();
         assert_eq!(results.last_fec_set_merkle_root, Some(merkle_root));
-        assert!(!results.is_retransmitter_signed);
-        blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
-
-        // Slot is full, but does not contain retransmitter shreds
-        let fec_set_index = 0;
-        let (first_data_shreds, _, _) =
-            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
-                slot,
-                parent_slot,
-                200,
-                fec_set_index,
-                // Do not set merkle root, so shreds are not signed
-                None,
-                true,
-            );
-        assert!(first_data_shreds.len() > DATA_SHREDS_PER_FEC_BLOCK);
-        let block_id = first_data_shreds.last().unwrap().merkle_root().unwrap();
-        blockstore
-            .insert_shreds(first_data_shreds, None, false)
-            .unwrap();
-        let results = blockstore.check_last_fec_set(slot).unwrap();
-        assert_eq!(results.last_fec_set_merkle_root, Some(block_id));
         assert!(!results.is_retransmitter_signed);
     }
 

@@ -472,16 +472,14 @@ mod tests {
 
     #[test_matrix(
         [true, false],
-        [true, false],
         [true, false]
     )]
-    fn test_resign_packet(repaired: bool, chained: bool, is_last_in_slot: bool) {
+    fn test_resign_packet(repaired: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let slot = 318_230_963 + rng.gen_range(0..318_230_963);
         let data_size = 1200 * rng.gen_range(32..64);
         let mut shreds =
-            make_merkle_shreds_for_tests(&mut rng, slot, data_size, chained, is_last_in_slot)
-                .unwrap();
+            make_merkle_shreds_for_tests(&mut rng, slot, data_size, is_last_in_slot).unwrap();
         // enumerate the shreds so that I have index of each shred
         let shreds_len = shreds.len();
         for (index, shred) in shreds.iter_mut().enumerate() {
@@ -489,7 +487,7 @@ mod tests {
             let signature = make_dummy_signature(&mut rng);
             let nonce = repaired.then(|| rng.gen::<Nonce>());
             let is_last_batch = index >= shreds_len - SHREDS_PER_FEC_BLOCK;
-            if chained && is_last_in_slot && is_last_batch {
+            if is_last_in_slot && is_last_batch {
                 shred.set_retransmitter_signature(&signature).unwrap();
 
                 let packet = &mut shred.payload().to_packet(nonce);
@@ -532,21 +530,19 @@ mod tests {
 
     #[test_matrix(
         [true, false],
-        [true, false],
         [true, false]
     )]
-    fn test_merkle_shred_wire_layout(repaired: bool, chained: bool, is_last_in_slot: bool) {
+    fn test_merkle_shred_wire_layout(repaired: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let slot = 318_230_963 + rng.gen_range(0..318_230_963);
         let data_size = 1200 * rng.gen_range(32..64);
         let mut shreds =
-            make_merkle_shreds_for_tests(&mut rng, slot, data_size, chained, is_last_in_slot)
-                .unwrap();
+            make_merkle_shreds_for_tests(&mut rng, slot, data_size, is_last_in_slot).unwrap();
         let shreds_len = shreds.len();
         for (index, shred) in shreds.iter_mut().enumerate() {
             let signature = make_dummy_signature(&mut rng);
             let is_last_batch = index >= shreds_len - SHREDS_PER_FEC_BLOCK;
-            if chained && is_last_in_slot && is_last_batch {
+            if is_last_in_slot && is_last_batch {
                 shred.set_retransmitter_signature(&signature).unwrap();
             } else {
                 assert_matches!(
@@ -607,19 +603,15 @@ mod tests {
                 get_merkle_root(bytes).unwrap(),
                 shred.merkle_root().unwrap(),
             );
-            if chained {
-                assert_eq!(
-                    get_chained_merkle_root(bytes).unwrap(),
-                    shred.chained_merkle_root().unwrap(),
-                );
-            } else {
-                assert_matches!(get_chained_merkle_root(bytes), None);
-            }
+            assert_eq!(
+                get_chained_merkle_root(bytes).unwrap(),
+                shred.chained_merkle_root().unwrap(),
+            );
             assert_eq!(
                 is_retransmitter_signed_variant(bytes).unwrap(),
-                chained && is_last_in_slot && is_last_batch,
+                is_last_in_slot && is_last_batch,
             );
-            if chained && is_last_in_slot && is_last_batch {
+            if is_last_in_slot && is_last_batch {
                 assert_eq!(
                     get_retransmitter_signature_offset(bytes).unwrap(),
                     shred.retransmitter_signature_offset().unwrap(),

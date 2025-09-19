@@ -5106,7 +5106,7 @@ pub(crate) mod tests {
                     &keypair,
                     &gibberish,
                     true,
-                    Some(Hash::default()),
+                    Hash::default(),
                     0,
                     0,
                     &reed_solomon_cache,

@@ -293,7 +293,7 @@ pub mod test {
                     &keypair,
                     &[],
                     true,
-                    Some(Hash::default()),
+                    Hash::default(),
                     last_shred as u32,
                     last_shred as u32,
                     &reed_solomon_cache,
