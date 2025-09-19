@@ -1438,7 +1438,7 @@ impl Drop for FlushGuard<'_> {
 mod tests {
     use {
         super::*,
-        crate::accounts_index::{AccountsIndexConfig, BINS_FOR_TESTING},
+        crate::accounts_index::{AccountsIndexConfig, IndexLimitMb, BINS_FOR_TESTING},
         assert_matches::assert_matches,
         itertools::Itertools,
         test_case::test_case,
@@ -1455,11 +1455,11 @@ mod tests {
     }
 
     fn new_disk_buckets_for_test<T: IndexValue>() -> InMemAccountsIndex<T, T> {
-        let holder = Arc::new(BucketMapHolder::new(
-            BINS_FOR_TESTING,
-            &AccountsIndexConfig::default(),
-            1,
-        ));
+        let config = AccountsIndexConfig {
+            index_limit_mb: IndexLimitMb::Minimal,
+            ..Default::default()
+        };
+        let holder = Arc::new(BucketMapHolder::new(BINS_FOR_TESTING, &config, 1));
         let bin = 0;
         let bucket = InMemAccountsIndex::new(&holder, bin);
         assert!(bucket.storage.is_disk_index_enabled());
