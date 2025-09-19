@@ -16,7 +16,7 @@ use {
     solana_rent::Rent,
     solana_slot_hashes::SlotHash,
     solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
-    solana_vote_interface::{error::VoteError, program::id},
+    solana_vote_interface::{authorized_voters::AuthorizedVoters, error::VoteError, program::id},
     std::{
         cmp::Ordering,
         collections::{HashSet, VecDeque},
@@ -1040,6 +1040,34 @@ pub fn create_account_with_authorized(
     vote_account
 }
 
+pub fn create_v4_account_with_authorized(
+    node_pubkey: &Pubkey,
+    authorized_voter: &Pubkey,
+    authorized_withdrawer: &Pubkey,
+    bls_pubkey_compressed: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
+    inflation_rewards_commission_bps: u16,
+    lamports: u64,
+) -> AccountSharedData {
+    let mut vote_account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &id());
+
+    let vote_state = VoteStateV4 {
+        node_pubkey: *node_pubkey,
+        authorized_voters: AuthorizedVoters::new(0, *authorized_voter),
+        authorized_withdrawer: *authorized_withdrawer,
+        bls_pubkey_compressed,
+        inflation_rewards_commission_bps,
+        ..VoteStateV4::default()
+    };
+
+    VoteStateV4::serialize(
+        &VoteStateVersions::V4(Box::new(vote_state)),
+        vote_account.data_as_mut_slice(),
+    )
+    .unwrap();
+
+    vote_account
+}
+
 // create_account() should be removed, use create_account_with_authorized() instead
 pub fn create_account(
     vote_pubkey: &Pubkey,
@@ -1080,7 +1108,7 @@ mod tests {
 
     fn create_test_account() -> (Pubkey, RefCell<AccountSharedData>) {
         let rent = Rent::default();
-        let balance = rent.minimum_balance(VoteStateV3::size_of());
+        let balance = VoteStateV3::get_rent_exempt_reserve(&rent);
         let vote_pubkey = solana_pubkey::new_rand();
         (
             vote_pubkey,
@@ -1219,7 +1247,7 @@ mod tests {
         // Test that when the feature is enabled, if the vote account does have sufficient lamports, the
         // new vote state is written out
         assert_eq!(
-            borrowed_account.set_lamports(rent.minimum_balance(VoteStateV3::size_of())),
+            borrowed_account.set_lamports(rent.minimum_balance(VoteStateV3::size_of()),),
             Ok(())
         );
         assert_eq!(
@@ -3529,6 +3557,42 @@ mod tests {
         assert_eq!(
             is_commission_update_allowed(first_normal_slot.saturating_add(slot), &epoch_schedule),
             expected_allowed
+        );
+    }
+
+    #[test]
+    fn test_create_v4_account_with_authorized() {
+        let node_pubkey = Pubkey::new_unique();
+        let authorized_voter = Pubkey::new_unique();
+        let authorized_withdrawer = Pubkey::new_unique();
+        let bls_pubkey_compressed = [42; 48];
+        let inflation_rewards_commission_bps = 10000;
+        let lamports = 100;
+        let vote_account = create_v4_account_with_authorized(
+            &node_pubkey,
+            &authorized_voter,
+            &authorized_withdrawer,
+            Some(bls_pubkey_compressed),
+            inflation_rewards_commission_bps,
+            lamports,
+        );
+        assert_eq!(vote_account.lamports(), lamports);
+        assert_eq!(vote_account.owner(), &id());
+        assert_eq!(vote_account.data().len(), VoteStateV4::size_of());
+        let vote_state_v4 = VoteStateV4::deserialize(vote_account.data(), &node_pubkey).unwrap();
+        assert_eq!(vote_state_v4.node_pubkey, node_pubkey);
+        assert_eq!(
+            vote_state_v4.authorized_voters,
+            AuthorizedVoters::new(0, authorized_voter)
+        );
+        assert_eq!(vote_state_v4.authorized_withdrawer, authorized_withdrawer);
+        assert_eq!(
+            vote_state_v4.bls_pubkey_compressed,
+            Some(bls_pubkey_compressed)
+        );
+        assert_eq!(
+            vote_state_v4.inflation_rewards_commission_bps,
+            inflation_rewards_commission_bps
         );
     }
 }
