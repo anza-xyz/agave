@@ -1,6 +1,7 @@
 //! `ForwardingStage` is a stage parallel to `BankingStage` that forwards
 //! packets to a node that is or will be leader soon.
 
+use solana_tpu_client_next::transaction_batch::WorkerPayload;
 use {
     crate::next_leader::next_leaders,
     agave_banking_stage_ingress_types::BankingPacketBatch,
@@ -168,7 +169,7 @@ pub(crate) fn spawn_forwarding_stage(
         )) => {
             // Create TPU clients for each socket provided.
             // Number of clients is same as number of bind IP addresses.
-            let non_vote_clients: Box<[TpuClientNextClient]> = tpu_client_sockets
+            let non_vote_clients: Box<[TpuClientNextClient<TransactionBatch>]> = tpu_client_sockets
                 .into_vec()
                 .into_iter()
                 .map(|socket| {
@@ -202,7 +203,7 @@ pub(crate) fn spawn_forwarding_stage(
 }
 
 /// Local struct to be able to update keys on all clients at once
-struct UpdateHandles(Box<[TpuClientNextClient]>);
+struct UpdateHandles(Box<[TpuClientNextClient<TransactionBatch>]>);
 impl NotifyKeyUpdate for UpdateHandles {
     fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         self.0.iter().try_for_each(|client| client.update_key(key))
@@ -567,14 +568,17 @@ impl LeaderUpdater for ForwardAddressGetter {
 }
 
 #[derive(Clone)]
-struct TpuClientNextClient {
-    sender: mpsc::Sender<TransactionBatch>,
+struct TpuClientNextClient<T: WorkerPayload> {
+    sender: mpsc::Sender<T>,
     update_certificate_sender: watch::Sender<Option<StakeIdentity>>,
 }
 
 const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
 
-impl TpuClientNextClient {
+impl<T> TpuClientNextClient<T>
+where
+    T: WorkerPayload,
+{
     fn new(
         runtime_handle: tokio::runtime::Handle,
         forward_address_getter: ForwardAddressGetter,
@@ -588,7 +592,7 @@ impl TpuClientNextClient {
 
         let config = Self::create_config(bind_socket, stake_identity);
         let (update_certificate_sender, update_certificate_receiver) = watch::channel(None);
-        let scheduler: ConnectionWorkersScheduler = ConnectionWorkersScheduler::new(
+        let scheduler = ConnectionWorkersScheduler::new(
             Box::new(leader_updater),
             receiver,
             update_certificate_receiver,
@@ -630,7 +634,7 @@ impl TpuClientNextClient {
     }
 }
 
-impl ForwardingClient for TpuClientNextClient {
+impl ForwardingClient for TpuClientNextClient<TransactionBatch> {
     fn send_transactions_in_batch(
         &self,
         wire_transactions: Vec<Vec<u8>>,
@@ -641,7 +645,7 @@ impl ForwardingClient for TpuClientNextClient {
     }
 }
 
-impl NotifyKeyUpdate for TpuClientNextClient {
+impl NotifyKeyUpdate for TpuClientNextClient<TransactionBatch> {
     fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         let stake_identity = StakeIdentity::new(identity);
         self.update_certificate_sender
