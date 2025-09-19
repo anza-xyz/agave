@@ -298,6 +298,8 @@ pub struct DefaultArgs {
     pub tpu_connection_pool_size: String,
 
     pub tpu_max_connections_per_peer: String,
+    pub tpu_max_unstaked_connections_per_ipaddr: String,
+
     pub tpu_max_connections_per_ipaddr_per_minute: String,
     pub tpu_max_staked_connections: String,
     pub tpu_max_unstaked_connections: String,
@@ -386,6 +388,7 @@ impl DefaultArgs {
                 DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE.to_string(),
             vote_use_quic: DEFAULT_VOTE_USE_QUIC.to_string(),
             tpu_max_connections_per_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER.to_string(),
+            tpu_max_unstaked_connections_per_ipaddr: DEFAULT_MAX_UNSTAKED_CONNECTIONS.to_string(),
             tpu_max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS.to_string(),
             tpu_max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS.to_string(),
             tpu_max_fwd_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS

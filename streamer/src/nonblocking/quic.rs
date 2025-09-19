@@ -406,7 +406,9 @@ fn prune_unstaked_connection_table(
 
         let max_connections = max_percentage_full.apply_to(max_unstaked_connections);
         let num_pruned = unstaked_connection_table.prune_oldest(max_connections);
-        stats.num_evictions.fetch_add(num_pruned, Ordering::Relaxed);
+        stats
+            .num_evictions_unstaked
+            .fetch_add(num_pruned, Ordering::Relaxed);
     }
 }
 
@@ -708,7 +710,7 @@ async fn setup_connection(
                 let params = get_connection_stake(&new_connection, &staked_nodes).map_or(
                     NewConnectionHandlerParams::new_unstaked(
                         packet_sender.clone(),
-                        quic_server_params.max_connections_per_peer,
+                        quic_server_params.max_unstaked_connections_per_ipaddr,
                         stats.clone(),
                         quic_server_params.wait_for_chunk_timeout,
                         quic_server_params.max_unstaked_connections,
@@ -721,18 +723,25 @@ async fn setup_connection(
                                 * STREAM_THROTTLING_INTERVAL_MS)
                                 as f64;
                         let stake_ratio = stake as f64 / total_stake as f64;
-                        let peer_type = if stake_ratio < min_stake_ratio {
+                        let (peer_type, max_connections_per_peer) = if stake_ratio < min_stake_ratio
+                        {
                             // If it is a staked connection with ultra low stake ratio, treat it as unstaked.
-                            ConnectionPeerType::Unstaked
+                            (
+                                ConnectionPeerType::Unstaked,
+                                quic_server_params.max_unstaked_connections_per_ipaddr,
+                            )
                         } else {
-                            ConnectionPeerType::Staked(stake)
+                            (
+                                ConnectionPeerType::Staked(stake),
+                                quic_server_params.max_connections_per_peer,
+                            )
                         };
                         NewConnectionHandlerParams {
                             packet_sender,
                             remote_pubkey: Some(pubkey),
                             peer_type,
                             total_stake,
-                            max_connections_per_peer: quic_server_params.max_connections_per_peer,
+                            max_connections_per_peer,
                             stats: stats.clone(),
                             max_stake,
                             min_stake,
@@ -751,7 +760,9 @@ async fn setup_connection(
                         {
                             let num_pruned =
                                 connection_table_l.prune_random(PRUNE_RANDOM_SAMPLE_SIZE, stake);
-                            stats.num_evictions.fetch_add(num_pruned, Ordering::Relaxed);
+                            stats
+                                .num_evictions_staked
+                                .fetch_add(num_pruned, Ordering::Relaxed);
                         }
 
                         if connection_table_l.total_size < quic_server_params.max_staked_connections
@@ -2017,6 +2028,7 @@ pub mod test {
             staked_nodes,
             QuicServerParams {
                 max_connections_per_peer: 2,
+                max_unstaked_connections_per_ipaddr: 2,
                 ..QuicServerParams::default_for_tests()
             },
         )

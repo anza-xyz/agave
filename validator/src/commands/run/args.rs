@@ -911,7 +911,16 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .default_value(&default_args.tpu_max_connections_per_peer)
             .validator(is_parsable::<u32>)
             .hidden(hidden_unless_forced())
-            .help("Controls the max concurrent connections per IpAddr."),
+            .help("Controls the max concurrent staked connections per peer."),
+    )
+    .arg(
+        Arg::with_name("tpu_max_unstaked_connections_per_ipaddr")
+            .long("tpu-max-unstaked-connections-per-ipaddr")
+            .takes_value(true)
+            .default_value(&default_args.tpu_max_unstaked_connections_per_ipaddr)
+            .validator(is_parsable::<u32>)
+            .hidden(hidden_unless_forced())
+            .help("Controls the max concurrent staked connections per peer."),
     )
     .arg(
         Arg::with_name("tpu_max_staked_connections")

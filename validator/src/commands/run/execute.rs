@@ -797,6 +797,8 @@ pub fn execute(
 
     let tpu_max_connections_per_peer =
         value_t_or_exit!(matches, "tpu_max_connections_per_peer", u64);
+    let tpu_max_unstaked_connections_per_ipaddr =
+        value_t_or_exit!(matches, "tpu_max_unstaked_connections_per_ipaddr", u64);
     let tpu_max_staked_connections = value_t_or_exit!(matches, "tpu_max_staked_connections", u64);
     let tpu_max_unstaked_connections =
         value_t_or_exit!(matches, "tpu_max_unstaked_connections", u64);
@@ -919,6 +921,9 @@ pub fn execute(
 
     let tpu_quic_server_config = QuicServerParams {
         max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+        max_unstaked_connections_per_ipaddr: tpu_max_unstaked_connections_per_ipaddr
+            .try_into()
+            .unwrap(),
         max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
         max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
         max_streams_per_ms,
