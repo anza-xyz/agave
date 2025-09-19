@@ -418,9 +418,22 @@ impl VoteStateHandle for VoteStateV4 {
 
     fn set_vote_account_state(
         self,
-        _vote_account: &mut BorrowedInstructionAccount,
+        vote_account: &mut BorrowedInstructionAccount,
     ) -> Result<(), InstructionError> {
-        todo!()
+        // If the account is not large enough to store the vote state, then attempt a realloc to make it large enough.
+        // The realloc can only proceed if the vote account has balance sufficient for rent exemption at the new size.
+        if (vote_account.get_data().len() < VoteStateV3::size_of())
+            && (!vote_account.is_rent_exempt_at_data_length(VoteStateV3::size_of())
+                || vote_account
+                    .set_data_length(VoteStateV3::size_of())
+                    .is_err())
+        {
+            // Unlike with conversions to v3, we will not gracefully default to
+            // storing a v1_14_11. Instead, throw an error, as per SIMD-0185.
+            return Err(InstructionError::AccountNotRentExempt);
+        }
+        // Vote account is large enough to store the newest version of vote state
+        vote_account.set_state(&VoteStateVersions::V4(Box::new(self)))
     }
 }
 
