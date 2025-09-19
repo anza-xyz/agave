@@ -1148,7 +1148,6 @@ pub(crate) fn make_shreds_from_data(
         stats.padding_bytes += data_buffer_total_size - unsigned_data.len();
         shred_leftover_data(
             proof_size,
-            true, /* chained */
             false,
             unsigned_data,
             data_buffer_per_shred_size,
@@ -1162,7 +1161,6 @@ pub(crate) fn make_shreds_from_data(
         stats.padding_bytes += data_buffer_total_size_signed - signed_data.len();
         shred_leftover_data(
             proof_size,
-            true, /* chained */
             true,
             signed_data,
             data_buffer_per_shred_size_signed,
@@ -1219,7 +1217,6 @@ pub(crate) fn make_shreds_from_data(
 #[allow(clippy::too_many_arguments)]
 fn shred_leftover_data(
     proof_size: u8,
-    chained: bool,
     resigned: bool,
     data: &[u8],
     data_buffer_per_shred_size: usize,
@@ -1230,12 +1227,12 @@ fn shred_leftover_data(
 ) {
     common_header_data.shred_variant = ShredVariant::MerkleData {
         proof_size,
-        chained,
+        chained: true,
         resigned,
     };
     common_header_code.shred_variant = ShredVariant::MerkleCode {
         proof_size,
-        chained,
+        chained: true,
         resigned,
     };
     common_header_data.fec_set_index = common_header_data.index;
