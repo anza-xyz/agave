@@ -18,6 +18,7 @@ pub struct ManageBlockProductionArgs {
     pub block_production_method: BlockProductionMethod,
     pub transaction_structure: TransactionStructure,
     pub num_workers: NonZeroUsize,
+    pub pacing_fill_time_millis: u64,
 }
 
 impl FromClapArgMatches for ManageBlockProductionArgs {
@@ -33,6 +34,12 @@ impl FromClapArgMatches for ManageBlockProductionArgs {
                 .unwrap_or_default(),
             num_workers: value_t!(matches, "block_production_num_workers", NonZeroUsize)
                 .unwrap_or(BankingStage::default_num_workers()),
+            pacing_fill_time_millis: value_t!(
+                matches,
+                "block_production_pacing_fill_time_millis",
+                u64
+            )
+            .unwrap_or(BankingStage::default_fill_time_millis()),
         })
     }
 }
@@ -68,17 +75,29 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .takes_value(true)
                 .help("Number of worker threads to use for block production"),
         )
+        .arg(
+            Arg::with_name("block_production_pacing_fill_time_millis")
+                .long("block-production-pacing-fill-time-millis")
+                .alias("pacing-fill-time-millis")
+                .value_name("MILLIS")
+                .takes_value(true)
+                .help(
+                    "Pacing fill time in milliseconds for the central-scheduler block production \
+                     method",
+                ),
+        )
 }
 
 pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     let manage_block_production_args = ManageBlockProductionArgs::from_clap_arg_match(matches)?;
 
     println!(
-        "Respawning block-production threads with method: {}, transaction structure: {} \
-         num_workers: {}",
+        "Respawning block-production threads with method: {}, transaction structure: {}, \
+         num_workers: {}, pacing_fill_time_millis: {}",
         manage_block_production_args.block_production_method,
         manage_block_production_args.transaction_structure,
         manage_block_production_args.num_workers,
+        manage_block_production_args.pacing_fill_time_millis,
     );
     let admin_client = admin_rpc_service::connect(ledger_path);
     admin_rpc_service::runtime().block_on(async move {
@@ -88,6 +107,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
                 manage_block_production_args.block_production_method,
                 manage_block_production_args.transaction_structure,
                 manage_block_production_args.num_workers,
+                manage_block_production_args.pacing_fill_time_millis,
             )
             .await
     })?;
@@ -111,6 +131,7 @@ mod tests {
                 block_production_method: BlockProductionMethod::default(),
                 transaction_structure: TransactionStructure::default(),
                 num_workers: BankingStage::default_num_workers(),
+                pacing_fill_time_millis: BankingStage::default_fill_time_millis(),
             }
         );
     }
@@ -126,6 +147,8 @@ mod tests {
             "sdk",
             "--block-production-num-workers",
             "4",
+            "--block-production-pacing-fill-time-millis",
+            "50",
         ]);
         let args = ManageBlockProductionArgs::from_clap_arg_match(&matches).unwrap();
 
@@ -135,6 +158,7 @@ mod tests {
                 block_production_method: BlockProductionMethod::CentralScheduler,
                 transaction_structure: TransactionStructure::Sdk,
                 num_workers: NonZeroUsize::new(4).unwrap(),
+                pacing_fill_time_millis: 50,
             }
         );
     }

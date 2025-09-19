@@ -468,6 +468,7 @@ fn main() {
         tpu_vote_receiver,
         gossip_vote_receiver,
         block_production_num_workers,
+        0,
         None,
         replay_vote_sender,
         None,
