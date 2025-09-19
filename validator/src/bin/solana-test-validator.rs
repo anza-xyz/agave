@@ -16,7 +16,7 @@ use {
     solana_clock::Slot,
     solana_core::consensus::tower_storage::FileTowerStorage,
     solana_epoch_schedule::EpochSchedule,
-    solana_faucet::faucet::run_local_faucet_with_port,
+    solana_faucet::faucet::{run_faucet, Faucet},
     solana_inflation::Inflation,
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_logger::redirect_stderr_to_file,
@@ -38,7 +38,8 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         process::exit,
-        sync::{Arc, RwLock},
+        sync::{Arc, Mutex, RwLock},
+        thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
     },
 };
@@ -362,14 +363,19 @@ fn main() {
         .and_then(sol_str_to_lamports);
 
     let (sender, receiver) = unbounded();
-    run_local_faucet_with_port(
-        faucet_keypair,
-        sender,
-        Some(faucet_time_slice_secs),
-        faucet_per_time_cap,
-        faucet_per_request_cap,
-        faucet_addr.port(),
-    );
+    thread::spawn(move || {
+        let faucet = Arc::new(Mutex::new(Faucet::new(
+            faucet_keypair,
+            Some(faucet_time_slice_secs),
+            faucet_per_time_cap,
+            faucet_per_request_cap,
+        )));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(run_faucet(faucet, faucet_addr, Some(sender)));
+    });
     let _ = receiver.recv().expect("run faucet").unwrap_or_else(|err| {
         println!("Error: failed to start faucet: {err}");
         exit(1);
