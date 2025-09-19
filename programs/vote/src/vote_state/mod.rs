@@ -486,7 +486,10 @@ pub fn process_new_vote_state(
             // than the new proposed root
             if current_vote.slot() <= new_root {
                 earned_credits = earned_credits
-                    .checked_add(vote_state.credits_for_vote_at_index(current_vote_state_index))
+                    .checked_add(handler::credits_for_vote_at_index(
+                        vote_state,
+                        current_vote_state_index,
+                    ))
                     .expect("`earned_credits` does not overflow");
                 current_vote_state_index = current_vote_state_index.checked_add(1).expect(
                     "`current_vote_state_index` is bounded by `MAX_LOCKOUT_HISTORY` when \
