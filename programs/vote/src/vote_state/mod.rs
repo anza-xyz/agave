@@ -486,7 +486,10 @@ pub fn process_new_vote_state(
             // than the new proposed root
             if current_vote.slot() <= new_root {
                 earned_credits = earned_credits
-                    .checked_add(vote_state.credits_for_vote_at_index(current_vote_state_index))
+                    .checked_add(handler::credits_for_vote_at_index(
+                        vote_state,
+                        current_vote_state_index,
+                    ))
                     .expect("`earned_credits` does not overflow");
                 current_vote_state_index = current_vote_state_index.checked_add(1).expect(
                     "`current_vote_state_index` is bounded by `MAX_LOCKOUT_HISTORY` when \
@@ -580,11 +583,11 @@ pub fn process_new_vote_state(
         // Award vote credits based on the number of slots that were voted on and have reached finality
         // For each finalized slot, there was one voted-on slot in the new vote state that was responsible for
         // finalizing it. Each of those votes is awarded 1 credit.
-        vote_state.increment_credits(epoch, earned_credits);
+        handler::increment_credits(vote_state, epoch, earned_credits);
     }
     if let Some(timestamp) = timestamp {
         let last_slot = new_state.back().unwrap().slot();
-        vote_state.process_timestamp(last_slot, timestamp)?;
+        handler::process_timestamp(vote_state, last_slot, timestamp)?;
     }
     vote_state.set_root_slot(new_root);
     vote_state.set_votes(new_state);
@@ -603,7 +606,7 @@ pub fn process_vote_unfiltered<T: VoteStateHandle>(
     check_slots_are_valid(vote_state, vote_slots, &vote.hash, slot_hashes)?;
     vote_slots
         .iter()
-        .for_each(|s| vote_state.process_next_vote_slot(*s, epoch, current_slot));
+        .for_each(|s| handler::process_next_vote_slot(vote_state, *s, epoch, current_slot));
     Ok(())
 }
 
@@ -818,7 +821,8 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 
     if remaining_balance == 0 {
         let reject_active_vote_account_close = vote_state
-            .epoch_credits_last()
+            .epoch_credits()
+            .last()
             .map(|(last_epoch_with_credits, _, _)| {
                 let current_epoch = clock.epoch;
                 // if current_epoch - last_epoch_with_credits < 2 then the validator has received credits
@@ -911,7 +915,7 @@ pub fn process_vote_with_account<S: std::hash::BuildHasher>(
             .iter()
             .max()
             .ok_or(VoteError::EmptySlots)
-            .and_then(|slot| vote_state.process_timestamp(*slot, timestamp))?;
+            .and_then(|slot| handler::process_timestamp(&mut vote_state, *slot, timestamp))?;
     }
     vote_state.set_vote_account_state(vote_account)
 }
@@ -1093,6 +1097,14 @@ mod tests {
         )
     }
 
+    fn get_credits(epoch_credits: &[(Epoch, u64, u64)]) -> u64 {
+        if epoch_credits.is_empty() {
+            0
+        } else {
+            epoch_credits.last().unwrap().1
+        }
+    }
+
     #[test]
     fn test_vote_state_upgrade_from_1_14_11() {
         // Create an initial vote account that is sized for the 1_14_11 version of vote state, and has only the
@@ -1131,7 +1143,7 @@ mod tests {
             134, 135,
         ]
         .into_iter()
-        .for_each(|v| vote_state.process_next_vote_slot(v, 4, 0));
+        .for_each(|v| handler::process_next_vote_slot(&mut vote_state, v, 4, 0));
 
         let version1_14_11_serialized = bincode::serialize(&VoteStateVersions::V1_14_11(Box::new(
             VoteState1_14_11::from(vote_state.clone()),
@@ -1488,14 +1500,14 @@ mod tests {
             process_slot_vote_unchecked(&mut vote_state, i as u64);
         }
 
-        assert_eq!(vote_state.credits(), 0);
+        assert_eq!(get_credits(vote_state.epoch_credits()), 0);
 
         process_slot_vote_unchecked(&mut vote_state, MAX_LOCKOUT_HISTORY as u64 + 1);
-        assert_eq!(vote_state.credits(), 1);
+        assert_eq!(get_credits(vote_state.epoch_credits()), 1);
         process_slot_vote_unchecked(&mut vote_state, MAX_LOCKOUT_HISTORY as u64 + 2);
-        assert_eq!(vote_state.credits(), 2);
+        assert_eq!(get_credits(vote_state.epoch_credits()), 2);
         process_slot_vote_unchecked(&mut vote_state, MAX_LOCKOUT_HISTORY as u64 + 3);
-        assert_eq!(vote_state.credits(), 3);
+        assert_eq!(get_credits(vote_state.epoch_credits()), 3);
     }
 
     #[test]
@@ -2012,8 +2024,14 @@ mod tests {
 
             // Ensure that the credits earned is correct for both vote states
             let vote_group = &test_vote_groups[i];
-            assert_eq!(vote_state_1.credits(), vote_group.2 as u64); // vote_group.2 is the expected number of credits
-            assert_eq!(vote_state_2.credits(), vote_group.2 as u64); // vote_group.2 is the expected number of credits
+            assert_eq!(
+                get_credits(vote_state_1.epoch_credits()),
+                vote_group.2 as u64
+            ); // vote_group.2 is the expected number of credits
+            assert_eq!(
+                get_credits(vote_state_2.epoch_credits()),
+                vote_group.2 as u64
+            ); // vote_group.2 is the expected number of credits
         }
     }
 
@@ -2129,7 +2147,10 @@ mod tests {
                 );
 
                 // Ensure that the credits earned is correct
-                assert_eq!(vote_state.credits(), proposed_vote_state.3 as u64);
+                assert_eq!(
+                    get_credits(vote_state.epoch_credits()),
+                    proposed_vote_state.3 as u64
+                );
             });
     }
 
