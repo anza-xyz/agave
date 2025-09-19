@@ -1105,6 +1105,18 @@ mod tests {
         }
     }
 
+    fn nth_recent_lockout(votes: &VecDeque<LandedVote>, position: usize) -> Option<&Lockout> {
+        if position < votes.len() {
+            let pos = votes
+                .len()
+                .checked_sub(position)
+                .and_then(|pos| pos.checked_sub(1))?;
+            votes.get(pos).map(|vote| &vote.lockout)
+        } else {
+            None
+        }
+    }
+
     #[test]
     fn test_vote_state_upgrade_from_1_14_11() {
         // Create an initial vote account that is sized for the 1_14_11 version of vote state, and has only the
@@ -1517,9 +1529,9 @@ mod tests {
         process_slot_vote_unchecked(&mut vote_state, 0);
         process_slot_vote_unchecked(&mut vote_state, 1);
         process_slot_vote_unchecked(&mut vote_state, 0);
-        assert_eq!(vote_state.nth_recent_lockout(0).unwrap().slot(), 1);
-        assert_eq!(vote_state.nth_recent_lockout(1).unwrap().slot(), 0);
-        assert!(vote_state.nth_recent_lockout(2).is_none());
+        assert_eq!(nth_recent_lockout(vote_state.votes(), 0).unwrap().slot(), 1);
+        assert_eq!(nth_recent_lockout(vote_state.votes(), 1).unwrap().slot(), 0);
+        assert!(nth_recent_lockout(vote_state.votes(), 2).is_none());
     }
 
     #[test]
@@ -1531,11 +1543,11 @@ mod tests {
         }
         for i in 0..(MAX_LOCKOUT_HISTORY - 1) {
             assert_eq!(
-                vote_state.nth_recent_lockout(i).unwrap().slot() as usize,
+                nth_recent_lockout(vote_state.votes(), i).unwrap().slot() as usize,
                 MAX_LOCKOUT_HISTORY - i - 1,
             );
         }
-        assert!(vote_state.nth_recent_lockout(MAX_LOCKOUT_HISTORY).is_none());
+        assert!(nth_recent_lockout(vote_state.votes(), MAX_LOCKOUT_HISTORY).is_none());
     }
 
     fn check_lockouts(vote_state: &VoteStateHandler) {

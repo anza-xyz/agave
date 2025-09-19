@@ -440,12 +440,14 @@ impl VoteStateHandle for VoteStateV4 {
 /// The target version to convert all deserialized vote state into.
 pub enum VoteStateTargetVersion {
     V3,
+    V4,
     // New vote state versions will be added here...
 }
 
 #[derive(Clone, Debug, PartialEq)]
 enum TargetVoteState {
     V3(VoteStateV3),
+    V4(VoteStateV4),
     // New vote state versions will be added here...
 }
 
@@ -463,24 +465,28 @@ impl VoteStateHandle for VoteStateHandler {
     fn is_uninitialized(&self) -> bool {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.is_uninitialized(),
+            TargetVoteState::V4(v4) => v4.is_uninitialized(),
         }
     }
 
     fn authorized_withdrawer(&self) -> &Pubkey {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.authorized_withdrawer(),
+            TargetVoteState::V4(v4) => v4.authorized_withdrawer(),
         }
     }
 
     fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_authorized_withdrawer(authorized_withdrawer),
+            TargetVoteState::V4(v4) => v4.set_authorized_withdrawer(authorized_withdrawer),
         }
     }
 
     fn authorized_voters(&self) -> &AuthorizedVoters {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.authorized_voters(),
+            TargetVoteState::V4(v4) => v4.authorized_voters(),
         }
     }
 
@@ -498,6 +504,9 @@ impl VoteStateHandle for VoteStateHandler {
             TargetVoteState::V3(v3) => {
                 v3.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
             }
+            TargetVoteState::V4(v4) => {
+                v4.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
+            }
         }
     }
 
@@ -507,108 +516,126 @@ impl VoteStateHandle for VoteStateHandler {
     ) -> Result<Pubkey, InstructionError> {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.get_and_update_authorized_voter(current_epoch),
+            TargetVoteState::V4(v4) => v4.get_and_update_authorized_voter(current_epoch),
         }
     }
 
     fn commission(&self) -> u8 {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.commission(),
+            TargetVoteState::V4(v4) => v4.commission(),
         }
     }
 
     fn set_commission(&mut self, commission: u8) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_commission(commission),
+            TargetVoteState::V4(v4) => v4.set_commission(commission),
         }
     }
 
     fn node_pubkey(&self) -> &Pubkey {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.node_pubkey(),
+            TargetVoteState::V4(v4) => v4.node_pubkey(),
         }
     }
 
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_node_pubkey(node_pubkey),
+            TargetVoteState::V4(v4) => v4.set_node_pubkey(node_pubkey),
         }
     }
 
     fn votes(&self) -> &VecDeque<LandedVote> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.votes(),
+            TargetVoteState::V4(v4) => v4.votes(),
         }
     }
 
     fn votes_mut(&mut self) -> &mut VecDeque<LandedVote> {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.votes_mut(),
+            TargetVoteState::V4(v4) => v4.votes_mut(),
         }
     }
 
     fn set_votes(&mut self, votes: VecDeque<LandedVote>) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_votes(votes),
+            TargetVoteState::V4(v4) => v4.set_votes(votes),
         }
     }
 
     fn contains_slot(&self, candidate_slot: Slot) -> bool {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.contains_slot(candidate_slot),
+            TargetVoteState::V4(v4) => v4.contains_slot(candidate_slot),
         }
     }
 
     fn last_lockout(&self) -> Option<&Lockout> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.last_lockout(),
+            TargetVoteState::V4(v4) => v4.last_lockout(),
         }
     }
 
     fn last_voted_slot(&self) -> Option<Slot> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.last_voted_slot(),
+            TargetVoteState::V4(v4) => v4.last_voted_slot(),
         }
     }
 
     fn root_slot(&self) -> Option<Slot> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.root_slot(),
+            TargetVoteState::V4(v4) => v4.root_slot(),
         }
     }
 
     fn set_root_slot(&mut self, root_slot: Option<Slot>) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_root_slot(root_slot),
+            TargetVoteState::V4(v4) => v4.set_root_slot(root_slot),
         }
     }
 
     fn current_epoch(&self) -> Epoch {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.current_epoch(),
+            TargetVoteState::V4(v4) => v4.current_epoch(),
         }
     }
 
     fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.epoch_credits(),
+            TargetVoteState::V4(v4) => v4.epoch_credits(),
         }
     }
 
     fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)> {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.epoch_credits_mut(),
+            TargetVoteState::V4(v4) => v4.epoch_credits_mut(),
         }
     }
 
     fn last_timestamp(&self) -> &BlockTimestamp {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.last_timestamp(),
+            TargetVoteState::V4(v4) => v4.last_timestamp(),
         }
     }
 
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_last_timestamp(timestamp),
+            TargetVoteState::V4(v4) => v4.set_last_timestamp(timestamp),
         }
     }
 
@@ -618,6 +645,7 @@ impl VoteStateHandle for VoteStateHandler {
     ) -> Result<(), InstructionError> {
         match self.target_state {
             TargetVoteState::V3(v3) => v3.set_vote_account_state(vote_account),
+            TargetVoteState::V4(v4) => v4.set_vote_account_state(vote_account),
         }
     }
 }
@@ -634,10 +662,16 @@ impl VoteStateHandler {
                 let vote_state = VoteStateV3::deserialize(vote_account.get_data())?;
                 TargetVoteState::V3(vote_state)
             }
+            VoteStateTargetVersion::V4 => {
+                let vote_state =
+                    VoteStateV4::deserialize(vote_account.get_data(), vote_account.get_key())?;
+                TargetVoteState::V4(vote_state)
+            }
         };
         Ok(Self { target_state })
     }
 
+    #[allow(clippy::arithmetic_side_effects)] // Safety: u16::MAX > u8::MAX * 100
     pub fn init_vote_account_state(
         vote_account: &mut BorrowedInstructionAccount,
         vote_init: &VoteInit,
@@ -647,6 +681,20 @@ impl VoteStateHandler {
         match target_version {
             VoteStateTargetVersion::V3 => {
                 VoteStateV3::new(vote_init, clock).set_vote_account_state(vote_account)
+            }
+            VoteStateTargetVersion::V4 => {
+                // TODO: Replace me with `VoteStateV4::new` later.
+                let vote_state = VoteStateV4 {
+                    node_pubkey: vote_init.node_pubkey,
+                    authorized_voters: AuthorizedVoters::new(
+                        clock.epoch,
+                        vote_init.authorized_voter,
+                    ),
+                    authorized_withdrawer: vote_init.authorized_withdrawer,
+                    inflation_rewards_commission_bps: (vote_init.commission as u16) * 100,
+                    ..VoteStateV4::default()
+                };
+                vote_state.set_vote_account_state(vote_account)
             }
         }
     }
@@ -659,6 +707,9 @@ impl VoteStateHandler {
             VoteStateTargetVersion::V3 => {
                 VoteStateV3::default().set_vote_account_state(vote_account)
             }
+            VoteStateTargetVersion::V4 => {
+                VoteStateV4::default().set_vote_account_state(vote_account)
+            }
         }
     }
 
@@ -669,6 +720,7 @@ impl VoteStateHandler {
         let length = vote_account.get_data().len();
         let expected = match target_version {
             VoteStateTargetVersion::V3 => VoteStateV3::size_of(),
+            VoteStateTargetVersion::V4 => VoteStateV4::size_of(),
         };
         if length != expected {
             Err(InstructionError::InvalidAccountData)
@@ -685,33 +737,20 @@ impl VoteStateHandler {
     }
 
     #[cfg(test)]
+    pub fn new_v4(vote_state: VoteStateV4) -> Self {
+        Self {
+            target_state: TargetVoteState::V4(vote_state),
+        }
+    }
+
+    #[cfg(test)]
     pub fn default_v3() -> Self {
         Self::new_v3(VoteStateV3::default())
     }
 
     #[cfg(test)]
-    pub fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => &v3.epoch_credits,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn nth_recent_lockout(&self, position: usize) -> Option<&Lockout> {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => {
-                if position < v3.votes.len() {
-                    let pos = v3
-                        .votes
-                        .len()
-                        .checked_sub(position)
-                        .and_then(|pos| pos.checked_sub(1))?;
-                    v3.votes.get(pos).map(|vote| &vote.lockout)
-                } else {
-                    None
-                }
-            }
-        }
+    pub fn default_v4() -> Self {
+        Self::new_v4(VoteStateV4::default())
     }
 }
 
