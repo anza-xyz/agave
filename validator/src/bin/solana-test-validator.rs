@@ -369,7 +369,10 @@ fn main() {
             faucet_per_time_cap,
             faucet_per_request_cap,
         )));
-        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         runtime.block_on(run_faucet(faucet, faucet_addr, Some(sender)));
     });
     let _ = receiver.recv().expect("run faucet").unwrap_or_else(|err| {
