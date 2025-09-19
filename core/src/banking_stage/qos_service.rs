@@ -55,11 +55,8 @@ impl QosService {
     ) -> (Vec<transaction::Result<TransactionCost<'a, Tx>>>, u64) {
         let transaction_costs =
             self.compute_transaction_costs(&bank.feature_set, transactions.iter(), pre_results);
-        let (transactions_qos_cost_results, num_included) = self.select_transactions_per_cost(
-            transactions.iter(),
-            transaction_costs.into_iter(),
-            bank,
-        );
+        let (transactions_qos_cost_results, num_included) =
+            self.select_transactions_per_cost(transaction_costs.into_iter(), bank);
         self.accumulate_estimated_transaction_costs(&Self::accumulate_batched_transaction_costs(
             transactions_qos_cost_results.iter(),
         ));
@@ -100,28 +97,25 @@ impl QosService {
     /// Given a list of transactions and their costs, this function returns a corresponding
     /// list of Results that indicate if a transaction is selected to be included in the current block,
     /// and a count of the number of transactions that would fit in the block
-    fn select_transactions_per_cost<'a, Tx: TransactionWithMeta>(
+    pub(crate) fn select_transactions_per_cost<'a, Tx: TransactionWithMeta>(
         &self,
-        transactions: impl Iterator<Item = &'a Tx>,
         transactions_costs: impl Iterator<Item = transaction::Result<TransactionCost<'a, Tx>>>,
         bank: &Bank,
     ) -> (Vec<transaction::Result<TransactionCost<'a, Tx>>>, usize) {
         let mut cost_tracking_time = Measure::start("cost_tracking_time");
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
         let mut num_included = 0;
-        let select_results = transactions
-            .zip(transactions_costs)
-            .map(|(tx, cost)| match cost {
+        let select_results = transactions_costs
+            .map(|cost| match cost {
                 Ok(cost) => match cost_tracker.try_add(&cost) {
                     Ok(UpdatedCosts {
                         updated_block_cost,
                         updated_costliest_account_cost,
                     }) => {
                         debug!(
-                            "slot {:?}, transaction {:?}, cost {:?}, fit into current block, \
+                            "slot {:?}, cost {:?}, fit into current block, \
                              current block cost {}, updated costliest account cost {}",
                             bank.slot(),
-                            tx,
                             cost,
                             updated_block_cost,
                             updated_costliest_account_cost
@@ -135,10 +129,9 @@ impl QosService {
                     }
                     Err(e) => {
                         debug!(
-                            "slot {:?}, transaction {:?}, cost {:?}, not fit into current block, \
+                            "slot {:?}, cost {:?}, not fit into current block, \
                              '{:?}'",
                             bank.slot(),
-                            tx,
                             cost,
                             e
                         );
@@ -685,7 +678,7 @@ mod tests {
             .unwrap()
             .set_limits(cost_limit, cost_limit, cost_limit);
         let (results, num_selected) =
-            qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+            qos_service.select_transactions_per_cost(txs_costs.into_iter(), &bank);
         assert_eq!(num_selected, 2);
 
         // verify that first transfer tx and first vote are allowed
@@ -739,7 +732,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                qos_service.select_transactions_per_cost(txs_costs.into_iter(), &bank);
             assert_eq!(
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
@@ -810,7 +803,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                qos_service.select_transactions_per_cost(txs_costs.into_iter(), &bank);
             assert_eq!(
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
@@ -864,7 +857,7 @@ mod tests {
                 .map(|cost| cost.as_ref().unwrap().sum())
                 .sum();
             let (qos_cost_results, _num_included) =
-                qos_service.select_transactions_per_cost(txs.iter(), txs_costs.into_iter(), &bank);
+                qos_service.select_transactions_per_cost(txs_costs.into_iter(), &bank);
             assert_eq!(
                 total_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
