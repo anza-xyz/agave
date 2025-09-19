@@ -1,4 +1,5 @@
 use {
+    log::info,
     crate::{
         netlink::MacAddress,
         route::Router,
@@ -35,6 +36,7 @@ impl NetworkDevice {
             .map_err(|_| io::Error::new(ErrorKind::InvalidInput, "Invalid interface name"))?;
 
         let if_index = unsafe { libc::if_nametoindex(if_name_c.as_ptr()) };
+        info!("greg: new NetworkDevice if_name: {}, if_index: {}", if_name, if_index);
 
         if if_index == 0 {
             return Err(io::Error::last_os_error());
@@ -52,6 +54,7 @@ impl NetworkDevice {
 
         let cstr = unsafe { CStr::from_ptr(ret) };
         let if_name = String::from_utf8_lossy(cstr.to_bytes()).to_string();
+        info!("greg: new_from_index NetworkDevice if_name: {}, if_index: {}", if_name, if_index);
 
         Ok(Self { if_index, if_name })
     }
@@ -59,6 +62,7 @@ impl NetworkDevice {
     pub fn new_from_default_route() -> Result<Self, io::Error> {
         let router = Router::new()?;
         let default_route = router.default().unwrap();
+        info!("greg: new_from_default_route NetworkDevice if_index: {}", default_route.if_index);
         NetworkDevice::new_from_index(default_route.if_index)
     }
 
@@ -113,6 +117,7 @@ impl NetworkDevice {
 
         let mut req: ifreq = unsafe { mem::zeroed() };
         let if_name = CString::new(self.if_name.as_bytes()).unwrap();
+        info!("greg: ipv4_addr NetworkDevice if_name: {}, if_index: {}", self.if_name, self.if_index);
 
         let if_name_bytes = if_name.as_bytes_with_nul();
         let len = std::cmp::min(if_name_bytes.len(), IF_NAMESIZE);
@@ -123,6 +128,7 @@ impl NetworkDevice {
                 len,
             );
         }
+        info!("greg: here");
 
         let result = unsafe { syscall(SYS_ioctl, fd.as_raw_fd(), SIOCGIFADDR, &mut req) };
         if result < 0 {
@@ -132,8 +138,10 @@ impl NetworkDevice {
         let addr = unsafe {
             let addr_ptr = &req.ifr_ifru.ifru_addr as *const libc::sockaddr;
             let sin_addr = (*(addr_ptr as *const libc::sockaddr_in)).sin_addr;
+            info!("greg: ipv4_addr NetworkDevice sin_addr: {}", sin_addr.s_addr);
             Ipv4Addr::from(sin_addr.s_addr.to_ne_bytes())
         };
+        info!("greg: ipv4_addr NetworkDevice addr: {}", addr);
         Ok(addr)
     }
 
