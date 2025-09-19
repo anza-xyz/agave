@@ -315,6 +315,7 @@ pub struct ValidatorConfig {
     pub block_verification_method: BlockVerificationMethod,
     pub block_production_method: BlockProductionMethod,
     pub block_production_num_workers: NonZeroUsize,
+    pub block_production_pacing_fill_time_millis: u64,
     pub transaction_struct: TransactionStructure,
     pub enable_block_production_forwarding: bool,
     pub generator_config: Option<GeneratorConfig>,
@@ -394,6 +395,7 @@ impl ValidatorConfig {
             block_verification_method: BlockVerificationMethod::default(),
             block_production_method: BlockProductionMethod::default(),
             block_production_num_workers: BankingStage::default_num_workers(),
+            block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis(),
             transaction_struct: TransactionStructure::default(),
             // enable forwarding by default for tests
             enable_block_production_forwarding: true,
@@ -1686,6 +1688,7 @@ impl Validator {
             &prioritization_fee_cache,
             config.block_production_method.clone(),
             config.block_production_num_workers,
+            config.block_production_pacing_fill_time_millis,
             config.transaction_struct.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),

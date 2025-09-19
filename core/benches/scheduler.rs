@@ -217,6 +217,7 @@ fn timing_scheduler<T: ReceiveAndBuffer, S: Scheduler<T::Transaction>>(
                     scheduler
                         .schedule(
                             black_box(&mut container),
+                            u64::MAX, // no budget
                             bench_env.filter_1,
                             bench_env.filter_2,
                         )
