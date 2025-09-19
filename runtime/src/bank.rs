@@ -33,13 +33,11 @@
 //! It offers a high-level API that signs transactions
 //! on behalf of the caller, and a low-level API for when they have
 //! already been signed and verified.
+pub(crate) use crate::bank::metrics::*;
 use {
     crate::{
         account_saver::collect_accounts_to_store,
-        bank::{
-            metrics::*,
-            partitioned_epoch_rewards::{EpochRewardStatus, VoteRewardsAccounts},
-        },
+        bank::partitioned_epoch_rewards::{EpochRewardStatus, VoteRewardsAccounts},
         bank_forks::BankForks,
         epoch_stakes::{NodeVoteAccounts, VersionedEpochStakes},
         inflation_rewards::points::InflationPointCalculationEvent,
@@ -107,7 +105,6 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{measure::Measure, measure_time, measure_us},
     solana_message::{inner_instruction::InnerInstructions, AccountKeys, SanitizedMessage},
-    solana_native_token::LAMPORTS_PER_SOL,
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
@@ -1604,10 +1601,14 @@ impl Bank {
         // Add new entry to stakes.stake_history, set appropriate epoch and
         // update vote accounts with warmed up stakes before saving a
         // snapshot of stakes in epoch stakes
-        let (_, activate_epoch_time_us) = measure_us!(self.stakes_cache.activate_epoch(
-            epoch,
+        let mut rewards_metrics = RewardsMetrics::default();
+        let (epoch_activation_bundle, activate_epoch_time_us) = measure_us!(self.activate_epoch(
+            reward_calc_tracer,
             &thread_pool,
-            self.new_warmup_cooldown_rate_epoch()
+            epoch,
+            self.new_warmup_cooldown_rate_epoch(),
+            parent_epoch,
+            &mut rewards_metrics
         ));
 
         // Save a snapshot of stakes for use in consensus and stake weighted networking
@@ -1615,11 +1616,10 @@ impl Bank {
         let (_, update_epoch_stakes_time_us) =
             measure_us!(self.update_epoch_stakes(leader_schedule_epoch));
 
-        let mut rewards_metrics = RewardsMetrics::default();
         // After saving a snapshot of stakes, apply stake rewards and commission
         let (_, update_rewards_with_thread_pool_time_us) = measure_us!(self
             .begin_partitioned_rewards(
-                reward_calc_tracer,
+                epoch_activation_bundle,
                 &thread_pool,
                 parent_epoch,
                 parent_slot,
@@ -2283,41 +2283,6 @@ impl Bank {
             prev_epoch_duration_in_years,
             validator_rate,
             foundation_rate,
-        }
-    }
-
-    fn filter_stake_delegations<'a>(
-        &self,
-        stakes: &'a Stakes<StakeAccount<Delegation>>,
-    ) -> Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)> {
-        if self
-            .feature_set
-            .is_active(&feature_set::stake_minimum_delegation_for_rewards::id())
-        {
-            let num_stake_delegations = stakes.stake_delegations().len();
-            let min_stake_delegation = solana_stake_program::get_minimum_delegation(
-                self.feature_set
-                    .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
-            )
-            .max(LAMPORTS_PER_SOL);
-
-            let (stake_delegations, filter_time_us) = measure_us!(stakes
-                .stake_delegations()
-                .iter()
-                .filter(|(_stake_pubkey, cached_stake_account)| {
-                    cached_stake_account.delegation().stake >= min_stake_delegation
-                })
-                .collect::<Vec<_>>());
-
-            datapoint_info!(
-                "stake_account_filter_time",
-                ("filter_time_us", filter_time_us, i64),
-                ("num_stake_delegations_before", num_stake_delegations, i64),
-                ("num_stake_delegations_after", stake_delegations.len(), i64)
-            );
-            stake_delegations
-        } else {
-            stakes.stake_delegations().iter().collect()
         }
     }
 
