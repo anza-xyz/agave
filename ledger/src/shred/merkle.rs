@@ -180,17 +180,12 @@ impl ShredData {
             })
     }
 
-    pub(super) fn get_merkle_root(
-        shred: &[u8],
-        proof_size: u8,
-        chained: bool,
-        resigned: bool,
-    ) -> Option<Hash> {
+    pub(super) fn get_merkle_root(shred: &[u8], proof_size: u8, resigned: bool) -> Option<Hash> {
         debug_assert_eq!(
             shred::layout::get_shred_variant(shred).unwrap(),
             ShredVariant::MerkleData {
                 proof_size,
-                chained,
+                chained: true,
                 resigned,
             },
         );
@@ -202,7 +197,7 @@ impl ShredData {
                 .map(usize::try_from)?
                 .ok()?
         };
-        let proof_offset = Self::get_proof_offset(proof_size, chained, resigned).ok()?;
+        let proof_offset = Self::get_proof_offset(proof_size, true, resigned).ok()?;
         let proof = get_merkle_proof(shred, proof_offset, proof_size).ok()?;
         let node = get_merkle_node(shred, SIZE_OF_SIGNATURE..proof_offset).ok()?;
         get_merkle_root(index, node, proof).ok()
@@ -234,17 +229,12 @@ impl ShredCode {
     // Offset into the payload where the erasure coded slice begins.
     const ERASURE_SHARD_START_OFFSET: usize = Self::SIZE_OF_HEADERS;
 
-    pub(super) fn get_merkle_root(
-        shred: &[u8],
-        proof_size: u8,
-        chained: bool,
-        resigned: bool,
-    ) -> Option<Hash> {
+    pub(super) fn get_merkle_root(shred: &[u8], proof_size: u8, resigned: bool) -> Option<Hash> {
         debug_assert_eq!(
             shred::layout::get_shred_variant(shred).unwrap(),
             ShredVariant::MerkleCode {
                 proof_size,
-                chained,
+                chained: true,
                 resigned,
             },
         );
@@ -260,7 +250,7 @@ impl ShredCode {
                 .ok()?;
             num_data_shreds.checked_add(position)?
         };
-        let proof_offset = Self::get_proof_offset(proof_size, chained, resigned).ok()?;
+        let proof_offset = Self::get_proof_offset(proof_size, true, resigned).ok()?;
         let proof = get_merkle_proof(shred, proof_offset, proof_size).ok()?;
         let node = get_merkle_node(shred, SIZE_OF_SIGNATURE..proof_offset).ok()?;
         get_merkle_root(index, node, proof).ok()
