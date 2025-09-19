@@ -27,7 +27,6 @@ pub fn main() {
         ("init", _) => commands::run::execute(
             &matches,
             solana_version,
-            &ledger_path,
             commands::run::execute::Operation::Initialize,
         )
         .inspect_err(|err| error!("Failed to initialize validator: {err}"))
@@ -35,7 +34,6 @@ pub fn main() {
         ("", _) | ("run", _) => commands::run::execute(
             &matches,
             solana_version,
-            &ledger_path,
             commands::run::execute::Operation::Run,
         )
         .inspect_err(|err| error!("Failed to start validator: {err}"))

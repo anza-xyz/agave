@@ -422,7 +422,7 @@ const DEFAULT_ANCIENT_STORAGE_IDEAL_SIZE: u64 = 100_000;
 /// combining should converge to.
 pub const DEFAULT_MAX_ANCIENT_STORAGES: usize = 100_000;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct AccountsDbConfig {
     pub index: Option<AccountsIndexConfig>,
     pub account_indexes: Option<AccountSecondaryIndexes>,
@@ -461,7 +461,7 @@ pub struct AccountsDbConfig {
 #[cfg(not(test))]
 const ABSURD_CONSECUTIVE_FAILED_ITERATIONS: usize = 100;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AccountShrinkThreshold {
     /// Measure the total space sparseness across all candidates
     /// And select the candidates by using the top sparse account storage entries to shrink.
