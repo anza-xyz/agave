@@ -691,11 +691,8 @@ mod tests {
         agave_feature_set::FeatureSet,
         rayon::ThreadPoolBuilder,
         solana_account::{accounts_equal, state_traits::StateMut, ReadableAccount},
-<<<<<<< HEAD
-        solana_genesis_config::GenesisConfig,
-=======
         solana_accounts_db::partitioned_rewards::PartitionedEpochRewardsConfig,
->>>>>>> 8aa41ea860 (runtime: Avoid locking during stake vote rewards calculation (#7742))
+        solana_genesis_config::GenesisConfig,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
         solana_stake_interface::state::{Delegation, StakeStateV2},
