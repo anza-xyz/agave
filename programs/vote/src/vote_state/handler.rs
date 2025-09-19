@@ -87,8 +87,6 @@ pub trait VoteStateHandle {
 
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp);
 
-    fn double_lockouts(&mut self);
-
     fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot);
 
     fn set_vote_account_state(
@@ -261,22 +259,6 @@ impl VoteStateHandle for VoteStateV3 {
         self.last_timestamp = timestamp;
     }
 
-    fn double_lockouts(&mut self) {
-        let stack_depth = self.votes.len();
-        for (i, v) in self.votes.iter_mut().enumerate() {
-            // Don't increase the lockout for this vote until we get more confirmations
-            // than the max number of confirmations this vote has seen
-            if stack_depth
-                > i.checked_add(v.confirmation_count() as usize).expect(
-                    "`confirmation_count` and tower_size should be bounded by \
-                     `MAX_LOCKOUT_HISTORY`",
-                )
-            {
-                v.lockout.increase_confirmation_count(1);
-            }
-        }
-    }
-
     fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot) {
         // Ignore votes for slots earlier than we already have votes for
         if self
@@ -302,7 +284,7 @@ impl VoteStateHandle for VoteStateV3 {
             increment_credits(self, epoch, credits);
         }
         self.votes.push_back(landed_vote);
-        self.double_lockouts();
+        double_lockouts(self);
     }
 
     fn set_vote_account_state(
@@ -462,10 +444,6 @@ impl VoteStateHandle for VoteStateV4 {
 
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
         self.last_timestamp = timestamp;
-    }
-
-    fn double_lockouts(&mut self) {
-        todo!()
     }
 
     fn process_next_vote_slot(
@@ -657,12 +635,6 @@ impl VoteStateHandle for VoteStateHandler {
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_last_timestamp(timestamp),
-        }
-    }
-
-    fn double_lockouts(&mut self) {
-        match &mut self.target_state {
-            TargetVoteState::V3(v3) => v3.double_lockouts(),
         }
     }
 
@@ -874,6 +846,21 @@ fn pop_expired_votes<T: VoteStateHandle>(vote_state: &mut T, next_vote_slot: Slo
             vote_state.votes_mut().pop_back();
         } else {
             break;
+        }
+    }
+}
+
+fn double_lockouts<T: VoteStateHandle>(vote_state: &mut T) {
+    let stack_depth = vote_state.votes().len();
+    for (i, v) in vote_state.votes_mut().iter_mut().enumerate() {
+        // Don't increase the lockout for this vote until we get more confirmations
+        // than the max number of confirmations this vote has seen
+        if stack_depth
+            > i.checked_add(v.confirmation_count() as usize).expect(
+                "`confirmation_count` and tower_size should be bounded by `MAX_LOCKOUT_HISTORY`",
+            )
+        {
+            v.lockout.increase_confirmation_count(1);
         }
     }
 }
