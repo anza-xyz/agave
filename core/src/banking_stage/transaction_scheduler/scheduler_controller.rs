@@ -32,6 +32,18 @@ use {
     },
 };
 
+pub struct SchedulerConfig {
+    pub pacing_fill_time: Duration,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            pacing_fill_time: Duration::from_millis(300),
+        }
+    }
+}
+
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
 pub(crate) struct SchedulerController<R, S>
 where
@@ -40,6 +52,7 @@ where
 {
     /// Exit signal for the scheduler thread.
     exit: Arc<AtomicBool>,
+    config: SchedulerConfig,
     /// Decision maker for determining what should be done with transactions.
     decision_maker: DecisionMaker,
     receive_and_buffer: R,
@@ -68,6 +81,7 @@ where
 {
     pub fn new(
         exit: Arc<AtomicBool>,
+        config: SchedulerConfig,
         decision_maker: DecisionMaker,
         receive_and_buffer: R,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -76,6 +90,7 @@ where
     ) -> Self {
         Self {
             exit,
+            config,
             decision_maker,
             receive_and_buffer,
             bank_forks,
@@ -121,7 +136,7 @@ where
                 cost_pacer = decision.bank().map(|b| CostPacer {
                     shared_block_cost: b.read_cost_tracker().unwrap().shared_block_cost(),
                     detection_time: now,
-                    fill_time: Duration::from_millis(300),
+                    fill_time: self.config.pacing_fill_time,
                 });
             }
 
@@ -513,6 +528,7 @@ mod tests {
         let exit = Arc::new(AtomicBool::new(false));
         let scheduler_controller = SchedulerController::new(
             exit,
+            SchedulerConfig::default(),
             decision_maker,
             receive_and_buffer,
             bank_forks,
@@ -584,7 +600,8 @@ mod tests {
                 &decision,
                 Some(&CostPacer {
                     shared_block_cost: Arc::new(AtomicU64::new(0)),
-                    detection_time: now.checked_sub(Duration::from_millis(400)).unwrap()
+                    detection_time: now.checked_sub(Duration::from_millis(400)).unwrap(),
+                    fill_time: Duration::from_millis(300),
                 }),
                 &now
             )
