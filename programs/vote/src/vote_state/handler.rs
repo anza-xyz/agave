@@ -19,7 +19,7 @@ use {
         error::VoteError,
         state::{
             BlockTimestamp, LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3,
-            VoteStateVersions, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
+            VoteStateV4, VoteStateVersions, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
             VOTE_CREDITS_GRACE_SLOTS, VOTE_CREDITS_MAXIMUM_PER_SLOT,
         },
     },
@@ -395,6 +395,150 @@ impl VoteStateHandle for VoteStateV3 {
         }
         // Vote account is large enough to store the newest version of vote state
         vote_account.set_state(&VoteStateVersions::V3(Box::new(self)))
+    }
+}
+
+impl VoteStateHandle for VoteStateV4 {
+    fn is_uninitialized(&self) -> bool {
+        self.authorized_voters.is_empty()
+    }
+
+    fn authorized_withdrawer(&self) -> &Pubkey {
+        &self.authorized_withdrawer
+    }
+
+    fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey) {
+        self.authorized_withdrawer = authorized_withdrawer;
+    }
+
+    fn set_new_authorized_voter<F>(
+        &mut self,
+        _authorized_pubkey: &Pubkey,
+        _current_epoch: Epoch,
+        _target_epoch: Epoch,
+        _verify: F,
+    ) -> Result<(), InstructionError>
+    where
+        F: Fn(Pubkey) -> Result<(), InstructionError>,
+    {
+        todo!()
+    }
+
+    fn get_and_update_authorized_voter(
+        &mut self,
+        current_epoch: Epoch,
+    ) -> Result<Pubkey, InstructionError> {
+        let pubkey = self
+            .authorized_voters
+            .get_and_cache_authorized_voter_for_epoch(current_epoch)
+            .ok_or(InstructionError::InvalidAccountData)?;
+        self.authorized_voters
+            .purge_authorized_voters(current_epoch);
+        Ok(pubkey)
+    }
+
+    fn commission(&self) -> u8 {
+        (self.inflation_rewards_commission_bps / 100) as u8
+    }
+
+    #[allow(clippy::arithmetic_side_effects)]
+    fn set_commission(&mut self, commission: u8) {
+        // Safety: u16::MAX > u8::MAX * 100
+        self.inflation_rewards_commission_bps = (commission as u16) * 100;
+    }
+
+    fn node_pubkey(&self) -> &Pubkey {
+        &self.node_pubkey
+    }
+
+    fn set_node_pubkey(&mut self, node_pubkey: Pubkey) {
+        self.node_pubkey = node_pubkey;
+    }
+
+    fn votes(&self) -> &VecDeque<LandedVote> {
+        &self.votes
+    }
+
+    fn votes_mut(&mut self) -> &mut VecDeque<LandedVote> {
+        &mut self.votes
+    }
+
+    fn set_votes(&mut self, votes: VecDeque<LandedVote>) {
+        self.votes = votes;
+    }
+
+    fn contains_slot(&self, candidate_slot: Slot) -> bool {
+        self.votes
+            .binary_search_by(|vote| vote.slot().cmp(&candidate_slot))
+            .is_ok()
+    }
+
+    fn last_lockout(&self) -> Option<&Lockout> {
+        self.votes.back().map(|vote| &vote.lockout)
+    }
+
+    fn last_voted_slot(&self) -> Option<Slot> {
+        self.last_lockout().map(|v| v.slot())
+    }
+
+    fn root_slot(&self) -> Option<Slot> {
+        self.root_slot
+    }
+
+    fn set_root_slot(&mut self, root_slot: Option<Slot>) {
+        self.root_slot = root_slot;
+    }
+
+    fn current_epoch(&self) -> Epoch {
+        if self.epoch_credits.is_empty() {
+            0
+        } else {
+            self.epoch_credits.last().unwrap().0
+        }
+    }
+
+    fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)> {
+        self.epoch_credits.last()
+    }
+
+    fn credits_for_vote_at_index(&self, _index: usize) -> u64 {
+        todo!()
+    }
+
+    fn increment_credits(&mut self, _epoch: Epoch, _credits: u64) {
+        todo!()
+    }
+
+    fn process_timestamp(
+        &mut self,
+        _slot: Slot,
+        _timestamp: UnixTimestamp,
+    ) -> Result<(), VoteError> {
+        todo!()
+    }
+
+    fn pop_expired_votes(&mut self, _next_vote_slot: Slot) {
+        todo!()
+    }
+
+    fn double_lockouts(&mut self) {
+        todo!()
+    }
+
+    fn process_next_vote_slot(
+        &mut self,
+        _next_vote_slot: Slot,
+        _epoch: Epoch,
+        _current_slot: Slot,
+    ) {
+        todo!()
+    }
+
+    fn set_vote_account_state(
+        self,
+        _vote_account: &mut BorrowedInstructionAccount,
+    ) -> Result<(), InstructionError> {
+        todo!()
     }
 }
 
