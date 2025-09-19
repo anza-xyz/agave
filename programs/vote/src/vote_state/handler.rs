@@ -87,12 +87,6 @@ pub trait VoteStateHandle {
 
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp);
 
-    // Pop all recent votes that are not locked out at the next vote slot.  This
-    // allows validators to switch forks once their votes for another fork have
-    // expired. This also allows validators continue voting on recent blocks in
-    // the same fork without increasing lockouts.
-    fn pop_expired_votes(&mut self, next_vote_slot: Slot);
-
     fn double_lockouts(&mut self);
 
     fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot);
@@ -267,16 +261,6 @@ impl VoteStateHandle for VoteStateV3 {
         self.last_timestamp = timestamp;
     }
 
-    fn pop_expired_votes(&mut self, next_vote_slot: Slot) {
-        while let Some(vote) = self.last_lockout() {
-            if !vote.is_locked_out_at_slot(next_vote_slot) {
-                self.votes.pop_back();
-            } else {
-                break;
-            }
-        }
-    }
-
     fn double_lockouts(&mut self) {
         let stack_depth = self.votes.len();
         for (i, v) in self.votes.iter_mut().enumerate() {
@@ -302,7 +286,7 @@ impl VoteStateHandle for VoteStateV3 {
             return;
         }
 
-        self.pop_expired_votes(next_vote_slot);
+        pop_expired_votes(self, next_vote_slot);
 
         let landed_vote = LandedVote {
             latency: compute_vote_latency(next_vote_slot, current_slot),
@@ -478,10 +462,6 @@ impl VoteStateHandle for VoteStateV4 {
 
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
         self.last_timestamp = timestamp;
-    }
-
-    fn pop_expired_votes(&mut self, _next_vote_slot: Slot) {
-        todo!()
     }
 
     fn double_lockouts(&mut self) {
@@ -677,12 +657,6 @@ impl VoteStateHandle for VoteStateHandler {
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_last_timestamp(timestamp),
-        }
-    }
-
-    fn pop_expired_votes(&mut self, next_vote_slot: Slot) {
-        match &mut self.target_state {
-            TargetVoteState::V3(v3) => v3.pop_expired_votes(next_vote_slot),
         }
     }
 
@@ -892,6 +866,16 @@ pub(crate) fn process_timestamp<T: VoteStateHandle>(
     }
     vote_state.set_last_timestamp(BlockTimestamp { slot, timestamp });
     Ok(())
+}
+
+fn pop_expired_votes<T: VoteStateHandle>(vote_state: &mut T, next_vote_slot: Slot) {
+    while let Some(vote) = vote_state.last_lockout() {
+        if !vote.is_locked_out_at_slot(next_vote_slot) {
+            vote_state.votes_mut().pop_back();
+        } else {
+            break;
+        }
+    }
 }
 
 #[allow(clippy::arithmetic_side_effects)]
