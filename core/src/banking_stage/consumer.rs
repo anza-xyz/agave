@@ -34,6 +34,21 @@ use {
 /// Consumer will create chunks of transactions from buffer with up to this size.
 pub const TARGET_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RetryableIndex {
+    pub index: usize,
+    pub immediately_retryable: bool,
+}
+
+impl RetryableIndex {
+    pub fn new(index: usize, immediately_retryable: bool) -> Self {
+        Self {
+            index,
+            immediately_retryable,
+        }
+    }
+}
+
 pub struct ProcessTransactionBatchOutput {
     // The number of transactions filtered out by the cost model
     pub(crate) cost_model_throttled_transactions_count: u64,
@@ -48,7 +63,7 @@ pub struct ExecuteAndCommitTransactionsOutput {
     pub(crate) transaction_counts: LeaderProcessedTransactionCounts,
     // Transactions that either were not executed, or were executed and failed to be committed due
     // to the block ending.
-    pub(crate) retryable_transaction_indexes: Vec<usize>,
+    pub(crate) retryable_transaction_indexes: Vec<RetryableIndex>,
     // A result that indicates whether transactions were successfully
     // committed into the Poh stream.
     pub commit_transactions_result: Result<Vec<CommitTransactionDetails>, PohRecorderError>,
@@ -256,23 +271,39 @@ impl Consumer {
                 // following are retryable errors
                 Err(TransactionError::AccountInUse) => {
                     error_counters.account_in_use += 1;
-                    Some(index)
+                    // locking failure due to vote conflict or jito - immediately retry.
+                    Some(RetryableIndex {
+                        index,
+                        immediately_retryable: true,
+                    })
                 }
                 Err(TransactionError::WouldExceedMaxBlockCostLimit) => {
                     error_counters.would_exceed_max_block_cost_limit += 1;
-                    Some(index)
+                    Some(RetryableIndex {
+                        index,
+                        immediately_retryable: false,
+                    })
                 }
                 Err(TransactionError::WouldExceedMaxVoteCostLimit) => {
                     error_counters.would_exceed_max_vote_cost_limit += 1;
-                    Some(index)
+                    Some(RetryableIndex {
+                        index,
+                        immediately_retryable: false,
+                    })
                 }
                 Err(TransactionError::WouldExceedMaxAccountCostLimit) => {
                     error_counters.would_exceed_max_account_cost_limit += 1;
-                    Some(index)
+                    Some(RetryableIndex {
+                        index,
+                        immediately_retryable: false,
+                    })
                 }
                 Err(TransactionError::WouldExceedAccountDataBlockLimit) => {
                     error_counters.would_exceed_account_data_block_limit += 1;
-                    Some(index)
+                    Some(RetryableIndex {
+                        index,
+                        immediately_retryable: false,
+                    })
                 }
                 // following are non-retryable errors
                 Err(TransactionError::TooManyAccountLocks) => {
@@ -369,7 +400,12 @@ impl Consumer {
 
         if let Err(recorder_err) = record_transactions_result {
             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
-                |(index, processing_result)| processing_result.was_processed().then_some(index),
+                |(index, processing_result)| {
+                    processing_result.was_processed().then_some(RetryableIndex {
+                        index,
+                        immediately_retryable: true, // recording errors are always immediately retryable
+                    })
+                },
             ));
 
             // retryable indexes are expected to be sorted - in this case the
@@ -754,7 +790,13 @@ mod tests {
                 processed_with_successful_result_count: 1,
             }
         );
-        assert_eq!(retryable_transaction_indexes, vec![0]);
+        assert_eq!(
+            retryable_transaction_indexes,
+            vec![RetryableIndex {
+                index: 0,
+                immediately_retryable: true
+            }]
+        );
         assert_matches!(
             commit_transactions_result,
             Err(PohRecorderError::MaxHeightReached)
@@ -1152,7 +1194,10 @@ mod tests {
             commit_transactions_result.get(1),
             Some(CommitTransactionDetails::NotCommitted(_))
         );
-        assert_eq!(retryable_transaction_indexes, vec![1]);
+        assert_eq!(
+            retryable_transaction_indexes,
+            vec![RetryableIndex::new(1, true)]
+        );
 
         let expected_block_cost = {
             let (actual_programs_execution_cost, actual_loaded_accounts_data_size_cost) =
@@ -1311,9 +1356,12 @@ mod tests {
 
         // with simd3, duplicate transactions are not retryable
         if relax_intrabatch_account_locks && use_duplicate_transaction {
-            assert_eq!(retryable_transaction_indexes, Vec::<usize>::new());
+            assert_eq!(retryable_transaction_indexes, Vec::<_>::new());
         } else {
-            assert_eq!(retryable_transaction_indexes, vec![1]);
+            assert_eq!(
+                retryable_transaction_indexes,
+                vec![RetryableIndex::new(1, true)]
+            );
         }
     }
 
@@ -1369,7 +1417,9 @@ mod tests {
 
         assert_eq!(
             execute_and_commit_transactions_output.retryable_transaction_indexes,
-            (1..transactions_len - 1).collect::<Vec<usize>>()
+            (1..transactions_len - 1)
+                .map(|index| RetryableIndex::new(index, true))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1455,12 +1505,14 @@ mod tests {
         if relax_intrabatch_account_locks {
             assert_eq!(
                 execute_and_commit_transactions_output.retryable_transaction_indexes,
-                Vec::<usize>::new()
+                Vec::<_>::new()
             );
         } else {
             assert_eq!(
                 execute_and_commit_transactions_output.retryable_transaction_indexes,
-                (1..transactions_len).collect::<Vec<usize>>()
+                (1..transactions_len)
+                    .map(|index| RetryableIndex::new(index, true))
+                    .collect::<Vec<_>>()
             );
         }
     }
@@ -1548,7 +1600,9 @@ mod tests {
         execute_and_commit_transactions_output
             .retryable_transaction_indexes
             .sort_unstable();
-        let expected: Vec<usize> = (0..transactions.len()).collect();
+        let expected: Vec<_> = (0..transactions.len())
+            .map(|index| RetryableIndex::new(index, true))
+            .collect();
         assert_eq!(
             execute_and_commit_transactions_output.retryable_transaction_indexes,
             expected
