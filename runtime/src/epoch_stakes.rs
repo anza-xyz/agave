@@ -174,6 +174,19 @@ impl VersionedEpochStakes {
         }
     }
 
+    pub fn bls_pubkey_to_rank_map(&self) -> &Arc<BLSPubkeyToRankMap> {
+        match self {
+            Self::Current {
+                bls_pubkey_to_rank_map,
+                ..
+            } => bls_pubkey_to_rank_map.get_or_init(|| {
+                Arc::new(BLSPubkeyToRankMap::new(
+                    self.stakes().vote_accounts().as_ref(),
+                ))
+            }),
+        }
+    }
+
     pub fn vote_account_stake(&self, vote_account: &Pubkey) -> u64 {
         self.stakes()
             .vote_accounts()
@@ -225,8 +238,15 @@ impl VersionedEpochStakes {
 #[cfg(test)]
 pub(crate) mod tests {
     use {
-        super::*, solana_account::AccountSharedData, solana_vote::vote_account::VoteAccount,
-        solana_vote_program::vote_state::create_account_with_authorized, std::iter,
+        super::*,
+        solana_account::AccountSharedData,
+        solana_bls_signatures::keypair::Keypair as BLSKeypair,
+        solana_vote::vote_account::VoteAccount,
+        solana_vote_program::vote_state::{
+            create_account_with_authorized, create_v4_account_with_authorized,
+        },
+        std::iter,
+        test_case::test_case,
     };
 
     struct VoteAccountInfo {
@@ -238,6 +258,7 @@ pub(crate) mod tests {
     fn new_vote_accounts(
         num_nodes: usize,
         num_vote_accounts_per_node: usize,
+        is_alpenglow: bool,
     ) -> HashMap<Pubkey, Vec<VoteAccountInfo>> {
         // Create some vote accounts for each pubkey
         (0..num_nodes)
@@ -247,15 +268,35 @@ pub(crate) mod tests {
                     node_id,
                     iter::repeat_with(|| {
                         let authorized_voter = solana_pubkey::new_rand();
-                        VoteAccountInfo {
-                            vote_account: solana_pubkey::new_rand(),
-                            account: create_account_with_authorized(
+                        let bls_pubkey_compressed: BLSPubkeyCompressed =
+                            BLSKeypair::new().public.try_into().unwrap();
+                        let bls_pubkey_compressed_serialized =
+                            bincode::serialize(&bls_pubkey_compressed)
+                                .unwrap()
+                                .try_into()
+                                .unwrap();
+
+                        let account = if is_alpenglow {
+                            create_v4_account_with_authorized(
+                                &node_id,
+                                &authorized_voter,
+                                &node_id,
+                                Some(bls_pubkey_compressed_serialized),
+                                0,
+                                100,
+                            )
+                        } else {
+                            create_account_with_authorized(
                                 &node_id,
                                 &authorized_voter,
                                 &node_id,
                                 0,
                                 100,
-                            ),
+                            )
+                        };
+                        VoteAccountInfo {
+                            vote_account: solana_pubkey::new_rand(),
+                            account,
                             authorized_voter,
                         }
                     })
@@ -282,13 +323,15 @@ pub(crate) mod tests {
             .collect()
     }
 
-    #[test]
-    fn test_parse_epoch_vote_accounts() {
+    #[test_case(true; "alpenglow")]
+    #[test_case(false; "towerbft")]
+    fn test_parse_epoch_vote_accounts(is_alpenglow: bool) {
         let stake_per_account = 100;
         let num_vote_accounts_per_node = 2;
         let num_nodes = 10;
 
-        let vote_accounts_map = new_vote_accounts(num_nodes, num_vote_accounts_per_node);
+        let vote_accounts_map =
+            new_vote_accounts(num_nodes, num_vote_accounts_per_node, is_alpenglow);
 
         let expected_authorized_voters: HashMap<_, _> = vote_accounts_map
             .iter()
@@ -344,12 +387,14 @@ pub(crate) mod tests {
         );
     }
 
-    #[test]
-    fn test_node_id_to_stake() {
+    #[test_case(true; "alpenglow")]
+    #[test_case(false; "towerbft")]
+    fn test_node_id_to_stake(is_alpenglow: bool) {
         let num_nodes = 10;
         let num_vote_accounts_per_node = 2;
 
-        let vote_accounts_map = new_vote_accounts(num_nodes, num_vote_accounts_per_node);
+        let vote_accounts_map =
+            new_vote_accounts(num_nodes, num_vote_accounts_per_node, is_alpenglow);
         let node_id_to_stake_map = vote_accounts_map
             .keys()
             .enumerate()
@@ -367,5 +412,49 @@ pub(crate) mod tests {
                 Some(*stake * num_vote_accounts_per_node as u64)
             );
         }
+    }
+
+    #[test_case(1; "single_vote_account")]
+    #[test_case(2; "multiple_vote_accounts")]
+    fn test_bls_pubkey_rank_map(num_vote_accounts_per_node: usize) {
+        solana_logger::setup();
+        let num_nodes = 10;
+        let num_vote_accounts = num_nodes * num_vote_accounts_per_node;
+
+        let vote_accounts_map = new_vote_accounts(num_nodes, num_vote_accounts_per_node, true);
+        let node_id_to_stake_map = vote_accounts_map
+            .keys()
+            .enumerate()
+            .map(|(index, node_id)| (*node_id, ((index + 1) * 100) as u64))
+            .collect::<HashMap<_, _>>();
+        let epoch_vote_accounts = new_epoch_vote_accounts(&vote_accounts_map, |node_id| {
+            *node_id_to_stake_map.get(node_id).unwrap()
+        });
+        let epoch_stakes = VersionedEpochStakes::new_for_tests(epoch_vote_accounts.clone(), 0);
+        let bls_pubkey_to_rank_map = epoch_stakes.bls_pubkey_to_rank_map();
+        assert_eq!(bls_pubkey_to_rank_map.len(), num_vote_accounts);
+        for (pubkey, (_, vote_account)) in epoch_vote_accounts {
+            let vote_state_view = vote_account.vote_state_view();
+            let bls_pubkey_compressed = bincode::deserialize::<BLSPubkeyCompressed>(
+                &vote_state_view.bls_pubkey_compressed().unwrap(),
+            )
+            .unwrap();
+            let bls_pubkey = BLSPubkey::try_from(bls_pubkey_compressed).unwrap();
+            let index = bls_pubkey_to_rank_map.get_rank(&bls_pubkey).unwrap();
+            assert!(index >= &0 && index < &(num_vote_accounts as u16));
+            assert_eq!(
+                bls_pubkey_to_rank_map.get_pubkey(*index as usize),
+                Some(&(pubkey, bls_pubkey))
+            );
+        }
+
+        // Convert it to versioned and back, we should get the same rank map
+        let mut bank_epoch_stakes = HashMap::new();
+        bank_epoch_stakes.insert(0, epoch_stakes.clone());
+        let epoch_stakes = bank_epoch_stakes
+            .get(&0)
+            .expect("Epoch stakes should exist");
+        let bls_pubkey_to_rank_map2 = epoch_stakes.bls_pubkey_to_rank_map();
+        assert_eq!(bls_pubkey_to_rank_map2, bls_pubkey_to_rank_map);
     }
 }
