@@ -587,7 +587,7 @@ pub fn process_new_vote_state(
     }
     if let Some(timestamp) = timestamp {
         let last_slot = new_state.back().unwrap().slot();
-        vote_state.process_timestamp(last_slot, timestamp)?;
+        handler::process_timestamp(vote_state, last_slot, timestamp)?;
     }
     vote_state.set_root_slot(new_root);
     vote_state.set_votes(new_state);
@@ -915,7 +915,7 @@ pub fn process_vote_with_account<S: std::hash::BuildHasher>(
             .iter()
             .max()
             .ok_or(VoteError::EmptySlots)
-            .and_then(|slot| vote_state.process_timestamp(*slot, timestamp))?;
+            .and_then(|slot| handler::process_timestamp(&mut vote_state, *slot, timestamp))?;
     }
     vote_state.set_vote_account_state(vote_account)
 }
