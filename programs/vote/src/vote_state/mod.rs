@@ -606,7 +606,7 @@ pub fn process_vote_unfiltered<T: VoteStateHandle>(
     check_slots_are_valid(vote_state, vote_slots, &vote.hash, slot_hashes)?;
     vote_slots
         .iter()
-        .for_each(|s| vote_state.process_next_vote_slot(*s, epoch, current_slot));
+        .for_each(|s| handler::process_next_vote_slot(vote_state, *s, epoch, current_slot));
     Ok(())
 }
 
@@ -1143,7 +1143,7 @@ mod tests {
             134, 135,
         ]
         .into_iter()
-        .for_each(|v| vote_state.process_next_vote_slot(v, 4, 0));
+        .for_each(|v| handler::process_next_vote_slot(&mut vote_state, v, 4, 0));
 
         let version1_14_11_serialized = bincode::serialize(&VoteStateVersions::V1_14_11(Box::new(
             VoteState1_14_11::from(vote_state.clone()),
