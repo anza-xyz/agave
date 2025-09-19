@@ -177,9 +177,12 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             usage_warning: "The accounts hash cache is obsolete",
     );
     add_arg!(Arg::with_name("disable_accounts_disk_index")
+        // (actually) deprecated in v3.1.0
         .long("disable-accounts-disk-index")
-        .help("Disable the disk-based accounts index if it is enabled by default."));
-
+        .help("Disable the disk-based accounts index if it is enabled by default.")
+        .conflicts_with("enable_accounts_disk_index"),
+        usage_warning: "The disk-based accounts index is disabled by default",
+    );
     add_arg!(
         // deprecated in v3.0.0
         Arg::with_name("gossip_host")
