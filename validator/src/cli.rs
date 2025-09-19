@@ -180,7 +180,7 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         // (actually) deprecated in v3.1.0
         .long("disable-accounts-disk-index")
         .help("Disable the disk-based accounts index if it is enabled by default.")
-        .conflicts_with("accounts_index_path"),
+        .conflicts_with("enable_accounts_disk_index"),
         usage_warning: "The disk-based accounts index is disabled by default",
     );
     add_arg!(
