@@ -90,7 +90,19 @@ impl AccountsFile {
         path: impl Into<PathBuf>,
         current_len: usize,
         storage_access: StorageAccess,
+        obsolete_accounts: &[(Offset, usize, Slot)],
     ) -> Result<Self> {
+        // When recreating the account storage entry, some accounts may be marked as obsolete.
+        // During archive generation, the saved size was reduced because obsolete accounts
+        // were excluded when writing to the archive.
+        // However, when rebooting from the directory, these accounts still exist in the
+        // storage file. If any accounts were removed, their sizes need to be added back to
+        // calculate the correct file size.
+        let current_len = current_len
+            + obsolete_accounts
+                .iter()
+                .map(|(_, data_len, _)| AppendVec::calculate_stored_size(*data_len))
+                .sum::<usize>();
         let av = AppendVec::new_for_startup(path, current_len, storage_access)?;
         Ok(Self::AppendVec(av))
     }

@@ -957,7 +957,12 @@ impl AccountStorageEntry {
         })
     }
 
-    pub fn new_existing(slot: Slot, id: AccountsFileId, accounts: AccountsFile) -> Self {
+    pub fn new_existing(
+        slot: Slot,
+        id: AccountsFileId,
+        accounts: AccountsFile,
+        obsolete_accounts: Vec<(Offset, usize, Slot)>,
+    ) -> Self {
         Self {
             id,
             slot,
@@ -965,7 +970,7 @@ impl AccountStorageEntry {
             count: AtomicUsize::new(0),
             alive_bytes: AtomicUsize::new(0),
             zero_lamport_single_ref_offsets: RwLock::default(),
-            obsolete_accounts: RwLock::default(),
+            obsolete_accounts: RwLock::new(obsolete_accounts),
         }
     }
 
