@@ -438,6 +438,7 @@ impl VoteStateHandle for VoteStateV4 {
 }
 
 /// The target version to convert all deserialized vote state into.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VoteStateTargetVersion {
     V3,
     V4,

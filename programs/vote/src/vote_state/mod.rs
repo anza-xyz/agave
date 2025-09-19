@@ -3,9 +3,12 @@
 
 mod handler;
 
-pub use solana_vote_interface::state::{vote_state_versions::*, *};
+pub use {
+    handler::VoteStateTargetVersion,
+    solana_vote_interface::state::{vote_state_versions::*, *},
+};
 use {
-    handler::{VoteStateHandle, VoteStateHandler, VoteStateTargetVersion},
+    handler::{VoteStateHandle, VoteStateHandler},
     log::*,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Clock, Epoch, Slot},
@@ -675,13 +678,13 @@ pub fn process_slot_vote_unchecked<T: VoteStateHandle>(vote_state: &mut T, slot:
 /// key
 pub fn authorize<S: std::hash::BuildHasher>(
     vote_account: &mut BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
     authorized: &Pubkey,
     vote_authorize: VoteAuthorize,
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    let mut vote_state =
-        VoteStateHandler::deserialize_and_convert(vote_account, VoteStateTargetVersion::V3)?;
+    let mut vote_state = VoteStateHandler::deserialize_and_convert(vote_account, target_version)?;
 
     match vote_authorize {
         VoteAuthorize::Voter => {
@@ -718,11 +721,11 @@ pub fn authorize<S: std::hash::BuildHasher>(
 /// Update the node_pubkey, requires signature of the authorized voter
 pub fn update_validator_identity<S: std::hash::BuildHasher>(
     vote_account: &mut BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
     node_pubkey: &Pubkey,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state =
-        VoteStateHandler::deserialize_and_convert(vote_account, VoteStateTargetVersion::V3)?;
+    let mut vote_state = VoteStateHandler::deserialize_and_convert(vote_account, target_version)?;
 
     // current authorized withdrawer must say "yay"
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
@@ -738,13 +741,13 @@ pub fn update_validator_identity<S: std::hash::BuildHasher>(
 /// Update the vote account's commission
 pub fn update_commission<S: std::hash::BuildHasher>(
     vote_account: &mut BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
     commission: u8,
     signers: &HashSet<Pubkey, S>,
     epoch_schedule: &EpochSchedule,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    let vote_state_result =
-        VoteStateHandler::deserialize_and_convert(vote_account, VoteStateTargetVersion::V3);
+    let vote_state_result = VoteStateHandler::deserialize_and_convert(vote_account, target_version);
     let enforce_commission_update_rule = if let Ok(decoded_vote_state) = &vote_state_result {
         commission > decoded_vote_state.commission()
     } else {
@@ -801,6 +804,7 @@ fn verify_authorized_signer<S: std::hash::BuildHasher>(
 pub fn withdraw<S: std::hash::BuildHasher>(
     instruction_context: &InstructionContext,
     vote_account_index: IndexOfAccount,
+    target_version: VoteStateTargetVersion,
     lamports: u64,
     to_account_index: IndexOfAccount,
     signers: &HashSet<Pubkey, S>,
@@ -809,8 +813,7 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 ) -> Result<(), InstructionError> {
     let mut vote_account =
         instruction_context.try_borrow_instruction_account(vote_account_index)?;
-    let vote_state =
-        VoteStateHandler::deserialize_and_convert(&vote_account, VoteStateTargetVersion::V3)?;
+    let vote_state = VoteStateHandler::deserialize_and_convert(&vote_account, target_version)?;
 
     verify_authorized_signer(vote_state.authorized_withdrawer(), signers)?;
 
@@ -860,11 +863,12 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 /// that the transaction must be signed by the staker's keys
 pub fn initialize_account<S: std::hash::BuildHasher>(
     vote_account: &mut BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
     vote_init: &VoteInit,
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    VoteStateHandler::check_vote_account_length(vote_account, VoteStateTargetVersion::V3)?;
+    VoteStateHandler::check_vote_account_length(vote_account, target_version)?;
     let versioned = vote_account.get_state::<VoteStateVersions>()?;
 
     if !versioned.is_uninitialized() {
@@ -874,21 +878,16 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
     // node must agree to accept this vote account
     verify_authorized_signer(&vote_init.node_pubkey, signers)?;
 
-    VoteStateHandler::init_vote_account_state(
-        vote_account,
-        vote_init,
-        clock,
-        VoteStateTargetVersion::V3,
-    )
+    VoteStateHandler::init_vote_account_state(vote_account, vote_init, clock, target_version)
 }
 
 fn verify_and_get_vote_state_handler<S: std::hash::BuildHasher>(
     vote_account: &BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
     clock: &Clock,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<VoteStateHandler, InstructionError> {
-    let mut vote_state =
-        VoteStateHandler::deserialize_and_convert(vote_account, VoteStateTargetVersion::V3)?;
+    let mut vote_state = VoteStateHandler::deserialize_and_convert(vote_account, target_version)?;
 
     if vote_state.is_uninitialized() {
         return Err(InstructionError::UninitializedAccount);
@@ -902,12 +901,14 @@ fn verify_and_get_vote_state_handler<S: std::hash::BuildHasher>(
 
 pub fn process_vote_with_account<S: std::hash::BuildHasher>(
     vote_account: &mut BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
     slot_hashes: &[SlotHash],
     clock: &Clock,
     vote: &Vote,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = verify_and_get_vote_state_handler(vote_account, clock, signers)?;
+    let mut vote_state =
+        verify_and_get_vote_state_handler(vote_account, target_version, clock, signers)?;
 
     process_vote(&mut vote_state, vote, slot_hashes, clock.epoch, clock.slot)?;
     if let Some(timestamp) = vote.timestamp {
@@ -922,12 +923,14 @@ pub fn process_vote_with_account<S: std::hash::BuildHasher>(
 
 pub fn process_vote_state_update<S: std::hash::BuildHasher>(
     vote_account: &mut BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
     slot_hashes: &[SlotHash],
     clock: &Clock,
     vote_state_update: VoteStateUpdate,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = verify_and_get_vote_state_handler(vote_account, clock, signers)?;
+    let mut vote_state =
+        verify_and_get_vote_state_handler(vote_account, target_version, clock, signers)?;
     do_process_vote_state_update(
         &mut vote_state,
         slot_hashes,
@@ -968,12 +971,14 @@ pub fn do_process_vote_state_update(
 
 pub fn process_tower_sync<S: std::hash::BuildHasher>(
     vote_account: &mut BorrowedInstructionAccount,
+    target_version: VoteStateTargetVersion,
     slot_hashes: &[SlotHash],
     clock: &Clock,
     tower_sync: TowerSync,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<(), InstructionError> {
-    let mut vote_state = verify_and_get_vote_state_handler(vote_account, clock, signers)?;
+    let mut vote_state =
+        verify_and_get_vote_state_handler(vote_account, target_version, clock, signers)?;
     do_process_tower_sync(
         &mut vote_state,
         slot_hashes,
@@ -1368,6 +1373,7 @@ mod tests {
         assert_matches!(
             update_commission(
                 &mut borrowed_account,
+                VoteStateTargetVersion::V3,
                 11,
                 &signers,
                 &epoch_schedule,
@@ -1386,6 +1392,7 @@ mod tests {
         assert_matches!(
             update_commission(
                 &mut borrowed_account,
+                VoteStateTargetVersion::V3,
                 12,
                 &signers,
                 &epoch_schedule,
@@ -1404,6 +1411,7 @@ mod tests {
         assert_matches!(
             update_commission(
                 &mut borrowed_account,
+                VoteStateTargetVersion::V3,
                 10,
                 &signers,
                 &epoch_schedule,
@@ -1428,6 +1436,7 @@ mod tests {
         assert_matches!(
             update_commission(
                 &mut borrowed_account,
+                VoteStateTargetVersion::V3,
                 9,
                 &signers,
                 &epoch_schedule,
