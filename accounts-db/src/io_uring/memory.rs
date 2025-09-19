@@ -138,7 +138,7 @@ impl DerefMut for PageAlignedMemory {
 #[derive(Debug)]
 pub(super) struct FixedIoBuffer {
     ptr: *mut u8,
-    size: usize,
+    size: u32,
     io_buf_index: Option<u16>,
 }
 
@@ -164,17 +164,25 @@ impl FixedIoBuffer {
         let buf_start = buffer.as_ptr() as usize;
 
         buffer.chunks_exact_mut(chunk_size).map(move |buf| {
+            assert!(
+                buf.len() <= u32::MAX as usize,
+                "buffer chunk size is too large"
+            );
             let io_buf_index = (buf.as_ptr() as usize - buf_start) / FIXED_BUFFER_LEN;
             Self {
                 ptr: buf.as_mut_ptr(),
-                size: buf.len(),
+                size: buf.len() as u32,
                 io_buf_index: Some(io_buf_index as u16),
             }
         })
     }
 
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> u32 {
         self.size
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.ptr
     }
 
     /// Safety: while just returning without dereferencing a pointer is safe, this is marked unsafe
@@ -186,16 +194,6 @@ impl FixedIoBuffer {
     /// The index of the fixed buffer in the ring. See register_buffers().
     pub fn io_buf_index(&self) -> Option<u16> {
         self.io_buf_index
-    }
-
-    /// Return a clone of `self` reduced to specified `size`
-    pub fn into_shrinked(self, size: usize) -> Self {
-        assert!(size <= self.size);
-        Self {
-            ptr: self.ptr,
-            size,
-            io_buf_index: self.io_buf_index,
-        }
     }
 
     /// Register provided buffer as fixed buffer in `io_uring`.
@@ -211,12 +209,6 @@ impl FixedIoBuffer {
             })
             .collect::<Vec<_>>();
         unsafe { ring.register_buffers(&iovecs) }
-    }
-}
-
-impl AsRef<[u8]> for FixedIoBuffer {
-    fn as_ref(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.ptr, self.size) }
     }
 }
 

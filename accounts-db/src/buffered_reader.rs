@@ -74,7 +74,7 @@ pub(crate) trait FileBufRead<'a>: BufRead {
     ///
     /// `read_limit` provides a pre-defined limit on the number of bytes that can be read
     /// from the file (unless EOF is reached).
-    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()>;
+    fn activate_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()>;
 
     /// Returns the current file offset corresponding to the start of the buffer
     /// that will be returned by the next call to `fill_buf`.
@@ -82,6 +82,42 @@ pub(crate) trait FileBufRead<'a>: BufRead {
     /// This offset represents the position within the underlying file where data
     /// will be consumed from.
     fn get_file_offset(&self) -> usize;
+
+    /// Add `file` reference to the read-ahead queue if implementation supports it.
+    ///
+    /// The read finishes when EOF is reached or `read_limit` bytes are read.
+    /// Multiple files can be added to the reader and they will be read-ahead in FIFO order.
+    /// The exact moment how and when reads are performed is implementation-specific, but
+    /// can be expedited by calling `submit_prefetch`.
+    ///
+    /// In order to consume prefetched files, call `activate_file` in the same order.
+    ///
+    /// Lifetime of reference is tied to the reader's lifetime.
+    fn add_file_to_prefetch(&mut self, file: &'a File, read_limit: usize) -> io::Result<()>;
+
+    /// Submit all prefetched files for reading.
+    ///
+    /// This method can be used for optimizing interaction with the kernel to batch multiple
+    /// requests (e.g. operations scheduled by `add_file_to_prefetch`) in a single syscall.
+    fn submit_prefetch(&mut self) -> io::Result<()>;
+}
+
+impl<'a> FileBufRead<'a> for Box<dyn FileBufRead<'a> + 'a> {
+    fn activate_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
+        self.as_mut().activate_file(file, read_limit)
+    }
+
+    fn get_file_offset(&self) -> usize {
+        self.as_ref().get_file_offset()
+    }
+
+    fn add_file_to_prefetch(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
+        self.as_mut().add_file_to_prefetch(file, read_limit)
+    }
+
+    fn submit_prefetch(&mut self) -> io::Result<()> {
+        self.as_mut().submit_prefetch()
+    }
 }
 
 /// An extension of the `BufRead` trait for readers that require stronger control
@@ -151,7 +187,7 @@ impl<'a, T: Backing> BufferedReader<'a, T> {
 }
 
 impl<'a, T: Backing> FileBufRead<'a> for BufferedReader<'a, T> {
-    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
+    fn activate_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
         self.do_set_file(file, read_limit);
         Ok(())
     }
@@ -163,6 +199,15 @@ impl<'a, T: Backing> FileBufRead<'a> for BufferedReader<'a, T> {
         } else {
             self.file_last_offset + self.buf_valid_bytes.start
         }
+    }
+
+    fn add_file_to_prefetch(&mut self, _file: &'a File, _read_limit: usize) -> io::Result<()> {
+        // No prefetching in this implementation
+        Ok(())
+    }
+
+    fn submit_prefetch(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -350,13 +395,21 @@ impl<R: BufRead> BufRead for BufReaderWithOverflow<R> {
 }
 
 impl<'a, R: FileBufRead<'a>> FileBufRead<'a> for BufReaderWithOverflow<R> {
-    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
+    fn activate_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
         self.overflow_buf.clear();
-        self.reader.set_file(file, read_limit)
+        self.reader.activate_file(file, read_limit)
     }
 
     fn get_file_offset(&self) -> usize {
         self.reader.get_file_offset() - self.overflow_buf.len()
+    }
+
+    fn add_file_to_prefetch(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
+        self.reader.add_file_to_prefetch(file, read_limit)
+    }
+
+    fn submit_prefetch(&mut self) -> io::Result<()> {
+        self.reader.submit_prefetch()
     }
 }
 
@@ -408,10 +461,11 @@ pub fn large_file_buf_reader(path: &Path, buf_size: usize) -> io::Result<impl Bu
     #[cfg(target_os = "linux")]
     {
         assert!(agave_io_uring::io_uring_supported());
-        use crate::io_uring::sequential_file_reader::{SequentialFileReader, DEFAULT_READ_SIZE};
+        use crate::io_uring::sequential_file_reader::SequentialFileReaderBuilder;
 
-        let buf_size = buf_size.max(DEFAULT_READ_SIZE);
-        SequentialFileReader::with_capacity(buf_size, path)
+        let mut reader = SequentialFileReaderBuilder::new().build(buf_size)?;
+        reader.add_path_to_prefetch(path)?;
+        Ok(reader)
     }
     #[cfg(not(target_os = "linux"))]
     {

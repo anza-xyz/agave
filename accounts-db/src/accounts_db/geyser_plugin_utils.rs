@@ -138,7 +138,7 @@ pub mod tests {
         let notifier = GeyserTestPlugin::default();
         let notifier = Arc::new(notifier);
         accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
-        accounts_db.generate_index(None, false);
+        accounts_db.generate_index(None, 0, false);
 
         // Ensure key1 was notified twice in different slots
         {
