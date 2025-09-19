@@ -917,7 +917,7 @@ mod tests {
                 &entries,
                 true,
                 // chained_merkle_root
-                Some(Hash::new_from_array(rand::thread_rng().gen())),
+                Hash::new_from_array(rand::thread_rng().gen()),
                 0,
                 code_index,
                 &rsc,

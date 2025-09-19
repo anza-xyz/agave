@@ -43,7 +43,7 @@ fn bench_shredder_ticks(bencher: &mut Bencher) {
     let num_ticks = max_ticks_per_n_shreds(1, Some(SHRED_SIZE_TYPICAL)) * num_shreds as u64;
     let entries = create_ticks(num_ticks, 0, Hash::default());
     let reed_solomon_cache = ReedSolomonCache::default();
-    let chained_merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
+    let chained_merkle_root = Hash::new_from_array(rand::thread_rng().gen());
     bencher.iter(|| {
         let shredder = Shredder::new(1, 0, 0, 0).unwrap();
         shredder.entries_to_merkle_shreds_for_tests(
@@ -71,7 +71,7 @@ fn bench_shredder_large_entries(bencher: &mut Bencher) {
         Some(shred_size),
     );
     let entries = make_large_unchained_entries(txs_per_entry, num_entries);
-    let chained_merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
+    let chained_merkle_root = Hash::new_from_array(rand::thread_rng().gen());
     let reed_solomon_cache = ReedSolomonCache::default();
     // 1Mb
     bencher.iter(|| {
@@ -98,7 +98,7 @@ fn bench_deshredder(bencher: &mut Bencher) {
     let num_ticks = max_ticks_per_n_shreds(1, Some(shred_size)) * num_shreds as u64;
     let entries = create_ticks(num_ticks, 0, Hash::default());
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();
-    let chained_merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
+    let chained_merkle_root = Hash::new_from_array(rand::thread_rng().gen());
     let (data_shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
         &kp,
         &entries,
@@ -120,7 +120,7 @@ fn bench_deshredder(bencher: &mut Bencher) {
 fn bench_deserialize_hdr(bencher: &mut Bencher) {
     let keypair = Keypair::new();
     let shredder = Shredder::new(2, 1, 0, 0).unwrap();
-    let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
+    let merkle_root = Hash::new_from_array(rand::thread_rng().gen());
     let mut stats = ProcessShredsStats::default();
     let reed_solomon_cache = ReedSolomonCache::default();
     let mut shreds = shredder
@@ -155,7 +155,7 @@ fn bench_shredder_coding(bencher: &mut Bencher) {
     let entries = make_entries();
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();
     let reed_solomon_cache = ReedSolomonCache::default();
-    let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
+    let merkle_root = Hash::new_from_array(rand::thread_rng().gen());
     bencher.iter(|| {
         let result: Vec<_> = shredder
             .make_merkle_shreds_from_entries(
@@ -178,7 +178,7 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
     let entries = make_entries();
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();
     let reed_solomon_cache = ReedSolomonCache::default();
-    let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
+    let merkle_root = Hash::new_from_array(rand::thread_rng().gen());
     let (_data_shreds, mut coding_shreds): (Vec<_>, Vec<_>) = shredder
         .make_merkle_shreds_from_entries(
             &Keypair::new(),
