@@ -121,6 +121,7 @@ where
                 cost_pacer = decision.bank().map(|b| CostPacer {
                     shared_block_cost: b.read_cost_tracker().unwrap().shared_block_cost(),
                     detection_time: now,
+                    fill_time: Duration::from_millis(300),
                 });
             }
 
@@ -372,22 +373,20 @@ where
 struct CostPacer {
     shared_block_cost: Arc<AtomicU64>,
     detection_time: Instant,
+    fill_time: Duration,
 }
 
 impl CostPacer {
     fn scheduling_budget(&self, current_time: &Instant) -> u64 {
-        // Limit for pacing. After this time, schedule as fast as possible.
-        const BLOCK_FILL_TIME: Duration = Duration::from_millis(300);
-        const ALLOCATION_PER_MILLI: u64 = MAX_BLOCK_UNITS / BLOCK_FILL_TIME.as_millis() as u64;
-
         let time_since = current_time.saturating_duration_since(self.detection_time);
-        if time_since >= BLOCK_FILL_TIME {
+        if time_since >= self.fill_time {
             return MAX_BLOCK_UNITS - self.shared_block_cost.load(Ordering::Acquire);
         }
 
         // on millisecond granularity, pace the cost linearly.
+        let allocation_per_milli = MAX_BLOCK_UNITS / self.fill_time.as_millis().max(1) as u64;
         let millis_since_detection = time_since.as_millis() as u64;
-        let paced_cost = ALLOCATION_PER_MILLI * millis_since_detection;
+        let paced_cost = allocation_per_milli * millis_since_detection;
 
         // saturating sub since we could be ahead of schedule.
         paced_cost.saturating_sub(self.shared_block_cost.load(Ordering::Acquire))
