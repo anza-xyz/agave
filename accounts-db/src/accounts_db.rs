@@ -5455,6 +5455,9 @@ impl AccountsDb {
         }
     }
 
+    /// Updates the accounts index with the given `infos` and `accounts`.
+    /// Returns a vector of `SlotList<AccountInfo>` containing the reclaims for each batch processed.
+    /// The element of the returned vector is guaranteed to be non-empty.
     fn update_index<'a>(
         &self,
         infos: Vec<AccountInfo>,
@@ -5462,7 +5465,7 @@ impl AccountsDb {
         reclaim: UpsertReclaim,
         update_index_thread_selection: UpdateIndexThreadSelection,
         thread_pool: &ThreadPool,
-    ) -> ReclaimsSlotList<AccountInfo> {
+    ) -> Vec<ReclaimsSlotList<AccountInfo>> {
         let target_slot = accounts.target_slot();
         let len = std::cmp::min(accounts.len(), infos.len());
 
@@ -5512,11 +5515,17 @@ impl AccountsDb {
                         let end = std::cmp::min(start + chunk_size, len);
                         update(start, end)
                     })
-                    .flatten()
+                    .filter(|reclaims| !reclaims.is_empty())
                     .collect()
             })
         } else {
-            update(0, len)
+            let reclaims = update(0, len);
+            if reclaims.is_empty() {
+                // If no reclaims, return an empty vector
+                vec![]
+            } else {
+                vec![reclaims]
+            }
         }
     }
 
@@ -5990,11 +5999,15 @@ impl AccountsDb {
         // If there are any reclaims then they should be handled. Reclaims affect
         // all storages, and may result in the removal of dead storages.
         let mut handle_reclaims_elapsed = 0;
+
+        // since reclaims only contains non-empty SlotList<AccountInfo>, we
+        // should skip handle_reclaims only when reclaims is empty. No need to
+        // check the elements of reclaims are empty.
         if !reclaims.is_empty() {
             let purge_stats = PurgeStats::default();
             let mut handle_reclaims_time = Measure::start("handle_reclaims");
             self.handle_reclaims(
-                reclaims.iter(),
+                reclaims.iter().flatten(),
                 None,
                 &HashSet::default(),
                 HandleReclaims::ProcessDeadSlots(&purge_stats),
