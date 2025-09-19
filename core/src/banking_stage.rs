@@ -15,7 +15,8 @@ use {
             packet_deserializer::PacketDeserializer,
             transaction_scheduler::{
                 prio_graph_scheduler::PrioGraphScheduler,
-                scheduler_controller::SchedulerController, scheduler_error::SchedulerError,
+                scheduler_controller::{SchedulerConfig, SchedulerController},
+                scheduler_error::SchedulerError,
             },
         },
         validator::{BlockProductionMethod, TransactionStructure},
@@ -550,6 +551,7 @@ impl BankingStage {
                         .spawn(move || {
                             let scheduler_controller = SchedulerController::new(
                                 exit,
+                                SchedulerConfig::default(),
                                 decision_maker,
                                 receive_and_buffer,
                                 bank_forks,
