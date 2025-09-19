@@ -138,12 +138,12 @@ fn bench_execute_batch(bencher: &mut Bencher, batch_size: usize) {
             }
         })
         .collect();
-    let mut batches_iter = batches.iter();
 
     let mut timing = ExecuteTimings::default();
     bencher.iter(|| {
+        let mut batches_iter = batches.iter();
+        let batch = batches_iter.next().unwrap();
         for _ in 0..batches_per_iteration {
-            let batch = batches_iter.next().unwrap();
             let _ = execute_batch(
                 batch,
                 &bank,
