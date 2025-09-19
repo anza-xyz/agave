@@ -224,7 +224,10 @@ impl<B> IoUringFileCreator<'_, B> {
                     file_key,
                     offset,
                     buf,
+                    buf_offset: 0,
                     write_len: len,
+                    // don't use async by default to avoid kernel scheduling on unbounded worker pool
+                    use_async: false,
                 };
                 state.submitted_writes_size += len;
                 self.ring.push(FileCreatorOp::Write(op))?;
@@ -385,7 +388,9 @@ impl OpenOp {
                 file_key: self.file_key,
                 offset,
                 buf,
+                buf_offset: 0,
                 write_len: len,
+                use_async: false,
             };
             ring.context_mut().submitted_writes_size += len;
             ring.push(FileCreatorOp::Write(op));
@@ -428,7 +433,9 @@ struct WriteOp {
     file_key: usize,
     offset: usize,
     buf: FixedIoBuffer,
+    buf_offset: usize,
     write_len: usize,
+    use_async: bool,
 }
 
 impl<'a> WriteOp {
@@ -437,14 +444,22 @@ impl<'a> WriteOp {
             file_key,
             offset,
             buf,
+            buf_offset,
             write_len,
+            use_async,
         } = self;
+
+        let flags = if *use_async {
+            squeue::Flags::ASYNC
+        } else {
+            squeue::Flags::empty()
+        };
 
         // Safety: buf is owned by `WriteOp` during the operation handling by the kernel and
         // reclaimed after completion passed in a call to `mark_write_completed`.
         opcode::WriteFixed::new(
             types::Fixed(*file_key as u32),
-            unsafe { buf.as_mut_ptr() },
+            unsafe { buf.as_mut_ptr().byte_add(*buf_offset) },
             *write_len as u32,
             buf.io_buf_index()
                 .expect("should have a valid fixed buffer"),
@@ -452,6 +467,7 @@ impl<'a> WriteOp {
         .offset(*offset as u64)
         .ioprio(IO_PRIO_BE_HIGHEST)
         .build()
+        .flags(flags)
     }
 
     fn complete(
@@ -462,22 +478,42 @@ impl<'a> WriteOp {
     where
         Self: Sized,
     {
-        let written = res? as usize;
+        let written = match res {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()), // likely a full disk
+            Ok(res) => res as usize,
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => 0, // retry with async flag
+            Err(err) => return Err(err),
+        };
 
         let WriteOp {
             file_key,
-            offset: _,
+            offset,
             ref mut buf,
+            buf_offset,
             write_len,
+            use_async: _,
         } = self;
 
-        // unless specified otherwise, the io uring worker will retry automatically on EAGAIN
-        assert_eq!(written, *write_len, "short write");
-
         let buf = mem::replace(buf, FixedIoBuffer::empty());
+        let total_written = *buf_offset + written;
+
+        if written < *write_len {
+            // On 5.15 kernel the io_uring worker might generate a short write, re-submit
+            // with offsets updated
+            ring.push(FileCreatorOp::Write(WriteOp {
+                file_key: *file_key,
+                offset: *offset + written,
+                buf,
+                buf_offset: total_written,
+                write_len: *write_len - written,
+                use_async: written == 0,
+            }));
+            return Ok(());
+        }
+
         if ring
             .context_mut()
-            .mark_write_completed(*file_key, *write_len, buf)
+            .mark_write_completed(*file_key, total_written, buf)
         {
             ring.push(FileCreatorOp::Close(CloseOp::new(*file_key)));
         }
