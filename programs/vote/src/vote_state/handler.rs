@@ -83,7 +83,9 @@ pub trait VoteStateHandle {
 
     fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)>;
 
-    fn process_timestamp(&mut self, slot: Slot, timestamp: i64) -> Result<(), VoteError>;
+    fn last_timestamp(&self) -> &BlockTimestamp;
+
+    fn set_last_timestamp(&mut self, timestamp: BlockTimestamp);
 
     // Pop all recent votes that are not locked out at the next vote slot.  This
     // allows validators to switch forks once their votes for another fork have
@@ -257,16 +259,12 @@ impl VoteStateHandle for VoteStateV3 {
         &mut self.epoch_credits
     }
 
-    fn process_timestamp(&mut self, slot: Slot, timestamp: UnixTimestamp) -> Result<(), VoteError> {
-        if (slot < self.last_timestamp.slot || timestamp < self.last_timestamp.timestamp)
-            || (slot == self.last_timestamp.slot
-                && BlockTimestamp { slot, timestamp } != self.last_timestamp
-                && self.last_timestamp.slot != 0)
-        {
-            return Err(VoteError::TimestampTooOld);
-        }
-        self.last_timestamp = BlockTimestamp { slot, timestamp };
-        Ok(())
+    fn last_timestamp(&self) -> &BlockTimestamp {
+        &self.last_timestamp
+    }
+
+    fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
+        self.last_timestamp = timestamp;
     }
 
     fn pop_expired_votes(&mut self, next_vote_slot: Slot) {
@@ -474,12 +472,12 @@ impl VoteStateHandle for VoteStateV4 {
         &mut self.epoch_credits
     }
 
-    fn process_timestamp(
-        &mut self,
-        _slot: Slot,
-        _timestamp: UnixTimestamp,
-    ) -> Result<(), VoteError> {
-        todo!()
+    fn last_timestamp(&self) -> &BlockTimestamp {
+        &self.last_timestamp
+    }
+
+    fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
+        self.last_timestamp = timestamp;
     }
 
     fn pop_expired_votes(&mut self, _next_vote_slot: Slot) {
@@ -670,9 +668,15 @@ impl VoteStateHandle for VoteStateHandler {
         }
     }
 
-    fn process_timestamp(&mut self, slot: Slot, timestamp: i64) -> Result<(), VoteError> {
+    fn last_timestamp(&self) -> &BlockTimestamp {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3.last_timestamp(),
+        }
+    }
+
+    fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
         match &mut self.target_state {
-            TargetVoteState::V3(v3) => v3.process_timestamp(slot, timestamp),
+            TargetVoteState::V3(v3) => v3.set_last_timestamp(timestamp),
         }
     }
 
@@ -871,6 +875,23 @@ pub(crate) fn increment_credits<T: VoteStateHandle>(
         .unwrap()
         .1
         .saturating_add(credits);
+}
+
+pub(crate) fn process_timestamp<T: VoteStateHandle>(
+    vote_state: &mut T,
+    slot: Slot,
+    timestamp: UnixTimestamp,
+) -> Result<(), VoteError> {
+    let last_timestamp = vote_state.last_timestamp();
+    if (slot < last_timestamp.slot || timestamp < last_timestamp.timestamp)
+        || (slot == last_timestamp.slot
+            && &BlockTimestamp { slot, timestamp } != last_timestamp
+            && last_timestamp.slot != 0)
+    {
+        return Err(VoteError::TimestampTooOld);
+    }
+    vote_state.set_last_timestamp(BlockTimestamp { slot, timestamp });
+    Ok(())
 }
 
 #[allow(clippy::arithmetic_side_effects)]
@@ -1293,58 +1314,69 @@ mod tests {
         assert!(vote_state.epoch_credits().len() <= MAX_EPOCH_CREDITS_HISTORY);
     }
 
-    #[test]
-    fn test_vote_process_timestamp() {
-        let (slot, timestamp) = (15, 1_575_412_285);
-        let mut vote_state = VoteStateV3 {
-            last_timestamp: BlockTimestamp { slot, timestamp },
+    #[test_case(|last_timestamp| {
+        VoteStateV3 {
+            last_timestamp,
             ..VoteStateV3::default()
-        };
+        }
+    } ; "VoteStateV3")]
+    #[test_case(|last_timestamp| {
+        VoteStateV4 {
+            last_timestamp,
+            ..VoteStateV4::default()
+        }
+    } ; "VoteStateV4")]
+    fn test_vote_process_timestamp<T: VoteStateHandle>(new_vote_state: fn(BlockTimestamp) -> T) {
+        let (slot, timestamp) = (15, 1_575_412_285);
+        let mut vote_state = new_vote_state(BlockTimestamp { slot, timestamp });
 
         assert_eq!(
-            vote_state.process_timestamp(slot - 1, timestamp + 1),
+            process_timestamp(&mut vote_state, slot - 1, timestamp + 1),
             Err(VoteError::TimestampTooOld)
         );
         assert_eq!(
-            vote_state.last_timestamp,
-            BlockTimestamp { slot, timestamp }
+            vote_state.last_timestamp(),
+            &BlockTimestamp { slot, timestamp }
         );
         assert_eq!(
-            vote_state.process_timestamp(slot + 1, timestamp - 1),
+            process_timestamp(&mut vote_state, slot + 1, timestamp - 1),
             Err(VoteError::TimestampTooOld)
         );
         assert_eq!(
-            vote_state.process_timestamp(slot, timestamp + 1),
+            process_timestamp(&mut vote_state, slot, timestamp + 1),
             Err(VoteError::TimestampTooOld)
         );
-        assert_eq!(vote_state.process_timestamp(slot, timestamp), Ok(()));
+        assert_eq!(process_timestamp(&mut vote_state, slot, timestamp), Ok(()));
         assert_eq!(
-            vote_state.last_timestamp,
-            BlockTimestamp { slot, timestamp }
+            vote_state.last_timestamp(),
+            &BlockTimestamp { slot, timestamp }
         );
-        assert_eq!(vote_state.process_timestamp(slot + 1, timestamp), Ok(()));
         assert_eq!(
-            vote_state.last_timestamp,
-            BlockTimestamp {
+            process_timestamp(&mut vote_state, slot + 1, timestamp),
+            Ok(())
+        );
+        assert_eq!(
+            vote_state.last_timestamp(),
+            &BlockTimestamp {
                 slot: slot + 1,
                 timestamp
             }
         );
         assert_eq!(
-            vote_state.process_timestamp(slot + 2, timestamp + 1),
+            process_timestamp(&mut vote_state, slot + 2, timestamp + 1),
             Ok(())
         );
         assert_eq!(
-            vote_state.last_timestamp,
-            BlockTimestamp {
+            vote_state.last_timestamp(),
+            &BlockTimestamp {
                 slot: slot + 2,
                 timestamp: timestamp + 1
             }
         );
 
         // Test initial vote
-        vote_state.last_timestamp = BlockTimestamp::default();
-        assert_eq!(vote_state.process_timestamp(0, timestamp), Ok(()));
+        vote_state.set_last_timestamp(BlockTimestamp::default());
+        assert_eq!(process_timestamp(&mut vote_state, 0, timestamp), Ok(()));
     }
 
     enum ExpectedVoteStateVersion {
