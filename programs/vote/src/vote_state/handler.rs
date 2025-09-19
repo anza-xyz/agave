@@ -79,10 +79,9 @@ pub trait VoteStateHandle {
 
     fn current_epoch(&self) -> Epoch;
 
-    fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)>;
+    fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)>;
 
-    /// increment credits, record credits for last epoch if new epoch
-    fn increment_credits(&mut self, epoch: Epoch, credits: u64);
+    fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)>;
 
     fn process_timestamp(&mut self, slot: Slot, timestamp: i64) -> Result<(), VoteError>;
 
@@ -250,36 +249,12 @@ impl VoteStateHandle for VoteStateV3 {
         }
     }
 
-    fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)> {
-        self.epoch_credits.last()
+    fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
+        &self.epoch_credits
     }
 
-    fn increment_credits(&mut self, epoch: Epoch, credits: u64) {
-        // increment credits, record by epoch
-
-        // never seen a credit
-        if self.epoch_credits.is_empty() {
-            self.epoch_credits.push((epoch, 0, 0));
-        } else if epoch != self.epoch_credits.last().unwrap().0 {
-            let (_, credits, prev_credits) = *self.epoch_credits.last().unwrap();
-
-            if credits != prev_credits {
-                // if credits were earned previous epoch
-                // append entry at end of list for the new epoch
-                self.epoch_credits.push((epoch, credits, credits));
-            } else {
-                // else just move the current epoch
-                self.epoch_credits.last_mut().unwrap().0 = epoch;
-            }
-
-            // Remove too old epoch_credits
-            if self.epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY {
-                self.epoch_credits.remove(0);
-            }
-        }
-
-        self.epoch_credits.last_mut().unwrap().1 =
-            self.epoch_credits.last().unwrap().1.saturating_add(credits);
+    fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)> {
+        &mut self.epoch_credits
     }
 
     fn process_timestamp(&mut self, slot: Slot, timestamp: UnixTimestamp) -> Result<(), VoteError> {
@@ -342,7 +317,7 @@ impl VoteStateHandle for VoteStateV3 {
             let landed_vote = self.votes.pop_front().unwrap();
             self.root_slot = Some(landed_vote.slot());
 
-            self.increment_credits(epoch, credits);
+            increment_credits(self, epoch, credits);
         }
         self.votes.push_back(landed_vote);
         self.double_lockouts();
@@ -491,12 +466,12 @@ impl VoteStateHandle for VoteStateV4 {
         }
     }
 
-    fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)> {
-        self.epoch_credits.last()
+    fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
+        &self.epoch_credits
     }
 
-    fn increment_credits(&mut self, _epoch: Epoch, _credits: u64) {
-        todo!()
+    fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)> {
+        &mut self.epoch_credits
     }
 
     fn process_timestamp(
@@ -683,15 +658,15 @@ impl VoteStateHandle for VoteStateHandler {
         }
     }
 
-    fn epoch_credits_last(&self) -> Option<&(Epoch, u64, u64)> {
+    fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
         match &self.target_state {
-            TargetVoteState::V3(v3) => v3.epoch_credits_last(),
+            TargetVoteState::V3(v3) => v3.epoch_credits(),
         }
     }
 
-    fn increment_credits(&mut self, epoch: Epoch, credits: u64) {
+    fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)> {
         match &mut self.target_state {
-            TargetVoteState::V3(v3) => v3.increment_credits(epoch, credits),
+            TargetVoteState::V3(v3) => v3.epoch_credits_mut(),
         }
     }
 
@@ -806,19 +781,6 @@ impl VoteStateHandler {
     }
 
     #[cfg(test)]
-    pub fn credits(&self) -> u64 {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => {
-                if v3.epoch_credits.is_empty() {
-                    0
-                } else {
-                    v3.epoch_credits.last().unwrap().1
-                }
-            }
-        }
-    }
-
-    #[cfg(test)]
     pub fn nth_recent_lockout(&self, position: usize) -> Option<&Lockout> {
         match &self.target_state {
             TargetVoteState::V3(v3) => {
@@ -873,6 +835,44 @@ pub(crate) fn credits_for_vote_at_index<T: VoteStateHandle>(vote_state: &T, inde
     }
 }
 
+pub(crate) fn increment_credits<T: VoteStateHandle>(
+    vote_state: &mut T,
+    epoch: Epoch,
+    credits: u64,
+) {
+    // increment credits, record by epoch
+
+    // never seen a credit
+    if vote_state.epoch_credits().is_empty() {
+        vote_state.epoch_credits_mut().push((epoch, 0, 0));
+    } else if epoch != vote_state.epoch_credits().last().unwrap().0 {
+        let (_, credits, prev_credits) = *vote_state.epoch_credits().last().unwrap();
+
+        if credits != prev_credits {
+            // if credits were earned previous epoch
+            // append entry at end of list for the new epoch
+            vote_state
+                .epoch_credits_mut()
+                .push((epoch, credits, credits));
+        } else {
+            // else just move the current epoch
+            vote_state.epoch_credits_mut().last_mut().unwrap().0 = epoch;
+        }
+
+        // Remove too old epoch_credits
+        if vote_state.epoch_credits().len() > MAX_EPOCH_CREDITS_HISTORY {
+            vote_state.epoch_credits_mut().remove(0);
+        }
+    }
+
+    vote_state.epoch_credits_mut().last_mut().unwrap().1 = vote_state
+        .epoch_credits()
+        .last()
+        .unwrap()
+        .1
+        .saturating_add(credits);
+}
+
 #[allow(clippy::arithmetic_side_effects)]
 #[allow(clippy::type_complexity)]
 #[cfg(test)]
@@ -914,6 +914,14 @@ mod tests {
             )
             .unwrap();
         transaction_context
+    }
+
+    fn get_credits(epoch_credits: &[(Epoch, u64, u64)]) -> u64 {
+        if epoch_credits.is_empty() {
+            0
+        } else {
+            epoch_credits.last().unwrap().1
+        }
     }
 
     fn new_vote_state_v3(vote_init: &VoteInit, clock: &Clock) -> VoteStateV3 {
@@ -1238,19 +1246,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_vote_state_epoch_credits() {
-        let mut vote_state = VoteStateV3::default();
-
-        assert_eq!(vote_state.credits(), 0);
-        assert_eq!(vote_state.epoch_credits.clone(), vec![]);
+    #[test_case(VoteStateV3::default() ; "VoteStateV3")]
+    #[test_case(VoteStateV4::default() ; "VoteStateV4")]
+    fn test_vote_state_epoch_credits<T: VoteStateHandle>(mut vote_state: T) {
+        assert_eq!(get_credits(vote_state.epoch_credits()), 0);
+        assert_eq!(vote_state.epoch_credits().clone(), vec![]);
 
         let mut expected = vec![];
         let mut credits = 0;
         let epochs = (MAX_EPOCH_CREDITS_HISTORY + 2) as u64;
         for epoch in 0..epochs {
             for _j in 0..epoch {
-                vote_state.increment_credits(epoch, 1);
+                increment_credits(&mut vote_state, epoch, 1);
                 credits += 1;
             }
             expected.push((epoch, credits, credits - epoch));
@@ -1260,32 +1267,30 @@ mod tests {
             expected.remove(0);
         }
 
-        assert_eq!(vote_state.credits(), credits);
-        assert_eq!(vote_state.epoch_credits.clone(), expected);
+        assert_eq!(get_credits(vote_state.epoch_credits()), credits);
+        assert_eq!(vote_state.epoch_credits().clone(), expected);
     }
 
-    #[test]
-    fn test_vote_state_epoch0_no_credits() {
-        let mut vote_state = VoteStateV3::default();
+    #[test_case(VoteStateV3::default() ; "VoteStateV3")]
+    #[test_case(VoteStateV4::default() ; "VoteStateV4")]
+    fn test_vote_state_epoch0_no_credits<T: VoteStateHandle>(mut vote_state: T) {
+        assert_eq!(vote_state.epoch_credits().len(), 0);
+        increment_credits(&mut vote_state, 1, 1);
+        assert_eq!(vote_state.epoch_credits().len(), 1);
 
-        assert_eq!(vote_state.epoch_credits.len(), 0);
-        vote_state.increment_credits(1, 1);
-        assert_eq!(vote_state.epoch_credits.len(), 1);
-
-        vote_state.increment_credits(2, 1);
-        assert_eq!(vote_state.epoch_credits.len(), 2);
+        increment_credits(&mut vote_state, 2, 1);
+        assert_eq!(vote_state.epoch_credits().len(), 2);
     }
 
-    #[test]
-    fn test_vote_state_increment_credits() {
-        let mut vote_state = VoteStateV3::default();
-
+    #[test_case(VoteStateV3::default() ; "VoteStateV3")]
+    #[test_case(VoteStateV4::default() ; "VoteStateV4")]
+    fn test_vote_state_increment_credits<T: VoteStateHandle>(mut vote_state: T) {
         let credits = (MAX_EPOCH_CREDITS_HISTORY + 2) as u64;
         for i in 0..credits {
-            vote_state.increment_credits(i, 1);
+            increment_credits(&mut vote_state, i, 1);
         }
-        assert_eq!(vote_state.credits(), credits);
-        assert!(vote_state.epoch_credits.len() <= MAX_EPOCH_CREDITS_HISTORY);
+        assert_eq!(get_credits(vote_state.epoch_credits()), credits);
+        assert!(vote_state.epoch_credits().len() <= MAX_EPOCH_CREDITS_HISTORY);
     }
 
     #[test]
