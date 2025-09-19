@@ -4,6 +4,7 @@ use {
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
+    crate::banking_stage::consumer::RetryableIndex,
     crossbeam_channel::{Receiver, RecvError, SendError, Sender},
     solana_measure::measure_us,
     solana_poh::poh_recorder::SharedWorkingBank,
@@ -179,7 +180,12 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 
     /// Send transactions back to scheduler as retryable.
     fn retry(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
-        let retryable_indexes: Vec<_> = (0..work.transactions.len()).collect();
+        let retryable_indexes: Vec<_> = (0..work.transactions.len())
+            .map(|index| RetryableIndex {
+                index,
+                immediately_retryable: true,
+            })
+            .collect();
         let num_retryable = retryable_indexes.len();
         self.metrics
             .count_metrics
@@ -942,7 +948,10 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid);
         assert_eq!(consumed.work.ids, vec![id]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
-        assert_eq!(consumed.retryable_indexes, vec![0]);
+        assert_eq!(
+            consumed.retryable_indexes,
+            vec![RetryableIndex::new(0, true)]
+        );
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
@@ -991,7 +1000,7 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid);
         assert_eq!(consumed.work.ids, vec![id]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
-        assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
+        assert_eq!(consumed.retryable_indexes, Vec::new());
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
@@ -1051,7 +1060,7 @@ mod tests {
             if relax_intrabatch_account_locks {
                 vec![]
             } else {
-                vec![1]
+                vec![RetryableIndex::new(1, true)]
             }
         );
 
@@ -1122,13 +1131,13 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid1);
         assert_eq!(consumed.work.ids, vec![id1]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
-        assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
+        assert_eq!(consumed.retryable_indexes, Vec::new());
 
         let consumed = consumed_receiver.recv().unwrap();
         assert_eq!(consumed.work.batch_id, bid2);
         assert_eq!(consumed.work.ids, vec![id2]);
         assert_eq!(consumed.work.max_ages, vec![max_age]);
-        assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
+        assert_eq!(consumed.retryable_indexes, Vec::new());
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
@@ -1258,7 +1267,7 @@ mod tests {
             .unwrap();
 
         let consumed = consumed_receiver.recv().unwrap();
-        assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
+        assert_eq!(consumed.retryable_indexes, Vec::new());
         // all but one succeed. 6 for initial funding
         assert_eq!(bank.transaction_count(), 6 + 5);
 
