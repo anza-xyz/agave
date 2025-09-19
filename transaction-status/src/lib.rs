@@ -6,11 +6,12 @@ pub use {
     solana_transaction_status_client_types::{
         option_serializer, ConfirmedTransactionStatusWithSignature, EncodeError,
         EncodedConfirmedBlock, EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
-        EncodedTransactionWithStatusMeta, InnerInstruction, InnerInstructions, Reward, Rewards,
-        TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionDetails,
-        TransactionStatus, TransactionStatusMeta, TransactionTokenBalance, UiAccountsList,
-        UiAddressTableLookup, UiCompiledInstruction, UiConfirmedBlock, UiInnerInstructions,
-        UiInstruction, UiLoadedAddresses, UiMessage, UiParsedInstruction, UiParsedMessage,
+        EncodedTransactionWithStatusMeta, InnerInstruction, InnerInstructions,
+        MaxSupportedTransactionVersionConfig, Reward, Rewards, TransactionBinaryEncoding,
+        TransactionConfirmationStatus, TransactionDetails, TransactionStatus,
+        TransactionStatusMeta, TransactionTokenBalance, UiAccountsList, UiAddressTableLookup,
+        UiCompiledInstruction, UiConfirmedBlock, UiInnerInstructions, UiInstruction,
+        UiLoadedAddresses, UiMessage, UiParsedInstruction, UiParsedMessage,
         UiPartiallyDecodedInstruction, UiRawMessage, UiReturnDataEncoding, UiTransaction,
         UiTransactionEncoding, UiTransactionReturnData, UiTransactionStatusMeta,
         UiTransactionTokenBalance,
@@ -61,7 +62,7 @@ pub mod token_balances;
 pub struct BlockEncodingOptions {
     pub transaction_details: TransactionDetails,
     pub show_rewards: bool,
-    pub max_supported_transaction_version: Option<u8>,
+    pub max_supported_transaction_version: MaxSupportedTransactionVersionConfig,
 }
 
 /// Represents types that can be encoded into one of several encoding formats
@@ -445,7 +446,7 @@ impl TransactionWithStatusMeta {
     pub fn encode(
         self,
         encoding: UiTransactionEncoding,
-        max_supported_transaction_version: Option<u8>,
+        max_supported_transaction_version: MaxSupportedTransactionVersionConfig,
         show_rewards: bool,
     ) -> Result<EncodedTransactionWithStatusMeta, EncodeError> {
         match self {
@@ -469,7 +470,7 @@ impl TransactionWithStatusMeta {
 
     fn build_json_accounts(
         self,
-        max_supported_transaction_version: Option<u8>,
+        max_supported_transaction_version: MaxSupportedTransactionVersionConfig,
         show_rewards: bool,
     ) -> Result<EncodedTransactionWithStatusMeta, EncodeError> {
         match self {
@@ -488,21 +489,14 @@ impl TransactionWithStatusMeta {
 impl VersionedTransactionWithStatusMeta {
     fn validate_version(
         &self,
-        max_supported_transaction_version: Option<u8>,
-    ) -> Result<Option<TransactionVersion>, EncodeError> {
-        match (
-            max_supported_transaction_version,
-            self.transaction.version(),
-        ) {
-            // Set to none because old clients can't handle this field
-            (None, TransactionVersion::LEGACY) => Ok(None),
-            (None, TransactionVersion::Number(version)) => {
-                Err(EncodeError::UnsupportedTransactionVersion(version))
-            }
-            (Some(_), TransactionVersion::LEGACY) => Ok(Some(TransactionVersion::LEGACY)),
-            (Some(max_version), TransactionVersion::Number(version)) => {
+        max_supported_transaction_version: MaxSupportedTransactionVersionConfig,
+    ) -> Result<TransactionVersion, EncodeError> {
+        let max_version = max_supported_transaction_version.max_supported_transaction_version;
+        match self.transaction.version() {
+            TransactionVersion::LEGACY => Ok(TransactionVersion::LEGACY),
+            TransactionVersion::Number(version) => {
                 if version <= max_version {
-                    Ok(Some(TransactionVersion::Number(version)))
+                    Ok(TransactionVersion::Number(version))
                 } else {
                     Err(EncodeError::UnsupportedTransactionVersion(version))
                 }
@@ -513,7 +507,7 @@ impl VersionedTransactionWithStatusMeta {
     pub fn encode(
         self,
         encoding: UiTransactionEncoding,
-        max_supported_transaction_version: Option<u8>,
+        max_supported_transaction_version: MaxSupportedTransactionVersionConfig,
         show_rewards: bool,
     ) -> Result<EncodedTransactionWithStatusMeta, EncodeError> {
         let version = self.validate_version(max_supported_transaction_version)?;
@@ -534,7 +528,7 @@ impl VersionedTransactionWithStatusMeta {
                     meta
                 }
             }),
-            version,
+            version: Some(version),
         })
     }
 
@@ -547,7 +541,7 @@ impl VersionedTransactionWithStatusMeta {
 
     fn build_json_accounts(
         self,
-        max_supported_transaction_version: Option<u8>,
+        max_supported_transaction_version: MaxSupportedTransactionVersionConfig,
         show_rewards: bool,
     ) -> Result<EncodedTransactionWithStatusMeta, EncodeError> {
         let version = self.validate_version(max_supported_transaction_version)?;
@@ -579,7 +573,7 @@ impl VersionedTransactionWithStatusMeta {
                 self.meta,
                 show_rewards,
             )),
-            version,
+            version: Some(version),
         })
     }
 }
@@ -602,7 +596,7 @@ impl ConfirmedTransactionWithStatusMeta {
     pub fn encode(
         self,
         encoding: UiTransactionEncoding,
-        max_supported_transaction_version: Option<u8>,
+        max_supported_transaction_version: MaxSupportedTransactionVersionConfig,
     ) -> Result<EncodedConfirmedTransactionWithStatusMeta, EncodeError> {
         Ok(EncodedConfirmedTransactionWithStatusMeta {
             slot: self.slot,
