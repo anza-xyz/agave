@@ -208,7 +208,7 @@ use {
         },
         MaybeTlsStream, WebSocketStream,
     },
-    url::Url,
+    tungstenite::client::IntoClientRequest,
 };
 
 pub type PubsubClientResult<T = ()> = Result<T, PubsubClientError>;
@@ -272,9 +272,11 @@ pub struct PubsubClient {
 }
 
 impl PubsubClient {
-    pub async fn new(url: &str) -> PubsubClientResult<Self> {
-        let url = Url::parse(url)?;
-        let (ws, _response) = connect_async(url)
+    pub async fn new<R>(request: R) -> PubsubClientResult<Self>
+    where
+        R: IntoClientRequest + Unpin,
+    {
+        let (ws, _response) = connect_async(request)
             .await
             .map_err(Box::new)
             .map_err(PubsubClientError::ConnectionError)?;
