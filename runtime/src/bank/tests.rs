@@ -11248,7 +11248,7 @@ fn test_system_instruction_unsigned_transaction() {
 
 #[test]
 fn test_calc_vote_accounts_to_store_empty() {
-    let vote_account_rewards = DashMap::default();
+    let vote_account_rewards = HashMap::default();
     let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
     assert_eq!(
         result.accounts_with_rewards.len(),
@@ -11259,7 +11259,7 @@ fn test_calc_vote_accounts_to_store_empty() {
 
 #[test]
 fn test_calc_vote_accounts_to_store_overflow() {
-    let vote_account_rewards = DashMap::default();
+    let mut vote_account_rewards = HashMap::default();
     let pubkey = solana_pubkey::new_rand();
     let mut vote_account = AccountSharedData::default();
     vote_account.set_lamports(u64::MAX);
@@ -11284,7 +11284,7 @@ fn test_calc_vote_accounts_to_store_normal() {
     let pubkey = solana_pubkey::new_rand();
     for commission in 0..2 {
         for vote_rewards in 0..2 {
-            let vote_account_rewards = DashMap::default();
+            let mut vote_account_rewards = HashMap::default();
             let mut vote_account = AccountSharedData::default();
             vote_account.set_lamports(1);
             vote_account_rewards.insert(
