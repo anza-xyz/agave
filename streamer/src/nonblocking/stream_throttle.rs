@@ -31,6 +31,7 @@ pub(crate) struct StakedStreamLoadEMA {
     max_staked_load_in_ema_window: u64,
     // Maximum number of streams for an unstaked connection in stream throttling window
     max_unstaked_load_in_throttling_window: u64,
+    max_streams_per_ms: u64,
 }
 
 impl StakedStreamLoadEMA {
@@ -63,6 +64,7 @@ impl StakedStreamLoadEMA {
             stats,
             max_staked_load_in_ema_window,
             max_unstaked_load_in_throttling_window,
+            max_streams_per_ms,
         }
     }
 
@@ -180,6 +182,10 @@ impl StakedStreamLoadEMA {
                 )
             }
         }
+    }
+
+    pub(crate) fn max_streams_per_ms(&self) -> u64 {
+        self.max_streams_per_ms
     }
 }
 

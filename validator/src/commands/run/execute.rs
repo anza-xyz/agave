@@ -60,7 +60,7 @@ use {
         },
     },
     solana_signer::Signer,
-    solana_streamer::quic::{QuicServerParams, DEFAULT_TPU_COALESCE},
+    solana_streamer::quic::{QosMode, QuicServerParams, DEFAULT_TPU_COALESCE},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::{
         broadcast_stage::BroadcastStageType,
@@ -921,10 +921,10 @@ pub fn execute(
         max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
         max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
         max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
-        max_streams_per_ms,
         max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
         coalesce: tpu_coalesce,
         num_threads: tpu_transaction_receive_threads,
+        qos_mode: QosMode::StakeWeighted { max_streams_per_ms },
         ..Default::default()
     };
 
@@ -932,7 +932,7 @@ pub fn execute(
         max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
         max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
         max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
-        max_streams_per_ms,
+        qos_mode: QosMode::StakeWeighted { max_streams_per_ms },
         max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
         coalesce: tpu_coalesce,
         num_threads: tpu_transaction_forward_receive_threads,
