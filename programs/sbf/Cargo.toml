@@ -52,6 +52,7 @@ members = [
     "rust/param_passing",
     "rust/param_passing_dep",
     "rust/poseidon",
+    "rust/r2_instruction_data_pointer",
     "rust/rand",
     "rust/realloc",
     "rust/realloc_invoke",
@@ -124,6 +125,7 @@ solana-cli-output = { path = "../../cli-output", version = "=3.1.0" }
 solana-clock = { version = "=3.0.0", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=3.1.0" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=3.1.0" }
+solana-cpi = "=3.0.0"
 solana-curve25519 = { path = "../../curves/curve25519", version = "=3.1.0" }
 solana-define-syscall = "=3.0.0"
 solana-fee = { path = "../../fee", version = "=3.1.0" }
@@ -150,6 +152,7 @@ solana-sbf-rust-invoked-dep = { path = "rust/invoked_dep", version = "=3.1.0" }
 solana-sbf-rust-many-args-dep = { path = "rust/many_args_dep", version = "=3.1.0" }
 solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=3.1.0" }
 solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=3.1.0" }
+solana-sbf-rust-r2-instruction-data-pointer = { path = "rust/r2_instruction_data_pointer", version = "=3.1.0" }
 solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=3.1.0" }
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=3.1.0" }
 solana-sbpf = "=0.12.2"
@@ -170,6 +173,7 @@ solana-transaction-context = { path = "../../transaction-context", version = "=3
 solana-transaction-status = { path = "../../transaction-status", version = "=3.1.0" }
 solana-vote = { path = "../../vote", version = "=3.1.0" }
 solana-vote-program = { path = "../../programs/vote", version = "=3.1.0" }
+test-case = "3.3.1"
 thiserror = "1.0"
 
 [features]
@@ -251,6 +255,7 @@ solana-transaction-error = "3.0.0"
 solana-transaction-status = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+test-case = { workspace = true }
 
 [profile.release]
 # The test programs are build in release mode

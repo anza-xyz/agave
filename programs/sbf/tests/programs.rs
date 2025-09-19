@@ -69,6 +69,7 @@ use {
         sync::{Arc, RwLock},
         time::Duration,
     },
+    test_case::test_matrix,
 };
 
 #[cfg(feature = "sbf_rust")]
@@ -1576,6 +1577,71 @@ fn test_program_sbf_instruction_introspection() {
         TransactionError::InstructionError(0, InstructionError::NotEnoughAccountKeys)
     );
     assert!(bank.get_account(&sysvar::instructions::id()).is_none());
+}
+
+#[test_matrix(
+    [0, 1, 2, 5, 10, 15, 20],
+    [1, 10, 50, 100, 255, 500, 1000, 1024]  // MAX_RETURN_DATA = 1024
+)]
+#[allow(clippy::arithmetic_side_effects)]
+#[cfg(feature = "sbf_rust")]
+fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_len: usize) {
+    solana_logger::setup();
+
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(50);
+
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let authority_keypair = Keypair::new();
+
+    let (bank, program_id) = load_program_of_loader_v4(
+        &mut bank_client,
+        &bank_forks,
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_r2_instruction_data_pointer",
+    );
+
+    let mut account_metas = Vec::new();
+
+    for i in 0..num_accounts {
+        let pubkey = Pubkey::new_unique();
+
+        // Mixed account sizes.
+        bank.store_account(
+            &pubkey,
+            &AccountSharedData::new(0, 100 + (i * 50), &program_id),
+        );
+
+        // Mixed account roles.
+        if i % 2 == 0 {
+            account_metas.push(AccountMeta::new(pubkey, false));
+        } else {
+            account_metas.push(AccountMeta::new_readonly(pubkey, false));
+        }
+    }
+
+    bank.freeze();
+
+    // The provided instruction data will be set to the return data.
+    let input_data: Vec<u8> = (0..input_data_len).map(|i| (i % 256) as u8).collect();
+
+    let instruction = Instruction::new_with_bytes(program_id, &input_data, account_metas);
+
+    let blockhash = bank.last_blockhash();
+    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+    let transaction = Transaction::new(&[&mint_keypair], message, blockhash);
+    let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
+
+    let result = bank.simulate_transaction(&sanitized_tx, false);
+    assert!(result.result.is_ok());
+
+    let return_data = result.return_data.unwrap().data;
+    assert_eq!(input_data, return_data);
 }
 
 fn get_stable_genesis_config() -> GenesisConfigInfo {

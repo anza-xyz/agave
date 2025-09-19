@@ -248,7 +248,7 @@ fn bench_create_vm(bencher: &mut Bencher) {
     executable.verify::<RequisiteVerifier>().unwrap();
 
     // Serialize account data
-    let (_serialized, regions, account_lengths) = serialize_parameters(
+    let (_serialized, regions, account_lengths, _instruction_data_offset) = serialize_parameters(
         &invoke_context
             .transaction_context
             .get_current_instruction_context()
@@ -283,7 +283,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
         .stricter_abi_and_runtime_constraints;
 
     // Serialize account data
-    let (_serialized, regions, account_lengths) = serialize_parameters(
+    let (_serialized, regions, account_lengths, _instruction_data_offset) = serialize_parameters(
         &invoke_context
             .transaction_context
             .get_current_instruction_context()

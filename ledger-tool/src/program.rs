@@ -505,6 +505,10 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     let interpreted = matches.value_of("mode").unwrap() != "jit";
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
+    let provide_instruction_data_offset_in_vm_r2 = invoke_context
+        .get_feature_set()
+        .provide_instruction_data_offset_in_vm_r2;
+
     // Adding `DELAY_VISIBILITY_SLOT_OFFSET` to slots to accommodate for delay visibility of the program
     let mut program_cache_for_tx_batch =
         bank.new_program_cache_for_tx_batch_for_slot(bank.slot() + DELAY_VISIBILITY_SLOT_OFFSET);
@@ -527,16 +531,17 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         )
         .unwrap();
     invoke_context.push().unwrap();
-    let (_parameter_bytes, regions, account_lengths) = serialize_parameters(
-        &invoke_context
-            .transaction_context
-            .get_current_instruction_context()
-            .unwrap(),
-        false, // stricter_abi_and_runtime_constraints
-        false, // account_data_direct_mapping
-        true,  // for mask_out_rent_epoch_in_vm_serialization
-    )
-    .unwrap();
+    let (_parameter_bytes, regions, account_lengths, instruction_data_offset) =
+        serialize_parameters(
+            &invoke_context
+                .transaction_context
+                .get_current_instruction_context()
+                .unwrap(),
+            false, // stricter_abi_and_runtime_constraints
+            false, // account_data_direct_mapping
+            true,  // for mask_out_rent_epoch_in_vm_serialization
+        )
+        .unwrap();
 
     let program = matches.value_of("PROGRAM").unwrap();
     let verified_executable = load_program(Path::new(program), program_id, &invoke_context);
@@ -554,6 +559,11 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         vm.debug_port = Some(matches.value_of("port").unwrap().parse::<u16>().unwrap());
     }
     vm.registers[1] = MM_INPUT_START;
+
+    // SIMD-0321: Provide offset to instruction data in VM register 2.
+    if provide_instruction_data_offset_in_vm_r2 {
+        vm.registers[2] = instruction_data_offset as u64;
+    }
     let (instruction_count, result) = vm.execute_program(&verified_executable, interpreted);
     let duration = Instant::now() - start_time;
     if matches.occurrences_of("trace") > 0 {
