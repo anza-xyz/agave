@@ -64,3 +64,4 @@ solana-pubkey = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 static_assertions = { workspace = true }
+test-case = { workspace = true }

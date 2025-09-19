@@ -4671,7 +4671,8 @@ impl RpcClient {
         &self,
         message: &impl SerializableMessage,
     ) -> ClientResult<u64> {
-        let serialized_encoded = serialize_and_encode(message, UiTransactionEncoding::Base64)?;
+        let serialized = message.serialize();
+        let serialized_encoded = BASE64_STANDARD.encode(serialized);
         let result = self
             .send::<Response<Option<u64>>>(
                 RpcRequest::GetFeeForMessage,
