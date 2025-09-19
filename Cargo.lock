@@ -7373,6 +7373,7 @@ dependencies = [
  "solana-version",
  "solana-vote-program",
  "tikv-jemallocator",
+ "tokio-util 0.7.16",
 ]
 
 [[package]]
@@ -9918,6 +9919,7 @@ dependencies = [
  "solana-transaction-error",
  "thiserror 2.0.16",
  "tokio",
+ "tokio-util 0.7.16",
 ]
 
 [[package]]
@@ -11752,6 +11754,7 @@ dependencies = [
  "solana-version",
  "thiserror 2.0.16",
  "tokio",
+ "tokio-util 0.7.16",
  "url 2.5.7",
  "x509-parser",
 ]

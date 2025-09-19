@@ -26,6 +26,7 @@ use {
         sync::{atomic::AtomicBool, Arc, RwLock},
         time::Duration,
     },
+    tokio_util::sync::CancellationToken,
 };
 
 const DEFAULT_CHANNEL_SIZE: usize = 100_000;
@@ -83,6 +84,7 @@ pub fn main() {
     let tpu_forward_address = args.tpu_forward_address;
     let max_streams_per_ms = args.max_streams_per_ms;
     let exit = Arc::new(AtomicBool::new(false));
+    let cancel = CancellationToken::new();
     // To be linked with the Tpu sigverify and forwarder service
     let (tpu_sender, tpu_receiver) = bounded(DEFAULT_CHANNEL_SIZE);
     let (tpu_fwd_sender, _tpu_fwd_receiver) = bounded(DEFAULT_CHANNEL_SIZE);
@@ -202,7 +204,7 @@ pub fn main() {
         max_connections_per_ipaddr_per_min,
         tpu_coalesce,
         &identity_keypair,
-        exit,
+        cancel.clone(),
     );
     vortexor.join().unwrap();
     sigverify_stage.join().unwrap();
