@@ -1,0 +1,27 @@
+[package]
+name = "xtask"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[dependencies]
+anyhow = "1.0.98"
+clap = { version = "4.5.27", features = ["derive"] }
+env_logger = "0.9"
+futures-util = "0.3.31"
+log = "0.4"
+octocrab = { version = "0.44.1", features = ["stream"] }
+regex = "1.0"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.143"
+tokio = { version = "1.47.1", features = ["full"] }
+toml_edit = { version = "0.22.23", features = ["serde"] }
+walkdir = "2"
+
+[dev-dependencies]
+pretty_assertions = { version = "1.4.1" }
+test-case = { version = "3.3.1" }
