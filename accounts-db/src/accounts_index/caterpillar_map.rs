@@ -10,11 +10,56 @@ use static_assertions::const_assert_eq;
 
 /// Represents a compact payload that can be embedded within a `CaterpillarCell`.
 ///
-/// Parent trait is automatically provided by #[bitfield] annotated structs as long as they
-/// fit in 64 bits. However CompactPayload is required to span at most 61 bits.
+/// This trait marks types that can be stored directly within the 64-bit atomic value
+/// of a `CaterpillarCell`. The payload is limited to 61 bits though to leave 3 bits for
+/// metadata and pointer alignment.
+///
+/// The supertrait is automatically provided by #[bitfield] annotation as long as struct
+/// fit in 64 bits. However `CompactPayload` is required to span at most 61 bits.
+///
+/// # Example
+/// ```
+/// #[bitfield(bits = 61)]
+/// #[derive(BitfieldSpecifier)]
+/// struct MyPayload {
+///     id: B32,
+///     flags: B29,
+/// }
+/// impl CompactPayload for MyPayload {}
+/// ```
 pub trait CompactPayload: Specifier<Bytes = u64, InOut = Self> {}
 
-/// Container capable of embedding a compact payload `C` or holding a boxed expanded payload `E`.
+/// A thread-safe container that can dynamically switch between compact and expanded representations.
+///
+/// `CaterpillarCell` starts with a compact payload `C` embedded directly in a 64-bit atomic value.
+/// When more space is needed, it can atomically transition to an expanded payload `E` stored on
+/// the heap. This design optimizes for the common case where data remains small while supporting
+/// efficient growth when needed.
+///
+/// # Type Parameters
+/// - `C`: Compact payload type that implements `CompactPayload` (≤ 61 bits)
+/// - `E`: Expanded payload type (aligned to 8-bytes) stored on the heap when data grows
+///
+/// # Thread Safety
+/// All operations on `CaterpillarCell` are atomic and thread-safe. Multiple threads can
+/// simultaneously call `turn_to_expanded()` on the `&` of the same cell - only one will succeed
+/// in the transition, while others will observe the already-expanded state.
+///
+/// Transitioning back from expanded to compact representation currently requires `&mut` access
+/// to the cell.
+///
+/// # Example
+/// ```
+/// let cell = CaterpillarCell::from_compact(small_payload);
+///
+/// // Multiple threads can safely expand concurrently
+/// match cell.turn_to_expanded() {
+///     CaterpillarCellView::Expanded(expanded) => {
+///         // Now can modify the expanded data
+///     }
+///     _ => unreachable!(),
+/// }
+/// ```
 pub struct CaterpillarCell<C: CompactPayload, E> {
     /// Raw value - either an embedded (small) payload or address of a boxed full value
     raw_atomic: AtomicU64,
@@ -26,10 +71,12 @@ where
     E: From<C>,
     C: From<E> + CompactPayload,
 {
+    /// Creates a new `CaterpillarCell` containing a compact payload.
     pub fn from_compact(compact: C) -> Self {
         Self::from_transumtion_cell(TransmutationCell::from_compact(compact))
     }
 
+    /// Creates a new `CaterpillarCell` containing an expanded payload.
     pub fn from_expanded(expanded: E) -> Self {
         Self::from_transumtion_cell(TransmutationCell::from_expanded(expanded))
     }
@@ -41,10 +88,32 @@ where
         }
     }
 
+    /// Returns a view of the current state without modifying it.
+    ///
+    /// This method provides read-only access to the cell's contents, whether
+    /// it's currently in compact or expanded state. The operation is atomic
+    /// and does not require exclusive access.
     pub fn as_view(&self) -> CaterpillarCellView<C, E> {
         TransmutationCell::from_raw(self.raw_atomic.load(Ordering::Relaxed)).into_view()
     }
 
+    /// Atomically ensures the cell is in expanded state and returns a view.
+    ///
+    /// If the cell is currently compact, this method will atomically transition
+    /// it to the expanded state by converting the compact payload to an expanded
+    /// payload and storing it on the heap. If it's already expanded, it returns
+    /// the existing expanded view.
+    ///
+    /// # Thread Safety
+    /// This operation is fully thread-safe using compare-and-swap. When multiple
+    /// threads call this method concurrently on a compact cell:
+    /// - Only one thread will succeed in the transition (first wins)
+    /// - Other threads will see the already-expanded state
+    /// - All threads can then safely access the expanded payload
+    ///
+    /// # Returns
+    /// Always returns `CaterpillarCellView::Expanded` containing a reference to
+    /// the expanded data, either newly created or pre-existing.
     pub fn turn_to_expanded(&self) -> CaterpillarCellView<C, E> {
         let mut current_raw = self.raw_atomic.load(Ordering::Acquire);
         loop {
@@ -72,6 +141,16 @@ where
         }
     }
 
+    /// Converts an expanded cell back to compact state.
+    ///
+    /// This method requires a mutable reference, ensuring exclusive access to the cell.
+    /// If the cell is currently expanded, it will deallocate the heap data and convert
+    /// it back to a compact representation embedded in the atomic value. If the cell
+    /// is already compact, it returns the current compact view.
+    ///
+    /// # Returns
+    /// Always returns `CaterpillarCellView::Compact` containing the compact data,
+    /// either newly converted or pre-existing.
     pub fn turn_to_compact(&mut self) -> CaterpillarCellView<C, E> {
         let current_raw = self.raw_atomic.load(Ordering::Acquire);
         let current_transmute = TransmutationCell::from_raw(current_raw);
@@ -99,26 +178,42 @@ impl<C: CompactPayload, E> Drop for CaterpillarCell<C, E> {
     }
 }
 
+/// A view into the current state of a `CaterpillarCell`.
+///
+/// This enum provides access to the cell's payload regardless of whether it's
+/// currently stored in compact or expanded form. The lifetime `'a` ties the
+/// view to the cell that created it.
 #[derive(Debug)]
 pub enum CaterpillarCellView<'a, C, E> {
+    /// The payload is stored compactly within the cell itself.
     Compact(C),
+    /// The payload is stored on the heap, referenced by this view.
     Expanded(&'a E),
 }
 
+/// Metadata stored in the low 3 bits of the cell's atomic value.
+///
+/// This structure contains flags that indicate how to interpret the remaining
+/// 61 bits of the atomic value - either as embedded compact data or as a
+/// shifted heap pointer.
 #[bitfield(bits = 3)]
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq, BitfieldSpecifier)]
 pub struct CommonPayloadInfo {
     /// Whether the payload is compact in the entry itself (otherwise entry stores address to heap memory)
     pub is_compact: bool,
+    /// Reserved bits for future use
     pub reserved: B2,
 }
 
+/// The complete 64-bit representation combining metadata and payload data.
 #[bitfield(bits = 64)]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct CommonInfoAndPayload {
+    /// 3-bit metadata indicating payload type and flags
     pub common_info: CommonPayloadInfo,
+    /// 61-bit payload representation (either embedded data or shifted pointer)
     pub payload_repr: B61,
 }
 
@@ -223,15 +318,15 @@ mod tests {
 
     #[derive(Debug)]
     pub struct TestExpandedPayload {
-        pub ref_count: u32,
-        pub slot_list: RwLock<Vec<TestCompactPayload>>,
+        pub beeps: u32,
+        pub inner_payloads: RwLock<Vec<TestCompactPayload>>,
     }
 
     impl From<TestCompactPayload> for TestExpandedPayload {
         fn from(compact: TestCompactPayload) -> Self {
             Self {
-                ref_count: 1,
-                slot_list: RwLock::new(vec![compact]),
+                beeps: 1,
+                inner_payloads: RwLock::new(vec![compact]),
             }
         }
     }
@@ -240,18 +335,17 @@ mod tests {
     #[repr(C)]
     #[derive(Clone, Debug, BitfieldSpecifier)]
     pub struct TestCompactPayload {
-        /// Storage id, capped at 2^29-1
-        pub file_id: B29,
-        pub offset_reduced: B31,
-        pub is_zero_lamports: bool,
+        pub id: B29,
+        pub offset: B31,
+        pub is_bar: bool,
     }
 
     impl From<TestExpandedPayload> for TestCompactPayload {
         fn from(expanded: TestExpandedPayload) -> Self {
-            let slot_list = expanded.slot_list.into_inner().unwrap();
+            let payloads = expanded.inner_payloads.into_inner().unwrap();
             Self::new()
-                .with_file_id(slot_list[0].file_id())
-                .with_offset_reduced(slot_list[0].offset_reduced())
+                .with_id(payloads[0].id())
+                .with_offset(payloads[0].offset())
         }
     }
 
@@ -262,11 +356,11 @@ mod tests {
     #[test]
     fn test_cell_turning() {
         let compact = TestCompactPayload::new()
-            .with_file_id(4534)
-            .with_offset_reduced(99)
-            .with_is_zero_lamports(true);
+            .with_id(4534)
+            .with_offset(99)
+            .with_is_bar(true);
         assert_eq!(
-            TestCompactPayload::from_bytes(compact.clone().into_bytes()).file_id(),
+            TestCompactPayload::from_bytes(compact.clone().into_bytes()).id(),
             4534
         );
 
@@ -274,36 +368,36 @@ mod tests {
         let CaterpillarCellView::Compact(compact) = compact_cell.as_view() else {
             panic!("Unexpected entry type")
         };
-        assert_eq!(compact.file_id(), 4534);
-        assert_eq!(compact.offset_reduced(), 99);
+        assert_eq!(compact.id(), 4534);
+        assert_eq!(compact.offset(), 99);
 
         let expanded = TestExpandedPayload {
-            ref_count: 2,
-            slot_list: RwLock::new(vec![compact]),
+            beeps: 2,
+            inner_payloads: RwLock::new(vec![compact]),
         };
         let expanded_cell = TestCaterpillarCell::from_expanded(expanded);
         let CaterpillarCellView::Expanded(expanded) = expanded_cell.as_view() else {
             panic!("Unexpected entry type")
         };
-        assert_eq!(expanded.ref_count, 2);
-        assert_eq!(expanded.slot_list.read().unwrap()[0].file_id(), 4534);
-        assert_eq!(expanded.slot_list.read().unwrap()[0].offset_reduced(), 99);
+        assert_eq!(expanded.beeps, 2);
+        assert_eq!(expanded.inner_payloads.read().unwrap()[0].id(), 4534);
+        assert_eq!(expanded.inner_payloads.read().unwrap()[0].offset(), 99);
 
         let turning_cell = compact_cell;
         let CaterpillarCellView::Expanded(expanded) = turning_cell.turn_to_expanded() else {
             panic!("Unexpected entry type")
         };
-        assert_eq!(expanded.ref_count, 1);
-        assert_eq!(expanded.slot_list.read().unwrap()[0].file_id(), 4534);
-        assert_eq!(expanded.slot_list.read().unwrap()[0].offset_reduced(), 99);
+        assert_eq!(expanded.beeps, 1);
+        assert_eq!(expanded.inner_payloads.read().unwrap()[0].id(), 4534);
+        assert_eq!(expanded.inner_payloads.read().unwrap()[0].offset(), 99);
 
         let mut mut_turning_cell = turning_cell;
         mut_turning_cell.turn_to_compact();
         let CaterpillarCellView::Compact(compact) = mut_turning_cell.as_view() else {
             panic!("Unexpected entry type")
         };
-        assert_eq!(compact.file_id(), 4534);
-        assert_eq!(compact.offset_reduced(), 99);
+        assert_eq!(compact.id(), 4534);
+        assert_eq!(compact.offset(), 99);
     }
 
     #[test]
@@ -316,9 +410,9 @@ mod tests {
 
         // Create an initial compact entry
         let initial_compact = TestCompactPayload::new()
-            .with_file_id(INITIAL_FILE_ID)
-            .with_offset_reduced(100)
-            .with_is_zero_lamports(false);
+            .with_id(INITIAL_FILE_ID)
+            .with_offset(100)
+            .with_is_bar(false);
 
         let cell = Arc::new(TestCaterpillarCell::from_compact(initial_compact));
 
@@ -342,11 +436,11 @@ mod tests {
                             // Create new entry with unique file_id for this thread
                             let unique_file_id = INITIAL_FILE_ID + 1000 + (thread_id as u32);
                             // Add entry to slot_list under write lock
-                            expanded.slot_list.write().unwrap().push(
+                            expanded.inner_payloads.write().unwrap().push(
                                 TestCompactPayload::new()
-                                    .with_file_id(unique_file_id)
-                                    .with_offset_reduced(50)
-                                    .with_is_zero_lamports(true),
+                                    .with_id(unique_file_id)
+                                    .with_offset(50)
+                                    .with_is_bar(true),
                             );
 
                             unique_file_id // Return the file_id this thread added
@@ -367,7 +461,7 @@ mod tests {
         let CaterpillarCellView::Expanded(expanded) = cell.as_view() else {
             panic!("Expected expanded entry at end");
         };
-        let slot_list = expanded.slot_list.read().unwrap();
+        let slot_list = expanded.inner_payloads.read().unwrap();
 
         // Should have original entry + N added by threads
         assert_eq!(slot_list.len(), NUM_THREADS + 1);
@@ -376,16 +470,16 @@ mod tests {
         for (thread_id, &expected_file_id) in added_file_ids.iter().enumerate() {
             let thread_entry = slot_list
                 .iter()
-                .find(|e| e.file_id() == expected_file_id)
+                .find(|e| e.id() == expected_file_id)
                 .unwrap_or_else(|| panic!("Missing entry for thread {}", thread_id));
 
             assert_eq!(
-                thread_entry.offset_reduced(),
+                thread_entry.offset(),
                 50 * (1 + thread_id / NUM_THREADS) as u32
             );
-            assert_eq!(thread_entry.is_zero_lamports(), thread_id < NUM_THREADS);
+            assert_eq!(thread_entry.is_bar(), thread_id < NUM_THREADS);
         }
 
-        assert_eq!(expanded.ref_count, 1);
+        assert_eq!(expanded.beeps, 1);
     }
 }
