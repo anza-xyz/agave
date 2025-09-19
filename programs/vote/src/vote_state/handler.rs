@@ -87,8 +87,6 @@ pub trait VoteStateHandle {
 
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp);
 
-    fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot);
-
     fn set_vote_account_state(
         self,
         vote_account: &mut BorrowedInstructionAccount,
@@ -259,34 +257,6 @@ impl VoteStateHandle for VoteStateV3 {
         self.last_timestamp = timestamp;
     }
 
-    fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot) {
-        // Ignore votes for slots earlier than we already have votes for
-        if self
-            .last_voted_slot()
-            .is_some_and(|last_voted_slot| next_vote_slot <= last_voted_slot)
-        {
-            return;
-        }
-
-        pop_expired_votes(self, next_vote_slot);
-
-        let landed_vote = LandedVote {
-            latency: compute_vote_latency(next_vote_slot, current_slot),
-            lockout: Lockout::new(next_vote_slot),
-        };
-
-        // Once the stack is full, pop the oldest lockout and distribute rewards
-        if self.votes.len() == MAX_LOCKOUT_HISTORY {
-            let credits = credits_for_vote_at_index(self, 0);
-            let landed_vote = self.votes.pop_front().unwrap();
-            self.root_slot = Some(landed_vote.slot());
-
-            increment_credits(self, epoch, credits);
-        }
-        self.votes.push_back(landed_vote);
-        double_lockouts(self);
-    }
-
     fn set_vote_account_state(
         self,
         vote_account: &mut BorrowedInstructionAccount,
@@ -444,15 +414,6 @@ impl VoteStateHandle for VoteStateV4 {
 
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
         self.last_timestamp = timestamp;
-    }
-
-    fn process_next_vote_slot(
-        &mut self,
-        _next_vote_slot: Slot,
-        _epoch: Epoch,
-        _current_slot: Slot,
-    ) {
-        todo!()
     }
 
     fn set_vote_account_state(
@@ -635,14 +596,6 @@ impl VoteStateHandle for VoteStateHandler {
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_last_timestamp(timestamp),
-        }
-    }
-
-    fn process_next_vote_slot(&mut self, next_vote_slot: Slot, epoch: Epoch, current_slot: Slot) {
-        match &mut self.target_state {
-            TargetVoteState::V3(v3) => {
-                v3.process_next_vote_slot(next_vote_slot, epoch, current_slot)
-            }
         }
     }
 
@@ -863,6 +816,39 @@ fn double_lockouts<T: VoteStateHandle>(vote_state: &mut T) {
             v.lockout.increase_confirmation_count(1);
         }
     }
+}
+
+pub(crate) fn process_next_vote_slot<T: VoteStateHandle>(
+    vote_state: &mut T,
+    next_vote_slot: Slot,
+    epoch: Epoch,
+    current_slot: Slot,
+) {
+    // Ignore votes for slots earlier than we already have votes for
+    if vote_state
+        .last_voted_slot()
+        .is_some_and(|last_voted_slot| next_vote_slot <= last_voted_slot)
+    {
+        return;
+    }
+
+    pop_expired_votes(vote_state, next_vote_slot);
+
+    let landed_vote = LandedVote {
+        latency: compute_vote_latency(next_vote_slot, current_slot),
+        lockout: Lockout::new(next_vote_slot),
+    };
+
+    // Once the stack is full, pop the oldest lockout and distribute rewards
+    if vote_state.votes().len() == MAX_LOCKOUT_HISTORY {
+        let credits = credits_for_vote_at_index(vote_state, 0);
+        let landed_vote = vote_state.votes_mut().pop_front().unwrap();
+        vote_state.set_root_slot(Some(landed_vote.slot()));
+
+        increment_credits(vote_state, epoch, credits);
+    }
+    vote_state.votes_mut().push_back(landed_vote);
+    double_lockouts(vote_state);
 }
 
 #[allow(clippy::arithmetic_side_effects)]
