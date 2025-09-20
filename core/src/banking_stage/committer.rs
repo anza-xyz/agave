@@ -35,6 +35,10 @@ pub enum CommitTransactionDetails {
     NotCommitted(TransactionError),
 }
 
+/// Adds transactions to bank, which would eventually get it committed into the AccountDB as well.
+///
+/// Note that this does not cause the transaction to be included in the PoH stream.  Use
+/// [`solana_poh::transaction_recorder::TransactionRecorder`] for that.
 #[derive(Clone)]
 pub struct Committer {
     transaction_status_sender: Option<TransactionStatusSender>,
