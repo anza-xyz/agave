@@ -19,7 +19,7 @@ use {
     solana_rent::Rent,
     solana_slot_hashes::SlotHash,
     solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
-    solana_vote_interface::{error::VoteError, program::id},
+    solana_vote_interface::{authorized_voters::AuthorizedVoters, error::VoteError, program::id},
     std::{
         cmp::Ordering,
         collections::{HashSet, VecDeque},
@@ -1057,6 +1057,54 @@ pub fn create_account(
     lamports: u64,
 ) -> AccountSharedData {
     create_account_with_authorized(node_pubkey, vote_pubkey, vote_pubkey, commission, lamports)
+}
+
+/// Creates a new VoteStateV4 from VoteInit and Clock
+#[allow(clippy::arithmetic_side_effects)]
+pub fn new_vote_state_v4(vote_init: &VoteInit, clock: &Clock) -> VoteStateV4 {
+    VoteStateV4 {
+        node_pubkey: vote_init.node_pubkey,
+        authorized_voters: AuthorizedVoters::new(clock.epoch, vote_init.authorized_voter),
+        authorized_withdrawer: vote_init.authorized_withdrawer,
+        inflation_rewards_commission_bps: u16::from(vote_init.commission) * 100, // u16::MAX > u8::MAX * 100
+        ..VoteStateV4::default()
+    }
+}
+
+/// Creates a new V4 vote account with separate authorized voter and withdrawer
+pub fn create_account_with_authorized_v4(
+    node_pubkey: &Pubkey,
+    authorized_voter: &Pubkey,
+    authorized_withdrawer: &Pubkey,
+    commission: u8,
+    lamports: u64,
+) -> AccountSharedData {
+    let mut vote_account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &id());
+    let vote_state = new_vote_state_v4(
+        &VoteInit {
+            node_pubkey: *node_pubkey,
+            authorized_voter: *authorized_voter,
+            authorized_withdrawer: *authorized_withdrawer,
+            commission,
+        },
+        &Clock::default(),
+    );
+    VoteStateV4::serialize(
+        &VoteStateVersions::V4(Box::new(vote_state)),
+        vote_account.data_as_mut_slice(),
+    )
+    .unwrap();
+    vote_account
+}
+
+/// Creates a new V4 vote account with the given parameters
+pub fn create_account_v4(
+    vote_pubkey: &Pubkey,
+    node_pubkey: &Pubkey,
+    commission: u8,
+    lamports: u64,
+) -> AccountSharedData {
+    create_account_with_authorized_v4(node_pubkey, vote_pubkey, vote_pubkey, commission, lamports)
 }
 
 #[allow(clippy::arithmetic_side_effects)]

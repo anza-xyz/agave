@@ -263,7 +263,7 @@ mod tests {
             },
             vote_state::{
                 self, Lockout, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
-                VoteAuthorizeWithSeedArgs, VoteInit, VoteStateUpdate, VoteStateV3,
+                VoteAuthorizeWithSeedArgs, VoteInit, VoteStateUpdate, VoteStateV3, VoteStateV4,
                 VoteStateVersions,
             },
         },
@@ -275,11 +275,12 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction},
-        solana_program_runtime::invoke_context::mock_process_instruction,
+        solana_program_runtime::invoke_context::mock_process_instruction_with_feature_set,
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::sysvar,
         solana_slot_hashes::SlotHashes,
+        solana_svm_feature_set::SVMFeatureSet,
         solana_vote_interface::instruction::{tower_sync, tower_sync_switch},
         std::{collections::HashSet, str::FromStr},
     };
@@ -299,13 +300,22 @@ mod tests {
         AccountSharedData::new(0, 0, &Pubkey::new_unique())
     }
 
+    fn feature_set_with_vote_state_v4(enabled: bool) -> SVMFeatureSet {
+        SVMFeatureSet {
+            vote_state_v4: enabled,
+            ..SVMFeatureSet::all_enabled()
+        }
+    }
+
     fn process_instruction(
+        vote_state_v4_enabled: bool,
         instruction_data: &[u8],
         transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
         instruction_accounts: Vec<AccountMeta>,
         expected_result: Result<(), InstructionError>,
     ) -> Vec<AccountSharedData> {
-        mock_process_instruction(
+        let feature_set = feature_set_with_vote_state_v4(vote_state_v4_enabled);
+        mock_process_instruction_with_feature_set(
             &id(),
             None,
             instruction_data,
@@ -315,10 +325,12 @@ mod tests {
             Entrypoint::vm,
             |_invoke_context| {},
             |_invoke_context| {},
+            &feature_set,
         )
     }
 
     fn process_instruction_as_one_arg(
+        vote_state_v4_enabled: bool,
         instruction: &Instruction,
         expected_result: Result<(), InstructionError>,
     ) -> Vec<AccountSharedData> {
@@ -361,6 +373,7 @@ mod tests {
             })
             .collect();
         process_instruction(
+            vote_state_v4_enabled,
             &instruction.data,
             transaction_accounts,
             instruction.accounts.clone(),
@@ -380,22 +393,37 @@ mod tests {
         account::create_account_shared_data_for_test(&Clock::default())
     }
 
-    fn create_test_account() -> (Pubkey, AccountSharedData) {
+    fn create_test_account(vote_state_v4_enabled: bool) -> (Pubkey, AccountSharedData) {
         let rent = Rent::default();
-        let balance = rent.minimum_balance(VoteStateV3::size_of());
         let vote_pubkey = solana_pubkey::new_rand();
-        (
-            vote_pubkey,
-            vote_state::create_account(&vote_pubkey, &solana_pubkey::new_rand(), 0, balance),
-        )
+        let node_pubkey = solana_pubkey::new_rand();
+
+        if vote_state_v4_enabled {
+            let balance = rent.minimum_balance(VoteStateV4::size_of());
+            (
+                vote_pubkey,
+                vote_state::create_account_v4(&vote_pubkey, &node_pubkey, 0, balance),
+            )
+        } else {
+            let balance = rent.minimum_balance(VoteStateV3::size_of());
+            (
+                vote_pubkey,
+                vote_state::create_account(&vote_pubkey, &node_pubkey, 0, balance),
+            )
+        }
     }
 
-    fn create_test_account_with_authorized() -> (Pubkey, Pubkey, Pubkey, AccountSharedData) {
+    fn create_test_account_with_authorized(
+        vote_state_v4_enabled: bool,
+    ) -> (Pubkey, Pubkey, Pubkey, AccountSharedData) {
         let vote_pubkey = solana_pubkey::new_rand();
         let authorized_voter = solana_pubkey::new_rand();
         let authorized_withdrawer = solana_pubkey::new_rand();
-        let account =
-            create_test_account_with_provided_authorized(&authorized_voter, &authorized_withdrawer);
+        let account = create_test_account_with_provided_authorized(
+            &authorized_voter,
+            &authorized_withdrawer,
+            vote_state_v4_enabled,
+        );
 
         (
             vote_pubkey,
@@ -408,17 +436,32 @@ mod tests {
     fn create_test_account_with_provided_authorized(
         authorized_voter: &Pubkey,
         authorized_withdrawer: &Pubkey,
+        vote_state_v4_enabled: bool,
     ) -> AccountSharedData {
-        vote_state::create_account_with_authorized(
-            &solana_pubkey::new_rand(),
-            authorized_voter,
-            authorized_withdrawer,
-            0,
-            100,
-        )
+        let node_pubkey = solana_pubkey::new_rand();
+
+        if vote_state_v4_enabled {
+            vote_state::create_account_with_authorized_v4(
+                &node_pubkey,
+                authorized_voter,
+                authorized_withdrawer,
+                0,
+                100,
+            )
+        } else {
+            vote_state::create_account_with_authorized(
+                &node_pubkey,
+                authorized_voter,
+                authorized_withdrawer,
+                0,
+                100,
+            )
+        }
     }
 
-    fn create_test_account_with_authorized_from_seed() -> VoteAccountTestFixtureWithAuthorities {
+    fn create_test_account_with_authorized_from_seed(
+        vote_state_v4_enabled: bool,
+    ) -> VoteAccountTestFixtureWithAuthorities {
         let vote_pubkey = Pubkey::new_unique();
         let voter_base_key = Pubkey::new_unique();
         let voter_owner = Pubkey::new_unique();
@@ -435,14 +478,27 @@ mod tests {
         )
         .unwrap();
 
-        VoteAccountTestFixtureWithAuthorities {
-            vote_account: vote_state::create_account_with_authorized(
-                &Pubkey::new_unique(),
+        let node_pubkey = Pubkey::new_unique();
+        let vote_account = if vote_state_v4_enabled {
+            vote_state::create_account_with_authorized_v4(
+                &node_pubkey,
                 &authorized_voter,
                 &authorized_withdrawer,
                 0,
                 100,
-            ),
+            )
+        } else {
+            vote_state::create_account_with_authorized(
+                &node_pubkey,
+                &authorized_voter,
+                &authorized_withdrawer,
+                0,
+                100,
+            )
+        };
+
+        VoteAccountTestFixtureWithAuthorities {
+            vote_account,
             vote_pubkey,
             voter_base_key,
             voter_owner,
@@ -456,7 +512,7 @@ mod tests {
     fn create_test_account_with_epoch_credits(
         credits_to_append: &[u64],
     ) -> (Pubkey, AccountSharedData) {
-        let (vote_pubkey, vote_account) = create_test_account();
+        let (vote_pubkey, vote_account) = create_test_account(false);
         let vote_account_space = vote_account.data().len();
 
         let mut vote_state = vote_state::from(&vote_account).unwrap();
@@ -514,6 +570,7 @@ mod tests {
     #[test]
     fn test_vote_process_instruction_decode_bail() {
         process_instruction(
+            false,
             &[],
             Vec::new(),
             Vec::new(),
@@ -559,6 +616,7 @@ mod tests {
 
         // init should pass
         let accounts = process_instruction(
+            false,
             &instruction_data,
             vec![
                 (vote_pubkey, vote_account.clone()),
@@ -572,6 +630,7 @@ mod tests {
 
         // reinit should fail
         process_instruction(
+            false,
             &instruction_data,
             vec![
                 (vote_pubkey, accounts[0].clone()),
@@ -585,6 +644,7 @@ mod tests {
 
         // init should fail, account is too big
         process_instruction(
+            false,
             &instruction_data,
             vec![
                 (
@@ -602,6 +662,7 @@ mod tests {
         // init should fail, node_pubkey didn't sign the transaction
         instruction_accounts[3].is_signer = false;
         process_instruction(
+            false,
             &instruction_data,
             vec![
                 (vote_pubkey, vote_account),
@@ -617,7 +678,7 @@ mod tests {
     #[test]
     fn test_vote_update_validator_identity() {
         let (vote_pubkey, _authorized_voter, authorized_withdrawer, vote_account) =
-            create_test_account_with_authorized();
+            create_test_account_with_authorized(false);
         let node_pubkey = solana_pubkey::new_rand();
         let instruction_data = serialize(&VoteInstruction::UpdateValidatorIdentity).unwrap();
         let transaction_accounts = vec![
@@ -646,6 +707,7 @@ mod tests {
         // should fail, node_pubkey didn't sign the transaction
         instruction_accounts[1].is_signer = false;
         let accounts = process_instruction(
+            false,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -658,6 +720,7 @@ mod tests {
         // should fail, authorized_withdrawer didn't sign the transaction
         instruction_accounts[2].is_signer = false;
         let accounts = process_instruction(
+            false,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -669,6 +732,7 @@ mod tests {
 
         // should pass
         let accounts = process_instruction(
+            false,
             &instruction_data,
             transaction_accounts,
             instruction_accounts,
@@ -681,7 +745,7 @@ mod tests {
     #[test]
     fn test_vote_update_commission() {
         let (vote_pubkey, _authorized_voter, authorized_withdrawer, vote_account) =
-            create_test_account_with_authorized();
+            create_test_account_with_authorized(false);
         let instruction_data = serialize(&VoteInstruction::UpdateCommission(42)).unwrap();
         let transaction_accounts = vec![
             (vote_pubkey, vote_account),
@@ -711,6 +775,7 @@ mod tests {
 
         // should pass
         let accounts = process_instruction(
+            false,
             &serialize(&VoteInstruction::UpdateCommission(u8::MAX)).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -721,6 +786,7 @@ mod tests {
 
         // should pass
         let accounts = process_instruction(
+            false,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -732,6 +798,7 @@ mod tests {
         // should fail, authorized_withdrawer didn't sign the transaction
         instruction_accounts[1].is_signer = false;
         let accounts = process_instruction(
+            false,
             &instruction_data,
             transaction_accounts,
             instruction_accounts,
@@ -743,7 +810,7 @@ mod tests {
 
     #[test]
     fn test_vote_signature() {
-        let (vote_pubkey, vote_account) = create_test_account();
+        let (vote_pubkey, vote_account) = create_test_account(false);
         let (vote, instruction_datas) = create_serialized_votes();
         let slot_hashes = SlotHashes::new(&[(*vote.slots.last().unwrap(), vote.hash)]);
         let slot_hashes_account = account::create_account_shared_data_for_test(&slot_hashes);
@@ -783,6 +850,7 @@ mod tests {
             // should fail, unsigned
             instruction_accounts[0].is_signer = false;
             process_instruction(
+                false,
                 &instruction_data,
                 transaction_accounts.clone(),
                 instruction_accounts.clone(),
@@ -792,6 +860,7 @@ mod tests {
 
             // should pass
             let accounts = process_instruction(
+                false,
                 &instruction_data,
                 transaction_accounts.clone(),
                 instruction_accounts.clone(),
@@ -821,6 +890,7 @@ mod tests {
                 )])),
             );
             process_instruction(
+                false,
                 &instruction_data,
                 transaction_accounts.clone(),
                 instruction_accounts.clone(),
@@ -833,6 +903,7 @@ mod tests {
                 account::create_account_shared_data_for_test(&SlotHashes::new(&[(0, vote.hash)])),
             );
             process_instruction(
+                false,
                 &instruction_data,
                 transaction_accounts.clone(),
                 instruction_accounts.clone(),
@@ -845,6 +916,7 @@ mod tests {
                 account::create_account_shared_data_for_test(&SlotHashes::new(&[])),
             );
             process_instruction(
+                false,
                 &instruction_data,
                 transaction_accounts.clone(),
                 instruction_accounts.clone(),
@@ -856,6 +928,7 @@ mod tests {
             let vote_account = AccountSharedData::new(100, VoteStateV3::size_of(), &id());
             transaction_accounts[0] = (vote_pubkey, vote_account);
             process_instruction(
+                false,
                 &instruction_data,
                 transaction_accounts.clone(),
                 instruction_accounts.clone(),
@@ -866,7 +939,7 @@ mod tests {
 
     #[test]
     fn test_authorize_voter() {
-        let (vote_pubkey, vote_account) = create_test_account();
+        let (vote_pubkey, vote_account) = create_test_account(false);
         let authorized_voter_pubkey = solana_pubkey::new_rand();
         let clock = Clock {
             epoch: 1,
@@ -900,6 +973,7 @@ mod tests {
         // should fail, unsigned
         instruction_accounts[0].is_signer = false;
         process_instruction(
+            false,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -909,6 +983,7 @@ mod tests {
 
         // should pass
         let accounts = process_instruction(
+            false,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -918,6 +993,7 @@ mod tests {
         // should fail, already set an authorized voter earlier for leader_schedule_epoch == 2
         transaction_accounts[0] = (vote_pubkey, accounts[0].clone());
         process_instruction(
+            false,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -941,6 +1017,7 @@ mod tests {
         let clock_account = account::create_account_shared_data_for_test(&clock);
         transaction_accounts[1] = (sysvar::clock::id(), clock_account);
         process_instruction(
+            false,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -971,6 +1048,7 @@ mod tests {
 
         for (instruction_data, is_tower_sync) in instruction_datas {
             process_instruction(
+                false,
                 &instruction_data,
                 transaction_accounts.clone(),
                 instruction_accounts.clone(),
@@ -983,6 +1061,7 @@ mod tests {
 
             // should pass, signed by authorized voter
             process_instruction(
+                false,
                 &instruction_data,
                 transaction_accounts.clone(),
                 authorized_instruction_accounts.clone(),
@@ -997,7 +1076,7 @@ mod tests {
 
     #[test]
     fn test_authorize_withdrawer() {
-        let (vote_pubkey, vote_account) = create_test_account();
+        let (vote_pubkey, vote_account) = create_test_account(false);
         let authorized_withdrawer_pubkey = solana_pubkey::new_rand();
         let instruction_data = serialize(&VoteInstruction::Authorize(
             authorized_withdrawer_pubkey,
@@ -1025,6 +1104,7 @@ mod tests {
         // should fail, unsigned
         instruction_accounts[0].is_signer = false;
         process_instruction(
+            false,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -1034,6 +1114,7 @@ mod tests {
 
         // should pass
         let accounts = process_instruction(
+            false,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -1049,6 +1130,7 @@ mod tests {
         });
         transaction_accounts[0] = (vote_pubkey, accounts[0].clone());
         process_instruction(
+            false,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -1064,6 +1146,7 @@ mod tests {
         ))
         .unwrap();
         process_instruction(
+            false,
             &instruction_data,
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -1073,7 +1156,7 @@ mod tests {
 
     #[test]
     fn test_vote_withdraw() {
-        let (vote_pubkey, vote_account) = create_test_account();
+        let (vote_pubkey, vote_account) = create_test_account(false);
         let lamports = vote_account.lamports();
         let authorized_withdrawer_pubkey = solana_pubkey::new_rand();
         let mut transaction_accounts = vec![
@@ -1097,6 +1180,7 @@ mod tests {
 
         // should pass, withdraw using authorized_withdrawer to authorized_withdrawer's account
         let accounts = process_instruction(
+            false,
             &serialize(&VoteInstruction::Authorize(
                 authorized_withdrawer_pubkey,
                 VoteAuthorize::Withdrawer,
@@ -1114,6 +1198,7 @@ mod tests {
         };
         transaction_accounts[0] = (vote_pubkey, accounts[0].clone());
         let accounts = process_instruction(
+            false,
             &serialize(&VoteInstruction::Withdraw(lamports)).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -1128,6 +1213,7 @@ mod tests {
         // should fail, unsigned
         transaction_accounts[0] = (vote_pubkey, vote_account);
         process_instruction(
+            false,
             &serialize(&VoteInstruction::Withdraw(lamports)).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -1137,6 +1223,7 @@ mod tests {
 
         // should pass
         process_instruction(
+            false,
             &serialize(&VoteInstruction::Withdraw(lamports)).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -1145,6 +1232,7 @@ mod tests {
 
         // should fail, insufficient funds
         process_instruction(
+            false,
             &serialize(&VoteInstruction::Withdraw(lamports + 1)).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -1154,6 +1242,7 @@ mod tests {
         // should pass, partial withdraw
         let withdraw_lamports = 42;
         let accounts = process_instruction(
+            false,
             &serialize(&VoteInstruction::Withdraw(withdraw_lamports)).unwrap(),
             transaction_accounts,
             instruction_accounts,
@@ -1206,6 +1295,7 @@ mod tests {
         // non rent exempt withdraw, with 0 credit epoch
         instruction_accounts[0].pubkey = vote_pubkey_1;
         process_instruction(
+            false,
             &serialize(&VoteInstruction::Withdraw(lamports - minimum_balance + 1)).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -1215,6 +1305,7 @@ mod tests {
         // non rent exempt withdraw, without 0 credit epoch
         instruction_accounts[0].pubkey = vote_pubkey_2;
         process_instruction(
+            false,
             &serialize(&VoteInstruction::Withdraw(lamports - minimum_balance + 1)).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -1224,6 +1315,7 @@ mod tests {
         // full withdraw, with 0 credit epoch
         instruction_accounts[0].pubkey = vote_pubkey_1;
         process_instruction(
+            false,
             &serialize(&VoteInstruction::Withdraw(lamports)).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
@@ -1233,6 +1325,7 @@ mod tests {
         // full withdraw, without 0 credit epoch
         instruction_accounts[0].pubkey = vote_pubkey_2;
         process_instruction(
+            false,
             &serialize(&VoteInstruction::Withdraw(lamports)).unwrap(),
             transaction_accounts,
             instruction_accounts,
@@ -1281,6 +1374,7 @@ mod tests {
         // Can't change authority unless base key signs.
         instruction_accounts[2].is_signer = false;
         process_instruction(
+            false,
             &serialize(&VoteInstruction::AuthorizeWithSeed(
                 VoteAuthorizeWithSeedArgs {
                     authorization_type,
@@ -1298,6 +1392,7 @@ mod tests {
 
         // Can't change authority if seed doesn't match.
         process_instruction(
+            false,
             &serialize(&VoteInstruction::AuthorizeWithSeed(
                 VoteAuthorizeWithSeedArgs {
                     authorization_type,
@@ -1314,6 +1409,7 @@ mod tests {
 
         // Can't change authority if owner doesn't match.
         process_instruction(
+            false,
             &serialize(&VoteInstruction::AuthorizeWithSeed(
                 VoteAuthorizeWithSeedArgs {
                     authorization_type,
@@ -1330,6 +1426,7 @@ mod tests {
 
         // Can change authority when base key signs for related derived key.
         process_instruction(
+            false,
             &serialize(&VoteInstruction::AuthorizeWithSeed(
                 VoteAuthorizeWithSeedArgs {
                     authorization_type,
@@ -1392,6 +1489,7 @@ mod tests {
         // Can't change authority unless base key signs.
         instruction_accounts[2].is_signer = false;
         process_instruction(
+            false,
             &serialize(&VoteInstruction::AuthorizeCheckedWithSeed(
                 VoteAuthorizeCheckedWithSeedArgs {
                     authorization_type,
@@ -1409,6 +1507,7 @@ mod tests {
         // Can't change authority unless new authority signs.
         instruction_accounts[3].is_signer = false;
         process_instruction(
+            false,
             &serialize(&VoteInstruction::AuthorizeCheckedWithSeed(
                 VoteAuthorizeCheckedWithSeedArgs {
                     authorization_type,
@@ -1425,6 +1524,7 @@ mod tests {
 
         // Can't change authority if seed doesn't match.
         process_instruction(
+            false,
             &serialize(&VoteInstruction::AuthorizeCheckedWithSeed(
                 VoteAuthorizeCheckedWithSeedArgs {
                     authorization_type,
@@ -1440,6 +1540,7 @@ mod tests {
 
         // Can't change authority if owner doesn't match.
         process_instruction(
+            false,
             &serialize(&VoteInstruction::AuthorizeCheckedWithSeed(
                 VoteAuthorizeCheckedWithSeedArgs {
                     authorization_type,
@@ -1455,6 +1556,7 @@ mod tests {
 
         // Can change authority when base key signs for related derived key and new authority signs.
         process_instruction(
+            false,
             &serialize(&VoteInstruction::AuthorizeCheckedWithSeed(
                 VoteAuthorizeCheckedWithSeedArgs {
                     authorization_type,
@@ -1478,7 +1580,7 @@ mod tests {
             voter_seed,
             vote_account,
             ..
-        } = create_test_account_with_authorized_from_seed();
+        } = create_test_account_with_authorized_from_seed(false);
         let new_voter_pubkey = Pubkey::new_unique();
         perform_authorize_with_seed_test(
             VoteAuthorize::Voter,
@@ -1500,7 +1602,7 @@ mod tests {
             withdrawer_seed,
             vote_account,
             ..
-        } = create_test_account_with_authorized_from_seed();
+        } = create_test_account_with_authorized_from_seed(false);
         let new_voter_pubkey = Pubkey::new_unique();
         perform_authorize_with_seed_test(
             VoteAuthorize::Voter,
@@ -1522,7 +1624,7 @@ mod tests {
             voter_seed,
             vote_account,
             ..
-        } = create_test_account_with_authorized_from_seed();
+        } = create_test_account_with_authorized_from_seed(false);
         let new_withdrawer_pubkey = Pubkey::new_unique();
         let clock = Clock {
             epoch: 1,
@@ -1554,6 +1656,7 @@ mod tests {
         ];
         // Despite having Voter authority, you may not change the Withdrawer authority.
         process_instruction(
+            false,
             &serialize(&VoteInstruction::AuthorizeWithSeed(
                 VoteAuthorizeWithSeedArgs {
                     authorization_type: VoteAuthorize::Withdrawer,
@@ -1578,7 +1681,7 @@ mod tests {
             withdrawer_seed,
             vote_account,
             ..
-        } = create_test_account_with_authorized_from_seed();
+        } = create_test_account_with_authorized_from_seed(false);
         let new_withdrawer_pubkey = Pubkey::new_unique();
         perform_authorize_with_seed_test(
             VoteAuthorize::Withdrawer,
@@ -1600,7 +1703,7 @@ mod tests {
             voter_seed,
             vote_account,
             ..
-        } = create_test_account_with_authorized_from_seed();
+        } = create_test_account_with_authorized_from_seed(false);
         let new_voter_pubkey = Pubkey::new_unique();
         perform_authorize_checked_with_seed_test(
             VoteAuthorize::Voter,
@@ -1622,7 +1725,7 @@ mod tests {
             withdrawer_seed,
             vote_account,
             ..
-        } = create_test_account_with_authorized_from_seed();
+        } = create_test_account_with_authorized_from_seed(false);
         let new_voter_pubkey = Pubkey::new_unique();
         perform_authorize_checked_with_seed_test(
             VoteAuthorize::Voter,
@@ -1644,7 +1747,7 @@ mod tests {
             voter_seed,
             vote_account,
             ..
-        } = create_test_account_with_authorized_from_seed();
+        } = create_test_account_with_authorized_from_seed(false);
         let new_withdrawer_pubkey = Pubkey::new_unique();
         let clock = Clock {
             epoch: 1,
@@ -1682,6 +1785,7 @@ mod tests {
         ];
         // Despite having Voter authority, you may not change the Withdrawer authority.
         process_instruction(
+            false,
             &serialize(&VoteInstruction::AuthorizeCheckedWithSeed(
                 VoteAuthorizeCheckedWithSeedArgs {
                     authorization_type: VoteAuthorize::Withdrawer,
@@ -1705,7 +1809,7 @@ mod tests {
             withdrawer_seed,
             vote_account,
             ..
-        } = create_test_account_with_authorized_from_seed();
+        } = create_test_account_with_authorized_from_seed(false);
         let new_withdrawer_pubkey = Pubkey::new_unique();
         perform_authorize_checked_with_seed_test(
             VoteAuthorize::Withdrawer,
@@ -1721,6 +1825,7 @@ mod tests {
     #[test]
     fn test_spoofed_vote() {
         process_instruction_as_one_arg(
+            false,
             &vote(
                 &invalid_vote_state_pubkey(),
                 &Pubkey::new_unique(),
@@ -1729,6 +1834,7 @@ mod tests {
             Err(InstructionError::InvalidAccountOwner),
         );
         process_instruction_as_one_arg(
+            false,
             &update_vote_state(
                 &invalid_vote_state_pubkey(),
                 &Pubkey::default(),
@@ -1737,6 +1843,7 @@ mod tests {
             Err(InstructionError::InvalidAccountOwner),
         );
         process_instruction_as_one_arg(
+            false,
             &compact_update_vote_state(
                 &invalid_vote_state_pubkey(),
                 &Pubkey::default(),
@@ -1745,6 +1852,7 @@ mod tests {
             Err(InstructionError::InvalidAccountOwner),
         );
         process_instruction_as_one_arg(
+            false,
             &tower_sync(
                 &invalid_vote_state_pubkey(),
                 &Pubkey::default(),
@@ -1788,6 +1896,7 @@ mod tests {
 
         // should fail, since VoteState1_14_11 isn't supported anymore
         process_instruction(
+            false,
             &instructions[1].data,
             transaction_accounts,
             instructions[1].accounts.clone(),
@@ -1828,6 +1937,7 @@ mod tests {
         ];
 
         process_instruction(
+            false,
             &instructions[1].data,
             transaction_accounts,
             instructions[1].accounts.clone(),
@@ -1847,8 +1957,13 @@ mod tests {
         );
         // this case fails regardless of CreateVoteAccountConfig::space, because
         // process_instruction_as_one_arg passes a default (empty) account
-        process_instruction_as_one_arg(&instructions[1], Err(InstructionError::InvalidAccountData));
         process_instruction_as_one_arg(
+            false,
+            &instructions[1],
+            Err(InstructionError::InvalidAccountData),
+        );
+        process_instruction_as_one_arg(
+            false,
             &vote(
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
@@ -1857,6 +1972,7 @@ mod tests {
             Err(InstructionError::InvalidInstructionData),
         );
         process_instruction_as_one_arg(
+            false,
             &vote_switch(
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
@@ -1866,6 +1982,7 @@ mod tests {
             Err(InstructionError::InvalidInstructionData),
         );
         process_instruction_as_one_arg(
+            false,
             &authorize(
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
@@ -1875,6 +1992,7 @@ mod tests {
             Err(InstructionError::InvalidAccountData),
         );
         process_instruction_as_one_arg(
+            false,
             &update_vote_state(
                 &Pubkey::default(),
                 &Pubkey::default(),
@@ -1884,6 +2002,7 @@ mod tests {
         );
 
         process_instruction_as_one_arg(
+            false,
             &update_vote_state_switch(
                 &Pubkey::default(),
                 &Pubkey::default(),
@@ -1893,6 +2012,7 @@ mod tests {
             Err(InstructionError::InvalidInstructionData),
         );
         process_instruction_as_one_arg(
+            false,
             &compact_update_vote_state(
                 &Pubkey::default(),
                 &Pubkey::default(),
@@ -1901,6 +2021,7 @@ mod tests {
             Err(InstructionError::InvalidInstructionData),
         );
         process_instruction_as_one_arg(
+            false,
             &compact_update_vote_state_switch(
                 &Pubkey::default(),
                 &Pubkey::default(),
@@ -1910,10 +2031,12 @@ mod tests {
             Err(InstructionError::InvalidInstructionData),
         );
         process_instruction_as_one_arg(
+            false,
             &tower_sync(&Pubkey::default(), &Pubkey::default(), TowerSync::default()),
             Err(InstructionError::InvalidAccountData),
         );
         process_instruction_as_one_arg(
+            false,
             &tower_sync_switch(
                 &Pubkey::default(),
                 &Pubkey::default(),
@@ -1924,6 +2047,7 @@ mod tests {
         );
 
         process_instruction_as_one_arg(
+            false,
             &update_validator_identity(
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
@@ -1932,11 +2056,13 @@ mod tests {
             Err(InstructionError::InvalidAccountData),
         );
         process_instruction_as_one_arg(
+            false,
             &update_commission(&Pubkey::new_unique(), &Pubkey::new_unique(), 0),
             Err(InstructionError::InvalidAccountData),
         );
 
         process_instruction_as_one_arg(
+            false,
             &withdraw(
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
@@ -1961,7 +2087,7 @@ mod tests {
             VoteAuthorize::Voter,
         );
         instruction.accounts = instruction.accounts[0..2].to_vec();
-        process_instruction_as_one_arg(&instruction, Err(InstructionError::MissingAccount));
+        process_instruction_as_one_arg(false, &instruction, Err(InstructionError::MissingAccount));
 
         let mut instruction = authorize_checked(
             &vote_pubkey,
@@ -1970,7 +2096,7 @@ mod tests {
             VoteAuthorize::Withdrawer,
         );
         instruction.accounts = instruction.accounts[0..2].to_vec();
-        process_instruction_as_one_arg(&instruction, Err(InstructionError::MissingAccount));
+        process_instruction_as_one_arg(false, &instruction, Err(InstructionError::MissingAccount));
 
         // Test with non-signing new_authorized_pubkey
         let mut instruction = authorize_checked(
@@ -1981,6 +2107,7 @@ mod tests {
         );
         instruction.accounts[3] = AccountMeta::new_readonly(new_authorized_pubkey, false);
         process_instruction_as_one_arg(
+            false,
             &instruction,
             Err(InstructionError::MissingRequiredSignature),
         );
@@ -1993,6 +2120,7 @@ mod tests {
         );
         instruction.accounts[3] = AccountMeta::new_readonly(new_authorized_pubkey, false);
         process_instruction_as_one_arg(
+            false,
             &instruction,
             Err(InstructionError::MissingRequiredSignature),
         );
@@ -2002,6 +2130,7 @@ mod tests {
         let vote_account = create_test_account_with_provided_authorized(
             &default_authorized_pubkey,
             &default_authorized_pubkey,
+            false,
         );
         let clock_address = sysvar::clock::id();
         let clock_account = account::create_account_shared_data_for_test(&Clock::default());
@@ -2036,12 +2165,14 @@ mod tests {
             },
         ];
         process_instruction(
+            false,
             &serialize(&VoteInstruction::AuthorizeChecked(VoteAuthorize::Voter)).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
             Ok(()),
         );
         process_instruction(
+            false,
             &serialize(&VoteInstruction::AuthorizeChecked(
                 VoteAuthorize::Withdrawer,
             ))
