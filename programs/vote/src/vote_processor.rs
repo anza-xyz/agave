@@ -67,7 +67,11 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     }
 
     // Determine the target vote state version to use for all operations.
-    let target_version = vote_state::VoteStateTargetVersion::V3;
+    let target_version = if invoke_context.get_feature_set().vote_state_v4 {
+        vote_state::VoteStateTargetVersion::V4
+    } else {
+        vote_state::VoteStateTargetVersion::V3
+    };
 
     let signers = instruction_context.get_signers()?;
     match limited_deserialize(data, solana_packet::PACKET_DATA_SIZE as u64)? {

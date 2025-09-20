@@ -156,6 +156,7 @@ impl FeatureSet {
             reenable_zk_elgamal_proof_program: self
                 .is_active(&reenable_zk_elgamal_proof_program::id()),
             raise_cpi_nesting_limit_to_8: self.is_active(&raise_cpi_nesting_limit_to_8::id()),
+            vote_state_v4: self.is_active(&vote_state_v4::id()),
         }
     }
 }
@@ -1126,6 +1127,10 @@ pub mod enforce_fixed_fec_set {
     solana_pubkey::declare_id!("fixfecLZYMfkGzwq6NJA11Yw6KYztzXiK9QcL3K78in");
 }
 
+pub mod vote_state_v4 {
+    solana_pubkey::declare_id!("Gx4XFcrVMt4HUvPzTpTSVkdDVgcDSjKhDN1RqRS6KDuZ");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2035,6 +2040,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             enforce_fixed_fec_set::id(),
             "SIMD-0317: Enforce 32 data + 32 coding shreds",
         ),
+        (vote_state_v4::id(), "SIMD-0185: Vote State v4"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
