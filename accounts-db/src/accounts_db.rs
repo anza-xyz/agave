@@ -666,6 +666,7 @@ impl IsZeroLamport for Account {
 /// An offset into the AccountsDb::storage vector
 pub type AtomicAccountsFileId = AtomicU32;
 pub type AccountsFileId = u32;
+pub type ObsoleteAccounts = Vec<(Offset, usize, Slot)>;
 
 type AccountSlots = HashMap<Pubkey, IntSet<Slot>>;
 type SlotOffsets = IntMap<Slot, IntSet<Offset>>;
@@ -957,7 +958,12 @@ impl AccountStorageEntry {
         })
     }
 
-    pub fn new_existing(slot: Slot, id: AccountsFileId, accounts: AccountsFile) -> Self {
+    pub fn new_existing(
+        slot: Slot,
+        id: AccountsFileId,
+        accounts: AccountsFile,
+        obsolete_accounts: Vec<(Offset, usize, Slot)>,
+    ) -> Self {
         Self {
             id,
             slot,
@@ -965,7 +971,7 @@ impl AccountStorageEntry {
             count: AtomicUsize::new(0),
             alive_bytes: AtomicUsize::new(0),
             zero_lamport_single_ref_offsets: RwLock::default(),
-            obsolete_accounts: RwLock::default(),
+            obsolete_accounts: RwLock::new(obsolete_accounts),
         }
     }
 
@@ -1003,6 +1009,36 @@ impl AccountStorageEntry {
             .filter(|(_, _, obsolete_slot)| slot.is_none_or(|s| *obsolete_slot <= s))
             .map(|(offset, data_len, _)| (*offset, *data_len))
             .collect()
+    }
+
+    /// Returns the accounts that were marked obsolete as of the passed in slot
+    /// or earlier. If slot is None, then slot will be assumed to be the max root
+    /// and all obsolete accounts will be returned.
+    pub fn serialize_obsolete_accounts(&self, slot: Slot, mut writer: impl std::io::Write) {
+        let obsolete_accounts = self.obsolete_accounts.read().unwrap();
+
+        if obsolete_accounts.is_empty() {
+            return;
+        }
+        let _ = bincode::serialize_into(&mut writer, &self.slot());
+        let _ = bincode::serialize_into(
+            writer,
+            &obsolete_accounts
+                .iter()
+                .filter(|(_, _, obsolete_slot)| slot >= *obsolete_slot)
+                .map(|(offset, data_len, slot)| (*offset, *data_len, *slot))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    /// Deserializes obsolete accounts previously serialized with
+    /// `serialize_obsolete_accounts`.
+    pub fn deserialize_obsolete_accounts(
+        reader: &mut impl std::io::Read,
+    ) -> Result<(Slot, ObsoleteAccounts), bincode::Error> {
+        let slot: Slot = bincode::deserialize_from(&mut *reader)?;
+        let obsolete_accounts: Vec<(Offset, usize, Slot)> = bincode::deserialize_from(reader)?;
+        Ok((slot, obsolete_accounts))
     }
 
     /// Returns the number of bytes that were marked obsolete as of the passed
@@ -6362,6 +6398,12 @@ impl AccountsDb {
             return SlotIndexGenerationInfo::default();
         }
 
+        let obsolete_accounts: HashSet<usize> = storage
+            .get_obsolete_accounts(None)
+            .iter()
+            .map(|(offset, _)| *offset)
+            .collect();
+
         let mut accounts_data_len = 0;
         let mut stored_size_alive = 0;
         let mut zero_lamport_pubkeys = vec![];
@@ -6389,56 +6431,59 @@ impl AccountsDb {
         storage
             .accounts
             .scan_accounts(reader, |offset, account| {
-                let data_len = account.data.len();
-                stored_size_alive += storage.accounts.calculate_stored_size(data_len);
-                let is_account_zero_lamport = account.is_zero_lamport();
-                if !is_account_zero_lamport {
-                    accounts_data_len += data_len as u64;
-                    all_accounts_are_zero_lamports = false;
-                } else {
-                    // With obsolete accounts enabled, all zero lamport accounts
-                    // are obsolete or single ref by the end of index generation
-                    // Store the offsets here
-                    if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
-                        zero_lamport_offsets.push(offset);
+                if !obsolete_accounts.contains(&offset) {
+                    let data_len = account.data.len();
+                    stored_size_alive += storage.accounts.calculate_stored_size(data_len);
+                    let is_account_zero_lamport = account.is_zero_lamport();
+                    if !is_account_zero_lamport {
+                        accounts_data_len += data_len as u64;
+                        all_accounts_are_zero_lamports = false;
+                    } else {
+                        // With obsolete accounts enabled, all zero lamport accounts
+                        // are obsolete or single ref by the end of index generation
+                        // Store the offsets here
+                        if self.mark_obsolete_accounts == MarkObsoleteAccounts::Enabled {
+                            zero_lamport_offsets.push(offset);
+                        }
+                        zero_lamport_pubkeys.push(*account.pubkey);
                     }
-                    zero_lamport_pubkeys.push(*account.pubkey);
-                }
-                keyed_account_infos.push((
-                    *account.pubkey,
-                    AccountInfo::new(
-                        StorageLocation::AppendVec(store_id, offset), // will never be cached
-                        is_account_zero_lamport,
-                    ),
-                ));
+                    keyed_account_infos.push((
+                        *account.pubkey,
+                        AccountInfo::new(
+                            StorageLocation::AppendVec(store_id, offset), // will never be cached
+                            is_account_zero_lamport,
+                        ),
+                    ));
 
-                if !self.account_indexes.is_empty() {
-                    self.accounts_index.update_secondary_indexes(
-                        account.pubkey,
-                        &account,
-                        &self.account_indexes,
-                    );
-                }
+                    if !self.account_indexes.is_empty() {
+                        self.accounts_index.update_secondary_indexes(
+                            account.pubkey,
+                            &account,
+                            &self.account_indexes,
+                        );
+                    }
 
-                let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
-                slot_lt_hash.0.mix_in(&account_lt_hash.0);
+                    let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
+                    slot_lt_hash.0.mix_in(&account_lt_hash.0);
 
-                if let Some(geyser_notifier) = geyser_notifier {
-                    debug_assert!(geyser_notifier.snapshot_notifications_enabled());
-                    let account_for_geyser = AccountForGeyser {
-                        pubkey: account.pubkey(),
-                        lamports: account.lamports(),
-                        owner: account.owner(),
-                        executable: account.executable(),
-                        rent_epoch: account.rent_epoch(),
-                        data: account.data(),
-                    };
-                    geyser_notifier.notify_account_restore_from_snapshot(
-                        slot,
-                        write_version_for_geyser,
-                        &account_for_geyser,
-                    );
-                    write_version_for_geyser += 1;
+                    if let Some(geyser_notifier) = geyser_notifier {
+                        debug_assert!(geyser_notifier.snapshot_notifications_enabled());
+                        let account_for_geyser = AccountForGeyser {
+                            pubkey: account.pubkey(),
+                            lamports: account.lamports(),
+                            owner: account.owner(),
+                            executable: account.executable(),
+                            rent_epoch: account.rent_epoch(),
+                            data: account.data(),
+                        };
+                        geyser_notifier.notify_account_restore_from_snapshot(
+                            slot,
+                            write_version_for_geyser,
+                            &account_for_geyser,
+                        );
+                        write_version_for_geyser += 1;
+                    }
+                    // Add some logging here
                 }
             })
             .expect("must scan accounts storage");

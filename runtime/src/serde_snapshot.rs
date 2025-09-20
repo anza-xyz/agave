@@ -14,6 +14,7 @@ use {
     log::*,
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     solana_accounts_db::{
+        account_info::Offset,
         accounts::Accounts,
         accounts_db::{
             AccountStorageEntry, AccountsDb, AccountsDbConfig, AccountsFileId,
@@ -854,13 +855,19 @@ pub(crate) fn reconstruct_single_storage(
     current_len: usize,
     append_vec_id: AccountsFileId,
     storage_access: StorageAccess,
+    obsolete_accounts: Vec<(Offset, usize, Slot)>,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
-    let accounts_file =
-        AccountsFile::new_for_startup(append_vec_path, current_len, storage_access)?;
+    let accounts_file = AccountsFile::new_for_startup(
+        append_vec_path,
+        current_len,
+        storage_access,
+        &obsolete_accounts,
+    )?;
     Ok(Arc::new(AccountStorageEntry::new_existing(
         *slot,
         append_vec_id,
         accounts_file,
+        obsolete_accounts,
     )))
 }
 
@@ -959,6 +966,7 @@ pub(crate) fn remap_and_reconstruct_single_storage(
         current_len,
         remapped_append_vec_id,
         storage_access,
+        Vec::new(),
     )?;
     Ok(storage)
 }

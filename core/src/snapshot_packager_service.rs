@@ -211,7 +211,26 @@ impl SnapshotPackagerService {
             start.elapsed(),
         );
 
-        let result = snapshot_utils::mark_bank_snapshot_as_loadable(&bank_snapshot_dir);
+        let result = snapshot_utils::serialize_obsolete_accounts(
+            &bank_snapshot_dir,
+            state.snapshot_slot,
+            &state.snapshot_storages,
+        );
+
+        let write_legacy_completer = match result {
+            Ok(write_legacy_completer) => write_legacy_completer != 0,
+            Err(err) => {
+                warn!("Failed to write obsolete accounts to storages: {err}");
+                // If writing the files failed, we do *NOT* want to write
+                // complete the snapshot
+                return;
+            }
+        };
+
+        let result = snapshot_utils::mark_bank_snapshot_as_loadable(
+            &bank_snapshot_dir,
+            write_legacy_completer,
+        );
         if let Err(err) = result {
             warn!("Failed to mark bank snapshot as loadable: {err}");
         }
