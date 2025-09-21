@@ -219,4 +219,20 @@ mod test {
         let error = storage.load(&new_pubkey).err().unwrap();
         assert!(matches!(error, VoteHistoryError::InvalidSignature));
     }
+
+    #[test]
+    fn test_null_vote_history_storage() {
+        let storage = NullVoteHistoryStorage::default();
+        let keypair = Keypair::new();
+        let pubkey = keypair.pubkey();
+        // NullVoteHistoryStorage::load() always fails
+        assert!(storage.load(&pubkey).is_err());
+
+        let vote_history = VoteHistory::new(pubkey, 0);
+        let saved_vote_history = SavedVoteHistory::new(&vote_history, &keypair).unwrap();
+        let saved_vote_history_versions = SavedVoteHistoryVersions::from(saved_vote_history);
+        // NullVoteHistoryStorage::save() always succeeds
+        assert!(storage.store(&saved_vote_history_versions).is_ok());
+        assert!(storage.load(&pubkey).is_err());
+    }
 }
