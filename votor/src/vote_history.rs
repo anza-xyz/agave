@@ -467,6 +467,10 @@ mod test {
         assert_eq!(vote_history.root(), 2);
         assert!(!vote_history.is_block_notarized(&block_1));
         assert!(vote_history.is_block_notarized(&block_2));
+
+        // Adding a block before root silently returns
+        vote_history.add_block_notarized(block_1);
+        assert!(!vote_history.is_block_notarized(&block_1));
     }
 
     #[test]
@@ -502,6 +506,9 @@ mod test {
         assert!(vote_history.is_parent_ready(2, &block_id_2_1));
         assert!(vote_history.is_parent_ready(2, &block_id_0));
         assert_eq!(vote_history.highest_parent_ready_slot(), Some(2));
+
+        // Adding a parent ready for slot before root silently returns false
+        assert!(!vote_history.add_parent_ready(1, block_id_0));
     }
 
     #[test]
@@ -529,11 +536,18 @@ mod test {
         assert_eq!(restored_vote_history, vote_history);
 
         // Save should fail if you give wrong keypair
-        assert!(vote_history
+        let error = vote_history
             .save(&vote_history_storage, &Keypair::new())
-            .is_err());
+            .err()
+            .unwrap();
+        assert!(matches!(error, VoteHistoryError::WrongVoteHistory(_)));
+        assert!(!error.is_file_missing());
 
         // Restore should fail if you give wrong pubkey
-        assert!(VoteHistory::restore(&vote_history_storage, &Pubkey::new_unique()).is_err());
+        let error = VoteHistory::restore(&vote_history_storage, &Pubkey::new_unique())
+            .err()
+            .unwrap();
+        assert!(matches!(error, VoteHistoryError::IoError(_)));
+        assert!(error.is_file_missing());
     }
 }

@@ -176,7 +176,8 @@ mod test {
     use {super::*, solana_keypair::Keypair, solana_votor_messages::vote::Vote};
 
     #[test]
-    fn test_file_vote_history_storage_filename() {
+    fn test_file_vote_history_storage() {
+        solana_logger::setup();
         let tmp_dir = std::env::temp_dir();
         let storage = FileVoteHistoryStorage::new(tmp_dir.clone());
         let keypair = Keypair::new();
@@ -205,5 +206,17 @@ mod test {
             restored_vote_history.votes_cast_since(0),
             vote_history.votes_cast_since(0)
         );
+
+        // Load with a wrong pubkey should fail
+        let error = storage.load(&Pubkey::new_unique()).err().unwrap();
+        assert!(matches!(error, VoteHistoryError::IoError(_)));
+        // Move Vote history to a wrong location should fail
+        let original_path = storage.filename(&pubkey);
+        let new_pubkey = Pubkey::new_unique();
+        let new_path = storage.filename(&new_pubkey);
+        // Copy the old file to new_path
+        fs::copy(&original_path, &new_path).unwrap();
+        let error = storage.load(&new_pubkey).err().unwrap();
+        assert!(matches!(error, VoteHistoryError::InvalidSignature));
     }
 }
