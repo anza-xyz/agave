@@ -822,6 +822,7 @@ mod tests {
             },
             status_cache::Status,
         },
+        semver::Version,
         solana_accounts_db::{
             accounts_db::{MarkObsoleteAccounts, ACCOUNTS_DB_CONFIG_FOR_TESTING},
             accounts_file::StorageAccess,
@@ -1628,6 +1629,73 @@ mod tests {
         assert!(hardlink_dirs.iter().all(|dir| fs::metadata(dir).is_err()));
     }
 
+    /// Test versioning when fastbooting
+    /// If the storages flushed file is present, fastboot should always pass
+    /// If only the fastboot version file is present, the version should be checked for compatibility
+    #[test]
+    fn test_fastboot_versioning() {
+        let genesis_config = GenesisConfig::default();
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let _bank = create_snapshot_dirs_for_tests(&genesis_config, &bank_snapshots_dir, 3, true);
+
+        let snapshot_config = SnapshotConfig {
+            bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
+            full_snapshot_archives_dir: bank_snapshots_dir.as_ref().to_path_buf(),
+            incremental_snapshot_archives_dir: bank_snapshots_dir.as_ref().to_path_buf(),
+            ..Default::default()
+        };
+
+        // Verify the snapshot is found with all files present
+        let snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
+        assert_eq!(snapshot.slot, 3);
+
+        // Test 1: Remove the storages flushed file
+        let storages_flushed_file = snapshot
+            .snapshot_dir
+            .join(snapshot_utils::SNAPSHOT_STORAGES_FLUSHED_FILENAME);
+        fs::remove_file(storages_flushed_file).unwrap();
+
+        // If the storages flushed file is removed, the version in the version file should be
+        // checked, and the snapshot should be found
+        let snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
+        assert_eq!(snapshot.slot, 3);
+
+        // Test 2: Modify the version in the fastboot version file to something newer
+        // than current
+        let complete_flag_file = snapshot
+            .snapshot_dir
+            .join(snapshot_utils::SNAPSHOT_FASTBOOT_VERSION_FILENAME);
+        let version = fs::read_to_string(&complete_flag_file).unwrap();
+        let version = Version::parse(&version).unwrap();
+        let new_version = Version::new(version.major + 1, version.minor, version.patch);
+
+        fs::write(&complete_flag_file, new_version.to_string()).unwrap();
+
+        // With an invalid version and no flush file, the snapshot will be considered invalid
+        let new_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config);
+        assert!(new_snapshot.is_none());
+
+        // Test 3: Remove the bank snapshot version file
+        let complete_flag_file = snapshot
+            .snapshot_dir
+            .join(snapshot_utils::SNAPSHOT_VERSION_FILENAME);
+        fs::remove_file(complete_flag_file).unwrap();
+
+        // This will now find the previous entry in the directory, which is slot 2
+        let snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
+        assert_eq!(snapshot.slot, 2);
+
+        // Test 4: Remove the fastboot version file
+        let fastboot_version_file = snapshot
+            .snapshot_dir
+            .join(snapshot_utils::SNAPSHOT_FASTBOOT_VERSION_FILENAME);
+        fs::remove_file(fastboot_version_file).unwrap();
+
+        // The flush file will still be found, making this a valid snapshot
+        let snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
+        assert_eq!(snapshot.slot, 2);
+    }
+
     #[test_case(false)]
     #[test_case(true)]
     fn test_get_highest_bank_snapshot(should_flush_and_hard_link_storages: bool) {
@@ -2329,11 +2397,12 @@ mod tests {
         // 1. call get_highest_loadable() but bad snapshot dir, so returns None
         assert!(get_highest_loadable_bank_snapshot(&SnapshotConfig::default()).is_none());
 
-        // 2. the 'storages flushed' file hasn't been written yet, so get_highest_loadable() should return NONE
+        // 2. the bank snapshot has not been marked as loadable, so get_highest_loadable() should return NONE
         assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
 
-        // 3. write 'storages flushed' file, get_highest_loadable(), should return highest_bank_snapshot_slot
-        snapshot_utils::write_storages_flushed_file(&highest_bank_snapshot.snapshot_dir).unwrap();
+        // 3. Mark the bank snapshot as loadable, get_highest_loadable() should return highest_bank_snapshot_slot
+        snapshot_utils::mark_bank_snapshot_as_loadable(&highest_bank_snapshot.snapshot_dir)
+            .unwrap();
         let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
         assert_eq!(bank_snapshot, highest_bank_snapshot);
 
@@ -2341,8 +2410,8 @@ mod tests {
         fs::remove_dir_all(&highest_bank_snapshot.snapshot_dir).unwrap();
         assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
 
-        // 5. write 'storages flushed' file, get_highest_loadable() should return Some() again, with slot-1
-        snapshot_utils::write_storages_flushed_file(get_bank_snapshot_dir(
+        // 5. Mark the bank snapshot as loadable, get_highest_loadable() should return Some() again, with slot-1
+        snapshot_utils::mark_bank_snapshot_as_loadable(get_bank_snapshot_dir(
             &snapshot_config.bank_snapshots_dir,
             highest_bank_snapshot.slot - 1,
         ))

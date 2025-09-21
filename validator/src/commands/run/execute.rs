@@ -89,7 +89,6 @@ pub enum Operation {
 pub fn execute(
     matches: &ArgMatches,
     solana_version: &str,
-    ledger_path: &Path,
     operation: Operation,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let run_args = RunArgs::from_clap_arg_match(matches)?;
@@ -165,13 +164,7 @@ pub fn execute(
         .map(Duration::from_millis)
         .unwrap_or(DEFAULT_TPU_COALESCE);
 
-    // Canonicalize ledger path to avoid issues with symlink creation
-    let ledger_path = create_and_canonicalize_directory(ledger_path).map_err(|err| {
-        format!(
-            "unable to access ledger path '{}': {err}",
-            ledger_path.display(),
-        )
-    })?;
+    let ledger_path = run_args.ledger_path;
 
     let max_ledger_shreds = if matches.is_present("limit_ledger_size") {
         let limit_ledger_size = match matches.value_of("limit_ledger_size") {
