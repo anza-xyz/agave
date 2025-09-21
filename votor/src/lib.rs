@@ -1,6 +1,9 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
 #[cfg(feature = "agave-unstable-api")]
+pub mod commitment;
+
+#[cfg(feature = "agave-unstable-api")]
 pub mod common;
 
 #[cfg(feature = "agave-unstable-api")]

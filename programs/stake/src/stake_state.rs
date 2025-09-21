@@ -12,7 +12,7 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::stake::id,
     solana_stake_interface::stake_flags::StakeFlags,
-    solana_vote_interface::state::VoteStateV3,
+    solana_vote_interface::state::{VoteStateV3, VoteStateV4},
 };
 
 // utility function, used by Stakes, tests
@@ -40,15 +40,10 @@ pub fn meta_from(account: &AccountSharedData) -> Option<Meta> {
     from(account).and_then(|state: StakeStateV2| state.meta())
 }
 
-fn new_stake(
-    stake: u64,
-    voter_pubkey: &Pubkey,
-    vote_state: &VoteStateV3,
-    activation_epoch: Epoch,
-) -> Stake {
+fn new_stake(stake: u64, voter_pubkey: &Pubkey, credits: u64, activation_epoch: Epoch) -> Stake {
     Stake {
         delegation: Delegation::new(voter_pubkey, stake, activation_epoch),
-        credits_observed: vote_state.credits(),
+        credits_observed: credits,
     }
 }
 
@@ -106,7 +101,14 @@ fn do_create_account(
 ) -> AccountSharedData {
     let mut stake_account = AccountSharedData::new(lamports, StakeStateV2::size_of(), &id());
 
-    let vote_state = VoteStateV3::deserialize(vote_account.data()).expect("vote_state");
+    let credits = if let Ok(vote_state_v3) = VoteStateV3::deserialize(vote_account.data()) {
+        vote_state_v3.credits()
+    } else {
+        match VoteStateV4::deserialize(vote_account.data(), voter_pubkey) {
+            Ok(vote_state_v4) => vote_state_v4.epoch_credits.last().map_or(0, |(_, c, _)| *c),
+            Err(e) => panic!("Invalid vote account state data: {e}"),
+        }
+    };
 
     let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
 
@@ -120,7 +122,7 @@ fn do_create_account(
             new_stake(
                 lamports - rent_exempt_reserve, // underflow is an error, is basically: assert!(lamports > rent_exempt_reserve);
                 voter_pubkey,
-                &vote_state,
+                credits,
                 activation_epoch,
             ),
             StakeFlags::empty(),

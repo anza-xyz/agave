@@ -805,6 +805,7 @@ impl ProgramTest {
             &bootstrap_validator_pubkey,
             &voting_keypair.pubkey(),
             &Pubkey::new_unique(),
+            None,
             bootstrap_validator_stake_lamports,
             42,
             fee_rate_governor,

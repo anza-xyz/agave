@@ -2,6 +2,10 @@ use {
     agave_feature_set::{FeatureSet, FEATURE_NAMES},
     log::*,
     solana_account::{Account, AccountSharedData},
+    solana_bls_signatures::{
+        keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
+        Pubkey as BLSPubkey,
+    },
     solana_cluster_type::ClusterType,
     solana_feature_gate_interface::{self as feature, Feature},
     solana_fee_calculator::FeeRateGovernor,
@@ -15,7 +19,9 @@ use {
     solana_stake_interface::state::StakeStateV2,
     solana_stake_program::stake_state,
     solana_system_interface::program as system_program,
+    solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     solana_vote_program::vote_state,
+    solana_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     std::borrow::Borrow,
 };
 
@@ -99,6 +105,21 @@ pub fn create_genesis_config_with_vote_accounts(
         voting_keypairs,
         stakes,
         ClusterType::Development,
+        false,
+    )
+}
+
+pub fn create_genesis_config_with_alpenglow_vote_accounts(
+    mint_lamports: u64,
+    voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
+    stakes: Vec<u64>,
+) -> GenesisConfigInfo {
+    create_genesis_config_with_vote_accounts_and_cluster_type(
+        mint_lamports,
+        voting_keypairs,
+        stakes,
+        ClusterType::Development,
+        true,
     )
 }
 
@@ -107,6 +128,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
     stakes: Vec<u64>,
     cluster_type: ClusterType,
+    is_alpenglow: bool,
 ) -> GenesisConfigInfo {
     assert!(!voting_keypairs.is_empty());
     assert_eq!(voting_keypairs.len(), stakes.len());
@@ -115,12 +137,23 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
     let voting_keypair = voting_keypairs[0].borrow().vote_keypair.insecure_clone();
 
     let validator_pubkey = voting_keypairs[0].borrow().node_keypair.pubkey();
+    let validator_bls_pubkey = if is_alpenglow {
+        let bls_keypair = BLSKeypair::derive_from_signer(
+            &voting_keypairs[0].borrow().vote_keypair,
+            BLS_KEYPAIR_DERIVE_SEED,
+        )
+        .unwrap();
+        Some(bls_pubkey_to_compressed_bytes(&bls_keypair.public))
+    } else {
+        None
+    };
     let genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
         &validator_pubkey,
         &voting_keypairs[0].borrow().vote_keypair.pubkey(),
         &voting_keypairs[0].borrow().stake_keypair.pubkey(),
+        validator_bls_pubkey,
         stakes[0],
         VALIDATOR_LAMPORTS,
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
@@ -143,7 +176,24 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
 
         // Create accounts
         let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
-        let vote_account = vote_state::create_account(&vote_pubkey, &node_pubkey, 0, *stake);
+        let vote_account = if is_alpenglow {
+            let bls_keypair = BLSKeypair::derive_from_signer(
+                &voting_keypairs[0].borrow().vote_keypair,
+                BLS_KEYPAIR_DERIVE_SEED,
+            )
+            .unwrap();
+            let bls_pubkey_compressed = bls_pubkey_to_compressed_bytes(&bls_keypair.public);
+            vote_state::create_v4_account_with_authorized(
+                &node_pubkey,
+                &vote_pubkey,
+                &vote_pubkey,
+                Some(bls_pubkey_compressed),
+                0,
+                *stake,
+            )
+        } else {
+            vote_state::create_account(&vote_pubkey, &node_pubkey, 0, *stake)
+        };
         let stake_account = Account::from(stake_state::create_account(
             &stake_pubkey,
             &vote_pubkey,
@@ -204,6 +254,7 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
         validator_pubkey,
         &voting_keypair.pubkey(),
         &Pubkey::new_unique(),
+        None,
         validator_stake_lamports,
         VALIDATOR_LAMPORTS,
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
@@ -228,7 +279,7 @@ pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
     do_activate_all_features::<false>(genesis_config);
 }
 
-fn do_activate_all_features<const IS_ALPENGLOW: bool>(genesis_config: &mut GenesisConfig) {
+pub fn do_activate_all_features<const IS_ALPENGLOW: bool>(genesis_config: &mut GenesisConfig) {
     // Activate all features at genesis in development mode
     for feature_id in FeatureSet::default().inactive() {
         if IS_ALPENGLOW || *feature_id != agave_feature_set::alpenglow::id() {
@@ -266,6 +317,13 @@ pub fn activate_feature(genesis_config: &mut GenesisConfig, feature_id: Pubkey) 
     );
 }
 
+pub fn bls_pubkey_to_compressed_bytes(
+    bls_pubkey: &BLSPubkey,
+) -> [u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE] {
+    let key = BLSPubkeyCompressed::try_from(bls_pubkey).unwrap();
+    bincode::serialize(&key).unwrap().try_into().unwrap()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn create_genesis_config_with_leader_ex_no_features(
     mint_lamports: u64,
@@ -273,6 +331,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     validator_pubkey: &Pubkey,
     validator_vote_account_pubkey: &Pubkey,
     validator_stake_account_pubkey: &Pubkey,
+    validator_bls_pubkey: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
     validator_stake_lamports: u64,
     validator_lamports: u64,
     fee_rate_governor: FeeRateGovernor,
@@ -280,12 +339,23 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     cluster_type: ClusterType,
     mut initial_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) -> GenesisConfig {
-    let validator_vote_account = vote_state::create_account(
-        validator_vote_account_pubkey,
-        validator_pubkey,
-        0,
-        validator_stake_lamports,
-    );
+    let validator_vote_account = if let Some(bls_pubkey_compressed) = validator_bls_pubkey {
+        vote_state::create_v4_account_with_authorized(
+            validator_pubkey,
+            validator_vote_account_pubkey,
+            validator_vote_account_pubkey,
+            Some(bls_pubkey_compressed),
+            0,
+            validator_stake_lamports,
+        )
+    } else {
+        vote_state::create_account(
+            validator_vote_account_pubkey,
+            validator_pubkey,
+            0,
+            validator_stake_lamports,
+        )
+    };
 
     let validator_stake_account = stake_state::create_account(
         validator_stake_account_pubkey,
@@ -342,6 +412,7 @@ pub fn create_genesis_config_with_leader_ex(
     validator_pubkey: &Pubkey,
     validator_vote_account_pubkey: &Pubkey,
     validator_stake_account_pubkey: &Pubkey,
+    validator_bls_pubkey: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
     validator_stake_lamports: u64,
     validator_lamports: u64,
     fee_rate_governor: FeeRateGovernor,
@@ -355,6 +426,7 @@ pub fn create_genesis_config_with_leader_ex(
         validator_pubkey,
         validator_vote_account_pubkey,
         validator_stake_account_pubkey,
+        validator_bls_pubkey,
         validator_stake_lamports,
         validator_lamports,
         fee_rate_governor,

@@ -312,6 +312,7 @@ impl LocalCluster {
             &keys_in_genesis,
             stakes_in_genesis,
             config.cluster_type,
+            false,
         );
         genesis_config.accounts.extend(
             config
