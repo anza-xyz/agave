@@ -3,19 +3,6 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-if [[ -n $APPVEYOR ]]; then
-  # Bootstrap rust build environment
-  source ci/env.sh
-  source ci/rust-version.sh
-
-  appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
-  export USERPROFILE="D:\\"
-  ./rustup-init -yv --default-toolchain "$rust_stable" --default-host x86_64-pc-windows-msvc
-  export PATH="$PATH:/d/.cargo/bin"
-  rustc -vV
-  cargo -vV
-fi
-
 DRYRUN=
 if [[ -z $CI_BRANCH ]]; then
   DRYRUN="echo"
@@ -141,9 +128,6 @@ for file in "${TARBALL_BASENAME}"-$TARGET.tar.bz2 "${TARBALL_BASENAME}"-$TARGET.
       mkdir -p github-action-release-upload/
       cp -v "$file" github-action-release-upload/
     fi
-  elif [[ -n $APPVEYOR ]]; then
-    # Add artifacts for .appveyor.yml to upload
-    appveyor PushArtifact "$file" -FileName "$CHANNEL_OR_TAG"/"$file"
   fi
 done
 
