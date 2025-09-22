@@ -1,0 +1,13 @@
+# Supported fields: ledger, identity, entrypoint, known_validators, rpc_port, log
+# Precedence: CLI arguments > config file > defaults
+
+ledger: /mnt/ledger
+identity: /mnt/identity.json
+entrypoint:
+  - "entrypoint.mainnet-beta.solana.com:8001"
+  - "entrypoint2.mainnet-beta.solana.com:8001"
+known_validators:
+  - "7Np41oeYqPefeNQEHSv1UDhYrehxin3NStELsSKCT4K2"
+  - "GdnSyH3YtwcxFvQrVVJMm1JhTS4QVX7MFsX56uJLUfiZ"
+rpc_port: 8899
+log: /var/log/agave-validator/mainnet.log

@@ -530,15 +530,24 @@ pub fn execute(
         rpc_config: run_args.json_rpc_config,
         on_start_geyser_plugin_config_files,
         geyser_plugin_always_enabled: matches.is_present("geyser_plugin_always_enabled"),
-        rpc_addrs: value_t!(matches, "rpc_port", u16).ok().map(|rpc_port| {
-            (
-                SocketAddr::new(rpc_bind_address, rpc_port),
-                SocketAddr::new(rpc_bind_address, rpc_port + 1),
-                // If additional ports are added, +2 needs to be skipped to avoid a conflict with
-                // the websocket port (which is +2) in web3.js This odd port shifting is tracked at
-                // https://github.com/solana-labs/solana/issues/12250
-            )
-        }),
+        rpc_addrs: {
+            let rpc_port_opt = value_t!(matches, "rpc_port", u16)
+                .ok()
+                .or_else(|| std::env::var("AGAVE_RPC_PORT").ok().and_then(|s| s.parse::<u16>().ok()));
+            if let Some(rpc_port) = rpc_port_opt {
+                if rpc_port == 0 {
+                    return Err(Box::new(crate::commands::Error::Dynamic(
+                        Box::<dyn std::error::Error>::from("invalid rpc_port: must be 1..=65535"),
+                    )));
+                }
+                Some((
+                    SocketAddr::new(rpc_bind_address, rpc_port),
+                    SocketAddr::new(rpc_bind_address, rpc_port + 1),
+                ))
+            } else {
+                None
+            }
+        },
         pubsub_config: run_args.pub_sub_config,
         voting_disabled: matches.is_present("no_voting") || restricted_repair_only_mode,
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),
