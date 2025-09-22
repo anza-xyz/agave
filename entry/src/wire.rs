@@ -3,7 +3,7 @@
 //! # Background
 //!
 //! A bincode serialized [`Entry`], whose serialization format and scheme is
-//! defined in large part by the solana-sdk, is the de-facto wire format for
+//! defined in large part by the solana sdk, is the de-facto wire format for
 //! turbine. This makes it quite difficult to change, so any performance
 //! work must remain bit-compatible with it. In particular, sequence lengths
 //! are encoded via `solana_short_vec` (a compact 1–3 byte varint for `u16`),
@@ -45,9 +45,9 @@ use {
 ///
 /// The wire format has to deal with two different length encoding schemes for
 /// sequences.
-/// - All sequences defined within the solana-sdk use the variable length
+/// - All sequences defined within the solana sdk use the variable length
 ///   [`solana_short_vec`] encoding.
-/// - Sequences defined outside of the solana-sdk use bincode's default fixint encoding.
+/// - Sequences defined outside of the solana sdk use bincode's default fixint encoding.
 ///
 /// This trait abstracts over these two different encoding schemes, which simpifies
 /// serialization / deserialization over sequences.
