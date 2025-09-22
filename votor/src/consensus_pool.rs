@@ -110,8 +110,6 @@ pub struct ConsensusPool {
     /// - They have a potential parent block with a NotarizeFallback certificate
     /// - All slots from the parent have a Skip certificate
     pub parent_ready_tracker: ParentReadyTracker,
-    /// Highest block that has a NotarizeFallback certificate, for use in producing our leader window
-    highest_notarized_fallback: Option<(Slot, Hash)>,
     /// Highest slot that has a Finalized variant certificate
     highest_finalized_slot: Option<Slot>,
     /// Highest slot that has Finalize+Notarize or FinalizeFast, for use in standstill
@@ -134,7 +132,6 @@ impl ConsensusPool {
             my_pubkey,
             vote_pools: BTreeMap::new(),
             completed_certificates: BTreeMap::new(),
-            highest_notarized_fallback: None,
             highest_finalized_slot: None,
             highest_finalized_with_notarize: None,
             parent_ready_tracker,
@@ -185,7 +182,6 @@ impl ConsensusPool {
     /// of the related certificates are newly complete.
     /// For each newly constructed certificate
     /// - Insert it into `self.certificates`
-    /// - Potentially update `self.highest_notarized_fallback`,
     /// - Potentially update `self.highest_finalized_slot`,
     /// - If we have a new highest finalized slot, return it
     /// - update any newly created events
@@ -296,12 +292,6 @@ impl ConsensusPool {
             Certificate::NotarizeFallback(slot, block_id) => {
                 self.parent_ready_tracker
                     .add_new_notar_fallback_or_stronger((slot, block_id), events);
-                if self
-                    .highest_notarized_fallback
-                    .is_none_or(|(s, _)| s < slot)
-                {
-                    self.highest_notarized_fallback = Some((slot, block_id));
-                }
             }
             Certificate::Skip(slot) => self.parent_ready_tracker.add_new_skip(slot, events),
             Certificate::Notarize(slot, block_id) => {
@@ -492,11 +482,6 @@ impl ConsensusPool {
         Ok(vec![new_certificate])
     }
 
-    /// The highest notarized fallback slot, for use as the parent slot in leader window
-    pub fn highest_notarized_fallback(&self) -> Option<(Slot, Hash)> {
-        self.highest_notarized_fallback
-    }
-
     /// Get the notarized block in `slot`
     pub fn get_notarized_block(&self, slot: Slot) -> Option<Block> {
         self.completed_certificates
@@ -548,27 +533,11 @@ impl ConsensusPool {
             .unwrap_or(0)
     }
 
-    pub fn highest_fast_finalized_block(&self) -> Option<Block> {
-        self.completed_certificates
-            .iter()
-            .filter_map(|(cert_id, _)| match cert_id {
-                Certificate::FinalizeFast(s, bid) => Some((*s, *bid)),
-                _ => None,
-            })
-            .max()
-    }
-
     /// Checks if any block in the slot `s` is finalized
     pub fn is_finalized(&self, slot: Slot) -> bool {
         self.completed_certificates.keys().any(|cert_id| {
             matches!(cert_id, Certificate::Finalize(s) | Certificate::FinalizeFast(s, _) if *s == slot)
         })
-    }
-
-    /// Check if the specific block `(block_id)` in slot `s` is notarized
-    pub fn is_notarized(&self, slot: Slot, block_id: Hash) -> bool {
-        self.completed_certificates
-            .contains_key(&Certificate::Notarize(slot, block_id))
     }
 
     /// Checks if the any block in slot `slot` has received a `NotarizeFallback` certificate, if so return
