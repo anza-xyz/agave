@@ -88,6 +88,25 @@ pub fn create_account(
         rent,
         lamports,
         Epoch::MAX,
+        false,
+    )
+}
+
+pub fn create_alpenglow_account(
+    authorized: &Pubkey,
+    voter_pubkey: &Pubkey,
+    vote_account: &AccountSharedData,
+    rent: &Rent,
+    lamports: u64,
+) -> AccountSharedData {
+    do_create_account(
+        authorized,
+        voter_pubkey,
+        vote_account,
+        rent,
+        lamports,
+        Epoch::MAX,
+        true,
     )
 }
 
@@ -98,16 +117,16 @@ fn do_create_account(
     rent: &Rent,
     lamports: u64,
     activation_epoch: Epoch,
+    is_alpenglow: bool,
 ) -> AccountSharedData {
     let mut stake_account = AccountSharedData::new(lamports, StakeStateV2::size_of(), &id());
 
-    let credits = if let Ok(vote_state_v3) = VoteStateV3::deserialize(vote_account.data()) {
-        vote_state_v3.credits()
+    let credits = if is_alpenglow {
+        let vote_state_v4 = VoteStateV4::deserialize(vote_account.data(), voter_pubkey).unwrap();
+        vote_state_v4.epoch_credits.last().map_or(0, |(_, c, _)| *c)
     } else {
-        match VoteStateV4::deserialize(vote_account.data(), voter_pubkey) {
-            Ok(vote_state_v4) => vote_state_v4.epoch_credits.last().map_or(0, |(_, c, _)| *c),
-            Err(e) => panic!("Invalid vote account state data: {e}"),
-        }
+        let vote_state = VoteStateV3::deserialize(vote_account.data()).expect("vote_state");
+        vote_state.credits()
     };
 
     let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
