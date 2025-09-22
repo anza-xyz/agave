@@ -6270,17 +6270,11 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len(formalize_loaded_transaction_
             .read()
             .unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
-        assert_eq!(slot_versions.len(), 2);
+        assert_eq!(slot_versions.len(), 1);
         assert_eq!(slot_versions[0].deployment_slot, bank.slot() - 1);
-        assert_eq!(slot_versions[0].effective_slot, bank.slot() - 1);
+        assert_eq!(slot_versions[0].effective_slot, bank.slot());
         assert!(matches!(
             slot_versions[0].program,
-            ProgramCacheEntryType::Closed,
-        ));
-        assert_eq!(slot_versions[1].deployment_slot, bank.slot() - 1);
-        assert_eq!(slot_versions[1].effective_slot, bank.slot());
-        assert!(matches!(
-            slot_versions[1].program,
             ProgramCacheEntryType::Loaded(_),
         ));
     }

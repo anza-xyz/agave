@@ -891,6 +891,18 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         slot_versions.insert(index, Arc::clone(&entry));
                     }
                 }
+                // Remove existing entires in the same deployment slot unless they are for a different environment.
+                // This overwrites the current status of a program in program management instructions.
+                slot_versions.retain(|existing| {
+                    existing.deployment_slot != entry.deployment_slot
+                        || existing
+                            .program
+                            .get_environment()
+                            .zip(entry.program.get_environment())
+                            .map(|(a, b)| !Arc::ptr_eq(a, b))
+                            .unwrap_or(false)
+                        || existing == &entry
+                });
             }
         }
         false
@@ -1791,8 +1803,16 @@ mod tests {
             entries.shuffle(&mut rng);
             let mut cache = ProgramCache::<TestForkGraph>::new(0, 0);
             for (deployment_slot, effective_slot) in entries {
-                assert!(!cache
-                    .assign_program(program_id, new_test_entry(deployment_slot, effective_slot)));
+                let entry = Arc::new(ProgramCacheEntry {
+                    program: new_loaded_entry(Arc::new(BuiltinProgram::new_mock())), // Assign them different environments
+                    account_owner: ProgramCacheEntryOwner::LoaderV2,
+                    account_size: 0,
+                    deployment_slot,
+                    effective_slot,
+                    tx_usage_counter: Arc::new(AtomicU64::default()),
+                    latest_access_slot: AtomicU64::new(deployment_slot),
+                });
+                assert!(!cache.assign_program(program_id, entry));
             }
             for ((deployment_slot, effective_slot), entry) in EXPECTED_ENTRIES
                 .iter()
