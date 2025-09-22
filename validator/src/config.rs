@@ -19,9 +19,8 @@ impl ValidatorConfig {
     pub fn load_from_file(path: &str) -> Result<Self, String> {
         let contents = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read config file {}: {}", path, e))?;
-        
-        serde_yaml::from_str(&contents)
-            .map_err(|e| format!("Invalid YAML in config file {}: {}", path, e))
+        toml::from_str::<Self>(&contents)
+            .map_err(|e| format!("Invalid TOML in config file {}: {}", path, e))
     }
 }
 
@@ -31,15 +30,15 @@ mod tests {
 
     #[test]
     fn test_config_parsing() {
-        let yaml = r#"
-ledger: /tmp/ledger
-identity: /tmp/identity.json
-entrypoint: ["127.0.0.1:8001"]
-known_validators: ["GdnSyH3YtwcxFvQrVVJMm1JhTS4QVX7MFsX56uJLUfiZ"]
-rpc_port: 8899
-log: /tmp/validator.log
+        let toml_str = r#"
+ledger = "/tmp/ledger"
+identity = "/tmp/identity.json"
+entrypoint = ["127.0.0.1:8001"]
+known_validators = ["GdnSyH3YtwcxFvQrVVJMm1JhTS4QVX7MFsX56uJLUfiZ"]
+rpc_port = 8899
+log = "/tmp/validator.log"
 "#;
-        let config: ValidatorConfig = serde_yaml::from_str(yaml).unwrap();
+        let config: ValidatorConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.ledger, Some(PathBuf::from("/tmp/ledger")));
         assert_eq!(config.identity, Some("/tmp/identity.json".to_string()));
         assert_eq!(config.entrypoint.as_ref().unwrap().len(), 1);
@@ -50,26 +49,26 @@ log: /tmp/validator.log
 
     #[test]
     fn test_unknown_fields_rejected() {
-        let yaml = r#"
-ledger: /tmp/ledger
-foo: bar
+        let toml_str = r#"
+ledger = "/tmp/ledger"
+foo = "bar"
 "#;
-        let result: Result<ValidatorConfig, _> = serde_yaml::from_str(yaml);
+        let result: Result<ValidatorConfig, _> = toml::from_str(toml_str);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("unknown field"));
     }
 
     #[test]
     fn test_parse_new_fields() {
-        let yaml = r#"
-ledger: /l
-identity: /i.json
-entrypoint: ["127.0.0.1:8001"]
-known_validators: ["7Np41oeYqPefeNQEHSv1UDhYrehxin3NStELsSKCT4K2"]
-rpc_port: 8899
-log: /v.log
+        let toml_str = r#"
+ledger = "/l"
+identity = "/i.json"
+entrypoint = ["127.0.0.1:8001"]
+known_validators = ["7Np41oeYqPefeNQEHSv1UDhYrehxin3NStELsSKCT4K2"]
+rpc_port = 8899
+log = "/v.log"
 "#;
-        let cfg: ValidatorConfig = serde_yaml::from_str(yaml).unwrap();
+        let cfg: ValidatorConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.rpc_port, Some(8899));
         assert_eq!(cfg.log.as_deref(), Some("/v.log"));
         assert_eq!(cfg.known_validators.as_ref().unwrap().len(), 1);

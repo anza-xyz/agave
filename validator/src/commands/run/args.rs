@@ -278,7 +278,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("FILE")
             .takes_value(true)
             .help(
-                "YAML configuration file. Supported keys: ledger (path), identity (keypair path), \
+                "Configuration file (TOML). Supported keys: ledger (path), identity (keypair path), \
 entrypoint ([host:port,...]), known_validators ([pubkey,...]), rpc_port (u16), log (path). \
 Precedence: CLI arguments > config file > defaults.",
             ),
