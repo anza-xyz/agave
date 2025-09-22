@@ -4,7 +4,6 @@ use {
     super::{error::FixtureError, proto::InstrContext as ProtoInstrContext},
     agave_feature_set::FeatureSet,
     solana_account::Account,
-    solana_hash::Hash,
     solana_instruction::AccountMeta,
     solana_pubkey::Pubkey,
     solana_stable_layout::stable_instruction::StableInstruction,
@@ -16,8 +15,6 @@ pub struct InstrContext {
     pub accounts: Vec<(Pubkey, Account)>,
     pub instruction: StableInstruction,
     pub cu_avail: u64,
-    pub last_blockhash: Hash,
-    pub lamports_per_signature: u64,
 }
 
 impl TryFrom<ProtoInstrContext> for InstrContext {
@@ -76,8 +73,6 @@ impl TryFrom<ProtoInstrContext> for InstrContext {
             accounts,
             instruction,
             cu_avail: value.cu_avail,
-            last_blockhash: Hash::default(),
-            lamports_per_signature: 0,
         })
     }
 }
