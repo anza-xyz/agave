@@ -114,8 +114,8 @@ fn try_short_u16_bytes_needed<T: TryInto<u16>>(len: T) -> bincode::Result<usize>
 ///
 /// # Safety
 ///
-/// - `dst` must be a valid for writes
-/// - `dst` must be valid for `needed` bytes
+/// - `dst` must be a valid for writes.
+/// - `dst` must be valid for `needed` bytes.
 #[inline(always)]
 unsafe fn encode_short_u16(dst: *mut u8, needed: usize, len: u16) {
     // From `solana_short_vec`:
@@ -157,19 +157,18 @@ impl SeqLen for ShortU16Len {
         }
 
         let len = len as u16;
+        let self_len = writer.buffer.len();
         let needed = short_u16_bytes_needed(len);
-        let cap = writer.buffer.capacity();
-        let free = cap.wrapping_sub(writer.pos);
-        if free < needed {
+        if needed > writer.buffer.capacity().wrapping_sub(self_len) {
             return Err(error_size_limit());
         }
 
-        // SAFETY: `writer.buffer` is valid for writes of `needed` bytes
         unsafe {
-            let dst = writer.buffer.as_mut_ptr().add(writer.pos);
+            // SAFETY: `writer.buffer` is valid for writes of `needed` bytes.
+            let dst = writer.buffer.as_mut_ptr().add(self_len);
             encode_short_u16(dst, needed, len);
+            writer.buffer.set_len(self_len + needed);
         };
-        writer.pos += needed;
 
         Ok(())
     }
@@ -194,39 +193,65 @@ impl<'a> Reader<'a> {
     }
 
     /// Copy exactly `len` bytes from the cursor into `buf`.
-    #[inline]
-    fn read_exact(&mut self, buf: *mut u8, len: usize) -> bincode::Result<()> {
-        if self.pos + len > self.cursor.len() {
+    ///
+    /// # Safety
+    ///
+    /// - `buf` must not overlap with the cursor.
+    /// - `buf` must be valid for writes of `len` bytes.
+    #[inline(always)]
+    unsafe fn read_exact(&mut self, buf: *mut u8, len: usize) -> bincode::Result<()> {
+        if len > self.cursor.len().saturating_sub(self.pos) {
             return Err(error_size_limit());
         }
-        unsafe {
-            ptr::copy_nonoverlapping(self.cursor.as_ptr().add(self.pos), buf, len);
-        }
+        ptr::copy_nonoverlapping(self.cursor.as_ptr().add(self.pos), buf, len);
         self.pos += len;
         Ok(())
     }
 
     /// Copy exactly `size_of::<T>()` bytes from the cursor into `ptr`.
+    ///
+    /// # Safety
+    ///
+    /// - `ptr` must not overlap with the cursor.
+    /// - `ptr` must be valid for writes of `size_of::<T>()` bytes.
+    /// - `T` must be plain ol' data.
     #[inline(always)]
-    fn read_t<T>(&mut self, ptr: *mut T) -> bincode::Result<()> {
+    unsafe fn read_t<T>(&mut self, ptr: *mut T) -> bincode::Result<()> {
         self.read_exact(ptr as *mut u8, size_of::<T>())
     }
 
-    /// Copy exactly `size_of::<T>()` bytes from the cursor into a new `T` on the stack.
+    /// Copy exactly `size_of::<T>()` bytes from the cursor into a new `T`.
+    ///
+    /// # Safety
+    ///
+    /// - `T` must be plain ol' data.
     #[inline(always)]
     fn get_t<T>(&mut self) -> bincode::Result<T> {
         let mut t = MaybeUninit::<T>::uninit();
-        self.read_t(t.as_mut_ptr())?;
-        Ok(unsafe { t.assume_init() })
+        unsafe {
+            // SAFETY:
+            // - `t` does not overlap with the cursor.
+            // - Caller ensures T is plain ol' data.
+            self.read_t(t.as_mut_ptr())?;
+            // SAFETY: `t` is initialized by `read_t`.
+            Ok(t.assume_init())
+        }
     }
 
+    /// Read a u64 from the cursor into `ptr`.
+    ///
+    /// # Safety
+    ///
+    /// - `ptr` must not overlap with the cursor.
+    /// - `ptr` must be valid pointer to a u64.
     #[inline(always)]
-    fn read_u64(&mut self, ptr: *mut u64) -> bincode::Result<()> {
+    unsafe fn read_u64(&mut self, ptr: *mut u64) -> bincode::Result<()> {
+        // SAFETY: Caller ensures `ptr` is a valid pointer to a u64.
         self.read_t(ptr)?;
-        // bincode defaults to little endian encoding
+        // bincode defaults to little endian encoding.
         #[cfg(target_endian = "big")]
         {
-            // SAFETY: ptr is initialized by read_t
+            // SAFETY: `ptr` is initialized by `read_t`.
             let val = unsafe { &mut *ptr };
             *val = val.swap_bytes();
         }
@@ -237,9 +262,12 @@ impl<'a> Reader<'a> {
     #[inline(always)]
     fn get_u64(&mut self) -> bincode::Result<u64> {
         let mut u64 = MaybeUninit::<u64>::uninit();
-        self.read_u64(u64.as_mut_ptr())?;
-        // SAFETY: u64 is initialized by read_u64
-        Ok(unsafe { u64.assume_init() })
+        unsafe {
+            // SAFETY: u64 doesn't overlap with the cursor.
+            self.read_u64(u64.as_mut_ptr())?;
+            // SAFETY: u64 is initialized by read_u64.
+            Ok(u64.assume_init())
+        }
     }
 
     /// Read a sequence of `T`s from the cursor into `ptr`.
@@ -250,7 +278,13 @@ impl<'a> Reader<'a> {
     /// Length encoding can be configured via the `Len` parameter.
     ///
     /// Prefer [`Self::read_byte_seq`] for sequences raw bytes.
-    fn read_seq<T, F, Len>(
+    ///
+    /// # Safety
+    ///
+    /// - `ptr` must not overlap with the cursor.
+    /// - `ptr` must be valid ptr to a Vec<T>.
+    /// - `parse_t` must properly initialize elements.
+    unsafe fn read_seq<T, F, Len>(
         &mut self,
         ptr: *mut Vec<T>,
         _len: Len,
@@ -266,17 +300,18 @@ impl<'a> Reader<'a> {
         let mut vec_ptr = vec.spare_capacity_mut().as_mut_ptr();
         for i in 0..len {
             // Yield the current slot to the caller.
-            parse_t(self, vec_ptr as *mut T)?;
-
-            unsafe {
-                vec_ptr = vec_ptr.add(1);
-                // Set the len for drop safety.
-                vec.set_len(i + 1);
+            if let Err(e) = parse_t(self, vec_ptr as *mut T) {
+                vec.set_len(i);
+                return Err(e);
             }
+
+            // SAFETY: `i` is gated by the capacity of the Vec.
+            vec_ptr = vec_ptr.add(1);
         }
-        unsafe {
-            ptr::write(ptr, vec);
-        }
+        // SAFETY: Caller ensures `parse_t` properly initializes elements.
+        vec.set_len(len);
+        // SAFETY: Caller ensures `ptr` is a valid ptr to a Vec<T>.
+        ptr::write(ptr, vec);
         Ok(())
     }
 
@@ -287,7 +322,13 @@ impl<'a> Reader<'a> {
     /// Should be used with types representable by raw bytes, like `Vec<u8>` or `Vec<[u8; N]>`.
     ///
     /// Length encoding can be configured via the `Len` parameter.
-    fn read_byte_seq<T, Len>(&mut self, ptr: *mut Vec<T>, _len: Len) -> bincode::Result<()>
+    ///
+    /// # Safety
+    ///
+    /// - `ptr` must not overlap with the cursor.
+    /// - `ptr` must be valid ptr to a `Vec<T>`.
+    /// - `T` must be plain ol' data, valid for writes of `size_of::<T>()` bytes.
+    unsafe fn read_byte_seq<T, Len>(&mut self, ptr: *mut Vec<T>, _len: Len) -> bincode::Result<()>
     where
         Len: SeqLen,
     {
@@ -295,84 +336,114 @@ impl<'a> Reader<'a> {
         let mut vec: Vec<T> = Vec::with_capacity(len);
         let vec_ptr = vec.spare_capacity_mut().as_mut_ptr();
         self.read_exact(vec_ptr as *mut u8, len * size_of::<T>())?;
-        unsafe {
-            vec.set_len(len);
-            ptr::write(ptr, vec);
-        }
+        // SAFETY: Caller ensures `T` is plain ol' data and can be initialized by raw byte reads.
+        vec.set_len(len);
+        // SAFETY: Caller ensures `ptr` is a valid ptr to a Vec<T>.
+        ptr::write(ptr, vec);
         Ok(())
     }
 }
 
-fn de_compiled_instruction(
+/// # Safety
+///
+/// - `ptr` must be a valid pointer to a `CompiledInstruction`.
+unsafe fn de_compiled_instruction(
     cursor: &mut Reader,
     ptr: *mut CompiledInstruction,
 ) -> bincode::Result<()> {
-    let (program_id_index_ptr, accounts_ptr, data_ptr) = unsafe {
-        (
-            &raw mut ((*ptr).program_id_index),
-            &raw mut ((*ptr).accounts),
-            &raw mut ((*ptr).data),
-        )
-    };
+    let (program_id_index_ptr, accounts_ptr, data_ptr) = (
+        &raw mut ((*ptr).program_id_index),
+        &raw mut ((*ptr).accounts),
+        &raw mut ((*ptr).data),
+    );
+
+    // SAFETY: program id index a raw byte.
     cursor.read_t(program_id_index_ptr)?;
+    // SAFETY: accounts are raw bytes.
     cursor.read_byte_seq(accounts_ptr, ShortU16Len)?;
+    // SAFETY: data is raw bytes.
     cursor.read_byte_seq(data_ptr, ShortU16Len)?;
+
     Ok(())
 }
 
-fn de_legacy_message(cursor: &mut Reader, ptr: *mut LegacyMessage) -> bincode::Result<()> {
-    let (account_keys_ptr, recent_blockhash_ptr, instructions_ptr) = unsafe {
-        (
-            &raw mut (*ptr).account_keys,
-            &raw mut (*ptr).recent_blockhash,
-            &raw mut (*ptr).instructions,
-        )
-    };
+/// # Safety
+///
+/// - `ptr` must be a valid pointer to a `LegacyMessage`.
+unsafe fn de_legacy_message(cursor: &mut Reader, ptr: *mut LegacyMessage) -> bincode::Result<()> {
+    let (account_keys_ptr, recent_blockhash_ptr, instructions_ptr) = (
+        &raw mut (*ptr).account_keys,
+        &raw mut (*ptr).recent_blockhash,
+        &raw mut (*ptr).instructions,
+    );
+
+    // SAFETY: account keys are raw bytes (`#[repr(transparent)] Address([u8; ADDRESS_BYTES])`).
     cursor.read_byte_seq(account_keys_ptr, ShortU16Len)?;
+    // SAFETY: recent blockhash is raw bytes (`#[repr(transparent)] Hash([u8; HASH_BYTES])`).
     cursor.read_t(recent_blockhash_ptr)?;
-    cursor.read_seq(instructions_ptr, ShortU16Len, de_compiled_instruction)?;
+    // SAFETY: `de_compiled_instruction` properly initializes elements.
+    cursor.read_seq(instructions_ptr, ShortU16Len, |c, p| {
+        de_compiled_instruction(c, p)
+    })?;
     Ok(())
 }
 
-fn de_address_table_lookup(
+/// # Safety
+///
+/// - `ptr` must be a valid pointer to a `MessageAddressTableLookup`.
+unsafe fn de_address_table_lookup(
     cursor: &mut Reader,
     ptr: *mut MessageAddressTableLookup,
 ) -> bincode::Result<()> {
-    let (account_key_ptr, writable_indexes_ptr, readonly_indexes_ptr) = unsafe {
-        (
-            &raw mut ((*ptr).account_key),
-            &raw mut ((*ptr).writable_indexes),
-            &raw mut ((*ptr).readonly_indexes),
-        )
-    };
+    let (account_key_ptr, writable_indexes_ptr, readonly_indexes_ptr) = (
+        &raw mut ((*ptr).account_key),
+        &raw mut ((*ptr).writable_indexes),
+        &raw mut ((*ptr).readonly_indexes),
+    );
+
+    // SAFETY: account key is raw bytes (`#[repr(transparent)] Address([u8; ADDRESS_BYTES])`).
     cursor.read_t(account_key_ptr)?;
+    // SAFETY: writable indexes are raw bytes.
     cursor.read_byte_seq(writable_indexes_ptr, ShortU16Len)?;
+    // SAFETY: readonly indexes are raw bytes.
     cursor.read_byte_seq(readonly_indexes_ptr, ShortU16Len)?;
+
     Ok(())
 }
 
-fn de_v0_message(cursor: &mut Reader, ptr: *mut V0Message) -> bincode::Result<()> {
-    let (account_keys_ptr, recent_blockhash_ptr, instructions_ptr, address_table_lookups_ptr) = unsafe {
-        (
-            &raw mut (*ptr).account_keys,
-            &raw mut (*ptr).recent_blockhash,
-            &raw mut (*ptr).instructions,
-            &raw mut (*ptr).address_table_lookups,
-        )
-    };
+/// # Safety
+///
+/// - `ptr` must be a valid pointer to a `V0Message`.
+unsafe fn de_v0_message(cursor: &mut Reader, ptr: *mut V0Message) -> bincode::Result<()> {
+    let (account_keys_ptr, recent_blockhash_ptr, instructions_ptr, address_table_lookups_ptr) = (
+        &raw mut (*ptr).account_keys,
+        &raw mut (*ptr).recent_blockhash,
+        &raw mut (*ptr).instructions,
+        &raw mut (*ptr).address_table_lookups,
+    );
+    // SAFETY: account keys are raw bytes (`#[repr(transparent)] Address([u8; ADDRESS_BYTES])`).
     cursor.read_byte_seq(account_keys_ptr, ShortU16Len)?;
+    // SAFETY: recent blockhash is raw bytes (`#[repr(transparent)] Hash([u8; HASH_BYTES])`).
     cursor.read_t(recent_blockhash_ptr)?;
-    cursor.read_seq(instructions_ptr, ShortU16Len, de_compiled_instruction)?;
-    cursor.read_seq(
-        address_table_lookups_ptr,
-        ShortU16Len,
-        de_address_table_lookup,
-    )?;
+    // SAFETY: `de_compiled_instruction` properly initializes elements.
+    cursor.read_seq(instructions_ptr, ShortU16Len, |c, p| {
+        de_compiled_instruction(c, p)
+    })?;
+    // SAFETY: `de_address_table_lookup` properly initializes elements.
+    cursor.read_seq(address_table_lookups_ptr, ShortU16Len, |c, p| {
+        de_address_table_lookup(c, p)
+    })?;
     Ok(())
 }
 
 /// See [`solana_message::VersionedMessage`] for more details.
-fn de_versioned_message(cursor: &mut Reader, ptr: *mut VersionedMessage) -> bincode::Result<()> {
+/// # Safety
+///
+/// - `ptr` must be a valid pointer to a `VersionedMessage`.
+unsafe fn de_versioned_message(
+    cursor: &mut Reader,
+    ptr: *mut VersionedMessage,
+) -> bincode::Result<()> {
     // From `solana_message`:
     //
     // If the first bit is set, the remaining 7 bits will be used to determine
@@ -392,14 +463,26 @@ fn de_versioned_message(cursor: &mut Reader, ptr: *mut VersionedMessage) -> binc
             0 => {
                 let mut msg = MaybeUninit::<V0Message>::uninit();
                 let msg_ptr = msg.as_mut_ptr();
-                let num_required_signatures_ptr =
-                    unsafe { &raw mut (*msg_ptr).header.num_required_signatures };
-                // header is serialized as 3 contiguous bytes.
-                cursor.read_t(num_required_signatures_ptr as *mut [u8; 3])?;
+                let (
+                    num_required_signatures_ptr,
+                    num_readonly_signed_accounts_ptr,
+                    num_readonly_unsigned_accounts_ptr,
+                ) = (
+                    &raw mut (*msg_ptr).header.num_required_signatures,
+                    &raw mut (*msg_ptr).header.num_readonly_signed_accounts,
+                    &raw mut (*msg_ptr).header.num_readonly_unsigned_accounts,
+                );
+                // MessageHeader is serialized as 3 contiguous bytes, but doesn't have a guaranteed layout,
+                // so we write the fields individually.
+                // SAFETY: Each field is a raw byte
+                cursor.read_t(num_required_signatures_ptr)?;
+                cursor.read_t(num_readonly_signed_accounts_ptr)?;
+                cursor.read_t(num_readonly_unsigned_accounts_ptr)?;
+
+                // SAFETY: msg_ptr is a valid pointer to a V0Message
                 de_v0_message(cursor, msg_ptr)?;
-                unsafe {
-                    ptr::write(ptr, VersionedMessage::V0(msg.assume_init()));
-                }
+                // SAFETY: msg is initialized by de_v0_message
+                ptr::write(ptr, VersionedMessage::V0(msg.assume_init()));
             }
             127 => {
                 return Err(invalid_version(127));
@@ -411,50 +494,61 @@ fn de_versioned_message(cursor: &mut Reader, ptr: *mut VersionedMessage) -> binc
     } else {
         let mut msg = MaybeUninit::<LegacyMessage>::uninit();
         let msg_ptr = msg.as_mut_ptr();
-        let (num_required_signatures_ptr, num_readonly_signed_accounts_ptr) = unsafe {
-            (
-                &raw mut (*msg_ptr).header.num_required_signatures,
-                &raw mut (*msg_ptr).header.num_readonly_signed_accounts,
-            )
-        };
-        unsafe {
-            ptr::write(num_required_signatures_ptr, variant);
-        }
-        // read the next 2 contiguous bytes.
-        cursor.read_t(num_readonly_signed_accounts_ptr as *mut [u8; 2])?;
+        let (
+            num_required_signatures_ptr,
+            num_readonly_signed_accounts_ptr,
+            num_readonly_unsigned_accounts_ptr,
+        ) = (
+            &raw mut (*msg_ptr).header.num_required_signatures,
+            &raw mut (*msg_ptr).header.num_readonly_signed_accounts,
+            &raw mut (*msg_ptr).header.num_readonly_unsigned_accounts,
+        );
+
+        // MessageHeader is serialized as 3 contiguous bytes, but doesn't have a guaranteed layout,
+        // so we write the fields individually.
+        // SAFETY: Each field is a raw byte
+        ptr::write(num_required_signatures_ptr, variant);
+        cursor.read_t(num_readonly_signed_accounts_ptr)?;
+        cursor.read_t(num_readonly_unsigned_accounts_ptr)?;
+        // SAFETY: msg_ptr is a valid pointer to a LegacyMessage
         de_legacy_message(cursor, msg_ptr)?;
-        unsafe {
-            ptr::write(ptr, VersionedMessage::Legacy(msg.assume_init()));
-        }
+        // SAFETY: msg is initialized by de_legacy_message
+        ptr::write(ptr, VersionedMessage::Legacy(msg.assume_init()));
     }
 
     Ok(())
 }
 
-fn de_versioned_transaction(
+/// # Safety
+///
+/// - `ptr` must be a valid pointer to a `VersionedTransaction`.
+unsafe fn de_versioned_transaction(
     cursor: &mut Reader,
     ptr: *mut VersionedTransaction,
 ) -> bincode::Result<()> {
-    let (signatures_ptr, message_ptr) =
-        unsafe { (&raw mut (*ptr).signatures, &raw mut (*ptr).message) };
+    let (signatures_ptr, message_ptr) = (&raw mut (*ptr).signatures, &raw mut (*ptr).message);
+    // SAFETY: signatures are raw bytes `(#[repr(transparent)] Signature([u8; SIGNATURE_BYTES]))`.
     cursor.read_byte_seq(signatures_ptr, ShortU16Len)?;
+    // SAFETY: `de_versioned_message` properly initializes elements.
     de_versioned_message(cursor, message_ptr)?;
     Ok(())
 }
 
-fn de_entry(cursor: &mut Reader, ptr: *mut Entry) -> bincode::Result<()> {
-    let (num_hashes_ptr, hash_ptr, txs_ptr) = unsafe {
-        (
-            &raw mut (*ptr).num_hashes,
-            &raw mut (*ptr).hash,
-            &raw mut (*ptr).transactions,
-        )
-    };
+/// # Safety
+///
+/// - `ptr` must be a valid pointer to a `Entry`.
+unsafe fn de_entry(cursor: &mut Reader, ptr: *mut Entry) -> bincode::Result<()> {
+    let (num_hashes_ptr, hash_ptr, txs_ptr) = (
+        &raw mut (*ptr).num_hashes,
+        &raw mut (*ptr).hash,
+        &raw mut (*ptr).transactions,
+    );
 
     cursor.read_u64(num_hashes_ptr)?;
+    // SAFETY: Hash is raw bytes `(#[repr(transparent)] Hash([u8; HASH_BYTES]))`.
     cursor.read_t(hash_ptr)?;
-    cursor.read_seq(txs_ptr, BincodeLen, de_versioned_transaction)?;
-
+    // SAFETY: `de_versioned_transaction` properly initializes elements.
+    cursor.read_seq(txs_ptr, BincodeLen, |c, p| de_versioned_transaction(c, p))?;
     Ok(())
 }
 
@@ -482,65 +576,85 @@ pub fn deserialize_entry(bytes: &[u8]) -> bincode::Result<Entry> {
     let mut cursor = Reader::new(bytes);
     let mut entry = MaybeUninit::<Entry>::uninit();
     let entry_ptr = entry.as_mut_ptr();
-    de_entry(&mut cursor, entry_ptr)?;
+    unsafe {
+        // SAFETY:
+        // - `entry_ptr` is a valid pointer to an `Entry`.
+        // - `de_entry` properly initializes elements.
+        de_entry(&mut cursor, entry_ptr)?;
+    }
     Ok(unsafe { entry.assume_init() })
 }
 
 pub fn deserialize_entry_multi(slice: &[u8]) -> bincode::Result<Vec<Entry>> {
     let mut cursor = Reader::new(slice);
     let mut entries = MaybeUninit::<Vec<Entry>>::uninit();
-    cursor.read_seq(entries.as_mut_ptr(), BincodeLen, de_entry)?;
+    unsafe {
+        // SAFETY:
+        // - `de_entry` properly initializes elements.
+        // - `entries` is a valid pointer to a `Vec<Entry>`.
+        cursor.read_seq(entries.as_mut_ptr(), BincodeLen, |c, p| de_entry(c, p))?;
+    }
     Ok(unsafe { entries.assume_init() })
 }
 
 pub struct Writer<'a> {
     buffer: &'a mut Vec<u8>,
-    pos: usize,
 }
 
 impl<'a> Writer<'a> {
     fn new(buffer: &'a mut Vec<u8>) -> Self {
-        Self { buffer, pos: 0 }
-    }
-
-    fn finish(&mut self) {
-        unsafe {
-            self.buffer.set_len(self.pos);
-        }
+        Self { buffer }
     }
 
     /// Write exactly `len` bytes from `buf` into the internal buffer.
+    ///
+    /// # Safety
+    ///
+    /// - `buf` must not overlap with the internal buffer.
+    /// - `buf` must be valid for reads of `len` bytes.
     #[inline(always)]
-    fn write(&mut self, buf: *const u8, len: usize) -> bincode::Result<()> {
-        if self.pos + len > self.buffer.capacity() {
+    unsafe fn write_exact(&mut self, buf: *const u8, len: usize) -> bincode::Result<()> {
+        let self_len = self.buffer.len();
+        if len > self.buffer.capacity().saturating_sub(self_len) {
             return Err(error_size_limit());
         }
-        unsafe {
-            ptr::copy_nonoverlapping(buf, self.buffer.as_mut_ptr().add(self.pos), len);
-        }
-        self.pos += len;
+        ptr::copy_nonoverlapping(buf, self.buffer.as_mut_ptr().add(self_len), len);
+        self.buffer.set_len(self_len + len);
         Ok(())
     }
 
     /// Write T into the internal buffer.
+    ///
+    /// # Safety
+    ///
+    /// - `T` must be plain ol' data.
     #[inline(always)]
-    fn write_t<T>(&mut self, value: &T) -> bincode::Result<()> {
-        self.write(value as *const T as *const u8, size_of::<T>())
+    unsafe fn write_t<T>(&mut self, value: &T) -> bincode::Result<()> {
+        self.write_exact(value as *const T as *const u8, size_of::<T>())
     }
 
     #[inline(always)]
     fn write_u64(&mut self, value: u64) -> bincode::Result<()> {
-        // bincode defaults to little endian encoding
+        // bincode defaults to little endian encoding.
+        // noop on LE machines.
         let val = value.to_le_bytes();
 
-        self.write_t(&val)?;
+        unsafe {
+            // SAFETY: `val` is plain ol' data.
+            self.write_t(&val)?;
+        }
         Ok(())
     }
 
     /// Write a byte slice into the internal buffer.
     #[inline(always)]
     fn write_bytes(&mut self, value: &[u8]) -> bincode::Result<()> {
-        self.write(value.as_ptr(), value.len())
+        unsafe {
+            // SAFETY:
+            // - `value` is raw bytes.
+            // - `value` does not overlap with the internal buffer.
+            self.write_exact(value.as_ptr(), value.len())
+        }
     }
 
     /// Write a sequence of `T`s into the internal buffer.
@@ -568,13 +682,17 @@ impl<'a> Writer<'a> {
     /// This writes the entire sequence at once, rather than yielding each element to the caller.
     ///
     /// Length encoding can be configured via the `Len` parameter.
+    ///
+    /// # Safety
+    ///
+    /// - `T` must be plain ol' data.
     #[inline(always)]
-    fn write_byte_seq<T, Len>(&mut self, value: &[T], _len: Len) -> bincode::Result<()>
+    unsafe fn write_byte_seq<T, Len>(&mut self, value: &[T], _len: Len) -> bincode::Result<()>
     where
         Len: SeqLen,
     {
         Len::encode_len(self, value.len())?;
-        self.write(value.as_ptr() as *const u8, size_of_val(value))
+        self.write_exact(value.as_ptr() as *const u8, size_of_val(value))
     }
 }
 
@@ -582,9 +700,11 @@ fn se_compiled_instruction(
     writer: &mut Writer,
     value: &CompiledInstruction,
 ) -> bincode::Result<()> {
-    writer.write_t(&value.program_id_index)?;
-    writer.write_byte_seq(&value.accounts, ShortU16Len)?;
-    writer.write_byte_seq(&value.data, ShortU16Len)?;
+    unsafe {
+        writer.write_t(&value.program_id_index)?;
+        writer.write_byte_seq(&value.accounts, ShortU16Len)?;
+        writer.write_byte_seq(&value.data, ShortU16Len)?;
+    }
     Ok(())
 }
 
@@ -600,7 +720,10 @@ fn se_header(writer: &mut Writer, value: &MessageHeader) -> bincode::Result<()> 
 
 fn se_legacy_message(writer: &mut Writer, value: &LegacyMessage) -> bincode::Result<()> {
     se_header(writer, &value.header)?;
-    writer.write_byte_seq(&value.account_keys, ShortU16Len)?;
+    unsafe {
+        // SAFETY: Account keys are raw bytes (`#[repr(transparent)] Address([u8; ADDRESS_BYTES])`).
+        writer.write_byte_seq(&value.account_keys, ShortU16Len)?;
+    }
     writer.write_bytes(value.recent_blockhash.as_ref())?;
     writer.write_seq(&value.instructions, ShortU16Len, se_compiled_instruction)?;
     Ok(())
@@ -611,15 +734,25 @@ fn se_address_table_lookup(
     value: &MessageAddressTableLookup,
 ) -> bincode::Result<()> {
     writer.write_bytes(value.account_key.as_ref())?;
-    writer.write_byte_seq(&value.writable_indexes, ShortU16Len)?;
-    writer.write_byte_seq(&value.readonly_indexes, ShortU16Len)?;
+    unsafe {
+        // SAFETY: Writable indexes are raw bytes.
+        writer.write_byte_seq(&value.writable_indexes, ShortU16Len)?;
+        // SAFETY: Readonly indexes are raw bytes.
+        writer.write_byte_seq(&value.readonly_indexes, ShortU16Len)?;
+    }
     Ok(())
 }
 
 fn se_v0_message(writer: &mut Writer, value: &V0Message) -> bincode::Result<()> {
-    writer.write_t(&MESSAGE_VERSION_PREFIX)?;
+    unsafe {
+        // SAFETY: Message version prefix is a raw byte.
+        writer.write_t(&MESSAGE_VERSION_PREFIX)?;
+    }
     se_header(writer, &value.header)?;
-    writer.write_byte_seq(&value.account_keys, ShortU16Len)?;
+    unsafe {
+        // SAFETY: Account keys are raw bytes (`#[repr(transparent)] Address([u8; ADDRESS_BYTES])`).
+        writer.write_byte_seq(&value.account_keys, ShortU16Len)?;
+    }
     writer.write_bytes(value.recent_blockhash.as_ref())?;
     writer.write_seq(&value.instructions, ShortU16Len, se_compiled_instruction)?;
     writer.write_seq(
@@ -642,7 +775,10 @@ fn se_versioned_transaction(
     writer: &mut Writer,
     value: &VersionedTransaction,
 ) -> bincode::Result<()> {
-    writer.write_byte_seq(&value.signatures, ShortU16Len)?;
+    unsafe {
+        // SAFETY: Signatures are raw bytes (`#[repr(transparent)] Signature([u8; SIGNATURE_BYTES])`).
+        writer.write_byte_seq(&value.signatures, ShortU16Len)?;
+    }
     se_versioned_message(writer, &value.message)?;
     Ok(())
 }
@@ -793,7 +929,6 @@ pub fn serialize_entry(entry: &Entry) -> bincode::Result<Vec<u8>> {
     let mut buffer = Vec::with_capacity(size as usize);
     let mut writer = Writer::new(&mut buffer);
     se_entry(&mut writer, entry)?;
-    writer.finish();
     Ok(buffer)
 }
 
@@ -802,7 +937,6 @@ pub fn serialize_entry_multi(entries: &[Entry]) -> bincode::Result<Vec<u8>> {
     let mut buffer = Vec::with_capacity(size as usize);
     let mut writer = Writer::new(&mut buffer);
     writer.write_seq(entries, BincodeLen, se_entry)?;
-    writer.finish();
     Ok(buffer)
 }
 
