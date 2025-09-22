@@ -946,7 +946,7 @@ pub fn execute(
     node.info.hot_swap_pubkey(identity_keypair.pubkey());
 
     let tpu_quic_server_config = QuicServerParams {
-        max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+        max_connections_per_staked_peer: tpu_max_connections_per_peer.try_into().unwrap(),
         max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
         max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
         max_streams_per_ms,
@@ -957,7 +957,7 @@ pub fn execute(
     };
 
     let tpu_fwd_quic_server_config = QuicServerParams {
-        max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+        max_connections_per_staked_peer: tpu_max_connections_per_peer.try_into().unwrap(),
         max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
         max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
         max_streams_per_ms,
@@ -970,7 +970,7 @@ pub fn execute(
     // Vote shares TPU forward's characteristics, except that we accept 1 connection
     // per peer and no unstaked connections are accepted.
     let mut vote_quic_server_config = tpu_fwd_quic_server_config.clone();
-    vote_quic_server_config.max_connections_per_peer = 1;
+    vote_quic_server_config.max_connections_per_staked_peer = 1;
     vote_quic_server_config.max_unstaked_connections = 0;
     vote_quic_server_config.num_threads = tpu_vote_transaction_receive_threads;
 

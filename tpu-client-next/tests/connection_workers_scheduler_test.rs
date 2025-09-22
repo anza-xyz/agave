@@ -354,7 +354,7 @@ async fn test_connection_pruned_and_reopened() {
     } = setup_quic_server(
         None,
         QuicServerParams {
-            max_connections_per_peer: 100,
+            max_connections_per_staked_peer: 100,
             max_unstaked_connections: 1,
             ..QuicServerParams::default_for_tests()
         },
@@ -556,7 +556,7 @@ async fn test_rate_limiting() {
     } = setup_quic_server(
         None,
         QuicServerParams {
-            max_connections_per_peer: 100,
+            max_connections_per_staked_peer: 100,
             max_connections_per_ipaddr_per_min: 1,
             ..QuicServerParams::default_for_tests()
         },
@@ -617,7 +617,7 @@ async fn test_rate_limiting_establish_connection() {
     } = setup_quic_server(
         None,
         QuicServerParams {
-            max_connections_per_peer: 100,
+            max_connections_per_staked_peer: 100,
             max_connections_per_ipaddr_per_min: 1,
             ..QuicServerParams::default_for_tests()
         },
@@ -761,7 +761,7 @@ async fn test_proactive_connection_close_detection() {
     } = setup_quic_server(
         None,
         QuicServerParams {
-            max_connections_per_peer: 1,
+            max_connections_per_staked_peer: 1,
             max_unstaked_connections: 1,
             ..QuicServerParams::default_for_tests()
         },
