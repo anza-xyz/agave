@@ -759,7 +759,7 @@ async fn setup_connection(
                 let params = get_connection_stake(&new_connection, &staked_nodes).map_or(
                     NewConnectionHandlerParams::new_unstaked(
                         packet_sender.clone(),
-                        quic_server_params.max_connections_per_peer,
+                        quic_server_params.max_connections_per_unstaked_peer,
                         stats.clone(),
                         quic_server_params.wait_for_chunk_timeout,
                         quic_server_params.max_unstaked_connections,
@@ -783,7 +783,8 @@ async fn setup_connection(
                             remote_pubkey: Some(pubkey),
                             peer_type,
                             total_stake,
-                            max_connections_per_peer: quic_server_params.max_connections_per_peer,
+                            max_connections_per_peer: quic_server_params
+                                .max_connections_per_staked_peer,
                             stats: stats.clone(),
                             max_stake,
                             min_stake,
@@ -1867,7 +1868,7 @@ pub mod test {
         } = setup_quic_server(
             None,
             QuicServerParams {
-                max_connections_per_peer: 2,
+                max_connections_per_staked_peer: 2,
                 ..QuicServerParams::default_for_tests()
             },
         );
@@ -2086,7 +2087,7 @@ pub mod test {
             sender,
             staked_nodes,
             QuicServerParams {
-                max_connections_per_peer: 2,
+                max_connections_per_staked_peer: 2,
                 ..QuicServerParams::default_for_tests()
             },
             cancel.clone(),

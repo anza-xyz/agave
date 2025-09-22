@@ -31,8 +31,14 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-// allow multiple connections for NAT and any open/close overlap
+/// Default maximum quic connections for staked nodes. This is > 1
+/// needed to allow RPC operators to have multiple hosts feeding into
+/// the same leader via same identity.
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
+
+/// Default maximum amount amount of unstaked peers we admit from
+/// a single IP address.
+const DEFAULT_MAX_QUIC_UNSTAKED_CONNECTIONS_PER_IP: usize = 2;
 
 pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
 
@@ -615,7 +621,8 @@ pub fn spawn_server_multi(
 
 #[derive(Clone)]
 pub struct QuicServerParams {
-    pub max_connections_per_peer: usize,
+    pub max_connections_per_staked_peer: usize,
+    pub max_connections_per_unstaked_peer: usize,
     pub max_staked_connections: usize,
     pub max_unstaked_connections: usize,
     pub max_streams_per_ms: u64,
@@ -629,7 +636,8 @@ pub struct QuicServerParams {
 impl Default for QuicServerParams {
     fn default() -> Self {
         QuicServerParams {
-            max_connections_per_peer: 1,
+            max_connections_per_staked_peer: 1,
+            max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_UNSTAKED_CONNECTIONS_PER_IP,
             max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
@@ -834,7 +842,7 @@ mod test {
             sender,
             staked_nodes,
             QuicServerParams {
-                max_connections_per_peer: 2,
+                max_connections_per_staked_peer: 2,
                 ..QuicServerParams::default_for_tests()
             },
             cancel.clone(),
