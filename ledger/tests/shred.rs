@@ -200,7 +200,7 @@ fn setup_different_sized_fec_blocks(
     let keypair1 = Keypair::new();
     let tx0 = system_transaction::transfer(&keypair0, &keypair1.pubkey(), 1, Hash::default());
     let entry = Entry::new(&Hash::default(), 1, vec![tx0]);
-    let merkle_capacity = ShredData::capacity(Some((6, true, true))).unwrap();
+    let merkle_capacity = ShredData::capacity(Some((6, true))).unwrap();
     let chained_merkle_root = Hash::default();
 
     assert!(DATA_SHREDS_PER_FEC_BLOCK > 2);

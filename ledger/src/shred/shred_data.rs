@@ -88,16 +88,12 @@ impl ShredData {
     pub fn capacity(
         merkle_variant: Option<(
             u8,   // proof_size
-            bool, // chained
             bool, // resigned
         )>,
     ) -> Result<usize, Error> {
         match merkle_variant {
             None => Err(Error::InvalidShredVariant),
-            Some((proof_size, chained, resigned)) => {
-                debug_assert!(chained || !resigned);
-                merkle::ShredData::capacity(proof_size, chained, resigned)
-            }
+            Some((proof_size, resigned)) => merkle::ShredData::capacity(proof_size, resigned),
         }
     }
 
