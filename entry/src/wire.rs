@@ -855,11 +855,11 @@ where
 }
 
 #[inline(always)]
-fn size_of_seq_bytes<T, Len>(seq: &[T], _len: Len) -> bincode::Result<usize>
+fn size_of_seq_bytes<T, Len>(seq: &[T], len: Len) -> bincode::Result<usize>
 where
     Len: SeqLen,
 {
-    size_of_seq_fixed(seq, _len, 1)
+    size_of_seq_fixed(seq, len, 1)
 }
 
 fn size_of_instruction(instruction: &CompiledInstruction) -> bincode::Result<usize> {
