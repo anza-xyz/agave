@@ -188,7 +188,7 @@ impl Shredder {
             // For backward compatibility. This is needed when the data shred
             // payload is None, so that deserializing to Vec<Entry> results in
             // an empty vector.
-            let data_buffer_size = ShredData::capacity(/*merkle_proof_size:*/ None).unwrap();
+            let data_buffer_size = ShredData::capacity(0, false).unwrap();
             Ok(vec![0u8; data_buffer_size])
         } else {
             Ok(data)
@@ -494,7 +494,7 @@ mod tests {
         let shredder = Shredder::new(slot, slot - 5, 0, 0).unwrap();
         // Create enough entries to make > 1 shred
         let data_buffer_size =
-            ShredData::capacity(/*merkle_proof_size:*/ Some((6, false))).unwrap();
+            ShredData::capacity(6 /* proof size */, false /* resigned */).unwrap();
         let num_entries = max_ticks_per_n_shreds(1, Some(data_buffer_size)) + 1;
         let entries: Vec<_> = (0..num_entries)
             .map(|_| {
