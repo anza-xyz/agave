@@ -533,7 +533,11 @@ pub fn execute(
         rpc_addrs: {
             let rpc_port_opt = value_t!(matches, "rpc_port", u16)
                 .ok()
-                .or_else(|| std::env::var("AGAVE_RPC_PORT").ok().and_then(|s| s.parse::<u16>().ok()));
+                .or_else(|| {
+                    if std::env::var("AGAVE_CONFIG_ACTIVE").ok().as_deref() == Some("1") {
+                        std::env::var("AGAVE_RPC_PORT").ok().and_then(|s| s.parse::<u16>().ok())
+                    } else { None }
+                });
             if let Some(rpc_port) = rpc_port_opt {
                 if rpc_port == 0 {
                     return Err(Box::new(crate::commands::Error::Dynamic(

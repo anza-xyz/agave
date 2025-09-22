@@ -163,6 +163,7 @@ fn apply_config_defaults() {
             applied += 1;
         }
     }
+    env::set_var("AGAVE_CONFIG_ACTIVE", "1");
 
     info!("Loaded config from {} (applied {} key(s))", path, applied);
 }
