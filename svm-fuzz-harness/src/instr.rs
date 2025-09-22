@@ -91,17 +91,7 @@ fn create_invoke_context_fields(
     let sysvar_cache = crate::sysvar_cache::setup_sysvar_cache(&input.accounts);
 
     let clock = sysvar_cache.get_clock().unwrap();
-
-    // Add checks for rent boundaries
-    let rent_ = sysvar_cache.get_rent().unwrap();
-    let rent = (*rent_).clone();
-    if rent.lamports_per_byte_year > u32::MAX.into()
-        || rent.exemption_threshold > 999.0
-        || rent.exemption_threshold < 0.0
-        || rent.burn_percent > 100
-    {
-        return None;
-    };
+    let rent = sysvar_cache.get_rent().unwrap();
 
     if !input
         .accounts
@@ -122,7 +112,7 @@ fn create_invoke_context_fields(
 
     let transaction_context = TransactionContext::new(
         transaction_accounts.clone(),
-        rent,
+        (*rent).clone(),
         compute_budget.max_instruction_stack_depth,
         compute_budget.max_instruction_trace_length,
     );
@@ -140,9 +130,6 @@ fn create_invoke_context_fields(
         .and_then(|x| (*x).last().cloned())
         .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
         .unwrap_or_default();
-
-    input.last_blockhash = blockhash;
-    input.lamports_per_signature = lamports_per_signature;
 
     let mut newly_loaded_programs = HashSet::<Pubkey>::new();
 
