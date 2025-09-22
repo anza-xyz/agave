@@ -429,7 +429,10 @@ impl VoteWorker {
         ProcessTransactionsSummary {
             reached_max_poh_height,
             transaction_counts: total_transaction_counts,
-            retryable_transaction_indexes,
+            retryable_transaction_indexes: retryable_transaction_indexes
+                .into_iter()
+                .map(|retryable_index| retryable_index.index)
+                .collect(),
             cost_model_throttled_transactions_count,
             cost_model_us,
             execute_and_commit_timings,
