@@ -178,7 +178,7 @@ pub fn create_genesis_config_with_vote_accounts_and_cluster_type(
         let node_account = Account::new(VALIDATOR_LAMPORTS, 0, &system_program::id());
         let vote_account = if is_alpenglow {
             let bls_keypair = BLSKeypair::derive_from_signer(
-                &voting_keypairs[0].borrow().vote_keypair,
+                &validator_voting_keypairs.borrow().vote_keypair,
                 BLS_KEYPAIR_DERIVE_SEED,
             )
             .unwrap();
