@@ -19,17 +19,9 @@ $ source $HOME/.cargo/env
 $ rustup component add rustfmt
 ```
 
-When building the master branch, please make sure you are using the latest stable rust version by running:
-
-```bash
-$ rustup update
-```
-
-When building a specific release branch, you should check the rust version in `ci/rust-version.sh` and if necessary, install that version by running:
-```bash
-$ rustup install VERSION
-```
-Note that if this is not the latest rust version on your machine, cargo commands may require an [override](https://rust-lang.github.io/rustup/overrides.html) in order to use the correct version.
+The `rust-toolchain.toml` file pins a specific rust version and ensures that
+cargo commands run with that version. Note that cargo will automatically install
+the correct version if it is not already installed.
 
 On Linux systems you may need to install libssl-dev, pkg-config, zlib1g-dev, protobuf etc.
 

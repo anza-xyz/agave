@@ -433,7 +433,7 @@ impl AccountsBackgroundService {
         let mut removed_slots_count = 0;
         let mut total_remove_slots_time = 0;
         let t_background = Builder::new()
-            .name("solBgAccounts".to_string())
+            .name("solAcctsBgSvc".to_string())
             .spawn({
                 let is_running = is_running.clone();
                 let stop = stop.clone();
