@@ -11,7 +11,7 @@ edition = { workspace = true }
 publish = false
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [[bin]]
 name = "test_exec_instr"
