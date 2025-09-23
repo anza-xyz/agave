@@ -864,8 +864,14 @@ impl VoteStateHandler {
                 TargetVoteState::V3(vote_state)
             }
             VoteStateTargetVersion::V4 => {
-                let vote_state =
-                    VoteStateV4::deserialize(vote_account.get_data(), vote_account.get_key())?;
+                // Once `VoteStateV4` is active, `VoteState0_23_5` will be
+                // considered uninitialized. Fail here early if we detect an
+                // enum variant discriminator of 0.
+                let data = vote_account.get_data();
+                if data.first().is_some_and(|b| *b == 0) {
+                    return Err(InstructionError::UninitializedAccount);
+                }
+                let vote_state = VoteStateV4::deserialize(data, vote_account.get_key())?;
                 TargetVoteState::V4(vote_state)
             }
         };

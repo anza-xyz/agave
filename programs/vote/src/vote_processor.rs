@@ -1285,9 +1285,16 @@ mod tests {
         );
         assert_eq!(accounts[0].lamports(), 0);
         assert_eq!(accounts[3].lamports(), lamports);
-        let post_state: VoteStateVersions = accounts[0].state().unwrap();
         // State has been deinitialized since balance is zero
-        assert!(post_state.is_uninitialized());
+        if vote_state_v4_enabled {
+            // v4 is always "initialized" per SIMD-0185.
+            let v4 = VoteStateV4::deserialize(accounts[0].data(), &vote_pubkey).unwrap();
+            // After deinitialize, it contains default state.
+            assert_eq!(v4, VoteStateV4::default());
+        } else {
+            let post_state: VoteStateVersions = accounts[0].state().unwrap();
+            assert!(post_state.is_uninitialized());
+        }
 
         // should fail, unsigned
         transaction_accounts[0] = (vote_pubkey, vote_account);
