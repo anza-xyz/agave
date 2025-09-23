@@ -36,9 +36,10 @@ use {
 /// the same leader via same identity.
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
 
-/// Default maximum amount amount of unstaked peers we admit from
-/// a single IP address.
-const DEFAULT_MAX_QUIC_UNSTAKED_CONNECTIONS_PER_IP: usize = 2;
+/// Maximum amount amount of unstaked peers we admit from
+/// a single IP address. Increasing this beyond 1 may
+/// expose the node to connection table churn.
+const MAX_QUIC_UNSTAKED_CONNECTIONS_PER_IP: usize = 1;
 
 pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
 
@@ -637,7 +638,7 @@ impl Default for QuicServerParams {
     fn default() -> Self {
         QuicServerParams {
             max_connections_per_staked_peer: 1,
-            max_connections_per_unstaked_peer: DEFAULT_MAX_QUIC_UNSTAKED_CONNECTIONS_PER_IP,
+            max_connections_per_unstaked_peer: MAX_QUIC_UNSTAKED_CONNECTIONS_PER_IP,
             max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
@@ -749,11 +750,8 @@ pub fn spawn_server_with_cancel(
 #[cfg(test)]
 mod test {
     use {
-        super::*,
-        crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
-        crossbeam_channel::unbounded,
-        solana_net_utils::sockets::bind_to_localhost_unique,
-        std::net::SocketAddr,
+        super::*, crate::nonblocking::quic::test::*, crossbeam_channel::unbounded,
+        solana_net_utils::sockets::bind_to_localhost_unique, std::net::SocketAddr,
     };
 
     fn rt_for_test() -> Runtime {
@@ -817,40 +815,6 @@ mod test {
 
         let runtime = rt_for_test();
         runtime.block_on(check_block_multiple_connections(server_address));
-        cancel.cancel();
-        t.join().unwrap();
-    }
-
-    #[test]
-    fn test_quic_server_multiple_streams() {
-        solana_logger::setup();
-        let s = bind_to_localhost_unique().expect("should bind");
-        let (sender, receiver) = unbounded();
-        let keypair = Keypair::new();
-        let server_address = s.local_addr().unwrap();
-        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
-        let cancel = CancellationToken::new();
-        let SpawnServerResult {
-            endpoints: _,
-            thread: t,
-            key_updater: _,
-        } = spawn_server_with_cancel(
-            "solQuicTest",
-            "quic_streamer_test",
-            [s],
-            &keypair,
-            sender,
-            staked_nodes,
-            QuicServerParams {
-                max_connections_per_staked_peer: 2,
-                ..QuicServerParams::default_for_tests()
-            },
-            cancel.clone(),
-        )
-        .unwrap();
-
-        let runtime = rt_for_test();
-        runtime.block_on(check_multiple_streams(receiver, server_address, None));
         cancel.cancel();
         t.join().unwrap();
     }

@@ -2087,7 +2087,7 @@ pub mod test {
             sender,
             staked_nodes,
             QuicServerParams {
-                max_connections_per_staked_peer: 2,
+                max_connections_per_unstaked_peer: 2,
                 ..QuicServerParams::default_for_tests()
             },
             cancel.clone(),
