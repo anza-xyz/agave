@@ -17,7 +17,7 @@ use {
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
     solana_account::{state_traits::StateMut, Account},
-    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
+    solana_account_decoder::{UiAccount, UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
         self,
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit},
@@ -1929,7 +1929,11 @@ fn get_buffers(
     )?;
 
     let mut buffers = vec![];
-    for (address, account) in results.iter() {
+    for (address, ui_account) in results.iter() {
+        let account: Account = ui_account.decode().expect(
+            "It should be impossible at this point for the account data not to be decodable. \
+             Ensure that the account was fetched using a binary encoding.",
+        );
         if let Ok(UpgradeableLoaderState::Buffer { authority_address }) = account.state() {
             buffers.push(CliUpgradeableBuffer {
                 address: address.to_string(),
@@ -1977,7 +1981,11 @@ fn get_programs(
     )?;
 
     let mut programs = vec![];
-    for (programdata_address, programdata_account) in results.iter() {
+    for (programdata_address, programdata_ui_account) in results.iter() {
+        let programdata_account: Account = programdata_ui_account.decode().expect(
+            "It should be impossible at this point for the account data not to be decodable. \
+             Ensure that the account was fetched using a binary encoding.",
+        );
         if let Ok(UpgradeableLoaderState::ProgramData {
             slot,
             upgrade_authority_address,
@@ -2024,8 +2032,8 @@ fn get_accounts_with_filter(
     rpc_client: &RpcClient,
     filters: Vec<RpcFilterType>,
     length: usize,
-) -> Result<Vec<(Pubkey, Account)>, Box<dyn std::error::Error>> {
-    let results = rpc_client.get_program_accounts_with_config(
+) -> Result<Vec<(Pubkey, UiAccount)>, Box<dyn std::error::Error>> {
+    let results = rpc_client.get_program_ui_accounts_with_config(
         &bpf_loader_upgradeable::id(),
         RpcProgramAccountsConfig {
             filters: Some(filters),

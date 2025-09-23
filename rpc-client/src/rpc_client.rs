@@ -3854,7 +3854,7 @@ mod tests {
         jsonrpc_core::{futures::prelude::*, Error, IoHandler, Params},
         jsonrpc_http_server::{AccessControlAllowOrigin, DomainsValidation, ServerBuilder},
         serde_json::{json, Number},
-        solana_account_decoder::encode_ui_account,
+        solana_account_decoder::UiAccountData,
         solana_account_decoder_client_types::UiAccountEncoding,
         solana_hash::Hash,
         solana_instruction::error::InstructionError,
@@ -4084,19 +4084,20 @@ mod tests {
     }
 
     #[test]
-    fn test_get_program_accounts_with_config() {
+    fn test_get_program_ui_accounts_with_config() {
         let program_id = Pubkey::new_unique();
         let pubkey = Pubkey::new_unique();
-        let account = Account {
+        let account = UiAccount {
             lamports: 1_000_000,
-            data: vec![],
-            owner: program_id,
+            data: UiAccountData::Binary("".to_string(), UiAccountEncoding::Base64),
+            owner: program_id.to_string(),
             executable: false,
             rent_epoch: 0,
+            space: Some(0),
         };
         let keyed_account = RpcKeyedAccount {
+            account: account.clone(),
             pubkey: pubkey.to_string(),
-            account: encode_ui_account(&pubkey, &account, UiAccountEncoding::Base64, None, None),
         };
         let expected_result = vec![(pubkey, account.clone())];
         // Test: without context
@@ -4110,7 +4111,7 @@ mod tests {
             .collect();
             let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
             let result = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4145,7 +4146,7 @@ mod tests {
             .collect();
             let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
             let result = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4230,7 +4231,7 @@ mod tests {
 
             let rpc_client = RpcClient::new_mock_with_mocks_map("mock_client".to_string(), mocks);
             let mut result1 = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4249,7 +4250,7 @@ mod tests {
             assert_eq!(result1.len(), 1);
 
             let result2 = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4268,7 +4269,7 @@ mod tests {
             assert_eq!(result2.len(), 1);
 
             let result_3 = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4287,7 +4288,7 @@ mod tests {
             assert_eq!(result_3.len(), 3);
 
             let result_4 = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
