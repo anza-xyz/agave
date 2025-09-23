@@ -335,8 +335,11 @@ impl VoteStateHandle for VoteStateV4 {
             .authorized_voters
             .get_and_cache_authorized_voter_for_epoch(current_epoch)
             .ok_or(InstructionError::InvalidAccountData)?;
+        // Per SIMD-0185, v4 retains voters for `current_epoch - 1` through
+        // `current_epoch + 2`. Only purge entries for epochs less than
+        // `current_epoch - 1`.
         self.authorized_voters
-            .purge_authorized_voters(current_epoch);
+            .purge_authorized_voters(current_epoch.saturating_sub(1));
         Ok(pubkey)
     }
 
@@ -1126,13 +1129,10 @@ mod tests {
         );
     }
 
-    #[test_case(new_vote_state_v3 ; "VoteStateV3")]
-    #[test_case(new_vote_state_v4 ; "VoteStateV4")]
-    fn test_get_and_update_authorized_voter<T: VoteStateHandle>(
-        new_vote_state: fn(&VoteInit, &Clock) -> T,
-    ) {
+    #[test]
+    fn test_get_and_update_authorized_voter_v3() {
         let original_voter = Pubkey::new_unique();
-        let mut vote_state = new_vote_state(
+        let mut vote_state = new_vote_state_v3(
             &VoteInit {
                 node_pubkey: original_voter,
                 authorized_voter: original_voter,
@@ -1192,6 +1192,104 @@ mod tests {
                 new_authorized_voter
             );
         }
+        assert_eq!(vote_state.authorized_voters().len(), 1);
+    }
+
+    // v4 purging retains one extra epoch compared to v3.
+    // Besides that, the functionality should be the same.
+    #[test]
+    fn test_get_and_update_authorized_voter_v4() {
+        let original_voter = Pubkey::new_unique();
+        let mut vote_state = new_vote_state_v4(
+            &VoteInit {
+                node_pubkey: original_voter,
+                authorized_voter: original_voter,
+                authorized_withdrawer: original_voter,
+                commission: 0,
+            },
+            &Clock::default(),
+        );
+
+        // Run the same exercise as the v3 test to start.
+
+        assert_eq!(vote_state.authorized_voters().len(), 1);
+        assert_eq!(
+            *vote_state.authorized_voters().first().unwrap().1,
+            original_voter
+        );
+
+        // If no new authorized voter was set, the same authorized voter
+        // is locked into the next epoch
+        assert_eq!(
+            vote_state.get_and_update_authorized_voter(1).unwrap(),
+            original_voter
+        );
+
+        // Try to get the authorized voter for epoch 5, implies
+        // the authorized voter for epochs 1-4 were unchanged
+        assert_eq!(
+            vote_state.get_and_update_authorized_voter(5).unwrap(),
+            original_voter
+        );
+
+        // Just like with the v3 tests, authorized voters for epochs 0..5 should
+        // be purged, but only because we didn't cache an entry for current - 1.
+        assert_eq!(vote_state.authorized_voters().len(), 1);
+        for i in 0..5 {
+            assert!(vote_state
+                .authorized_voters()
+                .get_authorized_voter(i)
+                .is_none());
+        }
+
+        // Say we're in epoch 7. Cache entries for both epochs 6 and 7.
+        assert_eq!(
+            vote_state.get_and_update_authorized_voter(6).unwrap(),
+            original_voter
+        );
+        assert_eq!(
+            vote_state.get_and_update_authorized_voter(7).unwrap(),
+            original_voter
+        );
+
+        // Now we should have length 2.
+        assert_eq!(vote_state.authorized_voters().len(), 2);
+
+        // 0..=5 should still be purged.
+        for i in 0..=5 {
+            assert!(vote_state
+                .authorized_voters()
+                .get_authorized_voter(i)
+                .is_none());
+        }
+
+        // Set an authorized voter change at epoch 9.
+        let new_authorized_voter = Pubkey::new_unique();
+        vote_state
+            .set_new_authorized_voter(&new_authorized_voter, 7, 9, |_| Ok(()))
+            .unwrap();
+
+        // Try to get the authorized voter for epoch 8, unchanged
+        assert_eq!(
+            vote_state.get_and_update_authorized_voter(8).unwrap(),
+            original_voter
+        );
+
+        // Try to get the authorized voter for epoch 9 and onwards, should
+        // be the new authorized voter
+        for i in 9..12 {
+            assert_eq!(
+                vote_state.get_and_update_authorized_voter(i).unwrap(),
+                new_authorized_voter
+            );
+        }
+        assert_eq!(vote_state.authorized_voters().len(), 2);
+
+        // If we skip a few epochs ahead, only the current epoch is retained.
+        assert_eq!(
+            vote_state.get_and_update_authorized_voter(15).unwrap(),
+            new_authorized_voter
+        );
         assert_eq!(vote_state.authorized_voters().len(), 1);
     }
 
