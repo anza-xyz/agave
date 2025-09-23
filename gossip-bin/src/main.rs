@@ -65,7 +65,6 @@ fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'
                         .value_name("HOST:PORT")
                         .takes_value(true)
                         .required(true)
-                        .multiple(true)
                         .validator(solana_net_utils::is_host_port)
                         .help("Rendezvous with the cluster at this entry point"),
                 )
