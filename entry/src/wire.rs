@@ -54,6 +54,8 @@ use {
 pub trait SeqLen {
     /// Read the length of a sequence from the reader.
     fn get_len(reader: &mut Reader) -> bincode::Result<usize>;
+    /// Pre-allocate a Vec with a capacity bounded by the length of the sequence.
+    fn prealloc<T>(reader: &mut Reader) -> bincode::Result<(usize, Vec<T>)>;
     /// Write the length of a sequence to the writer.
     fn encode_len(writer: &mut Writer, len: usize) -> bincode::Result<()>;
     /// Calculate the number of bytes needed to encode the given length.
@@ -67,6 +69,26 @@ impl SeqLen for BincodeLen {
     #[inline(always)]
     fn get_len(reader: &mut Reader) -> bincode::Result<usize> {
         reader.get_u64().map(|len| len as usize)
+    }
+
+    #[inline(always)]
+    fn prealloc<T>(reader: &mut Reader) -> bincode::Result<(usize, Vec<T>)> {
+        let len = Self::get_len(reader)?;
+        // Disallow lengths greater than u16::MAX.
+        //
+        // This is implicitly enforced by almost all sequences within `Entry`,
+        // as all types defined within the solana sdk use the variable length
+        // short u16 encoding. Enforcing this limit for bincode lengths prevents
+        // malicious input from causing OOM.
+        //
+        // Practically speaking, we have two cases where bincode lengths are used:
+        // - Vec<Entry> (64 bytes per entry)
+        // - Vec<VersionedTransaction> (136 bytes per message)
+        // This is a maximum of 136 * 65535 = ~8.5MiB.
+        if len > u16::MAX as usize {
+            return Err(error_size_limit());
+        }
+        Ok((len, Vec::with_capacity(len)))
     }
 
     #[inline(always)]
@@ -148,6 +170,13 @@ impl SeqLen for ShortU16Len {
         };
         reader.cursor = &reader.cursor[read..];
         Ok(len)
+    }
+
+    #[inline(always)]
+    fn prealloc<T>(reader: &mut Reader) -> bincode::Result<(usize, Vec<T>)> {
+        let len = Self::get_len(reader)?;
+        // `len` is already bounded by u16::MAX, so we don't need to worry about OOM.
+        Ok((len, Vec::with_capacity(len)))
     }
 
     #[inline(always)]
@@ -267,35 +296,6 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// Maximum `Vec` pre-allocation size to protect against malicious inputs
-    /// in deserialization.
-    ///
-    /// After gathering metrics on current mainnet beta, the maximum size
-    /// of entire `Vec<Entry>` payloads never exceeded 500KiB (they are 45KiB
-    /// in the average case), so this should be more than sufficient to avoid
-    /// false positives while being low enough not to introduce attack vectors.
-    ///
-    /// Note that this is _per_ `Vec<T>` allocation, not a global limit on the
-    /// size of the input payload.
-    const MAX_PREALLOC_BYTES: usize = 1 << 20; // 1MiB
-
-    /// Allocate a Vec with a capacity bounded by [`Self::MAX_PREALLOC_BYTES`].
-    ///
-    /// We could, in theory, allow the Vec to grow in the way that [`Vec::push`]
-    /// does, but it is preferable to avoid the branching and capacity checks
-    /// that would be required. Because we have a sense of the size of inputs
-    /// we're dealing with (and can measure), prefer a hard limit.
-    #[inline(always)]
-    fn vec_with_capacity_cautious<T>(capacity: usize) -> bincode::Result<Vec<T>> {
-        // Deserialization of `Entry` doesn't deal with ZSTs.
-        assert!(size_of::<T>() > 0);
-        if capacity > Self::MAX_PREALLOC_BYTES / size_of::<T>() {
-            return Err(error_size_limit());
-        }
-
-        Ok(Vec::with_capacity(capacity))
-    }
-
     /// Read a sequence of `T`s from the cursor into `ptr`.
     ///
     /// This provides a `*mut T` for each slot in the allocated Vec
@@ -320,8 +320,7 @@ impl<'a> Reader<'a> {
         F: Fn(&mut Reader<'a>, *mut T) -> bincode::Result<()>,
         Len: SeqLen,
     {
-        let len = Len::get_len(self)?;
-        let mut vec = Self::vec_with_capacity_cautious(len)?;
+        let (len, mut vec) = Len::prealloc(self)?;
         // Get a raw pointer to the Vec memory to facilitate in-place writing.
         let mut vec_ptr = vec.spare_capacity_mut().as_mut_ptr();
         for i in 0..len {
@@ -358,13 +357,9 @@ impl<'a> Reader<'a> {
     where
         Len: SeqLen,
     {
-        let len = Len::get_len(self)?;
-        let needed = len
-            .checked_mul(size_of::<T>())
-            .ok_or_else(error_size_limit)?;
-        let mut vec = Self::vec_with_capacity_cautious(len)?;
+        let (len, mut vec) = Len::prealloc(self)?;
         let vec_ptr = vec.spare_capacity_mut().as_mut_ptr();
-        self.read_exact(vec_ptr as *mut u8, needed)?;
+        self.read_exact(vec_ptr as *mut u8, len * size_of::<T>())?;
         // SAFETY: Caller ensures `T` is plain ol' data and can be initialized by raw byte reads.
         vec.set_len(len);
         // SAFETY: Caller ensures `ptr` is a valid ptr to a Vec<T>.
