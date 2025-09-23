@@ -87,6 +87,7 @@ where
     }
 
     pub fn run(mut self) -> Result<(), SchedulerError> {
+        let mut last_slot = None;
         while !self.exit.load(Ordering::Relaxed) {
             // BufferedPacketsDecision is shared with legacy BankingStage, which will forward
             // packets. Initially, not renaming these decision variants but the actions taken
@@ -110,6 +111,10 @@ where
                 .maybe_report_and_reset_slot(new_leader_slot);
 
             self.receive_completed()?;
+            if last_slot != new_leader_slot {
+                self.container.flush_held_transactions();
+                last_slot = new_leader_slot;
+            }
             self.process_transactions(&decision)?;
             if self.receive_and_buffer_packets(&decision).is_err() {
                 break;
@@ -353,7 +358,7 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::{
-            consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
+            consumer::{RetryableIndex, TARGET_NUM_TRANSACTIONS_PER_BATCH},
             packet_deserializer::PacketDeserializer,
             scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
             tests::create_slow_genesis_config,
@@ -874,7 +879,7 @@ mod tests {
         finished_consume_work_sender
             .send(FinishedConsumeWork {
                 work: consume_work,
-                retryable_indexes: vec![1],
+                retryable_indexes: vec![RetryableIndex::new(1, true)],
             })
             .unwrap();
 

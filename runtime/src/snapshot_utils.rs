@@ -21,6 +21,7 @@ use {
     crossbeam_channel::{Receiver, Sender},
     log::*,
     regex::Regex,
+    semver::Version,
     solana_accounts_db::{
         account_storage::{AccountStorageMap, AccountStoragesOrderer},
         account_storage_reader::AccountStorageReader,
@@ -58,6 +59,7 @@ pub use {archive_format::*, snapshot_interval::SnapshotInterval};
 
 pub const SNAPSHOT_STATUS_CACHE_FILENAME: &str = "status_cache";
 pub const SNAPSHOT_VERSION_FILENAME: &str = "version";
+pub const SNAPSHOT_FASTBOOT_VERSION_FILENAME: &str = "fastboot_version";
 /// No longer checked in version v3.1. Can be removed in v3.2
 pub const SNAPSHOT_STATE_COMPLETE_FILENAME: &str = "state_complete";
 pub const SNAPSHOT_STORAGES_FLUSHED_FILENAME: &str = "storages_flushed";
@@ -71,6 +73,7 @@ pub const SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME: &str = "full_snapshot_slot";
 pub const BANK_SNAPSHOTS_DIR: &str = "snapshots";
 pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
+const SNAPSHOT_FASTBOOT_VERSION: Version = Version::new(1, 0, 0);
 const VERSION_STRING_V1_2_0: &str = "1.2.0";
 pub const TMP_SNAPSHOT_ARCHIVE_PREFIX: &str = "tmp-snapshot-archive-";
 pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: NonZeroU64 =
@@ -366,6 +369,15 @@ pub enum SnapshotError {
 
     #[error("failed to rebuild snapshot storages: {0}")]
     RebuildStorages(String),
+}
+
+#[derive(Error, Debug)]
+pub enum SnapshotFastbootError {
+    #[error("invalid version string for fastboot '{0}'")]
+    InvalidVersion(String),
+
+    #[error("incompatible fastboot version '{0}'")]
+    IncompatibleVersion(Version),
 }
 
 #[derive(Error, Debug)]
@@ -690,9 +702,7 @@ pub fn read_full_snapshot_slot_file(bank_snapshot_dir: impl AsRef<Path>) -> io::
     Ok(slot)
 }
 
-/// Writes files that indicate the bank snapshot is loadable
-/// Prior to writing these files, the bank snapshot can be saved to an archive
-/// but can't be loaded from directly
+/// Writes files that indicate the bank snapshot is loadable by fastboot
 pub fn mark_bank_snapshot_as_loadable(bank_snapshot_dir: impl AsRef<Path>) -> io::Result<()> {
     // Mark this directory complete. Used in older versions to check if the snapshot is complete
     // Never read in v3.1, can be removed in v3.2
@@ -706,7 +716,8 @@ pub fn mark_bank_snapshot_as_loadable(bank_snapshot_dir: impl AsRef<Path>) -> io
         ))
     })?;
 
-    // Write the storages flushed file, this is used to determine if the snapshot bank is loadable
+    // Write the storages flushed file. Used in older versions to check if the snapshot is complete
+    // Read in v3.1 for backwards compatibility, can be removed in v3.2
     let flushed_storages_path = bank_snapshot_dir
         .as_ref()
         .join(SNAPSHOT_STORAGES_FLUSHED_FILENAME);
@@ -716,15 +727,61 @@ pub fn mark_bank_snapshot_as_loadable(bank_snapshot_dir: impl AsRef<Path>) -> io
             flushed_storages_path.display(),
         ))
     })?;
+
+    let snapshot_fastboot_version_path = bank_snapshot_dir
+        .as_ref()
+        .join(SNAPSHOT_FASTBOOT_VERSION_FILENAME);
+    fs::write(
+        &snapshot_fastboot_version_path,
+        SNAPSHOT_FASTBOOT_VERSION.to_string(),
+    )
+    .map_err(|err| {
+        IoError::other(format!(
+            "failed to write fastboot version file '{}': {err}",
+            snapshot_fastboot_version_path.display(),
+        ))
+    })?;
     Ok(())
 }
 
 /// Is this bank snapshot loadable?
-fn is_bank_snapshot_loadable(bank_snapshot_dir: impl AsRef<Path>) -> bool {
+fn is_bank_snapshot_loadable(
+    bank_snapshot_dir: impl AsRef<Path>,
+) -> std::result::Result<bool, SnapshotFastbootError> {
+    // Legacy storages flushed file
+    // Read in v3.1 for backwards compatibility, can be removed in v3.2
     let flushed_storages = bank_snapshot_dir
         .as_ref()
         .join(SNAPSHOT_STORAGES_FLUSHED_FILENAME);
-    flushed_storages.is_file()
+    if flushed_storages.is_file() {
+        return Ok(true);
+    }
+
+    let snapshot_fastboot_version_path = bank_snapshot_dir
+        .as_ref()
+        .join(SNAPSHOT_FASTBOOT_VERSION_FILENAME);
+
+    if let Ok(version_string) = fs::read_to_string(&snapshot_fastboot_version_path) {
+        if let Ok(version) = Version::from_str(version_string.trim()) {
+            is_snapshot_fastboot_compatible(&version)
+        } else {
+            Err(SnapshotFastbootError::InvalidVersion(version_string))
+        }
+    } else {
+        // No fastboot version file, so this is not a fastbootable
+        Ok(false)
+    }
+}
+
+/// Is the fastboot snapshot version compatible?
+fn is_snapshot_fastboot_compatible(
+    version: &Version,
+) -> std::result::Result<bool, SnapshotFastbootError> {
+    if version.major <= SNAPSHOT_FASTBOOT_VERSION.major {
+        Ok(true)
+    } else {
+        Err(SnapshotFastbootError::IncompatibleVersion(version.clone()))
+    }
 }
 
 /// Gets the highest, loadable, bank snapshot
@@ -736,7 +793,18 @@ pub fn get_highest_loadable_bank_snapshot(
     let highest_bank_snapshot = get_highest_bank_snapshot(&snapshot_config.bank_snapshots_dir)?;
 
     let is_bank_snapshot_loadable = is_bank_snapshot_loadable(&highest_bank_snapshot.snapshot_dir);
-    is_bank_snapshot_loadable.then_some(highest_bank_snapshot)
+
+    match is_bank_snapshot_loadable {
+        Ok(true) => Some(highest_bank_snapshot),
+        Ok(false) => None,
+        Err(err) => {
+            warn!(
+                "Bank snapshot is not loadable '{}': {err}",
+                highest_bank_snapshot.snapshot_dir.display()
+            );
+            None
+        }
+    }
 }
 
 /// If the validator halts in the middle of `archive_snapshot_package()`, the temporary staging

@@ -316,6 +316,7 @@ pub fn request_airdrop_transaction(
     Ok(transaction)
 }
 
+#[deprecated(since = "3.1.0", note = "use `run_local_faucet_with_config` instead")]
 pub fn run_local_faucet_with_port(
     faucet_keypair: Keypair,
     sender: Sender<Result<SocketAddr, String>>,
@@ -411,8 +412,10 @@ pub fn run_local_faucet_with_unique_port_for_tests(keypair: Keypair) -> SocketAd
 }
 
 // For integration tests. Listens on random open port and reports port to Sender.
+#[deprecated(since = "3.1.0", note = "use `run_local_faucet_for_tests` instead")]
 pub fn run_local_faucet(faucet_keypair: Keypair, per_time_cap: Option<u64>) -> SocketAddr {
     let (sender, receiver) = unbounded();
+    #[allow(deprecated)]
     run_local_faucet_with_port(faucet_keypair, sender, None, per_time_cap, None, 0);
     receiver
         .recv()

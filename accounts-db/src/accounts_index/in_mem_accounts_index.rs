@@ -1438,7 +1438,7 @@ impl Drop for FlushGuard<'_> {
 mod tests {
     use {
         super::*,
-        crate::accounts_index::{AccountsIndexConfig, BINS_FOR_TESTING},
+        crate::accounts_index::{AccountsIndexConfig, IndexLimitMb, BINS_FOR_TESTING},
         assert_matches::assert_matches,
         itertools::Itertools,
         test_case::test_case,
@@ -1455,11 +1455,11 @@ mod tests {
     }
 
     fn new_disk_buckets_for_test<T: IndexValue>() -> InMemAccountsIndex<T, T> {
-        let holder = Arc::new(BucketMapHolder::new(
-            BINS_FOR_TESTING,
-            &AccountsIndexConfig::default(),
-            1,
-        ));
+        let config = AccountsIndexConfig {
+            index_limit_mb: IndexLimitMb::Minimal,
+            ..Default::default()
+        };
+        let holder = Arc::new(BucketMapHolder::new(BINS_FOR_TESTING, &config, 1));
         let bin = 0;
         let bucket = InMemAccountsIndex::new(&holder, bin);
         assert!(bucket.storage.is_disk_index_enabled());
@@ -2211,7 +2211,7 @@ mod tests {
 
         {
             // add an entry with an empty slot list
-            let val = Arc::new(AccountMapEntry::<u64>::default());
+            let val = Arc::new(AccountMapEntry::<u64>::empty_for_tests());
             map.insert(key, val);
             let entry = map.entry(key);
             assert_matches!(entry, Entry::Occupied(_));
@@ -2225,7 +2225,7 @@ mod tests {
 
         {
             // add an entry with a NON empty slot list - it will NOT get removed
-            let val = Arc::new(AccountMapEntry::<u64>::default());
+            let val = Arc::new(AccountMapEntry::<u64>::empty_for_tests());
             val.slot_list.write().unwrap().push((1, 1));
             map.insert(key, val);
             // does NOT remove it since it has a non-empty slot list
@@ -2238,7 +2238,7 @@ mod tests {
 
     #[test]
     fn test_lock_and_update_slot_list() {
-        let test = AccountMapEntry::<u64>::default();
+        let test = AccountMapEntry::<u64>::empty_for_tests();
         let info = 65;
         let mut reclaims = ReclaimsSlotList::new();
         // first upsert, should increase

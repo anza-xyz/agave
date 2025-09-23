@@ -818,7 +818,8 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 
     if remaining_balance == 0 {
         let reject_active_vote_account_close = vote_state
-            .epoch_credits_last()
+            .epoch_credits()
+            .last()
             .map(|(last_epoch_with_credits, _, _)| {
                 let current_epoch = clock.epoch;
                 // if current_epoch - last_epoch_with_credits < 2 then the validator has received credits
@@ -1040,6 +1041,33 @@ pub fn create_account_with_authorized(
     vote_account
 }
 
+pub fn create_v4_account_with_authorized(
+    node_pubkey: &Pubkey,
+    authorized_voter: &Pubkey,
+    authorized_withdrawer: &Pubkey,
+    bls_pubkey_compressed: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
+    inflation_rewards_commission_bps: u16,
+    lamports: u64,
+) -> AccountSharedData {
+    let mut vote_account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &id());
+
+    let vote_state = handler::create_new_vote_state_v4_for_tests(
+        node_pubkey,
+        authorized_voter,
+        authorized_withdrawer,
+        bls_pubkey_compressed,
+        inflation_rewards_commission_bps,
+    );
+
+    VoteStateV4::serialize(
+        &VoteStateVersions::V4(Box::new(vote_state)),
+        vote_account.data_as_mut_slice(),
+    )
+    .unwrap();
+
+    vote_account
+}
+
 // create_account() should be removed, use create_account_with_authorized() instead
 pub fn create_account(
     vote_pubkey: &Pubkey,
@@ -1060,6 +1088,7 @@ mod tests {
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
         solana_transaction_context::{InstructionAccount, TransactionContext},
+        solana_vote_interface::authorized_voters::AuthorizedVoters,
         std::cell::RefCell,
         test_case::test_case,
     };
@@ -1091,6 +1120,14 @@ mod tests {
                 balance,
             )),
         )
+    }
+
+    fn get_credits(epoch_credits: &[(Epoch, u64, u64)]) -> u64 {
+        if epoch_credits.is_empty() {
+            0
+        } else {
+            epoch_credits.last().unwrap().1
+        }
     }
 
     #[test]
@@ -1488,14 +1525,14 @@ mod tests {
             process_slot_vote_unchecked(&mut vote_state, i as u64);
         }
 
-        assert_eq!(vote_state.credits(), 0);
+        assert_eq!(get_credits(vote_state.epoch_credits()), 0);
 
         process_slot_vote_unchecked(&mut vote_state, MAX_LOCKOUT_HISTORY as u64 + 1);
-        assert_eq!(vote_state.credits(), 1);
+        assert_eq!(get_credits(vote_state.epoch_credits()), 1);
         process_slot_vote_unchecked(&mut vote_state, MAX_LOCKOUT_HISTORY as u64 + 2);
-        assert_eq!(vote_state.credits(), 2);
+        assert_eq!(get_credits(vote_state.epoch_credits()), 2);
         process_slot_vote_unchecked(&mut vote_state, MAX_LOCKOUT_HISTORY as u64 + 3);
-        assert_eq!(vote_state.credits(), 3);
+        assert_eq!(get_credits(vote_state.epoch_credits()), 3);
     }
 
     #[test]
@@ -2012,8 +2049,14 @@ mod tests {
 
             // Ensure that the credits earned is correct for both vote states
             let vote_group = &test_vote_groups[i];
-            assert_eq!(vote_state_1.credits(), vote_group.2 as u64); // vote_group.2 is the expected number of credits
-            assert_eq!(vote_state_2.credits(), vote_group.2 as u64); // vote_group.2 is the expected number of credits
+            assert_eq!(
+                get_credits(vote_state_1.epoch_credits()),
+                vote_group.2 as u64
+            ); // vote_group.2 is the expected number of credits
+            assert_eq!(
+                get_credits(vote_state_2.epoch_credits()),
+                vote_group.2 as u64
+            ); // vote_group.2 is the expected number of credits
         }
     }
 
@@ -2129,7 +2172,10 @@ mod tests {
                 );
 
                 // Ensure that the credits earned is correct
-                assert_eq!(vote_state.credits(), proposed_vote_state.3 as u64);
+                assert_eq!(
+                    get_credits(vote_state.epoch_credits()),
+                    proposed_vote_state.3 as u64
+                );
             });
     }
 
@@ -3529,6 +3575,42 @@ mod tests {
         assert_eq!(
             is_commission_update_allowed(first_normal_slot.saturating_add(slot), &epoch_schedule),
             expected_allowed
+        );
+    }
+
+    #[test]
+    fn test_create_v4_account_with_authorized() {
+        let node_pubkey = Pubkey::new_unique();
+        let authorized_voter = Pubkey::new_unique();
+        let authorized_withdrawer = Pubkey::new_unique();
+        let bls_pubkey_compressed = [42; 48];
+        let inflation_rewards_commission_bps = 10000;
+        let lamports = 100;
+        let vote_account = create_v4_account_with_authorized(
+            &node_pubkey,
+            &authorized_voter,
+            &authorized_withdrawer,
+            Some(bls_pubkey_compressed),
+            inflation_rewards_commission_bps,
+            lamports,
+        );
+        assert_eq!(vote_account.lamports(), lamports);
+        assert_eq!(vote_account.owner(), &id());
+        assert_eq!(vote_account.data().len(), VoteStateV4::size_of());
+        let vote_state_v4 = VoteStateV4::deserialize(vote_account.data(), &node_pubkey).unwrap();
+        assert_eq!(vote_state_v4.node_pubkey, node_pubkey);
+        assert_eq!(
+            vote_state_v4.authorized_voters,
+            AuthorizedVoters::new(0, authorized_voter)
+        );
+        assert_eq!(vote_state_v4.authorized_withdrawer, authorized_withdrawer);
+        assert_eq!(
+            vote_state_v4.bls_pubkey_compressed,
+            Some(bls_pubkey_compressed)
+        );
+        assert_eq!(
+            vote_state_v4.inflation_rewards_commission_bps,
+            inflation_rewards_commission_bps
         );
     }
 }

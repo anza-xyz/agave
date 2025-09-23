@@ -3,19 +3,6 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-if [[ -n $APPVEYOR ]]; then
-  # Bootstrap rust build environment
-  source ci/env.sh
-  source ci/rust-version.sh
-
-  appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
-  export USERPROFILE="D:\\"
-  ./rustup-init -yv --default-toolchain "$rust_stable" --default-host x86_64-pc-windows-msvc
-  export PATH="$PATH:/d/.cargo/bin"
-  rustc -vV
-  cargo -vV
-fi
-
 DRYRUN=
 if [[ -z $CI_BRANCH ]]; then
   DRYRUN="echo"
@@ -89,12 +76,18 @@ echo --- Creating release tarball
   export CHANNEL
 
   source ci/rust-version.sh stable
-  scripts/cargo-install-all.sh --public-release stable "${RELEASE_BASENAME}"
+  scripts/cargo-install-all.sh stable "${RELEASE_BASENAME}"
 
-  tar cvf "${TARBALL_BASENAME}"-$TARGET.tar "${RELEASE_BASENAME}"
-  bzip2 "${TARBALL_BASENAME}"-$TARGET.tar
-  cp "${RELEASE_BASENAME}"/bin/agave-install-init agave-install-init-$TARGET
-  cp "${RELEASE_BASENAME}"/version.yml "${TARBALL_BASENAME}"-$TARGET.yml
+  source scripts/agave-build-lists.sh
+  tmp_excludes=$(mktemp)
+  for bin in "${AGAVE_BINS_VAL_OP[@]}"; do
+    find "${RELEASE_BASENAME}" -type f -name "$bin" -print -quit >> "$tmp_excludes"
+  done
+
+  tar -I bzip2 -X "$tmp_excludes" -cvf "${TARBALL_BASENAME}"-"$TARGET".tar.bz2 "${RELEASE_BASENAME}"
+
+  cp "${RELEASE_BASENAME}"/bin/agave-install-init agave-install-init-"$TARGET"
+  cp "${RELEASE_BASENAME}"/version.yml "${TARBALL_BASENAME}"-"$TARGET".yml
 )
 
 # Maybe tarballs are platform agnostic, only publish them from the Linux build
@@ -135,9 +128,6 @@ for file in "${TARBALL_BASENAME}"-$TARGET.tar.bz2 "${TARBALL_BASENAME}"-$TARGET.
       mkdir -p github-action-release-upload/
       cp -v "$file" github-action-release-upload/
     fi
-  elif [[ -n $APPVEYOR ]]; then
-    # Add artifacts for .appveyor.yml to upload
-    appveyor PushArtifact "$file" -FileName "$CHANNEL_OR_TAG"/"$file"
   fi
 done
 
