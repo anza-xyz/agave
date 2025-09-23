@@ -24,10 +24,11 @@ use {
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock,
         },
-        thread,
+        thread::{self},
         time::Duration,
     },
     tokio::runtime::Runtime,
+    tokio_util::sync::CancellationToken,
 };
 
 // allow multiple connections for NAT and any open/close overlap
@@ -588,7 +589,7 @@ impl StreamerStats {
     }
 }
 
-#[deprecated(since = "3.0.0", note = "Use spawn_server instead")]
+#[deprecated(since = "3.0.0", note = "Use spawn_server_with_cancel instead")]
 pub fn spawn_server_multi(
     thread_name: &'static str,
     metrics_name: &'static str,
@@ -599,6 +600,7 @@ pub fn spawn_server_multi(
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
 ) -> Result<SpawnServerResult, QuicServerError> {
+    #[allow(deprecated)]
     spawn_server(
         thread_name,
         metrics_name,
@@ -660,7 +662,7 @@ impl QuicServerParams {
     }
 }
 
-/// Spawns a tokio runtime and a streamer instance inside it.
+#[deprecated(since = "3.1.0", note = "Use spawn_server_with_cancel instead")]
 pub fn spawn_server(
     thread_name: &'static str,
     metrics_name: &'static str,
@@ -671,17 +673,51 @@ pub fn spawn_server(
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
 ) -> Result<SpawnServerResult, QuicServerError> {
+    let cancel = CancellationToken::new();
+    thread::spawn({
+        let cancel = cancel.clone();
+        move || loop {
+            if exit.load(Ordering::Relaxed) {
+                cancel.cancel();
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    });
+    spawn_server_with_cancel(
+        thread_name,
+        metrics_name,
+        sockets,
+        keypair,
+        packet_sender,
+        staked_nodes,
+        quic_server_params,
+        cancel,
+    )
+}
+
+/// Spawns a tokio runtime and a streamer instance inside it.
+pub fn spawn_server_with_cancel(
+    thread_name: &'static str,
+    metrics_name: &'static str,
+    sockets: impl IntoIterator<Item = UdpSocket>,
+    keypair: &Keypair,
+    packet_sender: Sender<PacketBatch>,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
+    quic_server_params: QuicServerParams,
+    cancel: CancellationToken,
+) -> Result<SpawnServerResult, QuicServerError> {
     let runtime = rt(format!("{thread_name}Rt"), quic_server_params.num_threads);
     let result = {
         let _guard = runtime.enter();
-        crate::nonblocking::quic::spawn_server(
+        crate::nonblocking::quic::spawn_server_with_cancel(
             metrics_name,
             sockets,
             keypair,
             packet_sender,
-            exit,
             staked_nodes,
             quic_server_params,
+            cancel,
         )
     }?;
     let handle = thread::Builder::new()
@@ -721,59 +757,59 @@ mod test {
 
     fn setup_quic_server() -> (
         std::thread::JoinHandle<()>,
-        Arc<AtomicBool>,
         crossbeam_channel::Receiver<PacketBatch>,
         SocketAddr,
+        CancellationToken,
     ) {
         let s = bind_to_localhost_unique().expect("should bind");
-        let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let cancel = CancellationToken::new();
         let SpawnServerResult {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = spawn_server(
+        } = spawn_server_with_cancel(
             "solQuicTest",
             "quic_streamer_test",
             [s],
             &keypair,
             sender,
-            exit.clone(),
             staked_nodes,
             QuicServerParams::default_for_tests(),
+            cancel.clone(),
         )
         .unwrap();
-        (t, exit, receiver, server_address)
+        (t, receiver, server_address, cancel)
     }
 
     #[test]
     fn test_quic_server_exit() {
-        let (t, exit, _receiver, _server_address) = setup_quic_server();
-        exit.store(true, Ordering::Relaxed);
+        let (t, _receiver, _server_address, cancel) = setup_quic_server();
+        cancel.cancel();
         t.join().unwrap();
     }
 
     #[test]
     fn test_quic_timeout() {
         solana_logger::setup();
-        let (t, exit, receiver, server_address) = setup_quic_server();
+        let (t, receiver, server_address, cancel) = setup_quic_server();
         let runtime = rt_for_test();
         runtime.block_on(check_timeout(receiver, server_address));
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
         t.join().unwrap();
     }
 
     #[test]
     fn test_quic_server_block_multiple_connections() {
         solana_logger::setup();
-        let (t, exit, _receiver, server_address) = setup_quic_server();
+        let (t, _receiver, server_address, cancel) = setup_quic_server();
 
         let runtime = rt_for_test();
         runtime.block_on(check_block_multiple_connections(server_address));
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
         t.join().unwrap();
     }
 
@@ -781,44 +817,44 @@ mod test {
     fn test_quic_server_multiple_streams() {
         solana_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
-        let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let cancel = CancellationToken::new();
         let SpawnServerResult {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = spawn_server(
+        } = spawn_server_with_cancel(
             "solQuicTest",
             "quic_streamer_test",
             [s],
             &keypair,
             sender,
-            exit.clone(),
             staked_nodes,
             QuicServerParams {
                 max_connections_per_peer: 2,
                 ..QuicServerParams::default_for_tests()
             },
+            cancel.clone(),
         )
         .unwrap();
 
         let runtime = rt_for_test();
         runtime.block_on(check_multiple_streams(receiver, server_address, None));
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
         t.join().unwrap();
     }
 
     #[test]
     fn test_quic_server_multiple_writes() {
         solana_logger::setup();
-        let (t, exit, receiver, server_address) = setup_quic_server();
+        let (t, receiver, server_address, cancel) = setup_quic_server();
 
         let runtime = rt_for_test();
         runtime.block_on(check_multiple_writes(receiver, server_address, None));
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
         t.join().unwrap();
     }
 
@@ -826,33 +862,33 @@ mod test {
     fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
-        let exit = Arc::new(AtomicBool::new(false));
         let (sender, _) = unbounded();
         let keypair = Keypair::new();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let cancel = CancellationToken::new();
         let SpawnServerResult {
             endpoints: _,
             thread: t,
             key_updater: _,
-        } = spawn_server(
+        } = spawn_server_with_cancel(
             "solQuicTest",
             "quic_streamer_test",
             [s],
             &keypair,
             sender,
-            exit.clone(),
             staked_nodes,
             QuicServerParams {
                 max_unstaked_connections: 0,
                 ..QuicServerParams::default_for_tests()
             },
+            cancel.clone(),
         )
         .unwrap();
 
         let runtime = rt_for_test();
         runtime.block_on(check_unstaked_node_connect_failure(server_address));
-        exit.store(true, Ordering::Relaxed);
+        cancel.cancel();
         t.join().unwrap();
     }
 }

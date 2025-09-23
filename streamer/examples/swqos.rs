@@ -24,13 +24,11 @@ use {
         net::SocketAddr,
         path::Path,
         str::FromStr as _,
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc, RwLock,
-        },
+        sync::{Arc, RwLock},
         time::Duration,
     },
     tokio::time::{sleep, Instant},
+    tokio_util::sync::CancellationToken,
 };
 
 fn parse_duration(arg: &str) -> Result<std::time::Duration, std::num::ParseFloatError> {
@@ -50,13 +48,13 @@ pub fn load_staked_nodes_overrides(path: &String) -> anyhow::Result<HashMap<Pubk
             let line = line?;
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() != 2 {
-                anyhow::bail!("invalid line {}: {}", line_num, line);
+                anyhow::bail!("invalid line {line_num}: {line}");
             }
             let pubkey = Pubkey::from_str(parts[0])
-                .map_err(|_| anyhow::anyhow!("invalid pubkey at line {}", line_num))?;
+                .map_err(|_| anyhow::anyhow!("invalid pubkey at line {line_num}"))?;
             let value: u64 = parts[1]
                 .parse()
-                .map_err(|_| anyhow::anyhow!("invalid number at line {}", line_num))?;
+                .map_err(|_| anyhow::anyhow!("invalid number at line {line_num}"))?;
 
             map.insert(pubkey, value.saturating_mul(LAMPORTS_PER_SOL));
         }
@@ -96,7 +94,6 @@ async fn main() -> anyhow::Result<()> {
     )
     .expect("should bind");
 
-    let exit = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = bounded(1024);
     let keypair = Keypair::new();
 
@@ -108,22 +105,23 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(RwLock::new(nodes))
     };
 
+    let cancel = CancellationToken::new();
     let SpawnNonBlockingServerResult {
         endpoints,
         stats,
         thread: run_thread,
         max_concurrent_connections: _,
-    } = solana_streamer::nonblocking::quic::spawn_server(
+    } = solana_streamer::nonblocking::quic::spawn_server_with_cancel(
         "quic_streamer_test",
         [socket.try_clone()?],
         &keypair,
         sender,
-        exit.clone(),
         staked_nodes,
         QuicServerParams {
             max_connections_per_peer: cli.max_connections_per_peer,
             ..QuicServerParams::default()
         },
+        cancel.clone(),
     )?;
     info!("Server listening on {}", socket.local_addr()?);
 
@@ -158,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
 
     sleep(cli.test_duration).await;
     info!("Server terminating");
-    exit.store(true, Ordering::Relaxed);
+    cancel.cancel();
     drop(endpoints);
     run_thread.await?;
     logger_thread.await??;

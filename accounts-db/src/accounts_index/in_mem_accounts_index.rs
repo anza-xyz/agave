@@ -2211,7 +2211,7 @@ mod tests {
 
         {
             // add an entry with an empty slot list
-            let val = Arc::new(AccountMapEntry::<u64>::default());
+            let val = Arc::new(AccountMapEntry::<u64>::empty_for_tests());
             map.insert(key, val);
             let entry = map.entry(key);
             assert_matches!(entry, Entry::Occupied(_));
@@ -2225,7 +2225,7 @@ mod tests {
 
         {
             // add an entry with a NON empty slot list - it will NOT get removed
-            let val = Arc::new(AccountMapEntry::<u64>::default());
+            let val = Arc::new(AccountMapEntry::<u64>::empty_for_tests());
             val.slot_list.write().unwrap().push((1, 1));
             map.insert(key, val);
             // does NOT remove it since it has a non-empty slot list
@@ -2238,7 +2238,7 @@ mod tests {
 
     #[test]
     fn test_lock_and_update_slot_list() {
-        let test = AccountMapEntry::<u64>::default();
+        let test = AccountMapEntry::<u64>::empty_for_tests();
         let info = 65;
         let mut reclaims = ReclaimsSlotList::new();
         // first upsert, should increase
