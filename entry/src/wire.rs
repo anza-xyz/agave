@@ -142,11 +142,11 @@ unsafe fn encode_short_u16(dst: *mut u8, needed: usize, len: u16) {
 
 impl SeqLen for ShortU16Len {
     #[inline(always)]
-    fn get_len(cursor: &mut Reader) -> bincode::Result<usize> {
-        let Ok((len, read)) = decode_shortu16_len(&cursor.cursor[cursor.pos..]) else {
+    fn get_len(reader: &mut Reader) -> bincode::Result<usize> {
+        let Ok((len, read)) = decode_shortu16_len(reader.cursor) else {
             return Err(error_invalid_short_u16());
         };
-        cursor.pos += read;
+        reader.cursor = &reader.cursor[read..];
         Ok(len)
     }
 
@@ -181,15 +181,11 @@ impl SeqLen for ShortU16Len {
 
 pub struct Reader<'a> {
     cursor: &'a [u8],
-    pos: usize,
 }
 
 impl<'a> Reader<'a> {
     fn new(bytes: &'a [u8]) -> Self {
-        Self {
-            cursor: bytes,
-            pos: 0,
-        }
+        Self { cursor: bytes }
     }
 
     /// Copy exactly `len` bytes from the cursor into `buf`.
@@ -200,11 +196,12 @@ impl<'a> Reader<'a> {
     /// - `buf` must be valid for writes of `len` bytes.
     #[inline(always)]
     unsafe fn read_exact(&mut self, buf: *mut u8, len: usize) -> bincode::Result<()> {
-        if len > self.cursor.len().saturating_sub(self.pos) {
-            return Err(error_size_limit());
-        }
-        ptr::copy_nonoverlapping(self.cursor.as_ptr().add(self.pos), buf, len);
-        self.pos += len;
+        let (src, rest) = self
+            .cursor
+            .split_at_checked(len)
+            .ok_or_else(error_size_limit)?;
+        ptr::copy_nonoverlapping(src.as_ptr(), buf, len);
+        self.cursor = rest;
         Ok(())
     }
 
