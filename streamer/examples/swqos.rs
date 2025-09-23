@@ -50,13 +50,13 @@ pub fn load_staked_nodes_overrides(path: &String) -> anyhow::Result<HashMap<Pubk
             let line = line?;
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() != 2 {
-                anyhow::bail!("invalid line {}: {}", line_num, line);
+                anyhow::bail!("invalid line {line_num}: {line}");
             }
             let pubkey = Pubkey::from_str(parts[0])
-                .map_err(|_| anyhow::anyhow!("invalid pubkey at line {}", line_num))?;
+                .map_err(|_| anyhow::anyhow!("invalid pubkey at line {line_num}"))?;
             let value: u64 = parts[1]
                 .parse()
-                .map_err(|_| anyhow::anyhow!("invalid number at line {}", line_num))?;
+                .map_err(|_| anyhow::anyhow!("invalid number at line {line_num}"))?;
 
             map.insert(pubkey, value.saturating_mul(LAMPORTS_PER_SOL));
         }
