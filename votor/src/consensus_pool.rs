@@ -556,6 +556,11 @@ impl ConsensusPool {
     }
 
     #[cfg(test)]
+    pub(crate) fn my_pubkey(&self) -> Pubkey {
+        self.my_pubkey
+    }
+
+    #[cfg(test)]
     fn make_start_leader_decision(
         &self,
         my_leader_slot: Slot,
@@ -1850,10 +1855,54 @@ mod tests {
         );
 
         let root_bank = bank_forks.read().unwrap().root_bank();
+        // Add a skip cert on slot 1 and finalize cert on slot 2
+        let cert_1 = CertificateMessage {
+            certificate: Certificate::new(CertificateType::Skip, 1, None),
+            signature: BLSSignature::default(),
+            bitmap: Vec::new(),
+        };
+        assert!(pool
+            .add_message(
+                root_bank.epoch_schedule(),
+                root_bank.epoch_stakes_map(),
+                root_bank.slot(),
+                &Pubkey::new_unique(),
+                &ConsensusMessage::Certificate(cert_1.clone()),
+                &mut vec![]
+            )
+            .is_ok());
+        let cert_2 = CertificateMessage {
+            certificate: Certificate::new(
+                CertificateType::FinalizeFast,
+                2,
+                Some(Hash::new_unique()),
+            ),
+            signature: BLSSignature::default(),
+            bitmap: Vec::new(),
+        };
+        assert!(pool
+            .add_message(
+                root_bank.epoch_schedule(),
+                root_bank.epoch_stakes_map(),
+                root_bank.slot(),
+                &Pubkey::new_unique(),
+                &ConsensusMessage::Certificate(cert_2.clone()),
+                &mut vec![]
+            )
+            .is_ok());
+        assert!(pool.skip_certified(1));
+        assert!(pool.is_finalized(2));
+
         let new_bank = Arc::new(create_bank(2, root_bank, &Pubkey::new_unique()));
         pool.prune_old_state(new_bank.slot());
+        // Check that cert for 1 is gone, but cert for 2 is still there
+        assert!(!pool.skip_certified(1));
+        assert!(pool.is_finalized(2));
         let new_bank = Arc::new(create_bank(3, new_bank, &Pubkey::new_unique()));
         pool.prune_old_state(new_bank.slot());
+        // Now both certs should be gone
+        assert!(!pool.skip_certified(1));
+        assert!(!pool.is_finalized(2));
         // Send a vote on slot 1, it should be rejected
         let vote = Vote::new_skip_vote(1);
         assert!(pool
@@ -2094,11 +2143,50 @@ mod tests {
             && cert.certificate.certificate_type() == CertificateType::Notarize));
         assert!(certs.iter().any(|cert| cert.certificate.slot() == 7
             && cert.certificate.certificate_type() == CertificateType::Skip));
+
+        // Add Finalize then Notarize cert on 8
+        let cert_8_finalize = CertificateMessage {
+            certificate: Certificate::new(CertificateType::Finalize, 8, None),
+            signature: BLSSignature::default(),
+            bitmap: Vec::new(),
+        };
+        assert!(pool
+            .add_message(
+                bank.epoch_schedule(),
+                bank.epoch_stakes_map(),
+                bank.slot(),
+                &Pubkey::new_unique(),
+                &ConsensusMessage::Certificate(cert_8_finalize),
+                &mut vec![]
+            )
+            .is_ok());
+        let cert_8_notarize = CertificateMessage {
+            certificate: Certificate::new(CertificateType::Notarize, 8, Some(Hash::new_unique())),
+            signature: BLSSignature::default(),
+            bitmap: Vec::new(),
+        };
+        assert!(pool
+            .add_message(
+                bank.epoch_schedule(),
+                bank.epoch_stakes_map(),
+                bank.slot(),
+                &Pubkey::new_unique(),
+                &ConsensusMessage::Certificate(cert_8_notarize),
+                &mut vec![]
+            )
+            .is_ok());
+
+        // Should only return certs on 8 now
+        let certs = pool.get_certs_for_standstill();
+        assert_eq!(certs.len(), 2);
+        assert!(certs.iter().any(|cert| cert.certificate.slot() == 8
+            && cert.certificate.certificate_type() == CertificateType::Finalize));
+        assert!(certs.iter().any(|cert| cert.certificate.slot() == 8
+            && cert.certificate.certificate_type() == CertificateType::Notarize));
     }
 
     #[test]
     fn test_new_parent_ready_with_certificates() {
-        solana_logger::setup();
         let (_, mut pool, bank_forks) = create_initial_state();
         let bank = bank_forks.read().unwrap().root_bank();
         let mut events = vec![];
@@ -2229,5 +2317,17 @@ mod tests {
                 .is_ok(),
             "BLS signature verification failed for VoteMessage"
         );
+    }
+
+    #[test]
+    fn test_update_pubkey() {
+        let new_pubkey = Pubkey::new_unique();
+        let (_, mut pool, _) = create_initial_state();
+        let old_pubkey = pool.my_pubkey();
+        assert_eq!(pool.parent_ready_tracker.my_pubkey(), old_pubkey);
+        assert_ne!(old_pubkey, new_pubkey);
+        pool.update_pubkey(new_pubkey);
+        assert_eq!(pool.my_pubkey(), new_pubkey);
+        assert_eq!(pool.parent_ready_tracker.my_pubkey(), new_pubkey);
     }
 }
