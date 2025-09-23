@@ -638,6 +638,7 @@ pub(crate) fn create_new_vote_state_v4_for_tests(
 }
 
 /// The target version to convert all deserialized vote state into.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VoteStateTargetVersion {
     V3,
     V4,
