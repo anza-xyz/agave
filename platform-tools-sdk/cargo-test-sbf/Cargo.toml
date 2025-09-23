@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 cargo_metadata = { workspace = true }
-clap = { version = "3.1.5", features = ["cargo"] }
+clap = { version = "4.5.31", features = ["cargo"] }
 itertools = { workspace = true }
 log = { workspace = true, features = ["std"] }
 regex = { workspace = true }

@@ -17,7 +17,7 @@ dev-context-only-utils = []
 
 [dependencies]
 bincode = { workspace = true }
-clap = { version = "3.1.5", features = ["derive", "cargo"] }
+clap = { version = "4.5.31", features = ["derive", "cargo"] }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }

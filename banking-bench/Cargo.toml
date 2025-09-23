@@ -17,7 +17,7 @@ dev-context-only-utils = []
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
 assert_matches = { workspace = true }
-clap = { version = "3.1.8", features = ["derive", "cargo"] }
+clap = { version = "4.5.31", features = ["derive", "cargo"] }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }

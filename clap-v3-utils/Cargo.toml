@@ -21,7 +21,7 @@ elgamal = ["dep:solana-zk-sdk"]
 
 [dependencies]
 chrono = { workspace = true, features = ["default"] }
-clap = { version = "3.2.23", features = ["cargo"] }
+clap = { version = "4.5.31", features = ["cargo"] }
 rpassword = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
