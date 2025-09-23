@@ -92,6 +92,15 @@ pub trait VoteStateHandle {
         self,
         vote_account: &mut BorrowedInstructionAccount,
     ) -> Result<(), InstructionError>;
+
+    #[cfg(test)]
+    fn credits(&self) -> u64 {
+        if self.epoch_credits().is_empty() {
+            0
+        } else {
+            self.epoch_credits().last().unwrap().1
+        }
+    }
 }
 
 impl VoteStateHandle for VoteStateV3 {
@@ -283,7 +292,8 @@ impl VoteStateHandle for VoteStateV3 {
 
 impl VoteStateHandle for VoteStateV4 {
     fn is_uninitialized(&self) -> bool {
-        self.authorized_voters.is_empty()
+        // As per SIMD-0185, v4 is always initialized.
+        false
     }
 
     fn authorized_withdrawer(&self) -> &Pubkey {
@@ -426,10 +436,10 @@ impl VoteStateHandle for VoteStateV4 {
     ) -> Result<(), InstructionError> {
         // If the account is not large enough to store the vote state, then attempt a realloc to make it large enough.
         // The realloc can only proceed if the vote account has balance sufficient for rent exemption at the new size.
-        if (vote_account.get_data().len() < VoteStateV3::size_of())
-            && (!vote_account.is_rent_exempt_at_data_length(VoteStateV3::size_of())
+        if (vote_account.get_data().len() < VoteStateV4::size_of())
+            && (!vote_account.is_rent_exempt_at_data_length(VoteStateV4::size_of())
                 || vote_account
-                    .set_data_length(VoteStateV3::size_of())
+                    .set_data_length(VoteStateV4::size_of())
                     .is_err())
         {
             // Unlike with conversions to v3, we will not gracefully default to
@@ -955,13 +965,6 @@ mod tests {
         transaction_context
     }
 
-    fn get_credits(epoch_credits: &[(Epoch, u64, u64)]) -> u64 {
-        if epoch_credits.is_empty() {
-            0
-        } else {
-            epoch_credits.last().unwrap().1
-        }
-    }
 
     fn get_max_sized_vote_state_v3() -> VoteStateV3 {
         let mut authorized_voters = AuthorizedVoters::default();
@@ -989,6 +992,7 @@ mod tests {
             root_slot: Some(u64::MAX),
             epoch_credits: vec![(0, 0, 0); MAX_EPOCH_CREDITS_HISTORY],
             authorized_voters,
+            bls_pubkey_compressed: Some([255; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
             ..Default::default()
         }
     }
@@ -1383,7 +1387,7 @@ mod tests {
     #[test_case(VoteStateV3::default() ; "VoteStateV3")]
     #[test_case(VoteStateV4::default() ; "VoteStateV4")]
     fn test_vote_state_epoch_credits<T: VoteStateHandle>(mut vote_state: T) {
-        assert_eq!(get_credits(vote_state.epoch_credits()), 0);
+        assert_eq!(vote_state.credits(), 0);
         assert_eq!(vote_state.epoch_credits().clone(), vec![]);
 
         let mut expected = vec![];
@@ -1401,7 +1405,7 @@ mod tests {
             expected.remove(0);
         }
 
-        assert_eq!(get_credits(vote_state.epoch_credits()), credits);
+        assert_eq!(vote_state.credits(), credits);
         assert_eq!(vote_state.epoch_credits().clone(), expected);
     }
 
@@ -1423,25 +1427,15 @@ mod tests {
         for i in 0..credits {
             increment_credits(&mut vote_state, i, 1);
         }
-        assert_eq!(get_credits(vote_state.epoch_credits()), credits);
+        assert_eq!(vote_state.credits(), credits);
         assert!(vote_state.epoch_credits().len() <= MAX_EPOCH_CREDITS_HISTORY);
     }
 
-    #[test_case(|last_timestamp| {
-        VoteStateV3 {
-            last_timestamp,
-            ..VoteStateV3::default()
-        }
-    } ; "VoteStateV3")]
-    #[test_case(|last_timestamp| {
-        VoteStateV4 {
-            last_timestamp,
-            ..VoteStateV4::default()
-        }
-    } ; "VoteStateV4")]
-    fn test_vote_process_timestamp<T: VoteStateHandle>(new_vote_state: fn(BlockTimestamp) -> T) {
+    #[test_case(VoteStateV3::default() ; "VoteStateV3")]
+    #[test_case(VoteStateV4::default() ; "VoteStateV4")]
+    fn test_vote_process_timestamp<T: VoteStateHandle>(mut vote_state: T) {
         let (slot, timestamp) = (15, 1_575_412_285);
-        let mut vote_state = new_vote_state(BlockTimestamp { slot, timestamp });
+        vote_state.set_last_timestamp(BlockTimestamp { slot, timestamp });
 
         assert_eq!(
             process_timestamp(&mut vote_state, slot - 1, timestamp + 1),
