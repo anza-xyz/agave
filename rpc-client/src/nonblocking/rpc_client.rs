@@ -4071,7 +4071,7 @@ impl RpcClient {
         &self,
         pubkey: &Pubkey,
     ) -> ClientResult<Vec<(Pubkey, Account)>> {
-        self.get_program_accounts_with_config(
+        self.get_program_ui_accounts_with_config(
             pubkey,
             RpcProgramAccountsConfig {
                 account_config: RpcAccountInfoConfig {
@@ -4082,6 +4082,21 @@ impl RpcClient {
             },
         )
         .await
+        .map(|response| {
+            response
+                .into_iter()
+                .map(|(pubkey, ui_account)| {
+                    (
+                        pubkey,
+                        ui_account.decode().expect(
+                            "It should be impossible at this point for the account data not to be \
+                             decodable. Ensure that the account was fetched using a binary \
+                             encoding.",
+                        ),
+                    )
+                })
+                .collect()
+        })
     }
 
     #[deprecated(
