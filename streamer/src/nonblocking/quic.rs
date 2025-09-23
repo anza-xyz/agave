@@ -1443,6 +1443,7 @@ impl ConnectionTable {
             table: IndexMap::default(),
             total_size: 0,
             is_staked,
+            cancel,
         }
     }
 
