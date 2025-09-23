@@ -312,11 +312,24 @@ mod tests {
     use {
         super::*,
         crate::fixture::proto::{AcctState as ProtoAcctState, InstrAcct as ProtoInstrAcct},
+        solana_sysvar_id::SysvarId,
     };
 
     #[test]
     fn test_system_program_exec() {
         let native_loader_id = solana_sdk_ids::native_loader::id().to_bytes().to_vec();
+        let sysvar_id = solana_sysvar_id::id().to_bytes().to_vec();
+
+        // Create Clock sysvar
+        let clock = solana_clock::Clock {
+            slot: 10,
+            ..Default::default()
+        };
+        let clock_data = bincode::serialize(&clock).unwrap();
+
+        // Create Rent sysvar
+        let rent = solana_rent::Rent::default();
+        let rent_data = bincode::serialize(&rent).unwrap();
 
         // Ensure that a basic account transfer works
         let input = ProtoInstrContext {
@@ -346,6 +359,22 @@ mod tests {
                     executable: true,
                     seed_addr: None,
                 },
+                ProtoAcctState {
+                    address: solana_clock::Clock::id().to_bytes().to_vec(),
+                    owner: sysvar_id.clone(),
+                    lamports: 1,
+                    data: clock_data.clone(),
+                    executable: false,
+                    seed_addr: None,
+                },
+                ProtoAcctState {
+                    address: solana_rent::Rent::id().to_bytes().to_vec(),
+                    owner: sysvar_id.clone(),
+                    lamports: 1,
+                    data: rent_data.clone(),
+                    executable: false,
+                    seed_addr: None,
+                },
             ],
             instr_accounts: vec![
                 ProtoInstrAcct {
@@ -368,7 +397,7 @@ mod tests {
             epoch_context: None,
             slot_context: None,
         };
-        let output = execute_instr_proto(input);
+        let output = execute_instr_proto(input.clone());
         assert_eq!(
             output,
             Some(ProtoInstrEffects {
@@ -397,6 +426,22 @@ mod tests {
                         lamports: 10000000,
                         data: b"Solana Program".to_vec(),
                         executable: true,
+                        seed_addr: None,
+                    },
+                    ProtoAcctState {
+                        address: solana_clock::Clock::id().to_bytes().to_vec(),
+                        owner: sysvar_id.clone(),
+                        lamports: 1,
+                        data: clock_data,
+                        executable: false,
+                        seed_addr: None,
+                    },
+                    ProtoAcctState {
+                        address: solana_rent::Rent::id().to_bytes().to_vec(),
+                        owner: sysvar_id.clone(),
+                        lamports: 1,
+                        data: rent_data,
+                        executable: false,
                         seed_addr: None,
                     },
                 ],
