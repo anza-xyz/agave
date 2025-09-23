@@ -280,7 +280,6 @@ macro_rules! impl_merkle_shred {
         }
 
         // Where the merkle proof starts in the shred binary.
-        #[allow(unused)]
         fn proof_offset(&self) -> Result<usize, Error> {
             let ShredVariant::$variant {
                 proof_size,
@@ -296,7 +295,6 @@ macro_rules! impl_merkle_shred {
             Ok(Self::SIZE_OF_HEADERS + Self::capacity(proof_size, resigned)? + SIZE_OF_MERKLE_ROOT)
         }
 
-        #[allow(unused)]
         fn chained_merkle_root_offset(&self) -> Result<usize, Error> {
             let ShredVariant::$variant {
                 proof_size,
@@ -400,7 +398,6 @@ macro_rules! impl_merkle_shred {
             Ok(())
         }
 
-        #[allow(unused)]
         pub(super) fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
             let ShredVariant::$variant {
                 proof_size,
@@ -424,7 +421,6 @@ macro_rules! impl_merkle_shred {
         }
 
         // Returns the offsets into the payload which are erasure coded.
-        #[allow(unused)]
         fn erasure_shard_offsets(&self) -> Result<Range<usize>, Error> {
             if self.payload.len() != Self::SIZE_OF_PAYLOAD {
                 return Err(Error::InvalidPayloadSize(self.payload.len()));
@@ -587,7 +583,6 @@ impl ShredDataTrait for ShredData {
     }
 
     #[inline]
-    #[allow(unused)]
     fn data(&self) -> Result<&[u8], Error> {
         let ShredVariant::MerkleData {
             proof_size,
@@ -928,7 +923,6 @@ fn make_stub_shred(
 
 // Generates data shreds for the current erasure batch.
 // Updates ShredCommonHeader.index for data shreds of the next batch.
-#[allow(unused)]
 fn make_shreds_data<'a>(
     common_header: &'a mut ShredCommonHeader,
     mut data_header: DataShredHeader,
