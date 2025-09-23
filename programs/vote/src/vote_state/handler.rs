@@ -20,8 +20,9 @@ use {
         error::VoteError,
         state::{
             BlockTimestamp, LandedVote, Lockout, VoteInit, VoteState1_14_11, VoteStateV3,
-            VoteStateV4, VoteStateVersions, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY,
-            VOTE_CREDITS_GRACE_SLOTS, VOTE_CREDITS_MAXIMUM_PER_SLOT,
+            VoteStateV4, VoteStateVersions, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+            MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY, VOTE_CREDITS_GRACE_SLOTS,
+            VOTE_CREDITS_MAXIMUM_PER_SLOT,
         },
     },
     std::collections::VecDeque,
@@ -437,6 +438,50 @@ impl VoteStateHandle for VoteStateV4 {
         }
         // Vote account is large enough to store the newest version of vote state
         vote_account.set_state(&VoteStateVersions::V4(Box::new(self)))
+    }
+}
+
+/// Default block revenue commission rate in basis points (100%) per SIMD-0185.
+#[cfg(test)] // Test-only for now, until later commits.
+const DEFAULT_BLOCK_REVENUE_COMMISSION_BPS: u16 = 10_000;
+
+/// Create a new VoteStateV4 from `VoteInit` with proper SIMD-0185 defaults.
+/// Note this is a temporary substitute for `VoteStateV4::new`.
+#[allow(clippy::arithmetic_side_effects)]
+#[cfg(test)] // Test-only for now, until later commits.
+pub(crate) fn create_new_vote_state_v4(
+    vote_pubkey: &Pubkey,
+    vote_init: &VoteInit,
+    clock: &Clock,
+) -> VoteStateV4 {
+    VoteStateV4 {
+        node_pubkey: vote_init.node_pubkey,
+        authorized_voters: AuthorizedVoters::new(clock.epoch, vote_init.authorized_voter),
+        authorized_withdrawer: vote_init.authorized_withdrawer,
+        inflation_rewards_commission_bps: (vote_init.commission as u16) * 100, // u16::MAX > u8::MAX * 100
+        // Per SIMD-0185, set default collectors and commission
+        inflation_rewards_collector: *vote_pubkey,
+        block_revenue_collector: vote_init.node_pubkey,
+        block_revenue_commission_bps: DEFAULT_BLOCK_REVENUE_COMMISSION_BPS,
+        ..VoteStateV4::default()
+    }
+}
+
+/// (Alpenglow) Create a test-only `VoteStateV4` with the provided values.
+pub(crate) fn create_new_vote_state_v4_for_tests(
+    node_pubkey: &Pubkey,
+    authorized_voter: &Pubkey,
+    authorized_withdrawer: &Pubkey,
+    bls_pubkey_compressed: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
+    inflation_rewards_commission_bps: u16,
+) -> VoteStateV4 {
+    VoteStateV4 {
+        node_pubkey: *node_pubkey,
+        authorized_voters: AuthorizedVoters::new(0, *authorized_voter),
+        authorized_withdrawer: *authorized_withdrawer,
+        bls_pubkey_compressed,
+        inflation_rewards_commission_bps,
+        ..VoteStateV4::default()
     }
 }
 
@@ -918,20 +963,6 @@ mod tests {
         }
     }
 
-    fn new_vote_state_v3(vote_init: &VoteInit, clock: &Clock) -> VoteStateV3 {
-        VoteStateV3::new(vote_init, clock)
-    }
-
-    fn new_vote_state_v4(vote_init: &VoteInit, clock: &Clock) -> VoteStateV4 {
-        VoteStateV4 {
-            node_pubkey: vote_init.node_pubkey,
-            authorized_voters: AuthorizedVoters::new(clock.epoch, vote_init.authorized_voter),
-            authorized_withdrawer: vote_init.authorized_withdrawer,
-            inflation_rewards_commission_bps: (vote_init.commission as u16) * 100,
-            ..VoteStateV4::default()
-        }
-    }
-
     fn get_max_sized_vote_state_v3() -> VoteStateV3 {
         let mut authorized_voters = AuthorizedVoters::default();
         for i in 0..=MAX_LEADER_SCHEDULE_EPOCH_OFFSET {
@@ -1056,6 +1087,7 @@ mod tests {
 
     #[test]
     fn test_set_new_authorized_voter() {
+        let vote_pubkey = Pubkey::new_unique();
         let original_voter = Pubkey::new_unique();
         let epoch_offset = 15;
 
@@ -1068,7 +1100,7 @@ mod tests {
         let clock = Clock::default();
 
         // Start with v3. We'll also check `prior_voters`.
-        let mut vote_state = new_vote_state_v3(&vote_init, &clock);
+        let mut vote_state = VoteStateV3::new(&vote_init, &clock);
         assert!(vote_state.prior_voters.last().is_none());
 
         set_new_authorized_voter_and_assert(
@@ -1079,26 +1111,15 @@ mod tests {
         );
 
         // Now try with v4. No `prior_voters` to check.
-        let mut vote_state = new_vote_state_v4(&vote_init, &clock);
+        let mut vote_state = create_new_vote_state_v4(&vote_pubkey, &vote_init, &clock);
 
         set_new_authorized_voter_and_assert(&mut vote_state, original_voter, epoch_offset, None);
     }
 
-    #[test_case(new_vote_state_v3 ; "VoteStateV3")]
-    #[test_case(new_vote_state_v4 ; "VoteStateV4")]
-    fn test_authorized_voter_is_locked_within_epoch<T: VoteStateHandle>(
-        new_vote_state: fn(&VoteInit, &Clock) -> T,
+    fn assert_authorized_voter_is_locked_within_epoch<T: VoteStateHandle>(
+        vote_state: &mut T,
+        original_voter: &Pubkey,
     ) {
-        let original_voter = Pubkey::new_unique();
-        let mut vote_state = new_vote_state(
-            &VoteInit {
-                node_pubkey: original_voter,
-                authorized_voter: original_voter,
-                authorized_withdrawer: original_voter,
-                commission: 0,
-            },
-            &Clock::default(),
-        );
         // Test that it's not possible to set a new authorized
         // voter within the same epoch, even if none has been
         // explicitly set before
@@ -1109,7 +1130,7 @@ mod tests {
         );
         assert_eq!(
             vote_state.authorized_voters().get_authorized_voter(1),
-            Some(original_voter)
+            Some(*original_voter)
         );
         // Set a new authorized voter for a future epoch
         assert_eq!(
@@ -1120,7 +1141,7 @@ mod tests {
         // voter within the same epoch, even if none has been
         // explicitly set before
         assert_eq!(
-            vote_state.set_new_authorized_voter(&original_voter, 3, 3, |_| Ok(())),
+            vote_state.set_new_authorized_voter(original_voter, 3, 3, |_| Ok(())),
             Err(VoteError::TooSoonToReauthorize.into())
         );
         assert_eq!(
@@ -1130,9 +1151,31 @@ mod tests {
     }
 
     #[test]
+    fn test_authorized_voter_is_locked_within_epoch() {
+        let vote_pubkey = Pubkey::new_unique();
+        let original_voter = Pubkey::new_unique();
+
+        let vote_init = VoteInit {
+            node_pubkey: original_voter,
+            authorized_voter: original_voter,
+            authorized_withdrawer: original_voter,
+            commission: 0,
+        };
+        let clock = Clock::default();
+
+        // First test v3.
+        let mut vote_state = VoteStateV3::new(&vote_init, &clock);
+        assert_authorized_voter_is_locked_within_epoch(&mut vote_state, &original_voter);
+
+        // Now v4.
+        let mut vote_state = create_new_vote_state_v4(&vote_pubkey, &vote_init, &clock);
+        assert_authorized_voter_is_locked_within_epoch(&mut vote_state, &original_voter);
+    }
+
+    #[test]
     fn test_get_and_update_authorized_voter_v3() {
         let original_voter = Pubkey::new_unique();
-        let mut vote_state = new_vote_state_v3(
+        let mut vote_state = VoteStateV3::new(
             &VoteInit {
                 node_pubkey: original_voter,
                 authorized_voter: original_voter,
@@ -1199,8 +1242,10 @@ mod tests {
     // Besides that, the functionality should be the same.
     #[test]
     fn test_get_and_update_authorized_voter_v4() {
+        let vote_pubkey = Pubkey::new_unique();
         let original_voter = Pubkey::new_unique();
-        let mut vote_state = new_vote_state_v4(
+        let mut vote_state = create_new_vote_state_v4(
+            &vote_pubkey,
             &VoteInit {
                 node_pubkey: original_voter,
                 authorized_voter: original_voter,

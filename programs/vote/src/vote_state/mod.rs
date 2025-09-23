@@ -16,7 +16,7 @@ use {
     solana_rent::Rent,
     solana_slot_hashes::SlotHash,
     solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
-    solana_vote_interface::{authorized_voters::AuthorizedVoters, error::VoteError, program::id},
+    solana_vote_interface::{error::VoteError, program::id},
     std::{
         cmp::Ordering,
         collections::{HashSet, VecDeque},
@@ -1044,24 +1044,6 @@ pub fn create_account_with_authorized(
     vote_account
 }
 
-// TODO(wen): when we have VoteStateV4::new(), switch all users there.
-pub fn new_v4_vote_state(
-    node_pubkey: &Pubkey,
-    authorized_voter: &Pubkey,
-    authorized_withdrawer: &Pubkey,
-    bls_pubkey_compressed: Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]>,
-    inflation_rewards_commission_bps: u16,
-) -> VoteStateV4 {
-    VoteStateV4 {
-        node_pubkey: *node_pubkey,
-        authorized_voters: AuthorizedVoters::new(0, *authorized_voter),
-        authorized_withdrawer: *authorized_withdrawer,
-        bls_pubkey_compressed,
-        inflation_rewards_commission_bps,
-        ..VoteStateV4::default()
-    }
-}
-
 pub fn create_v4_account_with_authorized(
     node_pubkey: &Pubkey,
     authorized_voter: &Pubkey,
@@ -1072,7 +1054,7 @@ pub fn create_v4_account_with_authorized(
 ) -> AccountSharedData {
     let mut vote_account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &id());
 
-    let vote_state = new_v4_vote_state(
+    let vote_state = handler::create_new_vote_state_v4_for_tests(
         node_pubkey,
         authorized_voter,
         authorized_withdrawer,
@@ -1109,6 +1091,7 @@ mod tests {
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
         solana_transaction_context::{InstructionAccount, TransactionContext},
+        solana_vote_interface::authorized_voters::AuthorizedVoters,
         std::cell::RefCell,
         test_case::test_case,
     };
