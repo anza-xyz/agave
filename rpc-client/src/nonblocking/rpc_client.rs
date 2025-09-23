@@ -3786,7 +3786,7 @@ impl RpcClient {
         pubkeys: &[Pubkey],
         commitment_config: CommitmentConfig,
     ) -> RpcResult<Vec<Option<Account>>> {
-        self.get_multiple_accounts_with_config(
+        self.get_multiple_ui_accounts_with_config(
             pubkeys,
             RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64Zstd),
@@ -3796,6 +3796,22 @@ impl RpcClient {
             },
         )
         .await
+        .map(|response| Response {
+            context: response.context,
+            value: response
+                .value
+                .into_iter()
+                .map(|ui_account| {
+                    ui_account.map(|ui_account| {
+                        ui_account.decode().expect(
+                            "It should be impossible at this point for the account data not to be \
+                             decodable. Ensure that the account was fetched using a binary \
+                             encoding.",
+                        )
+                    })
+                })
+                .collect(),
+        })
     }
 
     #[deprecated(
