@@ -13,7 +13,7 @@ use {
 
 /// one entry in the in-mem accounts index
 /// Represents the value for an account key in the in-memory accounts index
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct AccountMapEntry<T> {
     /// number of alive slots that contain >= 1 instances of account data for this pubkey
     /// where alive represents a slot that has not yet been removed by clean via AccountsDB::clean_stored_dead_slots() for containing no up to date account information
@@ -34,6 +34,16 @@ impl<T: IndexValue> AccountMapEntry<T> {
             meta,
         }
     }
+
+    #[cfg(test)]
+    pub(super) fn empty_for_tests() -> Self {
+        Self {
+            slot_list: RwLock::default(),
+            ref_count: AtomicRefCount::default(),
+            meta: AccountMapEntryMeta::default(),
+        }
+    }
+
     pub fn ref_count(&self) -> RefCount {
         self.ref_count.load(Ordering::Acquire)
     }
