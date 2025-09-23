@@ -270,6 +270,35 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// Maximum `Vec` pre-allocation size to protect against malicious inputs
+    /// in deserialization.
+    ///
+    /// After gathering metrics on current mainnet beta, the maximum size
+    /// of entire `Vec<Entry>` payloads never exceeded 500KiB (they are 45KiB
+    /// in the average case), so this should be more than sufficient to avoid
+    /// false positives while being low enough not to introduce attack vectors.
+    ///
+    /// Note that this is _per_ `Vec<T>` allocation, not a global limit on the
+    /// size of the input payload.
+    const MAX_PREALLOC_BYTES: usize = 1 << 20; // 1MiB
+
+    /// Allocate a Vec with a capacity bounded by [`Self::MAX_PREALLOC_BYTES`].
+    ///
+    /// We could, in theory, allow the Vec to grow in the way that [`Vec::push`]
+    /// does, but it is preferable to avoid the branching and capacity checks
+    /// that would be required. Because we have a sense of the size of inputs
+    /// we're dealing with (and can measure), prefer a hard limit.
+    #[inline(always)]
+    fn vec_with_capacity_cautious<T>(capacity: usize) -> bincode::Result<Vec<T>> {
+        // Deserialization of `Entry` doesn't deal with ZSTs.
+        assert!(size_of::<T>() > 0);
+        if capacity > Self::MAX_PREALLOC_BYTES / size_of::<T>() {
+            return Err(error_size_limit());
+        }
+
+        Ok(Vec::with_capacity(capacity))
+    }
+
     /// Read a sequence of `T`s from the cursor into `ptr`.
     ///
     /// This provides a `*mut T` for each slot in the allocated Vec
@@ -295,7 +324,7 @@ impl<'a> Reader<'a> {
         Len: SeqLen,
     {
         let len = Len::get_len(self)?;
-        let mut vec: Vec<T> = Vec::with_capacity(len);
+        let mut vec = Self::vec_with_capacity_cautious(len)?;
         // Get a raw pointer to the Vec memory to facilitate in-place writing.
         let mut vec_ptr = vec.spare_capacity_mut().as_mut_ptr();
         for i in 0..len {
@@ -333,9 +362,12 @@ impl<'a> Reader<'a> {
         Len: SeqLen,
     {
         let len = Len::get_len(self)?;
-        let mut vec: Vec<T> = Vec::with_capacity(len);
+        let needed = len
+            .checked_mul(size_of::<T>())
+            .ok_or_else(error_size_limit)?;
+        let mut vec = Self::vec_with_capacity_cautious(len)?;
         let vec_ptr = vec.spare_capacity_mut().as_mut_ptr();
-        self.read_exact(vec_ptr as *mut u8, len * size_of::<T>())?;
+        self.read_exact(vec_ptr as *mut u8, needed)?;
         // SAFETY: Caller ensures `T` is plain ol' data and can be initialized by raw byte reads.
         vec.set_len(len);
         // SAFETY: Caller ensures `ptr` is a valid ptr to a Vec<T>.
@@ -956,6 +988,10 @@ mod tests {
         proptest::collection::vec(any::<u8>(), 0..=max_len)
     }
 
+    fn strat_repeated_byte_vec(max_len: usize) -> impl Strategy<Value = Vec<u8>> {
+        (any::<u8>(), 0..=max_len).prop_map(|(b, len)| vec![b; len])
+    }
+
     fn strat_signature() -> impl Strategy<Value = Signature> {
         any::<[u8; SIGNATURE_BYTES]>().prop_map(Signature::from)
     }
@@ -1083,6 +1119,23 @@ mod tests {
             let our = our_short_u16_encode(len);
             let bincode = bincode::serialize(&ShortU16(len)).unwrap();
             prop_assert_eq!(our, bincode);
+        }
+
+        #[test]
+        fn deser_fails_on_bad_data(data in strat_repeated_byte_vec(1024)) {
+            // represents a zeroed Entry -- valid
+            if data.get(0..48) == Some(&[0; 48]) {
+                prop_assert!(deserialize_entry(&data).is_ok());
+            } else {
+                prop_assert!(deserialize_entry(&data).is_err());
+            }
+
+            // represents a bincode length 0 -- valid
+            if data.get(0..8) == Some(&[0; 8]) {
+                prop_assert!(deserialize_entry_multi(&data).is_ok());
+            } else {
+                prop_assert!(deserialize_entry_multi(&data).is_err());
+            }
         }
 
         #[test]
