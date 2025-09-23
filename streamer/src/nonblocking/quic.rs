@@ -1107,7 +1107,6 @@ async fn handle_connection(
             },
             _ = cancel.cancelled() => break,
         };
-        debug!("Accepted new stream from {remote_addr:?}");
 
         let max_streams_per_throttling_interval =
             stream_load_ema.available_load_capacity_in_throttling_duration(peer_type, total_stake);
@@ -1249,7 +1248,6 @@ async fn handle_connection(
             .fetch_add(1, Ordering::Relaxed);
     }
     stats.total_connections.fetch_sub(1, Ordering::Relaxed);
-    debug!("done with stream from {remote_addr}");
 }
 
 enum StreamState {
