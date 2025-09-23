@@ -846,7 +846,7 @@ where
             {
                 stats.unexpected_data_complete_shred += 1;
 
-                if discard_unexpected_data_complete_shreds(slot) {
+                if enforce_fixed_fec_set(slot) && discard_unexpected_data_complete_shreds(slot) {
                     return true;
                 }
             }
