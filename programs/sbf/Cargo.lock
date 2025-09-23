@@ -412,15 +412,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ansi_term"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee49baf6cb617b853aa8d93bf420db2383fab46d314482ca2803b40d5fde979b"
-dependencies = [
- "winapi 0.3.9",
-]
-
-[[package]]
 name = "anstream"
 version = "0.6.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -738,17 +729,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.87",
-]
-
-[[package]]
-name = "atty"
-version = "0.2.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9b39be18770d11421cdb1b9947a45dd3f37e93092cbf377614828a319d5fee8"
-dependencies = [
- "hermit-abi 0.1.13",
- "libc",
- "winapi 0.3.9",
 ]
 
 [[package]]
@@ -1290,18 +1270,30 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "2.33.3"
+version = "4.5.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37e58ac78573c40708d45522f0d80fa2f01cc4f9b4e2bf749807255454312002"
+checksum = "e2134bb3ea021b78629caa971416385309e0131b351b25e01dc16fb54e1b5fae"
 dependencies = [
- "ansi_term",
- "atty",
- "bitflags 1.2.1",
- "strsim 0.8.0",
- "textwrap",
- "unicode-width 0.1.8",
- "vec_map",
+ "clap_builder",
 ]
+
+[[package]]
+name = "clap_builder"
+version = "4.5.48"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2ba64afa3c0a6df7fa517765e31314e983f51dda798ffba27b988194fb65dc9"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "clap_lex",
+ "strsim",
+]
+
+[[package]]
+name = "clap_lex"
+version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
 name = "colorchoice"
@@ -1356,7 +1348,7 @@ dependencies = [
  "encode_unicode",
  "libc",
  "once_cell",
- "unicode-width 0.2.0",
+ "unicode-width",
  "windows-sys 0.59.0",
 ]
 
@@ -1369,7 +1361,7 @@ dependencies = [
  "encode_unicode",
  "libc",
  "once_cell",
- "unicode-width 0.2.0",
+ "unicode-width",
  "windows-sys 0.61.0",
 ]
 
@@ -1617,7 +1609,7 @@ dependencies = [
  "ident_case",
  "proc-macro2",
  "quote",
- "strsim 0.11.1",
+ "strsim",
  "syn 2.0.87",
 ]
 
@@ -2612,15 +2604,6 @@ checksum = "2540771e65fc8cb83cd6e8a237f70c319bd5c29f78ed1084ba5d50eeac86f7f9"
 
 [[package]]
 name = "hermit-abi"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91780f809e750b0a89f5544be56617ff6b1227ee485bcb06ebe10cdf89bd3b71"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "hermit-abi"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f154ce46856750ed433c8649605bf7ed2de3bc35fd9d2a9f30cddd873c80cb08"
@@ -3129,7 +3112,7 @@ checksum = "4adb2ee6ad319a912210a36e56e3623555817bcc877a7e6e8802d1d69c4d8056"
 dependencies = [
  "console 0.16.1",
  "portable-atomic",
- "unicode-width 0.2.0",
+ "unicode-width",
  "unit-prefix",
  "web-time",
 ]
@@ -3142,7 +3125,7 @@ checksum = "70a646d946d06bedbbc4cac4c218acf4bbf2d87757a784857025f4d447e4e1cd"
 dependencies = [
  "console 0.16.1",
  "portable-atomic",
- "unicode-width 0.2.0",
+ "unicode-width",
  "unit-prefix",
  "web-time",
 ]
@@ -4013,7 +3996,7 @@ version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91df4bbde75afed763b708b7eee1e8e7651e02d97f6d5dd763e89367e957b23b"
 dependencies = [
- "hermit-abi 0.5.1",
+ "hermit-abi",
  "libc",
 ]
 
@@ -10453,12 +10436,6 @@ dependencies = [
 
 [[package]]
 name = "strsim"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ea5119cdb4c55b55d432abb513a0429384878c15dde60cc77b1c99de1a95a6a"
-
-[[package]]
-name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
@@ -10687,7 +10664,7 @@ version = "3.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adcb7fd841cd518e279be3d5a3eb0636409487998a4aff22f3de87b81e88384f"
 dependencies = [
- "cfg-if 1.0.0",
+ "cfg-if 1.0.3",
  "proc-macro2",
  "quote",
  "syn 2.0.87",
@@ -10703,15 +10680,6 @@ dependencies = [
  "quote",
  "syn 2.0.87",
  "test-case-core",
-]
-
-[[package]]
-name = "textwrap"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d326610f408c7a4eb6f51c37c330e496b08506c9457c9d34287ecc38809fb060"
-dependencies = [
- "unicode-width 0.1.8",
 ]
 
 [[package]]
@@ -11296,12 +11264,6 @@ checksum = "f6ccf251212114b54433ec949fd6a7841275f9ada20dddd2f29e9ceea4501493"
 
 [[package]]
 name = "unicode-width"
-version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9337591893a19b88d8d87f2cec1e73fad5cdfd10e5a6f349f498ad6ea2ffb1e3"
-
-[[package]]
-name = "unicode-width"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"
@@ -11429,12 +11391,6 @@ name = "vec_extract_if_polyfill"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c9cb5fb67c2692310b6eb3fce7dd4b6e4c9a75be4f2f46b27f0b2b7799759c"
-
-[[package]]
-name = "vec_map"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1bddf1187be692e79c5ffeab891132dfb0f236ed36a43c7ed39f1165ee20191"
 
 [[package]]
 name = "version_check"
