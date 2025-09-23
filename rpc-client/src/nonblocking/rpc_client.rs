@@ -3524,7 +3524,17 @@ impl RpcClient {
             min_context_slot: None,
         };
 
-        self.get_account_with_config(pubkey, config).await
+        self.get_ui_account_with_config(pubkey, config)
+            .await
+            .map(|response| Response {
+                context: response.context,
+                value: response.value.map(|ui_account| {
+                    ui_account.decode().expect(
+                        "It should be impossible at this point for the account data not to be \
+                         decodable. Ensure that the account was fetched using a binary encoding.",
+                    )
+                }),
+            })
     }
 
     #[deprecated(
