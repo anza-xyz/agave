@@ -29,10 +29,7 @@ use {
     solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
     solana_sysvar::epoch_rewards::EpochRewards,
     solana_vote::vote_account::VoteAccounts,
-    std::{
-        ops::Add,
-        sync::{atomic::Ordering::Relaxed, Arc},
-    },
+    std::sync::{atomic::Ordering::Relaxed, Arc},
 };
 
 #[derive(Debug)]
@@ -64,12 +61,12 @@ impl RewardsAccumulator {
             .total_stake_rewards_lamports
             .saturating_add(stakers_reward);
     }
-}
 
-impl Add for RewardsAccumulator {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
+    /// Merges two instances by combining their vote rewards and stake rewards.
+    ///
+    /// To minimize reallocations, the instance with more vote rewards is used
+    /// as the base and the smaller instance is merged into it.
+    fn accumulate_into_larger(self, rhs: Self) -> Self {
         // Check which instance has more vote rewards. Treat the bigger one
         // as a destination, which is going to be extended. This way we make
         // the reallocation as small as possible.
@@ -526,7 +523,7 @@ impl Bank {
                 .reduce(
                     RewardsAccumulator::default,
                     |rewards_accumulator_a, rewards_accumulator_b| {
-                        rewards_accumulator_a + rewards_accumulator_b
+                        rewards_accumulator_a.accumulate_into_larger(rewards_accumulator_b)
                     },
                 )
         });
@@ -1381,7 +1378,7 @@ mod tests {
         assert_eq!(vote_reward_c_2.commission, 10);
         assert_eq!(vote_reward_c_2.vote_rewards, 50);
 
-        let accumulator = accumulator1 + accumulator2;
+        let accumulator = accumulator1.accumulate_into_larger(accumulator2);
 
         assert_eq!(accumulator.num_stake_rewards, 4);
         assert_eq!(accumulator.total_stake_rewards_lamports, 180);
