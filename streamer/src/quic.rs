@@ -24,10 +24,12 @@ use {
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock,
         },
-        thread,
         time::Duration,
     },
-    tokio::runtime::Runtime,
+    tokio::{
+        runtime::Handle as RuntimeHandle,
+        task::{JoinError, JoinHandle as TokioJoinHandle},
+    },
 };
 
 // allow multiple connections for NAT and any open/close overlap
@@ -64,7 +66,7 @@ pub fn default_num_tpu_vote_transaction_receive_threads() -> usize {
 
 pub struct SpawnServerResult {
     pub endpoints: Vec<Endpoint>,
-    pub thread: thread::JoinHandle<()>,
+    pub thread: TokioJoinHandle<Result<(), JoinError>>,
     pub key_updater: Arc<EndpointKeyUpdater>,
 }
 
@@ -113,15 +115,6 @@ pub(crate) fn configure_server(
     config.enable_segmentation_offload(false);
 
     Ok((server_config, cert_chain_pem))
-}
-
-fn rt(name: String, num_threads: NonZeroUsize) -> Runtime {
-    tokio::runtime::Builder::new_multi_thread()
-        .thread_name(name)
-        .worker_threads(num_threads.get())
-        .enable_all()
-        .build()
-        .unwrap()
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -588,29 +581,6 @@ impl StreamerStats {
     }
 }
 
-#[deprecated(since = "3.0.0", note = "Use spawn_server instead")]
-pub fn spawn_server_multi(
-    thread_name: &'static str,
-    metrics_name: &'static str,
-    sockets: Vec<UdpSocket>,
-    keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
-    exit: Arc<AtomicBool>,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
-    quic_server_params: QuicServerParams,
-) -> Result<SpawnServerResult, QuicServerError> {
-    spawn_server(
-        thread_name,
-        metrics_name,
-        sockets,
-        keypair,
-        packet_sender,
-        exit,
-        staked_nodes,
-        quic_server_params,
-    )
-}
-
 #[derive(Clone)]
 pub struct QuicServerParams {
     pub max_connections_per_peer: usize,
@@ -660,41 +630,40 @@ impl QuicServerParams {
     }
 }
 
+/// Configuration for a QUIC server used by the TPU.
+pub struct StreamerConfig {
+    pub params: QuicServerParams,
+    pub runtime_handle: RuntimeHandle,
+}
+
 /// Spawns a tokio runtime and a streamer instance inside it.
 pub fn spawn_server(
-    thread_name: &'static str,
     metrics_name: &'static str,
     sockets: impl IntoIterator<Item = UdpSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     exit: Arc<AtomicBool>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
-    quic_server_params: QuicServerParams,
+    StreamerConfig {
+        params,
+        runtime_handle,
+    }: StreamerConfig,
 ) -> Result<SpawnServerResult, QuicServerError> {
-    let runtime = rt(format!("{thread_name}Rt"), quic_server_params.num_threads);
-    let result = {
-        let _guard = runtime.enter();
-        crate::nonblocking::quic::spawn_server(
-            metrics_name,
-            sockets,
-            keypair,
-            packet_sender,
-            exit,
-            staked_nodes,
-            quic_server_params,
-        )
-    }?;
-    let handle = thread::Builder::new()
-        .name(thread_name.into())
-        .spawn(move || {
-            if let Err(e) = runtime.block_on(result.thread) {
-                warn!("error from runtime.block_on: {e:?}");
-            }
-        })
-        .unwrap();
+    let result = crate::nonblocking::quic::spawn_server(
+        metrics_name,
+        sockets,
+        keypair,
+        packet_sender,
+        exit,
+        staked_nodes,
+        params,
+    )?;
+
+    let handle = runtime_handle.spawn(result.thread);
     let updater = EndpointKeyUpdater {
         endpoints: result.endpoints.clone(),
     };
+
     Ok(SpawnServerResult {
         endpoints: result.endpoints,
         thread: handle,

@@ -49,7 +49,7 @@ use {
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_streamer::{
-        quic::{spawn_server, QuicServerParams, SpawnServerResult},
+        quic::{spawn_server, SpawnServerResult, StreamerConfig},
         streamer::StakedNodes,
     },
     solana_turbine::{
@@ -64,7 +64,10 @@ use {
         thread::{self, JoinHandle},
         time::Duration,
     },
-    tokio::sync::mpsc::Sender as AsyncSender,
+    tokio::{
+        sync::mpsc::Sender as AsyncSender,
+        task::{JoinError, JoinHandle as TokioJoinHandle},
+    },
 };
 
 pub struct TpuSockets {
@@ -103,12 +106,12 @@ pub struct Tpu {
     forwarding_stage: JoinHandle<()>,
     cluster_info_vote_listener: ClusterInfoVoteListener,
     broadcast_stage: BroadcastStage,
-    tpu_quic_t: Option<thread::JoinHandle<()>>,
-    tpu_forwards_quic_t: Option<thread::JoinHandle<()>>,
+    tpu_quic_t: Option<TokioJoinHandle<Result<(), JoinError>>>,
+    tpu_forwards_quic_t: Option<TokioJoinHandle<Result<(), JoinError>>>,
     tpu_entry_notifier: Option<TpuEntryNotifier>,
     staked_nodes_updater_service: StakedNodesUpdaterService,
     tracer_thread_hdl: TracerThread,
-    tpu_vote_quic_t: thread::JoinHandle<()>,
+    tpu_vote_quic_t: TokioJoinHandle<Result<(), JoinError>>,
 }
 
 impl Tpu {
@@ -146,9 +149,9 @@ impl Tpu {
         banking_tracer_channels: Channels,
         tracer_thread_hdl: TracerThread,
         tpu_enable_udp: bool,
-        tpu_quic_server_config: QuicServerParams,
-        tpu_fwd_quic_server_config: QuicServerParams,
-        vote_quic_server_config: QuicServerParams,
+        tpu_quic_server_config: StreamerConfig,
+        tpu_fwd_quic_server_config: StreamerConfig,
+        vote_quic_server_config: StreamerConfig,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
@@ -209,7 +212,6 @@ impl Tpu {
             thread: tpu_vote_quic_t,
             key_updater: vote_streamer_key_updater,
         } = spawn_server(
-            "solQuicTVo",
             "quic_streamer_tpu_vote",
             tpu_vote_quic_sockets,
             keypair,
@@ -227,7 +229,6 @@ impl Tpu {
                 thread: tpu_quic_t,
                 key_updater,
             } = spawn_server(
-                "solQuicTpu",
                 "quic_streamer_tpu",
                 transactions_quic_sockets,
                 keypair,
@@ -249,7 +250,6 @@ impl Tpu {
                 thread: tpu_forwards_quic_t,
                 key_updater: forwards_key_updater,
             } = spawn_server(
-                "solQuicTpuFwd",
                 "quic_streamer_tpu_forwards",
                 transactions_forwards_quic_sockets,
                 keypair,
@@ -420,9 +420,10 @@ impl Tpu {
                 .join(),
             self.forwarding_stage.join(),
             self.staked_nodes_updater_service.join(),
-            self.tpu_quic_t.map_or(Ok(()), |t| t.join()),
-            self.tpu_forwards_quic_t.map_or(Ok(()), |t| t.join()),
-            self.tpu_vote_quic_t.join(),
+            // TODO(klykov): join using runtime_handles
+            //self.tpu_quic_t.map_or(Ok(()), |t| t.join()),
+            //self.tpu_forwards_quic_t.map_or(Ok(()), |t| t.join()),
+            //self.tpu_vote_quic_t.join(),
         ];
         let broadcast_result = self.broadcast_stage.join();
         for result in results {
