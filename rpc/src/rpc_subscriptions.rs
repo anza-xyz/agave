@@ -355,6 +355,9 @@ fn filter_block_result_txs(
             },
         )
         .map_err(|err| match err {
+            EncodeError::InvalidTransactionVersion(version) => {
+                RpcBlockUpdateError::InvalidTransactionVersion(version)
+            }
             EncodeError::UnsupportedTransactionVersion(version) => {
                 RpcBlockUpdateError::UnsupportedTransactionVersion(version)
             }

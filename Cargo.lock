@@ -11532,6 +11532,7 @@ dependencies = [
  "spl-token-group-interface",
  "spl-token-interface",
  "spl-token-metadata-interface",
+ "test-case",
  "thiserror 2.0.16",
 ]
 
