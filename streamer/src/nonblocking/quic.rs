@@ -278,15 +278,7 @@ async fn run_server(
     debug!("spawn quic server");
     let mut last_datapoint = Instant::now();
     let unstaked_connection_table: Arc<Mutex<ConnectionTable>> =
-<<<<<<< HEAD
         Arc::new(Mutex::new(ConnectionTable::new(false)));
-    let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
-        stats.clone(),
-        quic_server_params.max_unstaked_connections,
-        quic_server_params.max_streams_per_ms,
-    ));
-=======
-        Arc::new(Mutex::new(ConnectionTable::new()));
 
     let qos_tracker = match quic_server_params.qos_mode {
         QosMode::StakeWeighted { max_streams_per_ms } => {
@@ -303,7 +295,6 @@ async fn run_server(
         },
     };
 
->>>>>>> 0d9a02a6a4 (rebase with master)
     stats
         .quic_endpoints_count
         .store(endpoints.len(), Ordering::Relaxed);
@@ -1110,7 +1101,7 @@ async fn handle_connection(
                 max_streams_per_second,
             } => {
                 let interval_ms = STREAM_THROTTLING_INTERVAL.as_millis() as u64;
-                (max_streams_per_second * interval_ms / 1000).max(1)
+                max_streams_per_second * interval_ms / 1000
             }
         };
 
