@@ -50,23 +50,6 @@ if [[ -n $CI ]]; then
     else
       export CI_TAG=$BUILDKITE_TAG
     fi
-  elif [[ -n $APPVEYOR ]]; then
-    export CI_BRANCH=$APPVEYOR_REPO_BRANCH
-    export CI_BUILD_ID=$APPVEYOR_BUILD_ID
-    export CI_COMMIT=$APPVEYOR_REPO_COMMIT
-    export CI_JOB_ID=$APPVEYOR_JOB_ID
-    if [[ -n $APPVEYOR_PULL_REQUEST_NUMBER ]]; then
-      export CI_PULL_REQUEST=true
-    else
-      export CI_PULL_REQUEST=
-    fi
-    if [[ $CI_LINUX = True ]]; then
-      export CI_OS_NAME=linux
-    else
-      export CI_OS_NAME=windows
-    fi
-    export CI_REPO_SLUG=$APPVEYOR_REPO_NAME
-    export CI_TAG=$APPVEYOR_REPO_TAG_NAME
 
   elif [[ $GITHUB_ACTION ]]; then
     export CI_BUILD_ID=$GITHUB_RUN_ID
