@@ -18,7 +18,6 @@ use {
         TOTAL_BUFFERED_PACKETS,
     },
     solana_clock::MAX_PROCESSING_AGE,
-    solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
@@ -134,10 +133,17 @@ where
             if most_recent_leader_slot != new_leader_slot {
                 self.container.flush_held_transactions();
                 most_recent_leader_slot = new_leader_slot;
-                cost_pacer = decision.bank().map(|b| CostPacer {
-                    shared_block_cost: b.read_cost_tracker().unwrap().shared_block_cost(),
-                    detection_time: now,
-                    fill_time: self.config.pacing_fill_time,
+                cost_pacer = decision.bank().map(|b| {
+                    let cost_tracker = b.read_cost_tracker().unwrap();
+                    let block_limit = cost_tracker.get_block_limit();
+                    let shared_block_cost = cost_tracker.shared_block_cost();
+
+                    CostPacer {
+                        block_limit,
+                        shared_block_cost,
+                        detection_time: now,
+                        fill_time: self.config.pacing_fill_time,
+                    }
                 });
             }
 
@@ -387,6 +393,7 @@ where
 }
 
 struct CostPacer {
+    block_limit: u64,
     shared_block_cost: Arc<AtomicU64>,
     detection_time: Instant,
     fill_time: Duration,
@@ -396,11 +403,11 @@ impl CostPacer {
     fn scheduling_budget(&self, current_time: &Instant) -> u64 {
         let time_since = current_time.saturating_duration_since(self.detection_time);
         if time_since >= self.fill_time {
-            return MAX_BLOCK_UNITS - self.shared_block_cost.load(Ordering::Acquire);
+            return self.block_limit - self.shared_block_cost.load(Ordering::Acquire);
         }
 
         // on millisecond granularity, pace the cost linearly.
-        let allocation_per_milli = MAX_BLOCK_UNITS / self.fill_time.as_millis().max(1) as u64;
+        let allocation_per_milli = self.block_limit / self.fill_time.as_millis().max(1) as u64;
         let millis_since_detection = time_since.as_millis() as u64;
         let paced_cost = allocation_per_milli * millis_since_detection;
 
@@ -600,6 +607,7 @@ mod tests {
             .process_transactions(
                 &decision,
                 Some(&CostPacer {
+                    block_limit: u64::MAX,
                     shared_block_cost: Arc::new(AtomicU64::new(0)),
                     detection_time: now.checked_sub(Duration::from_millis(400)).unwrap(),
                     fill_time: Duration::from_millis(300),
