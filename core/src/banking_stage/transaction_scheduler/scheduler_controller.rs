@@ -137,6 +137,18 @@ where
                     let cost_tracker = b.read_cost_tracker().unwrap();
                     let block_limit = cost_tracker.get_block_limit();
                     let shared_block_cost = cost_tracker.shared_block_cost();
+                    drop(cost_tracker);
+
+                    // If pacing_fill_time is greater than the bank's slot time,
+                    // adjust the pacing_fill_time to be the slot time, and warn.
+                    if self.config.pacing_fill_time.as_nanos() > b.ns_per_slot {
+                        warn!(
+                            "scheduler pacing config pacing_fill_time {:?} is greater than the \
+                             bank's slot time {}, setting to slot time",
+                            self.config.pacing_fill_time, b.ns_per_slot,
+                        );
+                        self.config.pacing_fill_time = Duration::from_nanos(b.ns_per_slot as u64);
+                    }
 
                     CostPacer {
                         block_limit,
