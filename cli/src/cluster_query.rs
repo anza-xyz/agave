@@ -506,6 +506,11 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .help("Display rent in lamports instead of SOL"),
                 ),
         )
+        .subcommand(
+            SubCommand::with_name("latest-blockhash")
+                .about("Get latest blockhash")
+                .alias("get-latest-blockhash"),
+        )
     }
 }
 
@@ -609,6 +614,10 @@ pub fn parse_get_slot(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliEr
 
 pub fn parse_get_block_height(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
     Ok(CliCommandInfo::without_signers(CliCommand::GetBlockHeight))
+}
+
+pub fn parse_get_latest_blockhash(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    Ok(CliCommandInfo::without_signers(CliCommand::GetLatestBlockhash))
 }
 
 pub fn parse_largest_accounts(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
@@ -1191,6 +1200,11 @@ pub fn process_get_slot(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessR
 pub fn process_get_block_height(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessResult {
     let block_height = rpc_client.get_block_height()?;
     Ok(block_height.to_string())
+}
+
+pub fn process_get_latest_blockhash(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessResult {
+    let blockhash = rpc_client.get_latest_blockhash()?;
+    Ok(blockhash.to_string())
 }
 
 pub fn parse_show_block_production(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
