@@ -61,7 +61,7 @@ impl<T: IndexValue> PossibleEvictions<T> {
     fn reset(&mut self, entries: Age) {
         self.possible_evictions.iter_mut().for_each(|entry| {
             entry.evictions_random.clear();
-            entry.evictions_age_possible.clear();
+            entry.evictions_age.clear();
         });
         let entries = entries as usize;
         assert!(
@@ -86,7 +86,7 @@ impl<T: IndexValue> PossibleEvictions<T> {
         if random {
             &mut list.evictions_random
         } else {
-            &mut list.evictions_age_possible
+            &mut list.evictions_age
         }
         .push((key, entry));
     }
@@ -176,7 +176,7 @@ struct StartupInfo<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
 /// result from scanning in-mem index during flush
 struct FlushScanResult<T> {
     /// pubkeys whose age indicates they may be evicted now, pending further checks.
-    evictions_age_possible: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
+    evictions_age: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
     /// pubkeys chosen to evict based on random eviction
     evictions_random: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
 }
@@ -1177,14 +1177,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         // scan in-mem map for items that we may evict
         let FlushScanResult {
-            mut evictions_age_possible,
+            mut evictions_age,
             mut evictions_random,
         } = self.flush_scan(current_age, startup, flush_guard, ages_flushing_now);
 
         // write to disk outside in-mem map read lock
         {
-            let mut evictions_age = Vec::with_capacity(evictions_age_possible.len());
-            if !evictions_age_possible.is_empty() || !evictions_random.is_empty() {
+            if !evictions_age.is_empty() || !evictions_random.is_empty() {
                 let disk = self.bucket.as_ref().unwrap();
                 let mut flush_entries_updated_on_disk = 0;
                 let mut flush_should_evict_us = 0;
@@ -1192,17 +1191,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 let m = Measure::start("flush_update");
 
                 // consider whether to write to disk for all the items we may evict, whether evicting due to age or random
-                for (is_random, check_for_eviction_and_dirty) in [
-                    (false, &mut evictions_age_possible),
-                    (true, &mut evictions_random),
-                ] {
-                    for (k, v) in check_for_eviction_and_dirty.drain(..) {
+                for (is_random, check_for_eviction_and_dirty) in
+                    [(false, &mut evictions_age), (true, &mut evictions_random)]
+                {
+                    check_for_eviction_and_dirty.retain_mut(|(k, v)| {
                         let mut slot_list = None;
                         if !is_random {
                             let mut mse = Measure::start("flush_should_evict");
                             let (evict_for_age, slot_list_temp) = self.should_evict_from_mem(
                                 current_age,
-                                &v,
+                                v,
                                 startup,
                                 true,
                                 ages_flushing_now,
@@ -1210,19 +1208,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             slot_list = slot_list_temp;
                             mse.stop();
                             flush_should_evict_us += mse.as_us();
-                            if evict_for_age {
-                                evictions_age.push(k);
-                            } else {
+                            if !evict_for_age {
                                 // not evicting, so don't write, even if dirty
-                                continue;
+                                return false;
                             }
                         } else if v.ref_count() != 1 {
-                            continue;
+                            return false;
                         }
                         if is_random && v.dirty() {
                             // Don't randomly evict dirty entries. Evicting dirty entries results in us writing entries with many slot list elements for example, unnecessarily.
                             // So, only randomly evict entries that lru would say don't throw away and were just read (or were dirty and written, but could not be evicted).
-                            continue;
+                            return false;
                         }
 
                         // if we are evicting it, then we need to update disk if we're dirty
@@ -1252,7 +1248,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                         break;
                                     }
                                     disk.try_write(
-                                        &k,
+                                        k,
                                         (
                                             &slot_list
                                                 .iter()
@@ -1277,7 +1273,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                 }
                             }
                         }
-                    }
+                        true
+                    });
                 }
                 Self::update_time_stat(&self.stats().flush_update_us, m);
                 Self::update_stat(&self.stats().flush_should_evict_us, flush_should_evict_us);
@@ -1286,21 +1283,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     flush_entries_updated_on_disk,
                 );
                 // remove the 'v'
-                let evictions_random = evictions_random
-                    .into_iter()
-                    .map(|(k, _v)| k)
-                    .collect::<Vec<_>>();
 
                 let m = Measure::start("flush_evict");
                 self.evict_from_cache(
-                    evictions_age,
+                    evictions_age.into_iter().map(|(k, _v)| k).collect(),
                     current_age,
                     startup,
                     false,
                     ages_flushing_now,
                 );
                 self.evict_from_cache(
-                    evictions_random,
+                    evictions_random.into_iter().map(|(k, _v)| k).collect(),
                     current_age,
                     startup,
                     true,
@@ -1805,10 +1798,10 @@ mod tests {
                 );
                 let evictions = possible_evictions.possible_evictions.pop().unwrap();
                 assert_eq!(
-                    evictions.evictions_age_possible.len(),
+                    evictions.evictions_age.len(),
                     1 + ages_flushing_now as usize
                 );
-                evictions.evictions_age_possible.iter().for_each(|(_k, v)| {
+                evictions.evictions_age.iter().for_each(|(_k, v)| {
                     assert!(
                         InMemAccountsIndex::<u64, u64>::should_evict_based_on_age(
                             current_age,
