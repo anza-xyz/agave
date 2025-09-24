@@ -1,6 +1,5 @@
 use {
     crate::{nonblocking::quic::ConnectionPeerType, quic::StreamerStats},
-    percentage::Percentage,
     std::{
         cmp,
         sync::{
@@ -11,13 +10,15 @@ use {
     },
 };
 
-const MAX_UNSTAKED_STREAMS_PERCENT: u64 = 20;
 pub const STREAM_THROTTLING_INTERVAL_MS: u64 = 100;
 pub const STREAM_THROTTLING_INTERVAL: Duration =
     Duration::from_millis(STREAM_THROTTLING_INTERVAL_MS);
 const STREAM_LOAD_EMA_INTERVAL_MS: u64 = 5;
 const STREAM_LOAD_EMA_INTERVAL_COUNT: u64 = 10;
 const EMA_WINDOW_MS: u64 = STREAM_LOAD_EMA_INTERVAL_MS * STREAM_LOAD_EMA_INTERVAL_COUNT;
+
+/// Target TPS for unstaked connections
+const UNSTAKED_MAX_TPS: u64 = 100;
 
 pub(crate) struct StakedStreamLoadEMA {
     current_load_ema: AtomicU64,
@@ -40,18 +41,10 @@ impl StakedStreamLoadEMA {
         max_streams_per_ms: u64,
     ) -> Self {
         let allow_unstaked_streams = max_unstaked_connections > 0;
-        let max_staked_load_in_ema_window = if allow_unstaked_streams {
-            (max_streams_per_ms
-                - Percentage::from(MAX_UNSTAKED_STREAMS_PERCENT).apply_to(max_streams_per_ms))
-                * EMA_WINDOW_MS
-        } else {
-            max_streams_per_ms * EMA_WINDOW_MS
-        };
+        let max_staked_load_in_ema_window = max_streams_per_ms * EMA_WINDOW_MS;
 
         let max_unstaked_load_in_throttling_window = if allow_unstaked_streams {
-            Percentage::from(MAX_UNSTAKED_STREAMS_PERCENT)
-                .apply_to(max_streams_per_ms * STREAM_THROTTLING_INTERVAL_MS)
-                .saturating_div(max_unstaked_connections as u64)
+            UNSTAKED_MAX_TPS * STREAM_THROTTLING_INTERVAL_MS / 1000
         } else {
             0
         };
