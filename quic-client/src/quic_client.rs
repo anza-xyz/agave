@@ -89,7 +89,7 @@ async fn send_data_async(
 
 async fn send_data_batch_async(
     connection: Arc<NonblockingQuicConnection>,
-    buffers: Vec<Vec<u8>>,
+    buffers: Vec<Arc<Vec<u8>>>,
 ) -> TransportResult<()> {
     let result = timeout(
         u32::try_from(buffers.len())
@@ -156,7 +156,8 @@ impl ClientConnection for QuicClientConnection {
     }
 
     fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()> {
-        RUNTIME.block_on(self.inner.send_data_batch(buffers))?;
+        let arc_buffers: Vec<Arc<Vec<u8>>> = buffers.iter().map(|b| Arc::new(b.clone())).collect();
+        RUNTIME.block_on(self.inner.send_data_batch(&arc_buffers))?;
         Ok(())
     }
 
@@ -168,7 +169,7 @@ impl ClientConnection for QuicClientConnection {
         Ok(())
     }
 
-    fn send_data_batch_async(&self, buffers: Vec<Vec<u8>>) -> TransportResult<()> {
+    fn send_data_batch_async(&self, buffers: Vec<Arc<Vec<u8>>>) -> TransportResult<()> {
         let _lock = ASYNC_TASK_SEMAPHORE.acquire();
         let inner = self.inner.clone();
         let _handle = RUNTIME.spawn(send_data_batch_async(inner, buffers));
