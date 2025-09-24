@@ -1570,6 +1570,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("block-production-pacing-fill-time-millis")
             .value_name("MILLIS")
             .takes_value(true)
+            .default_value(&default_args.block_production_pacing_fill_time_millis)
             .help(
                 "Pacing fill time in milliseconds for the central-scheduler block production \
                  method",
