@@ -9,7 +9,7 @@ use {
     agave_io_uring::{Completion, FixedSlab, Ring, RingOp},
     core::slice,
     io_uring::{opcode, squeue, types, IoUring},
-    libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_NONBLOCK, O_TRUNC, O_WRONLY},
+    libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_TRUNC, O_WRONLY},
     smallvec::SmallVec,
     std::{
         collections::VecDeque,
@@ -361,7 +361,7 @@ impl OpenOp {
                 .unwrap_or(libc::AT_FDCWD),
         );
         opcode::OpenAt::new(at_dir_fd, self.path_bytes.as_ptr() as _)
-            .flags(O_CREAT | O_TRUNC | O_NOFOLLOW | O_WRONLY | O_NOATIME | O_NONBLOCK)
+            .flags(O_CREAT | O_TRUNC | O_NOFOLLOW | O_WRONLY | O_NOATIME)
             .mode(self.mode)
             .file_index(Some(
                 types::DestinationSlot::try_from_slot_target(self.file_key as u32).unwrap(),
