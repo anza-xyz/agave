@@ -11363,6 +11363,7 @@ dependencies = [
  "solana-commitment-config",
  "solana-connection-cache",
  "solana-keypair",
+ "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",

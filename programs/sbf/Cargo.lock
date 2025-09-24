@@ -9686,6 +9686,7 @@ dependencies = [
  "solana-clock",
  "solana-connection-cache",
  "solana-keypair",
+ "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-quic-definitions",
