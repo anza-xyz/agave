@@ -30,6 +30,7 @@ pub mod hardened_unpack;
 mod io_uring;
 pub mod is_loadable;
 mod is_zero_lamport;
+mod obsolete_accounts;
 pub mod partitioned_rewards;
 pub mod pubkey_bins;
 #[cfg(feature = "dev-context-only-utils")]

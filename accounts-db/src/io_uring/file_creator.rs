@@ -9,7 +9,7 @@ use {
     agave_io_uring::{Completion, FixedSlab, Ring, RingOp},
     core::slice,
     io_uring::{opcode, squeue, types, IoUring},
-    libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_NONBLOCK, O_TRUNC, O_WRONLY},
+    libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_TRUNC, O_WRONLY},
     smallvec::SmallVec,
     std::{
         collections::VecDeque,
@@ -224,6 +224,7 @@ impl<B> IoUringFileCreator<'_, B> {
                     file_key,
                     offset,
                     buf,
+                    buf_offset: 0,
                     write_len: len,
                 };
                 state.submitted_writes_size += len;
@@ -361,7 +362,7 @@ impl OpenOp {
                 .unwrap_or(libc::AT_FDCWD),
         );
         opcode::OpenAt::new(at_dir_fd, self.path_bytes.as_ptr() as _)
-            .flags(O_CREAT | O_TRUNC | O_NOFOLLOW | O_WRONLY | O_NOATIME | O_NONBLOCK)
+            .flags(O_CREAT | O_TRUNC | O_NOFOLLOW | O_WRONLY | O_NOATIME)
             .mode(self.mode)
             .file_index(Some(
                 types::DestinationSlot::try_from_slot_target(self.file_key as u32).unwrap(),
@@ -385,6 +386,7 @@ impl OpenOp {
                 file_key: self.file_key,
                 offset,
                 buf,
+                buf_offset: 0,
                 write_len: len,
             };
             ring.context_mut().submitted_writes_size += len;
@@ -428,6 +430,7 @@ struct WriteOp {
     file_key: usize,
     offset: usize,
     buf: FixedIoBuffer,
+    buf_offset: usize,
     write_len: usize,
 }
 
@@ -437,6 +440,7 @@ impl<'a> WriteOp {
             file_key,
             offset,
             buf,
+            buf_offset,
             write_len,
         } = self;
 
@@ -444,7 +448,7 @@ impl<'a> WriteOp {
         // reclaimed after completion passed in a call to `mark_write_completed`.
         opcode::WriteFixed::new(
             types::Fixed(*file_key as u32),
-            unsafe { buf.as_mut_ptr() },
+            unsafe { buf.as_mut_ptr().byte_add(*buf_offset) },
             *write_len as u32,
             buf.io_buf_index()
                 .expect("should have a valid fixed buffer"),
@@ -462,22 +466,38 @@ impl<'a> WriteOp {
     where
         Self: Sized,
     {
-        let written = res? as usize;
+        let written = match res {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()), // likely a full disk
+            Ok(res) => res as usize,
+            Err(err) => return Err(err),
+        };
 
         let WriteOp {
             file_key,
-            offset: _,
+            offset,
             ref mut buf,
+            buf_offset,
             write_len,
         } = self;
 
-        // unless specified otherwise, the io uring worker will retry automatically on EAGAIN
-        assert_eq!(written, *write_len, "short write");
-
         let buf = mem::replace(buf, FixedIoBuffer::empty());
+        let total_written = *buf_offset + written;
+
+        if written < *write_len {
+            log::warn!("short write ({written}/{}), file={}", *write_len, *file_key);
+            ring.push(FileCreatorOp::Write(WriteOp {
+                file_key: *file_key,
+                offset: *offset + written,
+                buf,
+                buf_offset: total_written,
+                write_len: *write_len - written,
+            }));
+            return Ok(());
+        }
+
         if ring
             .context_mut()
-            .mark_write_completed(*file_key, *write_len, buf)
+            .mark_write_completed(*file_key, total_written, buf)
         {
             ring.push(FileCreatorOp::Close(CloseOp::new(*file_key)));
         }

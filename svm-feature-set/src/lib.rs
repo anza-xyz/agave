@@ -2,6 +2,7 @@
 pub struct SVMFeatureSet {
     pub move_precompile_verification_to_svm: bool,
     pub stricter_abi_and_runtime_constraints: bool,
+    pub account_data_direct_mapping: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
     pub enable_loader_v4: bool,
     pub deplete_cu_meter_on_vm_failure: bool,
@@ -44,6 +45,7 @@ impl SVMFeatureSet {
         Self {
             move_precompile_verification_to_svm: true,
             stricter_abi_and_runtime_constraints: true,
+            account_data_direct_mapping: true,
             enable_bpf_loader_set_authority_checked_ix: true,
             enable_loader_v4: true,
             deplete_cu_meter_on_vm_failure: true,

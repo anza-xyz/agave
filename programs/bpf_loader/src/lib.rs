@@ -268,7 +268,7 @@ fn create_vm<'a, 'b>(
         invoke_context
             .get_feature_set()
             .stricter_abi_and_runtime_constraints,
-        invoke_context.account_data_direct_mapping,
+        invoke_context.get_feature_set().account_data_direct_mapping,
     )?;
     invoke_context.set_syscall_context(SyscallContext {
         allocator: BpfAllocator::new(heap_size as u64),
@@ -1463,6 +1463,7 @@ fn execute<'a, 'b: 'a>(
     let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
         .stricter_abi_and_runtime_constraints;
+    let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
     let mask_out_rent_epoch_in_vm_serialization = invoke_context
         .get_feature_set()
         .mask_out_rent_epoch_in_vm_serialization;
@@ -1475,7 +1476,7 @@ fn execute<'a, 'b: 'a>(
         serialization::serialize_parameters(
             &instruction_context,
             stricter_abi_and_runtime_constraints,
-            invoke_context.account_data_direct_mapping,
+            account_data_direct_mapping,
             mask_out_rent_epoch_in_vm_serialization,
         )?;
     serialize_time.stop();
@@ -1640,13 +1641,14 @@ fn execute<'a, 'b: 'a>(
         invoke_context: &mut InvokeContext,
         parameter_bytes: &[u8],
         stricter_abi_and_runtime_constraints: bool,
+        account_data_direct_mapping: bool,
     ) -> Result<(), InstructionError> {
         serialization::deserialize_parameters(
             &invoke_context
                 .transaction_context
                 .get_current_instruction_context()?,
             stricter_abi_and_runtime_constraints,
-            invoke_context.account_data_direct_mapping,
+            account_data_direct_mapping,
             parameter_bytes,
             &invoke_context.get_syscall_context()?.accounts_metadata,
         )
@@ -1658,6 +1660,7 @@ fn execute<'a, 'b: 'a>(
             invoke_context,
             parameter_bytes.as_slice(),
             stricter_abi_and_runtime_constraints,
+            account_data_direct_mapping,
         )
         .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
     });

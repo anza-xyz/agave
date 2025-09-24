@@ -77,7 +77,7 @@ impl PartitionedStakeRewards {
         self.rewards
             .iter()
             .enumerate()
-            .filter_map(|(index, reward)| Some((index, reward.as_ref()?)))
+            .filter_map(|(index, reward)| reward.as_ref().map(|reward| (index, reward)))
     }
 
     fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<Option<PartitionedStakeReward>>] {

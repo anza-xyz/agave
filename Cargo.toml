@@ -94,6 +94,7 @@ members = [
     "rpc-test",
     "runtime",
     "runtime-transaction",
+    "scheduler-bindings",
     "send-transaction-service",
     "stake-accounts",
     "storage-bigtable",
@@ -181,6 +182,7 @@ agave-io-uring = { path = "io-uring", version = "=3.1.0" }
 agave-low-pass-filter = { path = "low-pass-filter", version = "=3.1.0" }
 agave-precompiles = { path = "precompiles", version = "=3.1.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.1.0" }
+agave-scheduler-bindings = { path = "scheduler-bindings", version = "=3.1.0" }
 agave-syscalls = { path = "syscalls", version = "=3.1.0" }
 agave-thread-manager = { path = "thread-manager", version = "=3.1.0" }
 agave-transaction-view = { path = "transaction-view", version = "=3.1.0" }
@@ -583,7 +585,7 @@ sysctl = "0.4.6"
 systemstat = "0.2.5"
 tar = "0.4.44"
 tarpc = "0.29.0"
-tempfile = "3.22.0"
+tempfile = "3.23.0"
 test-case = "3.3.1"
 thiserror = "2.0.16"
 thread-priority = "1.2.0"

@@ -744,7 +744,10 @@ fn test_flush_slots_with_reclaim_old_slots() {
         // Verify that the obsolete accounts for the remaining slots are correct
         let storage = accounts.storage.get_slot_storage_entry(slot).unwrap();
         assert_eq!(
-            storage.get_obsolete_accounts(Some(new_slot)).len() as u64,
+            storage
+                .obsolete_accounts_read_lock()
+                .filter_obsolete_accounts(Some(new_slot))
+                .count() as u64,
             5 - slot
         );
     }
@@ -1139,7 +1142,12 @@ fn test_clean_dead_slot_with_obsolete_accounts() {
     let slot = accounts.storage.get_slot_storage_entry(1).unwrap();
 
     // Ensure that slot1 also still contains the obsolete account
-    assert_eq!(slot.get_obsolete_accounts(None).len(), 1);
+    assert_eq!(
+        slot.obsolete_accounts_read_lock()
+            .filter_obsolete_accounts(None)
+            .count(),
+        1
+    );
 
     // Ref count for pubkey1 should be 1 as obsolete accounts are enabled
     accounts.assert_ref_count(&pubkey, 1);
@@ -3711,7 +3719,10 @@ define_accounts_db_test!(test_alive_bytes, |accounts_db| {
                 let stored_size_aligned = storage0.accounts.calculate_stored_size(account.data_len);
                 assert_eq!(before_size, after_size + stored_size_aligned);
                 assert_eq!(
-                    storage0.get_obsolete_accounts(None).len(),
+                    storage0
+                        .obsolete_accounts_read_lock()
+                        .filter_obsolete_accounts(None)
+                        .count(),
                     num_obsolete_accounts
                 );
             }

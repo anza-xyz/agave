@@ -174,7 +174,8 @@ pub struct StreamerStats {
     pub(crate) total_chunks_processed_by_batcher: AtomicUsize,
     pub(crate) total_stream_read_errors: AtomicUsize,
     pub(crate) total_stream_read_timeouts: AtomicUsize,
-    pub(crate) num_evictions: AtomicUsize,
+    pub(crate) num_evictions_staked: AtomicUsize,
+    pub(crate) num_evictions_unstaked: AtomicUsize,
     pub(crate) connection_added_from_staked_peer: AtomicUsize,
     pub(crate) connection_added_from_unstaked_peer: AtomicUsize,
     pub(crate) connection_add_failed: AtomicUsize,
@@ -251,8 +252,13 @@ impl StreamerStats {
                 i64
             ),
             (
-                "evictions",
-                self.num_evictions.swap(0, Ordering::Relaxed),
+                "evictions_staked",
+                self.num_evictions_staked.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "evictions_unstaked",
+                self.num_evictions_unstaked.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
