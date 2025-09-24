@@ -15,7 +15,9 @@ use {
             packet_deserializer::PacketDeserializer,
             transaction_scheduler::{
                 prio_graph_scheduler::PrioGraphScheduler,
-                scheduler_controller::{SchedulerConfig, SchedulerController},
+                scheduler_controller::{
+                    SchedulerConfig, SchedulerController, DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS,
+                },
                 scheduler_error::SchedulerError,
             },
         },
@@ -642,7 +644,7 @@ impl BankingStage {
     }
 
     pub fn default_fill_time_millis() -> u64 {
-        350
+        DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS
     }
 
     pub fn join(mut self) -> thread::Result<()> {

@@ -36,10 +36,11 @@ pub struct SchedulerConfig {
     pub pacing_fill_time: Duration,
 }
 
+pub(crate) const DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS: u64 = 350;
 impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
-            pacing_fill_time: Duration::from_millis(300),
+            pacing_fill_time: Duration::from_millis(DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS),
         }
     }
 }
