@@ -4,9 +4,9 @@
 //! Note that AccountInfo is saved to disk buckets during runtime, but disk buckets are recreated at startup.
 use {
     crate::{
-        accounts_db::AccountsFileId,
+        accounts_db::{AccountsFileId, AccountsFileIdRepr},
         accounts_file::ALIGN_BOUNDARY_OFFSET,
-        accounts_index::{DiskIndexValue, IndexValue, IsCached},
+        accounts_index::{caterpillar_cell::CompactPayload, DiskIndexValue, IndexValue, IsCached},
         is_zero_lamport::IsZeroLamport,
     },
     modular_bitfield::prelude::*,
@@ -71,7 +71,7 @@ const CACHED_OFFSET: OffsetReduced = (1 << (OffsetReduced::BITS - 1)) - 1;
 
 #[bitfield(bits = 32)]
 #[repr(C)]
-#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, BitfieldSpecifier)]
 pub struct PackedOffsetAndFlags {
     /// this provides 2^31 bits, which when multiplied by 8 (sizeof(u64)) = 16G, which is the maximum size of an append vec
     offset_reduced: B31,
@@ -79,25 +79,39 @@ pub struct PackedOffsetAndFlags {
     is_zero_lamport: bool,
 }
 
-#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
-pub struct AccountInfo {
+#[bitfield(bits = 61)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, BitfieldSpecifier)]
+pub struct AccountInfoInner {
     /// index identifying the append storage
-    store_id: AccountsFileId,
+    store_id: AccountsFileIdRepr,
 
     /// offset = 'packed_offset_and_flags.offset_reduced()' * ALIGN_BOUNDARY_OFFSET into the storage
     /// Note this is a smaller type than 'Offset'
     account_offset_and_flags: PackedOffsetAndFlags,
 }
 
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
+pub struct AccountInfo(AccountInfoInner);
+
+impl CompactPayload for AccountInfo {
+    fn from_raw(raw: u64) -> Self {
+        Self(AccountInfo::from_bitfield_raw::<AccountInfoInner>(raw))
+    }
+
+    fn into_raw(self) -> u64 {
+        AccountInfo::into_bitfield_raw(self.0)
+    }
+}
+
 impl IsZeroLamport for AccountInfo {
     fn is_zero_lamport(&self) -> bool {
-        self.account_offset_and_flags.is_zero_lamport()
+        self.0.account_offset_and_flags().is_zero_lamport()
     }
 }
 
 impl IsCached for AccountInfo {
     fn is_cached(&self) -> bool {
-        self.account_offset_and_flags.offset_reduced() == CACHED_OFFSET
+        self.0.account_offset_and_flags().offset_reduced() == CACHED_OFFSET
     }
 }
 
@@ -112,7 +126,8 @@ impl IsCached for StorageLocation {
 }
 
 /// We have to have SOME value for store_id when we are cached
-const CACHE_VIRTUAL_STORAGE_ID: AccountsFileId = AccountsFileId::MAX;
+const CACHE_VIRTUAL_STORAGE_ID: AccountsFileId =
+    ((1 << AccountsFileIdRepr::BITS) - 1) as AccountsFileId;
 
 impl AccountInfo {
     pub fn new(storage_location: StorageLocation, is_zero_lamport: bool) -> Self {
@@ -138,10 +153,11 @@ impl AccountInfo {
             }
         };
         packed_offset_and_flags.set_is_zero_lamport(is_zero_lamport);
-        Self {
-            store_id,
-            account_offset_and_flags: packed_offset_and_flags,
-        }
+        Self(
+            AccountInfoInner::new()
+                .with_store_id(store_id)
+                .with_account_offset_and_flags(packed_offset_and_flags),
+        )
     }
 
     pub fn get_reduced_offset(offset: usize) -> OffsetReduced {
@@ -151,11 +167,11 @@ impl AccountInfo {
     pub fn store_id(&self) -> AccountsFileId {
         // if the account is in a cached store, the store_id is meaningless
         assert!(!self.is_cached());
-        self.store_id
+        self.0.store_id()
     }
 
     pub fn offset(&self) -> Offset {
-        Self::reduced_offset_to_offset(self.account_offset_and_flags.offset_reduced())
+        Self::reduced_offset_to_offset(self.0.account_offset_and_flags().offset_reduced())
     }
 
     pub fn reduced_offset_to_offset(reduced_offset: OffsetReduced) -> Offset {
@@ -166,7 +182,7 @@ impl AccountInfo {
         if self.is_cached() {
             StorageLocation::Cached
         } else {
-            StorageLocation::AppendVec(self.store_id, self.offset())
+            StorageLocation::AppendVec(self.store_id(), self.offset())
         }
     }
 }

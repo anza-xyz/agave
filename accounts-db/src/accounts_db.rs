@@ -24,6 +24,7 @@ pub mod tests;
 
 #[cfg(test)]
 use crate::append_vec::StoredAccountMeta;
+use modular_bitfield::prelude::B29;
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -666,6 +667,7 @@ impl IsZeroLamport for Account {
 /// An offset into the AccountsDb::storage vector
 pub type AtomicAccountsFileId = AtomicU32;
 pub type AccountsFileId = u32;
+pub type AccountsFileIdRepr = B29;
 
 type AccountSlots = HashMap<Pubkey, IntSet<Slot>>;
 type SlotOffsets = IntMap<Slot, IntSet<Offset>>;
@@ -2015,12 +2017,13 @@ impl AccountsDb {
                     self.accounts_index
                         .get_and_then(entry.key(), |index_entry| {
                             if let Some(index_entry) = index_entry {
+                                let index_entry = index_entry.entry_view();
                                 match (index_entry.ref_count() as usize).cmp(&entry.value().len()) {
                                     std::cmp::Ordering::Equal => {
                                         // ref counts match, nothing to do here
                                     }
                                     std::cmp::Ordering::Greater => {
-                                        let slot_list = index_entry.slot_list.read().unwrap();
+                                        let slot_list = index_entry.slot_list();
                                         let num_too_new = slot_list
                                             .iter()
                                             .filter(|(slot, _)| slot > &max_slot_inclusive)
@@ -2050,7 +2053,7 @@ impl AccountsDb {
                                             index_entry.ref_count(),
                                             entry.value().len(),
                                             *entry.value(),
-                                            index_entry.slot_list.read().unwrap()
+                                            index_entry.slot_list()
                                         );
                                     }
                                 }
@@ -6712,7 +6715,8 @@ impl AccountsDb {
                     .scan_accounts_without_data(|offset, account| {
                         let key = account.pubkey();
                         let index_entry = self.accounts_index.get_cloned(key).unwrap();
-                        let slot_list = index_entry.slot_list.read().unwrap();
+                        let index_entry = index_entry.entry_view();
+                        let slot_list = index_entry.slot_list();
                         let mut count = 0;
                         for (slot2, account_info2) in slot_list.iter() {
                             if *slot2 == slot {
@@ -7165,7 +7169,8 @@ impl AccountsDb {
             for pubkey in map.keys() {
                 self.accounts_index.get_and_then(&pubkey, |account_entry| {
                     if let Some(account_entry) = account_entry {
-                        let list_r = &account_entry.slot_list.read().unwrap();
+                        let account_entry = account_entry.entry_view();
+                        let list_r = account_entry.slot_list();
                         info!(" key: {} ref_count: {}", pubkey, account_entry.ref_count(),);
                         info!("      slots: {list_r:?}");
                     }

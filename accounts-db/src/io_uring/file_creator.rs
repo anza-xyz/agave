@@ -463,7 +463,6 @@ impl<'a> WriteOp {
         Self: Sized,
     {
         let written = res? as usize;
-
         let WriteOp {
             file_key,
             offset: _,
