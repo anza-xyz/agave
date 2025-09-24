@@ -551,7 +551,7 @@ struct GenerateIndexTimings {
     pub storage_size_storages_us: u64,
     pub index_flush_us: u64,
     pub total_including_duplicates: u64,
-    pub accounts_data_len_dedup_time_us: u64,
+    pub visit_duplicate_accounts_time_us: u64,
     pub total_duplicate_slot_keys: u64,
     pub total_num_unique_duplicate_keys: u64,
     pub num_duplicate_accounts: u64,
@@ -596,8 +596,8 @@ impl GenerateIndexTimings {
                 i64
             ),
             (
-                "accounts_data_len_dedup_time_us",
-                self.accounts_data_len_dedup_time_us,
+                "visit_duplicate_accounts_us",
+                self.visit_duplicate_accounts_time_us,
                 i64
             ),
             (
@@ -6791,7 +6791,7 @@ impl AccountsDb {
         timings.num_zero_lamport_single_refs = num_zero_lamport_single_refs;
 
         // subtract data.len() from accounts_data_len for all old accounts that are in the index twice
-        let mut accounts_data_len_dedup_timer =
+        let mut visit_duplicate_accounts_timer =
             Measure::start("handle accounts data len duplicates");
         let DuplicatePubkeysVisitedInfo {
             accounts_data_len_from_duplicates,
@@ -6828,8 +6828,8 @@ impl AccountsDb {
                 DuplicatePubkeysVisitedInfo::default,
                 DuplicatePubkeysVisitedInfo::reduce,
             );
-        accounts_data_len_dedup_timer.stop();
-        timings.accounts_data_len_dedup_time_us = accounts_data_len_dedup_timer.as_us();
+        visit_duplicate_accounts_timer.stop();
+        timings.visit_duplicate_accounts_time_us = visit_duplicate_accounts_timer.as_us();
         timings.num_duplicate_accounts = num_duplicate_accounts;
 
         total_accum.lt_hash.mix_out(&duplicates_lt_hash.0);
