@@ -18,13 +18,14 @@ use {
         TOTAL_BUFFERED_PACKETS,
     },
     solana_clock::MAX_PROCESSING_AGE,
+    solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         num::Saturating,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicBool, Ordering},
             Arc, RwLock,
         },
         time::{Duration, Instant},
@@ -406,7 +407,7 @@ where
 
 struct CostPacer {
     block_limit: u64,
-    shared_block_cost: Arc<AtomicU64>,
+    shared_block_cost: SharedBlockCost,
     detection_time: Instant,
     fill_time: Duration,
 }
@@ -415,7 +416,7 @@ impl CostPacer {
     fn scheduling_budget(&self, current_time: &Instant) -> u64 {
         let time_since = current_time.saturating_duration_since(self.detection_time);
         if time_since >= self.fill_time {
-            return self.block_limit - self.shared_block_cost.load(Ordering::Acquire);
+            return self.block_limit - self.shared_block_cost.load();
         }
 
         // on millisecond granularity, pace the cost linearly.
@@ -424,7 +425,7 @@ impl CostPacer {
         let paced_cost = allocation_per_milli * millis_since_detection;
 
         // saturating sub since we could be ahead of schedule.
-        paced_cost.saturating_sub(self.shared_block_cost.load(Ordering::Acquire))
+        paced_cost.saturating_sub(self.shared_block_cost.load())
     }
 }
 
@@ -620,7 +621,7 @@ mod tests {
                 &decision,
                 Some(&CostPacer {
                     block_limit: u64::MAX,
-                    shared_block_cost: Arc::new(AtomicU64::new(0)),
+                    shared_block_cost: SharedBlockCost::new(0),
                     detection_time: now.checked_sub(Duration::from_millis(400)).unwrap(),
                     fill_time: Duration::from_millis(300),
                 }),

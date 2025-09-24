@@ -74,7 +74,7 @@ pub struct CostTracker {
     block_cost_limit: u64,
     vote_cost_limit: u64,
     cost_by_writable_accounts: HashMap<Pubkey, u64, ahash::RandomState>,
-    block_cost: Arc<AtomicU64>,
+    block_cost: SharedBlockCost,
     vote_cost: u64,
     transaction_count: Saturating<u64>,
     allocated_accounts_data_size: Saturating<u64>,
@@ -104,7 +104,7 @@ impl Default for CostTracker {
                 WRITABLE_ACCOUNTS_PER_BLOCK,
                 ahash::RandomState::new(),
             ),
-            block_cost: Arc::new(AtomicU64::new(0)),
+            block_cost: SharedBlockCost::new(0),
             vote_cost: 0,
             transaction_count: Saturating(0),
             allocated_accounts_data_size: Saturating(0),
@@ -212,12 +212,11 @@ impl CostTracker {
     }
 
     pub fn block_cost(&self) -> u64 {
-        self.block_cost.load(Ordering::Acquire)
+        self.block_cost.load()
     }
 
-    // TODO: return something that is readonly.
-    pub fn shared_block_cost(&self) -> Arc<AtomicU64> {
-        Arc::clone(&self.block_cost)
+    pub fn shared_block_cost(&self) -> SharedBlockCost {
+        self.block_cost.clone()
     }
 
     pub fn vote_cost(&self) -> u64 {
@@ -399,7 +398,7 @@ impl CostTracker {
             *account_cost = account_cost.saturating_add(adjustment);
             costliest_account_cost = costliest_account_cost.max(*account_cost);
         }
-        self.block_cost.fetch_add(adjustment, Ordering::Release);
+        self.block_cost.fetch_add(adjustment);
         if tx_cost.is_simple_vote() {
             self.vote_cost = self.vote_cost.saturating_add(adjustment);
         }
@@ -420,7 +419,7 @@ impl CostTracker {
                 .or_insert(0);
             *account_cost = account_cost.saturating_sub(adjustment);
         }
-        self.block_cost.fetch_sub(adjustment, Ordering::Relaxed);
+        self.block_cost.fetch_sub(adjustment);
         if tx_cost.is_simple_vote() {
             self.vote_cost = self.vote_cost.saturating_sub(adjustment);
         }
@@ -441,6 +440,29 @@ impl CostTracker {
 impl CostTrackerPostAnalysis for CostTracker {
     fn get_cost_by_writable_accounts(&self) -> &HashMap<Pubkey, u64, ahash::RandomState> {
         &self.cost_by_writable_accounts
+    }
+}
+
+/// Wrapper around blockcost to allow fast sharing of the value without locking.
+/// Value is read-only outside of cost-tracker.
+#[derive(Debug, Clone)]
+pub struct SharedBlockCost(Arc<AtomicU64>);
+
+impl SharedBlockCost {
+    pub fn new(value: u64) -> Self {
+        Self(Arc::new(AtomicU64::new(value)))
+    }
+
+    fn fetch_add(&self, value: u64) -> u64 {
+        self.0.fetch_add(value, Ordering::Release)
+    }
+
+    fn fetch_sub(&self, value: u64) -> u64 {
+        self.0.fetch_sub(value, Ordering::Release)
+    }
+
+    pub fn load(&self) -> u64 {
+        self.0.load(Ordering::Acquire)
     }
 }
 
