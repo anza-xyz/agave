@@ -467,7 +467,9 @@ impl<'a> WriteOp {
         Self: Sized,
     {
         let written = match res {
-            Ok(0) => return Err(io::ErrorKind::WriteZero.into()), // likely a full disk
+            // Fail fast if no progress. FS should report an error (e.g. `StorageFull`) if the
+            // condition isn't transient, but it's hard to verify without extra tracking.
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
             Ok(res) => res as usize,
             Err(err) => return Err(err),
         };
