@@ -32,6 +32,8 @@ pub const MAX_ACCOUNT_DATA_LEN: u64 = 10 * 1024 * 1024;
 // an account up to MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION at once.
 pub const MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION: i64 = MAX_ACCOUNT_DATA_LEN as i64 * 2;
 pub const MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION: usize = 10 * 1_024;
+// Maximum cross-program invocation and instructions per transaction
+pub const MAX_INSTRUCTION_TRACE_LENGTH: usize = 64;
 
 #[cfg(test)]
 static_assertions::const_assert_eq!(
