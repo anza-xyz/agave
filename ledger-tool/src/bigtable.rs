@@ -39,7 +39,10 @@ use {
     solana_shred_version::compute_shred_version,
     solana_signature::Signature,
     solana_storage_bigtable::CredentialType,
-    solana_transaction_status::{ConfirmedBlock, UiTransactionEncoding, VersionedConfirmedBlock},
+    solana_transaction_status::{
+        ConfirmedBlock, MaxSupportedTransactionVersionConfig, UiTransactionEncoding,
+        VersionedConfirmedBlock,
+    },
     std::{
         cmp::min,
         collections::HashSet,
@@ -499,7 +502,11 @@ async fn confirm(
                 let decoded_tx = confirmed_tx.get_transaction();
                 let encoded_tx_with_meta = confirmed_tx
                     .tx_with_meta
-                    .encode(UiTransactionEncoding::Json, Some(0), true)
+                    .encode(
+                        UiTransactionEncoding::Json,
+                        MaxSupportedTransactionVersionConfig::new(0),
+                        true,
+                    )
                     .map_err(|_| "Failed to encode transaction in block".to_string())?;
                 transaction = Some(CliTransaction {
                     transaction: encoded_tx_with_meta.transaction,
