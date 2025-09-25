@@ -946,6 +946,14 @@ impl VoteStateHandler {
     }
 
     #[cfg(test)]
+    pub fn as_ref_v3(&self) -> &VoteStateV3 {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3,
+            _ => panic!("not a v3"),
+        }
+    }
+
+    #[cfg(test)]
     pub fn as_ref_v4(&self) -> &VoteStateV4 {
         match &self.target_state {
             TargetVoteState::V4(v4) => v4,

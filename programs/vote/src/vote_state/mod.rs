@@ -1115,21 +1115,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_vote_state_upgrade_from_1_14_11() {
-        // Create an initial vote account that is sized for the 1_14_11 version of vote state, and has only the
-        // required lamports for rent exempt minimum at that size
-        let node_pubkey = solana_pubkey::new_rand();
-        let withdrawer_pubkey = solana_pubkey::new_rand();
-        let mut vote_state = VoteStateV3::new(
-            &VoteInit {
-                node_pubkey,
-                authorized_voter: withdrawer_pubkey,
-                authorized_withdrawer: withdrawer_pubkey,
-                commission: 10,
-            },
-            &Clock::default(),
-        );
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_vote_state_upgrade_from_1_14_11(target_version: VoteStateTargetVersion) {
+        let mut vote_state = vote_state_new_for_test(target_version);
+        let node_pubkey = *vote_state.node_pubkey();
+
         // Simulate prior epochs completed with credits and each setting a new authorized voter
         vote_state.increment_credits(0, 100);
         assert_eq!(
@@ -1146,6 +1137,7 @@ mod tests {
             vote_state.set_new_authorized_voter(&solana_pubkey::new_rand(), 2, 3, |_pubkey| Ok(())),
             Ok(())
         );
+
         // Simulate votes having occurred
         vec![
             100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116,
@@ -1155,10 +1147,35 @@ mod tests {
         .into_iter()
         .for_each(|v| vote_state.process_next_vote_slot(v, 4, 0));
 
-        let version1_14_11_serialized = bincode::serialize(&VoteStateVersions::V1_14_11(Box::new(
-            VoteState1_14_11::from(vote_state.clone()),
-        )))
-        .unwrap();
+        // Create an initial vote account that is sized for the 1_14_11 version of vote state, and has only the
+        // required lamports for rent exempt minimum at that size
+        let vote_state_v1_14_11 = match target_version {
+            VoteStateTargetVersion::V3 => {
+                // V1_14_11 can be converted directly to v3.
+                VoteState1_14_11::from(vote_state.as_ref_v3().clone())
+            }
+            VoteStateTargetVersion::V4 => {
+                // V1_14_11 cannot be converted directly to v4 (lossy).
+                VoteState1_14_11 {
+                    node_pubkey: *vote_state.node_pubkey(),
+                    authorized_withdrawer: *vote_state.authorized_withdrawer(),
+                    commission: vote_state.commission(),
+                    votes: vote_state
+                        .votes()
+                        .iter()
+                        .map(|landed_vote| (*landed_vote).into())
+                        .collect(),
+                    root_slot: vote_state.root_slot(),
+                    authorized_voters: vote_state.authorized_voters().clone(),
+                    epoch_credits: vote_state.epoch_credits().clone(),
+                    last_timestamp: vote_state.last_timestamp().clone(),
+                    prior_voters: CircBuf::default(), // v4 does not store prior_voters
+                }
+            }
+        };
+        let version1_14_11_serialized =
+            bincode::serialize(&VoteStateVersions::V1_14_11(Box::new(vote_state_v1_14_11)))
+                .unwrap();
         let version1_14_11_serialized_len = version1_14_11_serialized.len();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(version1_14_11_serialized_len);
@@ -1189,73 +1206,199 @@ mod tests {
         let mut borrowed_account = instruction_context
             .try_borrow_instruction_account(0)
             .unwrap();
+        let vote_pubkey = *borrowed_account.get_key();
+
+        // Closure to check expected vote state v4 fields.
+        let check_converted_vote_state_v4_fields = |converted_vote_state: &VoteStateHandler| {
+            let original_v4 = vote_state.as_ref_v4();
+            let converted_v4 = converted_vote_state.as_ref_v4();
+
+            // Inflation collector is set to the vote pubkey.
+            assert_eq!(converted_v4.inflation_rewards_collector, vote_pubkey);
+
+            // Remaining fields should be identical.
+            assert_eq!(original_v4.node_pubkey, converted_v4.node_pubkey);
+            assert_eq!(
+                original_v4.authorized_withdrawer,
+                converted_v4.authorized_withdrawer
+            );
+            assert_eq!(
+                original_v4.block_revenue_collector,
+                converted_v4.block_revenue_collector
+            );
+            assert_eq!(
+                original_v4.inflation_rewards_commission_bps,
+                converted_v4.inflation_rewards_commission_bps
+            );
+            assert_eq!(
+                original_v4.block_revenue_commission_bps,
+                converted_v4.block_revenue_commission_bps
+            );
+            assert_eq!(
+                original_v4.pending_delegator_rewards,
+                converted_v4.pending_delegator_rewards
+            );
+            assert_eq!(
+                original_v4.bls_pubkey_compressed,
+                converted_v4.bls_pubkey_compressed
+            );
+            assert_eq!(original_v4.votes, converted_v4.votes);
+            assert_eq!(original_v4.root_slot, converted_v4.root_slot);
+            assert_eq!(
+                original_v4.authorized_voters,
+                converted_v4.authorized_voters
+            );
+            assert_eq!(original_v4.epoch_credits, converted_v4.epoch_credits);
+            assert_eq!(original_v4.last_timestamp, converted_v4.last_timestamp);
+        };
 
         // Ensure that the vote state started out at 1_14_11
         let vote_state_version = borrowed_account.get_state::<VoteStateVersions>().unwrap();
         assert_matches!(vote_state_version, VoteStateVersions::V1_14_11(_));
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state = VoteStateV3::deserialize(borrowed_account.get_data()).unwrap();
+        let converted_vote_state =
+            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
 
         // Check to make sure that the vote_state is unchanged
-        assert!(vote_state == converted_vote_state);
+        match target_version {
+            VoteStateTargetVersion::V3 => {
+                // V1_14_11 and V3 share the same fields, so the vote states
+                // should be identical.
+                assert!(vote_state == converted_vote_state);
+            }
+            VoteStateTargetVersion::V4 => {
+                // V4 has fields that V1_14_11 does not have, so the vote states
+                // will vary slightly.
+                check_converted_vote_state_v4_fields(&converted_vote_state);
+            }
+        }
 
         let vote_state = converted_vote_state;
 
-        // Now re-set the vote account state; because the feature is not enabled, the old 1_14_11 format should be
-        // written out
-        assert_eq!(
-            VoteStateHandler::new_v3(vote_state.clone())
-                .set_vote_account_state(&mut borrowed_account),
-            Ok(())
-        );
-        let vote_state_version = borrowed_account.get_state::<VoteStateVersions>().unwrap();
-        assert_matches!(vote_state_version, VoteStateVersions::V1_14_11(_));
+        // Now re-set the vote account state, knowing the account only has
+        // enough lamports for V1_14_11.
+        match target_version {
+            VoteStateTargetVersion::V3 => {
+                // V3 will write out as V1_14_11.
+                assert_eq!(
+                    vote_state
+                        .clone()
+                        .set_vote_account_state(&mut borrowed_account),
+                    Ok(())
+                );
+                let vote_state_version = borrowed_account.get_state::<VoteStateVersions>().unwrap();
+                assert_matches!(vote_state_version, VoteStateVersions::V1_14_11(_));
+            }
+            VoteStateTargetVersion::V4 => {
+                // V4 will throw an error.
+                assert_eq!(
+                    vote_state
+                        .clone()
+                        .set_vote_account_state(&mut borrowed_account),
+                    Err(InstructionError::AccountNotRentExempt)
+                );
+            }
+        }
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state = VoteStateV3::deserialize(borrowed_account.get_data()).unwrap();
+        let converted_vote_state =
+            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
 
         // Check to make sure that the vote_state is unchanged
-        assert_eq!(vote_state, converted_vote_state);
+        match target_version {
+            VoteStateTargetVersion::V3 => {
+                // V1_14_11 and V3 share the same fields, so the vote states
+                // should be identical.
+                assert!(vote_state == converted_vote_state);
+            }
+            VoteStateTargetVersion::V4 => {
+                // V4 has fields that V1_14_11 does not have, so the vote states
+                // will vary slightly.
+                check_converted_vote_state_v4_fields(&converted_vote_state);
+            }
+        }
 
         let vote_state = converted_vote_state;
 
-        // Test that if the vote account does not have sufficient lamports to realloc,
-        // the old vote state is written out
-        assert_eq!(
-            VoteStateHandler::new_v3(vote_state.clone())
-                .set_vote_account_state(&mut borrowed_account),
-            Ok(())
-        );
-        let vote_state_version = borrowed_account.get_state::<VoteStateVersions>().unwrap();
-        assert_matches!(vote_state_version, VoteStateVersions::V1_14_11(_));
+        // Again, re-set the vote account state, knowing the account only has
+        // enough lamports for V1_14_11.
+        match target_version {
+            VoteStateTargetVersion::V3 => {
+                // V3 will write out as V1_14_11.
+                assert_eq!(
+                    vote_state
+                        .clone()
+                        .set_vote_account_state(&mut borrowed_account),
+                    Ok(())
+                );
+                let vote_state_version = borrowed_account.get_state::<VoteStateVersions>().unwrap();
+                assert_matches!(vote_state_version, VoteStateVersions::V1_14_11(_));
+            }
+            VoteStateTargetVersion::V4 => {
+                // V4 will throw an error.
+                assert_eq!(
+                    vote_state
+                        .clone()
+                        .set_vote_account_state(&mut borrowed_account),
+                    Err(InstructionError::AccountNotRentExempt)
+                );
+            }
+        }
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state = VoteStateV3::deserialize(borrowed_account.get_data()).unwrap();
+        let converted_vote_state =
+            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
 
         // Check to make sure that the vote_state is unchanged
-        assert_eq!(vote_state, converted_vote_state);
+        match target_version {
+            VoteStateTargetVersion::V3 => {
+                // V1_14_11 and V3 share the same fields, so the vote states
+                // should be identical.
+                assert!(vote_state == converted_vote_state);
+            }
+            VoteStateTargetVersion::V4 => {
+                // V4 has fields that V1_14_11 does not have, so the vote states
+                // will vary slightly.
+                check_converted_vote_state_v4_fields(&converted_vote_state);
+            }
+        }
 
         let vote_state = converted_vote_state;
 
-        // Test that when the feature is enabled, if the vote account does have sufficient lamports, the
-        // new vote state is written out
+        // Now top-up the vote account's lamports to be rent exempt for the target version.
+        let space = match target_version {
+            VoteStateTargetVersion::V3 => VoteStateV3::size_of(),
+            VoteStateTargetVersion::V4 => VoteStateV4::size_of(), // They're the same, but for posterity
+        };
         assert_eq!(
-            borrowed_account.set_lamports(rent.minimum_balance(VoteStateV3::size_of())),
+            borrowed_account.set_lamports(rent.minimum_balance(space)),
             Ok(())
         );
         assert_eq!(
-            VoteStateHandler::new_v3(vote_state.clone())
+            vote_state
+                .clone()
                 .set_vote_account_state(&mut borrowed_account),
             Ok(())
         );
+
+        // The vote state version should match the target version.
         let vote_state_version = borrowed_account.get_state::<VoteStateVersions>().unwrap();
-        assert_matches!(vote_state_version, VoteStateVersions::V3(_));
+        match target_version {
+            VoteStateTargetVersion::V3 => {
+                assert_matches!(vote_state_version, VoteStateVersions::V3(_));
+            }
+            VoteStateTargetVersion::V4 => {
+                assert_matches!(vote_state_version, VoteStateVersions::V4(_));
+            }
+        }
 
         // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state = VoteStateV3::deserialize(borrowed_account.get_data()).unwrap();
+        let converted_vote_state =
+            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
 
-        // Check to make sure that the vote_state is unchanged
+        // Check to make sure that the vote_state is unchanged.
+        // This time, for both v3 and v4, we can compare state directly.
         assert_eq!(vote_state, converted_vote_state);
     }
 
