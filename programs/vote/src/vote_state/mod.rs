@@ -1078,48 +1078,41 @@ pub fn create_account(
     create_account_with_authorized(node_pubkey, vote_pubkey, vote_pubkey, commission, lamports)
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        crate::vote_state,
         assert_matches::assert_matches,
         solana_account::AccountSharedData,
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
         solana_transaction_context::{InstructionAccount, TransactionContext},
         solana_vote_interface::authorized_voters::AuthorizedVoters,
-        std::cell::RefCell,
         test_case::test_case,
     };
 
     const MAX_RECENT_VOTES: usize = 16;
 
-    fn vote_state_new_for_test(auth_pubkey: &Pubkey) -> VoteStateHandler {
-        VoteStateHandler::new_v3(VoteStateV3::new(
-            &VoteInit {
-                node_pubkey: solana_pubkey::new_rand(),
-                authorized_voter: *auth_pubkey,
-                authorized_withdrawer: *auth_pubkey,
-                commission: 0,
-            },
-            &Clock::default(),
-        ))
-    }
-
-    fn create_test_account() -> (Pubkey, RefCell<AccountSharedData>) {
-        let rent = Rent::default();
-        let balance = rent.minimum_balance(VoteStateV3::size_of());
+    fn vote_state_new_for_test(target_version: VoteStateTargetVersion) -> VoteStateHandler {
         let vote_pubkey = solana_pubkey::new_rand();
-        (
-            vote_pubkey,
-            RefCell::new(vote_state::create_account(
-                &vote_pubkey,
-                &solana_pubkey::new_rand(),
-                0,
-                balance,
-            )),
-        )
+        let auth_pubkey = solana_pubkey::new_rand();
+        let vote_init = VoteInit {
+            node_pubkey: solana_pubkey::new_rand(),
+            authorized_voter: auth_pubkey,
+            authorized_withdrawer: auth_pubkey,
+            commission: 0,
+        };
+        let clock = Clock::default();
+
+        match target_version {
+            VoteStateTargetVersion::V3 => {
+                VoteStateHandler::new_v3(VoteStateV3::new(&vote_init, &clock))
+            }
+            VoteStateTargetVersion::V4 => VoteStateHandler::new_v4(
+                handler::create_new_vote_state_v4(&vote_pubkey, &vote_init, &clock),
+            ),
+        }
     }
 
     #[test]
@@ -1266,12 +1259,10 @@ mod tests {
         assert_eq!(vote_state, converted_vote_state);
     }
 
-    #[test]
-    fn test_vote_lockout() {
-        let (_vote_pubkey, vote_account) = create_test_account();
-
-        let vote_state_v3 = VoteStateV3::deserialize(vote_account.borrow().data()).unwrap();
-        let mut vote_state = VoteStateHandler::new_v3(vote_state_v3);
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_vote_lockout(target_version: VoteStateTargetVersion) {
+        let mut vote_state = vote_state_new_for_test(target_version);
 
         for i in 0..(MAX_LOCKOUT_HISTORY + 1) {
             process_slot_vote_unchecked(&mut vote_state, (INITIAL_LOCKOUT * i) as u64);
@@ -1452,10 +1443,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_vote_double_lockout_after_expiration() {
-        let voter_pubkey = solana_pubkey::new_rand();
-        let mut vote_state = vote_state_new_for_test(&voter_pubkey);
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_vote_double_lockout_after_expiration(target_version: VoteStateTargetVersion) {
+        let mut vote_state = vote_state_new_for_test(target_version);
 
         for i in 0..3 {
             process_slot_vote_unchecked(&mut vote_state, i as u64);
@@ -1480,10 +1471,10 @@ mod tests {
         check_lockouts(&vote_state);
     }
 
-    #[test]
-    fn test_expire_multiple_votes() {
-        let voter_pubkey = solana_pubkey::new_rand();
-        let mut vote_state = vote_state_new_for_test(&voter_pubkey);
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_expire_multiple_votes(target_version: VoteStateTargetVersion) {
+        let mut vote_state = vote_state_new_for_test(target_version);
 
         for i in 0..3 {
             process_slot_vote_unchecked(&mut vote_state, i as u64);
@@ -1512,10 +1503,10 @@ mod tests {
         assert_eq!(vote_state.votes()[2].confirmation_count(), 1);
     }
 
-    #[test]
-    fn test_vote_credits() {
-        let voter_pubkey = solana_pubkey::new_rand();
-        let mut vote_state = vote_state_new_for_test(&voter_pubkey);
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_vote_credits(target_version: VoteStateTargetVersion) {
+        let mut vote_state = vote_state_new_for_test(target_version);
 
         for i in 0..MAX_LOCKOUT_HISTORY {
             process_slot_vote_unchecked(&mut vote_state, i as u64);
@@ -1531,10 +1522,10 @@ mod tests {
         assert_eq!(vote_state.credits(), 3);
     }
 
-    #[test]
-    fn test_duplicate_vote() {
-        let voter_pubkey = solana_pubkey::new_rand();
-        let mut vote_state = vote_state_new_for_test(&voter_pubkey);
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_duplicate_vote(target_version: VoteStateTargetVersion) {
+        let mut vote_state = vote_state_new_for_test(target_version);
         process_slot_vote_unchecked(&mut vote_state, 0);
         process_slot_vote_unchecked(&mut vote_state, 1);
         process_slot_vote_unchecked(&mut vote_state, 0);
@@ -1543,10 +1534,10 @@ mod tests {
         assert!(vote_state.nth_recent_lockout(2).is_none());
     }
 
-    #[test]
-    fn test_nth_recent_lockout() {
-        let voter_pubkey = solana_pubkey::new_rand();
-        let mut vote_state = vote_state_new_for_test(&voter_pubkey);
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_nth_recent_lockout(target_version: VoteStateTargetVersion) {
+        let mut vote_state = vote_state_new_for_test(target_version);
         for i in 0..MAX_LOCKOUT_HISTORY {
             process_slot_vote_unchecked(&mut vote_state, i as u64);
         }
@@ -1582,12 +1573,11 @@ mod tests {
     }
 
     /// check that two accounts with different data can be brought to the same state with one vote submission
-    #[test]
-    fn test_process_missed_votes() {
-        let account_a = solana_pubkey::new_rand();
-        let mut vote_state_a = vote_state_new_for_test(&account_a);
-        let account_b = solana_pubkey::new_rand();
-        let mut vote_state_b = vote_state_new_for_test(&account_b);
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_process_missed_votes(target_version: VoteStateTargetVersion) {
+        let mut vote_state_a = vote_state_new_for_test(target_version);
+        let mut vote_state_b = vote_state_new_for_test(target_version);
 
         // process some votes on account a
         (0..5).for_each(|i| process_slot_vote_unchecked(&mut vote_state_a, i as u64));
@@ -1609,10 +1599,9 @@ mod tests {
         assert_eq!(recent_votes(&vote_state_a), recent_votes(&vote_state_b));
     }
 
-    #[test]
-    fn test_process_vote_skips_old_vote() {
-        let mut vote_state = VoteStateHandler::default_v3();
-
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_vote_skips_old_vote(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
         let slot_hashes: Vec<_> = vec![(0, vote.hash)];
         assert_eq!(
@@ -1627,10 +1616,9 @@ mod tests {
         assert_eq!(recent, recent_votes(&vote_state));
     }
 
-    #[test]
-    fn test_check_slots_are_valid_vote_empty_slot_hashes() {
-        let vote_state = VoteStateHandler::default_v3();
-
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_check_slots_are_valid_vote_empty_slot_hashes(vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
         assert_eq!(
             check_slots_are_valid(&vote_state, &vote.slots, &vote.hash, &[]),
@@ -1638,10 +1626,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_slots_are_valid_new_vote() {
-        let vote_state = VoteStateHandler::default_v3();
-
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_check_slots_are_valid_new_vote(vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
         let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
@@ -1650,10 +1637,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_slots_are_valid_bad_hash() {
-        let vote_state = VoteStateHandler::default_v3();
-
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_check_slots_are_valid_bad_hash(vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
         let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), hash(vote.hash.as_ref()))];
         assert_eq!(
@@ -1662,10 +1648,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_slots_are_valid_bad_slot() {
-        let vote_state = VoteStateHandler::default_v3();
-
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_check_slots_are_valid_bad_slot(vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![1], Hash::default());
         let slot_hashes: Vec<_> = vec![(0, vote.hash)];
         assert_eq!(
@@ -1674,10 +1659,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_slots_are_valid_duplicate_vote() {
-        let mut vote_state = VoteStateHandler::default_v3();
-
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_check_slots_are_valid_duplicate_vote(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
         let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
@@ -1690,10 +1674,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_slots_are_valid_next_vote() {
-        let mut vote_state = VoteStateHandler::default_v3();
-
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_check_slots_are_valid_next_vote(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
         let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
@@ -1709,10 +1692,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_slots_are_valid_next_vote_only() {
-        let mut vote_state = VoteStateHandler::default_v3();
-
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_check_slots_are_valid_next_vote_only(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![0], Hash::default());
         let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
@@ -1727,10 +1709,10 @@ mod tests {
             Ok(())
         );
     }
-    #[test]
-    fn test_process_vote_empty_slots() {
-        let mut vote_state = VoteStateHandler::default_v3();
 
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_vote_empty_slots(mut vote_state: VoteStateHandler) {
         let vote = Vote::new(vec![], Hash::default());
         assert_eq!(
             process_vote(&mut vote_state, &vote, &[], 0, 0),
@@ -1756,12 +1738,9 @@ mod tests {
     }
 
     // Test vote credit updates after "one credit per slot" feature is enabled
-    #[test]
-    fn test_vote_state_update_increment_credits() {
-        // Create a new VoteStateV3 handler
-        let mut vote_state =
-            VoteStateHandler::new_v3(VoteStateV3::new(&VoteInit::default(), &Clock::default()));
-
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_vote_state_update_increment_credits(mut vote_state: VoteStateHandler) {
         // Test data: a sequence of groups of votes to simulate having been cast, after each group a vote
         // state update is compared to "normal" vote processing to ensure that credits are earned equally
         let test_vote_groups: Vec<Vec<Slot>> = vec![
@@ -1836,8 +1815,9 @@ mod tests {
     }
 
     // Test vote credit updates after "timely vote credits" feature is enabled
-    #[test]
-    fn test_timely_credits() {
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_timely_credits(target_version: VoteStateTargetVersion) {
         // Each of the following (Vec<Slot>, Slot, u32) tuples gives a set of slots to cast votes on, a slot in which
         // the vote was cast, and the number of credits that should have been earned by the vote account after this
         // and all prior votes were cast.
@@ -2002,15 +1982,18 @@ mod tests {
             ),
         ];
 
+        let new_vote_state = || match target_version {
+            VoteStateTargetVersion::V3 => VoteStateHandler::default_v3(),
+            VoteStateTargetVersion::V4 => VoteStateHandler::default_v4(),
+        };
+
         // For each vote group, process all vote groups leading up to it and it itself, and ensure that the number of
         // credits earned is correct for both regular votes and vote state updates
         for i in 0..test_vote_groups.len() {
             // Create a new VoteStateV3 for vote transaction
-            let mut vote_state_1 =
-                VoteStateHandler::new_v3(VoteStateV3::new(&VoteInit::default(), &Clock::default()));
+            let mut vote_state_1 = new_vote_state();
             // Create a new VoteStateV3 for vote state update transaction
-            let mut vote_state_2 =
-                VoteStateHandler::new_v3(VoteStateV3::new(&VoteInit::default(), &Clock::default()));
+            let mut vote_state_2 = new_vote_state();
             test_vote_groups.iter().take(i + 1).for_each(|vote_group| {
                 let vote = Vote {
                     slots: vote_group.0.clone(), //vote_group.0 is the set of slots to cast votes on
@@ -2050,8 +2033,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_retroactive_voting_timely_credits() {
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_retroactive_voting_timely_credits(mut vote_state: VoteStateHandler) {
         // Each of the following (Vec<(Slot, int)>, Slot, Option<Slot>, u32) tuples gives the following data:
         // Vec<(Slot, int)> -- the set of slots and confirmation_counts that is the proposed vote state
         // Slot -- the slot in which the proposed vote state landed
@@ -2132,10 +2116,6 @@ mod tests {
             ),
         ];
 
-        // Initial vote state
-        let mut vote_state =
-            VoteStateHandler::new_v3(VoteStateV3::new(&VoteInit::default(), &Clock::default()));
-
         // Process the vote state updates in sequence and ensure that the credits earned after each is processed is
         // correct
         test_vote_state_updates
@@ -2166,9 +2146,9 @@ mod tests {
             });
     }
 
-    #[test]
-    fn test_process_new_vote_too_many_votes() {
-        let mut vote_state1 = VoteStateHandler::default_v3();
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_too_many_votes(mut vote_state1: VoteStateHandler) {
         let bad_votes: VecDeque<Lockout> = (0..=MAX_LOCKOUT_HISTORY)
             .map(|slot| {
                 Lockout::new_with_confirmation_count(
@@ -2191,9 +2171,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_process_new_vote_state_root_rollback() {
-        let mut vote_state1 = VoteStateHandler::default_v3();
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_state_root_rollback(mut vote_state1: VoteStateHandler) {
         for i in 0..MAX_LOCKOUT_HISTORY + 2 {
             process_slot_vote_unchecked(&mut vote_state1, i as Slot);
         }
@@ -2235,9 +2215,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_process_new_vote_state_zero_confirmations() {
-        let mut vote_state1 = VoteStateHandler::default_v3();
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_state_zero_confirmations(mut vote_state1: VoteStateHandler) {
         let current_epoch = vote_state1.current_epoch();
 
         let bad_votes: VecDeque<Lockout> = vec![
@@ -2275,9 +2255,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_process_new_vote_state_confirmations_too_large() {
-        let mut vote_state1 = VoteStateHandler::default_v3();
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_state_confirmations_too_large(initial_vote_state: VoteStateHandler) {
+        let mut vote_state1 = initial_vote_state.clone();
         let current_epoch = vote_state1.current_epoch();
 
         let good_votes: VecDeque<Lockout> = vec![Lockout::new_with_confirmation_count(
@@ -2296,7 +2277,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut vote_state1 = VoteStateHandler::default_v3();
+        let mut vote_state1 = initial_vote_state;
         let bad_votes: VecDeque<Lockout> = vec![Lockout::new_with_confirmation_count(
             0,
             MAX_LOCKOUT_HISTORY as u32 + 1,
@@ -2315,9 +2296,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_process_new_vote_state_slot_smaller_than_root() {
-        let mut vote_state1 = VoteStateHandler::default_v3();
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_state_slot_smaller_than_root(mut vote_state1: VoteStateHandler) {
         let current_epoch = vote_state1.current_epoch();
         let root_slot = 5;
 
@@ -2356,9 +2337,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_process_new_vote_state_slots_not_ordered() {
-        let mut vote_state1 = VoteStateHandler::default_v3();
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_state_slots_not_ordered(mut vote_state1: VoteStateHandler) {
         let current_epoch = vote_state1.current_epoch();
 
         let bad_votes: VecDeque<Lockout> = vec![
@@ -2396,9 +2377,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_process_new_vote_state_confirmations_not_ordered() {
-        let mut vote_state1 = VoteStateHandler::default_v3();
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_state_confirmations_not_ordered(mut vote_state1: VoteStateHandler) {
         let current_epoch = vote_state1.current_epoch();
 
         let bad_votes: VecDeque<Lockout> = vec![
@@ -2436,9 +2417,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_process_new_vote_state_new_vote_state_lockout_mismatch() {
-        let mut vote_state1 = VoteStateHandler::default_v3();
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_state_new_vote_state_lockout_mismatch(
+        mut vote_state1: VoteStateHandler,
+    ) {
         let current_epoch = vote_state1.current_epoch();
 
         let bad_votes: VecDeque<Lockout> = vec![
@@ -2461,9 +2444,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_process_new_vote_state_confirmation_rollback() {
-        let mut vote_state1 = VoteStateHandler::default_v3();
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_state_confirmation_rollback(mut vote_state1: VoteStateHandler) {
         let current_epoch = vote_state1.current_epoch();
         let votes: VecDeque<Lockout> = vec![
             Lockout::new_with_confirmation_count(0, 4),
@@ -2496,9 +2479,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_process_new_vote_state_root_progress() {
-        let mut vote_state1 = VoteStateHandler::default_v3();
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_state_root_progress(mut vote_state1: VoteStateHandler) {
         for i in 0..MAX_LOCKOUT_HISTORY {
             process_slot_vote_unchecked(&mut vote_state1, i as u64);
         }
@@ -2530,8 +2513,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_process_new_vote_state_same_slot_but_not_common_ancestor() {
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_state_same_slot_but_not_common_ancestor(
+        initial_vote_state: VoteStateHandler,
+    ) {
         // It might be possible that during the switch from old vote instructions
         // to new vote instructions, new_state contains votes for slots LESS
         // than the current state, for instance:
@@ -2550,7 +2536,7 @@ mod tests {
         // will immediately pop off 2.
 
         // Construct on-chain vote state
-        let mut vote_state1 = VoteStateHandler::default_v3();
+        let mut vote_state1 = initial_vote_state.clone();
         process_slot_votes_unchecked(&mut vote_state1, &[1, 2, 5]);
         assert_eq!(
             vote_state1
@@ -2562,7 +2548,7 @@ mod tests {
         );
 
         // Construct local tower state
-        let mut vote_state2 = VoteStateHandler::default_v3();
+        let mut vote_state2 = initial_vote_state;
         process_slot_votes_unchecked(&mut vote_state2, &[1, 2, 3, 5, 7]);
         assert_eq!(
             vote_state2
@@ -2587,10 +2573,11 @@ mod tests {
         assert_eq!(vote_state1, vote_state2);
     }
 
-    #[test]
-    fn test_process_new_vote_state_lockout_violation() {
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_state_lockout_violation(initial_vote_state: VoteStateHandler) {
         // Construct on-chain vote state
-        let mut vote_state1 = VoteStateHandler::default_v3();
+        let mut vote_state1 = initial_vote_state.clone();
         process_slot_votes_unchecked(&mut vote_state1, &[1, 2, 4, 5]);
         assert_eq!(
             vote_state1
@@ -2603,7 +2590,7 @@ mod tests {
 
         // Construct conflicting tower state. Vote 4 is missing,
         // but 5 should not have popped off vote 4.
-        let mut vote_state2 = VoteStateHandler::default_v3();
+        let mut vote_state2 = initial_vote_state;
         process_slot_votes_unchecked(&mut vote_state2, &[1, 2, 3, 5, 7]);
         assert_eq!(
             vote_state2
@@ -2628,10 +2615,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_process_new_vote_state_lockout_violation2() {
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_state_lockout_violation2(initial_vote_state: VoteStateHandler) {
         // Construct on-chain vote state
-        let mut vote_state1 = VoteStateHandler::default_v3();
+        let mut vote_state1 = initial_vote_state.clone();
         process_slot_votes_unchecked(&mut vote_state1, &[1, 2, 5, 6, 7]);
         assert_eq!(
             vote_state1
@@ -2644,7 +2632,7 @@ mod tests {
 
         // Construct a new vote state. Violates on-chain state because 8
         // should not have popped off 7
-        let mut vote_state2 = VoteStateHandler::default_v3();
+        let mut vote_state2 = initial_vote_state;
         process_slot_votes_unchecked(&mut vote_state2, &[1, 2, 3, 5, 6, 8]);
         assert_eq!(
             vote_state2
@@ -2670,10 +2658,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_process_new_vote_state_expired_ancestor_not_removed() {
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_state_expired_ancestor_not_removed(mut vote_state1: VoteStateHandler) {
         // Construct on-chain vote state
-        let mut vote_state1 = VoteStateHandler::default_v3();
         process_slot_votes_unchecked(&mut vote_state1, &[1, 2, 3, 9]);
         assert_eq!(
             vote_state1
@@ -2715,9 +2703,11 @@ mod tests {
         assert_eq!(vote_state1, vote_state2,);
     }
 
-    #[test]
-    fn test_process_new_vote_current_state_contains_bigger_slots() {
-        let mut vote_state1 = VoteStateHandler::default_v3();
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_process_new_vote_current_state_contains_bigger_slots(
+        mut vote_state1: VoteStateHandler,
+    ) {
         process_slot_votes_unchecked(&mut vote_state1, &[6, 7, 8]);
         assert_eq!(
             vote_state1
@@ -2770,9 +2760,9 @@ mod tests {
         assert_eq!(*vote_state1.votes(), good_votes);
     }
 
-    #[test]
-    fn test_filter_old_votes() {
-        let mut vote_state = VoteStateHandler::default_v3();
+    #[test_case(VoteStateHandler::default_v3() ; "VoteStateV3")]
+    #[test_case(VoteStateHandler::default_v4() ; "VoteStateV4")]
+    fn test_filter_old_votes(mut vote_state: VoteStateHandler) {
         let old_vote_slot = 1;
         let vote = Vote::new(vec![old_vote_slot], Hash::default());
 
@@ -2813,8 +2803,15 @@ mod tests {
             .collect()
     }
 
-    fn build_vote_state(vote_slots: Vec<Slot>, slot_hashes: &[(Slot, Hash)]) -> VoteStateHandler {
-        let mut vote_state = VoteStateHandler::default_v3();
+    fn build_vote_state(
+        target_version: VoteStateTargetVersion,
+        vote_slots: Vec<Slot>,
+        slot_hashes: &[(Slot, Hash)],
+    ) -> VoteStateHandler {
+        let mut vote_state = match target_version {
+            VoteStateTargetVersion::V3 => VoteStateHandler::default_v3(),
+            VoteStateTargetVersion::V4 => VoteStateHandler::default_v4(),
+        };
 
         if !vote_slots.is_empty() {
             let vote_hash = slot_hashes
@@ -2830,10 +2827,11 @@ mod tests {
         vote_state
     }
 
-    #[test]
-    fn test_check_and_filter_proposed_vote_state_empty() {
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_check_and_filter_proposed_vote_state_empty(target_version: VoteStateTargetVersion) {
         let empty_slot_hashes = build_slot_hashes(vec![]);
-        let empty_vote_state = build_vote_state(vec![], &empty_slot_hashes);
+        let empty_vote_state = build_vote_state(target_version, vec![], &empty_slot_hashes);
 
         // Test with empty TowerSync, should return EmptySlots error
         let mut tower_sync = TowerSync::from(vec![]);
@@ -2862,11 +2860,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_and_filter_proposed_vote_state_too_old() {
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_check_and_filter_proposed_vote_state_too_old(target_version: VoteStateTargetVersion) {
         let slot_hashes = build_slot_hashes(vec![1, 2, 3, 4]);
         let latest_vote = 4;
-        let vote_state = build_vote_state(vec![1, 2, 3, latest_vote], &slot_hashes);
+        let vote_state = build_vote_state(target_version, vec![1, 2, 3, latest_vote], &slot_hashes);
 
         // Test with a vote for a slot less than the latest vote in the vote_state,
         // should return error `VoteTooOld`
@@ -2901,6 +2900,7 @@ mod tests {
     }
 
     fn run_test_check_and_filter_proposed_vote_state_older_than_history_root(
+        target_version: VoteStateTargetVersion,
         earliest_slot_in_history: Slot,
         current_vote_state_slots: Vec<Slot>,
         current_vote_state_root: Option<Slot>,
@@ -2928,7 +2928,8 @@ mod tests {
                 .collect::<Vec<Slot>>(),
         );
 
-        let mut vote_state = build_vote_state(current_vote_state_slots, &slot_hashes);
+        let mut vote_state =
+            build_vote_state(target_version, current_vote_state_slots, &slot_hashes);
         vote_state.set_root_slot(current_vote_state_root);
 
         slot_hashes.retain(|slot| slot.0 >= earliest_slot_in_history);
@@ -2971,8 +2972,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_and_filter_proposed_vote_state_older_than_history_root() {
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_check_and_filter_proposed_vote_state_older_than_history_root(
+        target_version: VoteStateTargetVersion,
+    ) {
         // Test when `proposed_root` is in `current_vote_state_slots` but it's not the latest
         // slot
         let earliest_slot_in_history = 5;
@@ -2983,6 +2987,7 @@ mod tests {
         let expected_root = Some(4);
         let expected_vote_state = vec![Lockout::new_with_confirmation_count(5, 1)];
         run_test_check_and_filter_proposed_vote_state_older_than_history_root(
+            target_version,
             earliest_slot_in_history,
             current_vote_state_slots,
             current_vote_state_root,
@@ -3002,6 +3007,7 @@ mod tests {
         let expected_root = Some(4);
         let expected_vote_state = vec![Lockout::new_with_confirmation_count(5, 1)];
         run_test_check_and_filter_proposed_vote_state_older_than_history_root(
+            target_version,
             earliest_slot_in_history,
             current_vote_state_slots,
             current_vote_state_root,
@@ -3024,6 +3030,7 @@ mod tests {
             Lockout::new_with_confirmation_count(5, 1),
         ];
         run_test_check_and_filter_proposed_vote_state_older_than_history_root(
+            target_version,
             earliest_slot_in_history,
             current_vote_state_slots,
             current_vote_state_root,
@@ -3045,6 +3052,7 @@ mod tests {
             Lockout::new_with_confirmation_count(5, 1),
         ];
         run_test_check_and_filter_proposed_vote_state_older_than_history_root(
+            target_version,
             earliest_slot_in_history,
             current_vote_state_slots,
             current_vote_state_root,
@@ -3068,6 +3076,7 @@ mod tests {
             Lockout::new_with_confirmation_count(5, 1),
         ];
         run_test_check_and_filter_proposed_vote_state_older_than_history_root(
+            target_version,
             earliest_slot_in_history,
             current_vote_state_slots,
             current_vote_state_root,
@@ -3086,6 +3095,7 @@ mod tests {
         let expected_root = None;
         let expected_vote_state = vec![Lockout::new_with_confirmation_count(5, 1)];
         run_test_check_and_filter_proposed_vote_state_older_than_history_root(
+            target_version,
             earliest_slot_in_history,
             current_vote_state_slots,
             current_vote_state_root,
@@ -3096,10 +3106,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_and_filter_proposed_vote_state_slots_not_ordered() {
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_check_and_filter_proposed_vote_state_slots_not_ordered(
+        target_version: VoteStateTargetVersion,
+    ) {
         let slot_hashes = build_slot_hashes(vec![1, 2, 3, 4]);
-        let vote_state = build_vote_state(vec![1], &slot_hashes);
+        let vote_state = build_vote_state(target_version, vec![1], &slot_hashes);
 
         // Test with a `TowerSync` where the slots are out of order
         let vote_slot = 3;
@@ -3136,10 +3149,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_and_filter_proposed_vote_state_older_than_history_slots_filtered() {
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_check_and_filter_proposed_vote_state_older_than_history_slots_filtered(
+        target_version: VoteStateTargetVersion,
+    ) {
         let slot_hashes = build_slot_hashes(vec![1, 2, 3, 4]);
-        let mut vote_state = build_vote_state(vec![1, 2, 3, 4], &slot_hashes);
+        let mut vote_state = build_vote_state(target_version, vec![1, 2, 3, 4], &slot_hashes);
 
         // Test with a `TowerSync` where there:
         // 1) Exists a slot less than `earliest_slot_in_history`
@@ -3184,10 +3200,13 @@ mod tests {
         assert!(do_process_tower_sync(&mut vote_state, &slot_hashes, 0, 0, tower_sync,).is_ok());
     }
 
-    #[test]
-    fn test_check_and_filter_proposed_vote_state_older_than_history_slots_not_filtered() {
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_check_and_filter_proposed_vote_state_older_than_history_slots_not_filtered(
+        target_version: VoteStateTargetVersion,
+    ) {
         let slot_hashes = build_slot_hashes(vec![4]);
-        let mut vote_state = build_vote_state(vec![4], &slot_hashes);
+        let mut vote_state = build_vote_state(target_version, vec![4], &slot_hashes);
 
         // Test with a `TowerSync` where there:
         // 1) Exists a slot less than `earliest_slot_in_history`
@@ -3229,11 +3248,13 @@ mod tests {
         assert!(do_process_tower_sync(&mut vote_state, &slot_hashes, 0, 0, tower_sync,).is_ok());
     }
 
-    #[test]
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_check_and_filter_proposed_vote_state_older_than_history_slots_filtered_and_not_filtered(
+        target_version: VoteStateTargetVersion,
     ) {
         let slot_hashes = build_slot_hashes(vec![6]);
-        let mut vote_state = build_vote_state(vec![6], &slot_hashes);
+        let mut vote_state = build_vote_state(target_version, vec![6], &slot_hashes);
 
         // Test with a `TowerSync` where there exists both a slot:
         // 1) Less than `earliest_slot_in_history`
@@ -3288,10 +3309,13 @@ mod tests {
         assert!(do_process_tower_sync(&mut vote_state, &slot_hashes, 0, 0, tower_sync,).is_ok());
     }
 
-    #[test]
-    fn test_check_and_filter_proposed_vote_state_slot_not_on_fork() {
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_check_and_filter_proposed_vote_state_slot_not_on_fork(
+        target_version: VoteStateTargetVersion,
+    ) {
         let slot_hashes = build_slot_hashes(vec![2, 4, 6, 8]);
-        let vote_state = build_vote_state(vec![2, 4, 6], &slot_hashes);
+        let vote_state = build_vote_state(target_version, vec![2, 4, 6], &slot_hashes);
 
         // Test with a `TowerSync` where there:
         // 1) Exists a slot not in the slot hashes history
@@ -3343,10 +3367,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_and_filter_proposed_vote_state_root_on_different_fork() {
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_check_and_filter_proposed_vote_state_root_on_different_fork(
+        target_version: VoteStateTargetVersion,
+    ) {
         let slot_hashes = build_slot_hashes(vec![2, 4, 6, 8]);
-        let vote_state = build_vote_state(vec![6], &slot_hashes);
+        let vote_state = build_vote_state(target_version, vec![6], &slot_hashes);
 
         // Test with a `TowerSync` where:
         // 1) The root is not present in slot hashes history
@@ -3379,10 +3406,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_and_filter_proposed_vote_state_slot_newer_than_slot_history() {
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_check_and_filter_proposed_vote_state_slot_newer_than_slot_history(
+        target_version: VoteStateTargetVersion,
+    ) {
         let slot_hashes = build_slot_hashes(vec![2, 4, 6, 8, 10]);
-        let vote_state = build_vote_state(vec![2, 4, 6], &slot_hashes);
+        let vote_state = build_vote_state(target_version, vec![2, 4, 6], &slot_hashes);
 
         // Test with a `TowerSync` where there:
         // 1) The last slot in the update is a slot not in the slot hashes history
@@ -3405,10 +3435,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_and_filter_proposed_vote_state_slot_all_slot_hashes_in_update_ok() {
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_check_and_filter_proposed_vote_state_slot_all_slot_hashes_in_update_ok(
+        target_version: VoteStateTargetVersion,
+    ) {
         let slot_hashes = build_slot_hashes(vec![2, 4, 6, 8]);
-        let mut vote_state = build_vote_state(vec![2, 4, 6], &slot_hashes);
+        let mut vote_state = build_vote_state(target_version, vec![2, 4, 6], &slot_hashes);
 
         // Test with a `TowerSync` where every slot in the history is
         // in the update
@@ -3450,10 +3483,13 @@ mod tests {
         assert!(do_process_tower_sync(&mut vote_state, &slot_hashes, 0, 0, tower_sync,).is_ok());
     }
 
-    #[test]
-    fn test_check_and_filter_proposed_vote_state_slot_some_slot_hashes_in_update_ok() {
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_check_and_filter_proposed_vote_state_slot_some_slot_hashes_in_update_ok(
+        target_version: VoteStateTargetVersion,
+    ) {
         let slot_hashes = build_slot_hashes(vec![2, 4, 6, 8, 10]);
-        let mut vote_state = build_vote_state(vec![6], &slot_hashes);
+        let mut vote_state = build_vote_state(target_version, vec![6], &slot_hashes);
 
         // Test with a `TowerSync` where only some slots in the history are
         // in the update, and others slots in the history are missing.
@@ -3499,10 +3535,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_check_and_filter_proposed_vote_state_slot_hash_mismatch() {
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_check_and_filter_proposed_vote_state_slot_hash_mismatch(
+        target_version: VoteStateTargetVersion,
+    ) {
         let slot_hashes = build_slot_hashes(vec![2, 4, 6, 8]);
-        let vote_state = build_vote_state(vec![2, 4, 6], &slot_hashes);
+        let vote_state = build_vote_state(target_version, vec![2, 4, 6], &slot_hashes);
 
         // Test with a `TowerSync` where the hash is mismatched
 
