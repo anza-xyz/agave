@@ -26,9 +26,6 @@ use {
     },
 };
 
-// TODO: Change me once the program has full v4 feature gate support.
-pub(crate) const TEMP_HARDCODED_TARGET_VERSION: VoteStateTargetVersion = VoteStateTargetVersion::V3;
-
 // Switch that preserves old behavior before vote state v4 feature gate.
 // This should be cleaned up when vote state v4 is activated.
 enum PreserveBehaviorInHandlerHelper {

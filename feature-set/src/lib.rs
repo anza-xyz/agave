@@ -159,6 +159,7 @@ impl FeatureSet {
             raise_cpi_nesting_limit_to_8: self.is_active(&raise_cpi_nesting_limit_to_8::id()),
             provide_instruction_data_offset_in_vm_r2: self
                 .is_active(&provide_instruction_data_offset_in_vm_r2::id()),
+            vote_state_v4: self.is_active(&vote_state_v4::id()),
         }
     }
 }
@@ -1145,6 +1146,10 @@ pub mod discard_unexpected_data_complete_shreds {
     solana_pubkey::declare_id!("8MhfKhoZEoiySpVe248bDkisyEcBA7JQLyUS94xoTSqN");
 }
 
+pub mod vote_state_v4 {
+    solana_pubkey::declare_id!("Gx4XFcrVMt4HUvPzTpTSVkdDVgcDSjKhDN1RqRS6KDuZ");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2070,7 +2075,9 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             discard_unexpected_data_complete_shreds::id(),
             "SIMD-0337: Markers for Alpenglow Fast Leader Handover, DATA_COMPLETE_SHRED placement \
              rules",
-        ), /*************** ADD NEW FEATURES HERE ***************/
+        ),
+        (vote_state_v4::id(), "SIMD-0185: Vote State v4"),
+        /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
     .cloned()
