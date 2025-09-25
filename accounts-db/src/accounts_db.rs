@@ -6790,9 +6790,7 @@ impl AccountsDb {
         timings.visit_zero_lamports_us = visit_zero_lamports_us;
         timings.num_zero_lamport_single_refs = num_zero_lamport_single_refs;
 
-        // subtract data.len() from accounts_data_len for all old accounts that are in the index twice
-        let mut visit_duplicate_accounts_timer =
-            Measure::start("handle accounts data len duplicates");
+        let mut visit_duplicate_accounts_timer = Measure::start("visit duplicate accounts");
         let DuplicatePubkeysVisitedInfo {
             accounts_data_len_from_duplicates,
             num_duplicate_accounts,
