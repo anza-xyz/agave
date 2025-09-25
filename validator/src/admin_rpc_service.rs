@@ -779,17 +779,12 @@ impl AdminRpc for AdminRpcImpl {
                 return Err(jsonrpc_core::error::Error::internal_error());
             };
 
-            let pacing_fill_time_millis = match scheduler_pacing {
-                SchedulerPacing::Disabled => None,
-                SchedulerPacing::FillTimeMillis(m) => Some(m),
-            };
-
             banking_stage
                 .spawn_threads(
                     transaction_struct,
                     block_production_method,
                     num_workers,
-                    pacing_fill_time_millis,
+                    scheduler_pacing.into(),
                 )
                 .map_err(|err| {
                     error!("Failed to spawn new non-vote threads: {err:?}");
