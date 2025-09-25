@@ -41,7 +41,7 @@ use {
     },
     solana_time_utils::AtomicInterval,
     std::{
-        num::{NonZeroUsize, Saturating},
+        num::{NonZeroU64, NonZeroUsize, Saturating},
         ops::Deref,
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -374,7 +374,7 @@ impl BankingStage {
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
         num_workers: NonZeroUsize,
-        pacing_fill_time_millis: u64,
+        pacing_fill_time_millis: Option<NonZeroU64>,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
@@ -428,7 +428,7 @@ impl BankingStage {
         transaction_struct: TransactionStructure,
         block_production_method: BlockProductionMethod,
         num_workers: NonZeroUsize,
-        pacing_fill_time_millis: u64,
+        pacing_fill_time_millis: Option<NonZeroU64>,
     ) -> thread::Result<()> {
         if let Some(context) = self.context.as_ref() {
             info!("Shutting down banking stage threads");
@@ -465,7 +465,7 @@ impl BankingStage {
         transaction_struct: TransactionStructure,
         use_greedy_scheduler: bool,
         num_workers: NonZeroUsize,
-        pacing_fill_time_millis: u64,
+        pacing_fill_time_millis: Option<NonZeroU64>,
         context: &BankingStageContext,
     ) {
         match transaction_struct {
@@ -505,7 +505,7 @@ impl BankingStage {
         receive_and_buffer: R,
         use_greedy_scheduler: bool,
         num_workers: NonZeroUsize,
-        pacing_fill_time_millis: u64,
+        pacing_fill_time_millis: Option<NonZeroU64>,
         context: &BankingStageContext,
     ) {
         assert!(num_workers <= BankingStage::max_num_workers());
@@ -562,9 +562,8 @@ impl BankingStage {
                             let scheduler_controller = SchedulerController::new(
                                 exit,
                                 SchedulerConfig {
-                                    pacing_fill_time: Duration::from_millis(
-                                        pacing_fill_time_millis,
-                                    ),
+                                    pacing_fill_time: pacing_fill_time_millis
+                                        .map(|millis| Duration::from_millis(millis.get())),
                                 },
                                 decision_maker,
                                 receive_and_buffer,
@@ -643,7 +642,7 @@ impl BankingStage {
         MAX_NUM_WORKERS
     }
 
-    pub fn default_fill_time_millis() -> u64 {
+    pub const fn default_fill_time_millis() -> NonZeroU64 {
         DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS
     }
 
@@ -774,7 +773,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             DEFAULT_NUM_WORKERS,
-            0,
+            None,
             None,
             replay_vote_sender,
             None,
@@ -837,7 +836,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             DEFAULT_NUM_WORKERS,
-            0,
+            None,
             None,
             replay_vote_sender,
             None,
@@ -909,7 +908,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             DEFAULT_NUM_WORKERS,
-            0,
+            None,
             None,
             replay_vote_sender,
             None,
@@ -1067,7 +1066,7 @@ mod tests {
                 tpu_vote_receiver,
                 gossip_vote_receiver,
                 DEFAULT_NUM_WORKERS,
-                0,
+                None,
                 None,
                 replay_vote_sender,
                 None,
@@ -1261,7 +1260,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             DEFAULT_NUM_WORKERS,
-            0,
+            None,
             None,
             replay_vote_sender,
             None,

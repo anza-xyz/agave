@@ -21,7 +21,9 @@ use {
         sigverify_stage::SigVerifyStage,
         staked_nodes_updater_service::StakedNodesUpdaterService,
         tpu_entry_notifier::TpuEntryNotifier,
-        validator::{BlockProductionMethod, GeneratorConfig, TransactionStructure},
+        validator::{
+            BlockProductionMethod, GeneratorConfig, SchedulerPacing, TransactionStructure,
+        },
         vortexor_receiver_adapter::VortexorReceiverAdapter,
     },
     bytes::Bytes,
@@ -152,7 +154,7 @@ impl Tpu {
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
-        block_production_pacing_fill_time_millis: u64,
+        block_production_pacing_fill_time_millis: SchedulerPacing,
         transaction_struct: TransactionStructure,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
@@ -329,7 +331,7 @@ impl Tpu {
             tpu_vote_receiver,
             gossip_vote_receiver,
             block_production_num_workers,
-            block_production_pacing_fill_time_millis,
+            block_production_pacing_fill_time_millis.into(),
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,

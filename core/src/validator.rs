@@ -143,8 +143,9 @@ use {
         borrow::Cow,
         collections::{HashMap, HashSet},
         net::SocketAddr,
-        num::NonZeroUsize,
+        num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
+        str::FromStr,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
@@ -249,6 +250,48 @@ impl TransactionStructure {
     }
 }
 
+#[derive(
+    Clone, Debug, EnumVariantNames, IntoStaticStr, Display, Serialize, Deserialize, PartialEq, Eq,
+)]
+#[strum(serialize_all = "kebab-case")]
+#[serde(rename_all = "kebab-case")]
+pub enum SchedulerPacing {
+    Disabled,
+    FillTimeMillis(NonZeroU64),
+}
+
+impl Default for SchedulerPacing {
+    fn default() -> Self {
+        Self::FillTimeMillis(BankingStage::default_fill_time_millis())
+    }
+}
+
+impl FromStr for SchedulerPacing {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case("disabled") {
+            Ok(SchedulerPacing::Disabled)
+        } else {
+            match s.parse::<u64>() {
+                Ok(v) if v > 0 => Ok(SchedulerPacing::FillTimeMillis(
+                    NonZeroU64::new(v).ok_or_else(|| "value must be non-zero".to_string())?,
+                )),
+                _ => Err("value must be a positive integer or 'disabled'".to_string()),
+            }
+        }
+    }
+}
+
+impl From<SchedulerPacing> for Option<NonZeroU64> {
+    fn from(pacing: SchedulerPacing) -> Self {
+        match pacing {
+            SchedulerPacing::Disabled => None,
+            SchedulerPacing::FillTimeMillis(millis) => Some(millis),
+        }
+    }
+}
+
 /// Configuration for the block generator invalidator for replay.
 #[derive(Clone, Debug)]
 pub struct GeneratorConfig {
@@ -315,7 +358,7 @@ pub struct ValidatorConfig {
     pub block_verification_method: BlockVerificationMethod,
     pub block_production_method: BlockProductionMethod,
     pub block_production_num_workers: NonZeroUsize,
-    pub block_production_pacing_fill_time_millis: u64,
+    pub block_production_pacing_fill_time_millis: SchedulerPacing,
     pub transaction_struct: TransactionStructure,
     pub enable_block_production_forwarding: bool,
     pub generator_config: Option<GeneratorConfig>,
@@ -395,7 +438,7 @@ impl ValidatorConfig {
             block_verification_method: BlockVerificationMethod::default(),
             block_production_method: BlockProductionMethod::default(),
             block_production_num_workers: BankingStage::default_num_workers(),
-            block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis(),
+            block_production_pacing_fill_time_millis: SchedulerPacing::default(),
             transaction_struct: TransactionStructure::default(),
             // enable forwarding by default for tests
             enable_block_production_forwarding: true,
@@ -1688,7 +1731,7 @@ impl Validator {
             &prioritization_fee_cache,
             config.block_production_method.clone(),
             config.block_production_num_workers,
-            config.block_production_pacing_fill_time_millis,
+            config.block_production_pacing_fill_time_millis.clone(),
             config.transaction_struct.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),

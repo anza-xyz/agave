@@ -23,7 +23,7 @@ use {
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
-        num::Saturating,
+        num::{NonZeroU64, Saturating},
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
@@ -33,14 +33,18 @@ use {
 };
 
 pub struct SchedulerConfig {
-    pub pacing_fill_time: Duration,
+    pub pacing_fill_time: Option<Duration>,
 }
 
-pub(crate) const DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS: u64 = 350;
+pub(crate) const DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS: NonZeroU64 =
+    NonZeroU64::new(350).unwrap();
+
 impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
-            pacing_fill_time: Duration::from_millis(DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS),
+            pacing_fill_time: Some(Duration::from_millis(
+                DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS.get(),
+            )),
         }
     }
 }
@@ -142,13 +146,15 @@ where
 
                     // If pacing_fill_time is greater than the bank's slot time,
                     // adjust the pacing_fill_time to be the slot time, and warn.
-                    if self.config.pacing_fill_time.as_nanos() > b.ns_per_slot {
-                        warn!(
-                            "scheduler pacing config pacing_fill_time {:?} is greater than the \
-                             bank's slot time {}, setting to slot time",
-                            self.config.pacing_fill_time, b.ns_per_slot,
-                        );
-                        self.config.pacing_fill_time = Duration::from_nanos(b.ns_per_slot as u64);
+                    if let Some(pacing_fill_time) = &mut self.config.pacing_fill_time {
+                        if pacing_fill_time.as_nanos() > b.ns_per_slot {
+                            warn!(
+                                "scheduler pacing config pacing_fill_time {:?} is greater than \
+                                 the bank's slot time {}, setting to slot time",
+                                pacing_fill_time, b.ns_per_slot,
+                            );
+                            *pacing_fill_time = Duration::from_nanos(b.ns_per_slot as u64);
+                        }
                     }
 
                     CostPacer {
@@ -409,23 +415,26 @@ struct CostPacer {
     block_limit: u64,
     shared_block_cost: SharedBlockCost,
     detection_time: Instant,
-    fill_time: Duration,
+    fill_time: Option<Duration>,
 }
 
 impl CostPacer {
     fn scheduling_budget(&self, current_time: &Instant) -> u64 {
-        let time_since = current_time.saturating_duration_since(self.detection_time);
-        if time_since >= self.fill_time {
-            return self.block_limit - self.shared_block_cost.load();
-        }
+        let target = if let Some(fill_time) = &self.fill_time {
+            let time_since = current_time.saturating_duration_since(self.detection_time);
+            if time_since >= *fill_time {
+                self.block_limit
+            } else {
+                // on millisecond granularity, pace the cost linearly.
+                let allocation_per_milli = self.block_limit / fill_time.as_millis() as u64;
+                let millis_since_detection = time_since.as_millis() as u64;
+                allocation_per_milli * millis_since_detection
+            }
+        } else {
+            self.block_limit
+        };
 
-        // on millisecond granularity, pace the cost linearly.
-        let allocation_per_milli = self.block_limit / self.fill_time.as_millis().max(1) as u64;
-        let millis_since_detection = time_since.as_millis() as u64;
-        let paced_cost = allocation_per_milli * millis_since_detection;
-
-        // saturating sub since we could be ahead of schedule.
-        paced_cost.saturating_sub(self.shared_block_cost.load())
+        target.saturating_sub(self.shared_block_cost.load())
     }
 }
 
@@ -623,7 +632,7 @@ mod tests {
                     block_limit: u64::MAX,
                     shared_block_cost: SharedBlockCost::new(0),
                     detection_time: now.checked_sub(Duration::from_millis(400)).unwrap(),
-                    fill_time: Duration::from_millis(300),
+                    fill_time: Some(Duration::from_millis(300)),
                 }),
                 &now
             )

@@ -244,7 +244,7 @@ fn bench_banking(
         tpu_vote_receiver,
         gossip_vote_receiver,
         num_threads,
-        0, // no pacing delay
+        None,
         None,
         s,
         None,

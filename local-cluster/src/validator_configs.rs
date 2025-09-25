@@ -65,7 +65,9 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         block_verification_method: config.block_verification_method.clone(),
         block_production_method: config.block_production_method.clone(),
         block_production_num_workers: config.block_production_num_workers,
-        block_production_pacing_fill_time_millis: config.block_production_pacing_fill_time_millis,
+        block_production_pacing_fill_time_millis: config
+            .block_production_pacing_fill_time_millis
+            .clone(),
         transaction_struct: config.transaction_struct.clone(),
         enable_block_production_forwarding: config.enable_block_production_forwarding,
         generator_config: config.generator_config.clone(),

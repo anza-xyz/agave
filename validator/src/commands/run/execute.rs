@@ -32,7 +32,7 @@ use {
         system_monitor_service::SystemMonitorService,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
-            TransactionStructure, Validator, ValidatorConfig, ValidatorError,
+            SchedulerPacing, TransactionStructure, Validator, ValidatorConfig, ValidatorError,
             ValidatorStartProgress, ValidatorTpuConfig,
         },
     },
@@ -614,7 +614,7 @@ pub fn execute(
         block_production_pacing_fill_time_millis: value_t_or_exit!(
             matches,
             "block_production_pacing_fill_time_millis",
-            u64
+            SchedulerPacing
         ),
         transaction_struct: value_t_or_exit!(matches, "transaction_struct", TransactionStructure),
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),

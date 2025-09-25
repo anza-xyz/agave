@@ -14,7 +14,9 @@ use {
         banking_stage::BankingStage,
         consensus::{tower_storage::TowerStorage, Tower},
         repair::repair_service,
-        validator::{BlockProductionMethod, TransactionStructure, ValidatorStartProgress},
+        validator::{
+            BlockProductionMethod, SchedulerPacing, TransactionStructure, ValidatorStartProgress,
+        },
     },
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
@@ -269,7 +271,7 @@ pub trait AdminRpc {
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
         num_workers: NonZeroUsize,
-        pacing_fill_time_millis: u64,
+        scheduler_pacing: SchedulerPacing,
     ) -> Result<()>;
 }
 
@@ -758,7 +760,7 @@ impl AdminRpc for AdminRpcImpl {
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
         num_workers: NonZeroUsize,
-        pacing_fill_time_millis: u64,
+        scheduler_pacing: SchedulerPacing,
     ) -> Result<()> {
         debug!("manage_block_production rpc request received");
 
@@ -775,6 +777,11 @@ impl AdminRpc for AdminRpcImpl {
             let Some(banking_stage) = banking_stage.as_mut() else {
                 error!("banking stage is not initialized");
                 return Err(jsonrpc_core::error::Error::internal_error());
+            };
+
+            let pacing_fill_time_millis = match scheduler_pacing {
+                SchedulerPacing::Disabled => None,
+                SchedulerPacing::FillTimeMillis(m) => Some(m),
             };
 
             banking_stage

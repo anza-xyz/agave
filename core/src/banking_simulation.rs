@@ -832,7 +832,7 @@ impl BankingSimulator {
             tpu_vote_receiver,
             gossip_vote_receiver,
             BankingStage::default_num_workers(),
-            BankingStage::default_fill_time_millis(),
+            Some(BankingStage::default_fill_time_millis()),
             None,
             replay_vote_sender,
             None,
