@@ -19,7 +19,11 @@ use {
     },
 };
 
-pub fn spawn(
+/// Spawns a thread to receive packets from TPU and send them to the external scheduler.
+///
+/// # Safety:
+/// - `allocator_worker_id` must be unique among all processes using the same allocator path.
+pub unsafe fn spawn(
     exit: Arc<AtomicBool>,
     non_vote_receiver: BankingPacketReceiver,
     vote_receivers: Option<(BankingPacketReceiver, BankingPacketReceiver)>,
@@ -31,8 +35,9 @@ pub fn spawn(
         .name("solTpu2Pack".to_string())
         .spawn(move || {
             // Setup allocator and queue
+            // SAFETY: The caller must ensure that no other process is using the same worker id.
             if let Some((allocator, producer)) =
-                setup(allocator_path, allocator_worker_id, queue_path)
+                unsafe { setup(allocator_path, allocator_worker_id, queue_path) }
             {
                 tpu_to_pack(exit, non_vote_receiver, vote_receivers, allocator, producer);
             }
@@ -163,12 +168,15 @@ fn map_src_addr(addr: IpAddr) -> [u8; 16] {
     }
 }
 
-fn setup(
+/// # Safety:
+/// - `allocator_worker_id` must be unique among all processes using the same allocator path.
+unsafe fn setup(
     allocator_path: impl AsRef<Path>,
     allocator_worker_id: u32,
     queue_path: impl AsRef<Path>,
 ) -> Option<(Allocator, shaq::Producer<TpuToPackMessage>)> {
-    let allocator = Allocator::join(allocator_path, allocator_worker_id)
+    // SAFETY: The caller must ensure that no other process is using the same worker id.
+    let allocator = unsafe { Allocator::join(allocator_path, allocator_worker_id) }
         .map_err(|err| {
             error!("Failed to join allocator: {err:?}");
         })
