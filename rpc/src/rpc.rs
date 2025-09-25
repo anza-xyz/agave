@@ -3855,7 +3855,7 @@ pub mod rpc_full {
             if !skip_preflight {
                 let verification_error = transaction.verify().err();
 
-                if !meta.config.skip_preflight_health_check {
+                if verification_error.is_none() && !meta.config.skip_preflight_health_check {
                     match meta.health.check() {
                         RpcHealthStatus::Ok => (),
                         RpcHealthStatus::Unknown => {
