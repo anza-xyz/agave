@@ -952,6 +952,24 @@ impl VoteStateHandler {
             _ => panic!("not a v4"),
         }
     }
+
+    #[cfg(test)]
+    pub fn serialize(self) -> Vec<u8> {
+        match self.target_state {
+            TargetVoteState::V3(v3) => {
+                let mut data = vec![0; VoteStateV3::size_of()];
+                let versioned = VoteStateVersions::V3(Box::new(v3));
+                bincode::serialize_into(&mut data[..], &versioned).unwrap();
+                data
+            }
+            TargetVoteState::V4(v4) => {
+                let mut data = vec![0; VoteStateV4::size_of()];
+                let versioned = VoteStateVersions::V4(Box::new(v4));
+                bincode::serialize_into(&mut data[..], &versioned).unwrap();
+                data
+            }
+        }
+    }
 }
 
 // Computes the vote latency for vote on voted_for_slot where the vote itself landed in current_slot

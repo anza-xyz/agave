@@ -1293,23 +1293,17 @@ mod tests {
         assert_eq!(vote_state.votes().len(), 2);
     }
 
-    #[test]
-    fn test_update_commission() {
-        let node_pubkey = Pubkey::new_unique();
-        let withdrawer_pubkey = Pubkey::new_unique();
-        let clock = Clock::default();
-        let vote_state = VoteStateV3::new(
-            &VoteInit {
-                node_pubkey,
-                authorized_voter: withdrawer_pubkey,
-                authorized_withdrawer: withdrawer_pubkey,
-                commission: 10,
-            },
-            &clock,
-        );
+    #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
+    #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
+    fn test_update_commission(target_version: VoteStateTargetVersion) {
+        let mut vote_state = vote_state_new_for_test(target_version);
+        let node_pubkey = *vote_state.node_pubkey();
+        let withdrawer_pubkey = *vote_state.authorized_withdrawer();
 
-        let serialized =
-            bincode::serialize(&VoteStateVersions::V3(Box::new(vote_state.clone()))).unwrap();
+        // Set commission to start.
+        vote_state.set_commission(10);
+
+        let serialized = vote_state.serialize();
         let serialized_len = serialized.len();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized_len);
@@ -1356,15 +1350,15 @@ mod tests {
 
         // Increase commission in first half of epoch -- allowed
         assert_eq!(
-            VoteStateV3::deserialize(borrowed_account.get_data())
+            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
                 .unwrap()
-                .commission,
+                .commission(),
             10
         );
         assert_matches!(
             update_commission(
                 &mut borrowed_account,
-                TEMP_HARDCODED_TARGET_VERSION,
+                target_version,
                 11,
                 &signers,
                 &epoch_schedule,
@@ -1373,9 +1367,9 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            VoteStateV3::deserialize(borrowed_account.get_data())
+            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
                 .unwrap()
-                .commission,
+                .commission(),
             11
         );
 
@@ -1383,7 +1377,7 @@ mod tests {
         assert_matches!(
             update_commission(
                 &mut borrowed_account,
-                TEMP_HARDCODED_TARGET_VERSION,
+                target_version,
                 12,
                 &signers,
                 &epoch_schedule,
@@ -1392,9 +1386,9 @@ mod tests {
             Err(_)
         );
         assert_eq!(
-            VoteStateV3::deserialize(borrowed_account.get_data())
+            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
                 .unwrap()
-                .commission,
+                .commission(),
             11
         );
 
@@ -1402,7 +1396,7 @@ mod tests {
         assert_matches!(
             update_commission(
                 &mut borrowed_account,
-                TEMP_HARDCODED_TARGET_VERSION,
+                target_version,
                 10,
                 &signers,
                 &epoch_schedule,
@@ -1411,23 +1405,23 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            VoteStateV3::deserialize(borrowed_account.get_data())
+            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
                 .unwrap()
-                .commission,
+                .commission(),
             10
         );
 
         assert_eq!(
-            VoteStateV3::deserialize(borrowed_account.get_data())
+            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
                 .unwrap()
-                .commission,
+                .commission(),
             10
         );
 
         assert_matches!(
             update_commission(
                 &mut borrowed_account,
-                TEMP_HARDCODED_TARGET_VERSION,
+                target_version,
                 9,
                 &signers,
                 &epoch_schedule,
@@ -1436,9 +1430,9 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            VoteStateV3::deserialize(borrowed_account.get_data())
+            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version)
                 .unwrap()
-                .commission,
+                .commission(),
             9
         );
     }
