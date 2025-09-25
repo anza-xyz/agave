@@ -11868,6 +11868,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-signer",
  "solana-slot-hashes",
+ "solana-svm-feature-set",
  "solana-transaction",
  "solana-transaction-context",
  "solana-vote-interface",
