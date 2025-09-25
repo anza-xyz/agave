@@ -77,12 +77,10 @@ rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
 rolling-file = { workspace = true }
-rts-alloc = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
-shaq = { workspace = true }
 slab = { workspace = true }
 solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
@@ -183,6 +181,8 @@ trees = { workspace = true }
 jemallocator = { workspace = true }
 
 [target."cfg(unix)".dependencies]
+rts-alloc = { workspace = true }
+shaq = { workspace = true }
 sysctl = { workspace = true }
 
 [dev-dependencies]
