@@ -329,7 +329,7 @@ mod tests {
             );
 
             // Create a new AccountStorageEntry from the output file
-            let new_storage = AccountStorageEntry::new_existing(slot, 0, accounts_file);
+            let new_storage = AccountStorageEntry::new_existing(slot, 0, accounts_file, Vec::new());
 
             // Verify that the new storage has the same length as the reader
             assert_eq!(new_storage.accounts.len(), reader.len());
@@ -431,7 +431,7 @@ mod tests {
                     .unwrap();
 
             // Create a new AccountStorageEntry from the output file
-            let new_storage = AccountStorageEntry::new_existing(slot, 0, accounts_file);
+            let new_storage = AccountStorageEntry::new_existing(slot, 0, accounts_file, Vec::new());
 
             // Verify that the new storage has the same length as the reader
             assert_eq!(new_storage.accounts.len(), reader.len());

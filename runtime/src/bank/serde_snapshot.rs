@@ -68,6 +68,7 @@ mod tests {
                 storage_entry.slot(),
                 storage_entry.id(),
                 accounts_file,
+                Vec::new(),
             );
             next_append_vec_id = next_append_vec_id.max(new_storage_entry.id());
             storage.insert(new_storage_entry.slot(), Arc::new(new_storage_entry));

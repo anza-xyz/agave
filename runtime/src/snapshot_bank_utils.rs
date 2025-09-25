@@ -2401,7 +2401,7 @@ mod tests {
         assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
 
         // 3. Mark the bank snapshot as loadable, get_highest_loadable() should return highest_bank_snapshot_slot
-        snapshot_utils::mark_bank_snapshot_as_loadable(&highest_bank_snapshot.snapshot_dir)
+        snapshot_utils::mark_bank_snapshot_as_loadable(&highest_bank_snapshot.snapshot_dir, false)
             .unwrap();
         let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
         assert_eq!(bank_snapshot, highest_bank_snapshot);
@@ -2411,10 +2411,13 @@ mod tests {
         assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
 
         // 5. Mark the bank snapshot as loadable, get_highest_loadable() should return Some() again, with slot-1
-        snapshot_utils::mark_bank_snapshot_as_loadable(get_bank_snapshot_dir(
-            &snapshot_config.bank_snapshots_dir,
-            highest_bank_snapshot.slot - 1,
-        ))
+        snapshot_utils::mark_bank_snapshot_as_loadable(
+            get_bank_snapshot_dir(
+                &snapshot_config.bank_snapshots_dir,
+                highest_bank_snapshot.slot - 1,
+            ),
+            false,
+        )
         .unwrap();
         let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
         assert_eq!(bank_snapshot.slot, highest_bank_snapshot.slot - 1);
