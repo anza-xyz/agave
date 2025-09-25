@@ -462,7 +462,17 @@ impl<'a> WriteOp {
     where
         Self: Sized,
     {
+<<<<<<< HEAD
         let written = res? as usize;
+=======
+        let written = match res {
+            // Fail fast if no progress. FS should report an error (e.g. `StorageFull`) if the
+            // condition isn't transient, but it's hard to verify without extra tracking.
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(res) => res as usize,
+            Err(err) => return Err(err),
+        };
+>>>>>>> 893b873b5 (Update comment for write zero condition (#8184))
 
         let WriteOp {
             file_key,
