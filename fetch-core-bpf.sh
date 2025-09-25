@@ -21,7 +21,7 @@ add_core_bpf_program_to_fetch() {
   declare loader=$4
 
   so_name="solana_${name//-/_}_program.so"
-  declare download_url="https://github.com/solana-program/$name/releases/download/program%40$version/$so_name"
+  declare download_url="https://github.com/solana-program/$name/releases/download/program%40v$version/$so_name"
 
   programs+=("$name $version $address $loader $download_url")
 }
