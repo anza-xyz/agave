@@ -294,7 +294,7 @@ fn do_get_packet_offsets(
         .ok_or(PacketError::InvalidLen)?;
 
     // SIMD-0160: skip if has more than 64 top instructions
-    if instruction_len > 64 {
+    if instruction_len > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH {
         return Err(PacketError::InvalidProgramLen);
     }
 
