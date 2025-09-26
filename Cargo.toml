@@ -50,6 +50,7 @@ members = [
     "ledger",
     "ledger-tool",
     "local-cluster",
+    "low-pass-filter",
     "measure",
     "memory-management",
     "merkle-tree",
@@ -178,6 +179,7 @@ agave-cargo-registry = { path = "cargo-registry", version = "=3.1.0" }
 agave-feature-set = { path = "feature-set", version = "=3.1.0" }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=3.1.0" }
 agave-io-uring = { path = "io-uring", version = "=3.1.0" }
+agave-low-pass-filter = { path = "low-pass-filter", version = "=3.1.0" }
 agave-precompiles = { path = "precompiles", version = "=3.1.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.1.0" }
 agave-scheduler-bindings = { path = "scheduler-bindings", version = "=3.1.0" }
