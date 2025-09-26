@@ -2117,7 +2117,7 @@ mod tests {
             with_mock_invoke_context!($invoke_context, transaction_context, transaction_accounts);
             $invoke_context
                 .transaction_context
-                .configure_next_instruction_for_tests(1, vec![], &[])
+                .configure_next_instruction_for_tests(1, vec![], vec![])
                 .unwrap();
             $invoke_context.push().unwrap();
         };
