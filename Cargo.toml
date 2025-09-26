@@ -50,7 +50,6 @@ members = [
     "ledger",
     "ledger-tool",
     "local-cluster",
-    "low-pass-filter",
     "measure",
     "memory-management",
     "merkle-tree",
@@ -454,7 +453,6 @@ solana-loader-v4-interface = "3.1.0"
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=3.1.0" }
 solana-local-cluster = { path = "local-cluster", version = "=3.1.0" }
 solana-logger = "3.0.0"
-solana-low-pass-filter = { path = "low-pass-filter", version = "=3.0.0" }
 solana-measure = { path = "measure", version = "=3.1.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=3.1.0" }
 solana-message = "3.0.1"

@@ -33,7 +33,6 @@ frozen-abi = [
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
-agave-unstable-api = ["solana-low-pass-filter/agave-unstable-api"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -57,7 +56,6 @@ serde-big-array = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
 siphasher = { workspace = true }
-solana-account = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
@@ -76,7 +74,6 @@ solana-hash = "=3.0.0"
 solana-keypair = "=3.0.1"
 solana-ledger = { workspace = true, features = ["agave-unstable-api"] }
 solana-logger = "=3.0.0"
-solana-low-pass-filter = { workspace = true, features = ["agave-unstable-api"] }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = "=3.0.0"
