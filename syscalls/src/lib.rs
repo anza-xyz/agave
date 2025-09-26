@@ -4351,7 +4351,7 @@ mod tests {
                     .configure_next_instruction_for_tests(
                         0,
                         instruction_accounts,
-                        &[index_in_trace as u8],
+                        vec![index_in_trace as u8],
                     )
                     .unwrap();
                 invoke_context.transaction_context.push().unwrap();

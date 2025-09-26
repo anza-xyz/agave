@@ -1186,7 +1186,7 @@ mod tests {
             .configure_next_instruction_for_tests(
                 0,
                 vec![InstructionAccount::new(1, false, true)],
-                &[],
+                vec![],
             )
             .unwrap();
         let instruction_context = transaction_context.get_next_instruction_context().unwrap();
@@ -1338,7 +1338,7 @@ mod tests {
             .configure_next_instruction_for_tests(
                 0,
                 vec![InstructionAccount::new(1, false, true)],
-                &[],
+                vec![],
             )
             .unwrap();
         let instruction_context = transaction_context.get_next_instruction_context().unwrap();

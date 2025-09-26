@@ -1842,7 +1842,7 @@ mod tests {
                     InstructionAccount::new(1, false, true),
                     InstructionAccount::new(1, false, true),
                 ],
-                &[],
+                vec![],
             )
             .unwrap();
         let accounts = translate_accounts_rust(
