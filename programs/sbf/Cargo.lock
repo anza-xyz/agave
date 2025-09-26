@@ -9735,6 +9735,7 @@ dependencies = [
  "solana-account",
  "solana-instruction",
  "solana-instructions-sysvar",
+ "solana-message",
  "solana-pubkey",
  "solana-rent",
  "solana-sbpf",
