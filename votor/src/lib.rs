@@ -23,6 +23,9 @@ extern crate log;
 extern crate serde_derive;
 
 #[cfg(feature = "agave-unstable-api")]
+mod timer_manager;
+
+#[cfg(feature = "agave-unstable-api")]
 pub mod vote_history;
 #[cfg(feature = "agave-unstable-api")]
 pub mod vote_history_storage;
