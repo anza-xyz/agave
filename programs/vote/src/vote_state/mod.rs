@@ -15,7 +15,9 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_slot_hashes::SlotHash,
-    solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContextView},
+    solana_transaction_context::{
+        BorrowedInstructionAccount, IndexOfAccount, InstructionContextView,
+    },
     solana_vote_interface::{error::VoteError, program::id},
     std::{
         cmp::Ordering,
