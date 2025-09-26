@@ -232,13 +232,7 @@ impl<'a> SnapshotMinimizer<'a> {
                 .accounts_index
                 .get_and_then(&pubkey, |entry| {
                     if let Some(entry) = entry {
-                        let max_slot = entry
-                            .slot_list
-                            .read()
-                            .unwrap()
-                            .iter()
-                            .map(|(slot, _)| *slot)
-                            .max();
+                        let max_slot = entry.slot_list().iter().map(|(slot, _)| *slot).max();
                         if let Some(max_slot) = max_slot {
                             minimized_slot_set.insert(max_slot);
                         }

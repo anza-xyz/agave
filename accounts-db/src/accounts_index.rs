@@ -5,6 +5,7 @@ mod roots_tracker;
 mod secondary;
 use {
     crate::{
+        accounts_index::account_map_entry::SLWriteGuard,
         accounts_index_storage::{AccountsIndexStorage, Startup},
         ancestors::Ancestors,
         bucket_map_holder::Age,
@@ -202,7 +203,7 @@ pub trait IsCached {
     fn is_cached(&self) -> bool;
 }
 
-pub trait IndexValue: 'static + IsCached + IsZeroLamport + DiskIndexValue {}
+pub trait IndexValue: 'static + IsCached + IsZeroLamport + DiskIndexValue + Copy {}
 
 pub trait DiskIndexValue:
     'static + Clone + Debug + PartialEq + Copy + Default + Sync + Send
@@ -717,7 +718,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 self.get_and_then(&pubkey, |entry| {
                     if let Some(list) = entry {
                         let mut read_lock_timer = Measure::start("read_lock");
-                        let list_r = &list.slot_list.read().unwrap();
+                        let list_r = &list.slot_list();
                         read_lock_timer.stop();
                         read_lock_elapsed += read_lock_timer.as_us();
                         let mut latest_slot_timer = Measure::start("latest_slot");
@@ -821,7 +822,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         max_root: Option<Slot>,
         callback: impl FnOnce((Slot, T)) -> R,
     ) -> Option<R> {
-        let slot_list = entry.slot_list.read().unwrap();
+        let slot_list = entry.slot_list();
         self.latest_slot(ancestors, &slot_list, max_root)
             .map(|found_index| callback(slot_list[found_index]))
     }
@@ -854,7 +855,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     fn slot_list_mut<RT>(
         &self,
         pubkey: &Pubkey,
-        user_fn: impl FnOnce(&mut SlotList<T>) -> RT,
+        user_fn: impl FnOnce(SLWriteGuard<T>) -> RT,
     ) -> Option<RT> {
         let read_lock = self.get_bin(pubkey);
         read_lock.slot_list_mut(pubkey, user_fn)
@@ -952,7 +953,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         slots_to_purge: impl for<'a> Contains<'a, Slot>,
         reclaims: &mut ReclaimsSlotList<T>,
     ) -> bool {
-        self.slot_list_mut(pubkey, |slot_list| {
+        self.slot_list_mut(pubkey, |mut slot_list| {
             slot_list.retain(|(slot, item)| {
                 let should_purge = slots_to_purge.contains(slot);
                 if should_purge {
@@ -1057,7 +1058,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     ) where
         F: FnMut(
             &'a Pubkey,
-            Option<(&SlotList<T>, RefCount)>,
+            Option<(&[(Slot, T)], RefCount)>,
             Option<&Arc<AccountMapEntry<T>>>,
         ) -> AccountsIndexScanResult,
         I: Iterator<Item = &'a Pubkey>,
@@ -1079,7 +1080,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         let result = if let Some(result) = avoid_callback_result.as_ref() {
                             *result
                         } else {
-                            let slot_list = &locked_entry.slot_list.read().unwrap();
+                            let slot_list = &*locked_entry.slot_list();
                             callback(
                                 pubkey,
                                 Some((slot_list, locked_entry.ref_count())),
@@ -1097,7 +1098,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                                     1,
                                     "ref count expected to be zero, but is {}! {pubkey}, {:?}",
                                     locked_entry.ref_count(),
-                                    locked_entry.slot_list.read().unwrap(),
+                                    &*locked_entry.slot_list(),
                                 );
                                 true
                             }
@@ -1107,7 +1108,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                                     info!(
                                         "Unexpected unref {pubkey} with {old_ref} {:?}, expect \
                                          old_ref to be 1",
-                                        locked_entry.slot_list.read().unwrap()
+                                        &*locked_entry.slot_list()
                                     );
                                     datapoint_warn!(
                                         "accounts_db-unexpected-unref-zero",
@@ -1148,7 +1149,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                                 {
                                     let local_entry = entry.unwrap();
                                     if local_entry.ref_count() == 1
-                                        && local_entry.slot_list.read().unwrap().len() == 1
+                                        && local_entry.slot_list_len() == 1
                                     {
                                         // Account was found in memory, but is a single ref single slot account
                                         // For testing purposes, return None as this can be treated like
@@ -1164,7 +1165,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                             assert!(entry.is_some(), "{pubkey}, entry: {entry:?}");
                             let entry = entry.unwrap();
                             assert_eq!(entry.ref_count(), 1, "{pubkey}");
-                            assert_eq!(entry.slot_list.read().unwrap().len(), 1, "{pubkey}");
+                            assert_eq!(entry.slot_list_len(), 1, "{pubkey}");
                             (false, ())
                         });
                     }
@@ -1502,7 +1503,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
     fn purge_older_root_entries(
         &self,
-        slot_list: &mut SlotList<T>,
+        slot_list: &mut SLWriteGuard<T>,
         reclaims: &mut ReclaimsSlotList<T>,
         max_clean_root_inclusive: Option<Slot>,
     ) {
@@ -1549,8 +1550,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     ) -> bool {
         let mut is_slot_list_empty = false;
         let missing_in_accounts_index = self
-            .slot_list_mut(pubkey, |slot_list| {
-                self.purge_older_root_entries(slot_list, reclaims, max_clean_root_inclusive);
+            .slot_list_mut(pubkey, |mut slot_list| {
+                self.purge_older_root_entries(&mut slot_list, reclaims, max_clean_root_inclusive);
                 is_slot_list_empty = slot_list.is_empty();
             })
             .is_none();
@@ -1577,7 +1578,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         entry: &AccountMapEntry<T>,
         reclaims: &mut ReclaimsSlotList<T>,
     ) -> (u64, T) {
-        let mut slot_list = entry.slot_list.write().unwrap();
+        let mut slot_list = entry.slot_list_mut();
         let max_slot = slot_list
             .iter()
             .map(|(slot, _account)| *slot)
@@ -1741,8 +1742,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     // if this account has no more entries. Note this does not update the secondary
     // indexes!
     pub fn purge_roots(&self, pubkey: &Pubkey) -> (SlotList<T>, bool) {
-        self.slot_list_mut(pubkey, |slot_list| {
-            let reclaims = self.get_rooted_entries(slot_list, None);
+        self.slot_list_mut(pubkey, |mut slot_list| {
+            let reclaims = self.get_rooted_entries(&slot_list, None);
             slot_list.retain(|(slot, _)| !self.is_alive_root(*slot));
             (reclaims, slot_list.is_empty())
         })
@@ -1819,10 +1820,11 @@ pub mod tests {
             // clone the AccountMapEntryInner into a new Arc
             match self {
                 PreAllocatedAccountMapEntry::Entry(entry) => {
-                    let (slot, account_info) = entry.slot_list.read().unwrap()[0];
+                    let (slot, account_info) = entry.slot_list()[0];
                     let meta = AccountMapEntryMeta {
                         dirty: AtomicBool::new(entry.dirty()),
                         age: AtomicAge::new(entry.age()),
+                        is_regular: AtomicBool::new(entry.ref_count() == 1),
                     };
                     PreAllocatedAccountMapEntry::Entry(Arc::new(AccountMapEntry::new(
                         SlotList::from([(slot, account_info)]),
@@ -2198,11 +2200,8 @@ pub mod tests {
                 )
                 .into_account_map_entry(&index.storage.storage);
                 assert_eq!(new_entry.ref_count(), 0);
-                assert_eq!(new_entry.slot_list.read().unwrap().capacity(), 1);
-                assert_eq!(
-                    new_entry.slot_list.read().unwrap().to_vec(),
-                    vec![(slot, account_info)]
-                );
+                assert_eq!(new_entry.slot_list().capacity(), 1);
+                assert_eq!(new_entry.slot_list().to_vec(), vec![(slot, account_info)]);
 
                 // account_info type that is NOT cached
                 let account_info = true;
@@ -2217,11 +2216,8 @@ pub mod tests {
                 )
                 .into_account_map_entry(&index.storage.storage);
                 assert_eq!(new_entry.ref_count(), 1);
-                assert_eq!(new_entry.slot_list.read().unwrap().capacity(), 1);
-                assert_eq!(
-                    new_entry.slot_list.read().unwrap().to_vec(),
-                    vec![(slot, account_info)]
-                );
+                assert_eq!(new_entry.slot_list().capacity(), 1);
+                assert_eq!(new_entry.slot_list().to_vec(), vec![(slot, account_info)]);
             }
         }
     }
@@ -2245,10 +2241,7 @@ pub mod tests {
         for (i, key) in [key0, key1].iter().enumerate() {
             let entry = index.get_cloned(key).unwrap();
             assert_eq!(entry.ref_count(), 1);
-            assert_eq!(
-                entry.slot_list.read().unwrap().as_slice(),
-                &[(slot0, account_infos[i])],
-            );
+            assert_eq!(entry.slot_list().as_slice(), &[(slot0, account_infos[i])],);
         }
     }
 
@@ -2306,7 +2299,7 @@ pub mod tests {
         // verify the added entry matches expected
         {
             let entry = index.get_cloned(&key).unwrap();
-            let slot_list = entry.slot_list.read().unwrap();
+            let slot_list = entry.slot_list();
             assert_eq!(entry.ref_count(), RefCount::from(!is_cached));
             assert_eq!(slot_list.as_slice(), &[(slot0, account_infos[0])]);
             let new_entry = PreAllocatedAccountMapEntry::new(
@@ -2316,10 +2309,7 @@ pub mod tests {
                 false,
             )
             .into_account_map_entry(&index.storage.storage);
-            assert_eq!(
-                slot_list.as_slice(),
-                new_entry.slot_list.read().unwrap().as_slice(),
-            );
+            assert_eq!(slot_list.as_slice(), new_entry.slot_list().as_slice(),);
         }
 
         match upsert_method {
@@ -2367,7 +2357,7 @@ pub mod tests {
         index.populate_and_retrieve_duplicate_keys_from_startup(|_slot_keys| {});
 
         let entry = index.get_cloned(&key).unwrap();
-        let slot_list = entry.slot_list.read().unwrap();
+        let slot_list = entry.slot_list();
 
         if should_have_reclaims {
             assert_eq!(entry.ref_count(), 1);
@@ -2995,7 +2985,7 @@ pub mod tests {
         // Using brackets to limit scope of read lock
         {
             let entry = index.get_cloned(&key).unwrap();
-            let slot_list = entry.slot_list.read().unwrap();
+            let slot_list = entry.slot_list();
             assert_eq!(slot_list.len(), 1);
         }
 
@@ -3015,7 +3005,7 @@ pub mod tests {
 
         // Slot list should only have a single entry
         let entry = index.get_cloned(&key).unwrap();
-        let slot_list = entry.slot_list.read().unwrap();
+        let slot_list = entry.slot_list();
         assert_eq!(slot_list.len(), 1);
     }
 
@@ -3213,7 +3203,7 @@ pub mod tests {
             );
         }
         let entry = index.get_cloned(&key).unwrap();
-        assert_eq!(entry.slot_list.read().unwrap().len(), reclaim_slot as usize);
+        assert_eq!(entry.slot_list_len(), reclaim_slot as usize);
 
         // Insert an item newer than the one that we will reclaim old slots on
         index.upsert(
@@ -3227,10 +3217,7 @@ pub mod tests {
             UpsertReclaim::IgnoreReclaims,
         );
         let entry = index.get_cloned(&key).unwrap();
-        assert_eq!(
-            entry.slot_list.read().unwrap().len(),
-            (reclaim_slot + 1) as usize
-        );
+        assert_eq!(entry.slot_list_len(), (reclaim_slot + 1) as usize);
 
         // Reclaim all older slots
         index.upsert(
@@ -3340,9 +3327,9 @@ pub mod tests {
         // Verify that the slot list is length two and consists of the cached account at slot 1
         // and the uncached account at slot 2
         let entry = index.get_cloned(&key).unwrap();
-        assert_eq!(entry.slot_list.read().unwrap().len(), 2);
+        assert_eq!(entry.slot_list_len(), 2);
         assert_eq!(
-            entry.slot_list.read().unwrap()[0],
+            entry.slot_list()[0],
             PreAllocatedAccountMapEntry::new(
                 1,
                 CacheableIndexValueTest(true),
@@ -3352,7 +3339,7 @@ pub mod tests {
             .into()
         );
         assert_eq!(
-            entry.slot_list.read().unwrap()[1],
+            entry.slot_list()[1],
             PreAllocatedAccountMapEntry::new(
                 2,
                 CacheableIndexValueTest(false),
@@ -3968,21 +3955,12 @@ pub mod tests {
 
         {
             let account_map_entry = index.get_cloned(&key).unwrap();
-            let slot_list = account_map_entry.slot_list.read().unwrap();
+            let slot_list = account_map_entry.slot_list();
             assert_eq!(2, slot_list.len());
             assert_eq!(&[(slot1, value), (slot2, value)], slot_list.as_slice());
         }
         assert!(!index.clean_rooted_entries(&key, &mut gc, Some(slot2)));
-        assert_eq!(
-            2,
-            index
-                .get_cloned(&key)
-                .unwrap()
-                .slot_list
-                .read()
-                .unwrap()
-                .len()
-        );
+        assert_eq!(2, index.get_cloned(&key).unwrap().slot_list_len());
         assert!(gc.is_empty());
         {
             {
