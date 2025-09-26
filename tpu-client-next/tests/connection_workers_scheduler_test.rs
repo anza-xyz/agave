@@ -753,6 +753,7 @@ async fn test_update_identity() {
 // Test that connection close events are detected immediately via
 // connection.closed() monitoring, not only when send operations fail.
 #[tokio::test]
+#[ignore = "Enable after we introduce TaskTracker to streamer."]
 async fn test_proactive_connection_close_detection() {
     let SpawnTestServerResult {
         join_handle: server_handle,

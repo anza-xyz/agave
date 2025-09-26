@@ -1122,14 +1122,6 @@ mod tests {
         )
     }
 
-    fn get_credits(epoch_credits: &[(Epoch, u64, u64)]) -> u64 {
-        if epoch_credits.is_empty() {
-            0
-        } else {
-            epoch_credits.last().unwrap().1
-        }
-    }
-
     #[test]
     fn test_vote_state_upgrade_from_1_14_11() {
         // Create an initial vote account that is sized for the 1_14_11 version of vote state, and has only the
@@ -1525,14 +1517,14 @@ mod tests {
             process_slot_vote_unchecked(&mut vote_state, i as u64);
         }
 
-        assert_eq!(get_credits(vote_state.epoch_credits()), 0);
+        assert_eq!(vote_state.credits(), 0);
 
         process_slot_vote_unchecked(&mut vote_state, MAX_LOCKOUT_HISTORY as u64 + 1);
-        assert_eq!(get_credits(vote_state.epoch_credits()), 1);
+        assert_eq!(vote_state.credits(), 1);
         process_slot_vote_unchecked(&mut vote_state, MAX_LOCKOUT_HISTORY as u64 + 2);
-        assert_eq!(get_credits(vote_state.epoch_credits()), 2);
+        assert_eq!(vote_state.credits(), 2);
         process_slot_vote_unchecked(&mut vote_state, MAX_LOCKOUT_HISTORY as u64 + 3);
-        assert_eq!(get_credits(vote_state.epoch_credits()), 3);
+        assert_eq!(vote_state.credits(), 3);
     }
 
     #[test]
@@ -2049,14 +2041,8 @@ mod tests {
 
             // Ensure that the credits earned is correct for both vote states
             let vote_group = &test_vote_groups[i];
-            assert_eq!(
-                get_credits(vote_state_1.epoch_credits()),
-                vote_group.2 as u64
-            ); // vote_group.2 is the expected number of credits
-            assert_eq!(
-                get_credits(vote_state_2.epoch_credits()),
-                vote_group.2 as u64
-            ); // vote_group.2 is the expected number of credits
+            assert_eq!(vote_state_1.credits(), vote_group.2 as u64); // vote_group.2 is the expected number of credits
+            assert_eq!(vote_state_2.credits(), vote_group.2 as u64); // vote_group.2 is the expected number of credits
         }
     }
 
@@ -2172,10 +2158,7 @@ mod tests {
                 );
 
                 // Ensure that the credits earned is correct
-                assert_eq!(
-                    get_credits(vote_state.epoch_credits()),
-                    proposed_vote_state.3 as u64
-                );
+                assert_eq!(vote_state.credits(), proposed_vote_state.3 as u64);
             });
     }
 

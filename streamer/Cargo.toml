@@ -58,7 +58,7 @@ solana-transaction-error = { workspace = true }
 solana-transaction-metrics-tracker = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-tokio-util = { workspace = true }
+tokio-util = { workspace = true, features = ["rt"] }
 x509-parser = { workspace = true }
 
 [dev-dependencies]
