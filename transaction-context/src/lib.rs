@@ -299,7 +299,7 @@ impl TransactionContext {
         &mut self,
         program_index: IndexOfAccount,
         instruction_accounts: Vec<InstructionAccount>,
-        instruction_data: &[u8],
+        instruction_data: Vec<u8>,
     ) -> Result<(), InstructionError> {
         debug_assert!(instruction_accounts.len() <= u8::MAX as usize);
         let mut dedup_map = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
@@ -315,7 +315,7 @@ impl TransactionContext {
             program_index,
             instruction_accounts,
             dedup_map,
-            instruction_data.to_vec(),
+            instruction_data,
         )
     }
 
@@ -1139,7 +1139,7 @@ mod tests {
             .configure_next_instruction_for_tests(
                 u16::MAX,
                 vec![InstructionAccount::new(0, false, false)],
-                &[],
+                vec![],
             )
             .unwrap();
         let instruction_context = transaction_context.get_next_instruction_context().unwrap();
