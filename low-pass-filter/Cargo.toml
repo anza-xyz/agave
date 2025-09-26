@@ -1,0 +1,16 @@
+[package]
+name = "agave-low-pass-filter"
+description = "Low Pass Filter"
+version = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+agave-unstable-api = []
+
+[dependencies]
