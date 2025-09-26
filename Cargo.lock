@@ -11653,6 +11653,7 @@ dependencies = [
  "solana-runtime-transaction",
  "solana-transaction",
  "static_assertions",
+ "test-case",
  "unwrap_none",
 ]
 
