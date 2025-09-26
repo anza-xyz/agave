@@ -211,12 +211,12 @@ impl TransactionContext {
     pub fn get_instruction_context_at_index_in_trace(
         &self,
         index_in_trace: usize,
-    ) -> Result<InstructionContext, InstructionError> {
+    ) -> Result<InstructionContextView, InstructionError> {
         let instruction = self
             .instruction_trace
             .get(index_in_trace)
             .ok_or(InstructionError::CallDepth)?;
-        Ok(InstructionContext {
+        Ok(InstructionContextView {
             transaction_context: self,
             nesting_level: instruction.nesting_level,
             program_account_index_in_tx: instruction.program_account_index_in_tx,
@@ -230,7 +230,7 @@ impl TransactionContext {
     pub fn get_instruction_context_at_nesting_level(
         &self,
         nesting_level: usize,
-    ) -> Result<InstructionContext, InstructionError> {
+    ) -> Result<InstructionContextView, InstructionError> {
         let index_in_trace = *self
             .instruction_stack
             .get(nesting_level)
@@ -252,7 +252,7 @@ impl TransactionContext {
     }
 
     /// Returns a view on the current instruction
-    pub fn get_current_instruction_context(&self) -> Result<InstructionContext, InstructionError> {
+    pub fn get_current_instruction_context(&self) -> Result<InstructionContextView, InstructionError> {
         let level = self
             .get_instruction_stack_height()
             .checked_sub(1)
@@ -263,7 +263,7 @@ impl TransactionContext {
     /// Returns a view on the next instruction. This function assumes it has already been
     /// configured with the correct values in `prepare_next_instruction` or
     /// `prepare_next_top_level_instruction`
-    pub fn get_next_instruction_context(&self) -> Result<InstructionContext, InstructionError> {
+    pub fn get_next_instruction_context(&self) -> Result<InstructionContextView, InstructionError> {
         let index_in_trace = self
             .instruction_trace
             .len()
@@ -505,7 +505,7 @@ pub struct InstructionFrame {
 
 /// View interface to read instructions.
 #[derive(Debug, Clone)]
-pub struct InstructionContext<'a> {
+pub struct InstructionContextView<'a> {
     transaction_context: &'a TransactionContext,
     // The rest of the fields are redundant shortcuts
     nesting_level: usize,
@@ -515,7 +515,7 @@ pub struct InstructionContext<'a> {
     instruction_data: &'a [u8],
 }
 
-impl<'a> InstructionContext<'a> {
+impl<'a> InstructionContextView<'a> {
     /// How many Instructions were on the stack after this one was pushed
     ///
     /// That is the number of nested parent Instructions plus one (itself).

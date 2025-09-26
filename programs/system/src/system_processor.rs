@@ -17,7 +17,7 @@ use {
     solana_system_interface::{
         error::SystemError, instruction::SystemInstruction, MAX_PERMITTED_DATA_LENGTH,
     },
-    solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
+    solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContextView},
     std::collections::HashSet,
 };
 
@@ -153,7 +153,7 @@ fn create_account(
     owner: &Pubkey,
     signers: &HashSet<Pubkey>,
     invoke_context: &InvokeContext,
-    instruction_context: &InstructionContext,
+    instruction_context: &InstructionContextView,
 ) -> Result<(), InstructionError> {
     // if it looks like the `to` account is already in use, bail
     {
@@ -183,7 +183,7 @@ fn transfer_verified(
     to_account_index: IndexOfAccount,
     lamports: u64,
     invoke_context: &InvokeContext,
-    instruction_context: &InstructionContext,
+    instruction_context: &InstructionContextView,
 ) -> Result<(), InstructionError> {
     let mut from = instruction_context.try_borrow_instruction_account(from_account_index)?;
     if !from.get_data().is_empty() {
@@ -212,7 +212,7 @@ fn transfer(
     to_account_index: IndexOfAccount,
     lamports: u64,
     invoke_context: &InvokeContext,
-    instruction_context: &InstructionContext,
+    instruction_context: &InstructionContextView,
 ) -> Result<(), InstructionError> {
     if !instruction_context.is_instruction_account_signer(from_account_index)? {
         ic_msg!(
@@ -240,7 +240,7 @@ fn transfer_with_seed(
     to_account_index: IndexOfAccount,
     lamports: u64,
     invoke_context: &InvokeContext,
-    instruction_context: &InstructionContext,
+    instruction_context: &InstructionContextView,
 ) -> Result<(), InstructionError> {
     if !instruction_context.is_instruction_account_signer(from_base_account_index)? {
         ic_msg!(
