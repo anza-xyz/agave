@@ -5,7 +5,8 @@ use {
         bank::{BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
         serde_snapshot::{
             self, AccountsDbFields, ExtraFieldsToSerialize, SerializableAccountStorageEntry,
-            SnapshotAccountsDbFields, SnapshotBankFields, SnapshotStreams,
+            SerializedAccountsFileId, SnapshotAccountsDbFields, SnapshotBankFields,
+            SnapshotStreams,
         },
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
@@ -336,6 +337,12 @@ pub enum SnapshotError {
 
     #[error("snapshot hash mismatch: deserialized bank: {0:?}, snapshot archive: {1:?}")]
     MismatchedHash(SnapshotHash, SnapshotHash),
+
+    #[error(
+        "snapshot accounts file id mismatch: deserialized obsolete accounts file id: {0}, \
+         snapshot archive: {1}"
+    )]
+    MismatchedAccountsFileId(SerializedAccountsFileId, SerializedAccountsFileId),
 
     #[error("snapshot slot deltas are invalid: {0}")]
     VerifySlotDeltas(#[from] VerifySlotDeltasError),

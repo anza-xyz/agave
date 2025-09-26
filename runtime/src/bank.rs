@@ -111,7 +111,8 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
+        invoke_context::BuiltinFunctionWithContext,
+        loaded_programs::{ProgramCacheEntry, ProgramRuntimeEnvironment},
     },
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_reward_info::RewardInfo,
@@ -1466,12 +1467,6 @@ impl Bank {
         let (_epoch, slot_index) = self.epoch_schedule.get_epoch_and_slot_index(self.slot);
         let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(self.epoch);
         let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
-        let compute_budget = self
-            .compute_budget
-            .unwrap_or(ComputeBudget::new_with_defaults(
-                upcoming_feature_set.is_active(&raise_cpi_nesting_limit_to_8::id()),
-            ))
-            .to_budget();
 
         // Recompile loaded programs one at a time before the next epoch hits
         let slots_in_recompilation_phase =
@@ -1529,27 +1524,18 @@ impl Bank {
                 .global_program_cache
                 .write()
                 .unwrap();
-            let program_runtime_environment_v1 = create_program_runtime_environment_v1(
-                &upcoming_feature_set.runtime_features(),
-                &compute_budget,
-                false, /* deployment */
-                false, /* debugging_features */
-            )
-            .unwrap();
-            let program_runtime_environment_v2 = create_program_runtime_environment_v2(
-                &compute_budget,
-                false, /* debugging_features */
-            );
+            let (program_runtime_environment_v1, program_runtime_environment_v2) =
+                self.create_program_runtime_environments(&upcoming_feature_set);
             let mut upcoming_environments = program_cache.environments.clone();
             let changed_program_runtime_v1 =
-                *upcoming_environments.program_runtime_v1 != program_runtime_environment_v1;
+                *upcoming_environments.program_runtime_v1 != *program_runtime_environment_v1;
             let changed_program_runtime_v2 =
-                *upcoming_environments.program_runtime_v2 != program_runtime_environment_v2;
+                *upcoming_environments.program_runtime_v2 != *program_runtime_environment_v2;
             if changed_program_runtime_v1 {
-                upcoming_environments.program_runtime_v1 = Arc::new(program_runtime_environment_v1);
+                upcoming_environments.program_runtime_v1 = program_runtime_environment_v1;
             }
             if changed_program_runtime_v2 {
-                upcoming_environments.program_runtime_v2 = Arc::new(program_runtime_environment_v2);
+                upcoming_environments.program_runtime_v2 = program_runtime_environment_v2;
             }
             program_cache.upcoming_environments = Some(upcoming_environments);
             program_cache.programs_to_recompile = program_cache
@@ -4055,32 +4041,40 @@ impl Bank {
             self.apply_simd_0306_cost_tracker_changes();
         }
 
-        let simd_0268_active = self
-            .feature_set
-            .is_active(&raise_cpi_nesting_limit_to_8::id());
-
+        let (program_runtime_environment_v1, program_runtime_environment_v2) =
+            self.create_program_runtime_environments(&self.feature_set);
         self.transaction_processor
             .configure_program_runtime_environments(
-                Some(Arc::new(
-                    create_program_runtime_environment_v1(
-                        &self.feature_set.runtime_features(),
-                        &self
-                            .compute_budget()
-                            .unwrap_or(ComputeBudget::new_with_defaults(simd_0268_active))
-                            .to_budget(),
-                        false, /* deployment */
-                        false, /* debugging_features */
-                    )
-                    .unwrap(),
-                )),
-                Some(Arc::new(create_program_runtime_environment_v2(
-                    &self
-                        .compute_budget()
-                        .unwrap_or(ComputeBudget::new_with_defaults(simd_0268_active))
-                        .to_budget(),
-                    false, /* debugging_features */
-                ))),
+                Some(program_runtime_environment_v1),
+                Some(program_runtime_environment_v2),
             );
+    }
+
+    fn create_program_runtime_environments(
+        &self,
+        feature_set: &FeatureSet,
+    ) -> (ProgramRuntimeEnvironment, ProgramRuntimeEnvironment) {
+        let simd_0268_active = feature_set.is_active(&raise_cpi_nesting_limit_to_8::id());
+        let compute_budget = self
+            .compute_budget()
+            .as_ref()
+            .unwrap_or(&ComputeBudget::new_with_defaults(simd_0268_active))
+            .to_budget();
+        (
+            Arc::new(
+                create_program_runtime_environment_v1(
+                    &feature_set.runtime_features(),
+                    &compute_budget,
+                    false, /* deployment */
+                    false, /* debugging_features */
+                )
+                .unwrap(),
+            ),
+            Arc::new(create_program_runtime_environment_v2(
+                &compute_budget,
+                false, /* debugging_features */
+            )),
+        )
     }
 
     pub fn set_tick_height(&self, tick_height: u64) {

@@ -30,6 +30,7 @@ pub mod hardened_unpack;
 mod io_uring;
 pub mod is_loadable;
 mod is_zero_lamport;
+mod obsolete_accounts;
 pub mod partitioned_rewards;
 pub mod pubkey_bins;
 #[cfg(feature = "dev-context-only-utils")]
@@ -44,7 +45,10 @@ pub mod tiered_storage;
 pub mod utils;
 pub mod waitable_condvar;
 
-pub use {buffered_reader::large_file_buf_reader, file_io::validate_memlock_limit_for_disk_io};
+pub use {
+    buffered_reader::large_file_buf_reader, file_io::validate_memlock_limit_for_disk_io,
+    obsolete_accounts::ObsoleteAccounts,
+};
 
 #[macro_use]
 extern crate solana_metrics;

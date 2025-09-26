@@ -1661,6 +1661,7 @@ fn get_stable_genesis_config() -> GenesisConfigInfo {
         &validator_pubkey,
         &voting_keypair.pubkey(),
         &stake_pubkey,
+        None,
         bootstrap_validator_stake_lamports(),
         42,
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees

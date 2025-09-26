@@ -58,7 +58,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_TESTING: AccountsIndexConfig = AccountsIndex
     bins: Some(BINS_FOR_TESTING),
     num_flush_threads: Some(FLUSH_THREADS_TESTING),
     drives: None,
-    index_limit_mb: IndexLimitMb::Minimal,
+    index_limit_mb: IndexLimitMb::InMemOnly,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
 };
@@ -66,7 +66,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
     bins: Some(BINS_FOR_BENCHMARKS),
     num_flush_threads: Some(FLUSH_THREADS_TESTING),
     drives: None,
-    index_limit_mb: IndexLimitMb::Minimal,
+    index_limit_mb: IndexLimitMb::InMemOnly,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
 };
@@ -250,7 +250,7 @@ impl Default for AccountsIndexConfig {
             bins: None,
             num_flush_threads: None,
             drives: None,
-            index_limit_mb: IndexLimitMb::Minimal,
+            index_limit_mb: IndexLimitMb::InMemOnly,
             ages_to_stay_in_cache: None,
             scan_results_limit_bytes: None,
         }

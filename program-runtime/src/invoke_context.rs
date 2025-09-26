@@ -203,8 +203,6 @@ pub struct InvokeContext<'a> {
     pub timings: ExecuteDetailsTimings,
     pub syscall_context: Vec<Option<SyscallContext>>,
     traces: Vec<Vec<[u64; 12]>>,
-    /// Stops copying account data if stricter_abi_and_runtime_constraints is enabled
-    pub account_data_direct_mapping: bool,
 }
 
 impl<'a> InvokeContext<'a> {
@@ -229,7 +227,6 @@ impl<'a> InvokeContext<'a> {
             timings: ExecuteDetailsTimings::default(),
             syscall_context: Vec::new(),
             traces: Vec::new(),
-            account_data_direct_mapping: false,
         }
     }
 

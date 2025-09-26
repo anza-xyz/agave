@@ -5890,10 +5890,10 @@ fn test_invalid_forks_persisted_on_restart() {
             .entries_to_merkle_shreds_for_tests(
                 &majority_keypair,
                 &entries,
-                true, // is_full_slot
-                None, // chained_merkle_root
-                0,    // next_shred_index,
-                0,    // next_code_index
+                true,            // is_full_slot
+                Hash::default(), // chained_merkle_root
+                0,               // next_shred_index,
+                0,               // next_code_index
                 &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )

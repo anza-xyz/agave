@@ -393,10 +393,10 @@ async fn shreds(
             .make_merkle_shreds_from_entries(
                 &keypair,
                 &entries,
-                true, // last_in_slot
-                None, // chained_merkle_root
-                0,    // next_shred_index
-                0,    // next_code_index
+                true,            // last_in_slot
+                Hash::default(), // chained_merkle_root
+                0,               // next_shred_index
+                0,               // next_code_index
                 &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )

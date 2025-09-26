@@ -232,6 +232,7 @@ fn bench_create_vm(bencher: &mut Bencher) {
     let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
         .stricter_abi_and_runtime_constraints;
+    let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
     let raise_cpi_nesting_limit_to_8 = invoke_context
         .get_feature_set()
         .raise_cpi_nesting_limit_to_8;
@@ -254,8 +255,8 @@ fn bench_create_vm(bencher: &mut Bencher) {
             .get_current_instruction_context()
             .unwrap(),
         stricter_abi_and_runtime_constraints,
-        false, // account_data_direct_mapping
-        true,  // mask_out_rent_epoch_in_vm_serialization
+        account_data_direct_mapping,
+        true, // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 
@@ -281,6 +282,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
     let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
         .stricter_abi_and_runtime_constraints;
+    let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
 
     // Serialize account data
     let (_serialized, regions, account_lengths, _instruction_data_offset) = serialize_parameters(
@@ -289,8 +291,8 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
             .get_current_instruction_context()
             .unwrap(),
         stricter_abi_and_runtime_constraints,
-        false, // account_data_direct_mapping
-        true,  // mask_out_rent_epoch_in_vm_serialization
+        account_data_direct_mapping,
+        true, // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 

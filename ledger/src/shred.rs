@@ -64,9 +64,7 @@ pub use {
 };
 use {
     self::{shred_code::ShredCode, traits::Shred as _},
-    crate::{
-        blockstore::{self},
-    },
+    crate::blockstore::{self},
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
     num_enum::{IntoPrimitive, TryFromPrimitive},
@@ -996,30 +994,30 @@ mod tests {
         rayon::ThreadPoolBuilder,
         solana_keypair::keypair_from_seed,
         std::io::{Cursor, Seek, SeekFrom, Write},
-        test_case::{test_case, test_matrix},
+        test_case::test_case,
     };
 
     const SIZE_OF_SHRED_INDEX: usize = 4;
     const SIZE_OF_SHRED_SLOT: usize = 8;
     const SIZE_OF_SHRED_VARIANT: usize = 1;
-    const SIZE_OF_VERSION : usize = 2;
+    const SIZE_OF_VERSION: usize = 2;
     const SIZE_OF_FEC_SET_INDEX: usize = 4;
 
     const OFFSET_OF_SHRED_VARIANT: usize = SIZE_OF_SIGNATURE;
     const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_VARIANT;
     const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
-    const OFFSET_OF_FEC_SET_INDEX: usize = OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX + SIZE_OF_VERSION;
+    const OFFSET_OF_FEC_SET_INDEX: usize =
+        OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX + SIZE_OF_VERSION;
     const OFFSET_OF_NUM_DATA: usize = OFFSET_OF_FEC_SET_INDEX + SIZE_OF_FEC_SET_INDEX;
 
     pub(super) fn make_merkle_shreds_for_tests<R: Rng>(
         rng: &mut R,
         slot: Slot,
         data_size: usize,
-        chained: bool,
         is_last_in_slot: bool,
     ) -> Result<Vec<merkle::Shred>, Error> {
         let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
-        let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
+        let chained_merkle_root = Hash::new_from_array(rng.gen());
         let parent_offset = rng.gen_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
         let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
         let mut data = vec![0u8; data_size];
@@ -1028,7 +1026,7 @@ mod tests {
         merkle::make_shreds_from_data(
             &thread_pool,
             &Keypair::new(),
-            chained_merkle_root,
+            Some(chained_merkle_root),
             &data[..],
             slot,
             parent_slot,
@@ -1169,7 +1167,6 @@ mod tests {
             &mut rng,
             slot,
             1200 * 5, // data_size
-            true,     // chained
             is_last_in_slot,
         )
         .unwrap();
@@ -1419,7 +1416,6 @@ mod tests {
             &mut rng,
             slot,
             1200 * 5, // data_size
-            true,     // chained
             false,    // is_last_in_slot
         )
         .unwrap();
@@ -1440,7 +1436,9 @@ mod tests {
             let bad_fec_set_index = 5u32;
             {
                 let mut cursor = Cursor::new(packet.buffer_mut());
-                cursor.seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64)).unwrap();
+                cursor
+                    .seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64))
+                    .unwrap();
                 cursor.write_all(&bad_fec_set_index.to_le_bytes()).unwrap();
             }
 
@@ -1470,7 +1468,9 @@ mod tests {
                     .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
                     .unwrap();
                 cursor.write_all(&bad_index.to_le_bytes()).unwrap();
-                cursor.seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64)).unwrap();
+                cursor
+                    .seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64))
+                    .unwrap();
                 cursor.write_all(&fec_set_index.to_le_bytes()).unwrap();
             }
 
@@ -1499,7 +1499,9 @@ mod tests {
             let bad_num_data = 16u16;
             {
                 let mut cursor = Cursor::new(packet.buffer_mut());
-                cursor.seek(SeekFrom::Start(OFFSET_OF_NUM_DATA as u64)).unwrap();
+                cursor
+                    .seek(SeekFrom::Start(OFFSET_OF_NUM_DATA as u64))
+                    .unwrap();
                 cursor.write_all(&bad_num_data.to_le_bytes()).unwrap();
             }
 
@@ -1521,8 +1523,7 @@ mod tests {
             &mut rng,
             slot,
             1200 * 5, // data_size
-            true,     // chained
-            true,    // is_last_in_slot
+            true,     // is_last_in_slot
         )
         .unwrap();
         let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
@@ -1542,9 +1543,13 @@ mod tests {
         let fec_set_index = 0u32;
         {
             let mut cursor = Cursor::new(packet.buffer_mut());
-            cursor.seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64)).unwrap();
+            cursor
+                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                .unwrap();
             cursor.write_all(&bad_last_index.to_le_bytes()).unwrap();
-            cursor.seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64)).unwrap();
+            cursor
+                .seek(SeekFrom::Start(OFFSET_OF_FEC_SET_INDEX as u64))
+                .unwrap();
             cursor.write_all(&fec_set_index.to_le_bytes()).unwrap();
         }
 
@@ -1605,16 +1610,15 @@ mod tests {
         assert_matches!(bincode::deserialize::<ShredVariant>(&[0b1010_0101]), Err(_));
     }
 
-    #[test_case(false, false, 0b0100_0000)]
-    #[test_case(true, false, 0b0110_0000)]
-    #[test_case(true, true, 0b0111_0000)]
-    fn test_shred_variant_compat_merkle_code(chained: bool, resigned: bool, byte: u8) {
+    #[test_case(false, 0b0110_0000)]
+    #[test_case(true, 0b0111_0000)]
+    fn test_shred_variant_compat_merkle_code(resigned: bool, byte: u8) {
         for proof_size in 0..=15u8 {
             let byte = byte | proof_size;
             assert_eq!(
                 u8::from(ShredVariant::MerkleCode {
                     proof_size,
-                    chained,
+                    chained: true,
                     resigned,
                 }),
                 byte
@@ -1622,7 +1626,7 @@ mod tests {
             assert_eq!(
                 ShredType::from(ShredVariant::MerkleCode {
                     proof_size,
-                    chained,
+                    chained: true,
                     resigned,
                 }),
                 ShredType::Code
@@ -1631,13 +1635,13 @@ mod tests {
                 ShredVariant::try_from(byte).unwrap(),
                 ShredVariant::MerkleCode {
                     proof_size,
-                    chained,
+                    chained: true,
                     resigned,
                 },
             );
             let buf = bincode::serialize(&ShredVariant::MerkleCode {
                 proof_size,
-                chained,
+                chained: true,
                 resigned,
             })
             .unwrap();
@@ -1646,23 +1650,22 @@ mod tests {
                 bincode::deserialize::<ShredVariant>(&[byte]).unwrap(),
                 ShredVariant::MerkleCode {
                     proof_size,
-                    chained,
+                    chained: true,
                     resigned,
                 }
             );
         }
     }
 
-    #[test_case(false, false, 0b1000_0000)]
-    #[test_case(true, false, 0b1001_0000)]
-    #[test_case(true, true, 0b1011_0000)]
-    fn test_shred_variant_compat_merkle_data(chained: bool, resigned: bool, byte: u8) {
+    #[test_case(false, 0b1001_0000)]
+    #[test_case(true, 0b1011_0000)]
+    fn test_shred_variant_compat_merkle_data(resigned: bool, byte: u8) {
         for proof_size in 0..=15u8 {
             let byte = byte | proof_size;
             assert_eq!(
                 u8::from(ShredVariant::MerkleData {
                     proof_size,
-                    chained,
+                    chained: true,
                     resigned,
                 }),
                 byte
@@ -1670,7 +1673,7 @@ mod tests {
             assert_eq!(
                 ShredType::from(ShredVariant::MerkleData {
                     proof_size,
-                    chained,
+                    chained: true,
                     resigned,
                 }),
                 ShredType::Data
@@ -1679,13 +1682,13 @@ mod tests {
                 ShredVariant::try_from(byte).unwrap(),
                 ShredVariant::MerkleData {
                     proof_size,
-                    chained,
+                    chained: true,
                     resigned
                 }
             );
             let buf = bincode::serialize(&ShredVariant::MerkleData {
                 proof_size,
-                chained,
+                chained: true,
                 resigned,
             })
             .unwrap();
@@ -1694,7 +1697,7 @@ mod tests {
                 bincode::deserialize::<ShredVariant>(&[byte]).unwrap(),
                 ShredVariant::MerkleData {
                     proof_size,
-                    chained,
+                    chained: true,
                     resigned
                 }
             );
@@ -1800,7 +1803,7 @@ mod tests {
                 &keypair,
                 &data,
                 false,
-                Some(Hash::default()),
+                Hash::default(),
                 64,
                 64,
                 &reed_solomon_cache,
@@ -1930,15 +1933,12 @@ mod tests {
         assert!(flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
     }
 
-    #[test_matrix(
-        [true, false],
-        [true, false]
-    )]
-    fn test_is_shred_duplicate(chained: bool, is_last_in_slot: bool) {
+    #[test_case(true)]
+    #[test_case(false)]
+    fn test_is_shred_duplicate(is_last_in_slot: bool) {
         fn fill_retransmitter_signature<R: Rng>(
             rng: &mut R,
             shred: Shred,
-            chained: bool,
             is_last_in_slot: bool,
         ) -> Shred {
             let mut shred = shred.into_payload();
@@ -1948,26 +1948,26 @@ mod tests {
                 &mut shred.as_mut(),
                 &Signature::from(signature),
             );
-            if chained && is_last_in_slot {
+            if is_last_in_slot {
                 assert_matches!(out, Ok(()));
             } else {
                 assert_matches!(out, Err(Error::InvalidShredVariant));
             }
             Shred::new_from_serialized_shred(shred).unwrap()
         }
+
         let mut rng = rand::thread_rng();
         let slot = 285_376_049 + rng.gen_range(0..100_000);
         let shreds: Vec<_> = make_merkle_shreds_for_tests(
             &mut rng,
             slot,
             1200 * 5, // data_size
-            chained,
             is_last_in_slot,
         )
         .unwrap()
         .into_iter()
         .map(Shred::from)
-        .map(|shred| fill_retransmitter_signature(&mut rng, shred, chained, is_last_in_slot))
+        .map(|shred| fill_retransmitter_signature(&mut rng, shred, is_last_in_slot))
         .collect();
         {
             let num_data_shreds = shreds.iter().filter(|shred| shred.is_data()).count();
@@ -1984,9 +1984,8 @@ mod tests {
         }
         // Different retransmitter signature does not make shreds duplicate.
         for shred in &shreds {
-            let other =
-                fill_retransmitter_signature(&mut rng, shred.clone(), chained, is_last_in_slot);
-            if chained && is_last_in_slot {
+            let other = fill_retransmitter_signature(&mut rng, shred.clone(), is_last_in_slot);
+            if is_last_in_slot {
                 assert_ne!(shred.payload(), other.payload());
             }
             assert!(!shred.is_shred_duplicate(&other));

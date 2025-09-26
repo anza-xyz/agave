@@ -658,7 +658,11 @@ pub(crate) mod tests {
             bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
-                ProgramCacheEntry::default(),
+                ProgramCacheEntry::new_builtin(
+                    0,
+                    builtin_name.len(),
+                    |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                ),
             );
             account
         };
@@ -794,7 +798,11 @@ pub(crate) mod tests {
             bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
-                ProgramCacheEntry::default(),
+                ProgramCacheEntry::new_builtin(
+                    0,
+                    builtin_name.len(),
+                    |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                ),
             );
             account
         };
@@ -844,7 +852,11 @@ pub(crate) mod tests {
             bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
-                ProgramCacheEntry::default(),
+                ProgramCacheEntry::new_builtin(
+                    0,
+                    builtin_name.len(),
+                    |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                ),
             );
             account
         };
@@ -894,7 +906,11 @@ pub(crate) mod tests {
             bank.add_builtin(
                 builtin_id,
                 builtin_name.as_str(),
-                ProgramCacheEntry::default(),
+                ProgramCacheEntry::new_builtin(
+                    0,
+                    builtin_name.len(),
+                    |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+                ),
             );
             account
         };

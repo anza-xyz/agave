@@ -106,6 +106,7 @@ impl FeatureSet {
                 .is_active(&move_precompile_verification_to_svm::id()),
             stricter_abi_and_runtime_constraints: self
                 .is_active(&stricter_abi_and_runtime_constraints::id()),
+            account_data_direct_mapping: self.is_active(&account_data_direct_mapping::id()),
             enable_bpf_loader_set_authority_checked_ix: self
                 .is_active(&enable_bpf_loader_set_authority_checked_ix::id()),
             enable_loader_v4: self.is_active(&enable_loader_v4::id()),
@@ -754,6 +755,10 @@ pub mod apply_cost_tracker_during_replay {
 
 pub mod stricter_abi_and_runtime_constraints {
     solana_pubkey::declare_id!("CxeBn9PVeeXbmjbNwLv6U4C6svNxnC4JX6mfkvgeMocM");
+}
+
+pub mod account_data_direct_mapping {
+    solana_pubkey::declare_id!("9s3RKimHWS44rJcJ9P1rwCmn2TvMqtZQBmz815ZUUHqJ");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
@@ -1705,6 +1710,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             stricter_abi_and_runtime_constraints::id(),
             "SIMD-0219: Stricter ABI and Runtime Constraints",
+        ),
+        (
+            account_data_direct_mapping::id(),
+            "enable account data direct mapping",
         ),
         (
             last_restart_slot_sysvar::id(),
