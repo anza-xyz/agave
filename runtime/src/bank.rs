@@ -3902,7 +3902,10 @@ impl Bank {
     ) {
         self.update_bank_hash_stats(&accounts);
 
-        // updating the accounts lt hash *must* be done before storing the accounts
+        // Updating the accounts lt hash *must* be done before storing the accounts.
+        // Otherwise, when loading the old account versions, we end up finding the
+        // *new* account versions that we just stored!  This would result in mixing
+        // out the wrong values, leading to an incorrect accounts lt hash.
         self.update_accounts_lt_hash(&accounts);
 
         match caller {
