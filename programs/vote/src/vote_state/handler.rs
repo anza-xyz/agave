@@ -231,6 +231,20 @@ pub trait VoteStateHandle {
             self.epoch_credits().last().unwrap().1
         }
     }
+
+    #[cfg(test)]
+    fn nth_recent_lockout(&self, position: usize) -> Option<&Lockout> {
+        if position < self.votes().len() {
+            let pos = self
+                .votes()
+                .len()
+                .checked_sub(position)
+                .and_then(|pos| pos.checked_sub(1))?;
+            self.votes().get(pos).map(|vote| &vote.lockout)
+        } else {
+            None
+        }
+    }
 }
 
 impl VoteStateHandle for VoteStateV3 {
@@ -582,13 +596,11 @@ impl VoteStateHandle for VoteStateV4 {
 }
 
 /// Default block revenue commission rate in basis points (100%) per SIMD-0185.
-#[cfg(test)] // Test-only for now, until later commits.
 const DEFAULT_BLOCK_REVENUE_COMMISSION_BPS: u16 = 10_000;
 
 /// Create a new VoteStateV4 from `VoteInit` with proper SIMD-0185 defaults.
 /// Note this is a temporary substitute for `VoteStateV4::new`.
 #[allow(clippy::arithmetic_side_effects)]
-#[cfg(test)] // Test-only for now, until later commits.
 pub(crate) fn create_new_vote_state_v4(
     vote_pubkey: &Pubkey,
     vote_init: &VoteInit,
@@ -626,14 +638,17 @@ pub(crate) fn create_new_vote_state_v4_for_tests(
 }
 
 /// The target version to convert all deserialized vote state into.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VoteStateTargetVersion {
     V3,
+    V4,
     // New vote state versions will be added here...
 }
 
 #[derive(Clone, Debug, PartialEq)]
 enum TargetVoteState {
     V3(VoteStateV3),
+    V4(VoteStateV4),
     // New vote state versions will be added here...
 }
 
@@ -651,24 +666,28 @@ impl VoteStateHandle for VoteStateHandler {
     fn is_uninitialized(&self) -> bool {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.is_uninitialized(),
+            TargetVoteState::V4(v4) => v4.is_uninitialized(),
         }
     }
 
     fn authorized_withdrawer(&self) -> &Pubkey {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.authorized_withdrawer(),
+            TargetVoteState::V4(v4) => v4.authorized_withdrawer(),
         }
     }
 
     fn set_authorized_withdrawer(&mut self, authorized_withdrawer: Pubkey) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_authorized_withdrawer(authorized_withdrawer),
+            TargetVoteState::V4(v4) => v4.set_authorized_withdrawer(authorized_withdrawer),
         }
     }
 
     fn authorized_voters(&self) -> &AuthorizedVoters {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.authorized_voters(),
+            TargetVoteState::V4(v4) => v4.authorized_voters(),
         }
     }
 
@@ -686,6 +705,9 @@ impl VoteStateHandle for VoteStateHandler {
             TargetVoteState::V3(v3) => {
                 v3.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
             }
+            TargetVoteState::V4(v4) => {
+                v4.set_new_authorized_voter(authorized_pubkey, current_epoch, target_epoch, verify)
+            }
         }
     }
 
@@ -695,108 +717,126 @@ impl VoteStateHandle for VoteStateHandler {
     ) -> Result<Pubkey, InstructionError> {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.get_and_update_authorized_voter(current_epoch),
+            TargetVoteState::V4(v4) => v4.get_and_update_authorized_voter(current_epoch),
         }
     }
 
     fn commission(&self) -> u8 {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.commission(),
+            TargetVoteState::V4(v4) => v4.commission(),
         }
     }
 
     fn set_commission(&mut self, commission: u8) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_commission(commission),
+            TargetVoteState::V4(v4) => v4.set_commission(commission),
         }
     }
 
     fn node_pubkey(&self) -> &Pubkey {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.node_pubkey(),
+            TargetVoteState::V4(v4) => v4.node_pubkey(),
         }
     }
 
     fn set_node_pubkey(&mut self, node_pubkey: Pubkey) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_node_pubkey(node_pubkey),
+            TargetVoteState::V4(v4) => v4.set_node_pubkey(node_pubkey),
         }
     }
 
     fn votes(&self) -> &VecDeque<LandedVote> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.votes(),
+            TargetVoteState::V4(v4) => v4.votes(),
         }
     }
 
     fn votes_mut(&mut self) -> &mut VecDeque<LandedVote> {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.votes_mut(),
+            TargetVoteState::V4(v4) => v4.votes_mut(),
         }
     }
 
     fn set_votes(&mut self, votes: VecDeque<LandedVote>) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_votes(votes),
+            TargetVoteState::V4(v4) => v4.set_votes(votes),
         }
     }
 
     fn contains_slot(&self, candidate_slot: Slot) -> bool {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.contains_slot(candidate_slot),
+            TargetVoteState::V4(v4) => v4.contains_slot(candidate_slot),
         }
     }
 
     fn last_lockout(&self) -> Option<&Lockout> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.last_lockout(),
+            TargetVoteState::V4(v4) => v4.last_lockout(),
         }
     }
 
     fn last_voted_slot(&self) -> Option<Slot> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.last_voted_slot(),
+            TargetVoteState::V4(v4) => v4.last_voted_slot(),
         }
     }
 
     fn root_slot(&self) -> Option<Slot> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.root_slot(),
+            TargetVoteState::V4(v4) => v4.root_slot(),
         }
     }
 
     fn set_root_slot(&mut self, root_slot: Option<Slot>) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_root_slot(root_slot),
+            TargetVoteState::V4(v4) => v4.set_root_slot(root_slot),
         }
     }
 
     fn current_epoch(&self) -> Epoch {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.current_epoch(),
+            TargetVoteState::V4(v4) => v4.current_epoch(),
         }
     }
 
     fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.epoch_credits(),
+            TargetVoteState::V4(v4) => v4.epoch_credits(),
         }
     }
 
     fn epoch_credits_mut(&mut self) -> &mut Vec<(Epoch, u64, u64)> {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.epoch_credits_mut(),
+            TargetVoteState::V4(v4) => v4.epoch_credits_mut(),
         }
     }
 
     fn last_timestamp(&self) -> &BlockTimestamp {
         match &self.target_state {
             TargetVoteState::V3(v3) => v3.last_timestamp(),
+            TargetVoteState::V4(v4) => v4.last_timestamp(),
         }
     }
 
     fn set_last_timestamp(&mut self, timestamp: BlockTimestamp) {
         match &mut self.target_state {
             TargetVoteState::V3(v3) => v3.set_last_timestamp(timestamp),
+            TargetVoteState::V4(v4) => v4.set_last_timestamp(timestamp),
         }
     }
 
@@ -806,6 +846,7 @@ impl VoteStateHandle for VoteStateHandler {
     ) -> Result<(), InstructionError> {
         match self.target_state {
             TargetVoteState::V3(v3) => v3.set_vote_account_state(vote_account),
+            TargetVoteState::V4(v4) => v4.set_vote_account_state(vote_account),
         }
     }
 }
@@ -822,6 +863,17 @@ impl VoteStateHandler {
                 let vote_state = VoteStateV3::deserialize(vote_account.get_data())?;
                 TargetVoteState::V3(vote_state)
             }
+            VoteStateTargetVersion::V4 => {
+                // Once `VoteStateV4` is active, `VoteState0_23_5` will be
+                // considered uninitialized. Fail here early if we detect an
+                // enum variant discriminator of 0.
+                let data = vote_account.get_data();
+                if data.first().is_some_and(|b| *b == 0) {
+                    return Err(InstructionError::UninitializedAccount);
+                }
+                let vote_state = VoteStateV4::deserialize(data, vote_account.get_key())?;
+                TargetVoteState::V4(vote_state)
+            }
         };
         Ok(Self { target_state })
     }
@@ -836,6 +888,10 @@ impl VoteStateHandler {
             VoteStateTargetVersion::V3 => {
                 VoteStateV3::new(vote_init, clock).set_vote_account_state(vote_account)
             }
+            VoteStateTargetVersion::V4 => {
+                let vote_state = create_new_vote_state_v4(vote_account.get_key(), vote_init, clock);
+                vote_state.set_vote_account_state(vote_account)
+            }
         }
     }
 
@@ -847,6 +903,9 @@ impl VoteStateHandler {
             VoteStateTargetVersion::V3 => {
                 VoteStateV3::default().set_vote_account_state(vote_account)
             }
+            VoteStateTargetVersion::V4 => {
+                VoteStateV4::default().set_vote_account_state(vote_account)
+            }
         }
     }
 
@@ -857,6 +916,7 @@ impl VoteStateHandler {
         let length = vote_account.get_data().len();
         let expected = match target_version {
             VoteStateTargetVersion::V3 => VoteStateV3::size_of(),
+            VoteStateTargetVersion::V4 => VoteStateV4::size_of(),
         };
         if length != expected {
             Err(InstructionError::InvalidAccountData)
@@ -873,33 +933,20 @@ impl VoteStateHandler {
     }
 
     #[cfg(test)]
+    pub fn new_v4(vote_state: VoteStateV4) -> Self {
+        Self {
+            target_state: TargetVoteState::V4(vote_state),
+        }
+    }
+
+    #[cfg(test)]
     pub fn default_v3() -> Self {
         Self::new_v3(VoteStateV3::default())
     }
 
     #[cfg(test)]
-    pub fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => &v3.epoch_credits,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn nth_recent_lockout(&self, position: usize) -> Option<&Lockout> {
-        match &self.target_state {
-            TargetVoteState::V3(v3) => {
-                if position < v3.votes.len() {
-                    let pos = v3
-                        .votes
-                        .len()
-                        .checked_sub(position)
-                        .and_then(|pos| pos.checked_sub(1))?;
-                    v3.votes.get(pos).map(|vote| &vote.lockout)
-                } else {
-                    None
-                }
-            }
-        }
+    pub fn default_v4() -> Self {
+        Self::new_v4(VoteStateV4::default())
     }
 }
 
@@ -1542,6 +1589,68 @@ mod tests {
         }
     }
 
+    fn init_vote_account_state_v4_and_assert(
+        vote_pubkey: Pubkey,
+        vote_account: AccountSharedData,
+        vote_init: &VoteInit,
+        clock: &Clock,
+        rent: Rent,
+        expected_result: Result<(), InstructionError>,
+    ) {
+        let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent);
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let mut vote_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        // Initialize.
+        let result = VoteStateHandler::init_vote_account_state(
+            &mut vote_account,
+            vote_init,
+            clock,
+            VoteStateTargetVersion::V4,
+        );
+        assert_eq!(result, expected_result);
+
+        if result.is_ok() {
+            let vote_state_versions = vote_account.get_state::<VoteStateVersions>().unwrap();
+            assert!(matches!(vote_state_versions, VoteStateVersions::V4(_)));
+            assert!(!vote_state_versions.is_uninitialized());
+
+            // Verify fields.
+            if let VoteStateVersions::V4(v4) = vote_state_versions {
+                assert_eq!(v4.node_pubkey, vote_init.node_pubkey);
+                assert_eq!(
+                    v4.authorized_voters.get_authorized_voter(0),
+                    Some(vote_init.authorized_voter)
+                );
+                assert_eq!(v4.authorized_withdrawer, vote_init.authorized_withdrawer);
+                assert_eq!(
+                    v4.inflation_rewards_commission_bps,
+                    (vote_init.commission as u16) * 100
+                );
+
+                // SIMD-0185 fields
+                assert_eq!(v4.inflation_rewards_collector, vote_pubkey);
+                assert_eq!(v4.block_revenue_collector, vote_init.node_pubkey);
+                assert_eq!(
+                    v4.block_revenue_commission_bps,
+                    DEFAULT_BLOCK_REVENUE_COMMISSION_BPS
+                );
+
+                // Fields that should be default
+                assert_eq!(v4.pending_delegator_rewards, 0);
+                assert_eq!(v4.bls_pubkey_compressed, None);
+                assert!(v4.votes.is_empty());
+                assert_eq!(v4.root_slot, None);
+                assert!(v4.epoch_credits.is_empty());
+                assert_eq!(v4.last_timestamp, BlockTimestamp::default());
+            } else {
+                panic!("should be v4");
+            }
+        }
+    }
+
     fn deinit_vote_account_state_v3_and_assert(
         vote_pubkey: Pubkey,
         vote_account: AccountSharedData,
@@ -1575,6 +1684,32 @@ mod tests {
                 assert!(matches!(vote_state_versions, VoteStateVersions::V3(_)));
                 assert!(vote_state_versions.is_uninitialized());
             }
+        }
+    }
+
+    fn deinit_vote_account_state_v4_and_assert(
+        vote_pubkey: Pubkey,
+        vote_account: AccountSharedData,
+        rent: Rent,
+        expected_result: Result<(), InstructionError>,
+    ) {
+        let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent.clone());
+        let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+        let mut vote_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        // Deinitialize.
+        let result = VoteStateHandler::deinitialize_vote_account_state(
+            &mut vote_account,
+            VoteStateTargetVersion::V4,
+        );
+        assert_eq!(result, expected_result);
+
+        if result.is_ok() {
+            let vote_state_versions = vote_account.get_state::<VoteStateVersions>().unwrap();
+            assert!(matches!(vote_state_versions, VoteStateVersions::V4(_)));
+            // v4 is always initialized
         }
     }
 
@@ -1637,6 +1772,64 @@ mod tests {
     }
 
     #[test]
+    fn test_init_vote_account_state_v4() {
+        let vote_pubkey = Pubkey::new_unique();
+        let vote_init = VoteInit {
+            node_pubkey: Pubkey::new_unique(),
+            authorized_voter: Pubkey::new_unique(),
+            authorized_withdrawer: Pubkey::new_unique(),
+            commission: 5,
+        };
+        let clock = Clock::default();
+        let rent = Rent::default();
+
+        // First create a vote account that's too small for v4.
+        let v1_14_11_size = VoteState1_14_11::size_of();
+        let lamports = rent.minimum_balance(v1_14_11_size);
+        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+
+        // Initialize - should fail.
+        init_vote_account_state_v4_and_assert(
+            vote_pubkey,
+            vote_account,
+            &vote_init,
+            &clock,
+            rent.clone(),
+            Err(InstructionError::AccountNotRentExempt),
+        );
+
+        // Create a vote account that's too small for v4, but has enough
+        // lamports for resize.
+        let v4_size = VoteStateV4::size_of();
+        let lamports = rent.minimum_balance(v4_size);
+        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+
+        // Initialize - should resize and create v4.
+        init_vote_account_state_v4_and_assert(
+            vote_pubkey,
+            vote_account,
+            &vote_init,
+            &clock,
+            rent.clone(),
+            Ok(()),
+        );
+
+        // Now create a vote account that's large enough for v4.
+        let lamports = rent.minimum_balance(v4_size);
+        let vote_account = AccountSharedData::new(lamports, v4_size, &id());
+
+        // Initialize - should create v4.
+        init_vote_account_state_v4_and_assert(
+            vote_pubkey,
+            vote_account,
+            &vote_init,
+            &clock,
+            rent,
+            Ok(()),
+        );
+    }
+
+    #[test]
     fn test_deinitialize_vote_account_state_v3() {
         let vote_pubkey = Pubkey::new_unique();
         let rent = Rent::default();
@@ -1679,5 +1872,40 @@ mod tests {
             rent,
             ExpectedVoteStateVersion::V3,
         );
+    }
+
+    #[test]
+    fn test_deinitialize_vote_account_state_v4() {
+        let vote_pubkey = Pubkey::new_unique();
+        let rent = Rent::default();
+
+        // First create a vote account that's too small for v4.
+        let v1_14_11_size = VoteState1_14_11::size_of();
+        let lamports = rent.minimum_balance(v1_14_11_size);
+        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+
+        // Deinitialize - should fail.
+        deinit_vote_account_state_v4_and_assert(
+            vote_pubkey,
+            vote_account,
+            rent.clone(),
+            Err(InstructionError::AccountNotRentExempt),
+        );
+
+        // Create a vote account that's too small for v4, but has enough
+        // lamports for resize.
+        let v4_size = VoteStateV4::size_of();
+        let lamports = rent.minimum_balance(v4_size);
+        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+
+        // Deinitialize - should resize and create v4.
+        deinit_vote_account_state_v4_and_assert(vote_pubkey, vote_account, rent.clone(), Ok(()));
+
+        // Now create a vote account that's large enough for v4.
+        let lamports = rent.minimum_balance(v4_size);
+        let vote_account = AccountSharedData::new(lamports, v4_size, &id());
+
+        // Deinitialize - should create v4.
+        deinit_vote_account_state_v4_and_assert(vote_pubkey, vote_account, rent, Ok(()));
     }
 }
