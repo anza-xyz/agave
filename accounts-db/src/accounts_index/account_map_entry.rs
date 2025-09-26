@@ -21,7 +21,7 @@ pub struct AccountMapEntry<T> {
     /// list of slots in which this pubkey was updated
     /// Note that 'clean' removes outdated entries (ie. older roots) from this slot_list
     /// purge_slot() also removes non-rooted slots from this list
-    slot_list: RwLock<SlotList<T>>,
+    slot_list: RwLock<SlotListRepr<T>>,
     /// synchronization metadata for in-memory state since last flush to disk accounts index
     pub meta: AccountMapEntryMeta,
 }
@@ -109,7 +109,15 @@ impl<T: IndexValue> AccountMapEntry<T> {
     }
 
     pub fn slot_list_len(&self) -> usize {
-        self.slot_list.read().unwrap().len()
+        if !self.meta.is_regular.load(Ordering::Acquire) {
+            let slot_list_repr = self.slot_list.read().unwrap();
+            if !self.meta.is_regular.load(Ordering::Acquire) {
+                // Safety: `is_regular` confirmed to be false while holding the lock
+                return unsafe { slot_list_repr.list }.len();
+            }
+        }
+        // regular entry
+        1
     }
 
     pub fn slot_list(&self) -> RwLockReadGuard<SlotList<T>> {
@@ -121,6 +129,13 @@ impl<T: IndexValue> AccountMapEntry<T> {
     }
 }
 
+union SlotListRepr<T> {
+    /// This variant is used when entry's metadata `is_regular` loads as `true` while holding the lock
+    singleton: (Slot, T),
+    /// Slot list with potentially different number of elements than 1, used when `is_regular` loads as `false`
+    list: Box<Vec<(Slot, T)>>,
+}
+
 /// data per entry in in-mem accounts index
 /// used to keep track of consistency with disk index
 #[derive(Debug, Default)]
@@ -129,6 +144,11 @@ pub struct AccountMapEntryMeta {
     pub dirty: AtomicBool,
     /// 'age' at which this entry should be purged from the cache (implements lru)
     pub age: AtomicAge,
+    /// Marker for intepreting `SlotListRepr` as either a singleton or a list.
+    ///
+    /// It is updated when write access to the slot list is released and the entry kind
+    /// (regular vs irregular) changes.
+    is_regular: AtomicBool,
 }
 
 impl AccountMapEntryMeta {
@@ -139,6 +159,7 @@ impl AccountMapEntryMeta {
         AccountMapEntryMeta {
             dirty: AtomicBool::new(true),
             age: AtomicAge::new(storage.future_age_to_flush(is_cached)),
+            is_regular: false,
         }
     }
     pub fn new_clean<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(
@@ -147,6 +168,7 @@ impl AccountMapEntryMeta {
         AccountMapEntryMeta {
             dirty: AtomicBool::new(false),
             age: AtomicAge::new(storage.future_age_to_flush(false)),
+            is_regular: true,
         }
     }
 }
