@@ -96,7 +96,8 @@ mod tests {
     fn test_should_track_transaction() {
         let mut sig = [0x0; SIGNATURE_BYTES];
         let track = should_track_transaction(&sig);
-        assert!(!track);
+        // TXN_MASK is random and track will evaluate to true if it hits exactly the 0x0 signature
+        assert_eq!(track, *TXN_MASK == 0);
 
         // Intentionally matching the randomly generated mask
         // The lower four bits are ignored as only 12 highest bits from
