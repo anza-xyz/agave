@@ -36,7 +36,11 @@ pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
 
 pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
 
-pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 500;
+/// The maximum number of connections that can be opened for unstaked peers.
+pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 2000;
+
+/// The maximum number of connections that can be opened for unstaked peers.
+pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS_PER_IPADDR: usize = 4;
 
 /// Limit to 500K PPS
 pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 500;
@@ -622,6 +626,7 @@ pub fn spawn_server_multi(
 #[derive(Clone)]
 pub struct QuicServerParams {
     pub max_connections_per_peer: usize,
+    pub max_unstaked_connections_per_ipaddr: usize,
     pub max_staked_connections: usize,
     pub max_unstaked_connections: usize,
     pub max_streams_per_ms: u64,
@@ -637,6 +642,7 @@ impl Default for QuicServerParams {
         QuicServerParams {
             max_connections_per_peer: 1,
             max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
+            max_unstaked_connections_per_ipaddr: DEFAULT_MAX_UNSTAKED_CONNECTIONS_PER_IPADDR,
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
@@ -658,6 +664,7 @@ impl QuicServerParams {
         Self {
             coalesce_channel_size: 100_000,
             num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
+            max_unstaked_connections_per_ipaddr: 1,
             ..Self::default()
         }
     }
@@ -841,6 +848,7 @@ mod test {
             staked_nodes,
             QuicServerParams {
                 max_connections_per_peer: 2,
+                max_unstaked_connections_per_ipaddr: 2,
                 ..QuicServerParams::default_for_tests()
             },
             cancel.clone(),
