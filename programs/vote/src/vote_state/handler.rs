@@ -946,7 +946,7 @@ impl VoteStateHandler {
     }
 
     #[cfg(test)]
-    pub fn unwrap_v4(&self) -> &VoteStateV4 {
+    pub fn as_ref_v4(&self) -> &VoteStateV4 {
         match &self.target_state {
             TargetVoteState::V4(v4) => v4,
             _ => panic!("not a v4"),
@@ -1927,12 +1927,13 @@ mod tests {
             (50, 5_000),
             (75, 7_500),
             (100, 10_000),
+            (255, 25_500),
         ] {
             handler.set_commission(input);
             assert_eq!(handler.commission(), input);
 
             // Verify the internal V4 state has the correct basis points.
-            let vote_state_v4 = handler.unwrap_v4();
+            let vote_state_v4 = handler.as_ref_v4();
             assert_eq!(vote_state_v4.inflation_rewards_commission_bps, expected);
         }
     }
@@ -1987,7 +1988,7 @@ mod tests {
             )
             .unwrap();
 
-            handler.unwrap_v4().clone()
+            handler.as_ref_v4().clone()
         };
 
         // V0_23_5
