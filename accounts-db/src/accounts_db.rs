@@ -1241,7 +1241,7 @@ pub struct AccountsDb {
     /// Set of stores which are recently rooted or had accounts removed
     /// such that potentially a 0-lamport account update could be present which
     /// means we can remove the account from the index entirely.
-    dirty_stores: DashMap<Slot, Arc<AccountStorageEntry>, BuildNoHashHasher<Slot>>,
+    dirty_stores: Mutex<HashMap<Slot, Arc<AccountStorageEntry>, BuildNoHashHasher<Slot>>>,
 
     /// Zero-lamport accounts that are *not* purged during clean because they need to stay alive
     /// for incremental snapshot support.
@@ -1443,7 +1443,7 @@ impl AccountsDb {
             load_limit: AtomicU64::default(),
             is_bank_drop_callback_enabled: AtomicBool::default(),
             remove_unrooted_slots_synchronization: RemoveUnrootedSlotsSynchronization::default(),
-            dirty_stores: DashMap::default(),
+            dirty_stores: Mutex::default(),
             zero_lamport_accounts_to_purge_after_full_snapshot: DashSet::default(),
             log_dead_slots: AtomicBool::new(true),
             accounts_file_provider: AccountsFileProvider::default(),
@@ -1835,11 +1835,11 @@ impl AccountsDb {
         let mut dirty_store_processing_time = Measure::start("dirty_store_processing");
         let max_root_inclusive = self.accounts_index.max_root_inclusive();
         let max_slot_inclusive = max_clean_root_inclusive.unwrap_or(max_root_inclusive);
-        let mut dirty_stores = Vec::with_capacity(self.dirty_stores.len());
+        let mut dirty_stores = Vec::with_capacity(self.dirty_stores.lock().unwrap().len());
         // find the oldest dirty slot
         // we'll add logging if that append vec cannot be marked dead
         let mut min_dirty_slot = None::<u64>;
-        self.dirty_stores.retain(|slot, store| {
+        self.dirty_stores.lock().unwrap().retain(|slot, store| {
             if *slot > max_slot_inclusive {
                 true
             } else {
@@ -3165,7 +3165,11 @@ impl AccountsDb {
 
                 if store.num_zero_lamport_single_ref_accounts() == store.count() {
                     // all accounts in this storage can be dead
-                    self.dirty_stores.entry(slot).or_insert(store);
+                    self.dirty_stores
+                        .lock()
+                        .unwrap()
+                        .entry(slot)
+                        .or_insert(store);
                     self.shrink_stats
                         .num_dead_slots_added_to_clean
                         .fetch_add(1, Ordering::Relaxed);
@@ -3223,7 +3227,10 @@ impl AccountsDb {
         {
             if shrink_collect.alive_total_bytes == 0 {
                 // clean needs to take care of this dead slot
-                self.dirty_stores.insert(slot, store.clone());
+                self.dirty_stores
+                    .lock()
+                    .unwrap()
+                    .insert(slot, store.clone());
             }
 
             if !shrink_collect.all_are_zero_lamports {
@@ -3346,7 +3353,10 @@ impl AccountsDb {
 
         let mut not_retaining_store = |store: &Arc<AccountStorageEntry>| {
             if add_dirty_stores {
-                self.dirty_stores.insert(slot, store.clone());
+                self.dirty_stores
+                    .lock()
+                    .unwrap()
+                    .insert(slot, store.clone());
             }
             dead_storages.push(store.clone());
         };
@@ -3706,7 +3716,7 @@ impl AccountsDb {
         // As long as we don't mark anything as dead at slots > latest_full_snapshot_slot, then shrink will have nothing to do for
         // slots > latest_full_snapshot_slot.
         let maybe_clean = || {
-            if self.dirty_stores.len() > DIRTY_STORES_CLEANING_THRESHOLD {
+            if self.dirty_stores.lock().unwrap().len() > DIRTY_STORES_CLEANING_THRESHOLD {
                 let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
                 self.clean_accounts(latest_full_snapshot_slot, is_startup, epoch_schedule);
             }
@@ -5637,7 +5647,7 @@ impl AccountsDb {
                 // This may be different from the check above as this
                 // can be multithreaded
                 if remaining_accounts == 0 {
-                    self.dirty_stores.insert(*slot, store);
+                    self.dirty_stores.lock().unwrap().insert(*slot, store);
                     dead_slots.insert(*slot);
                 } else if Self::is_shrinking_productive(&store)
                     && self.is_candidate_for_shrink(&store)
@@ -6845,7 +6855,7 @@ impl AccountsDb {
             total_accum.all_zeros_slots.len()
         );
         for (slot, storage) in total_accum.all_zeros_slots {
-            self.dirty_stores.insert(slot, storage);
+            self.dirty_stores.lock().unwrap().insert(slot, storage);
         }
 
         // Need to add these last, otherwise older updates will be cleaned
@@ -7006,7 +7016,11 @@ impl AccountsDb {
                 count += store.batch_insert_zero_lamport_single_ref_account_offsets(&offsets);
                 if store.num_zero_lamport_single_ref_accounts() == store.count() {
                     // all accounts in this storage can be dead
-                    self.dirty_stores.entry(slot).or_insert(store);
+                    self.dirty_stores
+                        .lock()
+                        .unwrap()
+                        .entry(slot)
+                        .or_insert(store);
                     dead_stores += 1;
                 } else if Self::is_shrinking_productive(&store)
                     && self.is_candidate_for_shrink(&store)
