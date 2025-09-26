@@ -20,6 +20,7 @@ use {
     serde::Serialize,
     serde_json::Value,
     solana_account::{Account, ReadableAccount},
+    solana_account_decoder::UiAccount,
     solana_account_decoder_client_types::token::{UiTokenAccount, UiTokenAmount},
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_commitment_config::CommitmentConfig,
@@ -3020,13 +3021,26 @@ impl RpcClient {
         )
     }
 
+    #[deprecated(
+        note = "Use `get_ui_account_with_config()` instead. This function will be removed in a \
+                future version of `solana_rpc_client`."
+    )]
+    pub fn get_account_with_config(
+        &self,
+        pubkey: &Pubkey,
+        config: RpcAccountInfoConfig,
+    ) -> RpcResult<Option<Account>> {
+        #[allow(deprecated)]
+        self.invoke((self.rpc_client.as_ref()).get_account_with_config(pubkey, config))
+    }
+
     /// Returns all information associated with the account of the provided pubkey.
     ///
     /// If the account does not exist, this method returns `Ok(None)`.
     ///
-    /// To get multiple accounts at once, use the [`get_multiple_accounts_with_config`] method.
+    /// To get multiple accounts at once, use the [`get_multiple_ui_accounts_with_config`] method.
     ///
-    /// [`get_multiple_accounts_with_config`]: RpcClient::get_multiple_accounts_with_config
+    /// [`get_multiple_ui_accounts_with_config`]: RpcClient::get_multiple_ui_accounts_with_config
     ///
     /// # RPC Reference
     ///
@@ -3057,19 +3071,19 @@ impl RpcClient {
     ///     commitment: Some(commitment_config),
     ///     .. RpcAccountInfoConfig::default()
     /// };
-    /// let account = rpc_client.get_account_with_config(
+    /// let ui_account = rpc_client.get_ui_account_with_config(
     ///     &alice_pubkey,
     ///     config,
     /// )?;
-    /// assert!(account.value.is_some());
+    /// assert!(ui_account.value.is_some());
     /// # Ok::<(), Error>(())
     /// ```
-    pub fn get_account_with_config(
+    pub fn get_ui_account_with_config(
         &self,
         pubkey: &Pubkey,
         config: RpcAccountInfoConfig,
-    ) -> RpcResult<Option<Account>> {
-        self.invoke((self.rpc_client.as_ref()).get_account_with_config(pubkey, config))
+    ) -> RpcResult<Option<UiAccount>> {
+        self.invoke((self.rpc_client.as_ref()).get_ui_account_with_config(pubkey, config))
     }
 
     /// Get the max slot seen from retransmit stage.
@@ -3182,6 +3196,19 @@ impl RpcClient {
         )
     }
 
+    #[deprecated(
+        note = "Use `get_multiple_ui_accounts_with_config()` instead. This function will be \
+                removed in a future version of `solana_rpc_client`."
+    )]
+    pub fn get_multiple_accounts_with_config(
+        &self,
+        pubkeys: &[Pubkey],
+        config: RpcAccountInfoConfig,
+    ) -> RpcResult<Vec<Option<Account>>> {
+        #[allow(deprecated)]
+        self.invoke((self.rpc_client.as_ref()).get_multiple_accounts_with_config(pubkeys, config))
+    }
+
     /// Returns the account information for a list of pubkeys.
     ///
     /// # RPC Reference
@@ -3212,18 +3239,20 @@ impl RpcClient {
     ///     commitment: Some(commitment_config),
     ///     .. RpcAccountInfoConfig::default()
     /// };
-    /// let accounts = rpc_client.get_multiple_accounts_with_config(
+    /// let ui_accounts = rpc_client.get_multiple_ui_accounts_with_config(
     ///     &pubkeys,
     ///     config,
     /// )?;
     /// # Ok::<(), Error>(())
     /// ```
-    pub fn get_multiple_accounts_with_config(
+    pub fn get_multiple_ui_accounts_with_config(
         &self,
         pubkeys: &[Pubkey],
         config: RpcAccountInfoConfig,
-    ) -> RpcResult<Vec<Option<Account>>> {
-        self.invoke((self.rpc_client.as_ref()).get_multiple_accounts_with_config(pubkeys, config))
+    ) -> RpcResult<Vec<Option<UiAccount>>> {
+        self.invoke(
+            (self.rpc_client.as_ref()).get_multiple_ui_accounts_with_config(pubkeys, config),
+        )
     }
 
     /// Gets the raw data associated with an account.
@@ -3374,6 +3403,19 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_program_accounts(pubkey))
     }
 
+    #[deprecated(
+        note = "Use `get_program_ui_accounts_with_config()` instead. This function will be \
+                removed in a future version of `solana_rpc_client`."
+    )]
+    pub fn get_program_accounts_with_config(
+        &self,
+        pubkey: &Pubkey,
+        config: RpcProgramAccountsConfig,
+    ) -> ClientResult<Vec<(Pubkey, Account)>> {
+        #[allow(deprecated)]
+        self.invoke((self.rpc_client.as_ref()).get_program_accounts_with_config(pubkey, config))
+    }
+
     /// Returns all accounts owned by the provided program pubkey.
     ///
     /// # RPC Reference
@@ -3422,18 +3464,18 @@ impl RpcClient {
     ///     with_context: Some(false),
     ///     sort_results: Some(true),
     /// };
-    /// let accounts = rpc_client.get_program_accounts_with_config(
+    /// let ui_accounts = rpc_client.get_program_ui_accounts_with_config(
     ///     &alice.pubkey(),
     ///     config,
     /// )?;
     /// # Ok::<(), Error>(())
     /// ```
-    pub fn get_program_accounts_with_config(
+    pub fn get_program_ui_accounts_with_config(
         &self,
         pubkey: &Pubkey,
         config: RpcProgramAccountsConfig,
-    ) -> ClientResult<Vec<(Pubkey, Account)>> {
-        self.invoke((self.rpc_client.as_ref()).get_program_accounts_with_config(pubkey, config))
+    ) -> ClientResult<Vec<(Pubkey, UiAccount)>> {
+        self.invoke((self.rpc_client.as_ref()).get_program_ui_accounts_with_config(pubkey, config))
     }
 
     /// Returns the stake minimum delegation, in lamports.
@@ -3812,7 +3854,7 @@ mod tests {
         jsonrpc_core::{futures::prelude::*, Error, IoHandler, Params},
         jsonrpc_http_server::{AccessControlAllowOrigin, DomainsValidation, ServerBuilder},
         serde_json::{json, Number},
-        solana_account_decoder::encode_ui_account,
+        solana_account_decoder::UiAccountData,
         solana_account_decoder_client_types::UiAccountEncoding,
         solana_hash::Hash,
         solana_instruction::error::InstructionError,
@@ -4042,19 +4084,20 @@ mod tests {
     }
 
     #[test]
-    fn test_get_program_accounts_with_config() {
+    fn test_get_program_ui_accounts_with_config() {
         let program_id = Pubkey::new_unique();
         let pubkey = Pubkey::new_unique();
-        let account = Account {
+        let account = UiAccount {
             lamports: 1_000_000,
-            data: vec![],
-            owner: program_id,
+            data: UiAccountData::Binary("".to_string(), UiAccountEncoding::Base64),
+            owner: program_id.to_string(),
             executable: false,
             rent_epoch: 0,
+            space: Some(0),
         };
         let keyed_account = RpcKeyedAccount {
+            account: account.clone(),
             pubkey: pubkey.to_string(),
-            account: encode_ui_account(&pubkey, &account, UiAccountEncoding::Base64, None, None),
         };
         let expected_result = vec![(pubkey, account.clone())];
         // Test: without context
@@ -4068,7 +4111,7 @@ mod tests {
             .collect();
             let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
             let result = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4103,7 +4146,7 @@ mod tests {
             .collect();
             let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
             let result = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4188,7 +4231,7 @@ mod tests {
 
             let rpc_client = RpcClient::new_mock_with_mocks_map("mock_client".to_string(), mocks);
             let mut result1 = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4207,7 +4250,7 @@ mod tests {
             assert_eq!(result1.len(), 1);
 
             let result2 = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4226,7 +4269,7 @@ mod tests {
             assert_eq!(result2.len(), 1);
 
             let result_3 = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
@@ -4245,7 +4288,7 @@ mod tests {
             assert_eq!(result_3.len(), 3);
 
             let result_4 = rpc_client
-                .get_program_accounts_with_config(
+                .get_program_ui_accounts_with_config(
                     &program_id,
                     RpcProgramAccountsConfig {
                         filters: None,
