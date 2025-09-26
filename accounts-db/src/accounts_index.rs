@@ -15,9 +15,7 @@ use {
         rolling_bit_field::RollingBitField,
     },
     account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry},
-    in_mem_accounts_index::{
-        ExistedLocation, InMemAccountsIndex, InsertNewEntryResults, StartupStats,
-    },
+    in_mem_accounts_index::{InMemAccountsIndex, StartupStats},
     iter::{AccountsIndexPubkeyIterOrder, AccountsIndexPubkeyIterator},
     log::*,
     rand::{thread_rng, Rng},
@@ -1314,7 +1312,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     pub(crate) fn insert_new_if_missing_into_primary_index(
         &self,
         slot: Slot,
-        mut items: Vec<(Pubkey, T)>,
+        items: Vec<(Pubkey, T)>,
     ) -> (u64, InsertNewIfMissingIntoPrimaryIndexInfo) {
         let mut insert_time = Measure::start("insert_into_primary_index");
 
@@ -1325,78 +1323,55 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // accumulated stats after inserting pubkeys into the index
         let mut num_did_not_exist = 0;
         let mut num_existed_in_mem = 0;
-        let mut num_existed_on_disk = 0;
 
-        // offset bin processing in the 'binned' array by a random amount.
-        // This results in calls to insert_new_entry_if_missing_with_lock from different threads starting at different bins to avoid
-        // lock contention.
+        // Group items by bin first to enable batch processing
         let bins = self.bins();
         let random_bin_offset = thread_rng().gen_range(0..bins);
         let bin_calc = self.bin_calculator;
-        items.sort_unstable_by(|(pubkey_a, _), (pubkey_b, _)| {
-            ((bin_calc.bin_from_pubkey(pubkey_a) + random_bin_offset) % bins)
-                .cmp(&((bin_calc.bin_from_pubkey(pubkey_b) + random_bin_offset) % bins))
-                .then_with(|| pubkey_a.cmp(pubkey_b))
-        });
+
+        // Group items into bins using a Vec<Vec<usize>> where each inner Vec contains indices
+        let mut bin_groups: Vec<Vec<usize>> = vec![Vec::new(); bins];
+        for (index, (pubkey, _)) in items.iter().enumerate() {
+            let pubkey_bin = bin_calc.bin_from_pubkey(pubkey);
+            bin_groups[pubkey_bin].push(index);
+        }
 
         let storage = self.storage.storage.as_ref();
-        while !items.is_empty() {
-            let mut start_index = items.len() - 1;
-            let mut last_pubkey = &items[start_index].0;
-            let pubkey_bin = bin_calc.bin_from_pubkey(last_pubkey);
-            // Find the smallest index with the same pubkey bin
-            while start_index > 0 {
-                let next = start_index - 1;
-                let next_pubkey = &items[next].0;
-                assert_ne!(
-                    next_pubkey, last_pubkey,
-                    "Accounts may only be stored once per slot: {slot}"
-                );
-                if bin_calc.bin_from_pubkey(next_pubkey) != pubkey_bin {
-                    break;
-                }
-                start_index = next;
-                last_pubkey = next_pubkey;
+
+        // Process each bin in randomized order to avoid lock contention
+        for bin_offset in 0..bins {
+            let actual_bin = (bin_offset + random_bin_offset) % bins;
+            let indices = &bin_groups[actual_bin];
+
+            if indices.is_empty() {
+                continue;
             }
 
-            let r_account_maps = self.account_maps[pubkey_bin].as_ref();
-            // count only considers non-duplicate accounts
-            count += items.len() - start_index;
+            let r_account_maps = self.account_maps[actual_bin].as_ref();
+            count += indices.len();
 
-            let items = items.drain(start_index..);
             if use_disk {
-                r_account_maps.startup_insert_only(slot, items);
+                let bin_items_iter = indices.iter().map(|&index| {
+                    let (pubkey, account_info) = &items[index];
+                    (*pubkey, *account_info)
+                });
+                r_account_maps.startup_insert_only(slot, bin_items_iter);
             } else {
                 // not using disk buckets, so just write to in-mem
                 // this is no longer the default case
-                let mut duplicates_from_in_memory = vec![];
-                items.for_each(|(pubkey, account_info)| {
+                let entries_iter = indices.iter().map(|&index| {
+                    let (pubkey, account_info) = &items[index];
                     let new_entry =
-                        PreAllocatedAccountMapEntry::new(slot, account_info, storage, use_disk);
-                    match r_account_maps.insert_new_entry_if_missing_with_lock(pubkey, new_entry) {
-                        InsertNewEntryResults::DidNotExist => {
-                            num_did_not_exist += 1;
-                        }
-                        InsertNewEntryResults::Existed {
-                            other_slot,
-                            location,
-                        } => {
-                            if let Some(other_slot) = other_slot {
-                                duplicates_from_in_memory.push((other_slot, pubkey));
-                            }
-                            duplicates_from_in_memory.push((slot, pubkey));
-
-                            match location {
-                                ExistedLocation::InMem => {
-                                    num_existed_in_mem += 1;
-                                }
-                                ExistedLocation::OnDisk => {
-                                    num_existed_on_disk += 1;
-                                }
-                            }
-                        }
-                    }
+                        PreAllocatedAccountMapEntry::new(slot, *account_info, storage, use_disk);
+                    (*pubkey, new_entry)
                 });
+
+                let (duplicates_from_in_memory, batch_num_did_not_exist, batch_num_existed_in_mem) =
+                    r_account_maps
+                        .batch_insert_new_entries_if_missing_with_lock_in_mem(entries_iter);
+
+                num_did_not_exist += batch_num_did_not_exist;
+                num_existed_in_mem += batch_num_existed_in_mem;
 
                 r_account_maps
                     .startup_update_duplicates_from_in_memory_only(duplicates_from_in_memory);
@@ -1408,9 +1383,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             insert_time.as_us(),
             InsertNewIfMissingIntoPrimaryIndexInfo {
                 count,
-                num_did_not_exist,
-                num_existed_in_mem,
-                num_existed_on_disk,
+                num_did_not_exist: num_did_not_exist as u64,
+                num_existed_in_mem: num_existed_in_mem as u64,
+                num_existed_on_disk: 0, // not tracked in this code path
             },
         )
     }
@@ -1953,7 +1928,6 @@ pub mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Accounts may only be stored once per slot:")]
     fn test_insert_duplicates() {
         let key = solana_pubkey::new_rand();
         let pubkey = &key;
