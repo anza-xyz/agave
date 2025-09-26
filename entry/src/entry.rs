@@ -3,7 +3,7 @@
 //! transactions within it. Entries cannot be reordered, and its field `num_hashes`
 //! represents an approximate amount of time since the last Entry was created.
 use {
-    crate::poh::Poh,
+    crate::{poh::Poh, wire},
     crossbeam_channel::{Receiver, Sender},
     dlopen2::symbor::{Container, SymBorApi, Symbol},
     log::*,
@@ -208,6 +208,28 @@ impl Entry {
 
     pub fn is_tick(&self) -> bool {
         self.transactions.is_empty()
+    }
+
+    /// Serialize an `Entry` or `&[Entry]` using the optimized implementation.
+    ///
+    /// See [`wire::Serialize`] for more details.
+    #[inline(always)]
+    pub fn serialize<T: wire::Serialize>(value: T) -> bincode::Result<Vec<u8>> {
+        value.serialize()
+    }
+
+    /// Get the serialized size of an `Entry` or `&[Entry]` using the optimized implementation.
+    #[inline(always)]
+    pub fn serialized_size<T: wire::Serialize>(value: T) -> bincode::Result<u64> {
+        value.serialized_size()
+    }
+
+    /// Deserialize an `Entry` or `Vec<Entry>` using the optimized implementation.
+    ///
+    /// See [`wire::Deserialize`] for more details.
+    #[inline(always)]
+    pub fn deserialize<T: wire::Deserialize>(slice: &[u8]) -> bincode::Result<T> {
+        T::deserialize(slice)
     }
 }
 
