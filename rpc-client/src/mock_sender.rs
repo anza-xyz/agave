@@ -154,11 +154,19 @@ impl RpcSender for MockSender {
 
         let val = match method.as_str().unwrap() {
             "getAccountInfo" => serde_json::to_value(Response {
-                context: RpcResponseContext { slot: 1, api_version: None },
+                context: RpcResponseContext {
+                    api_version: None,
+                    block_height: 1,
+                    slot: 1,
+                },
                 value: Value::Null,
             })?,
             "getBalance" => serde_json::to_value(Response {
-                context: RpcResponseContext { slot: 1, api_version: None },
+                context: RpcResponseContext {
+                    api_version: None,
+                    block_height: 1,
+                    slot: 1,
+                },
                 value: Value::Number(Number::from(50)),
             })?,
             "getEpochInfo" => serde_json::to_value(EpochInfo {
@@ -199,7 +207,11 @@ impl RpcSender for MockSender {
                     .map(|_| status.clone())
                     .collect();
                 serde_json::to_value(Response {
-                    context: RpcResponseContext { slot: 1, api_version: None },
+                    context: RpcResponseContext {
+                        api_version: None,
+                        block_height: 1,
+                        slot: 1,
+                    },
                     value: statuses,
                 })?
             }
@@ -264,7 +276,11 @@ impl RpcSender for MockSender {
             "getBlockProduction" => {
                 if params.is_null() {
                     json!(Response {
-                        context: RpcResponseContext { slot: 1, api_version: None },
+                        context: RpcResponseContext {
+                            api_version: None,
+                            block_height: 1,
+                            slot: 1,
+                        },
                         value: RpcBlockProduction {
                             by_identity: HashMap::new(),
                             range: RpcBlockProductionRange {
@@ -282,7 +298,11 @@ impl RpcSender for MockSender {
                     let config_range = config.range.unwrap_or_default();
 
                     json!(Response {
-                        context: RpcResponseContext { slot: 1, api_version: None },
+                        context: RpcResponseContext {
+                            api_version: None,
+                            block_height: 1,
+                            slot: 1,
+                        },
                         value: RpcBlockProduction {
                             by_identity,
                             range: RpcBlockProductionRange {
@@ -296,11 +316,19 @@ impl RpcSender for MockSender {
                 }
             }
             "getStakeMinimumDelegation" => json!(Response {
-                context: RpcResponseContext { slot: 1, api_version: None },
+                context: RpcResponseContext {
+                    api_version: None,
+                    block_height: 1,
+                    slot: 1,
+                },
                 value: 123_456_789,
             }),
             "getSupply" => json!(Response {
-                context: RpcResponseContext { slot: 1, api_version: None },
+                context: RpcResponseContext {
+                    api_version: None,
+                    block_height: 1,
+                    slot: 1,
+                },
                 value: RpcSupply {
                     total: 100000000,
                     circulating: 50000,
@@ -315,7 +343,11 @@ impl RpcSender for MockSender {
                 };
 
                 json!(Response {
-                    context: RpcResponseContext { slot: 1, api_version: None },
+                    context: RpcResponseContext {
+                        api_version: None,
+                        block_height: 1,
+                        slot: 1,
+                    },
                     value: vec![rpc_account_balance],
                 })
             }
@@ -346,7 +378,11 @@ impl RpcSender for MockSender {
                 Value::String(signature)
             }
             "simulateTransaction" => serde_json::to_value(Response {
-                context: RpcResponseContext { slot: 1, api_version: None },
+                context: RpcResponseContext {
+                    api_version: None,
+                    block_height: 1,
+                    slot: 1,
+                },
                 value: RpcSimulateTransactionResult {
                     err: None,
                     logs: None,
@@ -373,14 +409,22 @@ impl RpcSender for MockSender {
                 })
             }
             "getLatestBlockhash" => serde_json::to_value(Response {
-                context: RpcResponseContext { slot: 1, api_version: None },
+                context: RpcResponseContext {
+                    api_version: None,
+                    block_height: 1,
+                    slot: 1,
+                },
                 value: RpcBlockhash {
                     blockhash: PUBKEY.to_string(),
                     last_valid_block_height: 1234,
                 },
             })?,
             "getFeeForMessage" => serde_json::to_value(Response {
-                context: RpcResponseContext { slot: 1, api_version: None },
+                context: RpcResponseContext {
+                    api_version: None,
+                    block_height: 1,
+                    slot: 1,
+                },
                 value: json!(Some(0)),
             })?,
             "getClusterNodes" => serde_json::to_value(vec![RpcContactInfo {
@@ -474,7 +518,11 @@ impl RpcSender for MockSender {
             "minimumLedgerSlot" => json![123],
             "getMaxRetransmitSlot" => json![123],
             "getMultipleAccounts" => serde_json::to_value(Response {
-                context: RpcResponseContext { slot: 1, api_version: None },
+                context: RpcResponseContext {
+                    api_version: None,
+                    block_height: 1,
+                    slot: 1,
+                },
                 value: vec![Value::Null, Value::Null]
             })?,
             "getProgramAccounts" => {

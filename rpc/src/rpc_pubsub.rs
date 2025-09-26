@@ -732,7 +732,7 @@ mod tests {
            "method": "signatureNotification",
            "params": {
                "result": {
-                   "context": { "slot": 0 },
+                   "context": { "blockHeight": 0, "slot": 0 },
                    "value": expected_res,
                },
                "subscription": 0,
@@ -756,7 +756,11 @@ mod tests {
         )
         .unwrap();
         let received_slot = 1;
-        rpc_subscriptions.notify_signatures_received((received_slot, vec![tx.signatures[0]]));
+        rpc_subscriptions.notify_signatures_received((
+            received_slot,
+            vec![tx.signatures[0]],
+            Some(received_slot),
+        ));
 
         // Test signature confirmation notification
         let response = receiver.recv();
@@ -767,7 +771,7 @@ mod tests {
            "method": "signatureNotification",
            "params": {
                "result": {
-                   "context": { "slot": received_slot },
+                   "context": { "blockHeight": received_slot, "slot": received_slot },
                    "value": expected_res,
                },
                "subscription": 1,
@@ -790,7 +794,11 @@ mod tests {
         )
         .unwrap();
         let received_slot = 2;
-        rpc_subscriptions.notify_signatures_received((received_slot, vec![tx.signatures[0]]));
+        rpc_subscriptions.notify_signatures_received((
+            received_slot,
+            vec![tx.signatures[0]],
+            Some(received_slot),
+        ));
 
         // Test signature confirmation notification
         let response = receiver.recv();
@@ -801,7 +809,7 @@ mod tests {
            "method": "signatureNotification",
            "params": {
                "result": {
-                   "context": { "slot": received_slot },
+                   "context": { "blockHeight": received_slot, "slot": received_slot },
                    "value": expected_res,
                },
                "subscription": 2,
@@ -962,7 +970,7 @@ mod tests {
            "method": "accountNotification",
            "params": {
                "result": {
-                   "context": { "slot": 1 },
+                   "context": { "blockHeight": 1, "slot": 1 },
                    "value": {
                        "owner": vote_program::id().to_string(),
                        "lamports": vote_balance,
@@ -1055,7 +1063,7 @@ mod tests {
            "method": "accountNotification",
            "params": {
                "result": {
-                   "context": { "slot": 1 },
+                   "context": { "blockHeight": 1, "slot": 1 },
                    "value": {
                        "owner": system_program::id().to_string(),
                        "lamports": 100,
@@ -1233,7 +1241,7 @@ mod tests {
            "method": "accountNotification",
            "params": {
                "result": {
-                   "context": { "slot": 1 },
+                   "context": { "blockHeight": 1, "slot": 1 },
                    "value": {
                        "owner": system_program::id().to_string(),
                        "lamports": 100,

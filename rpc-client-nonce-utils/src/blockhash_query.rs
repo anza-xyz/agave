@@ -285,6 +285,7 @@ mod tests {
         let rpc_blockhash = hash(&[1u8]);
         let get_latest_blockhash_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },
@@ -295,6 +296,7 @@ mod tests {
         });
         let is_blockhash_valid_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },
@@ -366,6 +368,7 @@ mod tests {
         );
         let get_account_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },

@@ -182,6 +182,7 @@ mod tests {
         let account_balance = 1;
         let account_balance_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },
@@ -205,6 +206,7 @@ mod tests {
 
         let check_fee_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },
@@ -218,6 +220,7 @@ mod tests {
 
         let check_fee_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },
@@ -234,6 +237,7 @@ mod tests {
         let account_balance = 2;
         let account_balance_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },
@@ -241,6 +245,7 @@ mod tests {
         });
         let check_fee_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },
@@ -261,6 +266,7 @@ mod tests {
         let account_balance = 50;
         let account_balance_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },
@@ -281,6 +287,7 @@ mod tests {
     fn test_get_fee_for_messages() {
         let check_fee_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },
@@ -303,6 +310,7 @@ mod tests {
         // No signatures, no fee.
         let check_fee_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },

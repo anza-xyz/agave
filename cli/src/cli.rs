@@ -2151,6 +2151,7 @@ mod tests {
         let identity_keypair = Keypair::new();
         let vote_account_info_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },
@@ -2191,6 +2192,7 @@ mod tests {
 
         let vote_account_info_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },
@@ -2254,6 +2256,7 @@ mod tests {
         let custodian = solana_pubkey::new_rand();
         let vote_account_info_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },

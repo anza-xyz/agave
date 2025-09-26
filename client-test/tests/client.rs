@@ -183,7 +183,7 @@ fn test_account_subscription() {
     subscriptions.notify_subscribers(commitment_slots);
 
     let expected = json!({
-    "context": { "slot": 1 },
+        "context": { "blockHeight": 1, "slot": 1 },
         "value": {
             "owner": system_program::id().to_string(),
             "lamports": 100,

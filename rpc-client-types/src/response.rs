@@ -72,6 +72,7 @@ pub struct RpcResponseContext {
     pub slot: Slot,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_version: Option<RpcApiVersion>,
+    pub block_height: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,8 +113,9 @@ impl<'de> Deserialize<'de> for RpcApiVersion {
 }
 
 impl RpcResponseContext {
-    pub fn new(slot: Slot) -> Self {
+    pub fn new(slot: Slot, block_height: u64) -> Self {
         Self {
+            block_height,
             slot,
             api_version: Some(RpcApiVersion::default()),
         }

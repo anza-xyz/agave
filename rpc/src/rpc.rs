@@ -144,7 +144,7 @@ pub const PERFORMANCE_SAMPLES_LIMIT: usize = 720;
 
 fn new_response<T>(bank: &Bank, value: T) -> RpcResponse<T> {
     RpcResponse {
-        context: RpcResponseContext::new(bank.slot()),
+        context: RpcResponseContext::new(bank.slot(), bank.block_height()),
         value,
     }
 }
@@ -1053,7 +1053,7 @@ impl JsonRpcRequestProcessor {
 
         if let Some((slot, accounts)) = self.get_cached_largest_accounts(&config.filter) {
             Ok(RpcResponse {
-                context: RpcResponseContext::new(slot),
+                context: RpcResponseContext::new(slot, bank.block_height()),
                 value: accounts,
             })
         } else {
@@ -5106,7 +5106,7 @@ pub mod tests {
         let expected = json!({
             "jsonrpc": "2.0",
             "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
+                "context": {"blockHeight": 0, "slot": 0, "apiVersion": RpcApiVersion::default()},
                 "value":20,
                 },
             "id": 1,
@@ -5560,7 +5560,7 @@ pub mod tests {
         );
         let result: Value = parse_success_result(rpc.handle_request_sync(request));
         let expected = json!({
-            "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
+            "context": {"blockHeight": 0, "slot": 0, "apiVersion": RpcApiVersion::default()},
             "value":{
                 "owner": "11111111111111111111111111111111",
                 "lamports": TEST_MINT_LAMPORTS,
@@ -5850,7 +5850,7 @@ pub mod tests {
         let result: RpcResponse<Vec<RpcKeyedAccount>> =
             parse_success_result(rpc.handle_request_sync(request));
         let expected = RpcResponse {
-            context: RpcResponseContext::new(0),
+            context: RpcResponseContext::new(0, 0),
             value: expected_value,
         };
         assert_eq!(result, expected);
@@ -6018,7 +6018,7 @@ pub mod tests {
         let expected = json!({
             "jsonrpc": "2.0",
             "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
+                "context": {"blockHeight": 0, "slot": 0, "apiVersion": RpcApiVersion::default()},
                 "value":{
                     "accounts": [
                         null,
@@ -6121,7 +6121,7 @@ pub mod tests {
         let expected = json!({
             "jsonrpc": "2.0",
             "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
+                "context": {"blockHeight": 0, "slot": 0, "apiVersion": RpcApiVersion::default()},
                 "value":{
                     "accounts":null,
                     "err":null,
@@ -6158,7 +6158,7 @@ pub mod tests {
         let expected = json!({
             "jsonrpc": "2.0",
             "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
+                "context": {"blockHeight": 0, "slot": 0, "apiVersion": RpcApiVersion::default()},
                 "value":{
                     "accounts":null,
                     "err":null,
@@ -6219,7 +6219,7 @@ pub mod tests {
         let expected = json!({
             "jsonrpc":"2.0",
             "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
+                "context": {"blockHeight": 0, "slot": 0, "apiVersion": RpcApiVersion::default()},
                 "value":{
                     "err":"BlockhashNotFound",
                     "accounts":null,
@@ -6259,7 +6259,7 @@ pub mod tests {
         let expected = json!({
             "jsonrpc": "2.0",
             "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
+                "context": {"blockHeight": 0, "slot": 0, "apiVersion": RpcApiVersion::default()},
                 "value":{
                     "accounts":null,
                     "err":null,
@@ -6388,7 +6388,7 @@ pub mod tests {
         let expected = json!({
             "jsonrpc": "2.0",
             "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
+                "context": {"blockHeight": 0, "slot": 0, "apiVersion": RpcApiVersion::default()},
                 "value":{
                     "accounts": [
                         null,
@@ -6501,7 +6501,7 @@ pub mod tests {
         let expected = json!({
             "jsonrpc": "2.0",
             "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
+                "context": {"blockHeight": 0, "slot": 0, "apiVersion": RpcApiVersion::default()},
                 "value":{
                     "accounts": null,
                     "err":null,
@@ -6550,7 +6550,7 @@ pub mod tests {
         let expected = json!({
             "jsonrpc": "2.0",
             "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
+                "context": {"blockHeight": 0, "slot": 0, "apiVersion": RpcApiVersion::default()},
                 "value":{
                     "accounts": null,
                     "err":null,
@@ -6599,7 +6599,7 @@ pub mod tests {
         let expected = json!({
             "jsonrpc": "2.0",
             "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
+                "context": {"blockHeight": 0, "slot": 0, "apiVersion": RpcApiVersion::default()},
                 "value":{
                     "accounts": null,
                     "err":null,

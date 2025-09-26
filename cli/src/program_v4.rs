@@ -1505,6 +1505,7 @@ mod tests {
         };
         let account_info_response = json!(Response {
             context: RpcResponseContext {
+                block_height: 1,
                 slot: 1,
                 api_version: None
             },

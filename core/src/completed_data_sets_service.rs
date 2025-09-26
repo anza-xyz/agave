@@ -67,14 +67,23 @@ impl CompletedDataSetsService {
         const RECV_TIMEOUT: Duration = Duration::from_secs(1);
         let handle_completed_data_set_info = |completed_data_set_info| {
             let CompletedDataSetInfo { slot, indices } = completed_data_set_info;
-            match blockstore.get_entries_in_data_block(slot, indices, /*slot_meta:*/ None) {
-                Ok(entries) => {
+            let block_height = blockstore.get_block_height(slot);
+            let entries =
+                blockstore.get_entries_in_data_block(slot, indices, /*slot_meta:*/ None);
+            match (block_height, entries) {
+                (Ok(block_height), Ok(entries)) => {
                     let transactions = Self::get_transaction_signatures(entries);
                     if !transactions.is_empty() {
-                        rpc_subscriptions.notify_signatures_received((slot, transactions));
+                        rpc_subscriptions.notify_signatures_received((
+                            slot,
+                            transactions,
+                            block_height,
+                        ));
                     }
                 }
-                Err(e) => warn!("completed-data-set-service deserialize error: {e:?}"),
+                (_, Err(e)) | (Err(e), _) => {
+                    warn!("completed-data-set-service deserialize error: {e:?}")
+                }
             }
             slot
         };

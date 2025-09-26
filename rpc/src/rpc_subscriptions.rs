@@ -101,7 +101,7 @@ pub enum NotificationEntry {
     Root(Slot),
     Bank(CommitmentSlots),
     Gossip(Slot),
-    SignaturesReceived((Slot, Vec<Signature>)),
+    SignaturesReceived((Slot, Vec<Signature>, Option<u64>)),
     Subscribed(SubscriptionParams, SubscriptionId),
     Unsubscribed(SubscriptionParams, SubscriptionId),
 }
@@ -153,6 +153,7 @@ where
     let mut notified = false;
     let bank = bank_forks.read().unwrap().get(slot);
     if let Some(bank) = bank {
+        let block_height = bank.block_height();
         let results = bank_method(&bank, params);
         let mut w_last_notified_slot = subscription.last_notified_slot.write().unwrap();
         let (filter_results, result_slot) =
@@ -160,7 +161,7 @@ where
         for result in filter_results {
             notifier.notify(
                 RpcResponse::from(RpcNotificationResponse {
-                    context: RpcNotificationContext { slot },
+                    context: RpcNotificationContext { block_height, slot },
                     value: result,
                 }),
                 subscription,
@@ -191,11 +192,12 @@ struct RpcNotificationResponse<T> {
 impl<T> From<RpcNotificationResponse<T>> for RpcResponse<T> {
     fn from(notification: RpcNotificationResponse<T>) -> Self {
         let RpcNotificationResponse {
-            context: RpcNotificationContext { slot },
+            context: RpcNotificationContext { block_height, slot },
             value,
         } = notification;
         Self {
             context: RpcResponseContext {
+                block_height,
                 slot,
                 api_version: None,
             },
@@ -207,6 +209,7 @@ impl<T> From<RpcNotificationResponse<T>> for RpcResponse<T> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RpcNotificationContext {
     slot: Slot,
+    block_height: u64,
 }
 
 const RPC_NOTIFICATIONS_METRICS_SUBMISSION_INTERVAL_MS: Duration = Duration::from_millis(2_000);
@@ -723,7 +726,7 @@ impl RpcSubscriptions {
         }));
     }
 
-    pub fn notify_signatures_received(&self, slot_signatures: (Slot, Vec<Signature>)) {
+    pub fn notify_signatures_received(&self, slot_signatures: (Slot, Vec<Signature>, Option<u64>)) {
         self.enqueue_notification(NotificationEntry::SignaturesReceived(slot_signatures));
     }
 
@@ -866,7 +869,11 @@ impl RpcSubscriptions {
                                 SOURCE,
                             );
                         }
-                        NotificationEntry::SignaturesReceived((slot, slot_signatures)) => {
+                        NotificationEntry::SignaturesReceived((
+                            slot,
+                            slot_signatures,
+                            block_height,
+                        )) => {
                             for slot_signature in &slot_signatures {
                                 if let Some(subs) = subscriptions.by_signature().get(slot_signature)
                                 {
@@ -877,7 +884,10 @@ impl RpcSubscriptions {
                                             if params.enable_received_notification {
                                                 notifier.notify(
                                                     RpcResponse::from(RpcNotificationResponse {
-                                                        context: RpcNotificationContext { slot },
+                                                        context: RpcNotificationContext {
+                                                            block_height: block_height.expect("Invariant: Block height must never be `None`. The block height of a bank is known at creation time, and the source of this notification entry is a bank via replay"),
+                                                            slot,
+                                                        },
                                                         value: RpcSignatureResult::ReceivedSignature(
                                                             ReceivedSignatureResult::ReceivedSignature,
                                                         ),
@@ -1022,7 +1032,10 @@ impl RpcSubscriptions {
                                         if let Some(block_update) = block_update {
                                             notifier.notify(
                                                 RpcResponse::from(RpcNotificationResponse {
-                                                    context: RpcNotificationContext { slot: s },
+                                                    context: RpcNotificationContext {
+                                                        block_height: s,
+                                                        slot: s,
+                                                    },
                                                     value: block_update,
                                                 }),
                                                 subscription,
@@ -1039,7 +1052,10 @@ impl RpcSubscriptions {
                                         // it'll retry on the next notification trigger
                                         notifier.notify(
                                             RpcResponse::from(RpcNotificationResponse {
-                                                context: RpcNotificationContext { slot: s },
+                                                context: RpcNotificationContext {
+                                                    block_height: s,
+                                                    slot: s,
+                                                },
                                                 value: RpcBlockUpdate {
                                                     slot,
                                                     block: None,
@@ -1260,7 +1276,7 @@ pub(crate) mod tests {
            "method": "accountNotification",
            "params": {
                "result": {
-                   "context": { "slot": 1 },
+                   "context": { "blockHeight": 1, "slot": 1 },
                    "value": {
                        "data": account_result.data,
                        "executable": false,
@@ -1512,7 +1528,7 @@ pub(crate) mod tests {
            "method": "blockNotification",
            "params": {
                "result": {
-                   "context": { "slot": slot },
+                   "context": { "blockHeight": slot, "slot": slot },
                    "value": expected_resp,
                },
                "subscription": 0,
@@ -1638,7 +1654,7 @@ pub(crate) mod tests {
            "method": "blockNotification",
            "params": {
                "result": {
-                   "context": { "slot": slot },
+                   "context": { "blockHeight": slot, "slot": slot },
                    "value": expected_resp,
                },
                "subscription": 0,
@@ -1750,7 +1766,7 @@ pub(crate) mod tests {
            "method": "blockNotification",
            "params": {
                "result": {
-                   "context": { "slot": slot },
+                   "context": { "blockHeight": slot, "slot": slot },
                    "value": expected_resp,
                },
                "subscription": 0,
@@ -1840,7 +1856,7 @@ pub(crate) mod tests {
            "method": "programNotification",
            "params": {
                "result": {
-                   "context": { "slot": 0 },
+                   "context": { "blockHeight": 0, "slot": 0 },
                    "value": {
                        "account": {
                           "data": "1111111111111111",
@@ -2013,7 +2029,7 @@ pub(crate) mod tests {
                "method": "programNotification",
                "params": {
                    "result": {
-                       "context": { "slot": slot },
+                       "context": { "blockHeight": slot, "slot": slot },
                        "value": {
                            "account": {
                               "data": "1111111111111111",
@@ -2312,7 +2328,7 @@ pub(crate) mod tests {
                "method": "programNotification",
                "params": {
                    "result": {
-                       "context": { "slot": slot },
+                       "context": { "blockHeight": slot, "slot": slot },
                        "value": {
                            "account": {
                               "data": "1111111111111111",
@@ -2527,8 +2543,11 @@ pub(crate) mod tests {
         let mut commitment_slots = CommitmentSlots::default();
         let received_slot = 1;
         commitment_slots.slot = received_slot;
-        subscriptions
-            .notify_signatures_received((received_slot, vec![unprocessed_tx.signatures[0]]));
+        subscriptions.notify_signatures_received((
+            received_slot,
+            vec![unprocessed_tx.signatures[0]],
+            Some(received_slot),
+        ));
         subscriptions.notify_subscribers(commitment_slots);
         let expected_res =
             RpcSignatureResult::ProcessedSignature(ProcessedSignatureResult { err: None });
@@ -2546,7 +2565,7 @@ pub(crate) mod tests {
                     "method": "signatureNotification",
                     "params": {
                         "result": {
-                            "context": { "slot": exp.slot },
+                            "context": { "slot": exp.slot, "blockHeight": exp.slot },
                             "value": expected_res,
                         },
                         "subscription": exp.id,
@@ -2820,7 +2839,7 @@ pub(crate) mod tests {
            "method": "accountNotification",
            "params": {
                "result": {
-                   "context": { "slot": 1 },
+                   "context": { "blockHeight": 1, "slot": 1 },
                    "value": {
                        "data": "1111111111111111",
                        "executable": false,
@@ -2878,7 +2897,7 @@ pub(crate) mod tests {
            "method": "accountNotification",
            "params": {
                "result": {
-                   "context": { "slot": 2 },
+                   "context": { "blockHeight": 1, "slot": 2 },
                    "value": {
                        "data": "1111111111111111",
                        "executable": false,
@@ -2907,6 +2926,7 @@ pub(crate) mod tests {
             "params": {
                 "result": {
                     "context": {
+                        "blockHeight": 0,
                         "slot": 0
                     },
                     "value": {
