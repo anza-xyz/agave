@@ -13,7 +13,7 @@ use {
     solana_sdk_ids::bpf_loader_deprecated,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_context::{
-        BorrowedInstructionAccount, IndexOfAccount, InstructionContext,
+        BorrowedInstructionAccount, IndexOfAccount, InstructionContextView,
         MAX_ACCOUNTS_PER_INSTRUCTION,
     },
     std::mem::{self, size_of},
@@ -220,7 +220,7 @@ impl Serializer {
 }
 
 pub fn serialize_parameters(
-    instruction_context: &InstructionContext,
+    instruction_context: &InstructionContextView,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
     mask_out_rent_epoch_in_vm_serialization: bool,
@@ -284,7 +284,7 @@ pub fn serialize_parameters(
 }
 
 pub fn deserialize_parameters(
-    instruction_context: &InstructionContext,
+    instruction_context: &InstructionContextView,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
     buffer: &[u8],
@@ -410,7 +410,7 @@ fn serialize_parameters_unaligned(
 }
 
 fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
-    instruction_context: &InstructionContext,
+    instruction_context: &InstructionContextView,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
     buffer: &[u8],
@@ -578,7 +578,7 @@ fn serialize_parameters_aligned(
 }
 
 fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
-    instruction_context: &InstructionContext,
+    instruction_context: &InstructionContextView,
     stricter_abi_and_runtime_constraints: bool,
     account_data_direct_mapping: bool,
     buffer: &[u8],

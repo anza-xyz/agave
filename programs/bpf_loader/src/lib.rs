@@ -40,7 +40,7 @@ use {
     solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::sync::{atomic::Ordering, Arc},
     solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
-    solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
+    solana_transaction_context::{IndexOfAccount, InstructionContextView, TransactionContext},
     std::{cell::RefCell, mem, rc::Rc},
 };
 
@@ -1413,7 +1413,7 @@ fn common_extend_program(
 
 fn common_close_account(
     authority_address: &Option<Pubkey>,
-    instruction_context: &InstructionContext,
+    instruction_context: &InstructionContextView,
     log_collector: &Option<Rc<RefCell<LogCollector>>>,
 ) -> Result<(), InstructionError> {
     if authority_address.is_none() {

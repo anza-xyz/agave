@@ -5,8 +5,12 @@
 use {
     crate::transaction_accounts::{AccountRefMut, TransactionAccount, TransactionAccounts},
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_instruction::error::InstructionError,
+    solana_instruction::{error::InstructionError, TRANSACTION_LEVEL_STACK_HEIGHT},
     solana_instructions_sysvar as instructions,
+    solana_message::{
+        compiled_instruction::CompiledInstruction,
+        inner_instruction::{InnerInstruction, InnerInstructionsList},
+    },
     solana_pubkey::Pubkey,
     solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
     std::{
@@ -115,7 +119,7 @@ pub struct TransactionContext {
     instruction_stack_capacity: usize,
     instruction_trace_capacity: usize,
     instruction_stack: Vec<usize>,
-    instruction_trace: Vec<InstructionFrame>,
+    instruction_trace: Vec<InstructionContext>,
     top_level_instruction_index: usize,
     return_data: TransactionReturnData,
     #[cfg(not(target_os = "solana"))]
@@ -136,7 +140,7 @@ impl TransactionContext {
             instruction_stack_capacity,
             instruction_trace_capacity,
             instruction_stack: Vec::with_capacity(instruction_stack_capacity),
-            instruction_trace: vec![InstructionFrame::default()],
+            instruction_trace: vec![InstructionContext::default()],
             top_level_instruction_index: 0,
             return_data: TransactionReturnData::default(),
             rent,
@@ -211,12 +215,12 @@ impl TransactionContext {
     pub fn get_instruction_context_at_index_in_trace(
         &self,
         index_in_trace: usize,
-    ) -> Result<InstructionContext, InstructionError> {
+    ) -> Result<InstructionContextView, InstructionError> {
         let instruction = self
             .instruction_trace
             .get(index_in_trace)
             .ok_or(InstructionError::CallDepth)?;
-        Ok(InstructionContext {
+        Ok(InstructionContextView {
             transaction_context: self,
             nesting_level: instruction.nesting_level,
             program_account_index_in_tx: instruction.program_account_index_in_tx,
@@ -230,7 +234,7 @@ impl TransactionContext {
     pub fn get_instruction_context_at_nesting_level(
         &self,
         nesting_level: usize,
-    ) -> Result<InstructionContext, InstructionError> {
+    ) -> Result<InstructionContextView, InstructionError> {
         let index_in_trace = *self
             .instruction_stack
             .get(nesting_level)
@@ -252,7 +256,9 @@ impl TransactionContext {
     }
 
     /// Returns a view on the current instruction
-    pub fn get_current_instruction_context(&self) -> Result<InstructionContext, InstructionError> {
+    pub fn get_current_instruction_context(
+        &self,
+    ) -> Result<InstructionContextView, InstructionError> {
         let level = self
             .get_instruction_stack_height()
             .checked_sub(1)
@@ -263,7 +269,7 @@ impl TransactionContext {
     /// Returns a view on the next instruction. This function assumes it has already been
     /// configured with the correct values in `prepare_next_instruction` or
     /// `prepare_next_top_level_instruction`
-    pub fn get_next_instruction_context(&self) -> Result<InstructionContext, InstructionError> {
+    pub fn get_next_instruction_context(&self) -> Result<InstructionContextView, InstructionError> {
         let index_in_trace = self
             .instruction_trace
             .len()
@@ -337,7 +343,7 @@ impl TransactionContext {
         if index_in_trace >= self.instruction_trace_capacity {
             return Err(InstructionError::MaxInstructionTraceLengthExceeded);
         }
-        self.instruction_trace.push(InstructionFrame::default());
+        self.instruction_trace.push(InstructionContext::default());
         if nesting_level >= self.instruction_stack_capacity {
             return Err(InstructionError::CallDepth);
         }
@@ -477,6 +483,45 @@ impl TransactionContext {
             },
         )
     }
+
+    pub fn deconstruct_into_record(
+        mut self,
+        record_inner_instructions: bool,
+    ) -> (ExecutionRecord, Option<InnerInstructionsList>) {
+        let inner_ix = if record_inner_instructions {
+            debug_assert!(self
+                .get_instruction_context_at_index_in_trace(0)
+                .map(|instruction_context| instruction_context.get_stack_height()
+                    == TRANSACTION_LEVEL_STACK_HEIGHT)
+                .unwrap_or(true));
+
+            let mut ix_trace = std::mem::take(&mut self.instruction_trace);
+            ix_trace.pop();
+            let mut outer_instructions = Vec::new();
+            for ix_in_trace in ix_trace.into_iter() {
+                let stack_height = ix_in_trace.nesting_level.saturating_add(1);
+                if stack_height == TRANSACTION_LEVEL_STACK_HEIGHT {
+                    outer_instructions.push(Vec::new());
+                } else if let Some(inner_instructions) = outer_instructions.last_mut() {
+                    let stack_height = u8::try_from(stack_height).unwrap_or(u8::MAX);
+                    inner_instructions.push(InnerInstruction {
+                        instruction: ix_in_trace.into(),
+                        stack_height,
+                    });
+                } else {
+                    debug_assert!(false);
+                }
+            }
+
+            Some(outer_instructions)
+        } else {
+            None
+        };
+
+        let record: ExecutionRecord = self.into();
+
+        (record, inner_ix)
+    }
 }
 
 /// Return data at the end of a transaction
@@ -492,7 +537,7 @@ pub struct TransactionReturnData {
 
 /// Instruction shared between runtime and programs.
 #[derive(Debug, Clone, Default)]
-pub struct InstructionFrame {
+pub struct InstructionContext {
     nesting_level: usize,
     program_account_index_in_tx: IndexOfAccount,
     instruction_accounts: Vec<InstructionAccount>,
@@ -503,9 +548,22 @@ pub struct InstructionFrame {
     instruction_data: Vec<u8>,
 }
 
+impl From<InstructionContext> for CompiledInstruction {
+    fn from(val: InstructionContext) -> Self {
+        CompiledInstruction::new_from_raw_parts(
+            val.program_account_index_in_tx as u8,
+            val.instruction_data,
+            val.instruction_accounts
+                .iter()
+                .map(|acc| acc.index_in_transaction as u8)
+                .collect(),
+        )
+    }
+}
+
 /// View interface to read instructions.
 #[derive(Debug, Clone)]
-pub struct InstructionContext<'a> {
+pub struct InstructionContextView<'a> {
     transaction_context: &'a TransactionContext,
     // The rest of the fields are redundant shortcuts
     nesting_level: usize,
@@ -515,7 +573,7 @@ pub struct InstructionContext<'a> {
     instruction_data: &'a [u8],
 }
 
-impl<'a> InstructionContext<'a> {
+impl<'a> InstructionContextView<'a> {
     /// How many Instructions were on the stack after this one was pushed
     ///
     /// That is the number of nested parent Instructions plus one (itself).
@@ -1079,7 +1137,7 @@ fn is_zeroed(buf: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, solana_sdk_ids::bpf_loader};
 
     #[test]
     fn test_instructions_sysvar_store_index_checked() {
@@ -1152,5 +1210,57 @@ mod tests {
 
         let result = instruction_context.get_program_owner();
         assert_eq!(result.err(), Some(InstructionError::MissingAccount));
+    }
+
+    #[test]
+    fn test_inner_instructions_list_from_instruction_trace() {
+        let instruction_trace = [1, 2, 1, 1, 2, 3, 2];
+        let mut transaction_context = TransactionContext::new(
+            vec![(
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, 1, &bpf_loader::ID),
+            )],
+            Rent::default(),
+            3,
+            instruction_trace.len(),
+        );
+        for (index_in_trace, stack_height) in instruction_trace.into_iter().enumerate() {
+            while stack_height <= transaction_context.get_instruction_stack_height() {
+                transaction_context.pop().unwrap();
+            }
+            if stack_height > transaction_context.get_instruction_stack_height() {
+                transaction_context
+                    .configure_next_instruction_for_tests(0, vec![], &[index_in_trace as u8])
+                    .unwrap();
+                transaction_context.push().unwrap();
+            }
+        }
+
+        let inner_instructions = transaction_context.deconstruct_into_record(true).1.unwrap();
+
+        assert_eq!(
+            inner_instructions,
+            vec![
+                vec![InnerInstruction {
+                    instruction: CompiledInstruction::new_from_raw_parts(0, vec![1], vec![]),
+                    stack_height: 2,
+                }],
+                vec![],
+                vec![
+                    InnerInstruction {
+                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![4], vec![]),
+                        stack_height: 2,
+                    },
+                    InnerInstruction {
+                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![5], vec![]),
+                        stack_height: 3,
+                    },
+                    InnerInstruction {
+                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![6], vec![]),
+                        stack_height: 2,
+                    },
+                ]
+            ]
+        );
     }
 }
