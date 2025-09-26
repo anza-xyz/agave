@@ -2901,6 +2901,9 @@ impl Bank {
         &self,
         txs: Vec<VersionedTransaction>,
     ) -> Result<TransactionBatch<RuntimeTransaction<SanitizedTransaction>>> {
+        let enable_static_instruction_limit = self
+            .feature_set
+            .is_active(&agave_feature_set::static_instruction_limit::id());
         let sanitized_txs = txs
             .into_iter()
             .map(|tx| {
@@ -2910,6 +2913,7 @@ impl Bank {
                     None,
                     self,
                     self.get_reserved_account_keys(),
+                    enable_static_instruction_limit,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -4591,6 +4595,9 @@ impl Bank {
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
+        let enable_static_instruction_limit = self
+            .feature_set
+            .is_active(&agave_feature_set::static_instruction_limit::id());
         let sanitized_tx = {
             let size =
                 bincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
@@ -4599,6 +4606,13 @@ impl Bank {
             }
             let message_hash = if verification_mode == TransactionVerificationMode::FullVerification
             {
+                // SIMD-0160, check instruction limit before signature verificaton
+                if enable_static_instruction_limit
+                    && tx.message.instructions().len()
+                        > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
+                {
+                    return Err(solana_transaction_error::TransactionError::SanitizeFailure);
+                }
                 tx.verify_and_hash_message()?
             } else {
                 tx.message.hash()
@@ -4610,6 +4624,7 @@ impl Bank {
                 None,
                 self,
                 self.get_reserved_account_keys(),
+                enable_static_instruction_limit,
             )
         }?;
 

@@ -31,6 +31,7 @@ solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-transaction = { workspace = true }
+solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 

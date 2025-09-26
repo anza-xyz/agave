@@ -1207,6 +1207,8 @@ mod tests {
                 None,
                 loader,
                 &HashSet::default(),
+                bank.feature_set
+                    .is_active(&agave_feature_set::static_instruction_limit::id()),
             )
             .unwrap()
         };

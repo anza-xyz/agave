@@ -3838,6 +3838,9 @@ pub mod rpc_full {
                 unsanitized_tx,
                 preflight_bank,
                 preflight_bank.get_reserved_account_keys(),
+                preflight_bank
+                    .feature_set
+                    .is_active(&agave_feature_set::static_instruction_limit::id()),
             )?;
             let blockhash = *transaction.message().recent_blockhash();
             let message_hash = *transaction.message_hash();
@@ -3988,8 +3991,13 @@ pub mod rpc_full {
                 });
             }
 
-            let transaction =
-                sanitize_transaction(unsanitized_tx, bank, bank.get_reserved_account_keys())?;
+            let transaction = sanitize_transaction(
+                unsanitized_tx,
+                bank,
+                bank.get_reserved_account_keys(),
+                bank.feature_set
+                    .is_active(&agave_feature_set::static_instruction_limit::id()),
+            )?;
             if sig_verify {
                 verify_transaction(&transaction)?;
             }
@@ -4391,6 +4399,7 @@ fn sanitize_transaction(
     transaction: VersionedTransaction,
     address_loader: impl AddressLoader,
     reserved_account_keys: &HashSet<Pubkey>,
+    enable_static_instruction_limit: bool,
 ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
     RuntimeTransaction::try_create(
         transaction,
@@ -4398,6 +4407,7 @@ fn sanitize_transaction(
         None,
         address_loader,
         reserved_account_keys,
+        enable_static_instruction_limit,
     )
     .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))
 }
@@ -9097,7 +9107,8 @@ pub mod tests {
             sanitize_transaction(
                 unsanitary_versioned_tx,
                 SimpleAddressLoader::Disabled,
-                &ReservedAccountKeys::empty_key_set()
+                &ReservedAccountKeys::empty_key_set(),
+                true,
             )
             .unwrap_err(),
             expect58
@@ -9122,7 +9133,8 @@ pub mod tests {
             sanitize_transaction(
                 versioned_tx,
                 SimpleAddressLoader::Disabled,
-                &ReservedAccountKeys::empty_key_set()
+                &ReservedAccountKeys::empty_key_set(),
+                true,
             )
             .unwrap_err(),
             Error::invalid_params(

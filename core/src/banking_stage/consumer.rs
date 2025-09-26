@@ -1789,6 +1789,8 @@ mod tests {
             Some(false),
             bank.as_ref(),
             &ReservedAccountKeys::empty_key_set(),
+            bank.feature_set
+                .is_active(&agave_feature_set::static_instruction_limit::id()),
         )
         .unwrap();
 
