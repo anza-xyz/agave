@@ -1,9 +1,5 @@
 use {
-    crate::{
-        cluster_info::REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS,
-        stake_weighting_config::{TimeConstant, WeightingConfig, WeightingConfigTyped},
-        weighted_shuffle::WeightedShuffle,
-    },
+    crate::{cluster_info::REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, weighted_shuffle::WeightedShuffle},
     agave_low_pass_filter::api as lpf,
     indexmap::IndexMap,
     rand::Rng,
@@ -21,36 +17,9 @@ const DEFAULT_ALPHA: u64 = ALPHA_MAX;
 // Low pass filter convergence time (ms)
 const DEFAULT_TC_MS: u64 = 30_000;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WeightingMode {
-    // alpha = 2.0 -> Quadratic
-    Static,
-    // alpha in [1.0, 2.0], smoothed over time, scaled up by 1,000,000 to avoid floating-point math
-    Dynamic {
-        alpha: u64,    // current alpha (fixed-point, 1,000,000–2,000,000)
-        filter_k: u64, // default: 611,015
-        tc_ms: u64,    // IIR time-constant (ms)
-    },
-}
-
-impl From<WeightingConfigTyped> for WeightingMode {
-    fn from(cfg: WeightingConfigTyped) -> Self {
-        match cfg {
-            WeightingConfigTyped::Static => WeightingMode::Static,
-            WeightingConfigTyped::Dynamic { tc } => {
-                let tc_ms = match tc {
-                    TimeConstant::Value(ms) => ms,
-                    TimeConstant::Default => DEFAULT_TC_MS,
-                };
-                let filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, tc_ms);
-                WeightingMode::Dynamic {
-                    alpha: DEFAULT_ALPHA,
-                    filter_k,
-                    tc_ms,
-                }
-            }
-        }
-    }
+pub struct IIRFilter {
+    alpha: u64, // alpha in [1.0, 2.0], smoothed over time, scaled up by 1,000,000 to avoid floating-point math
+    k: u64,     // default: 611,015
 }
 
 #[inline]
@@ -83,57 +52,17 @@ fn gossip_interpolate_weight(base: u64, base_squared: u64, alpha: u64) -> u64 {
 // push to for crds values belonging to the bucket.
 pub(crate) struct PushActiveSet {
     entries: [PushActiveSetEntry; NUM_PUSH_ACTIVE_SET_ENTRIES],
-    mode: WeightingMode,
+    filter: IIRFilter,
 }
 
 impl PushActiveSet {
-    pub(crate) fn new(mode: WeightingMode) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             entries: Default::default(),
-            mode,
-        }
-    }
-
-    pub(crate) fn new_static() -> Self {
-        Self::new(WeightingMode::Static)
-    }
-
-    pub(crate) fn apply_cfg(&mut self, cfg: &WeightingConfig) {
-        let config_type = WeightingConfigTyped::from(cfg);
-        match (&mut self.mode, config_type) {
-            (WeightingMode::Static, WeightingConfigTyped::Static) => (),
-            (current_mode, WeightingConfigTyped::Static) => {
-                // Dynamic -> Static: Switch mode
-                info!("Switching mode: {current_mode:?} -> Static");
-                self.mode = WeightingMode::Static;
-            }
-            (
-                WeightingMode::Dynamic {
-                    filter_k, tc_ms, ..
-                },
-                WeightingConfigTyped::Dynamic { tc },
-            ) => {
-                // Dynamic -> Dynamic: Update parameters if needed
-                let new_tc_ms = match tc {
-                    TimeConstant::Value(ms) => ms,
-                    TimeConstant::Default => DEFAULT_TC_MS,
-                };
-                if *tc_ms != new_tc_ms {
-                    *filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, new_tc_ms);
-                    *tc_ms = new_tc_ms;
-                    info!("Recomputed filter K = {} (tc_ms = {})", *filter_k, *tc_ms);
-                }
-            }
-            (current_mode, WeightingConfigTyped::Dynamic { .. }) => {
-                info!("Switching mode: {current_mode:?} -> Dynamic");
-                self.mode = WeightingMode::from(config_type);
-                if let WeightingMode::Dynamic {
-                    filter_k, tc_ms, ..
-                } = self.mode
-                {
-                    info!("Initialized filter K = {filter_k} (tc_ms = {tc_ms})");
-                }
-            }
+            filter: IIRFilter {
+                alpha: DEFAULT_ALPHA,
+                k: lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, DEFAULT_TC_MS),
+            },
         }
     }
 }
@@ -203,70 +132,49 @@ impl PushActiveSet {
             .map(|node| get_stake_bucket(stakes.get(node)))
             .collect();
 
-        match self.mode {
-            WeightingMode::Static => {
-                // alpha = 2.0 → weight = (bucket + 1)^2
-                // (k, entry) represents push active set where the stake bucket of
-                //     min stake of {this node, crds value owner}
-                // is equal to `k`. The `entry` maintains set of gossip nodes to
-                // actively push to for crds values belonging to this bucket.
-                for (k, entry) in self.entries.iter_mut().enumerate() {
-                    let weights: Vec<u64> = buckets
-                        .iter()
-                        .map(|&bucket| {
-                            // bucket <- get_stake_bucket(min stake of {
-                            //  this node, crds value owner and gossip peer
-                            // })
-                            // weight <- (bucket + 1)^2
-                            // min stake of {...} is a proxy for how much we care about
-                            // the link, and tries to mirror similar logic on the
-                            // receiving end when pruning incoming links:
-                            // https://github.com/solana-labs/solana/blob/81394cf92/gossip/src/received_cache.rs#L100-L105
-                            let bucket = bucket.min(k) as u64;
-                            bucket.saturating_add(1).saturating_pow(2)
-                        })
-                        .collect();
-                    entry.rotate(rng, size, num_bloom_filter_items, nodes, &weights);
-                }
-            }
-            WeightingMode::Dynamic {
-                ref mut alpha,
-                filter_k,
-                tc_ms: _,
-            } => {
-                // Need to take into account this node's stake bucket when calculating fraction of unstaked nodes.
-                let self_bucket = get_stake_bucket(stakes.get(self_pubkey));
-                let num_unstaked = buckets
-                    .iter()
-                    .filter(|&&b| b == 0)
-                    .count()
-                    .saturating_add(if self_bucket == 0 { 1 } else { 0 });
-                let total_nodes = nodes.len().saturating_add(1);
+        let self_bucket = get_stake_bucket(stakes.get(self_pubkey));
+        let num_unstaked = buckets
+            .iter()
+            .filter(|&&b| b == 0)
+            .count()
+            .saturating_add(if self_bucket == 0 { 1 } else { 0 });
+        let total_nodes = nodes.len().saturating_add(1);
 
-                let f_scaled = ((num_unstaked.saturating_mul(lpf::SCALE.get() as usize))
-                    .saturating_add(total_nodes / 2))
-                    / total_nodes;
-                let alpha_target = ALPHA_MIN.saturating_add(f_scaled as u64);
-                *alpha = lpf::filter_alpha(
-                    *alpha,
-                    alpha_target,
-                    lpf::FilterConfig {
-                        output_range: ALPHA_MIN..ALPHA_MAX,
-                        k: filter_k,
-                    },
-                );
+        let f_scaled = ((num_unstaked.saturating_mul(lpf::SCALE.get() as usize))
+            .saturating_add(total_nodes / 2))
+            / total_nodes;
+        let alpha_target = ALPHA_MIN.saturating_add(f_scaled as u64);
+        self.filter.alpha = lpf::filter_alpha(
+            self.filter.alpha,
+            alpha_target,
+            lpf::FilterConfig {
+                output_range: ALPHA_MIN..ALPHA_MAX,
+                k: self.filter.k,
+            },
+        );
 
-                for (k, entry) in self.entries.iter_mut().enumerate() {
-                    let weights: Vec<u64> = buckets
-                        .iter()
-                        .map(|&bucket| {
-                            let bucket = bucket.min(k) as u64;
-                            get_weight(bucket, *alpha)
-                        })
-                        .collect();
-                    entry.rotate(rng, size, num_bloom_filter_items, nodes, &weights);
-                }
-            }
+        // alpha = [1.0, 2.0] → weight = (bucket + 1)^alpha
+        // (k, entry) represents push active set where the stake bucket of
+        //     min stake of {this node, crds value owner}
+        // is equal to `k`. The `entry` maintains set of gossip nodes to
+        // actively push to for crds values belonging to this bucket.
+        for (k, entry) in self.entries.iter_mut().enumerate() {
+            let weights: Vec<u64> = buckets
+                .iter()
+                .map(|&bucket| {
+                    // bucket <- get_stake_bucket(min stake of {
+                    //  this node, crds value owner and gossip peer
+                    // })
+                    // weight <- (bucket + 1)^alpha
+                    // min stake of {...} is a proxy for how much we care about
+                    // the link, and tries to mirror similar logic on the
+                    // receiving end when pruning incoming links:
+                    // https://github.com/solana-labs/solana/blob/81394cf92/gossip/src/received_cache.rs#L100-L105
+                    let bucket = bucket.min(k) as u64;
+                    get_weight(bucket, self.filter.alpha)
+                })
+                .collect();
+            entry.rotate(rng, size, num_bloom_filter_items, nodes, &weights);
         }
     }
 
@@ -353,21 +261,11 @@ fn get_stake_bucket(stake: Option<&u64>) -> usize {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        crate::stake_weighting_config::{WEIGHTING_MODE_DYNAMIC, WEIGHTING_MODE_STATIC},
-        itertools::iproduct,
-        rand::SeedableRng,
-        rand_chacha::ChaChaRng,
+        super::*, itertools::iproduct, rand::SeedableRng, rand_chacha::ChaChaRng,
         std::iter::repeat_with,
     };
 
     const MAX_STAKE: u64 = (1 << 20) * LAMPORTS_PER_SOL;
-
-    fn push_active_set_new_dynamic() -> PushActiveSet {
-        PushActiveSet::new(WeightingMode::from(WeightingConfigTyped::Dynamic {
-            tc: TimeConstant::Default,
-        }))
-    }
 
     // Helper to generate a stake map given unstaked count
     fn make_stakes(
@@ -413,62 +311,6 @@ mod tests {
     }
 
     #[test]
-    fn test_push_active_set_static_weighting() {
-        const CLUSTER_SIZE: usize = 117;
-        let mut rng = ChaChaRng::from_seed([189u8; 32]);
-        let pubkey = Pubkey::new_unique();
-        let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(20).collect();
-        let stakes = repeat_with(|| rng.gen_range(1..MAX_STAKE));
-        let mut stakes: HashMap<_, _> = nodes.iter().copied().zip(stakes).collect();
-        stakes.insert(pubkey, rng.gen_range(1..MAX_STAKE));
-        let mut active_set = PushActiveSet::new(WeightingMode::Static);
-        assert!(active_set.entries.iter().all(|entry| entry.0.is_empty()));
-        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, &pubkey);
-        assert!(active_set.entries.iter().all(|entry| entry.0.len() == 5));
-        // Assert that for all entries, each filter already prunes the key.
-        for entry in &active_set.entries {
-            for (node, filter) in entry.0.iter() {
-                assert!(filter.contains(node));
-            }
-        }
-        let other = &nodes[5];
-        let origin = &nodes[17];
-        assert!(active_set
-            .get_nodes(&pubkey, origin, |_| false, &stakes)
-            .eq([13, 5, 18, 16, 0].into_iter().map(|k| &nodes[k])));
-        assert!(active_set
-            .get_nodes(&pubkey, other, |_| false, &stakes)
-            .eq([13, 18, 16, 0].into_iter().map(|k| &nodes[k])));
-        active_set.prune(&pubkey, &nodes[5], &[*origin], &stakes);
-        active_set.prune(&pubkey, &nodes[3], &[*origin], &stakes);
-        active_set.prune(&pubkey, &nodes[16], &[*origin], &stakes);
-        assert!(active_set
-            .get_nodes(&pubkey, origin, |_| false, &stakes)
-            .eq([13, 18, 0].into_iter().map(|k| &nodes[k])));
-        assert!(active_set
-            .get_nodes(&pubkey, other, |_| false, &stakes)
-            .eq([13, 18, 16, 0].into_iter().map(|k| &nodes[k])));
-        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes, &pubkey);
-        assert!(active_set.entries.iter().all(|entry| entry.0.len() == 7));
-        assert!(active_set
-            .get_nodes(&pubkey, origin, |_| false, &stakes)
-            .eq([18, 0, 7, 15, 11].into_iter().map(|k| &nodes[k])));
-        assert!(active_set
-            .get_nodes(&pubkey, other, |_| false, &stakes)
-            .eq([18, 16, 0, 7, 15, 11].into_iter().map(|k| &nodes[k])));
-        let origins = [*origin, *other];
-        active_set.prune(&pubkey, &nodes[18], &origins, &stakes);
-        active_set.prune(&pubkey, &nodes[0], &origins, &stakes);
-        active_set.prune(&pubkey, &nodes[15], &origins, &stakes);
-        assert!(active_set
-            .get_nodes(&pubkey, origin, |_| false, &stakes)
-            .eq([7, 11].into_iter().map(|k| &nodes[k])));
-        assert!(active_set
-            .get_nodes(&pubkey, other, |_| false, &stakes)
-            .eq([16, 7, 11].into_iter().map(|k| &nodes[k])));
-    }
-
-    #[test]
     fn test_push_active_set_dynamic_weighting() {
         const CLUSTER_SIZE: usize = 117;
         let mut rng = ChaChaRng::from_seed([14u8; 32]);
@@ -477,7 +319,7 @@ mod tests {
         let stakes = repeat_with(|| rng.gen_range(1..MAX_STAKE));
         let mut stakes: HashMap<_, _> = nodes.iter().copied().zip(stakes).collect();
         stakes.insert(pubkey, rng.gen_range(1..MAX_STAKE));
-        let mut active_set = push_active_set_new_dynamic();
+        let mut active_set = PushActiveSet::new();
         assert!(active_set.entries.iter().all(|entry| entry.0.is_empty()));
         active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, &pubkey);
         assert!(active_set.entries.iter().all(|entry| entry.0.len() == 5));
@@ -588,10 +430,7 @@ mod tests {
     }
 
     fn alpha_of(pas: &PushActiveSet) -> u64 {
-        match pas.mode {
-            WeightingMode::Dynamic { alpha, .. } => alpha,
-            WeightingMode::Static => panic!("test assumed Dynamic mode but found Static"),
-        }
+        pas.filter.alpha
     }
 
     #[test]
@@ -610,7 +449,7 @@ mod tests {
         let stakes = make_stakes(&nodes, num_unstaked, &mut rng);
         let my_pubkey = nodes.pop().unwrap();
 
-        let mut active_set = push_active_set_new_dynamic();
+        let mut active_set = PushActiveSet::new();
 
         // Simulate repeated calls to `rotate()` (as would happen every 7.5s)
         // 8 calls (60s) should be enough to converge to the expected target alpha.
@@ -651,7 +490,7 @@ mod tests {
         let mut rng = ChaChaRng::from_seed([99u8; 32]);
         let mut nodes: Vec<Pubkey> = repeat_with(Pubkey::new_unique).take(CLUSTER_SIZE).collect();
 
-        let mut active_set = push_active_set_new_dynamic();
+        let mut active_set = PushActiveSet::new();
 
         // 0% unstaked → alpha_target = 1,000,000
         let num_unstaked = 0;
@@ -757,163 +596,6 @@ mod tests {
                 alpha, *expected as u64,
                 "step {i}: alpha did not match expected during final convergence down"
             );
-        }
-    }
-
-    #[test]
-    fn test_record_size() {
-        assert_eq!(
-            bincode::serialized_size(&WeightingConfig::default()).unwrap(),
-            58
-        );
-    }
-
-    #[test]
-    fn test_apply_cfg_static_to_static() {
-        // Static -> Static: No change
-        let mut active_set = PushActiveSet::new(WeightingMode::Static);
-        assert_eq!(active_set.mode, WeightingMode::Static);
-
-        active_set.apply_cfg(&WeightingConfig::new_for_test(WEIGHTING_MODE_STATIC, 0));
-        assert_eq!(active_set.mode, WeightingMode::Static);
-    }
-
-    #[test]
-    fn test_apply_cfg_dynamic_to_static() {
-        // Dynamic -> Static: Mode switch
-        let mut active_set = push_active_set_new_dynamic();
-        assert!(matches!(active_set.mode, WeightingMode::Dynamic { .. }));
-
-        active_set.apply_cfg(&WeightingConfig::new_for_test(WEIGHTING_MODE_STATIC, 0));
-        assert_eq!(active_set.mode, WeightingMode::Static);
-    }
-
-    #[test]
-    fn test_apply_cfg_static_to_dynamic() {
-        // Static -> Dynamic: Mode switch
-        let mut active_set = PushActiveSet::new(WeightingMode::Static);
-        assert_eq!(active_set.mode, WeightingMode::Static);
-
-        let config = WeightingConfig::new_for_test(WEIGHTING_MODE_DYNAMIC, 0);
-        active_set.apply_cfg(&config);
-
-        match active_set.mode {
-            WeightingMode::Dynamic {
-                alpha,
-                filter_k,
-                tc_ms,
-            } => {
-                assert_eq!(alpha, DEFAULT_ALPHA);
-                assert_eq!(tc_ms, DEFAULT_TC_MS);
-                assert_eq!(
-                    filter_k,
-                    lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, DEFAULT_TC_MS)
-                );
-            }
-            WeightingMode::Static => panic!("Expected Dynamic mode after config change"),
-        }
-    }
-
-    #[test]
-    fn test_apply_cfg_dynamic_to_dynamic_same_tc() {
-        // Dynamic -> Dynamic (same tc): No change
-        let mut active_set = push_active_set_new_dynamic();
-        let original_mode = active_set.mode;
-
-        let config = WeightingConfig::new_for_test(WEIGHTING_MODE_DYNAMIC, 0);
-        active_set.apply_cfg(&config);
-
-        // Mode should be unchanged since tc is the same
-        assert_eq!(active_set.mode, original_mode);
-    }
-
-    #[test]
-    fn test_apply_cfg_dynamic_to_dynamic_different_tc() {
-        // Dynamic -> Dynamic (different tc): Update filter parameters
-        let mut active_set = push_active_set_new_dynamic();
-
-        // Change to a different tc value
-        let new_tc_ms = 45_000;
-        let config = WeightingConfig::new_for_test(WEIGHTING_MODE_DYNAMIC, new_tc_ms);
-        active_set.apply_cfg(&config);
-
-        match active_set.mode {
-            WeightingMode::Dynamic {
-                alpha,
-                filter_k,
-                tc_ms,
-            } => {
-                assert_eq!(alpha, DEFAULT_ALPHA);
-                assert_eq!(tc_ms, new_tc_ms);
-                assert_eq!(
-                    filter_k,
-                    lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, new_tc_ms)
-                );
-            }
-            WeightingMode::Static => panic!("Expected Dynamic mode"),
-        }
-    }
-
-    #[test]
-    fn test_apply_cfg_multiple_transitions() {
-        // Test multiple config changes in sequence
-        let mut active_set = PushActiveSet::new(WeightingMode::Static);
-
-        // Static -> Dynamic
-        active_set.apply_cfg(&WeightingConfig::new_for_test(
-            WEIGHTING_MODE_DYNAMIC,
-            20_000,
-        ));
-        assert!(matches!(
-            active_set.mode,
-            WeightingMode::Dynamic { tc_ms: 20_000, .. }
-        ));
-
-        // Dynamic -> Dynamic (change tc)
-        active_set.apply_cfg(&WeightingConfig::new_for_test(
-            WEIGHTING_MODE_DYNAMIC,
-            40_000,
-        ));
-        assert!(matches!(
-            active_set.mode,
-            WeightingMode::Dynamic { tc_ms: 40_000, .. }
-        ));
-
-        // Dynamic -> Static
-        active_set.apply_cfg(&WeightingConfig::new_for_test(WEIGHTING_MODE_STATIC, 0));
-        assert_eq!(active_set.mode, WeightingMode::Static);
-
-        // Static -> Dynamic (with default tc)
-        active_set.apply_cfg(&WeightingConfig::new_for_test(WEIGHTING_MODE_DYNAMIC, 0));
-        assert!(
-            matches!(active_set.mode, WeightingMode::Dynamic { tc_ms, .. } if tc_ms == DEFAULT_TC_MS)
-        );
-    }
-
-    #[test]
-    fn test_apply_cfg_filter_k_computation() {
-        // Verify that filter_k is correctly computed for different tc values
-        let mut active_set = PushActiveSet::new(WeightingMode::Static);
-
-        let test_cases = [10_000, 30_000, 60_000, 120_000];
-
-        for tc_ms in test_cases {
-            let config = WeightingConfig::new_for_test(WEIGHTING_MODE_DYNAMIC, tc_ms);
-            active_set.apply_cfg(&config);
-
-            let expected_filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, tc_ms);
-
-            match active_set.mode {
-                WeightingMode::Dynamic {
-                    filter_k,
-                    tc_ms: actual_tc_ms,
-                    ..
-                } => {
-                    assert_eq!(actual_tc_ms, tc_ms);
-                    assert_eq!(filter_k, expected_filter_k);
-                }
-                WeightingMode::Static => panic!("Expected Dynamic mode"),
-            }
         }
     }
 

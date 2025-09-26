@@ -6942,7 +6942,6 @@ dependencies = [
  "serde_bytes",
  "serde_derive",
  "siphasher 1.0.1",
- "solana-account",
  "solana-bloom",
  "solana-clap-utils",
  "solana-client",

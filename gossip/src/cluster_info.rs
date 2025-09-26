@@ -63,7 +63,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
-    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime::bank_forks::BankForks,
     solana_sanitize::Sanitize,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -226,7 +226,6 @@ impl ClusterInfo {
         stakes: &HashMap<Pubkey, u64>,
         gossip_validators: Option<&HashSet<Pubkey>>,
         sender: &impl ChannelSend<PacketBatch>,
-        maybe_bank_ref: Option<&Bank>,
     ) {
         let shred_version = self.my_contact_info.read().unwrap().shred_version();
         let self_keypair: Arc<Keypair> = self.keypair().clone();
@@ -239,7 +238,6 @@ impl ClusterInfo {
             &self.ping_cache,
             &mut pings,
             &self.socket_addr_space,
-            maybe_bank_ref,
         );
         let pings = pings
             .into_iter()
@@ -1532,18 +1530,12 @@ impl ClusterInfo {
                     //TODO: possibly tune this parameter
                     //we saw a deadlock passing an self.read().unwrap().timeout into sleep
                     if start - last_push > REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS {
-                        let maybe_bank = bank_forks
-                            .as_ref()
-                            .and_then(|bf| bf.read().ok())
-                            .map(|forks| forks.root_bank());
-                        let maybe_bank_ref = maybe_bank.as_deref();
                         self.refresh_my_gossip_contact_info();
                         self.refresh_push_active_set(
                             &recycler,
                             &stakes,
                             gossip_validators.as_ref(),
                             &sender,
-                            maybe_bank_ref,
                         );
                         last_push = timestamp();
                     }
@@ -2808,7 +2800,6 @@ mod tests {
             &cluster_info.ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
-            None,
         );
         let mut reqs = cluster_info.generate_new_gossip_requests(
             &thread_pool,
@@ -2956,7 +2947,6 @@ mod tests {
             &cluster_info.ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
-            None,
         );
         //check that all types of gossip messages are signed correctly
         cluster_info.flush_push_queue();
