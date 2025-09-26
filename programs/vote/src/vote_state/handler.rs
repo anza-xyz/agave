@@ -1626,7 +1626,7 @@ mod tests {
             if let VoteStateVersions::V4(v4) = vote_state_versions {
                 assert_eq!(v4.node_pubkey, vote_init.node_pubkey);
                 assert_eq!(
-                    v4.authorized_voters.get_authorized_voter(0),
+                    v4.authorized_voters.get_authorized_voter(clock.epoch),
                     Some(vote_init.authorized_voter)
                 );
                 assert_eq!(v4.authorized_withdrawer, vote_init.authorized_withdrawer);
