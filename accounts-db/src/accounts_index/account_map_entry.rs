@@ -7,7 +7,7 @@ use {
     solana_clock::Slot,
     std::sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, RwLock,
+        Arc, RwLock, RwLockReadGuard, RwLockWriteGuard,
     },
 };
 
@@ -21,7 +21,7 @@ pub struct AccountMapEntry<T> {
     /// list of slots in which this pubkey was updated
     /// Note that 'clean' removes outdated entries (ie. older roots) from this slot_list
     /// purge_slot() also removes non-rooted slots from this list
-    pub slot_list: RwLock<SlotList<T>>,
+    slot_list: RwLock<SlotList<T>>,
     /// synchronization metadata for in-memory state since last flush to disk accounts index
     pub meta: AccountMapEntryMeta,
 }
@@ -106,6 +106,18 @@ impl<T: IndexValue> AccountMapEntry<T> {
             Ordering::AcqRel,
             Ordering::Relaxed,
         );
+    }
+
+    pub fn slot_list_len(&self) -> usize {
+        self.slot_list.read().unwrap()
+    }
+
+    pub fn slot_list(&self) -> RwLockReadGuard<SlotList<T>> {
+        self.slot_list.read().unwrap()
+    }
+
+    pub fn slot_list_mut(&self) -> RwLockWriteGuard<SlotList<T>> {
+        self.slot_list.write().unwrap()
     }
 }
 
