@@ -1282,7 +1282,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     &self.stats().flush_entries_updated_on_disk,
                     flush_entries_updated_on_disk,
                 );
-                // remove the 'v'
 
                 let m = Measure::start("flush_evict");
                 self.evict_from_cache(
