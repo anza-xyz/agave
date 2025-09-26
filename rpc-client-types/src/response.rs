@@ -525,6 +525,9 @@ pub enum RpcBlockUpdateError {
 
     #[error("unsupported transaction version ({0})")]
     UnsupportedTransactionVersion(u8),
+
+    #[error("{0} is not a valid transaction version in the range 0-127")]
+    InvalidTransactionVersion(u8),
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]

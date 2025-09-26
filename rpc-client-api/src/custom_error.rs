@@ -27,6 +27,7 @@ pub const JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED: i64 = -32016;
 pub const JSON_RPC_SERVER_ERROR_EPOCH_REWARDS_PERIOD_ACTIVE: i64 = -32017;
 pub const JSON_RPC_SERVER_ERROR_SLOT_NOT_EPOCH_BOUNDARY: i64 = -32018;
 pub const JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE: i64 = -32019;
+pub const JSON_RPC_SERVER_ERROR_INVALID_TRANSACTION_VERSION: i64 = -32020;
 
 #[derive(Error, Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -79,6 +80,8 @@ pub enum RpcCustomError {
     SlotNotEpochBoundary { slot: Slot },
     #[error("LongTermStorageUnreachable")]
     LongTermStorageUnreachable,
+    #[error("InvalidTransactionVersion")]
+    InvalidTransactionVersion(u8),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -105,6 +108,9 @@ pub struct EpochRewardsPeriodActiveErrorData {
 impl From<EncodeError> for RpcCustomError {
     fn from(err: EncodeError) -> Self {
         match err {
+            EncodeError::InvalidTransactionVersion(version) => {
+                Self::InvalidTransactionVersion(version)
+            }
             EncodeError::UnsupportedTransactionVersion(version) => {
                 Self::UnsupportedTransactionVersion(version)
             }
@@ -212,6 +218,11 @@ impl From<RpcCustomError> for Error {
             RpcCustomError::BlockStatusNotAvailableYet { slot } => Self {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET),
                 message: format!("Block status not yet available for slot {slot}"),
+                data: None,
+            },
+            RpcCustomError::InvalidTransactionVersion(version) => Self {
+                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_INVALID_TRANSACTION_VERSION),
+                message: format!("{version} is not a valid transaction version in the range 0-127"),
                 data: None,
             },
             RpcCustomError::UnsupportedTransactionVersion(version) => Self {

@@ -55,6 +55,7 @@ bencher = { workspace = true }
 bytemuck = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 spl-token-confidential-transfer-proof-extraction = { workspace = true }
+test-case = { workspace = true }
 
 [[bench]]
 name = "extract_memos"

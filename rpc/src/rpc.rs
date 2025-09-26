@@ -4515,6 +4515,7 @@ pub mod tests {
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},
         },
+        solana_client::rpc_custom_error::JSON_RPC_SERVER_ERROR_INVALID_TRANSACTION_VERSION,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_entry::entry::next_versioned_entry,
         solana_fee_calculator::FeeRateGovernor,
@@ -7269,6 +7270,17 @@ pub mod tests {
             confirmed_block.transactions[1].version,
             Some(TransactionVersion::Number(0))
         );
+
+        let request = create_test_request(
+            "getBlock",
+            Some(json!([0u64, { "maxSupportedTransactionVersion": 128 }])),
+        );
+        let response = parse_failure_response(rpc.handle_request_sync(request));
+        let expected = (
+            JSON_RPC_SERVER_ERROR_INVALID_TRANSACTION_VERSION,
+            String::from("128 is not a valid transaction version in the range 0-127"),
+        );
+        assert_eq!(response, expected);
 
         let request = create_test_request("getBlock", Some(json!([0u64,])));
         let response = parse_failure_response(rpc.handle_request_sync(request));

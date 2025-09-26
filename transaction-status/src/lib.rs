@@ -490,6 +490,11 @@ impl VersionedTransactionWithStatusMeta {
         &self,
         max_supported_transaction_version: Option<u8>,
     ) -> Result<Option<TransactionVersion>, EncodeError> {
+        if let Some(x) = max_supported_transaction_version {
+            if x > 127 {
+                return Err(EncodeError::InvalidTransactionVersion(x));
+            }
+        }
         match (
             max_supported_transaction_version,
             self.transaction.version(),
@@ -881,7 +886,46 @@ pub struct TransactionByAddrInfo {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use {super::*, test_case::test_matrix};
+
+    #[allow(clippy::zero_prefixed_literal)]
+    #[test_matrix(0..127)]
+    fn test_validate_version_with_valid_version_number(version: u8) {
+        let tx = VersionedTransactionWithStatusMeta {
+            meta: TransactionStatusMeta::default(),
+            transaction: VersionedTransaction {
+                message: VersionedMessage::V0(v0::Message::default()),
+                ..VersionedTransaction::default()
+            },
+        };
+        assert_eq!(
+            tx.validate_version(Some(version)),
+            Ok(Some(TransactionVersion::Number(0))),
+        );
+    }
+
+    #[test_matrix(128..255)]
+    fn test_validate_version_with_invalid_version_number(version: u8) {
+        let tx = VersionedTransactionWithStatusMeta {
+            meta: TransactionStatusMeta::default(),
+            transaction: VersionedTransaction::default(),
+        };
+        assert_eq!(
+            tx.validate_version(Some(version)),
+            Err(EncodeError::InvalidTransactionVersion(version)),
+        );
+    }
+    #[test_matrix(128..255)]
+    fn test_encode_with_invalid_version_number(version: u8) {
+        let tx = VersionedTransactionWithStatusMeta {
+            meta: TransactionStatusMeta::default(),
+            transaction: VersionedTransaction::default(),
+        };
+        assert_eq!(
+            tx.encode(UiTransactionEncoding::Base64, Some(version), false,),
+            Err(EncodeError::InvalidTransactionVersion(version)),
+        );
+    }
 
     #[test]
     fn test_ui_transaction_status_meta_ctors_serialization() {
