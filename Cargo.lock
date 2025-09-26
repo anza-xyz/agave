@@ -136,6 +136,7 @@ dependencies = [
  "log",
  "solana-clock",
  "solana-hash",
+ "solana-metrics",
  "solana-signature",
  "solana-transaction",
  "solana-transaction-status",

@@ -407,6 +407,10 @@ pub fn set_host_id(host_id: String) {
     *HOST_ID.write().unwrap() = host_id;
 }
 
+pub fn get_host_id() -> String {
+    HOST_ID.read().unwrap().clone()
+}
+
 /// Submits a new point from any thread.  Note that points are internally queued
 /// and transmitted periodically in batches.
 pub fn submit(point: DataPoint, level: log::Level) {

@@ -5,6 +5,7 @@
 use {
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
+    solana_metrics,
     solana_signature::Signature,
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
@@ -370,6 +371,12 @@ impl SlotStatus {
 }
 
 pub type Result<T> = std::result::Result<T, GeyserPluginError>;
+
+/// Get the validator's host_id that was set during startup.
+/// This allows Geyser plugins to emit metrics using the same host_id as the validator.
+pub fn get_validator_host_id() -> String {
+    solana_metrics::get_host_id()
+}
 
 /// Defines a Geyser plugin, to stream data from the runtime.
 /// Geyser plugins must describe desired behavior for load and unload,
