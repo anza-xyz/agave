@@ -26,6 +26,9 @@ extern crate serde_derive;
 mod staked_validators_cache;
 
 #[cfg(feature = "agave-unstable-api")]
+mod timer_manager;
+
+#[cfg(feature = "agave-unstable-api")]
 pub mod vote_history;
 #[cfg(feature = "agave-unstable-api")]
 pub mod vote_history_storage;
