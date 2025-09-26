@@ -45,6 +45,8 @@ struct PacketOffsets {
     pub msg_start: u32,
     pub pubkey_start: u32,
     pub pubkey_len: u32,
+    pub instruction_len: u32,
+    pub instruction_start: u32,
 }
 
 impl PacketOffsets {
@@ -54,6 +56,8 @@ impl PacketOffsets {
         msg_start: u32,
         pubkey_start: u32,
         pubkey_len: u32,
+        instruction_len: u32,
+        instruction_start: u32,
     ) -> Self {
         Self {
             sig_len,
@@ -61,6 +65,8 @@ impl PacketOffsets {
             msg_start,
             pubkey_start,
             pubkey_len,
+            instruction_len,
+            instruction_start,
         }
     }
 }
@@ -74,7 +80,7 @@ pub enum PacketError {
     MismatchSignatureLen,
     PayerNotWritable,
     InvalidProgramIdIndex,
-    InvalidProgramLen,
+    InvalidNumberOfInstructions,
     UnsupportedVersion,
 }
 
@@ -261,7 +267,7 @@ fn do_get_packet_offsets(
         .checked_add(pubkey_len_size)
         .ok_or(PacketError::InvalidPubkeyLen)?;
 
-    let _ = pubkey_len
+    let blockhash_offset = pubkey_len
         .checked_mul(size_of::<Pubkey>())
         .and_then(|v| v.checked_add(pubkey_start))
         .filter(|v| *v <= packet.meta().size)
@@ -270,6 +276,37 @@ fn do_get_packet_offsets(
     if pubkey_len < sig_len_untrusted {
         return Err(PacketError::InvalidPubkeyLen);
     }
+
+    // read instruction length
+    let instructions_len_offset = blockhash_offset
+        .checked_add(size_of::<Hash>())
+        .ok_or(PacketError::InvalidLen)?;
+
+    // Packet should have at least 1 more byte for instructions.len
+    let _ = instructions_len_offset
+        .checked_add(1usize)
+        .filter(|v| *v <= packet.meta().size)
+        .ok_or(PacketError::InvalidLen)?;
+
+    let (instruction_len, instruction_len_size) = packet
+        .data(instructions_len_offset..)
+        .and_then(|bytes| decode_shortu16_len(bytes).ok())
+        .ok_or(PacketError::InvalidLen)?;
+
+    // SIMD-0160: skip if has more than 64 top instructions
+    if instruction_len > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH {
+        return Err(PacketError::InvalidNumberOfInstructions);
+    }
+
+    let instruction_start = instructions_len_offset
+        .checked_add(instruction_len_size)
+        .ok_or(PacketError::InvalidLen)?;
+
+    // Packet should have at least 1 more byte for one instructions_program_id
+    let _ = instruction_start
+        .checked_add(1usize)
+        .filter(|v| *v <= packet.meta().size)
+        .ok_or(PacketError::InvalidLen)?;
 
     let sig_start = current_offset
         .checked_add(sig_size)
@@ -280,6 +317,9 @@ fn do_get_packet_offsets(
     let pubkey_start = current_offset
         .checked_add(pubkey_start)
         .ok_or(PacketError::InvalidLen)?;
+    let instruction_start = current_offset
+        .checked_add(instruction_start)
+        .ok_or(PacketError::InvalidLen)?;
 
     Ok(PacketOffsets::new(
         u32::try_from(sig_len_untrusted)?,
@@ -287,6 +327,8 @@ fn do_get_packet_offsets(
         u32::try_from(msg_start)?,
         u32::try_from(pubkey_start)?,
         u32::try_from(pubkey_len)?,
+        u32::try_from(instruction_len)?,
+        u32::try_from(instruction_start)?,
     ))
 }
 
@@ -303,7 +345,7 @@ fn get_packet_offsets(
         }
     }
     // force sigverify to fail by returning zeros
-    PacketOffsets::new(0, 0, 0, 0, 0)
+    PacketOffsets::new(0, 0, 0, 0, 0, 0, 0)
 }
 
 fn check_for_simple_vote_transaction(
@@ -330,35 +372,13 @@ fn check_for_simple_vote_transaction(
         .checked_sub(current_offset)
         .ok_or(PacketError::InvalidLen)?;
 
-    let instructions_len_offset = (packet_offsets.pubkey_len as usize)
-        .checked_mul(size_of::<Pubkey>())
-        .and_then(|v| v.checked_add(pubkey_start))
-        .and_then(|v| v.checked_add(size_of::<Hash>()))
-        .ok_or(PacketError::InvalidLen)?;
-
-    // Packet should have at least 1 more byte for instructions.len
-    let _ = instructions_len_offset
-        .checked_add(1usize)
-        .filter(|v| *v <= packet.meta().size)
-        .ok_or(PacketError::InvalidLen)?;
-
-    let (instruction_len, instruction_len_size) = packet
-        .data(instructions_len_offset..)
-        .and_then(|bytes| decode_shortu16_len(bytes).ok())
-        .ok_or(PacketError::InvalidLen)?;
     // skip if has more than 1 instruction
-    if instruction_len != 1 {
-        return Err(PacketError::InvalidProgramLen);
+    if packet_offsets.instruction_len != 1 {
+        return Err(PacketError::InvalidNumberOfInstructions);
     }
 
-    let instruction_start = instructions_len_offset
-        .checked_add(instruction_len_size)
-        .ok_or(PacketError::InvalidLen)?;
-
-    // Packet should have at least 1 more byte for one instructions_program_id
-    let _ = instruction_start
-        .checked_add(1usize)
-        .filter(|v| *v <= packet.meta().size)
+    let instruction_start = (packet_offsets.instruction_start as usize)
+        .checked_sub(current_offset)
         .ok_or(PacketError::InvalidLen)?;
 
     let instruction_program_id_index: usize = usize::from(
@@ -681,7 +701,9 @@ mod tests {
                 PACKETS_PER_BATCH,
             },
             sigverify::{self, PacketOffsets},
-            test_tx::{new_test_vote_tx, test_multisig_tx, test_tx},
+            test_tx::{
+                new_test_tx_with_number_of_ixs, new_test_vote_tx, test_multisig_tx, test_tx,
+            },
         },
         bincode::{deserialize, serialize},
         bytes::{BufMut, Bytes, BytesMut},
@@ -691,11 +713,12 @@ mod tests {
         solana_message::{compiled_instruction::CompiledInstruction, Message, MessageHeader},
         solana_signature::Signature,
         solana_signer::Signer,
-        solana_transaction::Transaction,
+        solana_transaction::{versioned::VersionedTransaction, Transaction},
         std::{
             iter::repeat_with,
             sync::atomic::{AtomicU64, Ordering},
         },
+        test_case::test_case,
     };
 
     const SIG_OFFSET: usize = 1;
@@ -996,6 +1019,7 @@ mod tests {
         let offsets = sigverify::do_get_packet_offsets(packet.as_ref(), 0).unwrap();
         let expected_offsets = {
             legacy_offsets.pubkey_start += 1;
+            legacy_offsets.instruction_start += 1;
             legacy_offsets
         };
 
@@ -1033,6 +1057,8 @@ mod tests {
             packet_offsets.msg_start - packet_offsets.sig_start,
             packet_offsets.pubkey_start - packet_offsets.msg_start,
             packet_offsets.pubkey_len,
+            packet_offsets.instruction_len,
+            packet_offsets.instruction_start - packet_offsets.pubkey_start,
         )
     }
 
@@ -1040,23 +1066,23 @@ mod tests {
     fn test_get_packet_offsets() {
         assert_eq!(
             get_packet_offsets_from_tx(test_tx(), 0),
-            PacketOffsets::new(1, 1, 64, 4, 2)
+            PacketOffsets::new(1, 1, 64, 4, 2, 1, 97)
         );
         assert_eq!(
             get_packet_offsets_from_tx(test_tx(), 100),
-            PacketOffsets::new(1, 1, 64, 4, 2)
+            PacketOffsets::new(1, 1, 64, 4, 2, 1, 97)
         );
 
         // Ensure we're not indexing packet by the `current_offset` parameter.
         assert_eq!(
             get_packet_offsets_from_tx(test_tx(), 1_000_000),
-            PacketOffsets::new(1, 1, 64, 4, 2)
+            PacketOffsets::new(1, 1, 64, 4, 2, 1, 97)
         );
 
         // Ensure we're returning sig_len, not sig_size.
         assert_eq!(
             get_packet_offsets_from_tx(test_multisig_tx(), 0),
-            PacketOffsets::new(2, 1, 128, 4, 4)
+            PacketOffsets::new(2, 1, 128, 4, 4, 1, 161)
         );
     }
 
@@ -1798,5 +1824,33 @@ mod tests {
                 PinnedPacketBatch::new(vec![pinned_packet; 10]),
             ]
         )
+    }
+
+    #[test_case(false, false; "ok_ixs_legacy")]
+    #[test_case(true, false; "too_many_ixs_legacy")]
+    #[test_case(false, true; "ok_ixs_versioned")]
+    #[test_case(true, true; "too_many_ixs_versioned")]
+    fn test_number_of_instructions(too_many_ixs: bool, is_versioned_tx: bool) {
+        let mut number_of_ixs = 64;
+        if too_many_ixs {
+            number_of_ixs += 1;
+        }
+
+        let packet = if is_versioned_tx {
+            let tx: VersionedTransaction = new_test_tx_with_number_of_ixs(number_of_ixs);
+            BytesPacket::from_data(None, tx.clone()).unwrap()
+        } else {
+            let tx: Transaction = new_test_tx_with_number_of_ixs(number_of_ixs);
+            BytesPacket::from_data(None, tx.clone()).unwrap()
+        };
+
+        if too_many_ixs {
+            assert_eq!(
+                do_get_packet_offsets(packet.as_ref(), 0),
+                Err(PacketError::InvalidNumberOfInstructions),
+            );
+        } else {
+            assert!(do_get_packet_offsets(packet.as_ref(), 0).is_ok());
+        }
     }
 }
