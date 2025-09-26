@@ -5,43 +5,47 @@ use {
         is_zero_lamport::IsZeroLamport,
     },
     solana_clock::Slot,
-    std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, RwLock, RwLockReadGuard, RwLockWriteGuard,
+    std::{
+        fmt::Debug,
+        mem::{self, ManuallyDrop},
+        ops::Deref,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, RwLock, RwLockReadGuard, RwLockWriteGuard,
+        },
     },
 };
 
 /// one entry in the in-mem accounts index
 /// Represents the value for an account key in the in-memory accounts index
-#[derive(Debug)]
-pub struct AccountMapEntry<T> {
+pub struct AccountMapEntry<T: Copy> {
     /// number of alive slots that contain >= 1 instances of account data for this pubkey
     /// where alive represents a slot that has not yet been removed by clean via AccountsDB::clean_stored_dead_slots() for containing no up to date account information
     ref_count: AtomicRefCount,
     /// list of slots in which this pubkey was updated
     /// Note that 'clean' removes outdated entries (ie. older roots) from this slot_list
     /// purge_slot() also removes non-rooted slots from this list
-    slot_list: RwLock<SlotList<T>>,
+    slot_list: RwLock<SlotListRepr<T>>,
     /// synchronization metadata for in-memory state since last flush to disk accounts index
-    pub meta: AccountMapEntryMeta,
+    meta: AccountMapEntryMeta,
 }
 
 impl<T: IndexValue> AccountMapEntry<T> {
     pub fn new(slot_list: SlotList<T>, ref_count: RefCount, meta: AccountMapEntryMeta) -> Self {
+        let (is_singleton, slot_list_repr) = SlotListRepr::from_list(slot_list);
         Self {
-            slot_list: RwLock::new(slot_list),
+            slot_list: RwLock::new(slot_list_repr),
             ref_count: AtomicRefCount::new(ref_count),
-            meta,
+            meta: AccountMapEntryMeta {
+                is_singleton: AtomicBool::new(is_singleton),
+                ..meta
+            },
         }
     }
 
     #[cfg(test)]
     pub(super) fn empty_for_tests() -> Self {
-        Self {
-            slot_list: RwLock::default(),
-            ref_count: AtomicRefCount::default(),
-            meta: AccountMapEntryMeta::default(),
-        }
+        Self::new(SlotList::new(), 0, AccountMapEntryMeta::default())
     }
 
     pub fn ref_count(&self) -> RefCount {
@@ -108,16 +112,224 @@ impl<T: IndexValue> AccountMapEntry<T> {
         );
     }
 
+    /// Return length of the slot list
+    ///
+    /// This function might need to acquire a read lock on the slot list, so it should not be called
+    /// while any slot list accessor is active (since they hold the lock).
     pub fn slot_list_lock_read_len(&self) -> usize {
-        self.slot_list.read().unwrap().len()
+        if !self.meta.is_singleton.load(Ordering::Acquire) {
+            let slot_list_repr = self.slot_list.read().unwrap();
+            if !self.meta.is_singleton.load(Ordering::Acquire) {
+                // Safety: `is_singleton` confirmed to be false while holding the lock
+                return unsafe { slot_list_repr.list.len() };
+            }
+        }
+        1 // singleton list
     }
 
-    pub fn slot_list_read_lock(&self) -> RwLockReadGuard<SlotList<T>> {
-        self.slot_list.read().unwrap()
+    /// Acquire a read lock on the slot list and return accessor for interpreting its representation
+    ///
+    /// Do not call any locking function (`slot_list_*lock*`) until the returned object is dropped.
+    pub fn slot_list_read_lock(&self) -> SlotListReadGuard<'_, T> {
+        let repr_guard = self.slot_list.read().unwrap();
+        SlotListReadGuard {
+            repr_guard,
+            is_singleton: self.meta.is_singleton.load(Ordering::Acquire),
+        }
     }
 
-    pub fn slot_list_write_lock(&self) -> RwLockWriteGuard<SlotList<T>> {
-        self.slot_list.write().unwrap()
+    /// Acquire a write lock on the slot list and return accessor for modifying it
+    ///
+    /// Do not call any locking function (`slot_list_*lock*`) until the returned object is dropped.
+    pub fn slot_list_write_lock(&self) -> SlotListWriteGuard<'_, T> {
+        SlotListWriteGuard {
+            repr_guard: self.slot_list.write().unwrap(),
+            meta: &self.meta,
+        }
+    }
+}
+
+impl<T: IndexValue> Debug for AccountMapEntry<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountMapEntry")
+            .field("meta", &self.meta)
+            .field("ref_count", &self.ref_count)
+            .field("slot_list", &self.slot_list_read_lock())
+            .finish()
+    }
+}
+
+impl<T: Copy> Drop for AccountMapEntry<T> {
+    fn drop(&mut self) {
+        if !self.meta.is_singleton.load(Ordering::Acquire) {
+            // Make drop panic-resistant
+            if let Ok(mut slot_list) = self.slot_list.write() {
+                // Safety: we operate on &mut self, so is_singleton==false won't change since above check
+                unsafe { ManuallyDrop::drop(&mut slot_list.list) }
+            }
+        }
+    }
+}
+
+/// Dynamic representation of a slot list with denominator stored in entry metadata to minimize memory usage
+union SlotListRepr<T: Copy> {
+    /// This variant is used when entry's metadata `is_singleton` loads as `true` while holding the lock
+    singleton: (Slot, T),
+    /// Slot list with potentially different number of elements than 1, used when `is_singleton` loads as `false`
+    // Vec holds data on heap, however its inline size is impacted by len and capacity fields, so it needs to
+    // be wrapped in a Box to minimize the size of the union.
+    #[allow(clippy::box_collection)]
+    list: ManuallyDrop<Box<Vec<(Slot, T)>>>,
+}
+
+impl<T: Copy> SlotListRepr<T> {
+    fn from_list(slot_list: SlotList<T>) -> (bool, Self) {
+        let is_singleton = slot_list.len() == 1;
+        let this = if is_singleton {
+            Self {
+                singleton: slot_list[0],
+            }
+        } else {
+            Self {
+                list: ManuallyDrop::new(Box::new(slot_list.to_vec())),
+            }
+        };
+        (is_singleton, this)
+    }
+
+    // Safety: `is_singleton` needs to match current representation mode, thus this function is unsafe
+    unsafe fn as_slice(&self, is_singleton: bool) -> &[(Slot, T)] {
+        unsafe {
+            if is_singleton {
+                std::slice::from_ref(&self.singleton)
+            } else {
+                &self.list
+            }
+        }
+    }
+}
+
+/// Holds slot list lock for reading and provides read access interpreting its representation.
+pub struct SlotListReadGuard<'a, T: Copy> {
+    repr_guard: RwLockReadGuard<'a, SlotListRepr<T>>,
+    is_singleton: bool,
+}
+
+impl<T: Copy> Deref for SlotListReadGuard<'_, T> {
+    type Target = [(Slot, T)];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { SlotListRepr::as_slice(&self.repr_guard, self.is_singleton) }
+    }
+}
+
+impl<T: Copy + Debug> Debug for SlotListReadGuard<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.deref().fmt(f)
+    }
+}
+
+/// Holds slot list lock for writing and provides mutable API translating changes to the representation.
+///
+/// Note: the adjustment of representation happens on-demand when transitioning from singleton to list
+/// and on `Drop` to check possible transition from list to singleton.
+pub struct SlotListWriteGuard<'a, T: Copy> {
+    repr_guard: RwLockWriteGuard<'a, SlotListRepr<T>>,
+    meta: &'a AccountMapEntryMeta,
+}
+
+impl<T: Copy> SlotListWriteGuard<'_, T> {
+    /// Append element to the end of slot list
+    pub fn push(&mut self, item: (Slot, T)) {
+        self.change_to_list().push(item);
+    }
+
+    /// Retains only the elements specified by the predicate, passing a mutable reference to it.
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut (Slot, T)) -> bool,
+    {
+        if self.meta.is_singleton.load(Ordering::Acquire) {
+            let single_mut = &mut unsafe { self.repr_guard.singleton };
+            if !f(single_mut) {
+                self.clear();
+            }
+        } else {
+            unsafe { self.repr_guard.list.retain_mut(f) };
+        }
+    }
+
+    /// Removes and returns the element at position `index` within the list, shifting all elements after it to the left.
+    pub fn remove_at(&mut self, index: usize) -> (Slot, T) {
+        self.change_to_list().remove(index)
+    }
+
+    /// Replaces the element at position `index` within the list returning the previous element stored there.
+    pub fn replace_at(&mut self, index: usize, item: (Slot, T)) -> (Slot, T) {
+        let stored_item_mut = if self.meta.is_singleton.load(Ordering::Acquire) {
+            debug_assert_eq!(index, 0);
+            unsafe { &mut self.repr_guard.singleton }
+        } else {
+            unsafe { &mut self.repr_guard.list[index] }
+        };
+        mem::replace(stored_item_mut, item)
+    }
+
+    /// Clears the list, removing all elements.
+    pub fn clear(&mut self) {
+        self.change_to_list().clear();
+    }
+
+    fn change_to_list(&mut self) -> &mut Vec<(Slot, T)> {
+        if self.meta.is_singleton.swap(false, Ordering::AcqRel) {
+            let single = unsafe { self.repr_guard.singleton };
+            self.repr_guard.list = ManuallyDrop::new(Box::new(vec![single]));
+        }
+        unsafe { self.repr_guard.list.as_mut() }
+    }
+
+    fn try_change_to_singleton(&mut self) {
+        if !self.meta.is_singleton.load(Ordering::Acquire) {
+            let list = unsafe { &mut self.repr_guard.list };
+            if list.len() == 1 {
+                assert_eq!(list.len(), 1);
+                let item = list.pop().unwrap();
+                unsafe { ManuallyDrop::drop(list) };
+                self.repr_guard.singleton = item;
+                self.meta.is_singleton.store(true, Ordering::Release);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn assign(&mut self, value: impl IntoIterator<Item = (Slot, T)>) {
+        *self.change_to_list() = value.into_iter().collect();
+    }
+
+    #[cfg(test)]
+    pub fn cloned_list(&self) -> SlotList<T> {
+        self.iter().copied().collect()
+    }
+}
+
+impl<T: Copy> Drop for SlotListWriteGuard<'_, T> {
+    fn drop(&mut self) {
+        self.try_change_to_singleton();
+    }
+}
+
+impl<T: Copy> Deref for SlotListWriteGuard<'_, T> {
+    type Target = [(Slot, T)];
+
+    fn deref(&self) -> &Self::Target {
+        let is_singleton = self.meta.is_singleton.load(Ordering::Acquire);
+        unsafe { SlotListRepr::as_slice(&self.repr_guard, is_singleton) }
+    }
+}
+
+impl<T: Copy + Debug> Debug for SlotListWriteGuard<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.deref().fmt(f)
     }
 }
 
@@ -126,28 +338,35 @@ impl<T: IndexValue> AccountMapEntry<T> {
 #[derive(Debug, Default)]
 pub struct AccountMapEntryMeta {
     /// true if entry in in-mem idx has changes and needs to be written to disk
-    pub dirty: AtomicBool,
+    dirty: AtomicBool,
     /// 'age' at which this entry should be purged from the cache (implements lru)
-    pub age: AtomicAge,
+    age: AtomicAge,
+    /// Marker for intepreting `SlotListRepr` as either a singleton or a list.
+    ///
+    /// It is updated when write access to the slot list is released and the size of the slot
+    /// list changes between 1 and != 1.
+    is_singleton: AtomicBool,
 }
 
 impl AccountMapEntryMeta {
+    pub fn new(dirty: bool, age: Age) -> Self {
+        AccountMapEntryMeta {
+            dirty: AtomicBool::new(dirty),
+            age: AtomicAge::new(age),
+            is_singleton: AtomicBool::default(), // overwritten when passed to create entry
+        }
+    }
+
     pub fn new_dirty<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(
         storage: &BucketMapHolder<T, U>,
         is_cached: bool,
     ) -> Self {
-        AccountMapEntryMeta {
-            dirty: AtomicBool::new(true),
-            age: AtomicAge::new(storage.future_age_to_flush(is_cached)),
-        }
+        Self::new(true, storage.future_age_to_flush(is_cached))
     }
     pub fn new_clean<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(
         storage: &BucketMapHolder<T, U>,
     ) -> Self {
-        AccountMapEntryMeta {
-            dirty: AtomicBool::new(false),
-            age: AtomicAge::new(storage.future_age_to_flush(false)),
-        }
+        Self::new(false, storage.future_age_to_flush(false))
     }
 }
 
