@@ -2,7 +2,7 @@ use {
     crate::{
         accounts_index::{
             account_map_entry::{
-                AccountMapEntry, AccountMapEntryMeta, PreAllocatedAccountMapEntry,
+                AccountMapEntry, AccountMapEntryMeta, PreAllocatedAccountMapEntry, SLReadGuard,
             },
             DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, UpsertReclaim,
         },
@@ -174,7 +174,7 @@ struct StartupInfo<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
 
 #[derive(Default, Debug)]
 /// result from scanning in-mem index during flush
-struct FlushScanResult<T> {
+struct FlushScanResult<T: IndexValue> {
     /// pubkeys whose age indicates they may be evicted now, pending further checks.
     evictions_age_possible: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
     /// pubkeys chosen to evict based on random eviction
@@ -944,7 +944,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         startup: bool,
         update_stats: bool,
         ages_flushing_now: Age,
-    ) -> (bool, Option<std::sync::RwLockReadGuard<'a, SlotList<T>>>) {
+    ) -> (bool, Option<SLReadGuard<'a, T>>) {
         // this could be tunable dynamically based on memory pressure
         // we could look at more ages or we could throw out more items we are choosing to keep in the cache
         if Self::should_evict_based_on_age(current_age, entry, startup, ages_flushing_now) {

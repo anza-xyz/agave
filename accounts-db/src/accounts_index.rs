@@ -202,7 +202,7 @@ pub trait IsCached {
     fn is_cached(&self) -> bool;
 }
 
-pub trait IndexValue: 'static + IsCached + IsZeroLamport + DiskIndexValue {}
+pub trait IndexValue: 'static + IsCached + IsZeroLamport + DiskIndexValue + Copy {}
 
 pub trait DiskIndexValue:
     'static + Clone + Debug + PartialEq + Copy + Default + Sync + Send
@@ -1057,7 +1057,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     ) where
         F: FnMut(
             &'a Pubkey,
-            Option<(&SlotList<T>, RefCount)>,
+            Option<(&[(Slot, T)], RefCount)>,
             Option<&Arc<AccountMapEntry<T>>>,
         ) -> AccountsIndexScanResult,
         I: Iterator<Item = &'a Pubkey>,
@@ -1079,7 +1079,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         let result = if let Some(result) = avoid_callback_result.as_ref() {
                             *result
                         } else {
-                            let slot_list = &locked_entry.slot_list();
+                            let slot_list = &*locked_entry.slot_list();
                             callback(
                                 pubkey,
                                 Some((slot_list, locked_entry.ref_count())),
@@ -1097,7 +1097,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                                     1,
                                     "ref count expected to be zero, but is {}! {pubkey}, {:?}",
                                     locked_entry.ref_count(),
-                                    locked_entry.slot_list(),
+                                    &*locked_entry.slot_list(),
                                 );
                                 true
                             }
@@ -1107,7 +1107,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                                     info!(
                                         "Unexpected unref {pubkey} with {old_ref} {:?}, expect \
                                          old_ref to be 1",
-                                        locked_entry.slot_list()
+                                        &*locked_entry.slot_list()
                                     );
                                     datapoint_warn!(
                                         "accounts_db-unexpected-unref-zero",
@@ -1823,6 +1823,7 @@ pub mod tests {
                     let meta = AccountMapEntryMeta {
                         dirty: AtomicBool::new(entry.dirty()),
                         age: AtomicAge::new(entry.age()),
+                        is_regular: AtomicBool::new(entry.ref_count() == 1),
                     };
                     PreAllocatedAccountMapEntry::Entry(Arc::new(AccountMapEntry::new(
                         SlotList::from([(slot, account_info)]),

@@ -2016,7 +2016,7 @@ impl AccountsDb {
                                                 index_entry.ref_count(),
                                                 entry.value().len(),
                                                 *entry.value(),
-                                                slot_list
+                                                &*slot_list
                                             );
                                         }
                                     }
@@ -2028,7 +2028,7 @@ impl AccountsDb {
                                             index_entry.ref_count(),
                                             entry.value().len(),
                                             *entry.value(),
-                                            index_entry.slot_list()
+                                            &*index_entry.slot_list()
                                         );
                                     }
                                 }
@@ -7150,7 +7150,7 @@ impl AccountsDb {
             for pubkey in map.keys() {
                 self.accounts_index.get_and_then(&pubkey, |account_entry| {
                     if let Some(account_entry) = account_entry {
-                        let list_r = &account_entry.slot_list();
+                        let list_r = &*account_entry.slot_list();
                         info!(" key: {} ref_count: {}", pubkey, account_entry.ref_count(),);
                         info!("      slots: {list_r:?}");
                     }

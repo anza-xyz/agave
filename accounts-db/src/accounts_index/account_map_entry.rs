@@ -5,16 +5,20 @@ use {
         is_zero_lamport::IsZeroLamport,
     },
     solana_clock::Slot,
-    std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, RwLock, RwLockReadGuard, RwLockWriteGuard,
+    std::{
+        fmt::Debug,
+        mem::ManuallyDrop,
+        ops::Deref,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, RwLock, RwLockReadGuard, RwLockWriteGuard,
+        },
     },
 };
 
 /// one entry in the in-mem accounts index
 /// Represents the value for an account key in the in-memory accounts index
-#[derive(Debug)]
-pub struct AccountMapEntry<T> {
+pub struct AccountMapEntry<T: Copy> {
     /// number of alive slots that contain >= 1 instances of account data for this pubkey
     /// where alive represents a slot that has not yet been removed by clean via AccountsDB::clean_stored_dead_slots() for containing no up to date account information
     ref_count: AtomicRefCount,
@@ -29,7 +33,9 @@ pub struct AccountMapEntry<T> {
 impl<T: IndexValue> AccountMapEntry<T> {
     pub fn new(slot_list: SlotList<T>, ref_count: RefCount, meta: AccountMapEntryMeta) -> Self {
         Self {
-            slot_list: RwLock::new(slot_list),
+            slot_list: RwLock::new(SlotListRepr {
+                list: ManuallyDrop::new(Box::new(slot_list.to_vec())),
+            }), // TODO: select repr
             ref_count: AtomicRefCount::new(ref_count),
             meta,
         }
@@ -113,15 +119,18 @@ impl<T: IndexValue> AccountMapEntry<T> {
             let slot_list_repr = self.slot_list.read().unwrap();
             if !self.meta.is_regular.load(Ordering::Acquire) {
                 // Safety: `is_regular` confirmed to be false while holding the lock
-                return unsafe { slot_list_repr.list }.len();
+                return unsafe { slot_list_repr.list.len() };
             }
         }
-        // regular entry
-        1
+        1 // regular entry
     }
 
-    pub fn slot_list(&self) -> RwLockReadGuard<SlotList<T>> {
-        self.slot_list.read().unwrap()
+    pub fn slot_list(&self) -> SLReadGuard<'_, T> {
+        let repr_guard = self.slot_list.read().unwrap();
+        SLReadGuard {
+            repr_guard,
+            is_regular: self.meta.is_regular.load(Ordering::Acquire),
+        }
     }
 
     pub fn slot_list_mut(&self) -> RwLockWriteGuard<SlotList<T>> {
@@ -129,11 +138,40 @@ impl<T: IndexValue> AccountMapEntry<T> {
     }
 }
 
-union SlotListRepr<T> {
+impl<T: IndexValue> Debug for AccountMapEntry<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountMapEntry")
+            .field("meta", &self.meta)
+            .field("ref_count", &self.ref_count)
+            .field("slot_list", &&*self.slot_list())
+            .finish()
+    }
+}
+
+union SlotListRepr<T: Copy> {
     /// This variant is used when entry's metadata `is_regular` loads as `true` while holding the lock
     singleton: (Slot, T),
     /// Slot list with potentially different number of elements than 1, used when `is_regular` loads as `false`
-    list: Box<Vec<(Slot, T)>>,
+    list: ManuallyDrop<Box<Vec<(Slot, T)>>>,
+}
+
+pub struct SLReadGuard<'a, T: Copy> {
+    repr_guard: RwLockReadGuard<'a, SlotListRepr<T>>,
+    is_regular: bool,
+}
+
+impl<'a, T: Copy> Deref for SLReadGuard<'a, T> {
+    type Target = [(Slot, T)];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe {
+            if self.is_regular {
+                std::slice::from_ref(&self.repr_guard.singleton)
+            } else {
+                &self.repr_guard.list
+            }
+        }
+    }
 }
 
 /// data per entry in in-mem accounts index
@@ -148,7 +186,7 @@ pub struct AccountMapEntryMeta {
     ///
     /// It is updated when write access to the slot list is released and the entry kind
     /// (regular vs irregular) changes.
-    is_regular: AtomicBool,
+    pub is_regular: AtomicBool,
 }
 
 impl AccountMapEntryMeta {
@@ -159,7 +197,7 @@ impl AccountMapEntryMeta {
         AccountMapEntryMeta {
             dirty: AtomicBool::new(true),
             age: AtomicAge::new(storage.future_age_to_flush(is_cached)),
-            is_regular: false,
+            is_regular: AtomicBool::new(false),
         }
     }
     pub fn new_clean<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(
@@ -168,7 +206,7 @@ impl AccountMapEntryMeta {
         AccountMapEntryMeta {
             dirty: AtomicBool::new(false),
             age: AtomicAge::new(storage.future_age_to_flush(false)),
-            is_regular: true,
+            is_regular: AtomicBool::new(true),
         }
     }
 }
@@ -182,9 +220,7 @@ pub enum PreAllocatedAccountMapEntry<T: IndexValue> {
 impl<T: IndexValue> IsZeroLamport for PreAllocatedAccountMapEntry<T> {
     fn is_zero_lamport(&self) -> bool {
         match self {
-            PreAllocatedAccountMapEntry::Entry(entry) => {
-                entry.slot_list.read().unwrap()[0].1.is_zero_lamport()
-            }
+            PreAllocatedAccountMapEntry::Entry(entry) => entry.slot_list()[0].1.is_zero_lamport(),
             PreAllocatedAccountMapEntry::Raw(raw) => raw.1.is_zero_lamport(),
         }
     }
@@ -193,7 +229,7 @@ impl<T: IndexValue> IsZeroLamport for PreAllocatedAccountMapEntry<T> {
 impl<T: IndexValue> From<PreAllocatedAccountMapEntry<T>> for (Slot, T) {
     fn from(source: PreAllocatedAccountMapEntry<T>) -> (Slot, T) {
         match source {
-            PreAllocatedAccountMapEntry::Entry(entry) => entry.slot_list.read().unwrap()[0],
+            PreAllocatedAccountMapEntry::Entry(entry) => entry.slot_list()[0],
             PreAllocatedAccountMapEntry::Raw(raw) => raw,
         }
     }
