@@ -20,7 +20,7 @@ use {
     solana_svm_log_collector::{ic_logger_msg, LogCollector},
     solana_svm_measure::measure::Measure,
     solana_svm_type_overrides::sync::Arc,
-    solana_transaction_context::{BorrowedInstructionAccount, InstructionContext},
+    solana_transaction_context::{BorrowedInstructionAccount, InstructionContextView},
     std::{cell::RefCell, rc::Rc},
 };
 
@@ -57,7 +57,7 @@ fn get_state_mut(data: &mut [u8]) -> Result<&mut LoaderV4State, InstructionError
 
 fn check_program_account(
     log_collector: &Option<Rc<RefCell<LogCollector>>>,
-    instruction_context: &InstructionContext,
+    instruction_context: &InstructionContextView,
     program: &BorrowedInstructionAccount,
     authority_address: &Pubkey,
 ) -> Result<LoaderV4State, InstructionError> {

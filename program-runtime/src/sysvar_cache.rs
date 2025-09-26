@@ -16,7 +16,7 @@ use {
     solana_svm_type_overrides::sync::Arc,
     solana_sysvar::SysvarSerialize,
     solana_sysvar_id::SysvarId,
-    solana_transaction_context::{IndexOfAccount, InstructionContext},
+    solana_transaction_context::{IndexOfAccount, InstructionContextView},
 };
 
 #[cfg(feature = "frozen-abi")]
@@ -285,7 +285,7 @@ pub mod get_sysvar_with_account_check {
     use super::*;
 
     fn check_sysvar_account<S: SysvarId>(
-        instruction_context: &InstructionContext,
+        instruction_context: &InstructionContextView,
         instruction_account_index: IndexOfAccount,
     ) -> Result<(), InstructionError> {
         if !S::check_id(
@@ -298,7 +298,7 @@ pub mod get_sysvar_with_account_check {
 
     pub fn clock(
         invoke_context: &InvokeContext,
-        instruction_context: &InstructionContext,
+        instruction_context: &InstructionContextView,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<Clock>, InstructionError> {
         check_sysvar_account::<Clock>(instruction_context, instruction_account_index)?;
@@ -307,7 +307,7 @@ pub mod get_sysvar_with_account_check {
 
     pub fn rent(
         invoke_context: &InvokeContext,
-        instruction_context: &InstructionContext,
+        instruction_context: &InstructionContextView,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<Rent>, InstructionError> {
         check_sysvar_account::<Rent>(instruction_context, instruction_account_index)?;
@@ -316,7 +316,7 @@ pub mod get_sysvar_with_account_check {
 
     pub fn slot_hashes(
         invoke_context: &InvokeContext,
-        instruction_context: &InstructionContext,
+        instruction_context: &InstructionContextView,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<SlotHashes>, InstructionError> {
         check_sysvar_account::<SlotHashes>(instruction_context, instruction_account_index)?;
@@ -326,7 +326,7 @@ pub mod get_sysvar_with_account_check {
     #[allow(deprecated)]
     pub fn recent_blockhashes(
         invoke_context: &InvokeContext,
-        instruction_context: &InstructionContext,
+        instruction_context: &InstructionContextView,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<RecentBlockhashes>, InstructionError> {
         check_sysvar_account::<RecentBlockhashes>(instruction_context, instruction_account_index)?;
@@ -335,7 +335,7 @@ pub mod get_sysvar_with_account_check {
 
     pub fn stake_history(
         invoke_context: &InvokeContext,
-        instruction_context: &InstructionContext,
+        instruction_context: &InstructionContextView,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<StakeHistory>, InstructionError> {
         check_sysvar_account::<StakeHistory>(instruction_context, instruction_account_index)?;
@@ -344,7 +344,7 @@ pub mod get_sysvar_with_account_check {
 
     pub fn last_restart_slot(
         invoke_context: &InvokeContext,
-        instruction_context: &InstructionContext,
+        instruction_context: &InstructionContextView,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Arc<LastRestartSlot>, InstructionError> {
         check_sysvar_account::<LastRestartSlot>(instruction_context, instruction_account_index)?;
