@@ -507,4 +507,9 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     fn entry_notifications_enabled(&self) -> bool {
         false
     }
+
+    /// Called when the validator's host_id is set or changed.
+    /// This allows plugins to emit metrics using the same host_id as the validator.
+    /// Default implementation does nothing.
+    fn set_host_id(&self, _host_id: &str) {}
 }
