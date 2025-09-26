@@ -436,7 +436,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         match entry {
             Entry::Occupied(occupied) => {
                 let result =
-                    self.remove_if_slot_list_empty_value(occupied.get().slot_list_len() > 0);
+                    self.remove_if_slot_list_empty_value(occupied.get().slot_list_len() == 0);
                 if result {
                     // note there is a potential race here that has existed.
                     // if someone else holds the arc,
