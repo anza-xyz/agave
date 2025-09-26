@@ -997,7 +997,7 @@ mod tests {
             .configure_next_instruction_for_tests(
                 0,
                 vec![InstructionAccount::new(1, false, true)],
-                &[],
+                vec![],
             )
             .unwrap();
         transaction_context
