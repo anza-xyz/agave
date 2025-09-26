@@ -109,7 +109,7 @@ impl<T: IndexValue> AccountMapEntry<T> {
     }
 
     pub fn slot_list_len(&self) -> usize {
-        self.slot_list.read().unwrap()
+        self.slot_list.read().unwrap().len()
     }
 
     pub fn slot_list(&self) -> RwLockReadGuard<SlotList<T>> {
