@@ -19,6 +19,7 @@ fn process_authorize_with_seed_instruction(
     invoke_context: &InvokeContext,
     instruction_context: &InstructionContext,
     vote_account: &mut BorrowedInstructionAccount,
+    target_version: vote_state::VoteStateTargetVersion,
     new_authority: &Pubkey,
     authorization_type: VoteAuthorize,
     current_authority_derived_key_owner: &Pubkey,
@@ -41,6 +42,7 @@ fn process_authorize_with_seed_instruction(
     };
     vote_state::authorize(
         vote_account,
+        target_version,
         new_authority,
         authorization_type,
         &expected_authority_keys,
@@ -64,6 +66,9 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         return Err(InstructionError::InvalidAccountOwner);
     }
 
+    // Determine the target vote state version to use for all operations.
+    let target_version = vote_state::TEMP_HARDCODED_TARGET_VERSION;
+
     let signers = instruction_context.get_signers()?;
     match limited_deserialize(data, solana_packet::PACKET_DATA_SIZE as u64)? {
         VoteInstruction::InitializeAccount(vote_init) => {
@@ -74,12 +79,19 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             }
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 2)?;
-            vote_state::initialize_account(&mut me, &vote_init, &signers, &clock)
+            vote_state::initialize_account(&mut me, target_version, &vote_init, &signers, &clock)
         }
         VoteInstruction::Authorize(voter_pubkey, vote_authorize) => {
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 1)?;
-            vote_state::authorize(&mut me, &voter_pubkey, vote_authorize, &signers, &clock)
+            vote_state::authorize(
+                &mut me,
+                target_version,
+                &voter_pubkey,
+                vote_authorize,
+                &signers,
+                &clock,
+            )
         }
         VoteInstruction::AuthorizeWithSeed(args) => {
             instruction_context.check_number_of_instruction_accounts(3)?;
@@ -87,6 +99,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 invoke_context,
                 &instruction_context,
                 &mut me,
+                target_version,
                 &args.new_authority,
                 args.authorization_type,
                 &args.current_authority_derived_key_owner,
@@ -103,6 +116,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 invoke_context,
                 &instruction_context,
                 &mut me,
+                target_version,
                 new_authority,
                 args.authorization_type,
                 &args.current_authority_derived_key_owner,
@@ -112,13 +126,14 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         VoteInstruction::UpdateValidatorIdentity => {
             instruction_context.check_number_of_instruction_accounts(2)?;
             let node_pubkey = instruction_context.get_key_of_instruction_account(1)?;
-            vote_state::update_validator_identity(&mut me, node_pubkey, &signers)
+            vote_state::update_validator_identity(&mut me, target_version, node_pubkey, &signers)
         }
         VoteInstruction::UpdateCommission(commission) => {
             let sysvar_cache = invoke_context.get_sysvar_cache();
 
             vote_state::update_commission(
                 &mut me,
+                target_version,
                 commission,
                 &signers,
                 sysvar_cache.get_epoch_schedule()?.as_ref(),
@@ -136,7 +151,14 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             )?;
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 2)?;
-            vote_state::process_vote_with_account(&mut me, &slot_hashes, &clock, &vote, &signers)
+            vote_state::process_vote_with_account(
+                &mut me,
+                target_version,
+                &slot_hashes,
+                &clock,
+                &vote,
+                &signers,
+            )
         }
         VoteInstruction::UpdateVoteState(vote_state_update)
         | VoteInstruction::UpdateVoteStateSwitch(vote_state_update, _) => {
@@ -148,6 +170,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             let clock = sysvar_cache.get_clock()?;
             vote_state::process_vote_state_update(
                 &mut me,
+                target_version,
                 slot_hashes.slot_hashes(),
                 &clock,
                 vote_state_update,
@@ -164,6 +187,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             let clock = sysvar_cache.get_clock()?;
             vote_state::process_vote_state_update(
                 &mut me,
+                target_version,
                 slot_hashes.slot_hashes(),
                 &clock,
                 vote_state_update,
@@ -177,6 +201,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             let clock = sysvar_cache.get_clock()?;
             vote_state::process_tower_sync(
                 &mut me,
+                target_version,
                 slot_hashes.slot_hashes(),
                 &clock,
                 tower_sync,
@@ -192,6 +217,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             vote_state::withdraw(
                 &instruction_context,
                 0,
+                target_version,
                 lamports,
                 1,
                 &signers,
@@ -207,7 +233,14 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             }
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, &instruction_context, 1)?;
-            vote_state::authorize(&mut me, voter_pubkey, vote_authorize, &signers, &clock)
+            vote_state::authorize(
+                &mut me,
+                target_version,
+                voter_pubkey,
+                vote_authorize,
+                &signers,
+                &clock,
+            )
         }
     }
 });

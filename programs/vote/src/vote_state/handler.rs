@@ -946,10 +946,36 @@ impl VoteStateHandler {
     }
 
     #[cfg(test)]
+    pub fn as_ref_v3(&self) -> &VoteStateV3 {
+        match &self.target_state {
+            TargetVoteState::V3(v3) => v3,
+            _ => panic!("not a v3"),
+        }
+    }
+
+    #[cfg(test)]
     pub fn as_ref_v4(&self) -> &VoteStateV4 {
         match &self.target_state {
             TargetVoteState::V4(v4) => v4,
             _ => panic!("not a v4"),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn serialize(self) -> Vec<u8> {
+        match self.target_state {
+            TargetVoteState::V3(v3) => {
+                let mut data = vec![0; VoteStateV3::size_of()];
+                let versioned = VoteStateVersions::V3(Box::new(v3));
+                bincode::serialize_into(&mut data[..], &versioned).unwrap();
+                data
+            }
+            TargetVoteState::V4(v4) => {
+                let mut data = vec![0; VoteStateV4::size_of()];
+                let versioned = VoteStateVersions::V4(Box::new(v4));
+                bincode::serialize_into(&mut data[..], &versioned).unwrap();
+                data
+            }
         }
     }
 }
