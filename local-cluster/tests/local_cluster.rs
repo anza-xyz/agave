@@ -242,7 +242,7 @@ fn test_local_cluster_signature_subscribe() {
     );
 
     let (mut sig_subscribe_client, receiver) = PubsubClient::signature_subscribe(
-        &format!("ws://{}", non_bootstrap_info.rpc_pubsub().unwrap()),
+        format!("ws://{}", non_bootstrap_info.rpc_pubsub().unwrap()),
         &transaction.signatures[0],
         Some(RpcSignatureSubscribeConfig {
             commitment: Some(CommitmentConfig::processed()),
@@ -2728,7 +2728,7 @@ fn test_rpc_block_subscribe() {
     let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
     let rpc_node_contact_info = cluster.get_contact_info(rpc_node_pubkey).unwrap();
     let (mut block_subscribe_client, receiver) = PubsubClient::block_subscribe(
-        &format!(
+        format!(
             "ws://{}",
             // It is important that we subscribe to a non leader node as there
             // is a race condition which can cause leader nodes to not send
@@ -2883,7 +2883,7 @@ fn test_oc_bad_signatures() {
     );
 
     let (mut block_subscribe_client, receiver) = PubsubClient::block_subscribe(
-        &format!(
+        format!(
             "ws://{}",
             &cluster.entry_point_info.rpc_pubsub().unwrap().to_string()
         ),

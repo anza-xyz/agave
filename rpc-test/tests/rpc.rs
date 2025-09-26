@@ -39,6 +39,7 @@ use {
         time::{Duration, Instant},
     },
     tokio::runtime::Runtime,
+    tokio_tungstenite::tungstenite::client::IntoClientRequest,
 };
 
 macro_rules! json_req {
@@ -228,7 +229,8 @@ fn test_rpc_slot_updates() {
     let rpc_pubsub_url = test_validator.rpc_pubsub_url();
 
     rt.spawn(async move {
-        let pubsub_client = PubsubClient::new(&rpc_pubsub_url).await.unwrap();
+        let request = rpc_pubsub_url.into_client_request().unwrap();
+        let pubsub_client = PubsubClient::new(request).await.unwrap();
         let (mut slot_notifications, slot_unsubscribe) =
             pubsub_client.slot_updates_subscribe().await.unwrap();
 
