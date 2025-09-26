@@ -8869,7 +8869,7 @@ dependencies = [
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
- "solana-logger 3.0.0",
+ "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-native-token",

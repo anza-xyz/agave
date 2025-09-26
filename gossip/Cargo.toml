@@ -33,6 +33,7 @@ frozen-abi = [
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
+agave-unstable-api = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
