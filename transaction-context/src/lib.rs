@@ -280,7 +280,7 @@ impl TransactionContext {
         program_index: IndexOfAccount,
         instruction_accounts: Vec<InstructionAccount>,
         deduplication_map: Vec<u8>,
-        instruction_data: &[u8],
+        instruction_data: Vec<u8>,
     ) -> Result<(), InstructionError> {
         debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
         let instruction = self
@@ -289,7 +289,7 @@ impl TransactionContext {
             .ok_or(InstructionError::CallDepth)?;
         instruction.program_account_index_in_tx = program_index;
         instruction.instruction_accounts = instruction_accounts;
-        instruction.instruction_data = instruction_data.to_vec();
+        instruction.instruction_data = instruction_data;
         instruction.dedup_map = deduplication_map;
         Ok(())
     }
@@ -315,7 +315,7 @@ impl TransactionContext {
             program_index,
             instruction_accounts,
             dedup_map,
-            instruction_data,
+            instruction_data.to_vec(),
         )
     }
 

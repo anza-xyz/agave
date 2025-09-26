@@ -791,7 +791,7 @@ mod tests {
                             0,
                             instruction_accounts,
                             dedup_map,
-                            &instruction_data,
+                            instruction_data,
                         )
                         .unwrap();
                 } else {

@@ -443,7 +443,7 @@ impl<'a> InvokeContext<'a> {
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
-            &instruction.data,
+            instruction.data,
         )?;
         Ok(())
     }
@@ -488,7 +488,7 @@ impl<'a> InvokeContext<'a> {
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
-            instruction.data,
+            instruction.data.to_vec(),
         )?;
         Ok(())
     }
