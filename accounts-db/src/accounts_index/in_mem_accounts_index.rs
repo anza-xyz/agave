@@ -3,6 +3,7 @@ use {
         accounts_index::{
             account_map_entry::{
                 AccountMapEntry, AccountMapEntryMeta, PreAllocatedAccountMapEntry, SLReadGuard,
+                SLWriteGuard,
             },
             DiskIndexValue, IndexValue, ReclaimsSlotList, RefCount, SlotList, UpsertReclaim,
         },
@@ -495,13 +496,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     pub fn slot_list_mut<RT>(
         &self,
         pubkey: &Pubkey,
-        user_fn: impl FnOnce(&mut SlotList<T>) -> RT,
+        user_fn: impl FnOnce(SLWriteGuard<T>) -> RT,
     ) -> Option<RT> {
         self.get_internal_inner(pubkey, |entry| {
             (
                 true,
                 entry.map(|entry| {
-                    let result = user_fn(&mut entry.slot_list_mut());
+                    let result = user_fn(entry.slot_list_mut());
                     // note that to be safe here, we ALWAYS mark the entry as dirty
                     entry.set_dirty(true);
                     result
@@ -684,7 +685,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// is the number of entries added (1) - the number of uncached entries removed
     /// or replaced
     fn update_slot_list(
-        slot_list: &mut SlotList<T>,
+        slot_list: &mut SLWriteGuard<T>,
         slot: Slot,
         account_info: T,
         other_slot: Option<Slot>,
@@ -710,8 +711,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     let is_cur_account_cached = cur_account_info.is_cached();
 
                     // Replace the item
-                    let reclaim_item =
-                        std::mem::replace(&mut slot_list[slot_list_index], (slot, account_info));
+                    let reclaim_item = slot_list.replace_at(slot_list_index, (slot, account_info));
                     match reclaim {
                         UpsertReclaim::ReclaimOldSlots | UpsertReclaim::PopulateReclaims => {
                             // Reclaims are used to reclaim other versions of accounts when they are

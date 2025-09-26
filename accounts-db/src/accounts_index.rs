@@ -5,6 +5,7 @@ mod roots_tracker;
 mod secondary;
 use {
     crate::{
+        accounts_index::account_map_entry::SLWriteGuard,
         accounts_index_storage::{AccountsIndexStorage, Startup},
         ancestors::Ancestors,
         bucket_map_holder::Age,
@@ -854,7 +855,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     fn slot_list_mut<RT>(
         &self,
         pubkey: &Pubkey,
-        user_fn: impl FnOnce(&mut SlotList<T>) -> RT,
+        user_fn: impl FnOnce(SLWriteGuard<T>) -> RT,
     ) -> Option<RT> {
         let read_lock = self.get_bin(pubkey);
         read_lock.slot_list_mut(pubkey, user_fn)
@@ -952,7 +953,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         slots_to_purge: impl for<'a> Contains<'a, Slot>,
         reclaims: &mut ReclaimsSlotList<T>,
     ) -> bool {
-        self.slot_list_mut(pubkey, |slot_list| {
+        self.slot_list_mut(pubkey, |mut slot_list| {
             slot_list.retain(|(slot, item)| {
                 let should_purge = slots_to_purge.contains(slot);
                 if should_purge {
@@ -1502,7 +1503,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
     fn purge_older_root_entries(
         &self,
-        slot_list: &mut SlotList<T>,
+        slot_list: &mut SLWriteGuard<T>,
         reclaims: &mut ReclaimsSlotList<T>,
         max_clean_root_inclusive: Option<Slot>,
     ) {
@@ -1549,8 +1550,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     ) -> bool {
         let mut is_slot_list_empty = false;
         let missing_in_accounts_index = self
-            .slot_list_mut(pubkey, |slot_list| {
-                self.purge_older_root_entries(slot_list, reclaims, max_clean_root_inclusive);
+            .slot_list_mut(pubkey, |mut slot_list| {
+                self.purge_older_root_entries(&mut slot_list, reclaims, max_clean_root_inclusive);
                 is_slot_list_empty = slot_list.is_empty();
             })
             .is_none();
@@ -1741,8 +1742,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     // if this account has no more entries. Note this does not update the secondary
     // indexes!
     pub fn purge_roots(&self, pubkey: &Pubkey) -> (SlotList<T>, bool) {
-        self.slot_list_mut(pubkey, |slot_list| {
-            let reclaims = self.get_rooted_entries(slot_list, None);
+        self.slot_list_mut(pubkey, |mut slot_list| {
+            let reclaims = self.get_rooted_entries(&slot_list, None);
             slot_list.retain(|(slot, _)| !self.is_alive_root(*slot));
             (reclaims, slot_list.is_empty())
         })

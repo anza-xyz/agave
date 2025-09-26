@@ -2874,8 +2874,7 @@ fn test_delete_dependencies() {
         .collect();
     for key in [&key0, &key1, &key2] {
         let index_entry = accounts_index.get_cloned(key).unwrap();
-        let rooted_entries =
-            accounts_index.get_rooted_entries(index_entry.slot_list().as_slice(), None);
+        let rooted_entries = accounts_index.get_rooted_entries(&index_entry.slot_list(), None);
         let ref_count = index_entry.ref_count();
         let index = accounts_index.bin_calculator.bin_from_pubkey(key);
         let candidates_bin = &mut candidates[index];

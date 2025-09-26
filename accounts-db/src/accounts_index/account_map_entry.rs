@@ -133,8 +133,12 @@ impl<T: IndexValue> AccountMapEntry<T> {
         }
     }
 
-    pub fn slot_list_mut(&self) -> RwLockWriteGuard<SlotList<T>> {
-        self.slot_list.write().unwrap()
+    pub fn slot_list_mut(&self) -> SLWriteGuard<'_, T> {
+        let repr_guard = self.slot_list.write().unwrap();
+        SLWriteGuard {
+            repr_guard,
+            is_regular: self.meta.is_regular.load(Ordering::Acquire),
+        }
     }
 }
 
@@ -145,6 +149,15 @@ impl<T: IndexValue> Debug for AccountMapEntry<T> {
             .field("ref_count", &self.ref_count)
             .field("slot_list", &&*self.slot_list())
             .finish()
+    }
+}
+
+impl<T: Copy> Drop for AccountMapEntry<T> {
+    fn drop(&mut self) {
+        if !self.meta.is_regular.load(Ordering::Acquire) {
+            let mut slot_list = self.slot_list.write().unwrap();
+            unsafe { ManuallyDrop::drop(&mut slot_list.list) }
+        }
     }
 }
 
@@ -161,6 +174,85 @@ pub struct SLReadGuard<'a, T: Copy> {
 }
 
 impl<'a, T: Copy> Deref for SLReadGuard<'a, T> {
+    type Target = [(Slot, T)];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe {
+            if self.is_regular {
+                std::slice::from_ref(&self.repr_guard.singleton)
+            } else {
+                &self.repr_guard.list
+            }
+        }
+    }
+}
+
+pub struct SLWriteGuard<'a, T: Copy> {
+    repr_guard: RwLockWriteGuard<'a, SlotListRepr<T>>,
+    is_regular: bool,
+}
+
+impl<'a, T: Copy> SLWriteGuard<'a, T> {
+    pub fn push(&mut self, item: (Slot, T)) {
+        if self.is_regular {
+            self.is_regular = false;
+            unsafe {
+                let single = self.repr_guard.singleton;
+                self.repr_guard.list = ManuallyDrop::new(Box::new(vec![single, item]));
+            }
+        }
+        unsafe {
+            self.repr_guard.list.push(item);
+        }
+    }
+
+    pub fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&mut (Slot, T)) -> bool,
+    {
+        // TODO
+        if self.is_regular {
+            self.is_regular = false;
+            unsafe {
+                let single = self.repr_guard.singleton;
+                self.repr_guard.list = ManuallyDrop::new(Box::new(vec![single]));
+            }
+        }
+        unsafe {
+            self.repr_guard.list.retain_mut(f);
+        }
+    }
+
+    pub fn remove(&mut self, index: usize) {
+        // TODO
+        if self.is_regular {
+            self.is_regular = false;
+            unsafe {
+                let single = self.repr_guard.singleton;
+                self.repr_guard.list = ManuallyDrop::new(Box::new(vec![single]));
+            }
+        }
+        unsafe {
+            self.repr_guard.list.remove(index);
+        }
+    }
+
+    pub fn replace_at(&mut self, index: usize, item: (Slot, T)) -> (Slot, T) {
+        if self.is_regular {
+            self.is_regular = false;
+            unsafe {
+                let single = self.repr_guard.singleton;
+                self.repr_guard.list = ManuallyDrop::new(Box::new(vec![single]));
+            }
+        }
+        unsafe {
+            self.repr_guard.list[index] = item;
+        }
+        item // TODO
+    }
+}
+
+impl<'a, T: Copy> Deref for SLWriteGuard<'a, T> {
     type Target = [(Slot, T)];
 
     fn deref(&self) -> &Self::Target {
