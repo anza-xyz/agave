@@ -28,10 +28,10 @@ source ci/rust-version.sh nightly
 # as normal (not dev) dependencies, only if you're sure that there's good
 # reason to bend dev-context-only-utils's original intention and that listed
 # package isn't part of released binaries.
-source scripts/dcou-tainted-packages.sh
+source scripts/agave-build-lists.sh
 
 # convert to comma separeted (ref: https://stackoverflow.com/a/53839433)
-printf -v allowed '"%s",' "${dcou_tainted_packages[@]}"
+printf -v allowed '"%s",' "${DCOU_TAINTED_PACKAGES[@]}"
 allowed="${allowed%,}"
 
 mode=${1:-full}

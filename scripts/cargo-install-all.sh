@@ -42,7 +42,6 @@ installDir=
 buildProfileArg='--profile release'
 buildProfile='release'
 validatorOnly=
-publicRelease=
 
 while [[ -n $1 ]]; do
   if [[ ${1:0:1} = - ]]; then
@@ -60,9 +59,6 @@ while [[ -n $1 ]]; do
       shift
     elif [[ $1 = --validator-only ]]; then
       validatorOnly=true
-      shift
-    elif [[ $1 = --public-release ]]; then
-      publicRelease=true
       shift
     else
       usage "Unknown option: $1"
@@ -90,58 +86,24 @@ cd "$(dirname "$0")"/..
 
 SECONDS=0
 
-if [[ $CI_OS_NAME = windows ]]; then
-  # Limit windows to end-user command-line tools.  Full validator support is not
-  # yet available on windows
-  BINS=(
-    cargo-build-sbf
-    cargo-test-sbf
-    solana
-    agave-install
-    agave-install-init
-    solana-keygen
-    solana-test-validator
-    solana-tokens
-  )
-  DCOU_BINS=()
+source "$SOLANA_ROOT"/scripts/agave-build-lists.sh
+
+BINS=()
+DCOU_BINS=()
+if [[ -n "$validatorOnly" ]]; then
+  echo "Building binaries for net.sh deploys: ${AGAVE_BINS_END_USER[*]} ${AGAVE_BINS_VAL_OP[*]} ${AGAVE_BINS_DCOU[*]}"
+  BINS+=("${AGAVE_BINS_END_USER[@]}" "${AGAVE_BINS_VAL_OP[@]}")
+  DCOU_BINS+=("${AGAVE_BINS_DCOU[@]}")
 else
-  ./fetch-perf-libs.sh
+  echo "Building binaries for all platforms: ${AGAVE_BINS_DEV[*]} ${AGAVE_BINS_END_USER[*]} ${AGAVE_BINS_DEPRECATED[*]}"
+  BINS+=("${AGAVE_BINS_DEV[@]}" "${AGAVE_BINS_END_USER[@]}" "${AGAVE_BINS_DEPRECATED[@]}")
 
-  DCOU_BINS=()
-  BINS=(
-    solana
-    solana-faucet
-    solana-genesis
-    agave-install
-    solana-keygen
-  )
-
-  if [[ -z "$publicRelease" ]]; then
-    BINS+=(
-      agave-validator
-      agave-watchtower
-      solana-gossip
-    )
-
-    DCOU_BINS+=(
-      agave-ledger-tool
-    )
-  fi
-
-
-  # Speed up net.sh deploys by excluding unused binaries
-  if [[ -z "$validatorOnly" ]]; then
-    BINS+=(
-      cargo-build-sbf
-      cargo-test-sbf
-      agave-install-init
-      solana-stake-accounts
-      solana-test-validator
-    )
+  if [[ $CI_OS_NAME != windows ]]; then
+    echo "Building binaries for linux and osx only: ${AGAVE_BINS_VAL_OP[*]}, ${AGAVE_BINS_DCOU[*]}"
+    BINS+=("${AGAVE_BINS_VAL_OP[@]}")
+    DCOU_BINS+=("${AGAVE_BINS_DCOU[@]}")
   fi
 fi
-
-echo "Building binaries for: ${BINS[*]}"
 
 binArgs=()
 for bin in "${BINS[@]}"; do
@@ -153,14 +115,10 @@ for bin in "${DCOU_BINS[@]}"; do
   dcouBinArgs+=(--bin "$bin")
 done
 
-source "$SOLANA_ROOT"/scripts/dcou-tainted-packages.sh
-
 excludeArgs=()
-for package in "${dcou_tainted_packages[@]}"; do
+for package in "${DCOU_TAINTED_PACKAGES[@]}"; do
   excludeArgs+=(--exclude "$package")
 done
-
-mkdir -p "$installDir/bin"
 
 cargo_build() {
   # shellcheck disable=SC2086 # Don't want to double quote $maybeRustVersion
@@ -219,8 +177,12 @@ for bin in "${BINS[@]}" "${DCOU_BINS[@]}"; do
   cp -fv "target/$buildProfile/$bin" "$installDir"/bin
 done
 
-if [[ -d target/perf-libs ]]; then
-  cp -a target/perf-libs "$installDir"/bin/perf-libs
+if [[ $CI_OS_NAME != windows ]]; then
+  ./fetch-perf-libs.sh
+
+  if [[ -d target/perf-libs ]]; then
+    cp -a target/perf-libs "$installDir"/bin/perf-libs
+  fi
 fi
 
 if [[ -z "$validatorOnly" ]]; then
@@ -237,7 +199,7 @@ fi
   # deps dir can be empty
   shopt -s nullglob
   for dep in target/"$buildProfile"/deps/libsolana*program.*; do
-    cp -fv "$dep" "$installDir/bin/deps"
+    cp -fv "$dep" "$installDir"/bin/deps
   done
 )
 
