@@ -1151,11 +1151,11 @@ mod tests {
         // required lamports for rent exempt minimum at that size
         let vote_state_v1_14_11 = match target_version {
             VoteStateTargetVersion::V3 => {
-                // V1_14_11 can be converted directly to v3.
+                // v3 can be converted directly to V1_14_11.
                 VoteState1_14_11::from(vote_state.as_ref_v3().clone())
             }
             VoteStateTargetVersion::V4 => {
-                // V1_14_11 cannot be converted directly to v4 (lossy).
+                // v4 cannot be converted directly to V1_14_11.
                 VoteState1_14_11 {
                     node_pubkey: *vote_state.node_pubkey(),
                     authorized_withdrawer: *vote_state.authorized_withdrawer(),
