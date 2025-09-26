@@ -62,6 +62,7 @@ if [[ -n $CI ]]; then
       CONTAINER_HOME="/"
       ARGS+=(
         --volume "$HOME/.cache/sccache-for-docker:$CONTAINER_HOME/.cache/sccache"
+        --tmpfs "/mnt/tmpfs:nodev,nosuid,noexec,nodiratime"
       )
 
       # s3
