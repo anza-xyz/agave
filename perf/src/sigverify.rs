@@ -80,7 +80,7 @@ pub enum PacketError {
     MismatchSignatureLen,
     PayerNotWritable,
     InvalidProgramIdIndex,
-    InvalidProgramLen,
+    InvalidNumberOfInstructions,
     UnsupportedVersion,
 }
 
@@ -295,7 +295,7 @@ fn do_get_packet_offsets(
 
     // SIMD-0160: skip if has more than 64 top instructions
     if instruction_len > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH {
-        return Err(PacketError::InvalidProgramLen);
+        return Err(PacketError::InvalidNumberOfInstructions);
     }
 
     let instruction_start = instructions_len_offset
@@ -374,7 +374,7 @@ fn check_for_simple_vote_transaction(
 
     // skip if has more than 1 instruction
     if packet_offsets.instruction_len != 1 {
-        return Err(PacketError::InvalidProgramLen);
+        return Err(PacketError::InvalidNumberOfInstructions);
     }
 
     let instruction_start = (packet_offsets.instruction_start as usize)
@@ -1847,7 +1847,7 @@ mod tests {
         if too_many_ixs {
             assert_eq!(
                 do_get_packet_offsets(packet.as_ref(), 0),
-                Err(PacketError::InvalidProgramLen),
+                Err(PacketError::InvalidNumberOfInstructions),
             );
         } else {
             assert!(do_get_packet_offsets(packet.as_ref(), 0).is_ok());
