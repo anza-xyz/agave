@@ -12,11 +12,11 @@ use {
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_stake_interface::state::{Delegation, StakeActivationStatus},
-    solana_vote::vote_account::{VoteAccount, VoteAccounts},
+    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::state::VoteStateVersions,
     std::{
         collections::HashMap,
-        ops::Add,
+        ops::{Deref, DerefMut},
         sync::{Arc, RwLock, RwLockReadGuard},
     },
     thiserror::Error,
@@ -145,6 +145,78 @@ impl StakesCache {
     ) {
         let mut stakes = self.0.write().unwrap();
         stakes.activate_epoch(next_epoch, thread_pool, new_rate_activation_epoch)
+    }
+}
+
+#[derive(Default)]
+struct VoteAccountsAccumulator(VoteAccountsHashMap);
+
+impl VoteAccountsAccumulator {
+    /// Adds a delegation to the appropriate vote account in the accumulator.
+    fn add_delegation(
+        &mut self,
+        delegation: &Delegation,
+        epoch: Epoch,
+        stake_history: &StakeHistory,
+        vote_accounts: &VoteAccounts,
+        new_rate_activation_epoch: Option<Epoch>,
+    ) {
+        let stake = delegation.stake(epoch, stake_history, new_rate_activation_epoch);
+        let voter_pubkey = delegation.voter_pubkey;
+        // Skip stakes delegated to vote accounts that are not found (likely
+        // offline nodes).
+        if let Some(vote_account) = vote_accounts.get(&voter_pubkey) {
+            self.entry(delegation.voter_pubkey)
+                .and_modify(|entry| entry.0 = entry.0.saturating_add(stake))
+                .or_insert_with(|| (stake, vote_account.clone()));
+        }
+    }
+
+    /// Merges two instances by combining their stake.
+    ///
+    /// To minimize reallocations, the instance with more stakes is used as the
+    /// base and the smaller instance is merged into it.
+    fn accumulate_into_larger(self, rhs: Self) -> Self {
+        let (mut dst, src) = if self.len() >= rhs.len() {
+            (self, rhs)
+        } else {
+            (rhs, self)
+        };
+        for (voter, vote_account_data) in src.into_iter() {
+            dst.entry(voter)
+                .and_modify(|dst| dst.0 = dst.0.saturating_add(vote_account_data.0))
+                .or_insert(vote_account_data);
+        }
+        dst
+    }
+
+    /// Consumes the accumulator and converts it into [`VoteAccounts`].
+    fn into_vote_accounts(self) -> VoteAccounts {
+        let Self(vote_accounts_map) = self;
+        VoteAccounts::from(Arc::new(vote_accounts_map))
+    }
+}
+
+impl Deref for VoteAccountsAccumulator {
+    type Target = VoteAccountsHashMap;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for VoteAccountsAccumulator {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl IntoIterator for VoteAccountsAccumulator {
+    type Item = <VoteAccountsHashMap as IntoIterator>::Item;
+    type IntoIter = <VoteAccountsHashMap as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 
@@ -286,31 +358,57 @@ impl Stakes<StakeAccount> {
         let stake_delegations: Vec<_> = self.stake_delegations.values().collect();
         // Wrap up the prev epoch by adding new stake history entry for the
         // prev epoch.
-        let stake_history_entry = thread_pool.install(|| {
+        let (stake_history_entry, vote_accounts_accumulator) = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
-                .fold(StakeActivationStatus::default, |acc, stake_account| {
-                    let delegation = stake_account.delegation();
-                    acc + delegation.stake_activating_and_deactivating(
-                        self.epoch,
-                        &self.stake_history,
-                        new_rate_activation_epoch,
-                    )
-                })
-                .reduce(StakeActivationStatus::default, Add::add)
+                .with_min_len(2500)
+                .fold(
+                    || {
+                        (
+                            StakeActivationStatus::default(),
+                            VoteAccountsAccumulator::default(),
+                        )
+                    },
+                    |(stake_history_entry, mut vote_accounts_accumulator), stake_account| {
+                        let delegation = stake_account.delegation();
+                        let stake_history_entry = stake_history_entry
+                            + delegation.stake_activating_and_deactivating(
+                                self.epoch,
+                                &self.stake_history,
+                                new_rate_activation_epoch,
+                            );
+                        vote_accounts_accumulator.add_delegation(
+                            stake_account.delegation(),
+                            self.epoch,
+                            &self.stake_history,
+                            &self.vote_accounts,
+                            new_rate_activation_epoch,
+                        );
+                        (stake_history_entry, vote_accounts_accumulator)
+                    },
+                )
+                .reduce(
+                    || {
+                        (
+                            StakeActivationStatus::default(),
+                            VoteAccountsAccumulator::default(),
+                        )
+                    },
+                    |(stake_history_entry_a, vote_accounts_accumulator_a),
+                     (stake_history_entry_b, vote_accounts_accumulator_b)| {
+                        (
+                            stake_history_entry_a + stake_history_entry_b,
+                            vote_accounts_accumulator_a
+                                .accumulate_into_larger(vote_accounts_accumulator_b),
+                        )
+                    },
+                )
         });
         self.stake_history.add(self.epoch, stake_history_entry);
         self.epoch = next_epoch;
         // Refresh the stake distribution of vote accounts for the next epoch,
         // using new stake history.
-        self.vote_accounts = refresh_vote_accounts(
-            thread_pool,
-            self.epoch,
-            &self.vote_accounts,
-            &stake_delegations,
-            &self.stake_history,
-            new_rate_activation_epoch,
-        );
+        self.vote_accounts = vote_accounts_accumulator.into_vote_accounts();
     }
 
     /// Sum the stakes that point to the given voter_pubkey
@@ -466,47 +564,6 @@ impl From<Stakes<Stake>> for Stakes<Delegation> {
             stake_history: stakes.stake_history,
         }
     }
-}
-
-fn refresh_vote_accounts(
-    thread_pool: &ThreadPool,
-    epoch: Epoch,
-    vote_accounts: &VoteAccounts,
-    stake_delegations: &[&StakeAccount],
-    stake_history: &StakeHistory,
-    new_rate_activation_epoch: Option<Epoch>,
-) -> VoteAccounts {
-    type StakesHashMap = HashMap</*voter:*/ Pubkey, /*stake:*/ u64>;
-    fn merge(mut stakes: StakesHashMap, other: StakesHashMap) -> StakesHashMap {
-        if stakes.len() < other.len() {
-            return merge(other, stakes);
-        }
-        for (pubkey, stake) in other {
-            *stakes.entry(pubkey).or_default() += stake;
-        }
-        stakes
-    }
-    let delegated_stakes = thread_pool.install(|| {
-        stake_delegations
-            .par_iter()
-            .fold(HashMap::default, |mut delegated_stakes, stake_account| {
-                let delegation = stake_account.delegation();
-                let entry = delegated_stakes.entry(delegation.voter_pubkey).or_default();
-                *entry += delegation.stake(epoch, stake_history, new_rate_activation_epoch);
-                delegated_stakes
-            })
-            .reduce(HashMap::default, merge)
-    });
-    vote_accounts
-        .iter()
-        .map(|(&vote_pubkey, vote_account)| {
-            let delegated_stake = delegated_stakes
-                .get(&vote_pubkey)
-                .copied()
-                .unwrap_or_default();
-            (vote_pubkey, (delegated_stake, vote_account.clone()))
-        })
-        .collect()
 }
 
 #[cfg(test)]
