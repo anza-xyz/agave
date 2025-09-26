@@ -469,6 +469,7 @@ fn main() {
         gossip_vote_receiver,
         block_production_num_workers,
         None,
+        None,
         replay_vote_sender,
         None,
         bank_forks.clone(),

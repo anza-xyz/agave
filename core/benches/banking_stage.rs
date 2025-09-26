@@ -245,6 +245,7 @@ fn bench_banking(
         gossip_vote_receiver,
         num_threads,
         None,
+        None,
         s,
         None,
         bank_forks,
