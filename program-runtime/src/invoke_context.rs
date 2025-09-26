@@ -296,7 +296,7 @@ impl<'a> InvokeContext<'a> {
         instruction: Instruction,
         signers: &[Pubkey],
     ) -> Result<(), InstructionError> {
-        self.prepare_next_instruction(&instruction, signers)?;
+        self.prepare_next_instruction(instruction, signers)?;
         let mut compute_units_consumed = 0;
         self.process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())?;
         Ok(())
@@ -306,7 +306,7 @@ impl<'a> InvokeContext<'a> {
     /// and depends on `AccountMeta`s
     pub fn prepare_next_instruction(
         &mut self,
-        instruction: &Instruction,
+        instruction: Instruction,
         signers: &[Pubkey],
     ) -> Result<(), InstructionError> {
         // We reference accounts by an u8 index, so we have a total of 256 accounts.
@@ -895,7 +895,11 @@ pub fn mock_process_instruction_with_feature_set<
     pre_adjustments(&mut invoke_context);
     invoke_context
         .transaction_context
-        .configure_next_instruction_for_tests(program_index, instruction_accounts, instruction_data.to_vec())
+        .configure_next_instruction_for_tests(
+            program_index,
+            instruction_accounts,
+            instruction_data.to_vec(),
+        )
         .unwrap();
     let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
     assert_eq!(result, expected_result);
@@ -1265,7 +1269,7 @@ mod tests {
             metas.clone(),
         );
         invoke_context
-            .prepare_next_instruction(&inner_instruction, &[])
+            .prepare_next_instruction(inner_instruction, &[])
             .unwrap();
 
         let mut compute_units_consumed = 0;
@@ -1452,13 +1456,13 @@ mod tests {
 
         invoke_context.transaction_context.push().unwrap();
         invoke_context
-            .prepare_next_instruction(&instruction_1, &[fee_payer.pubkey()])
+            .prepare_next_instruction(instruction_1, &[fee_payer.pubkey()])
             .unwrap();
         test_case_1(&invoke_context);
 
         invoke_context.transaction_context.push().unwrap();
         invoke_context
-            .prepare_next_instruction(&instruction_2, &[fee_payer.pubkey()])
+            .prepare_next_instruction(instruction_2, &[fee_payer.pubkey()])
             .unwrap();
         test_case_2(&invoke_context);
     }
@@ -1538,7 +1542,7 @@ mod tests {
         );
 
         invoke_context
-            .prepare_next_instruction(&instruction, &[fee_payer.pubkey()])
+            .prepare_next_instruction(instruction, &[fee_payer.pubkey()])
             .unwrap();
         let instruction_context = invoke_context
             .transaction_context
