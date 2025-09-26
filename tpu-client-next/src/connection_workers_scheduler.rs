@@ -148,6 +148,14 @@ pub trait WorkersBroadcaster {
     /// Returns error if a critical issue occurs, e.g. the implementation
     /// encounters an unrecoverable error. In this case, it will trigger
     /// stopping the scheduler and cleaning all the data.
+    #[cfg(feature = "future-api")]
+    async fn send_to_workers(
+        &self,
+        workers: &mut WorkersCache,
+        leaders: &[SocketAddr],
+        transaction_batch: TransactionBatch,
+    ) -> Result<(), ConnectionWorkersSchedulerError>;
+    #[cfg(not(feature = "future-api"))]
     async fn send_to_workers(
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
@@ -192,8 +200,16 @@ impl ConnectionWorkersScheduler {
         self,
         config: ConnectionWorkersSchedulerConfig,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
-        self.run_with_broadcaster::<NonblockingBroadcaster>(config)
-            .await
+        #[cfg(feature = "future-api")]
+        {
+            self.run_with_broadcaster(config, NonblockingBroadcaster)
+                .await
+        }
+        #[cfg(not(feature = "future-api"))]
+        {
+            self.run_with_broadcaster::<NonblockingBroadcaster>(config)
+                .await
+        }
     }
 
     /// Starts the scheduler, which manages the distribution of transactions to
@@ -216,6 +232,7 @@ impl ConnectionWorkersScheduler {
             max_reconnect_attempts,
             leaders_fanout,
         }: ConnectionWorkersSchedulerConfig,
+        #[cfg(feature = "future-api")] broadcaster: Broadcaster,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
         let ConnectionWorkersScheduler {
             mut leader_updater,
@@ -284,10 +301,14 @@ impl ConnectionWorkersScheduler {
                     shutdown_worker(evicted_worker);
                 }
             }
-
-            if let Err(error) =
-                Broadcaster::send_to_workers(&mut workers, &send_leaders, transaction_batch).await
-            {
+            #[cfg(feature = "future-api")]
+            let broadcast_result = broadcaster
+                .send_to_workers(&mut workers, &send_leaders, transaction_batch)
+                .await;
+            #[cfg(not(feature = "future-api"))]
+            let broadcast_result =
+                Broadcaster::send_to_workers(&mut workers, &send_leaders, transaction_batch).await;
+            if let Err(error) = broadcast_result {
                 last_error = Some(error);
                 break;
             }
@@ -328,9 +349,8 @@ fn build_client_config(stake_identity: Option<&StakeIdentity>) -> ClientConfig {
 /// full, the transactions will not be sent to this worker.
 struct NonblockingBroadcaster;
 
-#[async_trait]
-impl WorkersBroadcaster for NonblockingBroadcaster {
-    async fn send_to_workers(
+impl NonblockingBroadcaster {
+    async fn send_to_workers_stateless(
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
@@ -359,6 +379,27 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
             }
         }
         Ok(())
+    }
+}
+
+#[async_trait]
+impl WorkersBroadcaster for NonblockingBroadcaster {
+    #[cfg(feature = "future-api")]
+    async fn send_to_workers(
+        &self,
+        workers: &mut WorkersCache,
+        leaders: &[SocketAddr],
+        transaction_batch: TransactionBatch,
+    ) -> Result<(), ConnectionWorkersSchedulerError> {
+        Self::send_to_workers_stateless(workers, leaders, transaction_batch).await
+    }
+    #[cfg(not(feature = "future-api"))]
+    async fn send_to_workers(
+        workers: &mut WorkersCache,
+        leaders: &[SocketAddr],
+        transaction_batch: TransactionBatch,
+    ) -> Result<(), ConnectionWorkersSchedulerError> {
+        Self::send_to_workers_stateless(workers, leaders, transaction_batch).await
     }
 }
 
