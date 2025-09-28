@@ -1825,8 +1825,6 @@ fn create_snapshot_meta_files_for_unarchived_snapshot(unpack_dir: impl AsRef<Pat
         slot_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME),
     )?;
 
-    mark_bank_snapshot_as_loadable(slot_dir)?;
-
     Ok(())
 }
 
