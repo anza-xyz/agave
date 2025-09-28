@@ -1,7 +1,6 @@
 [package]
 name = "solana-core"
 documentation = "https://docs.rs/solana-core"
-readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
 description = { workspace = true }
