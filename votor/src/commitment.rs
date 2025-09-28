@@ -81,14 +81,7 @@ mod tests {
 
         // Close the channel and ensure the error is returned
         drop(commitment_receiver);
-        let result = update_commitment_cache(
-            CommitmentType::Notarize,
-            7,
-            &commitment_sender,
-        );
-        assert!(matches!(
-            result,
-            Err(CommitmentError::ChannelDisconnected)
-        ));
+        let result = update_commitment_cache(CommitmentType::Notarize, 7, &commitment_sender);
+        assert!(matches!(result, Err(CommitmentError::ChannelDisconnected)));
     }
 }
