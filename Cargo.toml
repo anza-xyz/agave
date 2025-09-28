@@ -131,6 +131,7 @@ members = [
     "validator",
     "verified-packet-receiver",
     "version",
+    "wincode",
     "vortexor",
     "vote",
     "votor",
