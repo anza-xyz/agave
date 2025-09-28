@@ -5,13 +5,13 @@ use {
 };
 
 #[derive(Debug, Error)]
-pub enum AlpenglowCommitmentError {
+pub enum CommitmentError {
     #[error("Failed to send commitment data, channel disconnected")]
     ChannelDisconnected,
 }
 
 #[derive(Debug, PartialEq)]
-pub enum AlpenglowCommitmentType {
+pub enum CommitmentType {
     /// Our node has voted notarize for the slot
     Notarize,
     /// We have observed a finalization certificate for the slot
@@ -19,23 +19,23 @@ pub enum AlpenglowCommitmentType {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct AlpenglowCommitmentAggregationData {
-    pub commitment_type: AlpenglowCommitmentType,
+pub struct CommitmentAggregationData {
+    pub commitment_type: CommitmentType,
     pub slot: Slot,
 }
 
-pub fn alpenglow_update_commitment_cache(
-    commitment_type: AlpenglowCommitmentType,
+pub fn update_commitment_cache(
+    commitment_type: CommitmentType,
     slot: Slot,
-    commitment_sender: &Sender<AlpenglowCommitmentAggregationData>,
-) -> Result<(), AlpenglowCommitmentError> {
-    match commitment_sender.try_send(AlpenglowCommitmentAggregationData {
+    commitment_sender: &Sender<CommitmentAggregationData>,
+) -> Result<(), CommitmentError> {
+    match commitment_sender.try_send(CommitmentAggregationData {
         commitment_type,
         slot,
     }) {
         Err(TrySendError::Disconnected(_)) => {
             info!("commitment_sender has disconnected");
-            return Err(AlpenglowCommitmentError::ChannelDisconnected);
+            return Err(CommitmentError::ChannelDisconnected);
         }
         Err(TrySendError::Full(_)) => error!("commitment_sender is backed up, something is wrong"),
         Ok(_) => (),
@@ -48,47 +48,47 @@ mod tests {
     use {super::*, crossbeam_channel::unbounded};
 
     #[test]
-    fn test_alpenglow_update_commitment_cache() {
+    fn test_update_commitment_cache() {
         let (commitment_sender, commitment_receiver) = unbounded();
         let slot = 3;
-        let commitment_type = AlpenglowCommitmentType::Notarize;
-        alpenglow_update_commitment_cache(commitment_type, slot, &commitment_sender)
+        let commitment_type = CommitmentType::Notarize;
+        update_commitment_cache(commitment_type, slot, &commitment_sender)
             .expect("Failed to send commitment data");
         let received_data = commitment_receiver
             .try_recv()
             .expect("Failed to receive commitment data");
         assert_eq!(
             received_data,
-            AlpenglowCommitmentAggregationData {
-                commitment_type: AlpenglowCommitmentType::Notarize,
+            CommitmentAggregationData {
+                commitment_type: CommitmentType::Notarize,
                 slot,
             }
         );
         let slot = 5;
-        let commitment_type = AlpenglowCommitmentType::Finalized;
-        alpenglow_update_commitment_cache(commitment_type, slot, &commitment_sender)
+        let commitment_type = CommitmentType::Finalized;
+        update_commitment_cache(commitment_type, slot, &commitment_sender)
             .expect("Failed to send commitment data");
         let received_data = commitment_receiver
             .try_recv()
             .expect("Failed to receive commitment data");
         assert_eq!(
             received_data,
-            AlpenglowCommitmentAggregationData {
-                commitment_type: AlpenglowCommitmentType::Finalized,
+            CommitmentAggregationData {
+                commitment_type: CommitmentType::Finalized,
                 slot,
             }
         );
 
         // Close the channel and ensure the error is returned
         drop(commitment_receiver);
-        let result = alpenglow_update_commitment_cache(
-            AlpenglowCommitmentType::Notarize,
+        let result = update_commitment_cache(
+            CommitmentType::Notarize,
             7,
             &commitment_sender,
         );
         assert!(matches!(
             result,
-            Err(AlpenglowCommitmentError::ChannelDisconnected)
+            Err(CommitmentError::ChannelDisconnected)
         ));
     }
 }
