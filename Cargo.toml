@@ -50,7 +50,6 @@ members = [
     "ledger",
     "ledger-tool",
     "local-cluster",
-    "low-pass-filter",
     "measure",
     "memory-management",
     "merkle-tree",
@@ -179,7 +178,6 @@ agave-cargo-registry = { path = "cargo-registry", version = "=3.1.0" }
 agave-feature-set = { path = "feature-set", version = "=3.1.0" }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=3.1.0" }
 agave-io-uring = { path = "io-uring", version = "=3.1.0" }
-agave-low-pass-filter = { path = "low-pass-filter", version = "=3.1.0" }
 agave-precompiles = { path = "precompiles", version = "=3.1.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.1.0" }
 agave-scheduler-bindings = { path = "scheduler-bindings", version = "=3.1.0" }
@@ -345,7 +343,7 @@ rand_chacha = "0.3.1"
 rand_chacha0-2 = { package = "rand_chacha", version = "0.2.2" }
 rayon = "1.11.0"
 reed-solomon-erasure = "6.0.0"
-regex = "1.11.2"
+regex = "1.11.3"
 reqwest = { version = "0.12.23", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
@@ -354,10 +352,10 @@ rustls = { version = "0.23.32", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.27"
 seqlock = "0.2.0"
-serde = "1.0.226" # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde = "1.0.228" # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
 serde-big-array = "0.5.1"
 serde_bytes = "0.11.19"
-serde_derive = "1.0.224" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde_derive = "1.0.228" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
 serde_json = "1.0.145"
 serde_with = { version = "3.14.1", default-features = false }
 serde_yaml = "0.9.34"
@@ -587,7 +585,7 @@ tar = "0.4.44"
 tarpc = "0.29.0"
 tempfile = "3.23.0"
 test-case = "3.3.1"
-thiserror = "2.0.16"
+thiserror = "2.0.17"
 thread-priority = "1.2.0"
 tiny-bip39 = "0.8.2"
 tokio = "1.47.1"
