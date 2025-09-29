@@ -294,6 +294,7 @@ dependencies = [
  "bs58",
  "crossbeam-channel",
  "dashmap",
+ "histogram",
  "itertools 0.12.1",
  "log",
  "lru",
