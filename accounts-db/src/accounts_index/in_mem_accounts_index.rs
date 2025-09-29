@@ -1155,6 +1155,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             let disk = self.bucket.as_ref().unwrap();
             let mut flush_entries_updated_on_disk = 0;
             let mut flush_should_evict_us = 0;
+            let mut flush_grow_us = 0;
             // we don't care about lock time in this metric - bg threads can wait
             let m = Measure::start("flush_update");
             let evictions_age = evictions_age_possible
@@ -1219,7 +1220,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                     // disk needs to resize. This item did not get written. Resize and try again.
                                     let m = Measure::start("flush_grow");
                                     disk.grow(err);
-                                    Self::update_time_stat(&self.stats().flush_grow_us, m);
+                                    flush_grow_us += m.end_as_us();
                                 }
                             }
                         }
@@ -1227,7 +1228,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     Some(k)
                 })
                 .collect();
-            self.update_flush_stats(m, flush_should_evict_us, flush_entries_updated_on_disk);
+            self.update_flush_stats(
+                m,
+                flush_should_evict_us,
+                flush_entries_updated_on_disk,
+                flush_grow_us,
+            );
 
             let m = Measure::start("flush_evict");
             self.evict_from_cache(evictions_age, current_age, startup, ages_flushing_now);
@@ -1323,6 +1329,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         flush_update_measure: Measure,
         flush_should_evict_us: u64,
         flush_entries_updated_on_disk: u64,
+        flush_grow_us: u64,
     ) {
         let stats = self.stats();
         Self::update_time_stat(&stats.flush_update_us, flush_update_measure);
@@ -1331,6 +1338,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             &stats.flush_entries_updated_on_disk,
             flush_entries_updated_on_disk,
         );
+        Self::update_stat(&stats.flush_grow_us, flush_grow_us);
     }
 
     /// Returns the capacity for this bin's map
