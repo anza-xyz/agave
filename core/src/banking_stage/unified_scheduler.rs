@@ -36,10 +36,9 @@ use {
     },
     crate::banking_trace::Channels,
     agave_banking_stage_ingress_types::BankingPacketBatch,
-    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::bank_forks::BankForks,
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_runtime_transaction::transaction_meta::StaticMeta,
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},
     std::{
         num::NonZeroUsize,
@@ -97,10 +96,10 @@ pub(crate) fn ensure_banking_stage_setup(
                         continue;
                     };
 
-                    let Some(compute_budget_limits) = process_compute_budget_instructions(
-                        SVMMessage::program_instructions_iter(transaction.message()),
-                        &bank.feature_set,
-                    ).ok() else {
+                    let Ok(compute_budget_limits) = transaction
+                        .compute_budget_instruction_details()
+                        .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
+                    else {
                         continue;
                     };
 
