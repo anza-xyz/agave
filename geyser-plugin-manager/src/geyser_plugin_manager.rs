@@ -568,17 +568,12 @@ mod tests {
 
     #[test]
     fn test_plugin_host_id_access() {
-        use agave_geyser_plugin_interface::get_validator_host_id;
-
         // Set a specific host_id like the validator does
         solana_metrics::set_host_id("test_validator_host_12345".to_string());
 
-        // Verify the plugin can access the same host_id
-        let plugin_host_id = get_validator_host_id();
-        let direct_host_id = solana_metrics::get_host_id();
+        // Verify the plugin can access the host_id directly via solana_metrics
+        let host_id = solana_metrics::get_host_id();
 
-        // Both should be the same
-        assert_eq!(plugin_host_id, direct_host_id);
-        assert_eq!(plugin_host_id, "test_validator_host_12345");
+        assert_eq!(host_id, "test_validator_host_12345");
     }
 }

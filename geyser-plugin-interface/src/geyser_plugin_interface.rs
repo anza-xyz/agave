@@ -372,12 +372,6 @@ impl SlotStatus {
 
 pub type Result<T> = std::result::Result<T, GeyserPluginError>;
 
-/// Get the validator's host_id that was set during startup.
-/// This allows Geyser plugins to emit metrics using the same host_id as the validator.
-pub fn get_validator_host_id() -> String {
-    solana_metrics::get_host_id()
-}
-
 /// Defines a Geyser plugin, to stream data from the runtime.
 /// Geyser plugins must describe desired behavior for load and unload,
 /// as well as how they will handle streamed data.
@@ -508,8 +502,4 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         false
     }
 
-    /// Called when the validator's host_id is set or changed.
-    /// This allows plugins to emit metrics using the same host_id as the validator.
-    /// Default implementation does nothing.
-    fn set_host_id(&self, _host_id: &str) {}
 }
