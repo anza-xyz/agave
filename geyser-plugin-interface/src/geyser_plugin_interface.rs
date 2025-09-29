@@ -5,7 +5,6 @@
 use {
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
-    solana_metrics,
     solana_signature::Signature,
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
@@ -501,5 +500,4 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     fn entry_notifications_enabled(&self) -> bool {
         false
     }
-
 }
