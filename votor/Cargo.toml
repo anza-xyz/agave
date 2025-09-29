@@ -10,8 +10,8 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [features]
-default = [ "agave-unstable-api" ]
 agave-unstable-api = []
+default = [ "agave-unstable-api" ]
 dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]
 frozen-abi = [
     "dep:solana-frozen-abi",
