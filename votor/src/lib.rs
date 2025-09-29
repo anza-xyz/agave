@@ -10,19 +10,25 @@ pub mod commitment;
 #[cfg(feature = "agave-unstable-api")]
 pub mod common;
 
+#[cfg(feature = "agave-unstable-api")]
 mod consensus_metrics;
+#[cfg(feature = "agave-unstable-api")]
 mod consensus_pool;
+#[cfg(feature = "agave-unstable-api")]
 mod consensus_pool_service;
 
 #[cfg(feature = "agave-unstable-api")]
 pub mod event;
 
+#[cfg(feature = "agave-unstable-api")]
 mod event_handler;
 
 #[cfg(feature = "agave-unstable-api")]
 pub mod root_utils;
 
+#[cfg(feature = "agave-unstable-api")]
 mod staked_validators_cache;
+#[cfg(feature = "agave-unstable-api")]
 mod timer_manager;
 
 #[cfg(feature = "agave-unstable-api")]
@@ -30,7 +36,9 @@ pub mod vote_history;
 #[cfg(feature = "agave-unstable-api")]
 pub mod vote_history_storage;
 
+#[cfg(feature = "agave-unstable-api")]
 mod voting_service;
+#[cfg(feature = "agave-unstable-api")]
 mod voting_utils;
 
 #[cfg(feature = "agave-unstable-api")]
