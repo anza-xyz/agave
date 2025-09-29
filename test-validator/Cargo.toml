@@ -1,6 +1,5 @@
 [package]
 name = "solana-test-validator"
-readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
 description = { workspace = true }
