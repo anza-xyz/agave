@@ -161,7 +161,7 @@ impl<T: IndexValue> IsZeroLamport for PreAllocatedAccountMapEntry<T> {
     fn is_zero_lamport(&self) -> bool {
         match self {
             PreAllocatedAccountMapEntry::Entry(entry) => {
-                entry.slot_list.read().unwrap()[0].1.is_zero_lamport()
+                entry.slot_list_read_lock()[0].1.is_zero_lamport()
             }
             PreAllocatedAccountMapEntry::Raw(raw) => raw.1.is_zero_lamport(),
         }
@@ -171,7 +171,7 @@ impl<T: IndexValue> IsZeroLamport for PreAllocatedAccountMapEntry<T> {
 impl<T: IndexValue> From<PreAllocatedAccountMapEntry<T>> for (Slot, T) {
     fn from(source: PreAllocatedAccountMapEntry<T>) -> (Slot, T) {
         match source {
-            PreAllocatedAccountMapEntry::Entry(entry) => entry.slot_list.read().unwrap()[0],
+            PreAllocatedAccountMapEntry::Entry(entry) => entry.slot_list_read_lock()[0],
             PreAllocatedAccountMapEntry::Raw(raw) => raw,
         }
     }
