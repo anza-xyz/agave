@@ -613,14 +613,14 @@ impl PriorityUsage {
 
     fn take_readable(maybe_usage: &mut Option<Self>) {
         let Some(Self::Readonly(tasks)) = maybe_usage.take() else {
-            unreachable!();
+            panic!();
         };
         assert!(tasks.is_empty());
     }
 
     fn take_writable(maybe_usage: &mut Option<Self>) -> Task {
         let Some(Self::Writable(task)) = maybe_usage.take() else {
-            unreachable!();
+            panic!();
         };
         task
     }
