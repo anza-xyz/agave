@@ -1249,16 +1249,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                         v.set_dirty(true);
                                         break;
                                     }
-                                    disk.try_write(
-                                        &k,
-                                        (
-                                            &slot_list
-                                                .iter()
-                                                .map(|(slot, info)| (*slot, (*info).into()))
-                                                .collect::<Vec<_>>(),
-                                            ref_count.into(), // ref count on disk is u64
-                                        ),
-                                    )
+                                    // since we know slot_list.len() == 1, we can create a stack-allocated array for single element.
+                                    let (slot, info) = slot_list[0];
+                                    let disk_entry = [(slot, info.into())];
+                                    disk.try_write(&k, (&disk_entry, ref_count.into()))
                                 };
                                 match disk_resize {
                                     Ok(_) => {
