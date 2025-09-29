@@ -565,15 +565,4 @@ mod tests {
         assert!(unload_result.is_ok());
         assert_eq!(plugin_manager_lock.plugins.len(), 0);
     }
-
-    #[test]
-    fn test_plugin_host_id_access() {
-        // Set a specific host_id like the validator does
-        solana_metrics::set_host_id("test_validator_host_12345".to_string());
-
-        // Verify the plugin can access the host_id directly via solana_metrics
-        let host_id = solana_metrics::get_host_id();
-
-        assert_eq!(host_id, "test_validator_host_12345");
-    }
 }

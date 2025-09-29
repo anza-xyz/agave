@@ -2,7 +2,7 @@
 pub mod counter;
 pub mod datapoint;
 pub mod metrics;
-pub use crate::metrics::{flush, get_host_id, query, set_host_id, set_panic_hook, submit};
+pub use crate::metrics::{flush, query, set_host_id, set_panic_hook, submit};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
