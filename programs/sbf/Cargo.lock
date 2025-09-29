@@ -108,10 +108,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-low-pass-filter"
-version = "3.1.0"
-
-[[package]]
 name = "agave-precompiles"
 version = "3.1.0"
 dependencies = [
@@ -6930,7 +6926,6 @@ name = "solana-gossip"
 version = "3.1.0"
 dependencies = [
  "agave-feature-set",
- "agave-low-pass-filter",
  "arrayvec",
  "assert_matches",
  "bincode",
@@ -6951,7 +6946,6 @@ dependencies = [
  "serde_bytes",
  "serde_derive",
  "siphasher 1.0.1",
- "solana-account",
  "solana-bloom",
  "solana-clap-utils",
  "solana-client",
