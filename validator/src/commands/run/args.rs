@@ -1748,7 +1748,8 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                    memlock_budget_size: solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
+                    memlock_budget_size:
+                        solana_accounts_db::accounts_db::DEFAULT_MEMLOCK_BUDGET_SIZE,
                     ..AccountsDbConfig::default()
                 },
             }
@@ -1879,6 +1880,14 @@ mod tests {
 
             let expected_args = RunArgs {
                 ledger_path: ledger_path.clone(),
+                accounts_db_config: AccountsDbConfig {
+                    index: Some(AccountsIndexConfig {
+                        drives: Some(vec![ledger_path.join("accounts_index")]),
+                        ..default_run_args.accounts_db_config.clone().index.unwrap()
+                    }),
+                    base_working_path: Some(ledger_path.clone()),
+                    ..default_run_args.accounts_db_config.clone()
+                },
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(
@@ -1900,6 +1909,14 @@ mod tests {
 
             let expected_args = RunArgs {
                 ledger_path: ledger_path.clone(),
+                accounts_db_config: AccountsDbConfig {
+                    index: Some(AccountsIndexConfig {
+                        drives: Some(vec![ledger_path.join("accounts_index")]),
+                        ..default_run_args.accounts_db_config.clone().index.unwrap()
+                    }),
+                    base_working_path: Some(ledger_path.clone()),
+                    ..default_run_args.accounts_db_config.clone()
+                },
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(
@@ -1919,8 +1936,17 @@ mod tests {
                 fs::remove_dir_all(&ledger_path).unwrap()
             };
 
+            let expected_ledger_path = absolute(&ledger_path).unwrap();
             let expected_args = RunArgs {
-                ledger_path: absolute(&ledger_path).unwrap(),
+                ledger_path: expected_ledger_path.clone(),
+                accounts_db_config: AccountsDbConfig {
+                    index: Some(AccountsIndexConfig {
+                        drives: Some(vec![expected_ledger_path.join("accounts_index")]),
+                        ..default_run_args.accounts_db_config.clone().index.unwrap()
+                    }),
+                    base_working_path: Some(expected_ledger_path.clone()),
+                    ..default_run_args.accounts_db_config.clone()
+                },
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(
@@ -1941,8 +1967,17 @@ mod tests {
                 fs::remove_dir_all(&ledger_path).unwrap()
             };
 
+            let expected_ledger_path = absolute(&ledger_path).unwrap();
             let expected_args = RunArgs {
-                ledger_path: absolute(&ledger_path).unwrap(),
+                ledger_path: expected_ledger_path.clone(),
+                accounts_db_config: AccountsDbConfig {
+                    index: Some(AccountsIndexConfig {
+                        drives: Some(vec![expected_ledger_path.join("accounts_index")]),
+                        ..default_run_args.accounts_db_config.clone().index.unwrap()
+                    }),
+                    base_working_path: Some(expected_ledger_path.clone()),
+                    ..default_run_args.accounts_db_config.clone()
+                },
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(
