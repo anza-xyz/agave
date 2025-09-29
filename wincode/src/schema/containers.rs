@@ -100,7 +100,7 @@ use {
         len::{BincodeLen, SeqLen},
         schema::{size_of_elem_iter, write_elem_iter, SchemaRead, SchemaWrite},
     },
-    std::{marker::PhantomData, mem::MaybeUninit, ptr},
+    std::{marker::PhantomData, mem::MaybeUninit, slice},
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding and optimized
@@ -192,14 +192,14 @@ pub struct Pod<T>(PhantomData<T>);
 impl<T> SchemaWrite for Pod<T> {
     type Src = T;
 
-    #[inline(always)]
+    #[inline]
     fn size_of(_src: &Self::Src) -> Result<usize> {
         Ok(size_of::<T>())
     }
 
-    #[inline(always)]
+    #[inline]
     fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
-        // SAFETY: caller ensures `T` is plain ol' data.
+        // SAFETY: `T` is plain ol' data.
         unsafe { writer.write_t(src) }
     }
 }
@@ -207,17 +207,8 @@ impl<T> SchemaWrite for Pod<T> {
 impl<T> SchemaRead for Pod<T> {
     type Dst = T;
 
-    /// Read into `dst` from `reader`.
-    ///
-    /// # Safety
-    ///
-    /// - `dst` must be a valid pointer to a `T`.
-    /// - `T` must be plain ol' data.
-    #[inline(always)]
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
-        // SAFETY:
-        // - Caller ensures `dst` is a valid pointer to a T.
-        // - Caller ensures `T` is plain ol' data.
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+        // SAFETY: `T` is plain ol' data.
         unsafe { reader.read_t(dst) }
     }
 }
@@ -257,30 +248,24 @@ where
     ///
     /// # Safety
     ///
-    /// - `dst` must not overlap with the cursor.
-    /// - `dst` must be valid pointer to a `Vec<T::Dst>`.
     /// - `T::read` must properly initialize elements.
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let len = Len::size_hint_cautious::<T::Dst>(reader)?;
         let mut vec = std::vec::Vec::with_capacity(len);
         // Get a raw pointer to the Vec memory to facilitate in-place writing.
-        let vec_ptr = vec.spare_capacity_mut().as_mut_ptr();
+        let vec_ptr = vec.spare_capacity_mut();
+        #[allow(clippy::needless_range_loop)]
         for i in 0..len {
             // Yield the current slot to the caller.
-            if let Err(e) = T::read(reader, vec_ptr.add(i) as *mut T::Dst) {
-                unsafe {
-                    // SAFETY: we've read at least `i` elements.
-                    vec.set_len(i);
-                }
+            if let Err(e) = T::read(reader, &mut vec_ptr[i]) {
+                // SAFETY: we've read at least `i` elements.
+                unsafe { vec.set_len(i) };
                 return Err(e);
             }
         }
-        unsafe {
-            // SAFETY: Caller ensures `parse_t` properly initializes elements.
-            vec.set_len(len);
-            // SAFETY: Caller ensures `ptr` is a valid ptr to a Vec<T>.
-            ptr::write(dst, vec);
-        }
+        // SAFETY: Caller ensures `T::read` properly initializes elements.
+        unsafe { vec.set_len(len) }
+        dst.write(vec);
         Ok(())
     }
 }
@@ -291,17 +276,17 @@ where
 {
     type Src = std::vec::Vec<T>;
 
-    #[inline(always)]
+    #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
         #[allow(clippy::arithmetic_side_effects)]
         Ok(Len::bytes_needed(src.len())? + size_of_val(src.as_slice()))
     }
 
-    #[inline(always)]
+    #[inline]
     fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
         Len::encode_len(writer, src.len())?;
         // SAFETY: Caller ensures `src` is plain ol' data.
-        unsafe { writer.write_exact(src.as_ptr() as *const u8, size_of_val(src.as_slice())) }
+        unsafe { writer.write_slice_t(src.as_slice()) }
     }
 }
 
@@ -319,21 +304,21 @@ where
     ///
     /// # Safety
     ///
-    /// - `dst` must not overlap with the cursor.
-    /// - `dst` must be valid pointer to a `Vec<T>`.
     /// - `T` must be plain ol' data, valid for writes of `size_of::<T>()` bytes.
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let len = Len::size_hint_cautious::<T>(reader)?;
         let mut vec = std::vec::Vec::with_capacity(len);
-        let vec_ptr = vec.spare_capacity_mut().as_mut_ptr();
-        unsafe {
-            #[allow(clippy::arithmetic_side_effects)]
-            reader.read_exact(vec_ptr as *mut u8, len * size_of::<T>())?;
-            // SAFETY: Caller ensures `T` is plain ol' data and can be initialized by raw byte reads.
-            vec.set_len(len);
-            // SAFETY: Caller ensures `ptr` is a valid ptr to a Vec<T>.
-            ptr::write(dst, vec);
-        }
+        let spare_capacity = vec.spare_capacity_mut();
+        let slice = unsafe {
+            slice::from_raw_parts_mut(
+                spare_capacity.as_mut_ptr().cast(),
+                size_of_val(spare_capacity),
+            )
+        };
+        reader.read_exact(slice)?;
+        // SAFETY: Caller ensures `T` is plain ol' data and can be initialized by raw byte reads.
+        unsafe { vec.set_len(len) }
+        dst.write(vec);
         Ok(())
     }
 }
@@ -344,17 +329,17 @@ where
 {
     type Src = Box<[T]>;
 
-    #[inline(always)]
+    #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
         #[allow(clippy::arithmetic_side_effects)]
         Ok(Len::bytes_needed(src.len())? + size_of_val(&src[..]))
     }
 
-    #[inline(always)]
+    #[inline]
     fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
         Len::encode_len(writer, src.len())?;
         // SAFETY: Caller ensures `T` is plain ol' data.
-        unsafe { writer.write_exact(src[..].as_ptr() as *const u8, size_of_val(&src[..])) }
+        unsafe { writer.write_slice_t(&src[..]) }
     }
 }
 
@@ -365,13 +350,13 @@ where
     type Dst = Box<[T]>;
 
     #[inline(always)]
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let mut vec = MaybeUninit::uninit();
-        unsafe {
-            // Leverage drop safety of the Vec impl.
-            <Vec<Pod<T>, Len>>::read(reader, vec.as_mut_ptr())?;
-            ptr::write(dst, vec.assume_init().into_boxed_slice());
-        }
+        // Leverage drop safety of the Vec impl.
+        <Vec<Pod<T>, Len>>::read(reader, &mut vec)?;
+
+        // SAFETY: The given `SchemaRead` must properly initialize the dst.
+        unsafe { dst.write(vec.assume_init().into_boxed_slice()) };
         Ok(())
     }
 }
@@ -403,12 +388,11 @@ where
     type Dst = Box<[T::Dst]>;
 
     #[inline(always)]
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let mut v = MaybeUninit::uninit();
-        unsafe {
-            <Vec<Elem<T>, Len>>::read(reader, v.as_mut_ptr())?;
-            ptr::write(dst, v.assume_init().into_boxed_slice());
-        }
+        <Vec<Elem<T>, Len>>::read(reader, &mut v)?;
+        // SAFETY: The given `SchemaRead` must properly initialize the dst.
+        unsafe { dst.write(v.assume_init().into_boxed_slice()) };
         Ok(())
     }
 }
@@ -433,8 +417,8 @@ where
             // SAFETY:
             // - Caller ensures given `T` is plain ol' data.
             // - `front` and `back` are valid non-overlapping slices.
-            writer.write_exact(front.as_ptr() as *const u8, size_of_val(front))?;
-            writer.write_exact(back.as_ptr() as *const u8, size_of_val(back))?;
+            writer.write_slice_t(front)?;
+            writer.write_slice_t(back)?;
         }
         Ok(())
     }
@@ -447,19 +431,14 @@ where
     type Dst = std::collections::VecDeque<T>;
 
     #[inline(always)]
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let mut vec = MaybeUninit::uninit();
         // Leverage the contiguous read optimization of `Vec`.
-        <Vec<Pod<T>, Len>>::read(reader, vec.as_mut_ptr())?;
-        unsafe {
-            // From<Vec<T>> for VecDeque<T> is basically free.
-            //
-            // SAFETY:
-            // - Caller ensures `dst` is a valid pointer to a VecDeque<T>.
-            // - Caller ensures the given `SchemaRead` properly initializes the dst.
-            ptr::write(dst, vec.assume_init().into());
-        }
+        // From<Vec<T>> for VecDeque<T> is basically free.
+        <Vec<Pod<T>, Len>>::read(reader, &mut vec)?;
 
+        // SAFETY: The given `SchemaRead` must properly initialize the dst.
+        unsafe { dst.write(vec.assume_init().into()) };
         Ok(())
     }
 }
@@ -491,17 +470,14 @@ where
     type Dst = std::collections::VecDeque<T::Dst>;
 
     #[inline(always)]
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let mut vec = MaybeUninit::uninit();
         // Leverage the contiguous read optimization of `Vec`.
-        <Vec<Elem<T>, Len>>::read(reader, vec.as_mut_ptr())?;
-        unsafe {
-            // From<Vec<T>> for VecDeque<T> is basically free.
-            // SAFETY:
-            // - `dst` must be a valid pointer to a VecDeque<T>.
-            // - The given `SchemaRead` must properly initialize the dst.
-            ptr::write(dst, vec.assume_init().into());
-        }
+        // From<Vec<T>> for VecDeque<T> is basically free.
+        <Vec<Elem<T>, Len>>::read(reader, &mut vec)?;
+
+        // SAFETY: The given `SchemaRead` must properly initialize the dst.
+        unsafe { dst.write(vec.assume_init().into()) };
 
         Ok(())
     }

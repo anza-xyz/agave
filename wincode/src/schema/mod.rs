@@ -69,18 +69,20 @@ pub trait SchemaRead {
     ///
     /// # Safety
     ///
-    /// - `dst` must be a valid pointer to a `Self::Dst`.
-    /// - `Self::Dst` must be plain ol' data.
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()>;
+    /// - Implementation must properly initialize the `Self::Dst`.
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()>;
     /// Read `Self::Dst` from `reader` into a new `Self::Dst`.
     #[inline(always)]
     fn get(reader: &mut Reader) -> Result<Self::Dst> {
         let mut value = MaybeUninit::uninit();
-        // SAFETY: `value` is a valid pointer to a `Self::Dst`.
-        unsafe {
-            Self::read(reader, value.as_mut_ptr())?;
-            Ok(value.assume_init())
-        }
+        Self::read(reader, &mut value)?;
+        // SAFETY: `read` must properly initialize the `Self::Dst`.
+        Ok(unsafe { value.assume_init() })
+    }
+    /// Write an instance of `Self::Dst` into `dst`.
+    #[doc(hidden)]
+    fn write_into_uninit(value: Self::Dst, dst: &mut MaybeUninit<Self::Dst>) {
+        dst.write(value);
     }
 }
 

@@ -36,6 +36,7 @@ pub trait Deserialize: SchemaRead {
     fn deserialize(bytes: &[u8]) -> Result<Self::Dst> {
         let mut dst = MaybeUninit::uninit();
         Self::deserialize_into(bytes, &mut dst)?;
+        // SAFETY: `Implementor` ensures `SchemaRead` properly initializes the `Self::Dst`.
         Ok(unsafe { dst.assume_init() })
     }
 
@@ -43,14 +44,8 @@ pub trait Deserialize: SchemaRead {
     #[inline]
     fn deserialize_into(bytes: &[u8], target: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let mut cursor = Reader::new(bytes);
-        let target_ptr = target.as_mut_ptr();
-        unsafe {
-            // SAFETY:
-            // - `target_ptr` is a valid pointer to a `S::Dst`.
-            // - Implementor ensures `SchemaRead` properly initializes the `S::Dst`.
-            Self::read(&mut cursor, target_ptr)?;
-            Ok(())
-        }
+        Self::read(&mut cursor, target)?;
+        Ok(())
     }
 }
 
@@ -90,6 +85,10 @@ pub trait Serialize: SchemaWrite {
     }
 
     /// Serialize a serializable type into the given byte buffer.
+    ///
+    /// Note this will not attempt to resize the buffer and will error
+    /// if the buffer is too small. Use [`Serialize::serialized_size`]
+    /// to get needed capacity.
     fn serialize_into(src: &Self::Src, target: &mut Vec<u8>) -> Result<()> {
         let mut writer = Writer::new(target);
         Self::write(&mut writer, src)?;

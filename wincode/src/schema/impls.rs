@@ -1,3 +1,4 @@
+//! Blanket implementations for std types.
 use {
     crate::{
         error::{
@@ -10,7 +11,10 @@ use {
             size_of_elem_iter, write_elem_iter, SchemaRead, SchemaWrite,
         },
     },
-    std::{collections::VecDeque, mem::MaybeUninit, ptr},
+    std::{
+        collections::VecDeque,
+        mem::{transmute, MaybeUninit},
+    },
 };
 
 macro_rules! impl_int {
@@ -39,15 +43,15 @@ macro_rules! impl_int {
             type Dst = $type;
 
             #[inline(always)]
-            unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
-                // SAFETY: Caller ensures `ptr` is a valid pointer to a u64.
+            fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+                // SAFETY: integer is plain ol' data.
                 unsafe { reader.read_t(dst) }?;
                 // bincode defaults to little endian encoding.
                 #[cfg(target_endian = "big")]
                 {
-                    // SAFETY: `ptr` is initialized by `read_t`.
-                    let val = unsafe { &mut *dst };
-                    *val = val.swap_bytes();
+                    // SAFETY: `dst` is initialized by `read_t`.
+                    let val = unsafe { dst.assume_init_read() };
+                    dst.write(val.swap_bytes());
                 }
 
                 Ok(())
@@ -81,17 +85,16 @@ macro_rules! impl_int {
             type Dst = $type;
 
             #[inline(always)]
-            unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
-                let casted = reader.get_t::<$cast>()?;
+            fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+                // SAFETY: integer is plain ol' data.
+                let casted = unsafe { reader.get_t::<$cast>() }?;
                 let val = <$type>::from_le(
                     casted
                         .try_into()
                         .map_err(|_| pointer_sized_decode_error())?,
                 );
 
-                unsafe {
-                    ptr::write(dst, val);
-                }
+                dst.write(val);
 
                 Ok(())
             }
@@ -131,7 +134,7 @@ macro_rules! impl_pod {
             type Dst = $type;
 
             #[inline(always)]
-            unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
+            fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
                 // SAFETY: `$type` is plain ol' data.
                 unsafe { reader.read_t(dst) }
             }
@@ -157,11 +160,16 @@ impl SchemaWrite for bool {
 impl SchemaRead for bool {
     type Dst = bool;
 
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
-        let byte = reader.get_t::<u8>()?;
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+        // SAFETY: u8 is plain ol' data.
+        let byte = unsafe { reader.get_t::<u8>() }?;
         match byte {
-            0 => unsafe { ptr::write(dst, false) },
-            1 => unsafe { ptr::write(dst, true) },
+            0 => {
+                dst.write(false);
+            }
+            1 => {
+                dst.write(true);
+            }
             _ => return Err(invalid_bool_encoding(byte)),
         }
         Ok(())
@@ -202,7 +210,7 @@ where
     type Dst = Vec<T::Dst>;
 
     #[inline(always)]
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         <containers::Vec<Elem<T>, BincodeLen>>::read(reader, dst)
     }
 }
@@ -232,7 +240,7 @@ where
     type Dst = VecDeque<T::Dst>;
 
     #[inline(always)]
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         <containers::VecDeque<Elem<T>, BincodeLen>>::read(reader, dst)
     }
 }
@@ -266,16 +274,12 @@ where
     type Dst = [T::Dst; N];
 
     #[inline(always)]
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
-        let ptr = dst as *mut T::Dst;
-        for i in 0..N {
-            unsafe {
-                // SAFETY:
-                // - `i` is gated by `N`.
-                // - `ptr` must be a valid pointer to a `[T::Dst; N]`.
-                // - `T::read` must properly initialize the `T::Dst`.
-                T::read(reader, ptr.add(i))?;
-            }
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+        // SAFETY: MaybeUninit<[T::Dst; N]> trivially converts to [MaybeUninit<T::Dst>; N].
+        let ptr =
+            unsafe { transmute::<&mut MaybeUninit<Self::Dst>, &mut [MaybeUninit<T::Dst>; N]>(dst) };
+        for slot in ptr.iter_mut() {
+            T::read(reader, slot)?;
         }
         Ok(())
     }
@@ -313,18 +317,19 @@ where
     type Dst = Option<T::Dst>;
 
     #[inline(always)]
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let variant = u8::get(reader)?;
         match variant {
-            0 => ptr::write(dst, Option::None),
+            0 => {
+                dst.write(Option::None);
+            }
             1 => {
                 let mut value = MaybeUninit::uninit();
+                T::read(reader, &mut value)?;
+                // SAFETY:
+                // - `T::read` must properly initialize the `T::Dst`.
                 unsafe {
-                    // SAFETY:
-                    // - `value` is a valid pointer to a `T::Dst`.
-                    // - `T::read` must properly initialize the `T::Dst`.
-                    T::read(reader, value.as_mut_ptr())?;
-                    ptr::write(dst, Option::Some(value.assume_init()))
+                    dst.write(Option::Some(value.assume_init()));
                 }
             }
             _ => return Err(invalid_tag_encoding(variant as usize)),
@@ -421,14 +426,12 @@ where
     type Dst = Box<T::Dst>;
 
     #[inline(always)]
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let mut mem = Box::new_uninit();
+        T::read(reader, &mut mem)?;
         unsafe {
-            // SAFETY:
-            // - `mem` is a valid pointer to a `T::Dst`.
-            // - `T::read` must properly initialize the `T::Dst`.
-            T::read(reader, mem.as_mut_ptr())?;
-            ptr::write(dst, mem.assume_init());
+            // SAFETY: `T::read` must properly initialize the `T::Dst`.
+            dst.write(mem.assume_init());
         }
         Ok(())
     }
@@ -441,12 +444,14 @@ where
     type Dst = Box<[T::Dst]>;
 
     #[inline(always)]
-    unsafe fn read(reader: &mut Reader, dst: *mut Self::Dst) -> Result<()> {
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         <containers::BoxedSlice<Elem<T>, BincodeLen>>::read(reader, dst)
     }
 }
 
 /// Implement [`SchemaWrite`] and [`SchemaRead`] for a struct by specifying its constituent field schemas.
+///
+/// Note using this on packed structs is UB.
 ///
 /// # Examples
 ///
@@ -546,20 +551,31 @@ macro_rules! compound {
             #[allow(unused)]
             $vis trait [<$src Ext>] {
                 $(
+                    /// Get a mutable [`MaybeUninit`](std::mem::MaybeUninit) to the corresponding slot in `dst` for the field.
+                    fn [<get_uninit_ $field _mut>](dst: &mut std::mem::MaybeUninit<$target>) -> &mut std::mem::MaybeUninit<<$schema as $crate::SchemaRead>::Dst>;
                     /// Read the field into the corresponding slot in `dst` from `reader`.
                     ///
                     /// # Safety
                     ///
-                    /// - `dst` must be a valid pointer to a `Self`.
-                    /// - Corresponding element schema must properly initialize the field.
-                    unsafe fn [<read_ $field>](reader: &mut $crate::io::Reader, dst: *mut $target) -> $crate::error::Result<()>;
+                    /// - Corresponding field schema must properly initialize the field.
+                    fn [<read_ $field>](reader: &mut $crate::io::Reader, dst: &mut std::mem::MaybeUninit<$target>) -> $crate::error::Result<()>;
+                    /// Write an initialized instance of the field into the corresponding slot in `dst`.
+                    fn [<write_uninit_ $field>](val: <$schema as $crate::SchemaRead>::Dst, dst: &mut std::mem::MaybeUninit<$target>);
                 )+
             }
 
             impl [<$src Ext>] for $src {
                 #[inline(always)]
-                $(unsafe fn [<read_ $field>](reader: &mut $crate::io::Reader, dst: *mut $target) -> $crate::error::Result<()> {
-                    <$schema as $crate::SchemaRead>::read(reader, unsafe { &raw mut (*dst).$field })
+                $(fn [<get_uninit_ $field _mut>](dst: &mut std::mem::MaybeUninit<$target>) -> &mut std::mem::MaybeUninit<<$schema as $crate::SchemaRead>::Dst> {
+                    unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).$field).cast() }
+                })+
+                #[inline(always)]
+                $(fn [<read_ $field>](reader: &mut $crate::io::Reader, dst: &mut std::mem::MaybeUninit<$target>) -> $crate::error::Result<()> {
+                    <$schema as $crate::SchemaRead>::read(reader, Self::[<get_uninit_ $field _mut>](dst) )
+                })+
+                #[inline(always)]
+                $(fn [<write_uninit_ $field>](val: <$schema as $crate::SchemaRead>::Dst, dst: &mut std::mem::MaybeUninit<$target>) {
+                    <$schema as $crate::SchemaRead>::write_into_uninit(val, Self::[<get_uninit_ $field _mut>](dst) );
                 })+
             }
         }
@@ -580,19 +596,24 @@ macro_rules! compound {
                 Ok(())
             }
         }
-
+        // Compile time alignment check (prevent packed structs).
+        $(
+            #[allow(clippy::arithmetic_side_effects, clippy::modulo_one)]
+            const _: () = {
+                const OFFSET: usize = core::mem::offset_of!($target, $field);
+                const ALIGN: usize = core::mem::align_of::<<$schema as $crate::SchemaRead>::Dst>();
+                assert!(
+                    OFFSET % ALIGN == 0,
+                    concat!(stringify!($target), "::", stringify!($field), " is not naturally aligned (packed?)")
+                );
+            };
+        )+
         impl $crate::SchemaRead for $src {
             type Dst = $target;
 
-            /// Read the fields of `Self` from `reader` into `value`.
-            ///
-            /// # Safety
-            ///
-            /// - `value` must be a valid pointer to a `Self`.
-            /// - Constituent element schemas must properly initialize elements.
             #[inline(always)]
-            unsafe fn read(reader: &mut $crate::io::Reader, value: *mut Self::Dst) -> $crate::error::Result<()> {
-                $(<$schema as $crate::SchemaRead>::read(reader, unsafe { &raw mut (*value).$field })?;)+
+            fn read(reader: &mut $crate::io::Reader, dst: &mut std::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
+                $(<$schema as $crate::SchemaRead>::read(reader, unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).$field).cast() })?;)+
                 Ok(())
             }
         }
@@ -628,8 +649,8 @@ macro_rules! impl_tuple {
             type Dst = ($($name::Dst),+);
 
             #[inline(always)]
-            unsafe fn read(reader: &mut $crate::io::Reader, value: *mut Self::Dst) -> $crate::error::Result<()> {
-                $(<$name as $crate::SchemaRead>::read(reader, unsafe { &raw mut (*value).$field })?;)+
+            fn read(reader: &mut $crate::io::Reader, value: &mut std::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
+                $(<$name as $crate::SchemaRead>::read(reader, unsafe { &mut *(&raw mut (*value.as_mut_ptr()).$field).cast() })?;)+
                 Ok(())
             }
         }

@@ -1,7 +1,7 @@
 //! [`Reader`] and [`Writer`] implementations.
 use {
     crate::error::{read_size_limit, write_size_limit, Result},
-    std::{mem::MaybeUninit, ptr},
+    std::{mem::MaybeUninit, ptr, slice},
 };
 
 /// In-memory reader that allows direct reads from the source buffer
@@ -15,23 +15,17 @@ impl<'a> Reader<'a> {
         Self { cursor: bytes }
     }
 
-    /// Copy exactly `len` bytes from the [`Reader`] into `buf`.
-    ///
-    /// # Safety
-    ///
-    /// - `buf` must not overlap with the cursor.
-    /// - `buf` must be valid for writes of `len` bytes.
-    #[inline(always)]
-    pub unsafe fn read_exact(&mut self, buf: *mut u8, len: usize) -> Result<()> {
-        let Some((src, rest)) = self.cursor.split_at_checked(len) else {
-            return Err(read_size_limit(len));
+    /// Copy exactly `dst.len()` bytes from the [`Reader`] into `dst`.
+    #[inline]
+    pub fn read_exact(&mut self, dst: &mut [MaybeUninit<u8>]) -> Result<()> {
+        let Some((src, rest)) = self.cursor.split_at_checked(dst.len()) else {
+            return Err(read_size_limit(dst.len()));
         };
         unsafe {
             // SAFETY:
-            // - `src` is a valid pointer to a `[u8]`.
-            // - `src` is valid for reads of `len` bytes (given `split_at_checked`).
-            // - Caller ensures `buf` is valid for writes of `len` bytes.
-            ptr::copy_nonoverlapping(src.as_ptr(), buf, len);
+            // - `buf` mustn't overlap with the cursor (shouldn't be the case unless the user is doing something they shouldn't).
+            // - We just checked that we have enough bytes remaining in the cursor.
+            ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast::<u8>(), dst.len());
         }
         self.cursor = rest;
         Ok(())
@@ -41,29 +35,42 @@ impl<'a> Reader<'a> {
     ///
     /// # Safety
     ///
-    /// - `ptr` must not overlap with the cursor.
-    /// - `ptr` must be valid for writes of `size_of::<T>()` bytes.
-    /// - `T` must be plain ol' data.
+    /// - `T` must be initialized by reads of `size_of::<T>()` bytes.
     #[inline]
-    pub unsafe fn read_t<T>(&mut self, ptr: *mut T) -> Result<()> {
-        unsafe { self.read_exact(ptr as *mut u8, size_of::<T>()) }
+    pub unsafe fn read_t<T>(&mut self, dst: &mut MaybeUninit<T>) -> Result<()> {
+        let slice = unsafe {
+            slice::from_raw_parts_mut(dst.as_mut_ptr().cast::<MaybeUninit<u8>>(), size_of::<T>())
+        };
+        self.read_exact(slice)?;
+        Ok(())
+    }
+
+    /// Copy exactly `dst.len() * size_of::<T>()` bytes from the [`Reader`] into `dst`.
+    ///
+    /// # Safety
+    ///
+    /// - `T` must be initialized by reads of `size_of::<T>()` bytes.
+    #[inline]
+    pub unsafe fn read_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> Result<()> {
+        let slice = unsafe {
+            slice::from_raw_parts_mut(dst.as_mut_ptr().cast::<MaybeUninit<u8>>(), size_of_val(dst))
+        };
+        self.read_exact(slice)?;
+        Ok(())
     }
 
     /// Read T from the cursor into a new T.
     ///
     /// # Safety
     ///
-    /// - `T` must be plain ol' data.
     /// - `T` must be initialized by reads of `size_of::<T>()` bytes.
     #[inline(always)]
     pub unsafe fn get_t<T>(&mut self) -> Result<T> {
         let mut val = MaybeUninit::<T>::uninit();
-        unsafe {
-            // SAFETY:
-            // - `val` is a valid pointer to a `T`.
-            // - Caller ensures `T` is plain ol' data and is initialized by reads of `size_of::<T>()` bytes.
-            self.read_exact(val.as_mut_ptr() as *mut u8, size_of::<T>())?;
-        }
+        let slice = unsafe {
+            slice::from_raw_parts_mut(val.as_mut_ptr().cast::<MaybeUninit<u8>>(), size_of::<T>())
+        };
+        self.read_exact(slice)?;
         Ok(val.assume_init())
     }
 
@@ -100,29 +107,27 @@ impl<'a> Writer<'a> {
         Self { buffer }
     }
 
-    /// Write exactly `len` bytes from the given `buf` into the internal buffer.
-    ///
-    /// # Safety
-    ///
-    /// - `buf` must not overlap with the internal buffer.
-    /// - `buf` must be valid for reads of `len` bytes.
-    #[inline(always)]
-    pub unsafe fn write_exact(&mut self, buf: *const u8, len: usize) -> Result<()> {
-        let self_len = self.ensure_capacity_for(len)?;
+    /// Write exactly `src.len()` bytes from the given `src` into the internal buffer.
+    #[inline]
+    pub fn write_exact(&mut self, src: &[u8]) -> Result<()> {
+        let self_len = self.ensure_capacity_for(src.len())?;
         unsafe {
             // SAFETY:
-            // - Caller ensures `buf` is valid for reads of `len` bytes.
-            // - Caller ensures `buf` does not overlap with the internal buffer.
-            // - `self.buffer` is valid for writes of `len` bytes (given `capacity` check).
-            ptr::copy_nonoverlapping(buf, self.buffer.as_mut_ptr().add(self_len), len);
+            // - `src` mustn't overlap with the internal buffer (shouldn't be the case unless the user is doing something they shouldn't).
+            // - We just checked that we have enough capacity in the internal buffer.
+            ptr::copy_nonoverlapping(
+                src.as_ptr(),
+                self.buffer.as_mut_ptr().add(self_len),
+                src.len(),
+            );
             // SAFETY: capacity was checked above and we just wrote `len` bytes.
             #[allow(clippy::arithmetic_side_effects)]
-            self.buffer.set_len(self_len + len);
+            self.buffer.set_len(self_len + src.len());
         }
         Ok(())
     }
 
-    #[inline(always)]
+    #[inline]
     fn ensure_capacity_for(&self, len: usize) -> Result<usize> {
         let buf_len = self.buffer.len();
         if len > self.buffer.capacity().saturating_sub(buf_len) {
@@ -162,8 +167,30 @@ impl<'a> Writer<'a> {
     /// # Safety
     ///
     /// - `T` must be plain ol' data.
-    #[inline(always)]
+    #[inline]
     pub unsafe fn write_t<T>(&mut self, value: &T) -> Result<()> {
-        unsafe { self.write_exact(value as *const T as *const u8, size_of::<T>()) }
+        unsafe {
+            self.write_exact(slice::from_raw_parts(
+                value as *const T as *const u8,
+                size_of::<T>(),
+            ))
+        }
+    }
+
+    /// Write `len` bytes from the given `write` function into the internal buffer.
+    ///
+    /// # Safety
+    ///
+    /// - `write` must write EXACTLY `len` bytes into the given buffer.
+    /// - `write` must not write from a buffer that overlap with the internal buffer.
+    #[inline]
+    pub unsafe fn write_slice_t<T>(&mut self, value: &[T]) -> Result<()> {
+        #[allow(clippy::arithmetic_side_effects)]
+        unsafe {
+            self.write_exact(slice::from_raw_parts(
+                value.as_ptr().cast(),
+                size_of_val(value),
+            ))
+        }
     }
 }
