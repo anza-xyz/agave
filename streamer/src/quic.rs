@@ -775,7 +775,9 @@ mod test {
         )
     }
 
-    fn setup_quic_server() -> (
+    fn setup_quic_server_with_params(
+        server_params: QuicServerParams,
+    ) -> (
         std::thread::JoinHandle<()>,
         crossbeam_channel::Receiver<PacketBatch>,
         SocketAddr,
@@ -798,11 +800,20 @@ mod test {
             &keypair,
             sender,
             staked_nodes,
-            QuicServerParams::default_for_tests(),
+            server_params,
             cancel.clone(),
         )
         .unwrap();
         (t, receiver, server_address, cancel)
+    }
+
+    fn setup_quic_server() -> (
+        std::thread::JoinHandle<()>,
+        crossbeam_channel::Receiver<PacketBatch>,
+        SocketAddr,
+        CancellationToken,
+    ) {
+        setup_quic_server_with_params(QuicServerParams::default_for_tests())
     }
 
     #[test]
@@ -874,6 +885,30 @@ mod test {
 
         let runtime = rt_for_test();
         runtime.block_on(check_multiple_writes(receiver, server_address, None));
+        cancel.cancel();
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn test_quic_server_multiple_writes_with_simple_qos() {
+        solana_logger::setup();
+        let server_params = QuicServerParams {
+            qos_mode: QosMode::SimpleStreamsPerSecond {
+                max_streams_per_second: 50, // leave some room
+            },
+            ..QuicServerParams::default_for_tests()
+        };
+        let (t, receiver, server_address, cancel) = setup_quic_server_with_params(server_params);
+
+        let runtime = rt_for_test();
+        let num_expected_packets = 40;
+
+        runtime.block_on(check_multiple_packets(
+            receiver,
+            server_address,
+            None,
+            num_expected_packets,
+        ));
         cancel.cancel();
         t.join().unwrap();
     }

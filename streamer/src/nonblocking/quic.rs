@@ -1754,6 +1754,34 @@ pub mod test {
         }
         s1.finish().unwrap();
 
+        check_received_packets(receiver, num_expected_packets, num_bytes).await;
+    }
+
+    pub async fn check_multiple_packets(
+        receiver: Receiver<PacketBatch>,
+        server_address: SocketAddr,
+        client_keypair: Option<&Keypair>,
+        num_expected_packets: usize,
+    ) {
+        let conn1 = Arc::new(make_client_endpoint(&server_address, client_keypair).await);
+
+        // Send a full size packet with single byte writes.
+        let num_bytes = PACKET_DATA_SIZE;
+        let packet = vec![1u8; num_bytes];
+        for _ in 0..num_expected_packets {
+            let mut s1 = conn1.open_uni().await.unwrap();
+            s1.write_all(&packet).await.unwrap();
+            s1.finish().unwrap();
+        }
+
+        check_received_packets(receiver, num_expected_packets, num_bytes).await;
+    }
+
+    async fn check_received_packets(
+        receiver: Receiver<PacketBatch>,
+        num_expected_packets: usize,
+        num_bytes: usize,
+    ) {
         let mut all_packets = vec![];
         let now = Instant::now();
         let mut total_packets = 0;
