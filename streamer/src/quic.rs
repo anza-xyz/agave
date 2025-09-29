@@ -893,7 +893,7 @@ mod test {
     }
 
     #[test]
-    fn test_quic_server_multiple_writes_with_simple_qos() {
+    fn test_quic_server_multiple_packets_with_simple_qos() {
         // Send multiple writes from a staked node with SimpleStreamsPerSecond QoS mode
         // with a super low staked client stake to ensure it can send all packets
         // within the rate limit.
