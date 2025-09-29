@@ -26,3 +26,4 @@ pub mod metrics;
 
 // Logging abstraction module
 pub(crate) mod logging;
+pub mod tpu_client_next;
