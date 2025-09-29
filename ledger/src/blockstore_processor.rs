@@ -525,8 +525,10 @@ fn schedule_batches_for_execution(
         // to unlock.
         // scheduling is skipped if we have already detected an error in this loop
         let indexes = starting_index..starting_index + transactions.len();
+        // Widening usize index to OrderedTaskId (= u128) won't ever fail.
+        let task_ids = indexes.map(|i| i.try_into().unwrap());
         first_err = first_err.and_then(|()| {
-            bank.schedule_transaction_executions(transactions.into_iter().zip_eq(indexes))
+            bank.schedule_transaction_executions(transactions.into_iter().zip_eq(task_ids))
         });
     }
     first_err
