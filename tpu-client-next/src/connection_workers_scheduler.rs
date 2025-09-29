@@ -1,6 +1,7 @@
 //! This module defines [`ConnectionWorkersScheduler`] which sends transactions
 //! to the upcoming leaders.
 
+use crate::transaction_batch::WorkerPayload;
 #[cfg(feature = "agave-unstable-api")]
 use qualifier_attr::qualifiers;
 use {
@@ -26,7 +27,8 @@ use {
     tokio::sync::{mpsc, watch},
     tokio_util::sync::CancellationToken,
 };
-pub type TransactionReceiver = mpsc::Receiver<TransactionBatch>;
+
+pub type TransactionReceiver<T> = mpsc::Receiver<T>;
 
 /// The [`ConnectionWorkersScheduler`] sends transactions from the provided
 /// receiver channel to upcoming leaders. It obtains information about future
@@ -34,9 +36,9 @@ pub type TransactionReceiver = mpsc::Receiver<TransactionBatch>;
 ///
 /// Internally, it enables the management and coordination of multiple network
 /// connections, schedules and oversees connection workers.
-pub struct ConnectionWorkersScheduler {
+pub struct ConnectionWorkersScheduler<T> {
     leader_updater: Box<dyn LeaderUpdater>,
-    transaction_receiver: TransactionReceiver,
+    transaction_receiver: TransactionReceiver<T>,
     update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
     cancel: CancellationToken,
     stats: Arc<SendTransactionStats>,
@@ -141,7 +143,7 @@ impl From<StakeIdentity> for QuicClientCertificate {
 /// [`ConnectionWorkersScheduler`] to distribute transactions to workers
 /// accordingly.
 #[async_trait]
-pub trait WorkersBroadcaster {
+pub trait WorkersBroadcaster<T: WorkerPayload> {
     /// Sends a `transaction_batch` to workers associated with the given
     /// `leaders` addresses.
     ///
@@ -149,18 +151,22 @@ pub trait WorkersBroadcaster {
     /// encounters an unrecoverable error. In this case, it will trigger
     /// stopping the scheduler and cleaning all the data.
     async fn send_to_workers(
-        workers: &mut WorkersCache,
+        &self,
+        workers: &mut WorkersCache<T>,
         leaders: &[SocketAddr],
-        transaction_batch: TransactionBatch,
+        transaction_batch: T,
     ) -> Result<(), ConnectionWorkersSchedulerError>;
 }
 
-impl ConnectionWorkersScheduler {
+impl<T> ConnectionWorkersScheduler<T>
+where
+    T: WorkerPayload,
+{
     /// Creates the scheduler, which manages the distribution of transactions to
     /// the network's upcoming leaders.
     pub fn new(
         leader_updater: Box<dyn LeaderUpdater>,
-        transaction_receiver: mpsc::Receiver<TransactionBatch>,
+        transaction_receiver: mpsc::Receiver<T>,
         update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
         cancel: CancellationToken,
     ) -> Self {
@@ -192,7 +198,7 @@ impl ConnectionWorkersScheduler {
         self,
         config: ConnectionWorkersSchedulerConfig,
     ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
-        self.run_with_broadcaster::<NonblockingBroadcaster>(config)
+        self.run_with_broadcaster(config, NonblockingBroadcaster)
             .await
     }
 
@@ -205,7 +211,7 @@ impl ConnectionWorkersScheduler {
     ///
     /// Importantly, if some transactions were not delivered due to network
     /// problems, they will not be retried when the problem is resolved.
-    pub async fn run_with_broadcaster<Broadcaster: WorkersBroadcaster>(
+    pub async fn run_with_broadcaster<Broadcaster>(
         self,
         ConnectionWorkersSchedulerConfig {
             bind,
@@ -216,7 +222,11 @@ impl ConnectionWorkersScheduler {
             max_reconnect_attempts,
             leaders_fanout,
         }: ConnectionWorkersSchedulerConfig,
-    ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError> {
+        broadcaster: Broadcaster,
+    ) -> Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError>
+    where
+        Broadcaster: WorkersBroadcaster<T>,
+    {
         let ConnectionWorkersScheduler {
             mut leader_updater,
             mut transaction_receiver,
@@ -236,7 +246,7 @@ impl ConnectionWorkersScheduler {
         let mut identity_updater_is_active = true;
 
         loop {
-            let transaction_batch: TransactionBatch = tokio::select! {
+            let transaction_batch = tokio::select! {
                 recv_res = transaction_receiver.recv() => match recv_res {
                     Some(txs) => txs,
                     None => {
@@ -285,8 +295,9 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
-            if let Err(error) =
-                Broadcaster::send_to_workers(&mut workers, &send_leaders, transaction_batch).await
+            if let Err(error) = broadcaster
+                .send_to_workers(&mut workers, &send_leaders, transaction_batch)
+                .await
             {
                 last_error = Some(error);
                 break;
@@ -329,11 +340,15 @@ fn build_client_config(stake_identity: Option<&StakeIdentity>) -> ClientConfig {
 struct NonblockingBroadcaster;
 
 #[async_trait]
-impl WorkersBroadcaster for NonblockingBroadcaster {
+impl<T> WorkersBroadcaster<T> for NonblockingBroadcaster
+where
+    T: WorkerPayload,
+{
     async fn send_to_workers(
-        workers: &mut WorkersCache,
+        &self,
+        workers: &mut WorkersCache<T>,
         leaders: &[SocketAddr],
-        transaction_batch: TransactionBatch,
+        transaction_batch: T,
     ) -> Result<(), ConnectionWorkersSchedulerError> {
         for new_leader in leaders {
             let send_res =
