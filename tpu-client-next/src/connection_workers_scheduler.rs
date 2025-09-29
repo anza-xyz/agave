@@ -40,7 +40,7 @@ pub struct ConnectionWorkersScheduler {
     update_identity_receiver: watch::Receiver<Option<StakeIdentity>>,
     cancel: CancellationToken,
     stats: Arc<SendTransactionStats>,
-    broadcaster: Box<dyn WorkersBroadcaster>,
+    broadcaster: Arc<dyn WorkersBroadcaster>,
 }
 
 /// Errors that arise from running [`ConnectionWorkersSchedulerError`].
@@ -142,7 +142,7 @@ impl From<StakeIdentity> for QuicClientCertificate {
 /// [`ConnectionWorkersScheduler`] to distribute transactions to workers
 /// accordingly.
 #[async_trait]
-pub trait WorkersBroadcaster {
+pub trait WorkersBroadcaster: Send + Sync {
     /// Sends a `transaction_batch` to workers associated with the given
     /// `leaders` addresses.
     ///
@@ -173,11 +173,11 @@ impl ConnectionWorkersScheduler {
             update_identity_receiver,
             cancel,
             stats,
-            broadcaster: Box::new(NonblockingBroadcaster),
+            broadcaster: Arc::new(NonblockingBroadcaster),
         }
     }
 
-    pub fn with_broadcaster(&mut self, broadcaster: Box<dyn WorkersBroadcaster>) {
+    pub fn with_broadcaster(&mut self, broadcaster: Arc<dyn WorkersBroadcaster>) {
         self.broadcaster = broadcaster;
     }
 
