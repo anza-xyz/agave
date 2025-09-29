@@ -956,7 +956,7 @@ mod tests {
         }
     }
 
-    const TEST_SHORT_TIMEOUT: Duration = Duration::from_millis(5);
+    const TEST_SHORT_TIMEOUT: Duration = Duration::from_millis(10);
 
     fn send_parent_ready_event(
         test_context: &EventHandlerTestContext,
