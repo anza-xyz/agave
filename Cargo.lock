@@ -546,6 +546,7 @@ dependencies = [
 name = "agave-votor"
 version = "3.1.0"
 dependencies = [
+ "agave-votor",
  "anyhow",
  "bincode",
  "bitvec",
