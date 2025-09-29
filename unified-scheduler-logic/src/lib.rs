@@ -590,7 +590,17 @@ impl<R, W> Usage<R, W> {
 type FifoUsage = Usage<ShortCounter, ()>;
 const_assert_eq!(mem::size_of::<FifoUsage>(), 8);
 
-// BTreeMap is needed for now for efficient manipulation...
+// PriorityUsage will temporarily contain current tasks, unlike its very light-weight cousin (i.e.
+// FifoUsage). This arrangement is needed for reblocking (see the prepare_lock() method).
+//
+// Considering it may reside at usage_queue.current_usage, practically this means each addresses
+// (`Pubkey`s) may instantiate its own ones independently, exactly in the same manner as
+// usage_queue.blocked_usages_from_tasks.
+//
+// The reblocking algorithm involves the removal keyed by task_id on arbitrary-ordered unlocking
+// and the ranged query to handle reblocking of current readonly usages (if any). Currently,
+// BTreeMap is chosen mainly for its implementation simplicity and acceptable efficiency. This
+// might be replaced with more efficient implementation in the future.
 type PriorityUsage = Usage<BTreeMap<OrderedTaskId, Task>, Task>;
 const_assert_eq!(mem::size_of::<PriorityUsage>(), 32);
 
@@ -777,7 +787,7 @@ impl UsageQueueInner {
                 match current_usage {
                     Some(PriorityUsage::Readonly(tasks)) => match requested_usage {
                         RequestedUsage::Readonly => {
-                            // Don't skip remove()-ing to assert the existence of task
+                            // Don't skip remove()-ing to assert the existence of the last task.
                             tasks.remove(&task.task_id()).unwrap();
                             if tasks.is_empty() {
                                 is_newly_lockable = true;
@@ -898,8 +908,8 @@ impl UsageQueueInner {
                     Err(())
                 }
             }
-            // This is the heart of our priority queue mechanism. Understanding it needs a bit of
-            // twist of thinking.
+            // This is the heart of our priority queue mechanism, called reblocking. Understanding
+            // it needs a bit of twist of thinking.
             //
             // First, recall that the entire logic of SchedulingStateMachine is about fifo
             // queueing, whose state is ensured for completion with nice property of _bounded_
@@ -925,7 +935,7 @@ impl UsageQueueInner {
                         assert!(blocked_usages_from_tasks.is_empty());
                         Ok(())
                     }
-                    (Some(PriorityUsage::Writable(current_task)), _) => {
+                    (Some(PriorityUsage::Writable(current_task)), _requested_usage) => {
                         if !new_task.is_higher_priority(current_task)
                             || !current_task.try_reblock(token)
                         {
@@ -952,6 +962,11 @@ impl UsageQueueInner {
                         Ok(())
                     }
                     (Some(PriorityUsage::Readonly(current_tasks)), RequestedUsage::Writable) => {
+                        // First, we need to determine whether the write-requesting new_task could
+                        // reblock current read-only tasks _very efficiently while bounded under
+                        // the worst case_, to prevent large number of low priority tasks from
+                        // consuming undue amount of cpu cycles for nothing.
+
                         // Use extract_if once stablized to remove Vec creation and the repeating
                         // remove()s...
                         let task_indexes = current_tasks
