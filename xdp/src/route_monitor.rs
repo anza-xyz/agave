@@ -21,13 +21,8 @@ impl RouteMonitor {
                 thread::sleep(update_interval);
 
                 // Fetch and update both routes and ARP table atomically
-                match atomic_router.update_routes_and_neighbors() {
-                    Ok(()) => {
-                        log::info!("greg: Successfully updated routes and ARP table");
-                    }
-                    Err(e) => {
-                        log::info!("Failed to update routes and ARP table: {e}");
-                    }
+                if let Err(e) = atomic_router.update_routes_and_neighbors() {
+                    log::warn!("Failed to update routes and ARP table: {e}");
                 }
             }
         })

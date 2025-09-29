@@ -24,7 +24,7 @@ use {
 const NLA_HDR_LEN: usize = align_to(mem::size_of::<nlattr>(), NLA_ALIGNTO as usize);
 
 // Removes cloned routes, non-main/local table routes, and invalid route types
-// Many invisible routes are inserted when doing IPv4 MTU discovery or caching neighbor information
+// Many invisible routes may be inserted
 fn is_valid_route(route: &RouteEntry) -> bool {
     // Filter out cloned routes
     if route.flags & RTM_F_CLONED != 0 {
@@ -50,7 +50,7 @@ fn is_valid_route(route: &RouteEntry) -> bool {
         RTN_BLACKHOLE => true,
         RTN_THROW => true,
         _ => {
-            log::info!("greg: Unsupported route type: {}", route.type_);
+            log::info!("Unsupported route type: {}", route.type_);
             false
         }
     }
@@ -410,7 +410,6 @@ pub fn netlink_get_neighbors(
             continue;
         };
 
-        // Filter neighbors at the source for efficiency
         if neighbor.is_valid() {
             neighbors.push(neighbor);
         }
