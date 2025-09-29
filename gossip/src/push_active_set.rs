@@ -1,10 +1,5 @@
 use {
-    crate::{
-        cluster_info::REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS,
-        stake_weighting_config::{TimeConstant, WeightingConfig, WeightingConfigTyped},
-        weighted_shuffle::WeightedShuffle,
-    },
-    agave_low_pass_filter::api as lpf,
+    crate::weighted_shuffle::WeightedShuffle,
     indexmap::IndexMap,
     rand::Rng,
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
@@ -15,6 +10,7 @@ use {
 
 const NUM_PUSH_ACTIVE_SET_ENTRIES: usize = 25;
 
+<<<<<<< HEAD
 const ALPHA_MIN: u64 = lpf::SCALE.get();
 const ALPHA_MAX: u64 = 2 * lpf::SCALE.get();
 const DEFAULT_ALPHA: u64 = ALPHA_MAX;
@@ -77,10 +73,13 @@ fn gossip_interpolate_weight(base: u64, base_squared: u64, alpha: u64) -> u64 {
         / scale
 }
 
+=======
+>>>>>>> 70ad4f09f (Revert dynamic gossip weighting prs (#8217))
 // Each entry corresponds to a stake bucket for
 //     min stake of { this node, crds value owner }
 // The entry represents set of gossip nodes to actively
 // push to for crds values belonging to the bucket.
+<<<<<<< HEAD
 pub(crate) struct PushActiveSet {
     entries: [PushActiveSetEntry; NUM_PUSH_ACTIVE_SET_ENTRIES],
     mode: WeightingMode,
@@ -137,6 +136,10 @@ impl PushActiveSet {
         }
     }
 }
+=======
+#[derive(Default)]
+pub(crate) struct PushActiveSet([PushActiveSetEntry; NUM_PUSH_ACTIVE_SET_ENTRIES]);
+>>>>>>> 70ad4f09f (Revert dynamic gossip weighting prs (#8217))
 
 // Keys are gossip nodes to push messages to.
 // Values are which origins the node has pruned.
@@ -189,11 +192,7 @@ impl PushActiveSet {
         // Gossip nodes to be sampled for each push active set.
         nodes: &[Pubkey],
         stakes: &HashMap<Pubkey, u64>,
-        self_pubkey: &Pubkey,
     ) {
-        if nodes.is_empty() {
-            return;
-        }
         let num_bloom_filter_items = cluster_size.max(Self::MIN_NUM_BLOOM_ITEMS);
         // Active set of nodes to push to are sampled from these gossip nodes,
         // using sampling probabilities obtained from the stake bucket of each
@@ -202,76 +201,32 @@ impl PushActiveSet {
             .iter()
             .map(|node| get_stake_bucket(stakes.get(node)))
             .collect();
-
-        match self.mode {
-            WeightingMode::Static => {
-                // alpha = 2.0 → weight = (bucket + 1)^2
-                // (k, entry) represents push active set where the stake bucket of
-                //     min stake of {this node, crds value owner}
-                // is equal to `k`. The `entry` maintains set of gossip nodes to
-                // actively push to for crds values belonging to this bucket.
-                for (k, entry) in self.entries.iter_mut().enumerate() {
-                    let weights: Vec<u64> = buckets
-                        .iter()
-                        .map(|&bucket| {
-                            // bucket <- get_stake_bucket(min stake of {
-                            //  this node, crds value owner and gossip peer
-                            // })
-                            // weight <- (bucket + 1)^2
-                            // min stake of {...} is a proxy for how much we care about
-                            // the link, and tries to mirror similar logic on the
-                            // receiving end when pruning incoming links:
-                            // https://github.com/solana-labs/solana/blob/81394cf92/gossip/src/received_cache.rs#L100-L105
-                            let bucket = bucket.min(k) as u64;
-                            bucket.saturating_add(1).saturating_pow(2)
-                        })
-                        .collect();
-                    entry.rotate(rng, size, num_bloom_filter_items, nodes, &weights);
-                }
-            }
-            WeightingMode::Dynamic {
-                ref mut alpha,
-                filter_k,
-                tc_ms: _,
-            } => {
-                // Need to take into account this node's stake bucket when calculating fraction of unstaked nodes.
-                let self_bucket = get_stake_bucket(stakes.get(self_pubkey));
-                let num_unstaked = buckets
-                    .iter()
-                    .filter(|&&b| b == 0)
-                    .count()
-                    .saturating_add(if self_bucket == 0 { 1 } else { 0 });
-                let total_nodes = nodes.len().saturating_add(1);
-
-                let f_scaled = ((num_unstaked.saturating_mul(lpf::SCALE.get() as usize))
-                    .saturating_add(total_nodes / 2))
-                    / total_nodes;
-                let alpha_target = ALPHA_MIN.saturating_add(f_scaled as u64);
-                *alpha = lpf::filter_alpha(
-                    *alpha,
-                    alpha_target,
-                    lpf::FilterConfig {
-                        output_range: ALPHA_MIN..ALPHA_MAX,
-                        k: filter_k,
-                    },
-                );
-
-                for (k, entry) in self.entries.iter_mut().enumerate() {
-                    let weights: Vec<u64> = buckets
-                        .iter()
-                        .map(|&bucket| {
-                            let bucket = bucket.min(k) as u64;
-                            get_weight(bucket, *alpha)
-                        })
-                        .collect();
-                    entry.rotate(rng, size, num_bloom_filter_items, nodes, &weights);
-                }
-            }
+        // (k, entry) represents push active set where the stake bucket of
+        //     min stake of {this node, crds value owner}
+        // is equal to `k`. The `entry` maintains set of gossip nodes to
+        // actively push to for crds values belonging to this bucket.
+        for (k, entry) in self.0.iter_mut().enumerate() {
+            let weights: Vec<u64> = buckets
+                .iter()
+                .map(|&bucket| {
+                    // bucket <- get_stake_bucket(min stake of {
+                    //  this node, crds value owner and gossip peer
+                    // })
+                    // weight <- (bucket + 1)^2
+                    // min stake of {...} is a proxy for how much we care about
+                    // the link, and tries to mirror similar logic on the
+                    // receiving end when pruning incoming links:
+                    // https://github.com/solana-labs/solana/blob/81394cf92/gossip/src/received_cache.rs#L100-L105
+                    let bucket = bucket.min(k) as u64;
+                    bucket.saturating_add(1).saturating_pow(2)
+                })
+                .collect();
+            entry.rotate(rng, size, num_bloom_filter_items, nodes, &weights);
         }
     }
 
     fn get_entry(&self, stake: Option<&u64>) -> &PushActiveSetEntry {
-        &self.entries[get_stake_bucket(stake)]
+        &self.0[get_stake_bucket(stake)]
     }
 }
 
@@ -353,41 +308,9 @@ fn get_stake_bucket(stake: Option<&u64>) -> usize {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        crate::stake_weighting_config::{WEIGHTING_MODE_DYNAMIC, WEIGHTING_MODE_STATIC},
-        itertools::iproduct,
-        rand::SeedableRng,
-        rand_chacha::ChaChaRng,
+        super::*, itertools::iproduct, rand::SeedableRng, rand_chacha::ChaChaRng,
         std::iter::repeat_with,
     };
-
-    const MAX_STAKE: u64 = (1 << 20) * LAMPORTS_PER_SOL;
-
-    fn push_active_set_new_dynamic() -> PushActiveSet {
-        PushActiveSet::new(WeightingMode::from(WeightingConfigTyped::Dynamic {
-            tc: TimeConstant::Default,
-        }))
-    }
-
-    // Helper to generate a stake map given unstaked count
-    fn make_stakes(
-        nodes: &[Pubkey],
-        num_unstaked: usize,
-        rng: &mut ChaChaRng,
-    ) -> HashMap<Pubkey, u64> {
-        nodes
-            .iter()
-            .enumerate()
-            .map(|(i, node)| {
-                let stake = if i < num_unstaked {
-                    0
-                } else {
-                    rng.gen_range(1..=MAX_STAKE)
-                };
-                (*node, stake)
-            })
-            .collect()
-    }
 
     #[test]
     fn test_get_stake_bucket() {
@@ -413,20 +336,21 @@ mod tests {
     }
 
     #[test]
-    fn test_push_active_set_static_weighting() {
+    fn test_push_active_set() {
         const CLUSTER_SIZE: usize = 117;
+        const MAX_STAKE: u64 = (1 << 20) * LAMPORTS_PER_SOL;
         let mut rng = ChaChaRng::from_seed([189u8; 32]);
         let pubkey = Pubkey::new_unique();
         let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(20).collect();
         let stakes = repeat_with(|| rng.gen_range(1..MAX_STAKE));
         let mut stakes: HashMap<_, _> = nodes.iter().copied().zip(stakes).collect();
         stakes.insert(pubkey, rng.gen_range(1..MAX_STAKE));
-        let mut active_set = PushActiveSet::new(WeightingMode::Static);
-        assert!(active_set.entries.iter().all(|entry| entry.0.is_empty()));
-        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, &pubkey);
-        assert!(active_set.entries.iter().all(|entry| entry.0.len() == 5));
+        let mut active_set = PushActiveSet::default();
+        assert!(active_set.0.iter().all(|entry| entry.0.is_empty()));
+        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes);
+        assert!(active_set.0.iter().all(|entry| entry.0.len() == 5));
         // Assert that for all entries, each filter already prunes the key.
-        for entry in &active_set.entries {
+        for entry in &active_set.0 {
             for (node, filter) in entry.0.iter() {
                 assert!(filter.contains(node));
             }
@@ -448,8 +372,8 @@ mod tests {
         assert!(active_set
             .get_nodes(&pubkey, other, |_| false, &stakes)
             .eq([13, 18, 16, 0].into_iter().map(|k| &nodes[k])));
-        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes, &pubkey);
-        assert!(active_set.entries.iter().all(|entry| entry.0.len() == 7));
+        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes);
+        assert!(active_set.0.iter().all(|entry| entry.0.len() == 7));
         assert!(active_set
             .get_nodes(&pubkey, origin, |_| false, &stakes)
             .eq([18, 0, 7, 15, 11].into_iter().map(|k| &nodes[k])));
@@ -466,63 +390,6 @@ mod tests {
         assert!(active_set
             .get_nodes(&pubkey, other, |_| false, &stakes)
             .eq([16, 7, 11].into_iter().map(|k| &nodes[k])));
-    }
-
-    #[test]
-    fn test_push_active_set_dynamic_weighting() {
-        const CLUSTER_SIZE: usize = 117;
-        let mut rng = ChaChaRng::from_seed([14u8; 32]);
-        let pubkey = Pubkey::new_unique();
-        let nodes: Vec<_> = repeat_with(Pubkey::new_unique).take(20).collect();
-        let stakes = repeat_with(|| rng.gen_range(1..MAX_STAKE));
-        let mut stakes: HashMap<_, _> = nodes.iter().copied().zip(stakes).collect();
-        stakes.insert(pubkey, rng.gen_range(1..MAX_STAKE));
-        let mut active_set = push_active_set_new_dynamic();
-        assert!(active_set.entries.iter().all(|entry| entry.0.is_empty()));
-        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, &pubkey);
-        assert!(active_set.entries.iter().all(|entry| entry.0.len() == 5));
-        // Assert that for all entries, each filter already prunes the key.
-        for entry in &active_set.entries {
-            for (node, filter) in entry.0.iter() {
-                assert!(filter.contains(node));
-            }
-        }
-        let other = &nodes[6];
-        let origin = &nodes[17];
-        assert!(active_set
-            .get_nodes(&pubkey, origin, |_| false, &stakes)
-            .eq([7, 6, 2, 4, 12].into_iter().map(|k| &nodes[k])));
-        assert!(active_set
-            .get_nodes(&pubkey, other, |_| false, &stakes)
-            .eq([7, 2, 4, 12].into_iter().map(|k| &nodes[k])));
-
-        active_set.prune(&pubkey, &nodes[6], &[*origin], &stakes);
-        active_set.prune(&pubkey, &nodes[11], &[*origin], &stakes);
-        active_set.prune(&pubkey, &nodes[4], &[*origin], &stakes);
-        assert!(active_set
-            .get_nodes(&pubkey, origin, |_| false, &stakes)
-            .eq([7, 2, 12].into_iter().map(|k| &nodes[k])));
-        assert!(active_set
-            .get_nodes(&pubkey, other, |_| false, &stakes)
-            .eq([7, 2, 4, 12].into_iter().map(|k| &nodes[k])));
-        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes, &pubkey);
-        assert!(active_set.entries.iter().all(|entry| entry.0.len() == 7));
-        assert!(active_set
-            .get_nodes(&pubkey, origin, |_| false, &stakes)
-            .eq([2, 12, 15, 14, 16].into_iter().map(|k| &nodes[k])));
-        assert!(active_set
-            .get_nodes(&pubkey, other, |_| false, &stakes)
-            .eq([2, 4, 12, 15, 14, 16].into_iter().map(|k| &nodes[k])));
-        let origins = [*origin, *other];
-        active_set.prune(&pubkey, &nodes[2], &origins, &stakes);
-        active_set.prune(&pubkey, &nodes[12], &origins, &stakes);
-        active_set.prune(&pubkey, &nodes[14], &origins, &stakes);
-        assert!(active_set
-            .get_nodes(&pubkey, origin, |_| false, &stakes)
-            .eq([15, 16].into_iter().map(|k| &nodes[k])));
-        assert!(active_set
-            .get_nodes(&pubkey, other, |_| false, &stakes)
-            .eq([4, 15, 16].into_iter().map(|k| &nodes[k])));
     }
 
     #[test]
@@ -586,6 +453,7 @@ mod tests {
         let keys = [&nodes[5], &nodes[7], &nodes[1], &nodes[13]];
         assert!(entry.0.keys().eq(keys));
     }
+<<<<<<< HEAD
 
     fn alpha_of(pas: &PushActiveSet) -> u64 {
         match pas.mode {
@@ -1071,4 +939,6 @@ mod tests {
         // interpolate(16, 118676) should return 44
         assert_eq!(result, 44);
     }
+=======
+>>>>>>> 70ad4f09f (Revert dynamic gossip weighting prs (#8217))
 }

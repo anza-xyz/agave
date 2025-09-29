@@ -280,10 +280,13 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "agave-low-pass-filter"
 version = "3.0.5"
 
 [[package]]
+=======
+>>>>>>> 70ad4f09f (Revert dynamic gossip weighting prs (#8217))
 name = "agave-precompiles"
 version = "3.0.5"
 dependencies = [
@@ -8750,7 +8753,6 @@ name = "solana-gossip"
 version = "3.0.5"
 dependencies = [
  "agave-feature-set",
- "agave-low-pass-filter",
  "anyhow",
  "arrayvec",
  "assert_matches",
@@ -8778,7 +8780,6 @@ dependencies = [
  "serde_derive",
  "serial_test",
  "siphasher 1.0.1",
- "solana-account",
  "solana-bloom",
  "solana-clap-utils",
  "solana-client",
