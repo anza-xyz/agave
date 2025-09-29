@@ -77,7 +77,7 @@ const TARGET_UNSTAKED_KBPS: u64 = 5000; // about 200 TPS
 
 /// Target bitrate for a staked connection with maximum
 /// stake amount through the cluster
-const TARGET_MAX_STAKED_KBPS: u64 = TARGET_UNSTAKED_KBPS * 10; // about 2000 TPS
+const TARGET_MAX_STAKED_KBPS: u64 = TARGET_UNSTAKED_KBPS * 20; // about 4000 TPS
 
 /// Maximal allowed RTT for SWQOS calculations (to limit abuse)
 const MAX_ALLOWED_RTT_MS: u64 = 300;
@@ -653,7 +653,7 @@ fn compute_receive_window_bdp(max_receive_rate_kbps: u64, rtt: Duration) -> VarI
     // max(1) is needed on localhost to avoid zero result
     // truncate here is safe since u64 millis is an eternity
     let millis = (rtt.as_millis() as u64).clamp(1, MAX_ALLOWED_RTT_MS);
-    // Compute the receive window in bytes as max_rx_rate * rtt * 1.2 / 8, 
+    // Compute the receive window in bytes as max_rx_rate * rtt * 1.2 / 8,
     // here 1.2 is a margin to account for ack coalescing and network blips
     let receive_window = (max_receive_rate_kbps * millis) * 12 / 10 / 8;
     // hard constraint the RX window to avoid excess memory use
