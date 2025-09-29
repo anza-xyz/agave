@@ -172,13 +172,11 @@ used_underscore_binding = "deny"
 [workspace.dependencies]
 Inflector = "0.11.4"
 aes-gcm-siv = "0.11.1"
-<<<<<<< HEAD
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=3.0.5" }
 agave-cargo-registry = { path = "cargo-registry", version = "=3.0.5" }
 agave-feature-set = { path = "feature-set", version = "=3.0.5" }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=3.0.5" }
 agave-io-uring = { path = "io-uring", version = "=3.0.5" }
-agave-low-pass-filter = { path = "low-pass-filter", version = "=3.0.5" }
 agave-precompiles = { path = "precompiles", version = "=3.0.5" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.0.5" }
 agave-syscalls = { path = "syscalls", version = "=3.0.5" }
@@ -187,22 +185,6 @@ agave-transaction-view = { path = "transaction-view", version = "=3.0.5" }
 agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=3.0.5" }
 agave-votor = { path = "votor", version = "=3.0.5" }
 agave-xdp = { path = "xdp", version = "=3.0.5" }
-=======
-agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=3.1.0" }
-agave-cargo-registry = { path = "cargo-registry", version = "=3.1.0" }
-agave-feature-set = { path = "feature-set", version = "=3.1.0" }
-agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=3.1.0" }
-agave-io-uring = { path = "io-uring", version = "=3.1.0" }
-agave-precompiles = { path = "precompiles", version = "=3.1.0" }
-agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.1.0" }
-agave-scheduler-bindings = { path = "scheduler-bindings", version = "=3.1.0" }
-agave-syscalls = { path = "syscalls", version = "=3.1.0" }
-agave-thread-manager = { path = "thread-manager", version = "=3.1.0" }
-agave-transaction-view = { path = "transaction-view", version = "=3.1.0" }
-agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=3.1.0" }
-agave-votor = { path = "votor", version = "=3.1.0" }
-agave-xdp = { path = "xdp", version = "=3.1.0" }
->>>>>>> 70ad4f09f (Revert dynamic gossip weighting prs (#8217))
 ahash = "0.8.11"
 anyhow = "1.0.99"
 aquamarine = "0.6.0"
