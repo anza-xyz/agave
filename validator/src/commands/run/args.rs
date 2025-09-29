@@ -6,8 +6,7 @@ use {
     },
     agave_snapshots::SUPPORTED_ARCHIVE_COMPRESSION,
     clap::{values_t, App, Arg, ArgMatches},
-    solana_accounts_db::accounts_db::AccountsDbConfig,
-    solana_accounts_db::utils::create_and_canonicalize_directory,
+    solana_accounts_db::{accounts_db::AccountsDbConfig, utils::create_and_canonicalize_directory},
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::keypair_of,
