@@ -7,6 +7,9 @@ pub mod commitment;
 pub mod common;
 
 #[cfg(feature = "agave-unstable-api")]
+mod consensus_metrics;
+
+#[cfg(feature = "agave-unstable-api")]
 pub mod consensus_pool;
 
 #[cfg(feature = "agave-unstable-api")]
@@ -35,6 +38,9 @@ pub mod vote_history_storage;
 
 #[cfg(feature = "agave-unstable-api")]
 mod voting_service;
+
+#[cfg(feature = "agave-unstable-api")]
+mod voting_utils;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]

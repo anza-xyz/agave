@@ -2003,7 +2003,7 @@ impl AccountsDb {
                                         // ref counts match, nothing to do here
                                     }
                                     std::cmp::Ordering::Greater => {
-                                        let slot_list = index_entry.slot_list.read().unwrap();
+                                        let slot_list = index_entry.slot_list_read_lock();
                                         let num_too_new = slot_list
                                             .iter()
                                             .filter(|(slot, _)| slot > &max_slot_inclusive)
@@ -2033,7 +2033,7 @@ impl AccountsDb {
                                             index_entry.ref_count(),
                                             entry.value().len(),
                                             *entry.value(),
-                                            index_entry.slot_list.read().unwrap()
+                                            index_entry.slot_list_read_lock()
                                         );
                                     }
                                 }
@@ -6702,7 +6702,7 @@ impl AccountsDb {
                     .scan_accounts_without_data(|offset, account| {
                         let key = account.pubkey();
                         let index_entry = self.accounts_index.get_cloned(key).unwrap();
-                        let slot_list = index_entry.slot_list.read().unwrap();
+                        let slot_list = index_entry.slot_list_read_lock();
                         let mut count = 0;
                         for (slot2, account_info2) in slot_list.iter() {
                             if *slot2 == slot {
@@ -7153,7 +7153,7 @@ impl AccountsDb {
             for pubkey in map.keys() {
                 self.accounts_index.get_and_then(&pubkey, |account_entry| {
                     if let Some(account_entry) = account_entry {
-                        let list_r = &account_entry.slot_list.read().unwrap();
+                        let list_r = &account_entry.slot_list_read_lock();
                         info!(" key: {} ref_count: {}", pubkey, account_entry.ref_count(),);
                         info!("      slots: {list_r:?}");
                     }

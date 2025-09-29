@@ -233,9 +233,7 @@ impl<'a> SnapshotMinimizer<'a> {
                 .get_and_then(&pubkey, |entry| {
                     if let Some(entry) = entry {
                         let max_slot = entry
-                            .slot_list
-                            .read()
-                            .unwrap()
+                            .slot_list_read_lock()
                             .iter()
                             .map(|(slot, _)| *slot)
                             .max();
