@@ -1,11 +1,16 @@
 use {
-    crate::{event::VotorEvent, timer_manager::stats::TimerManagerStats},
+    crate::{
+        consensus_metrics::ConsensusMetrics, event::VotorEvent,
+        timer_manager::stats::TimerManagerStats,
+    },
     crossbeam_channel::Sender,
+    parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
     solana_ledger::leader_schedule_utils::last_of_consecutive_leader_slots,
     std::{
         cmp::Reverse,
         collections::{BinaryHeap, HashMap, VecDeque},
+        sync::Arc,
         time::{Duration, Instant},
     },
 };
@@ -45,7 +50,12 @@ impl TimerState {
     /// Call to make progress on the state machine.
     ///
     /// Returns a potentially empty list of events that should be sent.
-    fn progress(&mut self, delta_block: Duration, now: Instant) -> Option<VotorEvent> {
+    fn progress(
+        &mut self,
+        delta_block: Duration,
+        now: Instant,
+        consensus_metrics: &PlRwLock<ConsensusMetrics>,
+    ) -> Option<VotorEvent> {
         match self {
             Self::WaitDeltaTimeout { window, timeout } => {
                 assert!(!window.is_empty());
@@ -53,6 +63,7 @@ impl TimerState {
                     return None;
                 }
                 let slot = *window.front().unwrap();
+                consensus_metrics.write().record_start_of_slot(slot);
                 let timeout = now.checked_add(delta_block).unwrap();
                 *self = Self::WaitDeltaBlock {
                     window: window.to_owned(),
@@ -67,10 +78,12 @@ impl TimerState {
                 }
 
                 let ret = Some(VotorEvent::Timeout(window.pop_front().unwrap()));
-                if window.is_empty() {
-                    *self = Self::Done;
-                } else {
-                    *timeout = now.checked_add(delta_block).unwrap();
+                match window.front() {
+                    None => *self = Self::Done,
+                    Some(next_slot) => {
+                        consensus_metrics.write().record_start_of_slot(*next_slot);
+                        *timeout = now.checked_add(delta_block).unwrap();
+                    }
                 }
                 ret
             }
@@ -98,6 +111,7 @@ pub(super) struct Timers {
     heap: BinaryHeap<Reverse<(Instant, Slot)>>,
     /// Channel to send events on.
     event_sender: Sender<VotorEvent>,
+    consensus_metrics: Arc<PlRwLock<ConsensusMetrics>>,
     /// Stats for the timer manager.
     stats: TimerManagerStats,
 }
@@ -107,6 +121,7 @@ impl Timers {
         delta_timeout: Duration,
         delta_block: Duration,
         event_sender: Sender<VotorEvent>,
+        consensus_metrics: Arc<PlRwLock<ConsensusMetrics>>,
     ) -> Self {
         Self {
             delta_timeout,
@@ -114,6 +129,7 @@ impl Timers {
             timers: HashMap::new(),
             heap: BinaryHeap::new(),
             event_sender,
+            consensus_metrics,
             stats: TimerManagerStats::new(),
         }
     }
@@ -152,7 +168,9 @@ impl Timers {
                     }
 
                     let mut timer = self.timers.remove(&slot).unwrap();
-                    if let Some(event) = timer.progress(self.delta_block, now) {
+                    if let Some(event) =
+                        timer.progress(self.delta_block, now, &self.consensus_metrics)
+                    {
                         self.event_sender.send(event).unwrap();
                     }
                     if let Some(next_fire) = timer.next_fire() {
@@ -171,48 +189,89 @@ impl Timers {
     pub(super) fn stats(&self) -> TimerManagerStats {
         self.stats.clone()
     }
+
+    #[cfg(test)]
+    pub(super) fn is_timeout_set(&self, slot: Slot) -> bool {
+        self.timers.contains_key(&slot)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crossbeam_channel::unbounded};
+    use {super::*, crossbeam_channel::unbounded, solana_pubkey::Pubkey};
 
     #[test]
     fn timer_state_machine() {
+        let leader = Pubkey::default();
+        let consensus_metrics = PlRwLock::new(ConsensusMetrics::new(1));
         let one_micro = Duration::from_micros(1);
         let now = Instant::now();
         let slot = 0;
         let (mut timer_state, next_fire) = TimerState::new(slot, one_micro, now);
 
         assert!(matches!(
-            timer_state.progress(one_micro, next_fire).unwrap(),
+            timer_state
+                .progress(one_micro, next_fire, &consensus_metrics)
+                .unwrap(),
             VotorEvent::TimeoutCrashedLeader(0)
         ));
+        consensus_metrics
+            .write()
+            .record_block_hash_seen(leader, 0)
+            .unwrap();
 
         assert!(matches!(
             timer_state
-                .progress(one_micro, timer_state.next_fire().unwrap())
+                .progress(
+                    one_micro,
+                    timer_state.next_fire().unwrap(),
+                    &consensus_metrics
+                )
                 .unwrap(),
             VotorEvent::Timeout(0)
         ));
+        consensus_metrics
+            .write()
+            .record_block_hash_seen(leader, 1)
+            .unwrap();
 
         assert!(matches!(
             timer_state
-                .progress(one_micro, timer_state.next_fire().unwrap())
+                .progress(
+                    one_micro,
+                    timer_state.next_fire().unwrap(),
+                    &consensus_metrics
+                )
                 .unwrap(),
             VotorEvent::Timeout(1)
         ));
+        consensus_metrics
+            .write()
+            .record_block_hash_seen(leader, 2)
+            .unwrap();
 
         assert!(matches!(
             timer_state
-                .progress(one_micro, timer_state.next_fire().unwrap())
+                .progress(
+                    one_micro,
+                    timer_state.next_fire().unwrap(),
+                    &consensus_metrics
+                )
                 .unwrap(),
             VotorEvent::Timeout(2)
         ));
+        consensus_metrics
+            .write()
+            .record_block_hash_seen(leader, 3)
+            .unwrap();
 
         assert!(matches!(
             timer_state
-                .progress(one_micro, timer_state.next_fire().unwrap())
+                .progress(
+                    one_micro,
+                    timer_state.next_fire().unwrap(),
+                    &consensus_metrics
+                )
                 .unwrap(),
             VotorEvent::Timeout(3)
         ));
@@ -221,10 +280,11 @@ mod tests {
 
     #[test]
     fn timers_progress() {
+        let consensus_metrics = Arc::new(PlRwLock::new(ConsensusMetrics::new(1)));
         let one_micro = Duration::from_micros(1);
         let mut now = Instant::now();
         let (sender, receiver) = unbounded();
-        let mut timers = Timers::new(one_micro, one_micro, sender);
+        let mut timers = Timers::new(one_micro, one_micro, sender, consensus_metrics);
         assert!(timers.progress(now).is_none());
         assert!(receiver.try_recv().unwrap_err().is_empty());
 

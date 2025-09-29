@@ -25,11 +25,6 @@ impl VoteType {
             Vote::Finalize(_) => VoteType::Finalize,
         }
     }
-
-    #[allow(dead_code)]
-    pub fn is_notarize_type(&self) -> bool {
-        matches!(self, Self::Notarize | Self::NotarizeFallback)
-    }
 }
 
 pub const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
@@ -101,10 +96,7 @@ pub(crate) const DELTA_BLOCK: Duration = Duration::from_millis(400);
 /// Base timeout for when leader's first slice should arrive if they sent it immediately.
 pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 
-#[allow(dead_code)]
-/// TODO(wen): remove allow(dead_code) when timer is fully integrated
-/// Timeout for standstill detection mechanism.
-const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
+pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
 /// Returns the Duration for when the `SkipTimer` should be set for for the given slot in the leader window.
 #[inline]
