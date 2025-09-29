@@ -1,7 +1,10 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
+#[cfg(feature = "agave-unstable-api")]
 #[macro_use]
 extern crate log;
+
+#[cfg(feature = "agave-unstable-api")]
 extern crate serde_derive;
 
 #[cfg(feature = "agave-unstable-api")]
