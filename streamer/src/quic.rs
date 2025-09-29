@@ -913,7 +913,7 @@ mod test {
         let server_params = QuicServerParams {
             max_unstaked_connections: 0,
             qos_mode: QosMode::SimpleStreamsPerSecond {
-                max_streams_per_second: 50, // leave some room
+                max_streams_per_second: 50,
             },
             ..QuicServerParams::default_for_tests()
         };
@@ -921,7 +921,7 @@ mod test {
             setup_quic_server_with_params(server_params, Arc::new(RwLock::new(staked_nodes)));
 
         let runtime = rt_for_test();
-        let num_expected_packets = 40;
+        let num_expected_packets = 50;
 
         runtime.block_on(check_multiple_packets(
             receiver,
