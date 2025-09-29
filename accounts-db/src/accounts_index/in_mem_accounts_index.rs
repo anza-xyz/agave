@@ -1227,12 +1227,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     Some(k)
                 })
                 .collect();
-            Self::update_time_stat(&self.stats().flush_update_us, m);
-            Self::update_stat(&self.stats().flush_should_evict_us, flush_should_evict_us);
-            Self::update_stat(
-                &self.stats().flush_entries_updated_on_disk,
-                flush_entries_updated_on_disk,
-            );
+            self.update_flush_stats(m, flush_should_evict_us, flush_entries_updated_on_disk);
 
             let m = Measure::start("flush_evict");
             self.evict_from_cache(evictions_age, current_age, startup, ages_flushing_now);
@@ -1321,6 +1316,21 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         m.stop();
         let value = m.as_us();
         Self::update_stat(stat, value);
+    }
+
+    fn update_flush_stats(
+        &self,
+        flush_update_measure: Measure,
+        flush_should_evict_us: u64,
+        flush_entries_updated_on_disk: u64,
+    ) {
+        let stats = self.stats();
+        Self::update_time_stat(&stats.flush_update_us, flush_update_measure);
+        Self::update_stat(&stats.flush_should_evict_us, flush_should_evict_us);
+        Self::update_stat(
+            &stats.flush_entries_updated_on_disk,
+            flush_entries_updated_on_disk,
+        );
     }
 
     /// Returns the capacity for this bin's map
