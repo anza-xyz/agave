@@ -7,6 +7,7 @@ use {
     },
     itertools::Itertools,
     solana_clock::MAX_PROCESSING_AGE,
+    solana_cost_model::cost_model::CostModel,
     solana_fee::FeeFeatures,
     solana_fee_structure::FeeBudgetLimits,
     solana_measure::measure_us,
@@ -85,7 +86,33 @@ pub struct LeaderProcessedTransactionCounts {
     pub(crate) processed_with_successful_result_count: u64,
 }
 
+#[derive(Default)]
+pub struct ConsumerConfig {
+    /// Should initial checks be performed before locking accounts.
+    pub pre_lock_checks: bool,
+    /// How cost-tracking should be performed.
+    pub cost_tracking_kind: CostTrackingKind,
+}
+
+#[derive(Default)]
+pub enum CostTrackingKind {
+    /// Reserve CUs before beginning execution, and update with actual consumed
+    /// CUs after execution. This is the default behavior and ensures that
+    /// there is no wasted execution. However, can lead to false positives for
+    /// transactions being throttled due to cost model if estimated costs are
+    /// significantly higher than actual costs.
+    #[default]
+    ReserveRefund,
+    /// Only track actual consumed CUs after execution. This ensures that
+    /// transactions are not falsely throttled due to cost model. However,
+    /// can lead to wasted execution if the scheduler is not careful about
+    /// only scheduling transactions that are likely to fit within the cost
+    /// limits.
+    AddOnly,
+}
+
 pub struct Consumer {
+    config: ConsumerConfig,
     committer: Committer,
     transaction_recorder: TransactionRecorder,
     qos_service: QosService,
@@ -94,12 +121,14 @@ pub struct Consumer {
 
 impl Consumer {
     pub fn new(
+        config: ConsumerConfig,
         committer: Committer,
         transaction_recorder: TransactionRecorder,
         qos_service: QosService,
         log_messages_bytes_limit: Option<usize>,
     ) -> Self {
         Self {
+            config,
             committer,
             transaction_recorder,
             qos_service,
@@ -114,15 +143,19 @@ impl Consumer {
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
         let pre_results = vec![Ok(()); txs.len()];
-        let check_results =
-            bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
-        let check_results: Vec<_> = check_results
-            .into_iter()
-            .map(|result| match result {
-                Ok(_) => Ok(()),
-                Err(err) => Err(err),
-            })
-            .collect();
+        let check_results: Vec<_> = if self.config.pre_lock_checks {
+            let check_results =
+                bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
+            check_results
+                .into_iter()
+                .map(|result| match result {
+                    Ok(_) => Ok(()),
+                    Err(err) => Err(err),
+                })
+                .collect()
+        } else {
+            pre_results
+        };
         let mut output = self.process_and_record_transactions_with_pre_results(
             bank,
             txs,
@@ -181,11 +214,14 @@ impl Consumer {
         let (
             (transaction_qos_cost_results, cost_model_throttled_transactions_count),
             cost_model_us,
-        ) = measure_us!(self.qos_service.select_and_accumulate_transaction_costs(
-            bank,
-            txs,
-            pre_results
-        ));
+        ) = measure_us!(match self.config.cost_tracking_kind {
+            CostTrackingKind::ReserveRefund => self
+                .qos_service
+                .select_and_accumulate_transaction_costs(bank, txs, pre_results),
+            CostTrackingKind::AddOnly => {
+                todo!()
+            }
+        });
 
         // Only lock accounts for those transactions are selected for the block;
         // Once accounts are locked, other threads cannot encode transactions that will modify the
@@ -212,15 +248,22 @@ impl Consumer {
             ..
         } = execute_and_commit_transactions_output;
 
-        // Costs of all transactions are added to the cost_tracker before processing.
-        // To ensure accurate tracking of compute units, transactions that ultimately
-        // were not included in the block should have their cost removed, the rest
-        // should update with their actually consumed units.
-        QosService::remove_or_update_costs(
-            transaction_qos_cost_results.iter(),
-            commit_transactions_result.as_ref().ok(),
-            bank,
-        );
+        match self.config.cost_tracking_kind {
+            CostTrackingKind::ReserveRefund => {
+                // Costs of all transactions are added to the cost_tracker before processing.
+                // To ensure accurate tracking of compute units, transactions that ultimately
+                // were not included in the block should have their cost removed, the rest
+                // should update with their actually consumed units.
+                QosService::remove_or_update_costs(
+                    transaction_qos_cost_results.iter(),
+                    commit_transactions_result.as_ref().ok(),
+                    bank,
+                );
+            }
+            CostTrackingKind::AddOnly => {
+                // Costs were added immediately before recording. Nothing to do here.
+            }
+        }
 
         // reports qos service stats for this batch
         self.qos_service.report_metrics(bank.slot());
@@ -366,17 +409,54 @@ impl Consumer {
         };
 
         let (processed_transactions, processing_results_to_transactions_us) =
-            measure_us!(processing_results
-                .iter()
-                .zip(batch.sanitized_transactions())
-                .filter_map(|(processing_result, tx)| {
-                    if processing_result.was_processed() {
-                        Some(tx.to_versioned_transaction())
-                    } else {
-                        None
-                    }
-                })
-                .collect_vec());
+            measure_us!(match self.config.cost_tracking_kind {
+                CostTrackingKind::ReserveRefund => {
+                    // Since CUs were reserved before execution, and will be refunded,
+                    // we just collect processed transactions only.
+                    processing_results
+                        .iter()
+                        .zip(batch.sanitized_transactions())
+                        .filter_map(|(processing_result, tx)| {
+                            if processing_result.was_processed() {
+                                Some(tx.to_versioned_transaction())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect_vec()
+                }
+                CostTrackingKind::AddOnly => {
+                    let transaction_costs = batch
+                        .sanitized_transactions()
+                        .iter()
+                        .zip(processing_results.iter())
+                        .map(|(tx, result)| {
+                            result
+                                .as_ref()
+                                .map(|pr| {
+                                    CostModel::calculate_cost_for_executed_transaction(
+                                        tx,
+                                        pr.executed_units(),
+                                        pr.loaded_accounts_data_size(),
+                                        &bank.feature_set,
+                                    )
+                                })
+                                .map_err(|e| e.clone())
+                        });
+                    let (selected_transactions, _) = self
+                        .qos_service
+                        .select_transactions_per_cost(transaction_costs, bank);
+
+                    batch
+                        .sanitized_transactions()
+                        .iter()
+                        .zip(selected_transactions)
+                        .filter_map(|(tx, selected)| {
+                            selected.ok().map(|_| tx.to_versioned_transaction())
+                        })
+                        .collect_vec()
+                }
+            });
 
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
@@ -612,7 +692,13 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(
+            ConsumerConfig::default(),
+            committer,
+            recorder,
+            QosService::new(1),
+            None,
+        );
         let process_transactions_summary =
             consumer.process_and_record_transactions(&bank, &transactions);
 
@@ -722,7 +808,13 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(
+            ConsumerConfig::default(),
+            committer,
+            recorder,
+            QosService::new(1),
+            None,
+        );
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -924,7 +1016,13 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(
+            ConsumerConfig::default(),
+            committer,
+            recorder,
+            QosService::new(1),
+            None,
+        );
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -1026,7 +1124,13 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(
+            ConsumerConfig::default(),
+            committer,
+            recorder,
+            QosService::new(1),
+            None,
+        );
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -1114,7 +1218,13 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(
+            ConsumerConfig::default(),
+            committer,
+            recorder,
+            QosService::new(1),
+            None,
+        );
 
         let get_block_cost = || bank.read_cost_tracker().unwrap().block_cost();
         let get_tx_count = || bank.read_cost_tracker().unwrap().transaction_count();
@@ -1311,7 +1421,13 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(
+            ConsumerConfig::default(),
+            committer,
+            recorder,
+            QosService::new(1),
+            None,
+        );
 
         // with simd83 and no duplicate, we take a cross-batch lock on an account to create a conflict
         // with a duplicate transaction and simd83 it comes from message hash equality in the batch
@@ -1564,7 +1680,13 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder.clone(), QosService::new(1), None);
+        let consumer = Consumer::new(
+            ConsumerConfig::default(),
+            committer,
+            recorder.clone(),
+            QosService::new(1),
+            None,
+        );
 
         let process_transactions_summary =
             consumer.process_and_record_transactions(&bank, &transactions);
@@ -1709,7 +1831,13 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(
+            ConsumerConfig::default(),
+            committer,
+            recorder,
+            QosService::new(1),
+            None,
+        );
 
         let _ = consumer.process_and_record_transactions(&bank, &transactions);
 
@@ -1855,7 +1983,13 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(
+            ConsumerConfig::default(),
+            committer,
+            recorder,
+            QosService::new(1),
+            None,
+        );
 
         let consumer_output =
             consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()]);
