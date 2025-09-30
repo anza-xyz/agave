@@ -1,10 +1,12 @@
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 use {
     crate::{
         error::Result,
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
     },
-    std::mem::MaybeUninit,
+    core::mem::MaybeUninit,
 };
 
 /// Helper over [`SchemaRead`] that automatically constructs a reader
@@ -76,26 +78,28 @@ impl<T> Deserialize for T where T: SchemaRead {}
 /// ```
 pub trait Serialize: SchemaWrite {
     /// Serialize a serializable type into a `Vec` of bytes.
+    #[cfg(feature = "alloc")]
     fn serialize(src: &Self::Src) -> Result<Vec<u8>> {
-        let size = Self::size_of(src)?;
-        let mut buffer = Vec::with_capacity(size);
-        let mut writer = Writer::new(&mut buffer);
-        Self::write(&mut writer, src)?;
+        let mut buffer = Vec::with_capacity(Self::size_of(src)?);
+        let len = Self::serialize_into(src, buffer.spare_capacity_mut())?;
+        unsafe {
+            buffer.set_len(len);
+        }
         Ok(buffer)
     }
 
     /// Serialize a serializable type into the given byte buffer.
     ///
-    /// Note this will not attempt to resize the buffer and will error
-    /// if the buffer is too small. Use [`Serialize::serialized_size`]
-    /// to get needed capacity.
-    fn serialize_into(src: &Self::Src, target: &mut Vec<u8>) -> Result<()> {
+    /// Returns the number of bytes written to the buffer.
+    #[inline]
+    fn serialize_into(src: &Self::Src, target: &mut [MaybeUninit<u8>]) -> Result<usize> {
         let mut writer = Writer::new(target);
         Self::write(&mut writer, src)?;
-        Ok(())
+        Ok(writer.finish())
     }
 
     /// Get the size in bytes of the type when serialized.
+    #[inline]
     fn serialized_size(src: &Self::Src) -> Result<u64> {
         Self::size_of(src).map(|size| size as u64)
     }
@@ -148,6 +152,7 @@ where
 /// let bytes = wincode::serialize(&vec).unwrap();
 /// ```
 #[inline(always)]
+#[cfg(feature = "alloc")]
 pub fn serialize<T>(value: &T) -> Result<Vec<u8>>
 where
     T: SchemaWrite<Src = T> + ?Sized,

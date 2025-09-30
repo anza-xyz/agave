@@ -20,9 +20,11 @@ pub enum Error {
     InvalidBoolEncoding(u8),
     #[error("Invalid tag encoding: {0}")]
     InvalidTagEncoding(usize),
+    #[error("Writer has trailing bytes: {0}")]
+    WriterTrailingBytes(usize),
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = core::result::Result<T, Error>;
 
 #[cold]
 pub fn read_size_limit(len: usize) -> Error {
@@ -57,4 +59,9 @@ pub fn invalid_bool_encoding(byte: u8) -> Error {
 #[cold]
 pub fn invalid_tag_encoding(tag: usize) -> Error {
     Error::InvalidTagEncoding(tag)
+}
+
+#[cold]
+pub fn writer_trailing_bytes(bytes: usize) -> Error {
+    Error::WriterTrailingBytes(bytes)
 }

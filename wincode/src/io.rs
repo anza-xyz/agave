@@ -1,7 +1,9 @@
 //! [`Reader`] and [`Writer`] implementations.
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 use {
-    crate::error::{read_size_limit, write_size_limit, Result},
-    std::{mem::MaybeUninit, ptr, slice},
+    crate::error::{read_size_limit, write_size_limit, writer_trailing_bytes, Result},
+    core::{mem::MaybeUninit, ptr, slice},
 };
 
 /// In-memory reader that allows direct reads from the source buffer
@@ -92,41 +94,66 @@ impl<'a> Reader<'a> {
 /// In-memory writer that allows direct writes from user given buffers
 /// into the internal destination buffer.
 pub struct Writer<'a> {
-    buffer: &'a mut Vec<u8>,
+    buffer: &'a mut [MaybeUninit<u8>],
+    pos: usize,
 }
 
 impl<'a> Writer<'a> {
-    pub fn new(buffer: &'a mut Vec<u8>) -> Self {
-        Self { buffer }
+    pub fn new(buffer: &'a mut [MaybeUninit<u8>]) -> Self {
+        Self { buffer, pos: 0 }
+    }
+
+    #[cfg(feature = "alloc")]
+    pub fn from_vec(buffer: &'a mut Vec<u8>) -> Self {
+        Self {
+            pos: buffer.len(),
+            buffer: buffer.spare_capacity_mut(),
+        }
+    }
+
+    #[inline]
+    fn ensure_capacity(&mut self, len: usize) -> Result<()> {
+        if self.buffer.len().saturating_sub(self.pos) < len {
+            return Err(write_size_limit(len));
+        }
+        Ok(())
+    }
+
+    /// Get the number of bytes written to the buffer.
+    #[inline]
+    pub fn finish(self) -> usize {
+        self.pos
+    }
+
+    /// Get the number of bytes written to the buffer, and error if there are trailing bytes.
+    #[allow(clippy::arithmetic_side_effects)]
+    pub fn finish_disallow_trailing_bytes(self) -> Result<usize> {
+        if self.pos != self.buffer.len() {
+            return Err(writer_trailing_bytes(
+                self.buffer.len().saturating_sub(self.pos),
+            ));
+        }
+        Ok(self.pos)
     }
 
     /// Write exactly `src.len()` bytes from the given `src` into the internal buffer.
     #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
     pub fn write_exact(&mut self, src: &[u8]) -> Result<()> {
-        let self_len = self.ensure_capacity_for(src.len())?;
+        self.ensure_capacity(src.len())?;
+
         unsafe {
             // SAFETY:
             // - `src` mustn't overlap with the internal buffer (shouldn't be the case unless the user is doing something they shouldn't).
             // - We just checked that we have enough capacity in the internal buffer.
             ptr::copy_nonoverlapping(
                 src.as_ptr(),
-                self.buffer.as_mut_ptr().add(self_len),
+                self.buffer.as_mut_ptr().add(self.pos).cast(),
                 src.len(),
             );
-            // SAFETY: capacity was checked above and we just wrote `len` bytes.
-            #[allow(clippy::arithmetic_side_effects)]
-            self.buffer.set_len(self_len + src.len());
         }
+        self.pos += src.len();
         Ok(())
-    }
-
-    #[inline]
-    fn ensure_capacity_for(&self, len: usize) -> Result<usize> {
-        let buf_len = self.buffer.len();
-        if len > self.buffer.capacity().saturating_sub(buf_len) {
-            return Err(write_size_limit(len));
-        }
-        Ok(buf_len)
     }
 
     /// Write `len` bytes from the given `write` function into the internal buffer.
@@ -140,18 +167,15 @@ impl<'a> Writer<'a> {
     ///
     /// - `write` must write EXACTLY `len` bytes into the given buffer.
     /// - `write` must not write from a buffer that overlap with the internal buffer.
+    #[allow(clippy::arithmetic_side_effects)]
     pub unsafe fn write_with<F>(&mut self, len: usize, write: F) -> Result<()>
     where
         F: FnOnce(&mut [MaybeUninit<u8>]) -> Result<()>,
     {
-        let self_len = self.ensure_capacity_for(len)?;
-        let buf = &mut self.buffer.spare_capacity_mut()[..len];
-        write(buf)?;
-        unsafe {
-            // SAFETY: Caller ensures `write` writes exactly `len` bytes.
-            #[allow(clippy::arithmetic_side_effects)]
-            self.buffer.set_len(self_len + len);
-        }
+        self.ensure_capacity(len)?;
+        let dst = &mut self.buffer[self.pos..self.pos + len];
+        write(dst)?;
+        self.pos += len;
         Ok(())
     }
 

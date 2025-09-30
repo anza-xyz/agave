@@ -10,6 +10,11 @@
 //! Additionally, we have to assume [`BincodeLen`] for all sequences, because
 //! there is no way to specify a different length encoding without one of the
 //! [`containers`].
+#[cfg(feature = "alloc")]
+use {
+    crate::containers::{self, Elem},
+    alloc::{boxed::Box, collections::VecDeque, vec::Vec},
+};
 use {
     crate::{
         error::{
@@ -17,15 +22,9 @@ use {
         },
         io::{Reader, Writer},
         len::BincodeLen,
-        schema::{
-            containers::{self, Elem},
-            size_of_elem_iter, write_elem_iter, SchemaRead, SchemaWrite,
-        },
+        schema::{size_of_elem_iter, write_elem_iter, SchemaRead, SchemaWrite},
     },
-    std::{
-        collections::VecDeque,
-        mem::{transmute, MaybeUninit},
-    },
+    core::mem::{transmute, MaybeUninit},
 };
 
 macro_rules! impl_int {
@@ -197,6 +196,7 @@ impl SchemaRead for bool {
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T> SchemaWrite for Vec<T>
 where
     T: SchemaWrite,
@@ -215,6 +215,7 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T> SchemaRead for Vec<T>
 where
     T: SchemaRead,
@@ -227,6 +228,7 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T> SchemaWrite for VecDeque<T>
 where
     T: SchemaWrite,
@@ -245,6 +247,7 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T> SchemaRead for VecDeque<T>
 where
     T: SchemaRead,
@@ -392,6 +395,7 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T> SchemaWrite for Box<T>
 where
     T: SchemaWrite,
@@ -409,6 +413,7 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T> SchemaWrite for Box<[T]>
 where
     T: SchemaWrite,
@@ -427,6 +432,7 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T> SchemaRead for Box<T>
 where
     T: SchemaRead,
@@ -445,6 +451,7 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T> SchemaRead for Box<[T]>
 where
     T: SchemaRead,
@@ -559,30 +566,30 @@ macro_rules! compound {
             #[allow(unused)]
             $vis trait [<$src Ext>] {
                 $(
-                    /// Get a mutable [`MaybeUninit`](std::mem::MaybeUninit) to the corresponding slot in `dst` for the field.
-                    fn [<get_uninit_ $field _mut>](dst: &mut std::mem::MaybeUninit<$target>) -> &mut std::mem::MaybeUninit<<$schema as $crate::SchemaRead>::Dst>;
+                    /// Get a mutable [`MaybeUninit`](core::mem::MaybeUninit) to the corresponding slot in `dst` for the field.
+                    fn [<get_uninit_ $field _mut>](dst: &mut core::mem::MaybeUninit<$target>) -> &mut core::mem::MaybeUninit<<$schema as $crate::SchemaRead>::Dst>;
                     /// Read the field into the corresponding slot in `dst` from `reader`.
                     ///
                     /// # Safety
                     ///
                     /// - Corresponding field schema must properly initialize the field.
-                    fn [<read_ $field>](reader: &mut $crate::io::Reader, dst: &mut std::mem::MaybeUninit<$target>) -> $crate::error::Result<()>;
+                    fn [<read_ $field>](reader: &mut $crate::io::Reader, dst: &mut core::mem::MaybeUninit<$target>) -> $crate::error::Result<()>;
                     /// Write an initialized instance of the field into the corresponding slot in `dst`.
-                    fn [<write_uninit_ $field>](val: <$schema as $crate::SchemaRead>::Dst, dst: &mut std::mem::MaybeUninit<$target>);
+                    fn [<write_uninit_ $field>](val: <$schema as $crate::SchemaRead>::Dst, dst: &mut core::mem::MaybeUninit<$target>);
                 )+
             }
 
             impl [<$src Ext>] for $src {
                 #[inline]
-                $(fn [<get_uninit_ $field _mut>](dst: &mut std::mem::MaybeUninit<$target>) -> &mut std::mem::MaybeUninit<<$schema as $crate::SchemaRead>::Dst> {
+                $(fn [<get_uninit_ $field _mut>](dst: &mut core::mem::MaybeUninit<$target>) -> &mut core::mem::MaybeUninit<<$schema as $crate::SchemaRead>::Dst> {
                     unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).$field).cast() }
                 })+
                 #[inline]
-                $(fn [<read_ $field>](reader: &mut $crate::io::Reader, dst: &mut std::mem::MaybeUninit<$target>) -> $crate::error::Result<()> {
+                $(fn [<read_ $field>](reader: &mut $crate::io::Reader, dst: &mut core::mem::MaybeUninit<$target>) -> $crate::error::Result<()> {
                     <$schema as $crate::SchemaRead>::read(reader, Self::[<get_uninit_ $field _mut>](dst) )
                 })+
                 #[inline]
-                $(fn [<write_uninit_ $field>](val: <$schema as $crate::SchemaRead>::Dst, dst: &mut std::mem::MaybeUninit<$target>) {
+                $(fn [<write_uninit_ $field>](val: <$schema as $crate::SchemaRead>::Dst, dst: &mut core::mem::MaybeUninit<$target>) {
                     <$schema as $crate::SchemaRead>::write_into_uninit(val, Self::[<get_uninit_ $field _mut>](dst) );
                 })+
             }
@@ -620,7 +627,7 @@ macro_rules! compound {
             type Dst = $target;
 
             #[inline]
-            fn read(reader: &mut $crate::io::Reader, dst: &mut std::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
+            fn read(reader: &mut $crate::io::Reader, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
                 $(<$schema as $crate::SchemaRead>::read(reader, unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).$field).cast() })?;)+
                 Ok(())
             }
@@ -657,7 +664,7 @@ macro_rules! impl_tuple {
             type Dst = ($($name::Dst),+);
 
             #[inline]
-            fn read(reader: &mut $crate::io::Reader, value: &mut std::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
+            fn read(reader: &mut $crate::io::Reader, value: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
                 $(<$name as $crate::SchemaRead>::read(reader, unsafe { &mut *(&raw mut (*value.as_mut_ptr()).$field).cast() })?;)+
                 Ok(())
             }

@@ -97,18 +97,27 @@ use {
     crate::{
         error::Result,
         io::{Reader, Writer},
-        len::{BincodeLen, SeqLen},
-        schema::{size_of_elem_iter, write_elem_iter, SchemaRead, SchemaWrite},
+        schema::{SchemaRead, SchemaWrite},
     },
-    std::{marker::PhantomData, mem::MaybeUninit, slice},
+    core::{marker::PhantomData, mem::MaybeUninit},
+};
+#[cfg(feature = "alloc")]
+use {
+    crate::{
+        len::{BincodeLen, SeqLen},
+        schema::{size_of_elem_iter, write_elem_iter},
+    },
+    core::slice,
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding and optimized
 /// read/write implementation for [`Pod`].
+#[cfg(feature = "alloc")]
 pub struct Vec<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
 
 /// A [`VecDeque`](std::collections::VecDeque) with a customizable length encoding and optimized
 /// read/write implementation for [`Pod`].
+#[cfg(feature = "alloc")]
 pub struct VecDeque<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
 
 /// A [`Box<[T]>`](std::boxed::Box) with a customizable length encoding and optimized
@@ -143,6 +152,7 @@ pub struct VecDeque<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
 /// let bincode_bytes = bincode::serialize(&my_struct).unwrap();
 /// assert_eq!(wincode_bytes, bincode_bytes);
 /// ```
+#[cfg(feature = "alloc")]
 pub struct BoxedSlice<T, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
 
 /// Indicates that the type is an element of a sequence, composable with [`containers`](self).
@@ -213,13 +223,14 @@ impl<T> SchemaRead for Pod<T> {
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T, Len> SchemaWrite for Vec<Elem<T>, Len>
 where
     Len: SeqLen,
     T: SchemaWrite,
     T::Src: Sized,
 {
-    type Src = std::vec::Vec<T::Src>;
+    type Src = alloc::vec::Vec<T::Src>;
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> Result<usize> {
@@ -232,12 +243,13 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T, Len> SchemaRead for Vec<Elem<T>, Len>
 where
     Len: SeqLen,
     T: SchemaRead,
 {
-    type Dst = std::vec::Vec<T::Dst>;
+    type Dst = alloc::vec::Vec<T::Dst>;
 
     /// Read a sequence of `T::Dst`s from `reader` into `dst`.
     ///
@@ -251,7 +263,7 @@ where
     /// - `T::read` must properly initialize elements.
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let len = Len::size_hint_cautious::<T::Dst>(reader)?;
-        let mut vec = std::vec::Vec::with_capacity(len);
+        let mut vec = alloc::vec::Vec::with_capacity(len);
         // Get a raw pointer to the Vec memory to facilitate in-place writing.
         let vec_ptr = vec.spare_capacity_mut();
         #[allow(clippy::needless_range_loop)]
@@ -270,11 +282,12 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T, Len> SchemaWrite for Vec<Pod<T>, Len>
 where
     Len: SeqLen,
 {
-    type Src = std::vec::Vec<T>;
+    type Src = alloc::vec::Vec<T>;
 
     #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
@@ -290,11 +303,12 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T, Len> SchemaRead for Vec<Pod<T>, Len>
 where
     Len: SeqLen,
 {
-    type Dst = std::vec::Vec<T>;
+    type Dst = alloc::vec::Vec<T>;
 
     /// Read a sequence of bytes or a sequence of fixed length byte arrays from the cursor into `dst`.
     ///
@@ -307,7 +321,7 @@ where
     /// - `T` must be plain ol' data, valid for writes of `size_of::<T>()` bytes.
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let len = Len::size_hint_cautious::<T>(reader)?;
-        let mut vec = std::vec::Vec::with_capacity(len);
+        let mut vec = alloc::vec::Vec::with_capacity(len);
         let spare_capacity = vec.spare_capacity_mut();
         let slice = unsafe {
             slice::from_raw_parts_mut(
@@ -323,11 +337,12 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T, Len> SchemaWrite for BoxedSlice<Pod<T>, Len>
 where
     Len: SeqLen,
 {
-    type Src = Box<[T]>;
+    type Src = alloc::boxed::Box<[T]>;
 
     #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
@@ -343,11 +358,12 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T, Len> SchemaRead for BoxedSlice<Pod<T>, Len>
 where
     Len: SeqLen,
 {
-    type Dst = Box<[T]>;
+    type Dst = alloc::boxed::Box<[T]>;
 
     #[inline(always)]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
@@ -361,13 +377,14 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T, Len> SchemaWrite for BoxedSlice<Elem<T>, Len>
 where
     Len: SeqLen,
     T: SchemaWrite,
     T::Src: Sized,
 {
-    type Src = Box<[T::Src]>;
+    type Src = alloc::boxed::Box<[T::Src]>;
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> Result<usize> {
@@ -380,12 +397,13 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T, Len> SchemaRead for BoxedSlice<Elem<T>, Len>
 where
     Len: SeqLen,
     T: SchemaRead,
 {
-    type Dst = Box<[T::Dst]>;
+    type Dst = alloc::boxed::Box<[T::Dst]>;
 
     #[inline(always)]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
@@ -397,11 +415,12 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T, Len> SchemaWrite for VecDeque<Pod<T>, Len>
 where
     Len: SeqLen,
 {
-    type Src = std::collections::VecDeque<T>;
+    type Src = alloc::collections::VecDeque<T>;
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> Result<usize> {
@@ -424,11 +443,12 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T, Len> SchemaRead for VecDeque<Pod<T>, Len>
 where
     Len: SeqLen,
 {
-    type Dst = std::collections::VecDeque<T>;
+    type Dst = alloc::collections::VecDeque<T>;
 
     #[inline(always)]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
@@ -443,13 +463,14 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T, Len> SchemaWrite for VecDeque<Elem<T>, Len>
 where
     Len: SeqLen,
     T: SchemaWrite,
     T::Src: Sized,
 {
-    type Src = std::collections::VecDeque<T::Src>;
+    type Src = alloc::collections::VecDeque<T::Src>;
 
     #[inline(always)]
     fn size_of(value: &Self::Src) -> Result<usize> {
@@ -462,12 +483,13 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T, Len> SchemaRead for VecDeque<Elem<T>, Len>
 where
     Len: SeqLen,
     T: SchemaRead,
 {
-    type Dst = std::collections::VecDeque<T::Dst>;
+    type Dst = alloc::collections::VecDeque<T::Dst>;
 
     #[inline(always)]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {

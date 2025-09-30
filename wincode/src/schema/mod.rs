@@ -46,7 +46,7 @@ use {
         io::*,
         len::SeqLen,
     },
-    std::mem::MaybeUninit,
+    core::mem::MaybeUninit,
 };
 
 pub mod containers;
@@ -116,7 +116,7 @@ where
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc"))]
 mod tests {
     use {
         crate::{
@@ -126,8 +126,9 @@ mod tests {
             len::BincodeLen,
             serialize, Deserialize, Serialize,
         },
+        alloc::{boxed::Box, collections::VecDeque, vec::Vec},
+        core::result::Result,
         proptest::prelude::*,
-        std::{collections::VecDeque, result::Result},
     };
 
     #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]

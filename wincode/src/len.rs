@@ -69,7 +69,7 @@ impl<const MAX_SIZE: usize> SeqLen for BincodeLen<MAX_SIZE> {
 
 #[cfg(feature = "solana-short-vec")]
 pub mod short_vec {
-    use {super::*, solana_short_vec::decode_shortu16_len};
+    use {super::*, core::ptr, solana_short_vec::decode_shortu16_len};
     pub struct ShortU16Len;
 
     /// Branchless computation of the number of bytes needed to encode a short u16.
@@ -107,15 +107,15 @@ pub mod short_vec {
         // byte may only have the 2 least-significant bits set, otherwise the encoded
         // value will overflow the u16.
         match needed {
-            1 => std::ptr::write(dst, len as u8),
+            1 => ptr::write(dst, len as u8),
             2 => {
-                std::ptr::write(dst, ((len & 0x7f) as u8) | 0x80);
-                std::ptr::write(dst.add(1), (len >> 7) as u8);
+                ptr::write(dst, ((len & 0x7f) as u8) | 0x80);
+                ptr::write(dst.add(1), (len >> 7) as u8);
             }
             3 => {
-                std::ptr::write(dst, ((len & 0x7f) as u8) | 0x80);
-                std::ptr::write(dst.add(1), (((len >> 7) & 0x7f) as u8) | 0x80);
-                std::ptr::write(dst.add(2), (len >> 14) as u8);
+                ptr::write(dst, ((len & 0x7f) as u8) | 0x80);
+                ptr::write(dst.add(1), (((len >> 7) & 0x7f) as u8) | 0x80);
+                ptr::write(dst.add(2), (len >> 14) as u8);
             }
             _ => unreachable!(),
         }
@@ -157,7 +157,7 @@ pub mod short_vec {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "alloc"))]
     mod tests {
         use {
             super::*,
@@ -165,6 +165,7 @@ pub mod short_vec {
                 compound,
                 containers::{self, Pod},
             },
+            alloc::vec::Vec,
             proptest::prelude::*,
             solana_short_vec::ShortU16,
         };
