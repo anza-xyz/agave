@@ -1,4 +1,15 @@
 //! Blanket implementations for std types.
+//!
+//! Because the blanket implementations must be entirely general (e.g., we
+//! need to support `Vec<T>` for any `T`), we can't make any assumptions about
+//! the "Plain Old Data" nature of `T`, so all sequences will treat constituent
+//! elements of `T` as opaque. Of course users can use `std::vec::Vec<Pod<T>>`,
+//! which will certainly speed things up for POD elements of sequences, but
+//! the optimization will only be _per_ element.
+//!
+//! Additionally, we have to assume [`BincodeLen`] for all sequences, because
+//! there is no way to specify a different length encoding without one of the
+//! [`containers`].
 use {
     crate::{
         error::{
@@ -29,11 +40,16 @@ macro_rules! impl_int {
 
             #[inline(always)]
             fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
-                // bincode defaults to little endian encoding.
-                // noop on LE machines.
-                unsafe {
+                #[cfg(target_endian = "little")]
+                {
                     // SAFETY: int is plain ol' data.
-                    writer.write_t(&src.to_le_bytes())?;
+                    unsafe { writer.write_t(src)? };
+                }
+                // bincode defaults to little endian encoding.
+                #[cfg(target_endian = "big")]
+                {
+                    // SAFETY: int is plain ol' data.
+                    unsafe { writer.write_t(&src.to_le_bytes())? };
                 }
                 Ok(())
             }
@@ -44,14 +60,16 @@ macro_rules! impl_int {
 
             #[inline(always)]
             fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-                // SAFETY: integer is plain ol' data.
-                unsafe { reader.read_t(dst) }?;
+                #[cfg(target_endian = "little")]
+                {
+                    // SAFETY: integer is plain ol' data.
+                    unsafe { reader.read_t(dst) }?;
+                }
                 // bincode defaults to little endian encoding.
                 #[cfg(target_endian = "big")]
                 {
-                    // SAFETY: `dst` is initialized by `read_t`.
-                    let val = unsafe { dst.assume_init_read() };
-                    dst.write(val.swap_bytes());
+                    let val = <$type>::from_le_bytes(unsafe { reader.get_t() }?);
+                    dst.write(val);
                 }
 
                 Ok(())
@@ -63,12 +81,12 @@ macro_rules! impl_int {
         impl SchemaWrite for $type {
             type Src = $type;
 
-            #[inline(always)]
+            #[inline]
             fn size_of(_src: &Self::Src) -> Result<usize> {
                 Ok(size_of::<$cast>())
             }
 
-            #[inline(always)]
+            #[inline]
             fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
                 let src = *src as $cast;
                 // bincode defaults to little endian encoding.
@@ -84,7 +102,7 @@ macro_rules! impl_int {
         impl SchemaRead for $type {
             type Dst = $type;
 
-            #[inline(always)]
+            #[inline]
             fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
                 // SAFETY: integer is plain ol' data.
                 let casted = unsafe { reader.get_t::<$cast>() }?;
@@ -118,7 +136,7 @@ macro_rules! impl_pod {
         impl SchemaWrite for $type {
             type Src = $type;
 
-            #[inline(always)]
+            #[inline]
             fn size_of(_src: &Self::Src) -> Result<usize> {
                 Ok(size_of::<$type>())
             }
@@ -133,7 +151,7 @@ macro_rules! impl_pod {
         impl SchemaRead for $type {
             type Dst = $type;
 
-            #[inline(always)]
+            #[inline]
             fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
                 // SAFETY: `$type` is plain ol' data.
                 unsafe { reader.read_t(dst) }
@@ -148,10 +166,12 @@ impl_pod!(i8);
 impl SchemaWrite for bool {
     type Src = bool;
 
+    #[inline]
     fn size_of(_src: &Self::Src) -> Result<usize> {
         Ok(size_of::<u8>())
     }
 
+    #[inline]
     fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
         unsafe { writer.write_t(&(*src as u8)) }
     }
@@ -160,6 +180,7 @@ impl SchemaWrite for bool {
 impl SchemaRead for bool {
     type Dst = bool;
 
+    #[inline]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         // SAFETY: u8 is plain ol' data.
         let byte = unsafe { reader.get_t::<u8>() }?;
@@ -176,15 +197,6 @@ impl SchemaRead for bool {
     }
 }
 
-/// Blanket `Vec<T>` `SchemaWrite` implementation.
-///
-/// If the user wants to serialize a plain `Vec<T>`, we can assume it should
-/// use the default bincode length encoding, as otherwise specifying a length
-/// encoding would require a newtype struct with a custom #[serde(with = "x")],
-/// which is obviously not the case here.
-///
-/// We also cannot make any assumptions about the "Plain Old Data" nature of `T`,
-/// so we play it safe and use `Elem<T>` for the sequence mode.
 impl<T> SchemaWrite for Vec<T>
 where
     T: SchemaWrite,
@@ -192,12 +204,12 @@ where
 {
     type Src = Vec<T::Src>;
 
-    #[inline(always)]
+    #[inline]
     fn size_of(value: &Self::Src) -> Result<usize> {
         <containers::Vec<Elem<T>, BincodeLen>>::size_of(value)
     }
 
-    #[inline(always)]
+    #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
         <containers::Vec<Elem<T>, BincodeLen>>::write(writer, value)
     }
@@ -209,7 +221,7 @@ where
 {
     type Dst = Vec<T::Dst>;
 
-    #[inline(always)]
+    #[inline]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         <containers::Vec<Elem<T>, BincodeLen>>::read(reader, dst)
     }
@@ -222,12 +234,12 @@ where
 {
     type Src = VecDeque<T::Src>;
 
-    #[inline(always)]
+    #[inline]
     fn size_of(value: &Self::Src) -> Result<usize> {
         <containers::VecDeque<Elem<T>, BincodeLen>>::size_of(value)
     }
 
-    #[inline(always)]
+    #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
         <containers::VecDeque<Elem<T>, BincodeLen>>::write(writer, value)
     }
@@ -239,16 +251,12 @@ where
 {
     type Dst = VecDeque<T::Dst>;
 
-    #[inline(always)]
+    #[inline]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         <containers::VecDeque<Elem<T>, BincodeLen>>::read(reader, dst)
     }
 }
 
-/// Blanket `[T]` `SchemaWrite` implementation.
-///
-/// Similar to `Vec<T>`, we assume the default bincode length encoding and
-/// can't make any assumptions about the "Plain Old Data" nature of `T`.
 impl<T> SchemaWrite for [T]
 where
     T: SchemaWrite,
@@ -256,12 +264,12 @@ where
 {
     type Src = [T::Src];
 
-    #[inline(always)]
+    #[inline]
     fn size_of(value: &Self::Src) -> Result<usize> {
         size_of_elem_iter::<T, BincodeLen>(value.iter())
     }
 
-    #[inline(always)]
+    #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
         write_elem_iter::<T, BincodeLen>(writer, value.iter())
     }
@@ -273,7 +281,7 @@ where
 {
     type Dst = [T::Dst; N];
 
-    #[inline(always)]
+    #[inline]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         // SAFETY: MaybeUninit<[T::Dst; N]> trivially converts to [MaybeUninit<T::Dst>; N].
         let ptr =
@@ -292,7 +300,7 @@ where
 {
     type Src = [T::Src; N];
 
-    #[inline(always)]
+    #[inline]
     fn size_of(value: &Self::Src) -> Result<usize> {
         #[allow(clippy::arithmetic_side_effects)]
         value
@@ -301,7 +309,7 @@ where
             .try_fold(0, |acc, x| Ok::<_, Error>(acc + x?))
     }
 
-    #[inline(always)]
+    #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
         for item in value {
             T::write(writer, item)?;
@@ -316,7 +324,7 @@ where
 {
     type Dst = Option<T::Dst>;
 
-    #[inline(always)]
+    #[inline]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let variant = u8::get(reader)?;
         match variant {
@@ -346,7 +354,7 @@ where
 {
     type Src = Option<T::Src>;
 
-    #[inline(always)]
+    #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
         #[allow(clippy::arithmetic_side_effects)]
         match src {
@@ -355,7 +363,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
         match value {
             Option::Some(value) => {
@@ -373,12 +381,12 @@ where
 {
     type Src = &'a T::Src;
 
-    #[inline(always)]
+    #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
         T::size_of(src)
     }
 
-    #[inline(always)]
+    #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
         T::write(writer, value)
     }
@@ -390,12 +398,12 @@ where
 {
     type Src = Box<T::Src>;
 
-    #[inline(always)]
+    #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
         T::size_of(src)
     }
 
-    #[inline(always)]
+    #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
         T::write(writer, value)
     }
@@ -408,12 +416,12 @@ where
 {
     type Src = Box<[T::Src]>;
 
-    #[inline(always)]
+    #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
         <containers::BoxedSlice<Elem<T>, BincodeLen>>::size_of(src)
     }
 
-    #[inline(always)]
+    #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
         <containers::BoxedSlice<Elem<T>, BincodeLen>>::write(writer, value)
     }
@@ -425,7 +433,7 @@ where
 {
     type Dst = Box<T::Dst>;
 
-    #[inline(always)]
+    #[inline]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let mut mem = Box::new_uninit();
         T::read(reader, &mut mem)?;
@@ -443,7 +451,7 @@ where
 {
     type Dst = Box<[T::Dst]>;
 
-    #[inline(always)]
+    #[inline]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         <containers::BoxedSlice<Elem<T>, BincodeLen>>::read(reader, dst)
     }
@@ -565,15 +573,15 @@ macro_rules! compound {
             }
 
             impl [<$src Ext>] for $src {
-                #[inline(always)]
+                #[inline]
                 $(fn [<get_uninit_ $field _mut>](dst: &mut std::mem::MaybeUninit<$target>) -> &mut std::mem::MaybeUninit<<$schema as $crate::SchemaRead>::Dst> {
                     unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).$field).cast() }
                 })+
-                #[inline(always)]
+                #[inline]
                 $(fn [<read_ $field>](reader: &mut $crate::io::Reader, dst: &mut std::mem::MaybeUninit<$target>) -> $crate::error::Result<()> {
                     <$schema as $crate::SchemaRead>::read(reader, Self::[<get_uninit_ $field _mut>](dst) )
                 })+
-                #[inline(always)]
+                #[inline]
                 $(fn [<write_uninit_ $field>](val: <$schema as $crate::SchemaRead>::Dst, dst: &mut std::mem::MaybeUninit<$target>) {
                     <$schema as $crate::SchemaRead>::write_into_uninit(val, Self::[<get_uninit_ $field _mut>](dst) );
                 })+
@@ -583,14 +591,14 @@ macro_rules! compound {
         impl $crate::SchemaWrite for $src {
             type Src = $target;
 
-            #[inline(always)]
+            #[inline]
             fn size_of(value: &Self::Src) -> $crate::error::Result<usize> {
                 #[allow(clippy::arithmetic_side_effects)]
                 Ok(0 $(+ <$schema as $crate::SchemaWrite>::size_of(&value.$field)?)+)
             }
 
 
-            #[inline(always)]
+            #[inline]
             fn write(writer: &mut $crate::io::Writer, value: &Self::Src) -> $crate::error::Result<()> {
                 $(<$schema as $crate::SchemaWrite>::write(writer, &value.$field)?;)+
                 Ok(())
@@ -611,7 +619,7 @@ macro_rules! compound {
         impl $crate::SchemaRead for $src {
             type Dst = $target;
 
-            #[inline(always)]
+            #[inline]
             fn read(reader: &mut $crate::io::Reader, dst: &mut std::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
                 $(<$schema as $crate::SchemaRead>::read(reader, unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).$field).cast() })?;)+
                 Ok(())
@@ -629,13 +637,13 @@ macro_rules! impl_tuple {
         {
             type Src = ($($name::Src),+);
 
-            #[inline(always)]
+            #[inline]
             fn size_of(value: &Self::Src) -> $crate::error::Result<usize> {
                 #[allow(clippy::arithmetic_side_effects)]
                 Ok(0 $(+ <$name as $crate::SchemaWrite>::size_of(&value.$field)?)+)
             }
 
-            #[inline(always)]
+            #[inline]
             fn write(writer: &mut $crate::io::Writer, value: &Self::Src) -> $crate::error::Result<()> {
                 $(<$name as $crate::SchemaWrite>::write(writer, &value.$field)?;)+
                 Ok(())
@@ -648,7 +656,7 @@ macro_rules! impl_tuple {
         {
             type Dst = ($($name::Dst),+);
 
-            #[inline(always)]
+            #[inline]
             fn read(reader: &mut $crate::io::Reader, value: &mut std::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
                 $(<$name as $crate::SchemaRead>::read(reader, unsafe { &mut *(&raw mut (*value.as_mut_ptr()).$field).cast() })?;)+
                 Ok(())

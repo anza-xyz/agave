@@ -36,7 +36,7 @@ pub trait Deserialize: SchemaRead {
     fn deserialize(bytes: &[u8]) -> Result<Self::Dst> {
         let mut dst = MaybeUninit::uninit();
         Self::deserialize_into(bytes, &mut dst)?;
-        // SAFETY: `Implementor` ensures `SchemaRead` properly initializes the `Self::Dst`.
+        // SAFETY: Implementor ensures `SchemaRead` properly initializes the `Self::Dst`.
         Ok(unsafe { dst.assume_init() })
     }
 

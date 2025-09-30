@@ -31,18 +31,14 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
-    /// Copy exactly `size_of::<T>()` bytes from the [`Reader`] into `ptr`.
+    /// Copy exactly `size_of::<T>()` bytes from the [`Reader`] into `dst`.
     ///
     /// # Safety
     ///
     /// - `T` must be initialized by reads of `size_of::<T>()` bytes.
     #[inline]
     pub unsafe fn read_t<T>(&mut self, dst: &mut MaybeUninit<T>) -> Result<()> {
-        let slice = unsafe {
-            slice::from_raw_parts_mut(dst.as_mut_ptr().cast::<MaybeUninit<u8>>(), size_of::<T>())
-        };
-        self.read_exact(slice)?;
-        Ok(())
+        self.read_slice_t(slice::from_mut(dst))
     }
 
     /// Copy exactly `dst.len() * size_of::<T>()` bytes from the [`Reader`] into `dst`.
@@ -67,10 +63,7 @@ impl<'a> Reader<'a> {
     #[inline(always)]
     pub unsafe fn get_t<T>(&mut self) -> Result<T> {
         let mut val = MaybeUninit::<T>::uninit();
-        let slice = unsafe {
-            slice::from_raw_parts_mut(val.as_mut_ptr().cast::<MaybeUninit<u8>>(), size_of::<T>())
-        };
-        self.read_exact(slice)?;
+        self.read_t(&mut val)?;
         Ok(val.assume_init())
     }
 
@@ -169,12 +162,7 @@ impl<'a> Writer<'a> {
     /// - `T` must be plain ol' data.
     #[inline]
     pub unsafe fn write_t<T>(&mut self, value: &T) -> Result<()> {
-        unsafe {
-            self.write_exact(slice::from_raw_parts(
-                value as *const T as *const u8,
-                size_of::<T>(),
-            ))
-        }
+        self.write_slice_t(slice::from_ref(value))
     }
 
     /// Write `len` bytes from the given `write` function into the internal buffer.
@@ -185,7 +173,6 @@ impl<'a> Writer<'a> {
     /// - `write` must not write from a buffer that overlap with the internal buffer.
     #[inline]
     pub unsafe fn write_slice_t<T>(&mut self, value: &[T]) -> Result<()> {
-        #[allow(clippy::arithmetic_side_effects)]
         unsafe {
             self.write_exact(slice::from_raw_parts(
                 value.as_ptr().cast(),

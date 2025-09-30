@@ -1,5 +1,4 @@
-//! Schema definitions that make it simple to implement performant serialization
-//! and deserialization of types, with bincode and [`solana_short_vec`] support.
+//! Schema traits.
 //!
 //! # Example
 //!
@@ -71,6 +70,7 @@ pub trait SchemaRead {
     ///
     /// - Implementation must properly initialize the `Self::Dst`.
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()>;
+
     /// Read `Self::Dst` from `reader` into a new `Self::Dst`.
     #[inline(always)]
     fn get(reader: &mut Reader) -> Result<Self::Dst> {
@@ -79,6 +79,7 @@ pub trait SchemaRead {
         // SAFETY: `read` must properly initialize the `Self::Dst`.
         Ok(unsafe { value.assume_init() })
     }
+
     /// Write an instance of `Self::Dst` into `dst`.
     #[doc(hidden)]
     fn write_into_uninit(value: Self::Dst, dst: &mut MaybeUninit<Self::Dst>) {
