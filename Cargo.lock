@@ -323,6 +323,10 @@ name = "agave-scheduler-bindings"
 version = "3.1.0"
 
 [[package]]
+name = "agave-scheduling-utils"
+version = "3.1.0"
+
+[[package]]
 name = "agave-store-histogram"
 version = "3.1.0"
 dependencies = [
