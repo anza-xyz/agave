@@ -739,9 +739,109 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        std::{fmt::Debug, hash::Hash},
+        solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+        std::{
+            fmt::Debug,
+            hash::Hash,
+            net::{IpAddr, Ipv4Addr},
+        },
         test_case::test_case,
     };
+
+    #[test_case(1000)]
+    fn test_chacha8_vs_chacha20(iterations: u64) {
+        let num_nodes = 10_000;
+        let mut rng = rand::thread_rng();
+        let fanout = (num_nodes / 10).into();
+        let mut port_range =
+            solana_net_utils::sockets::unique_port_range_for_tests(num_nodes).into_iter();
+        let (unstaked_numerator, unstaked_denominator) = (1, 7);
+        let mut nodes: Vec<_> = (0..num_nodes)
+            .map(|_| {
+                let pubkey = solana_pubkey::new_rand();
+                let port = port_range.next().unwrap();
+                let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+                GossipContactInfo::new_with_socketaddr(&pubkey, &addr)
+            })
+            .collect();
+        nodes.shuffle(&mut rng);
+
+        let keypair = Arc::new(Keypair::new());
+        nodes[0] = GossipContactInfo::new_localhost(&keypair.pubkey(), timestamp());
+        let this_node = nodes[0].clone();
+
+        let mut stakes: HashMap<Pubkey, u64> = nodes
+            .iter()
+            .filter_map(|node| {
+                if rng.gen_ratio(unstaked_numerator, unstaked_denominator) {
+                    None
+                } else {
+                    Some((*node.pubkey(), rng.gen_range(1..20)))
+                }
+            })
+            .collect();
+
+        let slot_leader = nodes[1].pubkey();
+        stakes.insert(*slot_leader, u32::MAX as u64 * LAMPORTS_PER_SOL);
+
+        let cluster_info =
+            ClusterInfo::new(this_node, keypair.clone(), SocketAddrSpace::Unspecified);
+        {
+            let now = timestamp();
+            let keypair = Keypair::new();
+            let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
+            for node in nodes.iter().skip(1) {
+                let node = CrdsData::from(node);
+                let node = CrdsValue::new(node, &keypair);
+                assert_eq!(
+                    gossip_crds.insert(node, now, GossipRoute::LocalMessage),
+                    Ok(())
+                );
+            }
+        }
+
+        let mut cluster_nodes =
+            new_cluster_nodes::<RetransmitStage>(&cluster_info, ClusterType::Development, &stakes);
+
+        for i in 0..iterations {
+            let (mut shreds, _) = Shredder::new(2 + i, 1, 0, 0)
+                .unwrap()
+                .entries_to_merkle_shreds_for_tests(
+                    &keypair,
+                    &[],
+                    true,
+                    solana_hash::Hash::default(),
+                    0,
+                    0,
+                    &ReedSolomonCache::default(),
+                    &mut ProcessShredsStats::default(),
+                );
+            let shred = shreds.pop().unwrap();
+
+            cluster_nodes.use_cha_cha_8 = true;
+            let chacha8_results = cluster_nodes
+                .get_retransmit_addrs(
+                    slot_leader,
+                    &shred.id(),
+                    fanout,
+                    &SocketAddrSpace::Unspecified,
+                )
+                .unwrap();
+
+            cluster_nodes.use_cha_cha_8 = false;
+            let chacha20_results = cluster_nodes
+                .get_retransmit_addrs(
+                    slot_leader,
+                    &shred.id(),
+                    fanout,
+                    &SocketAddrSpace::Unspecified,
+                )
+                .unwrap();
+
+            assert!(chacha8_results == chacha20_results);
+            println!("{i}: 8: {:?}, 20: {:?}", chacha8_results, chacha20_results);
+        }
+    }
 
     #[test]
     fn test_cluster_nodes_retransmit() {
