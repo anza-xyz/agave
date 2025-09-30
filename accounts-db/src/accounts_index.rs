@@ -1,4 +1,5 @@
 mod account_map_entry;
+pub(crate) mod caterpillar_cell;
 pub(crate) mod in_mem_accounts_index;
 mod iter;
 mod roots_tracker;
