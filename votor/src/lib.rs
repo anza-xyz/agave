@@ -1,25 +1,46 @@
-#![cfg(feature = "agave-unstable-api")]
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
+#[cfg(feature = "agave-unstable-api")]
+pub mod commitment;
+
+#[cfg(feature = "agave-unstable-api")]
+pub mod common;
+
+#[cfg(feature = "agave-unstable-api")]
+mod consensus_metrics;
+
+#[cfg(feature = "agave-unstable-api")]
+pub mod consensus_pool;
+
+#[cfg(feature = "agave-unstable-api")]
+pub mod event;
+
+#[cfg(feature = "agave-unstable-api")]
+pub mod root_utils;
+
+#[cfg(feature = "agave-unstable-api")]
 #[macro_use]
 extern crate log;
+
+#[cfg(feature = "agave-unstable-api")]
 extern crate serde_derive;
 
-pub mod commitment;
-pub mod common;
-mod consensus_metrics;
-mod consensus_pool;
-mod consensus_pool_service;
-pub mod event;
-mod event_handler;
-pub mod root_utils;
+#[cfg(feature = "agave-unstable-api")]
 mod staked_validators_cache;
+
+#[cfg(feature = "agave-unstable-api")]
 mod timer_manager;
+
+#[cfg(feature = "agave-unstable-api")]
 pub mod vote_history;
+#[cfg(feature = "agave-unstable-api")]
 pub mod vote_history_storage;
+
+#[cfg(feature = "agave-unstable-api")]
 mod voting_service;
+
+#[cfg(feature = "agave-unstable-api")]
 mod voting_utils;
-pub mod votor;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]

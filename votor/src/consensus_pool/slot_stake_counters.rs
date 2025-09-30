@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+// TODO(wen): remove allow(dead_code) when consensus_pool is fully integrated
+
 use {
     crate::{
         common::{

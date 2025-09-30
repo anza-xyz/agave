@@ -54,6 +54,9 @@ pub enum AddVoteError {
     #[error("Unrooted slot")]
     UnrootedSlot,
 
+    #[error("Slot in the future")]
+    SlotInFuture,
+
     #[error("Certificate error: {0}")]
     Certificate(#[from] CertificateError),
 
@@ -547,7 +550,6 @@ impl ConsensusPool {
     }
 
     /// Checks if `slot` has a `Skip` certificate
-    #[cfg(test)]
     pub fn skip_certified(&self, slot: Slot) -> bool {
         self.completed_certificates
             .contains_key(&Certificate::Skip(slot))

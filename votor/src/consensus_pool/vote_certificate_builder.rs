@@ -17,6 +17,7 @@ use {
 /// length will be less than or equal to this number.
 const MAXIMUM_VALIDATORS: usize = 4096;
 
+#[allow(dead_code)]
 #[derive(Debug, Error, PartialEq)]
 pub enum CertificateError {
     #[error("BLS error: {0}")]
@@ -29,6 +30,8 @@ pub enum CertificateError {
     ValidatorDoesNotExist(u16),
 }
 
+// TODO(wen): remove dead_code when we migrate consensus_pool
+#[allow(dead_code)]
 /// A builder for creating a `CertificateMessage` by efficiently aggregating BLS signatures.
 #[derive(Clone)]
 pub struct VoteCertificateBuilder {
@@ -71,6 +74,7 @@ impl TryFrom<CertificateMessage> for VoteCertificateBuilder {
     }
 }
 
+#[allow(dead_code)]
 impl VoteCertificateBuilder {
     pub fn new(certificate_id: Certificate) -> Self {
         Self {

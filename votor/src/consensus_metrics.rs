@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use {
     histogram::Histogram,
     solana_clock::{Epoch, Slot},

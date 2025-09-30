@@ -199,8 +199,7 @@ impl ParentReadyTracker {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn parent_ready(&self, slot: Slot, parent: Block) -> bool {
+    pub fn parent_ready(&self, slot: Slot, parent: Block) -> bool {
         self.slot_statuses
             .get(&slot)
             .is_some_and(|ss| ss.parents_ready.contains(&parent))

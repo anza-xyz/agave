@@ -546,7 +546,6 @@ dependencies = [
 name = "agave-votor"
 version = "3.1.0"
 dependencies = [
- "agave-votor",
  "anyhow",
  "bincode",
  "bitvec",
@@ -599,7 +598,6 @@ dependencies = [
  "solana-vote",
  "solana-vote-program",
  "solana-votor-messages",
- "tempfile",
  "test-case",
  "thiserror 2.0.17",
  "tokio-util 0.7.16",
