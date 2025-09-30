@@ -60,7 +60,7 @@ impl<T: IndexValue> PossibleEvictions<T> {
     /// clear existing data and prepare to add 'entries' more ages of data
     fn reset(&mut self, entries: Age) {
         self.possible_evictions.iter_mut().for_each(|entry| {
-            entry.evictions_age.clear();
+            entry.evictions_age_possible.clear();
         });
         let entries = entries as usize;
         assert!(
@@ -76,7 +76,7 @@ impl<T: IndexValue> PossibleEvictions<T> {
     fn insert(&mut self, relative_age: Age, key: Pubkey, entry: Arc<AccountMapEntry<T>>) {
         let index = self.index + (relative_age as usize);
         let list = &mut self.possible_evictions[index];
-        list.evictions_age.push((key, entry));
+        list.evictions_age_possible.push((key, entry));
     }
 }
 
@@ -164,7 +164,7 @@ struct StartupInfo<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
 /// result from scanning in-mem index during flush
 struct FlushScanResult<T> {
     /// pubkeys whose age indicates they may be evicted now, pending further checks.
-    evictions_age: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
+    evictions_age_possible: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T, U> {
@@ -913,7 +913,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         startup || current_age.wrapping_sub(entry.age()) <= ages_flushing_now
     }
 
-    /// return true if 'entry' should be evicted from the in-mem index
+    /// return Some(slot_list_guard) if 'entry' should be evicted from the in-mem index
     fn should_evict_from_mem<'a>(
         &self,
         current_age: Age,
@@ -1146,17 +1146,18 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         Self::update_stat(&self.stats().buckets_scanned, 1);
 
         // scan in-mem map for items that we may evict
-        let FlushScanResult { evictions_age } =
-            self.flush_scan(current_age, startup, flush_guard, ages_flushing_now);
+        let FlushScanResult {
+            evictions_age_possible,
+        } = self.flush_scan(current_age, startup, flush_guard, ages_flushing_now);
 
-        if !evictions_age.is_empty() {
+        if !evictions_age_possible.is_empty() {
             // write to disk outside in-mem map read lock
             let disk = self.bucket.as_ref().unwrap();
             let mut flush_entries_updated_on_disk = 0;
             let mut flush_should_evict_us = 0;
             // we don't care about lock time in this metric - bg threads can wait
             let m = Measure::start("flush_update");
-            let evictions_age = evictions_age
+            let evictions_age = evictions_age_possible
                 .into_iter()
                 .filter_map(|(k, v)| {
                     // consider whether to write to disk for all the items we may evict
@@ -1725,10 +1726,10 @@ mod tests {
                 );
                 let evictions = possible_evictions.possible_evictions.pop().unwrap();
                 assert_eq!(
-                    evictions.evictions_age.len(),
+                    evictions.evictions_age_possible.len(),
                     1 + ages_flushing_now as usize
                 );
-                evictions.evictions_age.iter().for_each(|(_k, v)| {
+                evictions.evictions_age_possible.iter().for_each(|(_k, v)| {
                     assert!(
                         InMemAccountsIndex::<u64, u64>::should_evict_based_on_age(
                             current_age,
@@ -1771,12 +1772,12 @@ mod tests {
                 )),
                 startup,
                 false,
-                0,
+                0
             )
             .is_none());
         // 1 element slot list
         assert!(bucket
-            .should_evict_from_mem(current_age, &one_element_slot_list_entry, startup, false, 0,)
+            .should_evict_from_mem(current_age, &one_element_slot_list_entry, startup, false, 0)
             .is_some());
         // 2 element slot list
         assert!(bucket
@@ -1789,7 +1790,7 @@ mod tests {
                 )),
                 startup,
                 false,
-                0,
+                0
             )
             .is_none());
 
@@ -1806,26 +1807,26 @@ mod tests {
                     )),
                     startup,
                     false,
-                    0,
+                    0
                 )
                 .is_none());
         }
 
         // 1 element slot list, age is now
         assert!(bucket
-            .should_evict_from_mem(current_age, &one_element_slot_list_entry, startup, false, 0,)
+            .should_evict_from_mem(current_age, &one_element_slot_list_entry, startup, false, 0)
             .is_some());
 
         // 1 element slot list, but not current age
         current_age = 1;
         assert!(bucket
-            .should_evict_from_mem(current_age, &one_element_slot_list_entry, startup, false, 0,)
+            .should_evict_from_mem(current_age, &one_element_slot_list_entry, startup, false, 0)
             .is_none());
 
         // 1 element slot list, but at startup and age not current
         startup = true;
         assert!(bucket
-            .should_evict_from_mem(current_age, &one_element_slot_list_entry, startup, false, 0,)
+            .should_evict_from_mem(current_age, &one_element_slot_list_entry, startup, false, 0)
             .is_some());
     }
 
