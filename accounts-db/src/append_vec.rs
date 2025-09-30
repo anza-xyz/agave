@@ -18,9 +18,7 @@ use {
     crate::{
         account_info::Offset,
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
-        accounts_file::{
-            AccountsFileError, InternalsForArchive, Result, StorageAccess, StoredAccountsInfo,
-        },
+        accounts_file::{InternalsForArchive, StorageAccess, StoredAccountsInfo},
         buffered_reader::{
             BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufFileRead,
             RequiredLenBufRead as _, Stack,
@@ -85,9 +83,14 @@ fn stored_size_checked(data_len: usize) -> Option<usize> {
 
 pub const MAXIMUM_APPEND_VEC_FILE_SIZE: u64 = 16 * 1024 * 1024 * 1024; // 16 GiB
 
+pub type Result<T> = std::result::Result<T, AppendVecError>;
+
 /// An enum for AppendVec related errors.
 #[derive(Error, Debug)]
 pub enum AppendVecError {
+    #[error("I/O error: {0}")]
+    Io(#[from] io::Error),
+
     #[error("too small file size {0} for AppendVec")]
     FileSizeTooSmall(usize),
 
@@ -331,20 +334,14 @@ impl AppendVec {
 
     fn sanitize_len_and_size(current_len: usize, file_size: usize) -> Result<()> {
         if file_size == 0 {
-            Err(AccountsFileError::AppendVecError(
-                AppendVecError::FileSizeTooSmall(file_size),
-            ))
+            Err(AppendVecError::FileSizeTooSmall(file_size))
         } else if usize::try_from(MAXIMUM_APPEND_VEC_FILE_SIZE)
             .map(|max| file_size > max)
             .unwrap_or(true)
         {
-            Err(AccountsFileError::AppendVecError(
-                AppendVecError::FileSizeTooLarge(file_size),
-            ))
+            Err(AppendVecError::FileSizeTooLarge(file_size))
         } else if current_len > file_size {
-            Err(AccountsFileError::AppendVecError(
-                AppendVecError::OffsetOutOfBounds(current_len, file_size),
-            ))
+            Err(AppendVecError::OffsetOutOfBounds(current_len, file_size))
         } else {
             Ok(())
         }
@@ -572,9 +569,7 @@ impl AppendVec {
         let aligned_current_len = u64_align!(self.current_len.load(Ordering::Acquire));
 
         if !matches || last_offset != aligned_current_len {
-            return Err(AccountsFileError::AppendVecError(
-                AppendVecError::IncorrectLayout(self.path.clone()),
-            ));
+            return Err(AppendVecError::IncorrectLayout(self.path.clone()));
         }
 
         Ok(num_accounts)
@@ -1053,7 +1048,7 @@ impl AppendVec {
                         Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
                         Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                        Err(err) => return Err(AccountsFileError::Io(err)),
+                        Err(err) => return Err(AppendVecError::Io(err)),
                     };
 
                     let (meta, next) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
@@ -1207,7 +1202,7 @@ impl AppendVec {
                         Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
                         Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                        Err(err) => return Err(AccountsFileError::Io(err)),
+                        Err(err) => return Err(AppendVecError::Io(err)),
                     };
                     let (stored_meta, next) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
                     let (account_meta, _) = Self::get_type::<AccountMeta>(bytes, next).unwrap();
@@ -1422,7 +1417,7 @@ pub mod tests {
 
     #[test_case(StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
-    #[should_panic(expected = "AppendVecError(FileSizeTooSmall(0))")]
+    #[should_panic(expected = "FileSizeTooSmall(0)")]
     fn test_append_vec_new_bad_size(storage_access: StorageAccess) {
         let path = get_append_vec_path("test_append_vec_new_bad_size");
         let _av = AppendVec::new(&path.path, true, 0, storage_access);
