@@ -145,6 +145,14 @@ name = "agave-scheduler-bindings"
 version = "3.1.0"
 
 [[package]]
+name = "agave-scheduling-utils"
+version = "3.1.0"
+dependencies = [
+ "ahash 0.8.11",
+ "solana-pubkey",
+]
+
+[[package]]
 name = "agave-syscalls"
 version = "3.1.0"
 dependencies = [
@@ -6439,6 +6447,7 @@ dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-feature-set",
  "agave-scheduler-bindings",
+ "agave-scheduling-utils",
  "agave-transaction-view",
  "agave-verified-packet-receiver",
  "agave-votor",
