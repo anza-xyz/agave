@@ -1189,15 +1189,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // may have to loop if disk has to grow and we have to retry the write
                         loop {
                             let disk_resize = {
+                                // Check the refcount before grabbing the slot list read lock. If ref_count != 1, then skip.
+                                let ref_count = v.ref_count();
+                                if ref_count != 1 {
+                                    v.set_dirty(true);
+                                    break;
+                                }
+
                                 // Re-acquire the slot list lock just before disk write to minimize lock contention
                                 let slot_list = v.slot_list_read_lock();
-                                // Check the ref count and slot list one more time before flushing.
-                                // It is possible the foreground has updated this entry since
-                                // we last checked above in `should_evict_from_mem()`.
-                                // If the entry *was* updated, re-mark it as dirty then
-                                // skip to the next pubkey/entry.
-                                let ref_count = v.ref_count();
-                                if ref_count != 1 || slot_list.len() != 1 {
+
+                                if slot_list.len() != 1 {
                                     v.set_dirty(true);
                                     return None;
                                 }
