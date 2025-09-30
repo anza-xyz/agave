@@ -33,10 +33,11 @@ frozen-abi = [
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
-agave-unstable-api = []
+agave-unstable-api = ["agave-low-pass-filter/agave-unstable-api"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-low-pass-filter = { workspace = true, features = ["agave-unstable-api"] }
 arrayvec = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
