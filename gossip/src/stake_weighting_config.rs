@@ -63,7 +63,7 @@ impl WeightingConfig {
 }
 
 mod weighting_config_control_pubkey {
-    solana_pubkey::declare_id!("goSwVUizoqNYKEaaiTjkgdN2RgLpvsTvFt1MEVGibY9");
+    solana_pubkey::declare_id!("noDynamicGossipWeights111111111111111111111");
 }
 
 pub(crate) fn get_gossip_config_from_account(bank: &Bank) -> Option<WeightingConfig> {
