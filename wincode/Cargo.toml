@@ -8,25 +8,25 @@ homepage.workspace = true
 license.workspace = true
 edition.workspace = true
 
-[lints]
-workspace = true
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+solana-short-vec = ["dep:solana-short-vec"]
 
 [dependencies]
 paste = "1.0.15"
 solana-short-vec = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
-[features]
-default = []
-solana-short-vec = ["dep:solana-short-vec"]
-
 [dev-dependencies]
-proptest = { workspace = true }
-solana-short-vec = { workspace = true }
 bincode = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+proptest = { workspace = true }
 rand = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+solana-short-vec = { workspace = true }
 
-[package.metadata.docs.rs]
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
+[lints]
+workspace = true
