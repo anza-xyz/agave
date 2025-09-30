@@ -4109,6 +4109,7 @@ mod tests {
             .into_iter()
             .collect();
             let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
+            #[allow(deprecated)]
             let result = rpc_client
                 .get_program_accounts_with_config(
                     &program_id,
@@ -4144,6 +4145,7 @@ mod tests {
             .into_iter()
             .collect();
             let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
+            #[allow(deprecated)]
             let result = rpc_client
                 .get_program_accounts_with_config(
                     &program_id,
@@ -4229,6 +4231,7 @@ mod tests {
             );
 
             let rpc_client = RpcClient::new_mock_with_mocks_map("mock_client".to_string(), mocks);
+            #[allow(deprecated)]
             let mut result1 = rpc_client
                 .get_program_accounts_with_config(
                     &program_id,
@@ -4248,6 +4251,7 @@ mod tests {
 
             assert_eq!(result1.len(), 1);
 
+            #[allow(deprecated)]
             let result2 = rpc_client
                 .get_program_accounts_with_config(
                     &program_id,
@@ -4267,6 +4271,7 @@ mod tests {
 
             assert_eq!(result2.len(), 1);
 
+            #[allow(deprecated)]
             let result_3 = rpc_client
                 .get_program_accounts_with_config(
                     &program_id,
@@ -4286,6 +4291,7 @@ mod tests {
 
             assert_eq!(result_3.len(), 3);
 
+            #[allow(deprecated)]
             let result_4 = rpc_client
                 .get_program_accounts_with_config(
                     &program_id,
