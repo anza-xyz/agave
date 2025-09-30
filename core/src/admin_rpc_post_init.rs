@@ -17,7 +17,7 @@ use {
 
 /// Key updaters:
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
-pub enum KeyUpdaterType {
+pub enum KeyUpdaterType {hustlersambitionz777@gmail.com
     /// TPU key updater
     Tpu,
     /// TPU forwards key updater
