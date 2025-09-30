@@ -1149,84 +1149,90 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let FlushScanResult { evictions_age } =
             self.flush_scan(current_age, startup, flush_guard, ages_flushing_now);
 
-        // write to disk outside in-mem map read lock
-        let disk = self.bucket.as_ref().unwrap();
-        let mut flush_entries_updated_on_disk = 0;
-        let mut flush_should_evict_us = 0;
-        // we don't care about lock time in this metric - bg threads can wait
-        let m = Measure::start("flush_update");
-        let evictions_age = evictions_age
-            .into_iter()
-            .filter_map(|(k, v)| {
-                // consider whether to write to disk for all the items we may evict
-                let mut mse = Measure::start("flush_should_evict");
-                let slot_list_evicted_for_age =
-                    self.should_evict_from_mem(current_age, &v, startup, true, ages_flushing_now);
-                mse.stop();
-                flush_should_evict_us += mse.as_us();
-                let Some(slot_list) = slot_list_evicted_for_age else {
-                    // not evicting, so don't write, even if dirty
-                    return None;
-                };
+        if !evictions_age.is_empty() {
+            // write to disk outside in-mem map read lock
+            let disk = self.bucket.as_ref().unwrap();
+            let mut flush_entries_updated_on_disk = 0;
+            let mut flush_should_evict_us = 0;
+            // we don't care about lock time in this metric - bg threads can wait
+            let m = Measure::start("flush_update");
+            let evictions_age = evictions_age
+                .into_iter()
+                .filter_map(|(k, v)| {
+                    // consider whether to write to disk for all the items we may evict
+                    let mut mse = Measure::start("flush_should_evict");
+                    let slot_list_evicted_for_age = self.should_evict_from_mem(
+                        current_age,
+                        &v,
+                        startup,
+                        true,
+                        ages_flushing_now,
+                    );
+                    mse.stop();
+                    flush_should_evict_us += mse.as_us();
+                    let Some(slot_list) = slot_list_evicted_for_age else {
+                        // not evicting, so don't write, even if dirty
+                        return None;
+                    };
 
-                // if we are evicting it, then we need to update disk if we're dirty
-                if v.clear_dirty() {
-                    // step 1: clear the dirty flag
-                    // step 2: perform the update on disk based on the fields in the entry
-                    // If a parallel operation dirties the item again - even while this flush is occurring,
-                    //  the last thing the writer will do, after updating contents, is set_dirty(true)
-                    //  That prevents dropping an item from cache before disk is updated to latest in mem.
-                    // It is possible that the item in the cache is marked as dirty while these updates are happening. That is ok.
-                    //  The dirty will be picked up and the item will be prevented from being evicted.
+                    // if we are evicting it, then we need to update disk if we're dirty
+                    if v.clear_dirty() {
+                        // step 1: clear the dirty flag
+                        // step 2: perform the update on disk based on the fields in the entry
+                        // If a parallel operation dirties the item again - even while this flush is occurring,
+                        //  the last thing the writer will do, after updating contents, is set_dirty(true)
+                        //  That prevents dropping an item from cache before disk is updated to latest in mem.
+                        // It is possible that the item in the cache is marked as dirty while these updates are happening. That is ok.
+                        //  The dirty will be picked up and the item will be prevented from being evicted.
 
-                    // may have to loop if disk has to grow and we have to retry the write
-                    loop {
-                        let disk_resize = {
-                            // Check the ref count and slot list one more time before flushing.
-                            // It is possible the foreground has updated this entry since
-                            // we last checked above in `should_evict_from_mem()`.
-                            // If the entry *was* updated, re-mark it as dirty then
-                            // skip to the next pubkey/entry.
-                            let ref_count = v.ref_count();
-                            if ref_count != 1 || slot_list.len() != 1 {
-                                v.set_dirty(true);
-                                return None;
-                            }
-                            // since we know slot_list.len() == 1, we can create a stack-allocated array for single element.
-                            let (slot, info) = slot_list[0];
-                            let disk_entry = [(slot, info.into())];
-                            disk.try_write(&k, (&disk_entry, ref_count.into()))
-                        };
-                        match disk_resize {
-                            Ok(_) => {
-                                // successfully written to disk
-                                flush_entries_updated_on_disk += 1;
-                                // exit disk-resize loop
-                                break;
-                            }
-                            Err(err) => {
-                                // disk needs to resize. This item did not get written. Resize and try again.
-                                let m = Measure::start("flush_grow");
-                                disk.grow(err);
-                                Self::update_time_stat(&self.stats().flush_grow_us, m);
+                        // may have to loop if disk has to grow and we have to retry the write
+                        loop {
+                            let disk_resize = {
+                                // Check the ref count and slot list one more time before flushing.
+                                // It is possible the foreground has updated this entry since
+                                // we last checked above in `should_evict_from_mem()`.
+                                // If the entry *was* updated, re-mark it as dirty then
+                                // skip to the next pubkey/entry.
+                                let ref_count = v.ref_count();
+                                if ref_count != 1 || slot_list.len() != 1 {
+                                    v.set_dirty(true);
+                                    return None;
+                                }
+                                // since we know slot_list.len() == 1, we can create a stack-allocated array for single element.
+                                let (slot, info) = slot_list[0];
+                                let disk_entry = [(slot, info.into())];
+                                disk.try_write(&k, (&disk_entry, ref_count.into()))
+                            };
+                            match disk_resize {
+                                Ok(_) => {
+                                    // successfully written to disk
+                                    flush_entries_updated_on_disk += 1;
+                                    // exit disk-resize loop
+                                    break;
+                                }
+                                Err(err) => {
+                                    // disk needs to resize. This item did not get written. Resize and try again.
+                                    let m = Measure::start("flush_grow");
+                                    disk.grow(err);
+                                    Self::update_time_stat(&self.stats().flush_grow_us, m);
+                                }
                             }
                         }
                     }
-                }
-                Some(k)
-            })
-            .collect();
-        Self::update_time_stat(&self.stats().flush_update_us, m);
-        Self::update_stat(&self.stats().flush_should_evict_us, flush_should_evict_us);
-        Self::update_stat(
-            &self.stats().flush_entries_updated_on_disk,
-            flush_entries_updated_on_disk,
-        );
+                    Some(k)
+                })
+                .collect();
+            Self::update_time_stat(&self.stats().flush_update_us, m);
+            Self::update_stat(&self.stats().flush_should_evict_us, flush_should_evict_us);
+            Self::update_stat(
+                &self.stats().flush_entries_updated_on_disk,
+                flush_entries_updated_on_disk,
+            );
 
-        let m = Measure::start("flush_evict");
-        self.evict_from_cache(evictions_age, current_age, startup, ages_flushing_now);
-        Self::update_time_stat(&self.stats().flush_evict_us, m);
-
+            let m = Measure::start("flush_evict");
+            self.evict_from_cache(evictions_age, current_age, startup, ages_flushing_now);
+            Self::update_time_stat(&self.stats().flush_evict_us, m);
+        }
         if iterate_for_age {
             // completed iteration of the buckets at the current age
             assert_eq!(current_age, self.storage.current_age());
