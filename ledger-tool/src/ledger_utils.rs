@@ -365,8 +365,8 @@ pub fn load_and_process_ledger(
         if matches!(method, BlockProductionMethod::UnifiedScheduler) {
             warn!(
                 "Currently, the unified-scheduler method is experimental for block-production. It \
-                 doesn't support priority ordering, has known security issues and should be used \
-                 only for developing and benchmarking purposes"
+                 has known security issues and should be used only for developing and \
+                 benchmarking purposes"
             );
         }
     })
