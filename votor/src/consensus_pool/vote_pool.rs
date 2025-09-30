@@ -6,12 +6,14 @@ use {
     std::collections::{HashMap, HashSet},
 };
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct VoteEntry {
     pub(crate) transactions: Vec<VoteMessage>,
     pub(crate) total_stake_by_key: Stake,
 }
 
+#[allow(dead_code)]
 impl VoteEntry {
     pub fn new() -> Self {
         Self {
@@ -21,11 +23,13 @@ impl VoteEntry {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) trait VotePool {
     fn total_stake(&self) -> Stake;
     fn has_prev_validator_vote(&self, validator_vote_key: &Pubkey) -> bool;
 }
 
+#[allow(dead_code)]
 /// There are two types of vote pools:
 /// - SimpleVotePool: Tracks all votes of a specfic vote type made by validators for some slot N, but only one vote per block.
 /// - DuplicateBlockVotePool: Tracks all votes of a specfic vote type made by validators for some slot N,
@@ -42,6 +46,7 @@ pub(crate) struct SimpleVotePool {
     prev_voted_validators: HashSet<Pubkey>,
 }
 
+#[allow(dead_code)]
 impl SimpleVotePool {
     pub fn new() -> Self {
         Self {
@@ -91,6 +96,7 @@ pub(crate) struct DuplicateBlockVotePool {
     prev_voted_block_ids: HashMap<Pubkey, Vec<Hash>>,
 }
 
+#[allow(dead_code)]
 impl DuplicateBlockVotePool {
     pub fn new(max_entries_per_pubkey: usize) -> Self {
         Self {

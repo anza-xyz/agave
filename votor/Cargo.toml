@@ -76,14 +76,12 @@ solana-votor-messages = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-votor = { path = ".", features = ["agave-unstable-api"] }
 rand = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
-tempfile = { workspace = true }
 test-case = { workspace = true }
 tokio-util = { workspace = true }
 
