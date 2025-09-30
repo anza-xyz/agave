@@ -101,10 +101,13 @@ pub(crate) const DELTA_BLOCK: Duration = Duration::from_millis(400);
 /// Base timeout for when leader's first slice should arrive if they sent it immediately.
 pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 
-#[allow(dead_code)]
-/// TODO(wen): remove allow(dead_code) when timer is fully integrated
 /// Timeout for standstill detection mechanism.
-const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
+#[cfg(not(test))]
+pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
+
+/// Shorter timeout for standstill detection mechanism during tests.
+#[cfg(test)]
+pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10);
 
 /// Returns the Duration for when the `SkipTimer` should be set for for the given slot in the leader window.
 #[inline]
