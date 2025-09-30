@@ -3749,7 +3749,7 @@ define_accounts_db_test!(
         // scan the accounts to track zlsr accounts
         accounts_db.accounts_index.scan(
             pubkeys.iter(),
-            |_pubkey, slots_refs, _entry| {
+            |_pubkey, slots_refs| {
                 let (slot_list, ref_count) = slots_refs.unwrap();
                 assert_eq!(slot_list.len(), 1);
                 assert_eq!(ref_count, 1);
@@ -3760,7 +3760,6 @@ define_accounts_db_test!(
                 AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
             },
             None,
-            false,
             ScanFilter::All,
         );
 
