@@ -32,11 +32,13 @@ use {
     super::{
         decision_maker::{BufferedPacketsDecision, DecisionMaker, DecisionMakerWrapper},
         packet_deserializer::PacketDeserializer,
+        transaction_scheduler::receive_and_buffer::calculate_priority_and_cost,
     },
     crate::banking_trace::Channels,
     agave_banking_stage_ingress_types::BankingPacketBatch,
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_runtime::bank_forks::BankForks,
+    solana_runtime_transaction::transaction_meta::StaticMeta,
     solana_unified_scheduler_pool::{BankingStageHelper, DefaultSchedulerPool},
     std::{
         num::NonZeroUsize,
@@ -94,9 +96,21 @@ pub(crate) fn ensure_banking_stage_setup(
                         continue;
                     };
 
-                    let index = task_id_base + packet_index;
+                    let Ok(compute_budget_limits) = transaction
+                        .compute_budget_instruction_details()
+                        .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
+                    else {
+                        continue;
+                    };
 
-                    let task = helper.create_new_task(transaction, index, packet_size);
+                    let (priority, _cost) = calculate_priority_and_cost(
+                        &transaction,
+                        &compute_budget_limits.into(),
+                        &bank,
+                    );
+                    let task_id = BankingStageHelper::new_task_id(task_id_base + packet_index, priority);
+
+                    let task = helper.create_new_task(transaction, task_id, packet_size);
                     helper.send_new_task(task);
                 }
             }

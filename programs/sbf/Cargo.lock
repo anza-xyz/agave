@@ -6523,6 +6523,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-transaction-status",
  "solana-turbine",
+ "solana-unified-scheduler-logic",
  "solana-unified-scheduler-pool",
  "solana-validator-exit",
  "solana-version",

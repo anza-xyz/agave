@@ -1,7 +1,6 @@
 [package]
 name = "agave-votor"
 documentation = "https://docs.rs/agave-votor"
-readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
 description = { workspace = true }

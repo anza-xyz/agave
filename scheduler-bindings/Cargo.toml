@@ -2,7 +2,6 @@
 name = "agave-scheduler-bindings"
 description = "Agave scheduler-binding message types for external pack process integration"
 documentation = "https://docs.rs/agave-scheduler-bindings"
-readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }

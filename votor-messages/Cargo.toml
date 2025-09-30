@@ -1,7 +1,6 @@
 [package]
 name = "solana-votor-messages"
 documentation = "https://docs.rs/solana-votor-messages"
-readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
 description = { workspace = true }
