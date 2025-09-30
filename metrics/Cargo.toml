@@ -30,6 +30,7 @@ bencher = { workspace = true }
 env_logger = { workspace = true }
 rand = { workspace = true }
 serial_test = { workspace = true }
+solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 
 [[bench]]
 name = "metrics"

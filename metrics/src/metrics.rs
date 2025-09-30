@@ -743,4 +743,11 @@ mod test {
             .to_owned();
         agent.submit(point, Level::Info);
     }
+
+    #[test]
+    fn test_host_id() {
+        let test_host_id = "test_host_123".to_string();
+        set_host_id(test_host_id.clone());
+        assert_eq!(get_host_id(), test_host_id);
+    }
 }
