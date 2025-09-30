@@ -689,9 +689,9 @@ pub fn execute(
         BlockProductionMethod::UnifiedScheduler
     ) {
         warn!(
-            "Currently, the unified-scheduler method is experimental for block-production. \
-            It doesn't support priority ordering, has known security issues and should be used \
-            only for developing and benchmarking purposes"
+            "Currently, the unified-scheduler method is experimental for block-production. It \
+             doesn't support priority ordering, has known security issues and should be used only \
+             for developing and benchmarking purposes"
         );
     }
 
