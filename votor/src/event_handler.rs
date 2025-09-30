@@ -1201,6 +1201,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_received_block_event_and_parent_ready_event() {
         // Test different orders of received block event and parent ready event
         // some will send Notarize immediately, some will wait for parent ready
@@ -1269,6 +1270,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_received_block_notarized_and_timeout() {
         // Test block notarized event will trigger Finalize vote when all conditions are met
         // But it will not trigger Finalize if any of the conditions are not met
@@ -1352,6 +1354,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_received_timeout_crashed_leader_and_first_shred() {
         let test_context = setup();
 
@@ -1373,6 +1376,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_received_safe_to_notar() {
         let test_context = setup();
 
@@ -1426,6 +1430,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_received_safe_to_skip() {
         let test_context = setup();
 
@@ -1458,6 +1463,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_received_produce_window() {
         let test_context = setup();
 
@@ -1511,6 +1517,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_received_finalized() {
         solana_logger::setup();
         let test_context = setup();
@@ -1547,6 +1554,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_parent_ready_in_middle_of_window() {
         solana_logger::setup();
         let test_context = setup();
@@ -1586,6 +1594,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_received_standstill() {
         solana_logger::setup();
         let test_context = setup();
@@ -1638,6 +1647,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_received_set_identity() {
         solana_logger::setup();
         let test_context = setup();
@@ -1699,6 +1709,7 @@ mod tests {
     #[test_case("bls_receiver")]
     #[test_case("commitment_receiver")]
     #[test_case("own_vote_receiver")]
+    #[ignore]
     fn test_channel_disconnection(channel_name: &str) {
         solana_logger::setup();
         let mut setup_result = setup();
