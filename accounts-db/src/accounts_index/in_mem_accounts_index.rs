@@ -892,6 +892,97 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
+    /// Batch version of insert_new_entry_if_missing_with_lock that processes multiple entries
+    /// for in-memory insertions only (not using disk buckets). Skips disk lookups for efficiency.
+    /// Returns aggregated results for all insertions
+    pub fn batch_insert_new_entries_if_missing_with_lock_in_mem<I>(
+        &self,
+        entries: I,
+    ) -> (Vec<(Slot, Pubkey)>, usize, usize)
+    where
+        I: Iterator<Item = (Pubkey, PreAllocatedAccountMapEntry<T>)>,
+    {
+        let mut duplicates_from_in_memory = vec![];
+        let mut num_did_not_exist = 0;
+        let mut num_existed_in_mem = 0;
+
+        // Acquire the write lock once for the entire batch
+        let mut map = self.map_internal.write().unwrap();
+
+        for (pubkey, new_entry) in entries {
+            let entry = map.entry(pubkey);
+            let mut other_slot = None;
+            let (slot, already_existed) = match entry {
+                Entry::Occupied(occupied) => {
+                    // in cache, so merge into cache
+                    let (slot, account_info) = new_entry.into();
+
+                    let slot_list = occupied.get().slot_list.read().unwrap();
+
+                    // If there is only one entry in the slot list, it means that
+                    // the previous entry inserted was a duplicate, which should be
+                    // added to the duplicates list too. Note that we only need to do
+                    // this for slot_list.len() == 1. For slot_list.len() > 1, the
+                    // items, previously inserted into the slot_list, have already
+                    // been added. We don't need to add them again.
+                    if slot_list.len() == 1 {
+                        other_slot = Some(slot_list[0].0);
+                    }
+                    drop(slot_list);
+
+                    let updated_slot_list_len = Self::lock_and_update_slot_list(
+                        occupied.get(),
+                        (slot, account_info),
+                        None, // should be None because we don't expect a different slot # during index generation
+                        &mut ReclaimsSlotList::new(),
+                        UpsertReclaim::IgnoreReclaims,
+                    );
+
+                    // In case of a race condition, multiple threads try to insert
+                    // to the same pubkey with different slots. We only need to
+                    // record `other_slot` once. If the slot list length after
+                    // update is not 2, it means that someone else has already
+                    // recorded `other_slot` before us. Therefore, We don't need to
+                    // record it again.
+                    if updated_slot_list_len != 2 {
+                        // clear `other_slot` if we don't win the race.
+                        other_slot = None;
+                    }
+
+                    (Some(slot), true) /* already existed */
+                }
+                Entry::Vacant(vacant) => {
+                    // This batch function is only used for in-memory insertions (not using disk buckets).
+                    // Skip disk lookup and directly insert new entry.
+                    let new_account_map_entry = new_entry.into_account_map_entry(&self.storage);
+                    assert!(new_account_map_entry.dirty());
+                    vacant.insert(new_account_map_entry);
+                    (None, false) /* did not exist */
+                }
+            };
+
+            if already_existed {
+                if let Some(other_slot) = other_slot {
+                    duplicates_from_in_memory.push((other_slot, pubkey));
+                }
+                if let Some(slot) = slot {
+                    duplicates_from_in_memory.push((slot, pubkey));
+                }
+                num_existed_in_mem += 1;
+            } else {
+                num_did_not_exist += 1;
+            }
+        }
+
+        drop(map);
+
+        (
+            duplicates_from_in_memory,
+            num_did_not_exist,
+            num_existed_in_mem,
+        )
+    }
+
     pub fn flush(&self, can_advance_age: bool) {
         if let Some(flush_guard) = FlushGuard::lock(&self.flushing_active) {
             self.flush_internal(&flush_guard, can_advance_age)
