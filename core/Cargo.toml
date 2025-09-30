@@ -42,6 +42,7 @@ frozen-abi = [
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
 agave-feature-set = { workspace = true }
+agave-scheduling-utils = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-verified-packet-receiver = { workspace = true }
 agave-votor = { workspace = true, features = ["agave-unstable-api"] }

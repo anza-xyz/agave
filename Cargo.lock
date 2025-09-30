@@ -325,6 +325,10 @@ version = "3.1.0"
 [[package]]
 name = "agave-scheduling-utils"
 version = "3.1.0"
+dependencies = [
+ "ahash 0.8.11",
+ "solana-pubkey",
+]
 
 [[package]]
 name = "agave-store-histogram"
@@ -8128,6 +8132,7 @@ dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-feature-set",
  "agave-reserved-account-keys",
+ "agave-scheduling-utils",
  "agave-transaction-view",
  "agave-verified-packet-receiver",
  "agave-votor",
