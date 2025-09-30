@@ -95,6 +95,7 @@ members = [
     "runtime",
     "runtime-transaction",
     "scheduler-bindings",
+    "scheduling-utils",
     "send-transaction-service",
     "stake-accounts",
     "storage-bigtable",
