@@ -527,7 +527,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         .configure_next_instruction_for_tests(
             program_index.saturating_add(1),
             instruction_accounts,
-            &instruction_data,
+            instruction_data,
         )
         .unwrap();
     invoke_context.push().unwrap();

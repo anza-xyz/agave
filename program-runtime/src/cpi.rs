@@ -802,7 +802,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
         check_aligned,
     )?;
     check_authorized_program(&instruction.program_id, &instruction.data, invoke_context)?;
-    invoke_context.prepare_next_instruction(&instruction, &signers)?;
+    invoke_context.prepare_next_instruction(instruction, &signers)?;
 
     let mut accounts = S::translate_accounts(
         account_infos_addr,
@@ -1324,7 +1324,7 @@ mod tests {
                 .configure_next_instruction_for_tests(
                     $program_account,
                     instruction_accounts,
-                    instruction_data,
+                    instruction_data.to_vec(),
                 )
                 .unwrap();
             $invoke_context.push().unwrap();
@@ -1842,7 +1842,7 @@ mod tests {
                     InstructionAccount::new(1, false, true),
                     InstructionAccount::new(1, false, true),
                 ],
-                &[],
+                vec![],
             )
             .unwrap();
         let accounts = translate_accounts_rust(

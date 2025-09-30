@@ -1052,14 +1052,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         pubkeys: I,
         mut callback: F,
         avoid_callback_result: Option<AccountsIndexScanResult>,
-        provide_entry_in_callback: bool,
         filter: ScanFilter,
     ) where
-        F: FnMut(
-            &'a Pubkey,
-            Option<(&SlotList<T>, RefCount)>,
-            Option<&Arc<AccountMapEntry<T>>>,
-        ) -> AccountsIndexScanResult,
+        F: FnMut(&'a Pubkey, Option<(&SlotList<T>, RefCount)>) -> AccountsIndexScanResult,
         I: Iterator<Item = &'a Pubkey>,
     {
         let mut lock = None;
@@ -1080,11 +1075,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                             *result
                         } else {
                             let slot_list = &locked_entry.slot_list_read_lock();
-                            callback(
-                                pubkey,
-                                Some((slot_list, locked_entry.ref_count())),
-                                provide_entry_in_callback.then_some(locked_entry),
-                            )
+                            callback(pubkey, Some((slot_list, locked_entry.ref_count())))
                         };
                         cache = match result {
                             AccountsIndexScanResult::Unref => {
@@ -1122,7 +1113,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         };
                     }
                     None => {
-                        avoid_callback_result.unwrap_or_else(|| callback(pubkey, None, None));
+                        avoid_callback_result.unwrap_or_else(|| callback(pubkey, None));
                     }
                 }
                 (cache, ())

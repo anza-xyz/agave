@@ -791,7 +791,7 @@ mod tests {
                             0,
                             instruction_accounts,
                             dedup_map,
-                            &instruction_data,
+                            instruction_data.clone(),
                         )
                         .unwrap();
                 } else {
@@ -800,7 +800,7 @@ mod tests {
                         .configure_next_instruction_for_tests(
                             0,
                             instruction_accounts,
-                            &instruction_data,
+                            instruction_data.clone(),
                         )
                         .unwrap();
                 }
@@ -961,7 +961,7 @@ mod tests {
                 .configure_next_instruction_for_tests(
                     0,
                     instruction_accounts.clone(),
-                    &instruction_data,
+                    instruction_data.clone(),
                 )
                 .unwrap();
             invoke_context.push().unwrap();
@@ -1058,7 +1058,11 @@ mod tests {
             // check serialize_parameters_unaligned
             invoke_context
                 .transaction_context
-                .configure_next_instruction_for_tests(7, instruction_accounts, &instruction_data)
+                .configure_next_instruction_for_tests(
+                    7,
+                    instruction_accounts,
+                    instruction_data.clone(),
+                )
                 .unwrap();
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
@@ -1217,15 +1221,10 @@ mod tests {
             ];
             let instruction_accounts =
                 deduplicated_instruction_accounts(&[1, 1, 2, 3, 4, 4, 5, 6], |index| index >= 4);
-            let instruction_data = vec![];
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .transaction_context
-                .configure_next_instruction_for_tests(
-                    0,
-                    instruction_accounts.clone(),
-                    &instruction_data,
-                )
+                .configure_next_instruction_for_tests(0, instruction_accounts.clone(), vec![])
                 .unwrap();
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
@@ -1259,7 +1258,7 @@ mod tests {
             // check serialize_parameters_unaligned
             invoke_context
                 .transaction_context
-                .configure_next_instruction_for_tests(7, instruction_accounts, &instruction_data)
+                .configure_next_instruction_for_tests(7, instruction_accounts, vec![])
                 .unwrap();
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
@@ -1483,9 +1482,8 @@ mod tests {
         let transaction_accounts_indexes = [0, 1, 2, 3, 4, 5];
         let instruction_accounts =
             deduplicated_instruction_accounts(&transaction_accounts_indexes, |index| index > 0);
-        let instruction_data = [];
         transaction_context
-            .configure_next_instruction_for_tests(6, instruction_accounts, &instruction_data)
+            .configure_next_instruction_for_tests(6, instruction_accounts, vec![])
             .unwrap();
         transaction_context.push().unwrap();
         let instruction_context = transaction_context

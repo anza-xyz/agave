@@ -2118,7 +2118,7 @@ impl AccountsDb {
                     let mut should_collect_reclaims = false;
                     self.accounts_index.scan(
                         iter::once(candidate_pubkey),
-                        |_candidate_pubkey, slot_list_and_ref_count, _entry| {
+                        |_candidate_pubkey, slot_list_and_ref_count| {
                             let mut useless = true;
                             if let Some((slot_list, ref_count)) = slot_list_and_ref_count {
                                 // find the highest rooted slot in the slot list
@@ -2180,7 +2180,6 @@ impl AccountsDb {
                             AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
                         },
                         None,
-                        false,
                         if candidate_info.might_contain_zero_lamport_entry {
                             ScanFilter::All
                         } else {
@@ -2737,7 +2736,7 @@ impl AccountsDb {
         let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
         self.accounts_index.scan(
             accounts.iter().map(|account| account.pubkey()),
-            |pubkey, slots_refs, _entry| {
+            |pubkey, slots_refs| {
                 let stored_account = &accounts[index];
                 let mut do_populate_accounts_for_shrink = |ref_count, slot_list| {
                     if stored_account.is_zero_lamport()
@@ -2793,7 +2792,6 @@ impl AccountsDb {
                 AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
             },
             None,
-            false,
             self.scan_filter_for_shrinking,
         );
         assert_eq!(index, std::cmp::min(accounts.len(), count));
@@ -3024,13 +3022,12 @@ impl AccountsDb {
 
         self.accounts_index.scan(
             zero_lamport_single_ref_pubkeys.iter().cloned(),
-            |_pubkey, _slots_refs, _entry| AccountsIndexScanResult::Unref,
+            |_pubkey, _slots_refs| AccountsIndexScanResult::Unref,
             if do_assert {
                 Some(AccountsIndexScanResult::UnrefAssert0)
             } else {
                 Some(AccountsIndexScanResult::UnrefLog0)
             },
-            false,
             ScanFilter::All,
         );
 
@@ -3101,7 +3098,7 @@ impl AccountsDb {
     ) {
         self.accounts_index.scan(
             pubkeys,
-            |pubkey, slot_refs, _entry| {
+            |pubkey, slot_refs| {
                 match slot_refs {
                     Some((slot_list, ref_count)) => {
                         // Let's handle the special case - after unref, the result is a single ref zero lamport account.
@@ -3134,7 +3131,6 @@ impl AccountsDb {
                 AccountsIndexScanResult::Unref
             },
             None,
-            false,
             ScanFilter::All,
         );
     }
@@ -5708,7 +5704,7 @@ impl AccountsDb {
                                 pubkeys_removed_from_accounts_index.contains(pubkey);
                             !already_removed
                         }),
-                    |_pubkey, slots_refs, _entry| {
+                    |_pubkey, slots_refs| {
                         if let Some((slot_list, ref_count)) = slots_refs {
                             // Let's handle the special case - after unref, the result is a single ref zero lamport account.
                             if slot_list.len() == 1 && ref_count == 2 {
@@ -5725,7 +5721,6 @@ impl AccountsDb {
                         AccountsIndexScanResult::Unref
                     },
                     None,
-                    false,
                     ScanFilter::All,
                 )
             });
@@ -6977,7 +6972,7 @@ impl AccountsDb {
 
         self.accounts_index.scan(
             pubkeys.iter(),
-            |_pubkey, slots_refs, _entry| {
+            |_pubkey, slots_refs| {
                 let (slot_list, ref_count) = slots_refs.unwrap();
                 if ref_count == 1 {
                     assert_eq!(slot_list.len(), 1);
@@ -6993,7 +6988,6 @@ impl AccountsDb {
                 AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
             },
             None,
-            false,
             ScanFilter::All,
         );
 
@@ -7059,7 +7053,7 @@ impl AccountsDb {
         let mut duplicates_lt_hash = Box::new(DuplicatesLtHash::default());
         self.accounts_index.scan(
             pubkeys.iter(),
-            |pubkey, slots_refs, _entry| {
+            |pubkey, slots_refs| {
                 if let Some((slot_list, _ref_count)) = slots_refs {
                     if slot_list.len() > 1 {
                         // Only the account data len in the highest slot should be used, and the rest are
@@ -7095,7 +7089,6 @@ impl AccountsDb {
                 AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
             },
             None,
-            false,
             ScanFilter::All,
         );
         (
