@@ -1,104 +1,127 @@
+//! Client implementation for sending transactions to TPU nodes.
+//!
+//! Running TPU client requires the caller to establish connections to TPU
+//! nodes. To avoid recreating these connections every leader window, it is
+//! desirable to cache them. [`Client`] provides this functionality while
+//! [`ClientBuilder`] helps configuring it.
+//!
+//! # Example
+//!
+//! ```rust
+//!
+//! ```
 use {
     crate::{
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
         },
         leader_updater::LeaderUpdater,
-        ConnectionWorkersScheduler,
+        transaction_batch::TransactionBatch,
+        ConnectionWorkersScheduler, SendTransactionStats,
     },
-    log::warn,
     solana_keypair::Keypair,
-    std::net::{SocketAddr, UdpSocket},
-    tokio::{
-        runtime::Handle,
-        sync::{mpsc, watch},
+    std::{
+        future::Future,
+        net::{SocketAddr, UdpSocket},
+        sync::Arc,
     },
+    thiserror::Error,
+    tokio::sync::{mpsc, watch},
     tokio_util::{sync::CancellationToken, task::TaskTracker},
 };
 
-// TODO(klykov): temp name
-trait Transactions {}
-
-/// [`TpuClientNextClient`]
+/// [`Client`]
 #[derive(Clone)]
-pub struct TpuClientNextClient<TransactionBatch: Transactions> {
+pub struct Client {
     sender: mpsc::Sender<TransactionBatch>,
     update_certificate_sender: watch::Sender<Option<StakeIdentity>>,
     tasks: TaskTracker,
     cancel: CancellationToken,
 }
 
-pub struct TpuClientNextClientBuilder {
+pub struct ClientBuilder {
     leader_updater: Box<dyn LeaderUpdater>,
-    bind_target: BindTarget,
+    bind_target: Option<BindTarget>,
     identity: Option<StakeIdentity>,
-    num_connections: Option<usize>,
-    leader_send_fanout: Option<usize>,
-    metrics_reporting: Option<(String, std::time::Duration)>,
+    num_connections: usize,
+    leader_send_fanout: usize,
+    skip_check_transaction_age: bool,
+    input_channel_size: usize,
+    worker_channel_size: usize,
+    max_reconnect_attempts: usize,
     cancel: CancellationToken,
 }
 
-impl TpuClientNextClientBuilder {
-    pub fn new(leader_updater: Box<dyn LeaderUpdater>, cancel: CancellationToken) -> Self {
+impl ClientBuilder {
+    pub fn with_leader_updater(leader_updater: Box<dyn LeaderUpdater>) -> Self {
         Self {
             leader_updater,
-            bind_target,
+            bind_target: None,
             identity: None,
-            num_connections: None,
-            leader_send_fanout: None,
-            metrics_reporting: None,
-            cancel,
+            num_connections: 64,
+            leader_send_fanout: 2,
+            skip_check_transaction_age: true,
+            worker_channel_size: 2,
+            input_channel_size: 64,
+            max_reconnect_attempts: 2,
+            cancel: CancellationToken::new(),
         }
     }
 
-    pub fn set_bind_socket(mut self, bind_socket: UdpSocket) -> Self {
-        self.bind_target = BindTarget::Socket(bind_socket);
+    pub fn bind_socket(mut self, bind_socket: UdpSocket) -> Self {
+        self.bind_target = Some(BindTarget::Socket(bind_socket));
         self
     }
 
-    pub fn set_bind_addr(mut self, bind_addr: SocketAddr) -> Self {
-        self.bind_target = BindTarget::Address(bind_addr);
+    pub fn bind_addr(mut self, bind_addr: SocketAddr) -> Self {
+        self.bind_target = Some(BindTarget::Address(bind_addr));
         self
     }
 
-    pub fn set_leader_send_fanout(mut self, fanout: usize) -> Self {
-        self.leader_send_fanout = Some(fanout);
+    pub fn leader_send_fanout(mut self, fanout: usize) -> Self {
+        self.leader_send_fanout = fanout;
         self
     }
 
-    pub fn set_identity(mut self, identity: &Keypair) -> Self {
-        self.identity = Some(StakeIdentity::new(identity));
+    pub fn identity<'a>(mut self, identity: impl Into<Option<&'a Keypair>>) -> Self {
+        self.identity = identity.into().map(StakeIdentity::new);
         self
     }
 
-    pub fn set_max_cache_size(mut self, num_connections: usize) -> Self {
-        self.num_connections = Some(num_connections);
+    pub fn max_cache_size(mut self, num_connections: usize) -> Self {
+        self.num_connections = num_connections;
         self
     }
 
-    pub fn set_metrics_reporting(mut self, name: &str, interval: std::time::Duration) -> Self {
-        self.metrics_reporting = Some((name.to_string(), interval));
+    pub fn cancel_token(mut self, cancel: CancellationToken) -> Self {
+        self.cancel = cancel;
         self
     }
 
-    async fn build<TransactionBatch: Transactions>(self) -> TpuClientNextClient<TransactionBatch> {
-        // todo for this 128 add set as well
-        let (sender, receiver) = mpsc::channel(128);
+    /// TODO(klykov): API-wise, it is also possible to split the result into Sender (to
+    /// send txs) and Client which will be background task running the
+    /// scheduler. Not sure if we need this flexibility.
+    pub async fn build<F, Fut>(self, report_fn: Option<F>) -> Result<Client, ClientBuilderError>
+    where
+        F: FnOnce(Arc<SendTransactionStats>, CancellationToken) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let bind = self.bind_target.ok_or(ClientBuilderError::Misconfigured)?;
+        let (sender, receiver) = mpsc::channel(self.input_channel_size);
 
         let (update_certificate_sender, update_certificate_receiver) = watch::channel(None);
 
         let config = ConnectionWorkersSchedulerConfig {
-            bind: self.bind_target,
+            bind,
             stake_identity: self.identity,
-            num_connections: self.num_connections.unwrap(),
-            skip_check_transaction_age: true,
-            // experimentally found parameter values
-            worker_channel_size: 64,
-            max_reconnect_attempts: 4,
+            num_connections: self.num_connections,
+            skip_check_transaction_age: self.skip_check_transaction_age,
+            worker_channel_size: self.worker_channel_size,
+            max_reconnect_attempts: self.max_reconnect_attempts,
             // We open connection to one more leader in advance, which time-wise means ~1.6s
             leaders_fanout: Fanout {
-                connect: self.leader_send_fanout.unwrap() + 1,
-                send: self.leader_send_fanout.unwrap(),
+                connect: self.leader_send_fanout + 1,
+                send: self.leader_send_fanout,
             },
         };
 
@@ -108,42 +131,58 @@ impl TpuClientNextClientBuilder {
             update_certificate_receiver,
             self.cancel.clone(),
         );
-        let mut tasks = TaskTracker::new();
-        // leaking handle to this task, as it will run until the cancel signal is received
-        tasks.spawn(scheduler.get_stats().report_to_influxdb(
-            &self.metrics_reporting.as_ref().unwrap().0,
-            self.metrics_reporting.as_ref().unwrap().1,
-            self.cancel.clone(),
-        ));
+        let tasks = TaskTracker::new();
+        if let Some(report_fn) = report_fn {
+            let stats = scheduler.get_stats();
+            let cancel = self.cancel.clone();
+            tasks.spawn(report_fn(stats, cancel));
+        }
         tasks.spawn(scheduler.run(config));
-        TpuClientNextClient::<TransactionBatch> {
+        tasks.close();
+        Ok(Client {
             sender,
             update_certificate_sender,
             tasks,
-            cancel,
-        }
+            cancel: self.cancel,
+        })
     }
 }
 
-impl<TransactionBatch: Transactions> TpuClientNextClient<TransactionBatch> {
-    pub async fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>) {
-        let res = self
-            .sender
+impl Client {
+    pub async fn send_transactions_in_batch(
+        &self,
+        wire_transactions: Vec<Vec<u8>>,
+    ) -> Result<(), mpsc::error::SendError<TransactionBatch>> {
+        self.sender
             .send(TransactionBatch::new(wire_transactions))
-            .await;
-        if res.is_err() {
-            warn!("Failed to send transaction to channel: it is closed.");
-        }
+            .await
     }
 
-    fn update_identity(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn try_send_transactions_in_batch(
+        &self,
+        wire_transactions: Vec<Vec<u8>>,
+    ) -> Result<(), mpsc::error::TrySendError<TransactionBatch>> {
+        self.sender
+            .try_send(TransactionBatch::new(wire_transactions))
+    }
+
+    pub fn update_identity(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         let stake_identity = StakeIdentity::new(identity);
         self.update_certificate_sender
             .send(Some(stake_identity))
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     }
 
-    pub fn cancel(&self) {
+    pub async fn stop(&self) {
         self.cancel.cancel();
+        self.tasks.wait().await;
     }
+}
+
+/// Represents [`Builder`] errors.
+#[derive(Debug, Error)]
+pub enum ClientBuilderError {
+    /// Error during building client.
+    #[error("ClientBuilder is misconfigured.")]
+    Misconfigured,
 }
