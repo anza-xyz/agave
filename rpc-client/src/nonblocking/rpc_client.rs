@@ -4124,7 +4124,6 @@ impl RpcClient {
         pubkey: &Pubkey,
         mut config: RpcProgramAccountsConfig,
     ) -> ClientResult<Vec<(Pubkey, Account)>> {
-        // TODO
         let commitment = config
             .account_config
             .commitment
