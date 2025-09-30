@@ -739,9 +739,86 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        std::{fmt::Debug, hash::Hash},
+        rand::RngCore,
+        solana_hash::Hash as SolanaHash,
+        solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+        std::{collections::VecDeque, fmt::Debug, hash::Hash},
         test_case::test_case,
     };
+
+    #[test_case(true /* chacha8 */)]
+    #[test_case(false /* chacha20 */)]
+    fn test_chacha_both_variants_distribution(variant: bool) {
+        let mut rng = rand::thread_rng();
+
+        let (nodes, stakes, cluster_info) = make_test_cluster(&mut rng, 10_000, Some((0, 1)));
+        let slot_leader = nodes[0].pubkey();
+
+        let mut cluster_nodes =
+            new_cluster_nodes::<RetransmitStage>(&cluster_info, ClusterType::Development, &stakes);
+        cluster_nodes.use_cha_cha_8 = variant;
+
+        let shred = Shredder::new(2, 1, 0, 0)
+            .unwrap()
+            .entries_to_merkle_shreds_for_tests(
+                &Keypair::new(),
+                &[],
+                true,
+                SolanaHash::default(),
+                0,
+                0,
+                &ReedSolomonCache::default(),
+                &mut ProcessShredsStats::default(),
+            )
+            .0
+            .pop()
+            .unwrap();
+
+        let mut weighted_shuffle = cluster_nodes.weighted_shuffle.clone();
+        if let Some(i) = cluster_nodes.index.get(slot_leader) {
+            weighted_shuffle.remove_index(*i);
+        }
+
+        let mut chacha_rng: Box<dyn RngCore> = if variant {
+            Box::new(get_seeded_rng(slot_leader, &shred.id()))
+        } else {
+            Box::new(get_seeded_legacy_rng(slot_leader, &shred.id()))
+        };
+        let shuffled_nodes: Vec<&Node> = weighted_shuffle
+            .shuffle(&mut chacha_rng)
+            .map(|i| &cluster_nodes.nodes[i])
+            .collect();
+
+        let mut covered: HashSet<Pubkey> = HashSet::new();
+        let mut queue = VecDeque::from([
+            *shuffled_nodes[0].pubkey(), /* leader has the shred to retransmit first */
+        ]);
+
+        while let Some(addr) = queue.pop_front() {
+            if !covered.insert(addr) {
+                continue; // skip already processed
+            }
+            let (_, peers) = get_retransmit_peers(
+                10usize,
+                |n: &Node| n.pubkey() == &addr,
+                shuffled_nodes.clone(),
+            );
+            for peer in peers {
+                queue.push_back(*peer.pubkey());
+            }
+        }
+
+        // filter out unstaked nodes, without contact_info and leader (it can't retransmit to itself)
+        let staked_nodes: HashSet<_> = cluster_nodes
+            .nodes
+            .iter()
+            .filter(|n| n.stake > 0 && n.contact_info().is_some() && n.pubkey() != slot_leader)
+            .map(|n| *n.pubkey())
+            .collect();
+
+        let crosscheck: Vec<_> = staked_nodes.difference(&covered).collect();
+        assert!(crosscheck.is_empty(), "all nodes should be covered");
+    }
 
     #[test]
     fn test_cluster_nodes_retransmit() {
