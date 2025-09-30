@@ -335,6 +335,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// lookup 'pubkey' in the index (in_mem or disk).
     /// call 'callback' whether found or not
+    #[cfg(test)]
     pub(super) fn get_internal_cloned<RT>(
         &self,
         pubkey: &Pubkey,
@@ -355,7 +356,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// then the disk entry *must* also be added to the in-mem cache.
     ///
     /// Prefer `get_internal_inner()` or `get_internal_cloned()` for safe alternatives.
-    pub(super) fn get_internal<RT>(
+    fn get_internal<RT>(
         &self,
         pubkey: &Pubkey,
         // return true if item should be added to in_mem cache
