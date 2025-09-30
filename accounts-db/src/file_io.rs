@@ -377,6 +377,36 @@ mod tests {
     }
 
     #[test]
+    fn test_create_writes_contents_tmpfs() -> io::Result<()> {
+        let temp_dir = tempfile::tempdir_in("/mnt/tmpfs")?;
+        let file_path = temp_dir.path().join("test.txt");
+        let contents = "Hello world".repeat(1 << 19);
+
+        // Shared state to capture callback invocations
+        let mut callback_invoked_path = None;
+
+        // Instantiate FileCreator
+        let mut creator = file_creator(2 << 20, |path| {
+            callback_invoked_path.replace(path);
+        })?;
+
+        let dir = Arc::new(File::open(temp_dir.path())?);
+        creator.schedule_create_at_dir(
+            file_path.clone(),
+            0o644,
+            dir,
+            &mut Cursor::new(contents.clone()),
+        )?;
+        creator.drain()?;
+        drop(creator);
+
+        assert_eq!(read_file_to_string(&file_path), contents);
+        assert_eq!(callback_invoked_path, Some(file_path));
+
+        Ok(())
+    }
+
+    #[test]
     fn test_multiple_file_creations() -> io::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let mut callback_counter = 0;
