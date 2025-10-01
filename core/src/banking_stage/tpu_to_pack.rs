@@ -102,20 +102,10 @@ fn handle_packet_batches(
             };
             let packet_size = packet_bytes.len();
 
-            // Allocate enough memory for the packet in the allocator.
-            let Some(allocated_ptr) = allocator.allocate(packet_size as u32) else {
-                // Failed to allocate memory for the packet, drop the rest of the batch.
-                warn!("Failed to allocate memory for packet. Dropping the rest of the batch.");
-                break 'batch_loop;
-            };
-
-            // Reserve space in the producer queue for the packet message.
-            let Some(tpu_to_pack_message) = producer.reserve() else {
-                // Free the allocated packet if we can't reserve space in the queue.
-                // SAFETY: `allocated_ptr` was allocated from `allocator`.
-                unsafe {
-                    allocator.free(allocated_ptr);
-                }
+            let Some((allocated_ptr, tpu_to_pack_message)) =
+                allocate_and_reserve_message(allocator, producer, packet_size)
+            else {
+                warn!("Failed to allocate/reserve message. Dropping the rest of the batch.");
                 break 'batch_loop;
             };
 
@@ -159,6 +149,27 @@ fn handle_packet_batches(
     // Commit the messages to the producer queue.
     // This makes the messages available to the consumer.
     producer.commit();
+}
+
+fn allocate_and_reserve_message(
+    allocator: &Allocator,
+    producer: &mut shaq::Producer<TpuToPackMessage>,
+    packet_size: usize,
+) -> Option<(NonNull<u8>, NonNull<TpuToPackMessage>)> {
+    // Allocate enough memory for the packet in the allocator.
+    let allocated_ptr = allocator.allocate(packet_size as u32)?;
+
+    // Reserve space in the producer queue for the packet message.
+    let Some(tpu_to_pack_message) = producer.reserve() else {
+        // Free the allocated packet if we can't reserve space in the queue.
+        // SAFETY: `allocated_ptr` was allocated from `allocator`.
+        unsafe {
+            allocator.free(allocated_ptr);
+        }
+        return None;
+    };
+
+    Some((allocated_ptr, tpu_to_pack_message))
 }
 
 fn flags_from_meta(flags: PacketFlags) -> u8 {
