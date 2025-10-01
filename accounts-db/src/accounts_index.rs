@@ -772,14 +772,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             if config.is_aborted() {
                 break;
             }
-            if let Some(entry) = self.get_cloned(&pubkey) {
-                self.get_account_info_with_and_then(
-                    &entry,
-                    Some(ancestors),
-                    max_root,
-                    |(slot, account_info)| func(&pubkey, (&account_info, slot)),
-                );
-            };
+            self.get_with_and_then(
+                &pubkey,
+                Some(ancestors),
+                max_root,
+                true,
+                |(slot, account_info)| func(&pubkey, (&account_info, slot)),
+            );
         }
     }
 
@@ -1067,7 +1066,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 last_bin = bin;
             }
 
-            let mut internal_callback = |entry: Option<&Arc<AccountMapEntry<T>>>| {
+            let mut internal_callback = |entry: Option<&AccountMapEntry<T>>| {
                 let mut cache = false;
                 match entry {
                     Some(locked_entry) => {
@@ -1126,7 +1125,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                     // the entry to the in-mem cache if the entry is made dirty.
                     lock.as_ref()
                         .unwrap()
-                        .get_internal(pubkey, internal_callback);
+                        .get_internal_inner(pubkey, internal_callback);
                 }
                 ScanFilter::OnlyAbnormal
                 | ScanFilter::OnlyAbnormalWithVerify
@@ -1147,11 +1146,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                                         entry = None;
                                     }
                                 }
-                                internal_callback(entry);
+                                internal_callback(entry.map(Arc::as_ref));
                                 entry.is_some()
                             });
                     if !found && matches!(filter, ScanFilter::OnlyAbnormalWithVerify) {
-                        lock.as_ref().unwrap().get_internal(pubkey, |entry| {
+                        lock.as_ref().unwrap().get_internal_inner(pubkey, |entry| {
                             assert!(entry.is_some(), "{pubkey}, entry: {entry:?}");
                             let entry = entry.unwrap();
                             assert_eq!(entry.ref_count(), 1, "{pubkey}");

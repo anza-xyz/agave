@@ -33,6 +33,7 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account = { workspace = true }
+solana-account-decoder = { workspace = true }
 solana-account-decoder-client-types = { workspace = true, features = ["zstd"] }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }

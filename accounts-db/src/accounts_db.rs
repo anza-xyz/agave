@@ -4178,44 +4178,42 @@ impl AccountsDb {
             // Notice the subtle `?` at previous line, we bail out pretty early if missing.
 
             if new_slot == slot && new_storage_location.is_store_id_equal(&storage_location) {
-                let message = format!(
-                    "Bad index entry detected ({}, {}, {:?}, {:?}, {:?}, {:?})",
-                    pubkey,
-                    slot,
-                    storage_location,
-                    load_hint,
-                    new_storage_location,
-                    self.accounts_index.get_cloned(pubkey)
-                );
-                // Considering that we've failed to get accessor above and further that
-                // the index still returned the same (slot, store_id) tuple, offset must be same
-                // too.
-                assert!(
-                    new_storage_location.is_offset_equal(&storage_location),
-                    "{message}"
-                );
+                self.accounts_index
+                    .get_and_then(pubkey, |entry| -> (_, ()) {
+                        let message = format!(
+                            "Bad index entry detected ({pubkey}, {slot}, {storage_location:?}, \
+                             {load_hint:?}, {new_storage_location:?}, {entry:?})"
+                        );
+                        // Considering that we've failed to get accessor above and further that
+                        // the index still returned the same (slot, store_id) tuple, offset must be same
+                        // too.
+                        assert!(
+                            new_storage_location.is_offset_equal(&storage_location),
+                            "{message}"
+                        );
 
-                // If the entry was missing from the cache, that means it must have been flushed,
-                // and the accounts index is always updated before cache flush, so store_id must
-                // not indicate being cached at this point.
-                assert!(!new_storage_location.is_cached(), "{message}");
+                        // If the entry was missing from the cache, that means it must have been flushed,
+                        // and the accounts index is always updated before cache flush, so store_id must
+                        // not indicate being cached at this point.
+                        assert!(!new_storage_location.is_cached(), "{message}");
 
-                // If this is not a cache entry, then this was a minor fork slot
-                // that had its storage entries cleaned up by purge_slots() but hasn't been
-                // cleaned yet. That means this must be rpc access and not replay/banking at the
-                // very least. Note that purge shouldn't occur even for RPC as caller must hold all
-                // of ancestor slots..
-                assert_eq!(load_hint, LoadHint::Unspecified, "{message}");
+                        // If this is not a cache entry, then this was a minor fork slot
+                        // that had its storage entries cleaned up by purge_slots() but hasn't been
+                        // cleaned yet. That means this must be rpc access and not replay/banking at the
+                        // very least. Note that purge shouldn't occur even for RPC as caller must hold all
+                        // of ancestor slots..
+                        assert_eq!(load_hint, LoadHint::Unspecified, "{message}");
 
-                // Everything being assert!()-ed, let's panic!() here as it's an error condition
-                // after all....
-                // That reasoning is based on the fact all of code-path reaching this fn
-                // retry_to_get_account_accessor() must outlive the Arc<Bank> (and its all
-                // ancestors) over this fn invocation, guaranteeing the prevention of being purged,
-                // first of all.
-                // For details, see the comment in AccountIndex::do_checked_scan_accounts(),
-                // which is referring back here.
-                panic!("{message}");
+                        // Everything being assert!()-ed, let's panic!() here as it's an error condition
+                        // after all....
+                        // That reasoning is based on the fact all of code-path reaching this fn
+                        // retry_to_get_account_accessor() must outlive the Arc<Bank> (and its all
+                        // ancestors) over this fn invocation, guaranteeing the prevention of being purged,
+                        // first of all.
+                        // For details, see the comment in AccountIndex::do_checked_scan_accounts(),
+                        // which is referring back here.
+                        panic!("{message}");
+                    });
             } else if fallback_to_slow_path {
                 // the above bad-index-entry check must had been checked first to retain the same
                 // behavior
@@ -6696,20 +6694,23 @@ impl AccountsDb {
                     .accounts
                     .scan_accounts_without_data(|offset, account| {
                         let key = account.pubkey();
-                        let index_entry = self.accounts_index.get_cloned(key).unwrap();
-                        let slot_list = index_entry.slot_list_read_lock();
-                        let mut count = 0;
-                        for (slot2, account_info2) in slot_list.iter() {
-                            if *slot2 == slot {
-                                count += 1;
-                                let ai = AccountInfo::new(
-                                    StorageLocation::AppendVec(store_id, offset), // will never be cached
-                                    account.is_zero_lamport(),
-                                );
-                                assert_eq!(&ai, account_info2);
+                        self.accounts_index.get_and_then(key, |entry| {
+                            let index_entry = entry.unwrap();
+                            let slot_list = index_entry.slot_list_read_lock();
+                            let mut count = 0;
+                            for (slot2, account_info2) in slot_list.iter() {
+                                if *slot2 == slot {
+                                    count += 1;
+                                    let ai = AccountInfo::new(
+                                        StorageLocation::AppendVec(store_id, offset), // will never be cached
+                                        account.is_zero_lamport(),
+                                    );
+                                    assert_eq!(&ai, account_info2);
+                                }
                             }
-                        }
-                        assert_eq!(1, count);
+                            assert_eq!(1, count);
+                            (false, ())
+                        });
                     })
                     .expect("must scan accounts storage");
             });
