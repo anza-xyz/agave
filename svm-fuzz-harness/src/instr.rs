@@ -247,7 +247,7 @@ fn execute_instr(mut input: InstrContext) -> Option<InstrEffects> {
             .configure_next_instruction_for_tests(
                 program_idx,
                 instruction_accounts,
-                &input.instruction.data,
+                input.instruction.data.to_vec(),
             )
             .unwrap();
 
