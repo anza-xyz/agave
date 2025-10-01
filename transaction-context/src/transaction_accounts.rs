@@ -13,7 +13,7 @@ use {
 
 /// An account key and the matching account
 pub type KeyedAccountSharedData = (Pubkey, AccountSharedData);
-pub(crate) type OwnedTransactionAccounts = (
+pub(crate) type DeconstructedTransactionAccounts = (
     UnsafeCell<Box<[KeyedAccountSharedData]>>,
     Box<[Cell<bool>]>,
     Cell<i64>,
@@ -142,7 +142,7 @@ impl TransactionAccounts {
         self.lamports_delta.get()
     }
 
-    pub(crate) fn take(self) -> OwnedTransactionAccounts {
+    pub(crate) fn take(self) -> DeconstructedTransactionAccounts {
         (self.accounts, self.touched_flags, self.resize_delta)
     }
 
