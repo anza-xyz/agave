@@ -1094,8 +1094,10 @@ mod tests {
 
     const MAX_RECENT_VOTES: usize = 16;
 
-    fn vote_state_new_for_test(target_version: VoteStateTargetVersion) -> VoteStateHandler {
-        let vote_pubkey = solana_pubkey::new_rand();
+    fn vote_state_new_for_test(
+        vote_pubkey: &Pubkey,
+        target_version: VoteStateTargetVersion,
+    ) -> VoteStateHandler {
         let auth_pubkey = solana_pubkey::new_rand();
         let vote_init = VoteInit {
             node_pubkey: solana_pubkey::new_rand(),
@@ -1110,7 +1112,7 @@ mod tests {
                 VoteStateHandler::new_v3(VoteStateV3::new(&vote_init, &clock))
             }
             VoteStateTargetVersion::V4 => VoteStateHandler::new_v4(
-                handler::create_new_vote_state_v4(&vote_pubkey, &vote_init, &clock),
+                handler::create_new_vote_state_v4(vote_pubkey, &vote_init, &clock),
             ),
         }
     }
@@ -1118,8 +1120,8 @@ mod tests {
     #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_vote_state_upgrade_from_1_14_11(target_version: VoteStateTargetVersion) {
-        let mut vote_state = vote_state_new_for_test(target_version);
-        let node_pubkey = *vote_state.node_pubkey();
+        let vote_pubkey = solana_pubkey::new_rand();
+        let mut vote_state = vote_state_new_for_test(&vote_pubkey, target_version);
 
         // Simulate prior epochs completed with credits and each setting a new authorized voter
         vote_state.increment_credits(0, 100);
@@ -1187,7 +1189,7 @@ mod tests {
         // vote account that was just created
         let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
-            vec![(id(), processor_account), (node_pubkey, vote_account)],
+            vec![(id(), processor_account), (vote_pubkey, vote_account)],
             rent.clone(),
             0,
             0,
@@ -1206,51 +1208,6 @@ mod tests {
         let mut borrowed_account = instruction_context
             .try_borrow_instruction_account(0)
             .unwrap();
-        let vote_pubkey = *borrowed_account.get_key();
-
-        // Closure to check expected vote state v4 fields.
-        let check_converted_vote_state_v4_fields = |converted_vote_state: &VoteStateHandler| {
-            let original_v4 = vote_state.as_ref_v4();
-            let converted_v4 = converted_vote_state.as_ref_v4();
-
-            // Inflation collector is set to the vote pubkey.
-            assert_eq!(converted_v4.inflation_rewards_collector, vote_pubkey);
-
-            // Remaining fields should be identical.
-            assert_eq!(original_v4.node_pubkey, converted_v4.node_pubkey);
-            assert_eq!(
-                original_v4.authorized_withdrawer,
-                converted_v4.authorized_withdrawer
-            );
-            assert_eq!(
-                original_v4.block_revenue_collector,
-                converted_v4.block_revenue_collector
-            );
-            assert_eq!(
-                original_v4.inflation_rewards_commission_bps,
-                converted_v4.inflation_rewards_commission_bps
-            );
-            assert_eq!(
-                original_v4.block_revenue_commission_bps,
-                converted_v4.block_revenue_commission_bps
-            );
-            assert_eq!(
-                original_v4.pending_delegator_rewards,
-                converted_v4.pending_delegator_rewards
-            );
-            assert_eq!(
-                original_v4.bls_pubkey_compressed,
-                converted_v4.bls_pubkey_compressed
-            );
-            assert_eq!(original_v4.votes, converted_v4.votes);
-            assert_eq!(original_v4.root_slot, converted_v4.root_slot);
-            assert_eq!(
-                original_v4.authorized_voters,
-                converted_v4.authorized_voters
-            );
-            assert_eq!(original_v4.epoch_credits, converted_v4.epoch_credits);
-            assert_eq!(original_v4.last_timestamp, converted_v4.last_timestamp);
-        };
 
         // Ensure that the vote state started out at 1_14_11
         let vote_state_version = borrowed_account.get_state::<VoteStateVersions>().unwrap();
@@ -1261,18 +1218,7 @@ mod tests {
             VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
 
         // Check to make sure that the vote_state is unchanged
-        match target_version {
-            VoteStateTargetVersion::V3 => {
-                // V1_14_11 and V3 share the same fields, so the vote states
-                // should be identical.
-                assert!(vote_state == converted_vote_state);
-            }
-            VoteStateTargetVersion::V4 => {
-                // V4 has fields that V1_14_11 does not have, so the vote states
-                // will vary slightly.
-                check_converted_vote_state_v4_fields(&converted_vote_state);
-            }
-        }
+        assert!(vote_state == converted_vote_state);
 
         let vote_state = converted_vote_state;
 
@@ -1306,63 +1252,7 @@ mod tests {
             VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
 
         // Check to make sure that the vote_state is unchanged
-        match target_version {
-            VoteStateTargetVersion::V3 => {
-                // V1_14_11 and V3 share the same fields, so the vote states
-                // should be identical.
-                assert!(vote_state == converted_vote_state);
-            }
-            VoteStateTargetVersion::V4 => {
-                // V4 has fields that V1_14_11 does not have, so the vote states
-                // will vary slightly.
-                check_converted_vote_state_v4_fields(&converted_vote_state);
-            }
-        }
-
-        let vote_state = converted_vote_state;
-
-        // Again, re-set the vote account state, knowing the account only has
-        // enough lamports for V1_14_11.
-        match target_version {
-            VoteStateTargetVersion::V3 => {
-                // V3 will write out as V1_14_11.
-                assert_eq!(
-                    vote_state
-                        .clone()
-                        .set_vote_account_state(&mut borrowed_account),
-                    Ok(())
-                );
-                let vote_state_version = borrowed_account.get_state::<VoteStateVersions>().unwrap();
-                assert_matches!(vote_state_version, VoteStateVersions::V1_14_11(_));
-            }
-            VoteStateTargetVersion::V4 => {
-                // V4 will throw an error.
-                assert_eq!(
-                    vote_state
-                        .clone()
-                        .set_vote_account_state(&mut borrowed_account),
-                    Err(InstructionError::AccountNotRentExempt)
-                );
-            }
-        }
-
-        // Convert the vote state to current as would occur during vote instructions
-        let converted_vote_state =
-            VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
-
-        // Check to make sure that the vote_state is unchanged
-        match target_version {
-            VoteStateTargetVersion::V3 => {
-                // V1_14_11 and V3 share the same fields, so the vote states
-                // should be identical.
-                assert!(vote_state == converted_vote_state);
-            }
-            VoteStateTargetVersion::V4 => {
-                // V4 has fields that V1_14_11 does not have, so the vote states
-                // will vary slightly.
-                check_converted_vote_state_v4_fields(&converted_vote_state);
-            }
-        }
+        assert!(vote_state == converted_vote_state);
 
         let vote_state = converted_vote_state;
 
@@ -1397,15 +1287,14 @@ mod tests {
         let converted_vote_state =
             VoteStateHandler::deserialize_and_convert(&borrowed_account, target_version).unwrap();
 
-        // Check to make sure that the vote_state is unchanged.
-        // This time, for both v3 and v4, we can compare state directly.
+        // Check to make sure that the vote_state is unchanged
         assert_eq!(vote_state, converted_vote_state);
     }
 
     #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_vote_lockout(target_version: VoteStateTargetVersion) {
-        let mut vote_state = vote_state_new_for_test(target_version);
+        let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
 
         for i in 0..(MAX_LOCKOUT_HISTORY + 1) {
             process_slot_vote_unchecked(&mut vote_state, (INITIAL_LOCKOUT * i) as u64);
@@ -1439,7 +1328,7 @@ mod tests {
     #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_update_commission(target_version: VoteStateTargetVersion) {
-        let mut vote_state = vote_state_new_for_test(target_version);
+        let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
         let node_pubkey = *vote_state.node_pubkey();
         let withdrawer_pubkey = *vote_state.authorized_withdrawer();
 
@@ -1583,7 +1472,7 @@ mod tests {
     #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_vote_double_lockout_after_expiration(target_version: VoteStateTargetVersion) {
-        let mut vote_state = vote_state_new_for_test(target_version);
+        let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
 
         for i in 0..3 {
             process_slot_vote_unchecked(&mut vote_state, i as u64);
@@ -1611,7 +1500,7 @@ mod tests {
     #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_expire_multiple_votes(target_version: VoteStateTargetVersion) {
-        let mut vote_state = vote_state_new_for_test(target_version);
+        let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
 
         for i in 0..3 {
             process_slot_vote_unchecked(&mut vote_state, i as u64);
@@ -1643,7 +1532,7 @@ mod tests {
     #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_vote_credits(target_version: VoteStateTargetVersion) {
-        let mut vote_state = vote_state_new_for_test(target_version);
+        let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
 
         for i in 0..MAX_LOCKOUT_HISTORY {
             process_slot_vote_unchecked(&mut vote_state, i as u64);
@@ -1662,7 +1551,7 @@ mod tests {
     #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_duplicate_vote(target_version: VoteStateTargetVersion) {
-        let mut vote_state = vote_state_new_for_test(target_version);
+        let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
         process_slot_vote_unchecked(&mut vote_state, 0);
         process_slot_vote_unchecked(&mut vote_state, 1);
         process_slot_vote_unchecked(&mut vote_state, 0);
@@ -1674,7 +1563,7 @@ mod tests {
     #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_nth_recent_lockout(target_version: VoteStateTargetVersion) {
-        let mut vote_state = vote_state_new_for_test(target_version);
+        let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
         for i in 0..MAX_LOCKOUT_HISTORY {
             process_slot_vote_unchecked(&mut vote_state, i as u64);
         }
@@ -1713,8 +1602,8 @@ mod tests {
     #[test_case(VoteStateTargetVersion::V3 ; "VoteStateV3")]
     #[test_case(VoteStateTargetVersion::V4 ; "VoteStateV4")]
     fn test_process_missed_votes(target_version: VoteStateTargetVersion) {
-        let mut vote_state_a = vote_state_new_for_test(target_version);
-        let mut vote_state_b = vote_state_new_for_test(target_version);
+        let mut vote_state_a = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
+        let mut vote_state_b = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
 
         // process some votes on account a
         (0..5).for_each(|i| process_slot_vote_unchecked(&mut vote_state_a, i as u64));
