@@ -43,7 +43,9 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+        runtime_transaction::RuntimeTransaction,
+        transaction_meta::StaticMeta,
+        transaction_with_meta::TransactionWithMeta,
     },
     solana_signature::Signature,
     solana_svm::{
@@ -62,6 +64,7 @@ use {
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         borrow::Cow,
+        cmp::Reverse,
         collections::{HashMap, HashSet},
         num::Saturating,
         ops::Index,
@@ -136,6 +139,48 @@ fn get_first_error<T, Tx: SVMTransaction>(
     do_get_first_error(batch, commit_results)
         .map(|(error, _signature)| error)
         .unwrap_or(Ok(()))
+}
+
+/// Sort transactions by compute_unit_price (descending), with deterministic tie-breaking by
+/// original index to ensure all validators execute in identical priority order.
+fn sort_transactions_by_priority(
+    transactions: &mut [RuntimeTransaction<SanitizedTransaction>],
+    feature_set: &FeatureSet,
+) {
+    if transactions.len() <= 1 {
+        return;
+    }
+
+    let mut indexed: Vec<_> = transactions
+        .iter()
+        .cloned()
+        .enumerate()
+        .collect();
+
+    indexed.sort_unstable_by_cached_key(|(idx, tx)| {
+        let priority = compute_transaction_priority(tx, feature_set);
+        (Reverse(priority), *idx)
+    });
+
+    for (i, (_, tx)) in indexed.into_iter().enumerate() {
+        transactions[i] = tx;
+    }
+}
+
+/// Returns compute_unit_price for priority sorting. Vote transactions return 0.
+#[inline]
+fn compute_transaction_priority(
+    tx: &RuntimeTransaction<SanitizedTransaction>,
+    feature_set: &FeatureSet,
+) -> u64 {
+    if tx.is_simple_vote_transaction() {
+        return 0;
+    }
+
+    tx.compute_budget_instruction_details()
+        .sanitize_and_convert_to_compute_budget_limits(feature_set)
+        .map(|limits| limits.compute_unit_price)
+        .unwrap_or(0)
 }
 
 fn create_thread_pool(num_threads: usize) -> ThreadPool {
