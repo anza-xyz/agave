@@ -109,39 +109,21 @@ fn handle_packet_batches(
                 break 'batch_loop;
             };
 
-            // Copy the packet data into the allocated memory.
+            // Get the offset of the allocated pointer in the allocator.
+            // SAFETY: `allocated_ptr` was allocated from `allocator`.
+            let allocated_ptr_offset_in_allocator = unsafe { allocator.offset(allocated_ptr) };
+
             // SAFETY:
             // - `allocated_ptr` is valid for `packet_size` bytes.
-            // - src and dst are valid pointers that are properly aligned
-            //   and do not overlap.
+            // - `tpu_to_pack_message` is a valid pointer to a `TpuToPackMessage`.
             unsafe {
-                allocated_ptr.copy_from_nonoverlapping(
-                    NonNull::new(packet_bytes.as_ptr().cast_mut())
-                        .expect("packet bytes must be non-null"),
-                    packet_size,
+                copy_packet_and_populate_message(
+                    packet_bytes,
+                    packet.meta(),
+                    allocated_ptr,
+                    allocated_ptr_offset_in_allocator,
+                    tpu_to_pack_message,
                 );
-            }
-
-            // Create a sharable transaction region for the packet.
-            let transaction = SharableTransactionRegion {
-                // SAFETY: `allocated_ptr` was allocated from `allocator`.
-                offset: unsafe { allocator.offset(allocated_ptr) },
-                length: packet_size as u32,
-            };
-
-            // Translate flags from meta.
-            let tpu_message_flags = flags_from_meta(packet.meta().flags);
-
-            // Get the source address of the packet - convert to expected format.
-            let src_addr = map_src_addr(packet.meta().addr);
-
-            // Populate the message and write it to the queue.
-            unsafe {
-                tpu_to_pack_message.write(TpuToPackMessage {
-                    transaction,
-                    flags: tpu_message_flags,
-                    src_addr,
-                });
             }
         }
     }
@@ -170,6 +152,51 @@ fn allocate_and_reserve_message(
     };
 
     Some((allocated_ptr, tpu_to_pack_message))
+}
+
+/// # Safety:
+/// - `allocated_ptr` must be valid for `packet_bytes.len()` bytes.
+/// - `tpu_to_pack_message` must be a valid pointer to a `TpuToPackMessage`.
+unsafe fn copy_packet_and_populate_message(
+    packet_bytes: &[u8],
+    packet_meta: &solana_packet::Meta,
+    allocated_ptr: NonNull<u8>,
+    allocated_ptr_offset_in_allocator: usize,
+    tpu_to_pack_message: NonNull<TpuToPackMessage>,
+) {
+    // Copy the packet data into the allocated memory.
+    // SAFETY:
+    // - `allocated_ptr` is valid for `packet_size` bytes.
+    // - src and dst are valid pointers that are properly aligned
+    //   and do not overlap.
+    unsafe {
+        allocated_ptr.copy_from_nonoverlapping(
+            NonNull::new(packet_bytes.as_ptr().cast_mut()).expect("packet bytes must be non-null"),
+            packet_bytes.len(),
+        );
+    }
+
+    // Create a sharable transaction region for the packet.
+    let transaction = SharableTransactionRegion {
+        offset: allocated_ptr_offset_in_allocator,
+        length: packet_bytes.len() as u32,
+    };
+
+    // Translate flags from meta.
+    let tpu_message_flags = flags_from_meta(packet_meta.flags);
+
+    // Get the source address of the packet - convert to expected format.
+    let src_addr = map_src_addr(packet_meta.addr);
+
+    // Populate the message and write it to the queue.
+    // SAFETY: `tpu_to_pack_message` is a valid pointer to a `TpuToPackMessage`.
+    unsafe {
+        tpu_to_pack_message.write(TpuToPackMessage {
+            transaction,
+            flags: tpu_message_flags,
+            src_addr,
+        });
+    }
 }
 
 fn flags_from_meta(flags: PacketFlags) -> u8 {
