@@ -244,3 +244,38 @@ unsafe fn setup(
 
     Some((allocator, producer))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_flags_from_meta() {
+        assert_eq!(
+            flags_from_meta(PacketFlags::empty()),
+            tpu_message_flags::NONE
+        );
+        assert_eq!(
+            flags_from_meta(PacketFlags::SIMPLE_VOTE_TX),
+            tpu_message_flags::IS_SIMPLE_VOTE
+        );
+        assert_eq!(
+            flags_from_meta(PacketFlags::FORWARDED),
+            tpu_message_flags::FORWARDED
+        );
+        assert_eq!(
+            flags_from_meta(PacketFlags::FROM_STAKED_NODE),
+            tpu_message_flags::FROM_STAKED_NODE
+        );
+        assert_eq!(
+            flags_from_meta(
+                PacketFlags::SIMPLE_VOTE_TX
+                    | PacketFlags::FORWARDED
+                    | PacketFlags::FROM_STAKED_NODE
+            ),
+            tpu_message_flags::IS_SIMPLE_VOTE
+                | tpu_message_flags::FORWARDED
+                | tpu_message_flags::FROM_STAKED_NODE
+        );
+    }
+}
