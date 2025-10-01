@@ -62,12 +62,11 @@ fn tpu_to_pack(
         vec![non_vote_receiver].into_iter().cycle()
     };
 
-    while exit.load(Ordering::Relaxed) {
+    while !exit.load(Ordering::Relaxed) {
         // Receive packets from the next receiver in round-robin order.
-        let Ok(packet_batches) = round_robin_receiver_iter.next().unwrap().try_recv() else {
-            continue;
+        if let Ok(packet_batches) = round_robin_receiver_iter.next().unwrap().try_recv() {
+            handle_packet_batches(&allocator, &mut producer, packet_batches);
         };
-        handle_packet_batches(&allocator, &mut producer, packet_batches);
     }
 }
 
