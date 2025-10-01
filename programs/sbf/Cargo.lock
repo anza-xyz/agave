@@ -7994,6 +7994,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "solana-account",
+ "solana-account-decoder",
  "solana-account-decoder-client-types",
  "solana-clock",
  "solana-commitment-config",
