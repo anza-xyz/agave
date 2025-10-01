@@ -218,7 +218,7 @@ impl RecordReceiver {
     }
 
     /// Channel is empty and there are no active threads attempting to send.
-    pub fn is_empty(&self) -> bool {
+    pub fn is_safe_to_restart(&self) -> bool {
         // The order here is important. active_senders must be checked first.
         // If checked after is_empty, we could have a race:
         // 1) sender has not sent yet, active_senders = 1. is_empty = true.
@@ -382,9 +382,9 @@ mod tests {
 
         // Receive 1 record.
         assert!(receiver.try_recv().is_ok());
-        assert!(!receiver.is_empty());
+        assert!(!receiver.is_safe_to_restart());
         assert!(receiver.try_recv().is_ok());
-        assert!(receiver.is_empty());
+        assert!(receiver.is_safe_to_restart());
     }
 
     #[test]
@@ -473,7 +473,7 @@ mod tests {
         receiver.restart(current_slot);
         let mut receives = 0;
         while receives < 10_000_000 {
-            if receiver.is_shutdown() && receiver.is_empty() {
+            if receiver.is_shutdown() && receiver.is_safe_to_shutdown() {
                 current_slot += 1;
                 receiver.restart(current_slot);
             }

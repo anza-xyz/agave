@@ -203,7 +203,7 @@ impl PohService {
                     "channel should be shutdown if last tick of slot"
                 );
                 if remaining_tick_time.is_zero()
-                    && (!last_tick_of_slot || record_receiver.is_empty())
+                    && (!last_tick_of_slot || record_receiver.is_safe_to_restart())
                 {
                     last_tick = Instant::now();
                     poh_recorder.write().unwrap().tick();
@@ -235,7 +235,7 @@ impl PohService {
         }
 
         record_receiver.shutdown();
-        while !record_receiver.is_empty() {
+        while !record_receiver.is_safe_to_restart() {
             Self::read_record_receiver_and_process(
                 &poh_recorder,
                 &mut record_receiver,
@@ -316,7 +316,7 @@ impl PohService {
                     "channel should be shutdown if last tick of slot"
                 );
                 if remaining_tick_time.is_zero()
-                    && (!last_tick_of_slot || record_receiver.is_empty())
+                    && (!last_tick_of_slot || record_receiver.is_safe_to_restart())
                 {
                     last_tick = Instant::now();
                     poh_recorder.write().unwrap().tick();
@@ -353,7 +353,7 @@ impl PohService {
         }
 
         record_receiver.shutdown();
-        while !record_receiver.is_empty() {
+        while !record_receiver.is_safe_to_restart() {
             Self::read_record_receiver_and_process(
                 &poh_recorder,
                 &mut record_receiver,
@@ -553,7 +553,7 @@ impl PohService {
             }
 
             // If exit signal is set and there are no more records to process, exit.
-            if should_exit && record_receiver.is_empty() {
+            if should_exit && record_receiver.is_safe_to_restart() {
                 break;
             }
         }
@@ -610,7 +610,7 @@ impl PohService {
         service_message: &Option<PohServiceMessageGuard>,
         record_receiver: &RecordReceiver,
     ) -> bool {
-        service_message.is_none() || record_receiver.is_empty()
+        service_message.is_none() || record_receiver.is_safe_to_restart()
     }
 
     pub fn join(self) -> thread::Result<()> {
