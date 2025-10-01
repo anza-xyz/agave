@@ -1193,7 +1193,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                 let mut ref_count = v.ref_count();
                                 if ref_count != 1 {
                                     v.set_dirty(true);
-                                    break;
+                                    return None;
                                 }
 
                                 // Re-acquire the slot list lock just before disk write to minimize lock contention
