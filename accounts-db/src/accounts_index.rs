@@ -776,7 +776,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 &pubkey,
                 Some(ancestors),
                 max_root,
-                false,
+                true,
                 |(slot, account_info)| func(&pubkey, (&account_info, slot)),
             );
         }
