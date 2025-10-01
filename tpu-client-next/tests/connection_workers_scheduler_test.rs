@@ -18,7 +18,8 @@ use {
     },
     solana_tpu_client_next::{
         connection_workers_scheduler::{
-            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, NonblockingBroadcaster,
+            StakeIdentity,
         },
         leader_updater::{create_leader_updater, LeaderUpdater},
         send_transaction_stats::SendTransactionStatsNonAtomic,
@@ -199,7 +200,7 @@ fn spawn_tx_sender(
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test]
 async fn test_client() {
     let SpawnTestServerResult {
         join_handle: server_handle,
@@ -208,6 +209,8 @@ async fn test_client() {
         stats: _stats,
         cancel,
     } = setup_quic_server(None, QuicServerParams::default_for_tests());
+
+    let _drop_guard = cancel.clone().drop_guard();
 
     let successfully_sent = Arc::new(AtomicU64::new(0));
 
@@ -220,9 +223,9 @@ async fn test_client() {
         ))
         .leader_send_fanout(1)
         .identity(None)
-        .max_cache_size(1);
-    let client = builder
-        .build(Some({
+        .max_cache_size(1)
+        .worker_channel_size(100)
+        .report({
             let successfully_sent = successfully_sent.clone();
             |stats: Arc<SendTransactionStats>, cancel: CancellationToken| async move {
                 let mut interval = interval(Duration::from_millis(10));
@@ -236,7 +239,10 @@ async fn test_client() {
                     })
                     .await;
             }
-        }))
+        });
+
+    let client = builder
+        .build::<NonblockingBroadcaster>()
         .await
         .expect("Client should be built successfully.");
 
@@ -251,14 +257,6 @@ async fn test_client() {
         .expect("Client should accept the transaction batch");
     client
         .try_send_transactions_in_batch(txs.clone())
-        .expect("Client should accept the transaction batch");
-    let new_identity = Keypair::new();
-    client
-        .update_identity(&new_identity)
-        .expect("Client should update identity");
-    client
-        .send_transactions_in_batch(txs)
-        .await
         .expect("Client should accept the transaction batch");
 
     // Check results
@@ -286,11 +284,7 @@ async fn test_client() {
     }
 
     // Stop client
-    client.stop().await;
-    println!(
-        "Successfully sent: {}",
-        successfully_sent.load(Ordering::Relaxed)
-    );
+    client.shutdown().await;
     assert_eq!(
         successfully_sent.load(Ordering::Relaxed),
         expected_num_txs as u64

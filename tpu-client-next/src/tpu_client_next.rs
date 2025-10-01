@@ -7,13 +7,40 @@
 //!
 //! # Example
 //!
-//! ```rust
-//!
+//! ```rust, no_run
+//!  let builder = ClientBuilder::with_leader_updater(leader_updater)
+//!        .cancel_token(cancel.child_token())
+//!        .bind_addr(SocketAddr::new(
+//!            IpAddr::V4(Ipv4Addr::LOCALHOST),
+//!            0u16
+//!        ))
+//!        .leader_send_fanout(2)
+//!        .identity(&identity_keypair)
+//!        .max_cache_size(128);
+//!        .report({
+//!            let successfully_sent = successfully_sent.clone();
+//!            |stats: Arc<SendTransactionStats>, cancel: CancellationToken| async move {
+//!                let mut interval = interval(Duration::from_millis(10));
+//!                cancel
+//!                    .run_until_cancelled(async {
+//!                        loop {
+//!                            interval.tick().await;
+//!                            let view = stats.read_and_reset();
+//!                            successfully_sent.fetch_add(view.successfully_sent, Ordering::Relaxed);
+//!                        }
+//!                    })
+//!                    .await;
+//!            }
+//!        });
+//!    let client = builder
+//!        .build::<NonblockingBroadcaster>()
+//!        .await
+//!        .expect("Client should be built successfully.");
 //! ```
 use {
     crate::{
         connection_workers_scheduler::{
-            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity, WorkersBroadcaster,
         },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
@@ -23,6 +50,7 @@ use {
     std::{
         future::Future,
         net::{SocketAddr, UdpSocket},
+        pin::Pin,
         sync::Arc,
     },
     thiserror::Error,
@@ -30,7 +58,7 @@ use {
     tokio_util::{sync::CancellationToken, task::TaskTracker},
 };
 
-/// [`Client`]
+/// TODO(klykov) Documentation to be added when we agree on general API.
 #[derive(Clone)]
 pub struct Client {
     sender: mpsc::Sender<TransactionBatch>,
@@ -49,6 +77,7 @@ pub struct ClientBuilder {
     input_channel_size: usize,
     worker_channel_size: usize,
     max_reconnect_attempts: usize,
+    report_fn: Option<ReportFn>,
     cancel: CancellationToken,
 }
 
@@ -64,6 +93,7 @@ impl ClientBuilder {
             worker_channel_size: 2,
             input_channel_size: 64,
             max_reconnect_attempts: 2,
+            report_fn: None,
             cancel: CancellationToken::new(),
         }
     }
@@ -98,13 +128,26 @@ impl ClientBuilder {
         self
     }
 
-    /// TODO(klykov): API-wise, it is also possible to split the result into Sender (to
-    /// send txs) and Client which will be background task running the
-    /// scheduler. Not sure if we need this flexibility.
-    pub async fn build<F, Fut>(self, report_fn: Option<F>) -> Result<Client, ClientBuilderError>
+    pub fn worker_channel_size(mut self, size: usize) -> Self {
+        self.worker_channel_size = size;
+        self
+    }
+
+    pub fn report<F, Fut>(mut self, f: F) -> Self
     where
         F: FnOnce(Arc<SendTransactionStats>, CancellationToken) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.report_fn = Some(Box::new(move |stats, cancel| Box::pin(f(stats, cancel))));
+        self
+    }
+
+    /// TODO(klykov): API-wise, it is also possible to split the result into Sender (to
+    /// send txs) and Client which will be background task running the
+    /// scheduler. Not sure if we need this flexibility.
+    pub async fn build<Broadcaster>(self) -> Result<Client, ClientBuilderError>
+    where
+        Broadcaster: WorkersBroadcaster + 'static,
     {
         let bind = self.bind_target.ok_or(ClientBuilderError::Misconfigured)?;
         let (sender, receiver) = mpsc::channel(self.input_channel_size);
@@ -132,12 +175,12 @@ impl ClientBuilder {
             self.cancel.clone(),
         );
         let tasks = TaskTracker::new();
-        if let Some(report_fn) = report_fn {
+        if let Some(report_fn) = self.report_fn {
             let stats = scheduler.get_stats();
             let cancel = self.cancel.clone();
             tasks.spawn(report_fn(stats, cancel));
         }
-        tasks.spawn(scheduler.run(config));
+        tasks.spawn(scheduler.run_with_broadcaster::<Broadcaster>(config));
         tasks.close();
         Ok(Client {
             sender,
@@ -147,6 +190,15 @@ impl ClientBuilder {
         })
     }
 }
+
+pub type ReportFn = Box<
+    dyn FnOnce(
+            Arc<SendTransactionStats>,
+            CancellationToken,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
 
 impl Client {
     pub async fn send_transactions_in_batch(
@@ -173,15 +225,25 @@ impl Client {
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     }
 
-    pub async fn stop(&self) {
+    pub async fn shutdown(self) {
         self.cancel.cancel();
+        drop(self.sender);
+        drop(self.update_certificate_sender);
         self.tasks.wait().await;
     }
 }
 
-/// Represents [`Builder`] errors.
+/// Represents [`ClientBuilder`] errors.
 #[derive(Debug, Error)]
 pub enum ClientBuilderError {
+    /// Error during building client.
+    #[error("ClientBuilder is misconfigured.")]
+    Misconfigured,
+}
+
+/// Represents [`Client`] errors.
+#[derive(Debug, Error)]
+pub enum ClientError {
     /// Error during building client.
     #[error("ClientBuilder is misconfigured.")]
     Misconfigured,

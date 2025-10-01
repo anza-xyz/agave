@@ -326,6 +326,7 @@ fn build_client_config(stake_identity: Option<&StakeIdentity>) -> ClientConfig {
 /// [`NonblockingBroadcaster`] attempts to immediately send transactions to all
 /// the workers. If worker cannot accept transactions because it's channel is
 /// full, the transactions will not be sent to this worker.
+#[cfg_attr(feature = "agave-unstable-api", qualifiers(pub))]
 struct NonblockingBroadcaster;
 
 #[async_trait]
