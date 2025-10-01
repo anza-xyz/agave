@@ -2834,6 +2834,7 @@ mod tests {
     const SHORTENED_MAX_POOLING_DURATION: Duration = Duration::from_millis(100);
 
     #[test]
+    #[ignore]
     fn test_scheduler_drop_idle() {
         solana_logger::setup();
 

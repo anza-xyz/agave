@@ -33,8 +33,10 @@ macro_rules! u64_align {
     };
 }
 
-#[derive(Error, Debug)]
+pub type Result<T> = std::result::Result<T, AccountsFileError>;
+
 /// An enum for AccountsFile related errors.
+#[derive(Error, Debug)]
 pub enum AccountsFileError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -55,8 +57,6 @@ pub enum StorageAccess {
     #[default]
     File,
 }
-
-pub type Result<T> = std::result::Result<T, AccountsFileError>;
 
 #[derive(Debug)]
 /// An enum for accessing an accounts file which can be implemented
@@ -115,9 +115,10 @@ impl AccountsFile {
     /// Flushes contents to disk
     pub fn flush(&self) -> Result<()> {
         match self {
-            Self::AppendVec(av) => av.flush(),
-            Self::TieredStorage(_) => Ok(()),
+            Self::AppendVec(av) => av.flush()?,
+            Self::TieredStorage(_) => {}
         }
+        Ok(())
     }
 
     pub fn remaining_bytes(&self) -> u64 {
@@ -258,14 +259,14 @@ impl AccountsFile {
         callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
     ) -> Result<()> {
         match self {
-            Self::AppendVec(av) => av.scan_accounts_without_data(callback),
+            Self::AppendVec(av) => av.scan_accounts_without_data(callback)?,
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
                     reader.scan_accounts_without_data(callback)?;
                 }
-                Ok(())
             }
         }
+        Ok(())
     }
 
     /// Iterate over all accounts and call `callback` with each account.
@@ -282,14 +283,14 @@ impl AccountsFile {
         callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
     ) -> Result<()> {
         match self {
-            Self::AppendVec(av) => av.scan_accounts(reader, callback),
+            Self::AppendVec(av) => av.scan_accounts(reader, callback)?,
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
                     reader.scan_accounts(callback)?;
                 }
-                Ok(())
             }
         }
+        Ok(())
     }
 
     /// Iterate over all accounts and call `callback` with each account.
@@ -303,11 +304,12 @@ impl AccountsFile {
     ) -> Result<()> {
         let mut reader = append_vec::new_scan_accounts_reader();
         match self {
-            Self::AppendVec(av) => av.scan_accounts_stored_meta(&mut reader, callback),
+            Self::AppendVec(av) => av.scan_accounts_stored_meta(&mut reader, callback)?,
             Self::TieredStorage(_) => {
                 unimplemented!("StoredAccountMeta is only implemented for AppendVec")
             }
         }
+        Ok(())
     }
 
     /// Calculate the amount of storage required for an account with the passed
@@ -336,14 +338,14 @@ impl AccountsFile {
     /// iterate over all pubkeys
     pub fn scan_pubkeys(&self, callback: impl FnMut(&Pubkey)) -> Result<()> {
         match self {
-            Self::AppendVec(av) => av.scan_pubkeys(callback),
+            Self::AppendVec(av) => av.scan_pubkeys(callback)?,
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
                     reader.scan_pubkeys(callback)?;
                 }
-                Ok(())
             }
         }
+        Ok(())
     }
 
     /// Copy each account metadata, account and hash to the internal buffer.
