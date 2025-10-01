@@ -772,17 +772,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             if config.is_aborted() {
                 break;
             }
-            self.get_and_then(&pubkey, |entry| {
-                if let Some(entry) = entry {
-                    self.get_account_info_with_and_then(
-                        entry,
-                        Some(ancestors),
-                        max_root,
-                        |(slot, account_info)| func(&pubkey, (&account_info, slot)),
-                    );
-                }
-                (false, ())
-            });
+            self.get_with_and_then(
+                &pubkey,
+                Some(ancestors),
+                max_root,
+                false,
+                |(slot, account_info)| func(&pubkey, (&account_info, slot)),
+            );
         }
     }
 
