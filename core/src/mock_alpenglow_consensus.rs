@@ -42,6 +42,14 @@ const NUM_VOTE_ROUNDS: Slot = 4;
 /// rough upper bound of number of testnet validators to avoid allocations
 const NUM_TESTNET_VALIDATORS: usize = 1024 * 3;
 
+// Configure maximal transmission rate to be ~ 100 KPPS.
+// On average we have ~2000 destinations, so overall broadcast should
+// take at most 20 ms.
+/// Max packets to send in one batch
+const MAX_PACKETS_PER_BATCH: usize = 200;
+/// Interval between batches
+const PACING_INTERVAL: Duration = Duration::from_millis(2);
+
 /// This is a placeholder that is only used for load-testing.
 /// This is not representative of the actual alpenglow implementation.
 pub(crate) struct MockAlpenglowConsensus {
@@ -505,8 +513,12 @@ impl MockAlpenglowConsensus {
                     );
                 }
             }
-            // broadcast to everybody at once
-            let _ = batch_send(&socket, send_instructions);
+            // broadcast to everybody, but in small batches to avoid correlated packet bursts
+            for batch in send_instructions.as_slice().chunks(MAX_PACKETS_PER_BATCH) {
+                // this does not clone the Vec with bytes, only the tuples with references
+                let _ = batch_send(&socket, batch.iter().copied());
+                thread::sleep(PACING_INTERVAL);
+            }
         }
     }
 
