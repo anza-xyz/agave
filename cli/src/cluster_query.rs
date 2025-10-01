@@ -11,7 +11,7 @@ use {
     console::style,
     crossbeam_channel::unbounded,
     serde::{Deserialize, Serialize},
-    solana_account::{from_account, state_traits::StateMut},
+    solana_account::{from_account, state_traits::StateMut, Account},
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         input_parsers::*,
@@ -1886,7 +1886,7 @@ pub fn process_show_stakes(
     }
 
     let all_stake_accounts = rpc_client
-        .get_program_accounts_with_config(&stake::program::id(), program_accounts_config)?;
+        .get_program_ui_accounts_with_config(&stake::program::id(), program_accounts_config)?;
     let stake_history_account = rpc_client.get_account(&stake_history::id())?;
     let clock_account = rpc_client.get_account(&sysvar::clock::id())?;
     let clock: Clock = from_account(&clock_account).ok_or_else(|| {
@@ -1902,7 +1902,11 @@ pub fn process_show_stakes(
     stake_account_progress_bar.finish_and_clear();
 
     let mut stake_accounts: Vec<CliKeyedStakeState> = vec![];
-    for (stake_pubkey, stake_account) in all_stake_accounts {
+    for (stake_pubkey, stake_ui_account) in all_stake_accounts {
+        let stake_account: Account = stake_ui_account.decode().expect(
+            "It should be impossible at this point for the account data not to be decodable. \
+             Ensure that the account was fetched using a binary encoding.",
+        );
         if let Ok(stake_state) = stake_account.state() {
             match stake_state {
                 StakeStateV2::Initialized(_) => {
