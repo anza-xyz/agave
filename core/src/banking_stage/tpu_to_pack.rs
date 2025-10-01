@@ -151,12 +151,17 @@ fn handle_packet_batches(
 
 fn flags_from_meta(flags: PacketFlags) -> u8 {
     let mut tpu_message_flags = 0;
-    tpu_message_flags |=
-        tpu_message_flags::IS_SIMPLE_VOTE * u8::from(flags.contains(PacketFlags::SIMPLE_VOTE_TX));
-    tpu_message_flags |=
-        tpu_message_flags::FORWARDED * u8::from(flags.contains(PacketFlags::FORWARDED));
-    tpu_message_flags |= tpu_message_flags::FROM_STAKED_NODE
-        * u8::from(flags.contains(PacketFlags::FROM_STAKED_NODE));
+
+    if flags.contains(PacketFlags::SIMPLE_VOTE_TX) {
+        tpu_message_flags |= tpu_message_flags::IS_SIMPLE_VOTE;
+    }
+    if flags.contains(PacketFlags::FORWARDED) {
+        tpu_message_flags |= tpu_message_flags::FORWARDED;
+    }
+    if flags.contains(PacketFlags::FROM_STAKED_NODE) {
+        tpu_message_flags |= tpu_message_flags::FROM_STAKED_NODE;
+    }
+
     tpu_message_flags
 }
 
