@@ -86,10 +86,10 @@ fn handle_packet_batches(
     'batch_loop: for batch in packet_batches.iter() {
         for packet in batch.iter() {
             // Check if the packet is valid and get the bytes.
-            let packet_size = packet.meta().size;
-            let Some(packet_bytes) = packet.data(..packet_size) else {
+            let Some(packet_bytes) = packet.data(..) else {
                 continue;
             };
+            let packet_size = packet_bytes.len();
 
             // Allocate enough memory for the packet in the allocator.
             let Some(allocated_ptr) = allocator.allocate(packet_size as u32) else {
