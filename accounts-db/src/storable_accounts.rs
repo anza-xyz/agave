@@ -362,7 +362,6 @@ pub mod tests {
             account_info::{AccountInfo, StorageLocation},
             accounts_db::{get_temp_accounts_paths, AccountStorageEntry},
             accounts_file::AccountsFileProvider,
-            append_vec::{AccountMeta, StoredAccountMeta, StoredMeta},
         },
         rand::Rng,
         solana_account::{accounts_equal, AccountSharedData, WritableAccount},
@@ -400,29 +399,21 @@ pub mod tests {
     /// this is used in the test for generation of storages
     /// this is no longer used in the validator.
     /// It is very tricky to get these right. There are already tests for this. It is likely worth it to leave this here for a while until everything has settled.
-    impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>]) {
+    impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountInfo<'a>]) {
         fn account<Ret>(
             &self,
             index: usize,
             mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
         ) -> Ret {
-            let stored_account_meta = self.1[index];
-            let stored_account_info = StoredAccountInfo {
-                pubkey: stored_account_meta.pubkey(),
-                lamports: stored_account_meta.lamports(),
-                owner: stored_account_meta.owner(),
-                data: stored_account_meta.data(),
-                executable: stored_account_meta.executable(),
-                rent_epoch: stored_account_meta.rent_epoch(),
-            };
-            let account_for_storage = AccountForStorage::StoredAccountInfo(&stored_account_info);
+            let stored_account_info = self.1[index];
+            let account_for_storage = AccountForStorage::StoredAccountInfo(stored_account_info);
             callback(account_for_storage)
         }
         fn is_zero_lamport(&self, index: usize) -> bool {
             self.1[index].is_zero_lamport()
         }
         fn data_len(&self, index: usize) -> usize {
-            self.1[index].data_len()
+            self.1[index].data.len()
         }
         fn pubkey(&self, index: usize) -> &Pubkey {
             self.1[index].pubkey()
@@ -474,30 +465,22 @@ pub mod tests {
 
     /// this is no longer used. It is very tricky to get these right. There are already tests for this. It is likely worth it to leave this here for a while until everything has settled.
     /// this tuple contains a single different source slot that applies to all accounts
-    /// accounts are StoredAccountMeta
-    impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>], Slot) {
+    /// accounts are StoredAccountInfo
+    impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountInfo<'a>], Slot) {
         fn account<Ret>(
             &self,
             index: usize,
             mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
         ) -> Ret {
-            let stored_account_meta = self.1[index];
-            let stored_account_info = StoredAccountInfo {
-                pubkey: stored_account_meta.pubkey(),
-                lamports: stored_account_meta.lamports(),
-                owner: stored_account_meta.owner(),
-                data: stored_account_meta.data(),
-                executable: stored_account_meta.executable(),
-                rent_epoch: stored_account_meta.rent_epoch(),
-            };
-            let account_for_storage = AccountForStorage::StoredAccountInfo(&stored_account_info);
+            let stored_account_info = self.1[index];
+            let account_for_storage = AccountForStorage::StoredAccountInfo(stored_account_info);
             callback(account_for_storage)
         }
         fn is_zero_lamport(&self, index: usize) -> bool {
             self.1[index].is_zero_lamport()
         }
         fn data_len(&self, index: usize) -> usize {
-            self.1[index].data_len()
+            self.1[index].data.len()
         }
         fn pubkey(&self, index: usize) -> &Pubkey {
             self.1[index].pubkey()
@@ -531,48 +514,22 @@ pub mod tests {
     #[test]
     fn test_contains_multiple_slots() {
         let db = AccountsDb::new_single_for_tests();
-        let pk = Pubkey::from([1; 32]);
         let slot = 0;
-        let lamports = 1;
-        let owner = Pubkey::default();
-        let executable = false;
-        let rent_epoch = 0;
-        let meta = StoredMeta {
-            write_version_obsolete: 5,
-            pubkey: pk,
-            data_len: 7,
+        let storage_id = 0; // does not matter
+        let offset = 0; // does not matter
+        let account_from_storage = AccountFromStorage {
+            index_info: AccountInfo::new(
+                StorageLocation::AppendVec(storage_id, offset),
+                false, // does not matter
+            ),
+            data_len: 7, // does not matter
+            pubkey: Pubkey::new_unique(),
         };
-        let account_meta = AccountMeta {
-            lamports,
-            owner,
-            executable,
-            rent_epoch,
-        };
-        let data = Vec::default();
-        let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
-        let stored_size = 101;
-        let stored_account = StoredAccountMeta {
-            meta: &meta,
-            account_meta: &account_meta,
-            data: &data,
-            offset,
-            stored_size,
-        };
-
-        let account_from_storage = AccountFromStorage::new(&stored_account);
 
         let accounts = [&account_from_storage, &account_from_storage];
         let accounts2 = [(slot, &accounts[..])];
         let test3 = StorableAccountsBySlot::new(slot, &accounts2[..], &db);
         assert!(!test3.contains_multiple_slots());
-    }
-
-    pub fn build_accounts_from_storage<'a>(
-        accounts: impl Iterator<Item = &'a StoredAccountMeta<'a>>,
-    ) -> Vec<AccountFromStorage> {
-        accounts
-            .map(|account| AccountFromStorage::new(account))
-            .collect()
     }
 
     #[test]
@@ -582,7 +539,6 @@ pub mod tests {
             for entries in 0..2 {
                 for starting_slot in 0..max_slots {
                     let db = AccountsDb::new_single_for_tests();
-                    let data = Vec::default();
                     let mut raw = Vec::new();
                     let mut raw2 = Vec::new();
                     let mut raw4 = Vec::new();
@@ -596,37 +552,35 @@ pub mod tests {
                             0,
                         );
 
-                        raw.push((
-                            pk,
-                            account.clone(),
-                            starting_slot % max_slots,
-                            StoredMeta {
-                                write_version_obsolete: 0, // just something
-                                pubkey: pk,
-                                data_len: u64::MAX, // just something
-                            },
-                            AccountMeta {
-                                lamports: account.lamports(),
-                                owner: *account.owner(),
-                                executable: account.executable(),
-                                rent_epoch: account.rent_epoch(),
-                            },
-                        ));
+                        raw.push((pk, account.clone(), starting_slot % max_slots));
                     }
                     for entry in 0..entries {
-                        let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
-                        let stored_size = 101;
                         let raw = &raw[entry as usize];
-                        raw2.push(StoredAccountMeta {
-                            meta: &raw.3,
-                            account_meta: &raw.4,
-                            data: &data,
-                            offset,
-                            stored_size,
+                        raw2.push(StoredAccountInfo {
+                            pubkey: &raw.0,
+                            lamports: raw.1.lamports(),
+                            owner: raw.1.owner(),
+                            data: raw.1.data(),
+                            executable: raw.1.executable(),
+                            rent_epoch: raw.1.rent_epoch(),
                         });
                         raw4.push((raw.0, raw.1.clone()));
                     }
-                    let raw2_accounts_from_storage = build_accounts_from_storage(raw2.iter());
+                    let raw2_accounts_from_storage: Vec<_> = raw2
+                        .iter()
+                        .map(|account| {
+                            let storage_id = 0; // does not matter
+                            let offset = 0; // does not matter
+                            AccountFromStorage {
+                                index_info: AccountInfo::new(
+                                    StorageLocation::AppendVec(storage_id, offset),
+                                    account.is_zero_lamport(),
+                                ),
+                                data_len: account.data.len() as u64,
+                                pubkey: *account.pubkey,
+                            }
+                        })
+                        .collect();
 
                     let mut two = Vec::new();
                     let mut three = Vec::new();
@@ -718,7 +672,6 @@ pub mod tests {
     #[test]
     fn test_storable_accounts_by_slot() {
         for entries in 0..6 {
-            let data = Vec::default();
             let mut raw = Vec::new();
             let mut raw2 = Vec::new();
             for entry in 0..entries {
@@ -730,39 +683,36 @@ pub mod tests {
                     false,
                     0,
                 );
-                raw.push((
-                    pk,
-                    account.clone(),
-                    StoredMeta {
-                        write_version_obsolete: 500 + (entry * 3) as u64, // just something
-                        pubkey: pk,
-                        data_len: (entry * 2) as u64, // just something
-                    },
-                    AccountMeta {
-                        lamports: account.lamports(),
-                        owner: *account.owner(),
-                        executable: account.executable(),
-                        rent_epoch: account.rent_epoch(),
-                    },
-                ));
+                raw.push((pk, account.clone()));
             }
 
             for entry in 0..entries {
-                let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
-                let stored_size = 101;
-                raw2.push(StoredAccountMeta {
-                    meta: &raw[entry as usize].2,
-                    account_meta: &raw[entry as usize].3,
-                    data: &data,
-                    offset,
-                    stored_size,
+                let raw = &raw[entry as usize];
+                raw2.push(StoredAccountInfo {
+                    pubkey: &raw.0,
+                    lamports: raw.1.lamports(),
+                    owner: raw.1.owner(),
+                    data: raw.1.data(),
+                    executable: raw.1.executable(),
+                    rent_epoch: raw.1.rent_epoch(),
                 });
             }
 
-            let raw2_account_from_storage = raw2
+            let raw2_accounts_from_storage: Vec<_> = raw2
                 .iter()
-                .map(|account| AccountFromStorage::new(account))
-                .collect::<Vec<_>>();
+                .map(|account| {
+                    let storage_id = 0; // does not matter
+                    let offset = 0; // does not matter
+                    AccountFromStorage {
+                        index_info: AccountInfo::new(
+                            StorageLocation::AppendVec(storage_id, offset),
+                            account.is_zero_lamport(),
+                        ),
+                        data_len: account.data.len() as u64,
+                        pubkey: *account.pubkey,
+                    }
+                })
+                .collect();
             let raw2_refs = raw2.iter().collect::<Vec<_>>();
 
             // enumerate through permutations of # entries (ie. accounts) in each slot. Each one is 0..=entries.
@@ -785,7 +735,7 @@ pub mod tests {
                                 (overall_index < raw2.len()).then(|| {
                                     let range = overall_index..(overall_index + count);
                                     let mut result =
-                                        raw2_account_from_storage[range.clone()].to_vec();
+                                        raw2_accounts_from_storage[range.clone()].to_vec();
                                     // since we're no longer storing `StoredAccountMeta`, we have to actually store the
                                     // accounts so they can be looked up later in `db`
                                     let storage = setup_sample_storage(&db, slot);
@@ -842,22 +792,17 @@ pub mod tests {
     #[test]
     fn test_find_internal_index() {
         let db = AccountsDb::new_single_for_tests();
-        let account_from_storage = AccountFromStorage::new(&StoredAccountMeta {
-            meta: &StoredMeta {
-                write_version_obsolete: 0,
-                pubkey: Pubkey::new_unique(),
-                data_len: 0,
-            },
-            account_meta: &AccountMeta {
-                lamports: 0,
-                owner: Pubkey::new_unique(),
-                executable: false,
-                rent_epoch: 0,
-            },
-            data: &[],
-            offset: 0,
-            stored_size: 0,
-        });
+        let storage_id = 0; // does not matter
+        let offset = 0; // does not matter
+        let account = AccountSharedData::default();
+        let account_from_storage = AccountFromStorage {
+            index_info: AccountInfo::new(
+                StorageLocation::AppendVec(storage_id, offset),
+                account.is_zero_lamport(),
+            ),
+            data_len: account.data().len() as u64,
+            pubkey: Pubkey::new_unique(),
+        };
 
         let mut slot_accounts = Vec::new();
         let mut all_accounts = Vec::new();
