@@ -917,7 +917,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     fn should_evict_from_mem(
         &self,
         current_age: Age,
-        entry: &Arc<AccountMapEntry<T>>,
+        entry: &AccountMapEntry<T>,
         startup: bool,
         update_stats: bool,
         ages_flushing_now: Age,
