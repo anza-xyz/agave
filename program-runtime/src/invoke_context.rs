@@ -16,7 +16,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
-        elf::Executable,
+        elf::Executable as GenericExecutable,
         error::{EbpfError, ProgramResult},
         memory_region::MemoryMapping,
         program::{BuiltinFunction, SBPFVersion},
@@ -45,6 +45,8 @@ use {
 };
 
 pub type BuiltinFunctionWithContext = BuiltinFunction<InvokeContext<'static>>;
+pub type Executable = GenericExecutable<InvokeContext<'static>>;
+pub type RegisterTrace<'a> = &'a [[u64; 12]];
 
 /// Adapter so we can unify the interfaces of built-in programs and syscalls
 #[macro_export]
@@ -742,7 +744,7 @@ impl<'a> InvokeContext<'a> {
     /// Iterates over all VM register traces (including CPI)
     pub fn iterate_vm_traces(
         &self,
-        callback: &dyn Fn(InstructionContext, &Executable<InvokeContext<'static>>, &[[u64; 12]]),
+        callback: &dyn Fn(InstructionContext, &Executable, RegisterTrace),
     ) {
         for (index_in_trace, register_trace) in &self.register_traces {
             let Ok(instruction_context) = self
