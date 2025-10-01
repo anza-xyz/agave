@@ -174,8 +174,9 @@ impl PohService {
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut last_tick = Instant::now();
-        let mut last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
-        if last_tick_of_slot {
+        let mut should_shutdown_for_test_producers =
+            Self::should_shutdown_for_test_producers(&poh_recorder);
+        if should_shutdown_for_test_producers {
             record_receiver.shutdown();
         }
         while !poh_exit.load(Ordering::Relaxed) {
@@ -199,17 +200,18 @@ impl PohService {
                 // records can be received - we will just process the ones that
                 // have already been received.
                 debug_assert!(
-                    !last_tick_of_slot || record_receiver.is_shutdown(),
+                    !should_shutdown_for_test_producers || record_receiver.is_shutdown(),
                     "channel should be shutdown if last tick of slot"
                 );
                 if remaining_tick_time.is_zero()
-                    && (!last_tick_of_slot || record_receiver.is_safe_to_restart())
+                    && (!should_shutdown_for_test_producers || record_receiver.is_safe_to_restart())
                 {
                     last_tick = Instant::now();
                     poh_recorder.write().unwrap().tick();
 
-                    last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
-                    if last_tick_of_slot
+                    should_shutdown_for_test_producers =
+                        Self::should_shutdown_for_test_producers(&poh_recorder);
+                    if should_shutdown_for_test_producers
                         || record_receiver.should_shutdown(
                             poh.lock().unwrap().remaining_hashes_in_slot(ticks_per_slot),
                             ticks_per_slot,
@@ -227,8 +229,9 @@ impl PohService {
 
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
-                last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
-                if last_tick_of_slot {
+                should_shutdown_for_test_producers =
+                    Self::should_shutdown_for_test_producers(&poh_recorder);
+                if should_shutdown_for_test_producers {
                     record_receiver.shutdown();
                 }
             }
@@ -285,8 +288,9 @@ impl PohService {
         let mut last_tick = Instant::now();
         let num_ticks = poh_config.target_tick_count.unwrap();
         let poh = poh_recorder.read().unwrap().poh.clone();
-        let mut last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
-        if last_tick_of_slot {
+        let mut should_shutdown_for_test_producers =
+            Self::should_shutdown_for_test_producers(&poh_recorder);
+        if should_shutdown_for_test_producers {
             record_receiver.shutdown();
         }
 
@@ -312,18 +316,19 @@ impl PohService {
                 // records can be received - we will just process the ones that
                 // have already been received.
                 debug_assert!(
-                    !last_tick_of_slot || record_receiver.is_shutdown(),
+                    !should_shutdown_for_test_producers || record_receiver.is_shutdown(),
                     "channel should be shutdown if last tick of slot"
                 );
                 if remaining_tick_time.is_zero()
-                    && (!last_tick_of_slot || record_receiver.is_safe_to_restart())
+                    && (!should_shutdown_for_test_producers || record_receiver.is_safe_to_restart())
                 {
                     last_tick = Instant::now();
                     poh_recorder.write().unwrap().tick();
                     elapsed_ticks += 1;
 
-                    last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
-                    if last_tick_of_slot
+                    should_shutdown_for_test_producers =
+                        Self::should_shutdown_for_test_producers(&poh_recorder);
+                    if should_shutdown_for_test_producers
                         || record_receiver.should_shutdown(
                             poh.lock().unwrap().remaining_hashes_in_slot(ticks_per_slot),
                             ticks_per_slot,
@@ -345,8 +350,9 @@ impl PohService {
             }
             if let Some(service_message) = service_message {
                 Self::handle_service_message(&poh_recorder, service_message, &mut record_receiver);
-                last_tick_of_slot = Self::last_tick_of_slot(&poh_recorder);
-                if last_tick_of_slot {
+                should_shutdown_for_test_producers =
+                    Self::should_shutdown_for_test_producers(&poh_recorder);
+                if should_shutdown_for_test_producers {
                     record_receiver.shutdown();
                 }
             }
@@ -363,8 +369,8 @@ impl PohService {
         }
     }
 
-    /// Returns true if this is the last tick of the current slot.
-    fn last_tick_of_slot(poh_recorder: &RwLock<PohRecorder>) -> bool {
+    /// Returns true if the receiver should be shutdown. This is for test variants of the poh service.
+    fn should_shutdown_for_test_producers(poh_recorder: &RwLock<PohRecorder>) -> bool {
         let poh_recorder = poh_recorder.read().unwrap();
         poh_recorder
             .bank()
@@ -591,9 +597,9 @@ impl PohService {
                     let slot = bank.slot();
                     let bank_max_tick_height = bank.max_tick_height();
                     recorder.set_bank(bank);
-                    let bank_on_last_tick =
-                        recorder.tick_height() >= bank_max_tick_height.saturating_sub(1);
-                    if !bank_on_last_tick {
+                    let should_restart =
+                        recorder.tick_height() < bank_max_tick_height.saturating_sub(1);
+                    if should_restart {
                         record_receiver.restart(slot);
                     }
                 }
