@@ -4641,7 +4641,7 @@ dependencies = [
 [[package]]
 name = "quinn"
 version = "0.11.8"
-source = "git+https://github.com/anza-xyz/quinn?rev=fc4decb0cf79b1b210603294e96849d67e9c22e2#d8944f6085193cc29e750b40d86d0b5cb4a21831"
+source = "git+https://github.com/anza-xyz/quinn?rev=fc4decb0cf79b1b210603294e96849d67e9c22e2#fc4decb0cf79b1b210603294e96849d67e9c22e2"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -4660,7 +4660,7 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.11.12"
-source = "git+https://github.com/anza-xyz/quinn?rev=fc4decb0cf79b1b210603294e96849d67e9c22e2#d8944f6085193cc29e750b40d86d0b5cb4a21831"
+source = "git+https://github.com/anza-xyz/quinn?rev=fc4decb0cf79b1b210603294e96849d67e9c22e2#fc4decb0cf79b1b210603294e96849d67e9c22e2"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -5221,9 +5221,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-platform-verifier"
-version = "0.5.1"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a5467026f437b4cb2a533865eaa73eb840019a0916f4b9ec563c6e617e086c9"
+checksum = "19787cda76408ec5404443dc8b31795c87cd8fec49762dc75fa727740d34acc1"
 dependencies = [
  "core-foundation 0.10.0",
  "core-foundation-sys",
@@ -5236,7 +5236,7 @@ dependencies = [
  "rustls-webpki 0.103.6",
  "security-framework 3.2.0",
  "security-framework-sys",
- "webpki-root-certs",
+ "webpki-root-certs 0.26.11",
  "windows-sys 0.59.0",
 ]
 
@@ -11607,9 +11607,18 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "0.26.6"
+version = "0.26.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8c6dfa3ac045bc517de14c7b1384298de1dbd229d38e08e169d9ae8c170937c"
+checksum = "75c7f0ef91146ebfb530314f5f1d24528d7f0767efbfd31dce919275413e393e"
+dependencies = [
+ "webpki-root-certs 1.0.2",
+]
+
+[[package]]
+name = "webpki-root-certs"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e4ffd8df1c57e87c325000a3d6ef93db75279dc3a231125aac571650f22b12a"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -11660,9 +11669,9 @@ dependencies = [
 
 [[package]]
 name = "wide"
-version = "0.7.32"
+version = "0.7.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41b5576b9a81633f3e8df296ce0063042a73507636cbe956c61133dd7034ab22"
+checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
 dependencies = [
  "bytemuck",
  "safe_arch",
