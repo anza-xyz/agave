@@ -9593,6 +9593,7 @@ dependencies = [
  "log",
  "qualifier_attr",
  "rand 0.8.5",
+ "shuttle",
  "solana-clock",
  "solana-entry",
  "solana-hash",
