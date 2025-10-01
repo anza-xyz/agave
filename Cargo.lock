@@ -5349,15 +5349,9 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash 2.0.0",
-<<<<<<< HEAD
  "rustls 0.23.27",
  "socket2",
  "thiserror 2.0.12",
-=======
- "rustls 0.23.31",
- "socket2 0.6.0",
- "thiserror 2.0.16",
->>>>>>> 7eb0faaea (bump quinn to 0.11.9 and quinn-proto to 0.11.13 (#7799))
  "tokio",
  "tracing",
  "web-time",
