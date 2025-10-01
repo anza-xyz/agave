@@ -204,25 +204,27 @@ impl Client {
     pub async fn send_transactions_in_batch(
         &self,
         wire_transactions: Vec<Vec<u8>>,
-    ) -> Result<(), mpsc::error::SendError<TransactionBatch>> {
+    ) -> Result<(), ClientError> {
         self.sender
             .send(TransactionBatch::new(wire_transactions))
             .await
+            .map_err(ClientError::SendError)
     }
 
     pub fn try_send_transactions_in_batch(
         &self,
         wire_transactions: Vec<Vec<u8>>,
-    ) -> Result<(), mpsc::error::TrySendError<TransactionBatch>> {
+    ) -> Result<(), ClientError> {
         self.sender
             .try_send(TransactionBatch::new(wire_transactions))
+            .map_err(ClientError::TrySendError)
     }
 
-    pub fn update_identity(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn update_identity(&self, identity: &Keypair) -> Result<(), ClientError> {
         let stake_identity = StakeIdentity::new(identity);
         self.update_certificate_sender
             .send(Some(stake_identity))
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+            .map_err(|_| ClientError::FailedToUpdateIdentity.into())
     }
 
     pub async fn shutdown(self) {
@@ -244,7 +246,12 @@ pub enum ClientBuilderError {
 /// Represents [`Client`] errors.
 #[derive(Debug, Error)]
 pub enum ClientError {
-    /// Error during building client.
-    #[error("ClientBuilder is misconfigured.")]
-    Misconfigured,
+    #[error("Failed to update identity.")]
+    FailedToUpdateIdentity,
+
+    #[error(transparent)]
+    SendError(#[from] mpsc::error::SendError<TransactionBatch>),
+
+    #[error(transparent)]
+    TrySendError(#[from] mpsc::error::TrySendError<TransactionBatch>),
 }
