@@ -133,22 +133,27 @@ impl RecordSender {
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
-                .is_ok()
+                .is_err()
             {
-                // Send the record over the channel, space has been reserved successfully.
-                if let Err(err) = self.sender.try_send(record) {
+                // Failed to reserve space, decrement active senders and try again.
+                self.active_senders.fetch_sub(1, Ordering::AcqRel);
+                continue;
+            }
+
+            match self.sender.try_send(record) {
+                Ok(_) => {
+                    self.active_senders.fetch_sub(1, Ordering::AcqRel);
+                    return Ok(transaction_indexes.map(|mut transaction_indexes| {
+                        let transaction_starting_index = *transaction_indexes;
+                        *transaction_indexes += num_transactions;
+                        transaction_starting_index
+                    }));
+                }
+                Err(err) => {
                     assert!(err.is_disconnected());
                     self.active_senders.fetch_sub(1, Ordering::AcqRel);
                     return Err(RecordSenderError::Disconnected);
                 }
-                self.active_senders.fetch_sub(1, Ordering::AcqRel);
-                return Ok(transaction_indexes.map(|mut transaction_indexes| {
-                    let transaction_starting_index = *transaction_indexes;
-                    *transaction_indexes += num_transactions;
-                    transaction_starting_index
-                }));
-            } else {
-                self.active_senders.fetch_sub(1, Ordering::AcqRel);
             }
         }
     }
