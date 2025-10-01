@@ -644,8 +644,8 @@ opt-level = 3
 # for details, see https://github.com/anza-xyz/crossbeam/commit/fd279d707025f0e60951e429bf778b4813d1b6bf
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d707025f0e60951e429bf778b4813d1b6bf" }
 # for details, see https://github.com/anza-xyz/agave/issues/8262
-quinn = { git = "https://github.com/anza-xyz/quinn", rev = "d8944f6085193cc29e750b40d86d0b5cb4a21831" }
-quinn-proto = { git = "https://github.com/anza-xyz/quinn", rev = "d8944f6085193cc29e750b40d86d0b5cb4a21831" }
+quinn = { git = "https://github.com/anza-xyz/quinn", rev = "fc4decb0cf79b1b210603294e96849d67e9c22e2" }
+quinn-proto = { git = "https://github.com/anza-xyz/quinn", rev = "fc4decb0cf79b1b210603294e96849d67e9c22e2" }
 
 # We include the following crates as our dependencies above from crates.io:
 #
