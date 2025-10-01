@@ -18,7 +18,9 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_slot_hashes::SlotHash,
-    solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
+    solana_transaction_context::{
+        BorrowedInstructionAccount, IndexOfAccount, InstructionContextView,
+    },
     solana_vote_interface::{error::VoteError, program::id},
     std::{
         cmp::Ordering,
@@ -797,7 +799,7 @@ fn verify_authorized_signer<S: std::hash::BuildHasher>(
 
 /// Withdraw funds from the vote account
 pub fn withdraw<S: std::hash::BuildHasher>(
-    instruction_context: &InstructionContext,
+    instruction_context: &InstructionContextView,
     vote_account_index: IndexOfAccount,
     target_version: VoteStateTargetVersion,
     lamports: u64,

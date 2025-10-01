@@ -10,7 +10,9 @@ use {
     solana_svm_log_collector::ic_msg,
     solana_system_interface::error::SystemError,
     solana_sysvar::rent::Rent,
-    solana_transaction_context::{BorrowedInstructionAccount, IndexOfAccount, InstructionContext},
+    solana_transaction_context::{
+        BorrowedInstructionAccount, IndexOfAccount, InstructionContextView,
+    },
     std::collections::HashSet,
 };
 
@@ -81,7 +83,7 @@ pub(crate) fn withdraw_nonce_account(
     rent: &Rent,
     signers: &HashSet<Pubkey>,
     invoke_context: &InvokeContext,
-    instruction_context: &InstructionContext,
+    instruction_context: &InstructionContextView,
 ) -> Result<(), InstructionError> {
     let mut from = instruction_context.try_borrow_instruction_account(from_account_index)?;
     if !from.is_writable() {
