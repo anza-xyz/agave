@@ -19,14 +19,19 @@ use {
     },
 };
 
+pub struct BankingPacketReceivers {
+    pub non_vote_receiver: BankingPacketReceiver,
+    pub gossip_vote_receiver: Option<BankingPacketReceiver>,
+    pub tpu_vote_receiver: Option<BankingPacketReceiver>,
+}
+
 /// Spawns a thread to receive packets from TPU and send them to the external scheduler.
 ///
 /// # Safety:
 /// - `allocator_worker_id` must be unique among all processes using the same allocator path.
 pub unsafe fn spawn(
     exit: Arc<AtomicBool>,
-    non_vote_receiver: BankingPacketReceiver,
-    vote_receivers: Option<(BankingPacketReceiver, BankingPacketReceiver)>,
+    receivers: BankingPacketReceivers,
     allocator_path: PathBuf,
     allocator_worker_id: u32,
     queue_path: PathBuf,
@@ -39,7 +44,7 @@ pub unsafe fn spawn(
             if let Some((allocator, producer)) =
                 unsafe { setup(allocator_path, allocator_worker_id, queue_path) }
             {
-                tpu_to_pack(exit, non_vote_receiver, vote_receivers, allocator, producer);
+                tpu_to_pack(exit, receivers, allocator, producer);
             }
         })
         .unwrap()
@@ -47,26 +52,33 @@ pub unsafe fn spawn(
 
 fn tpu_to_pack(
     exit: Arc<AtomicBool>,
-    non_vote_receiver: BankingPacketReceiver,
-    vote_receivers: Option<(BankingPacketReceiver, BankingPacketReceiver)>,
+    receivers: BankingPacketReceivers,
     allocator: Allocator,
     mut producer: shaq::Producer<TpuToPackMessage>,
 ) {
-    // Create a round-robin receiver for vote/non-vote packets.
-    // If vote receivers are not provided, this just always returns the non-vote receiver.
-    let mut round_robin_receiver_iter = if let Some(vote_receivers) = vote_receivers {
-        vec![vote_receivers.0, vote_receivers.1, non_vote_receiver]
-            .into_iter()
-            .cycle()
-    } else {
-        vec![non_vote_receiver].into_iter().cycle()
-    };
+    // select! requires actual receivers, so in the case of None for vote receivers,
+    // we create a dummy channel that can never receive.
+    let non_vote_receiver = receivers.non_vote_receiver;
+    let gossip_vote_receiver = receivers
+        .gossip_vote_receiver
+        .unwrap_or_else(crossbeam_channel::never);
+    let tpu_vote_receiver = receivers
+        .tpu_vote_receiver
+        .unwrap_or_else(crossbeam_channel::never);
 
     while !exit.load(Ordering::Relaxed) {
-        // Receive packets from the next receiver in round-robin order.
-        if let Ok(packet_batches) = round_robin_receiver_iter.next().unwrap().try_recv() {
-            handle_packet_batches(&allocator, &mut producer, packet_batches);
+        let packet_batches = match crossbeam_channel::select! {
+            recv(non_vote_receiver) -> msg => msg,
+            recv(gossip_vote_receiver) -> msg => msg,
+            recv(tpu_vote_receiver) -> msg => msg,
+        } {
+            Ok(packet_batches) => packet_batches,
+            Err(crossbeam_channel::RecvError) => {
+                // Senders have been dropped, exit the loop.
+                break;
+            }
         };
+        handle_packet_batches(&allocator, &mut producer, packet_batches);
     }
 }
 
