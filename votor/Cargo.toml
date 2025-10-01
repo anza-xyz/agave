@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [features]
 agave-unstable-api = []
+default = [ "agave-unstable-api" ]
 dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]
 frozen-abi = [
     "dep:solana-frozen-abi",
@@ -76,7 +77,6 @@ solana-votor-messages = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-agave-votor = { path = ".", features = ["agave-unstable-api"] }
 rand = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
