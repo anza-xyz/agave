@@ -149,12 +149,12 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         const TIMEOUT: Duration = Duration::from_millis(50);
         let now = Instant::now();
         while now.elapsed() < TIMEOUT {
-            if let Some(new_bank) = self.working_bank() {
+            if let Some(new_bank) = self.shared_working_bank.load_ref().as_ref() {
                 match current_bank {
-                    Some(current_bank) if Arc::ptr_eq(&new_bank, current_bank) => {}
+                    Some(current_bank) if Arc::ptr_eq(new_bank, current_bank) => {}
                     // If we don't currently have a bank OR we have a new bank, return it.
                     _ => {
-                        return Some(new_bank);
+                        return Some(Arc::clone(new_bank));
                     }
                 }
             }
@@ -163,18 +163,13 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         None
     }
 
-    /// Get the current poh working bank without a timeout.
-    fn working_bank(&self) -> Option<Arc<Bank>> {
-        self.shared_working_bank.load()
-    }
-
     /// Update the bank if it has changed.
     /// Returns true if the bank is updated or still usable.
     fn update_bank(&self, bank: &mut Arc<Bank>) -> bool {
-        if let Some(working_bank) = self.working_bank() {
-            if !Arc::ptr_eq(&working_bank, bank) {
+        if let Some(working_bank) = self.shared_working_bank.load_ref().as_ref() {
+            if !Arc::ptr_eq(working_bank, bank) {
                 // If we've loaded a new bank, update to it.
-                *bank = working_bank;
+                *bank = Arc::clone(working_bank);
             }
 
             // If the bank, whether new or old, is still not complete, return true.
