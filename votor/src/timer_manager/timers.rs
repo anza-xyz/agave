@@ -67,10 +67,11 @@ impl TimerState {
                 }
 
                 let ret = Some(VotorEvent::Timeout(window.pop_front().unwrap()));
-                if window.is_empty() {
-                    *self = Self::Done;
-                } else {
-                    *timeout = now.checked_add(delta_block).unwrap();
+                match window.front() {
+                    None => *self = Self::Done,
+                    Some(_next_slot) => {
+                        *timeout = now.checked_add(delta_block).unwrap();
+                    }
                 }
                 ret
             }
@@ -171,6 +172,11 @@ impl Timers {
     pub(super) fn stats(&self) -> TimerManagerStats {
         self.stats.clone()
     }
+
+    #[cfg(test)]
+    pub(super) fn is_timeout_set(&self, slot: Slot) -> bool {
+        self.timers.contains_key(&slot)
+    }
 }
 
 #[cfg(test)]
@@ -185,7 +191,7 @@ mod tests {
         let (mut timer_state, next_fire) = TimerState::new(slot, one_micro, now);
 
         assert!(matches!(
-            timer_state.progress(one_micro, next_fire).unwrap(),
+            timer_state.progress(one_micro, next_fire,).unwrap(),
             VotorEvent::TimeoutCrashedLeader(0)
         ));
 

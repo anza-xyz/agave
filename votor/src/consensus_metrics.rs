@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use {
     histogram::Histogram,
     solana_clock::{Epoch, Slot},
@@ -95,8 +93,13 @@ pub enum RecordBlockHashError {
 pub struct ConsensusMetrics {
     /// Used to track this node's view of how the other nodes on the network are voting.
     node_metrics: BTreeMap<Pubkey, NodeVoteMetrics>,
+
     /// Used to track when this node received blocks from different leaders in the network.
     leader_metrics: BTreeMap<Pubkey, Histogram>,
+
+    /// Counts number of times metrics recording failed.
+    metrics_recording_failed: usize,
+
     /// Tracks when individual slots began.
     ///
     /// Relies on [`TimerManager`] to notify of start of slots.
@@ -111,6 +114,7 @@ impl ConsensusMetrics {
         Self {
             node_metrics: BTreeMap::default(),
             leader_metrics: BTreeMap::default(),
+            metrics_recording_failed: 0,
             start_of_slot: BTreeMap::default(),
             current_epoch: epoch,
         }
@@ -119,6 +123,7 @@ impl ConsensusMetrics {
     /// Records a `vote` from the node with `id`.
     pub fn record_vote(&mut self, id: Pubkey, vote: &Vote) -> Result<(), RecordVoteError> {
         let Some(start) = self.start_of_slot.get(&vote.slot()) else {
+            self.metrics_recording_failed = self.metrics_recording_failed.saturating_add(1);
             return Err(RecordVoteError::SlotNotFound);
         };
         let node = self.node_metrics.entry(id).or_default();
@@ -134,6 +139,7 @@ impl ConsensusMetrics {
         slot: Slot,
     ) -> Result<(), RecordBlockHashError> {
         let Some(start) = self.start_of_slot.get(&slot) else {
+            self.metrics_recording_failed = self.metrics_recording_failed.saturating_add(1);
             return Err(RecordBlockHashError::SlotNotFound);
         };
         let elapsed = start.elapsed().as_micros();
@@ -169,52 +175,60 @@ impl ConsensusMetrics {
     }
 
     /// Performs end of epoch reporting and reset all the statistics for the subsequent epoch.
-    fn end_of_epoch_reporting(&mut self) {
+    fn end_of_epoch_reporting(&mut self, epoch: Epoch) {
         for (addr, metrics) in &self.node_metrics {
             let addr = addr.to_string();
-            datapoint_info!("votor_consensus_metrics",
+            datapoint_info!("consensus_vote_metrics",
                 "address" => addr,
                 ("notar_vote_count", metrics.notar.entries(), i64),
-                ("notar_vote_mean", metrics.notar.mean().ok(), Option<i64>),
-                ("notar_vote_stddev", metrics.notar.stddev(), Option<i64>),
-                ("notar_vote_maximum", metrics.notar.maximum().ok(), Option<i64>),
+                ("notar_vote_us_mean", metrics.notar.mean().ok(), Option<i64>),
+                ("notar_vote_us_stddev", metrics.notar.stddev(), Option<i64>),
+                ("notar_vote_us_maximum", metrics.notar.maximum().ok(), Option<i64>),
 
                 ("notar_fallback_vote_count", metrics.notar_fallback.entries(), i64),
-                ("notar_fallback_vote_mean", metrics.notar_fallback.mean().ok(), Option<i64>),
-                ("notar_fallback_vote_stddev", metrics.notar_fallback.stddev(), Option<i64>),
-                ("notar_fallback_vote_maximum", metrics.notar_fallback.maximum().ok(), Option<i64>),
+                ("notar_fallback_vote_us_mean", metrics.notar_fallback.mean().ok(), Option<i64>),
+                ("notar_fallback_vote_us_stddev", metrics.notar_fallback.stddev(), Option<i64>),
+                ("notar_fallback_vote_us_maximum", metrics.notar_fallback.maximum().ok(), Option<i64>),
 
                 ("skip_vote_count", metrics.skip.entries(), i64),
-                ("skip_vote_mean", metrics.skip.mean().ok(), Option<i64>),
-                ("skip_vote_stddev", metrics.skip.stddev(), Option<i64>),
-                ("skip_vote_maximum", metrics.skip.maximum().ok(), Option<i64>),
+                ("skip_vote_us_mean", metrics.skip.mean().ok(), Option<i64>),
+                ("skip_vote_us_stddev", metrics.skip.stddev(), Option<i64>),
+                ("skip_vote_us_maximum", metrics.skip.maximum().ok(), Option<i64>),
 
                 ("skip_fallback_vote_count", metrics.skip_fallback.entries(), i64),
-                ("skip_fallback_vote_mean", metrics.skip_fallback.mean().ok(), Option<i64>),
-                ("skip_fallback_vote_stddev", metrics.skip_fallback.stddev(), Option<i64>),
-                ("skip_fallback_vote_maximum", metrics.skip_fallback.maximum().ok(), Option<i64>),
+                ("skip_fallback_vote_us_mean", metrics.skip_fallback.mean().ok(), Option<i64>),
+                ("skip_fallback_vote_us_stddev", metrics.skip_fallback.stddev(), Option<i64>),
+                ("skip_fallback_vote_us_maximum", metrics.skip_fallback.maximum().ok(), Option<i64>),
 
                 ("finalize_vote_count", metrics.final_.entries(), i64),
-                ("finalize_vote_mean", metrics.final_.mean().ok(), Option<i64>),
-                ("finalize_vote_stddev", metrics.final_.stddev(), Option<i64>),
-                ("finalize_vote_maximum", metrics.final_.maximum().ok(), Option<i64>),
+                ("finalize_vote_us_mean", metrics.final_.mean().ok(), Option<i64>),
+                ("finalize_vote_us_stddev", metrics.final_.stddev(), Option<i64>),
+                ("finalize_vote_us_maximum", metrics.final_.maximum().ok(), Option<i64>),
             );
         }
 
         for (addr, histogram) in &self.leader_metrics {
             let addr = addr.to_string();
-            datapoint_info!("votor_consensus_metrics",
+            datapoint_info!("consensus_block_hash_seen_metrics",
                 "address" => addr,
-                ("blocks_seen_vote_count", histogram.entries(), i64),
-                ("blocks_seen_vote_mean", histogram.mean().ok(), Option<i64>),
-                ("blocks_seen_vote_stddev", histogram.stddev(), Option<i64>),
-                ("blocks_seen_vote_maximum", histogram.maximum().ok(), Option<i64>),
+                ("block_hash_seen_count", histogram.entries(), i64),
+                ("block_hash_seen_us_mean", histogram.mean().ok(), Option<i64>),
+                ("block_hash_seen_us_stddev", histogram.stddev(), Option<i64>),
+                ("block_hash_seen_us_maximum", histogram.maximum().ok(), Option<i64>),
             );
         }
 
-        self.node_metrics.clear();
-        self.leader_metrics.clear();
-        self.start_of_slot.clear();
+        datapoint_info!(
+            "consensus_metrics_internals",
+            ("start_of_slot_count", self.start_of_slot.len(), i64),
+            (
+                "metrics_recording_failed",
+                self.metrics_recording_failed,
+                i64
+            ),
+        );
+
+        *self = Self::new(epoch);
     }
 
     /// This function can be called if there is a new [`Epoch`] and it will carry out end of epoch reporting.
@@ -222,7 +236,7 @@ impl ConsensusMetrics {
         assert!(epoch >= self.current_epoch);
         if epoch != self.current_epoch {
             self.current_epoch = epoch;
-            self.end_of_epoch_reporting();
+            self.end_of_epoch_reporting(epoch);
         }
     }
 }

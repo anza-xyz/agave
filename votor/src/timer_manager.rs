@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Controls the queueing and firing of skip timer events for use
 //! in the event loop.
 // TODO: Make this mockable in event_handler for tests
@@ -13,7 +11,7 @@ use {
         event::VotorEvent,
     },
     crossbeam_channel::Sender,
-    parking_lot::RwLock,
+    parking_lot::RwLock as PlRwLock,
     solana_clock::Slot,
     std::{
         sync::{
@@ -29,13 +27,13 @@ use {
 /// A manager of timer states.  Uses a background thread to trigger next ready
 /// timers and send events.
 pub(crate) struct TimerManager {
-    timers: Arc<RwLock<Timers>>,
+    timers: Arc<PlRwLock<Timers>>,
     handle: JoinHandle<()>,
 }
 
 impl TimerManager {
     pub(crate) fn new(event_sender: Sender<VotorEvent>, exit: Arc<AtomicBool>) -> Self {
-        let timers = Arc::new(RwLock::new(Timers::new(
+        let timers = Arc::new(PlRwLock::new(Timers::new(
             DELTA_TIMEOUT,
             DELTA_BLOCK,
             event_sender,
@@ -67,6 +65,11 @@ impl TimerManager {
 
     pub(crate) fn join(self) {
         self.handle.join().unwrap();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_timeout_set(&self, slot: Slot) -> bool {
+        self.timers.read().is_timeout_set(slot)
     }
 }
 
