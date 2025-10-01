@@ -1190,7 +1190,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         loop {
                             let disk_resize = {
                                 // Check the refcount before grabbing the slot list read lock. If ref_count != 1, then skip.
-                                let ref_count = v.ref_count();
+                                let mut ref_count = v.ref_count();
                                 if ref_count != 1 {
                                     v.set_dirty(true);
                                     break;
@@ -1198,8 +1198,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
                                 // Re-acquire the slot list lock just before disk write to minimize lock contention
                                 let slot_list = v.slot_list_read_lock();
-
-                                if slot_list.len() != 1 {
+                                ref_count = v.ref_count(); // neded to re-check ref count after grabbing slot list lock
+                                if ref_count != 1 || slot_list.len() != 1 {
                                     v.set_dirty(true);
                                     return None;
                                 }
