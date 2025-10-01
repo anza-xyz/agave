@@ -11064,7 +11064,7 @@ dependencies = [
  "solana-svm-timings",
  "solana-sysvar-id",
  "solana-transaction-context",
- "thiserror 2.0.16",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
