@@ -12,16 +12,16 @@ use {
 };
 
 /// An account key and the matching account
-pub type TransactionAccount = (Pubkey, AccountSharedData);
+pub type KeyedAccountSharedData = (Pubkey, AccountSharedData);
 pub(crate) type OwnedTransactionAccounts = (
-    UnsafeCell<Box<[TransactionAccount]>>,
+    UnsafeCell<Box<[KeyedAccountSharedData]>>,
     Box<[Cell<bool>]>,
     Cell<i64>,
 );
 
 #[derive(Debug)]
 pub struct TransactionAccounts {
-    accounts: UnsafeCell<Box<[TransactionAccount]>>,
+    accounts: UnsafeCell<Box<[KeyedAccountSharedData]>>,
     borrow_counters: Box<[BorrowCounter]>,
     touched_flags: Box<[Cell<bool>]>,
     resize_delta: Cell<i64>,
@@ -30,7 +30,7 @@ pub struct TransactionAccounts {
 
 impl TransactionAccounts {
     #[cfg(not(target_os = "solana"))]
-    pub(crate) fn new(accounts: Vec<TransactionAccount>) -> TransactionAccounts {
+    pub(crate) fn new(accounts: Vec<KeyedAccountSharedData>) -> TransactionAccounts {
         let touched_flags = vec![Cell::new(false); accounts.len()].into_boxed_slice();
         let borrow_counters = vec![BorrowCounter::default(); accounts.len()].into_boxed_slice();
         let accounts = UnsafeCell::new(accounts.into_boxed_slice());

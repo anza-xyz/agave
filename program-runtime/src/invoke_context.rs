@@ -33,7 +33,7 @@ use {
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
-        transaction_accounts::TransactionAccount, IndexOfAccount, InstructionAccount,
+        transaction_accounts::KeyedAccountSharedData, IndexOfAccount, InstructionAccount,
         InstructionContext, TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
     },
     std::{
@@ -862,7 +862,7 @@ pub fn mock_process_instruction_with_feature_set<
     loader_id: &Pubkey,
     program_index: Option<IndexOfAccount>,
     instruction_data: &[u8],
-    mut transaction_accounts: Vec<TransactionAccount>,
+    mut transaction_accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
     builtin_function: BuiltinFunctionWithContext,
@@ -940,7 +940,7 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
     loader_id: &Pubkey,
     program_index: Option<IndexOfAccount>,
     instruction_data: &[u8],
-    transaction_accounts: Vec<TransactionAccount>,
+    transaction_accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
     builtin_function: BuiltinFunctionWithContext,
@@ -1379,7 +1379,7 @@ mod tests {
 
     #[test]
     fn test_prepare_instruction_maximum_accounts() {
-        let mut transaction_accounts: Vec<TransactionAccount> =
+        let mut transaction_accounts: Vec<KeyedAccountSharedData> =
             Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
         let mut account_metas: Vec<AccountMeta> = Vec::with_capacity(MAX_ACCOUNTS_PER_INSTRUCTION);
 
@@ -1493,7 +1493,7 @@ mod tests {
 
     #[test]
     fn test_duplicated_accounts() {
-        let mut transaction_accounts: Vec<TransactionAccount> =
+        let mut transaction_accounts: Vec<KeyedAccountSharedData> =
             Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
         let mut account_metas: Vec<AccountMeta> =
             Vec::with_capacity(MAX_ACCOUNTS_PER_INSTRUCTION.saturating_sub(1));
