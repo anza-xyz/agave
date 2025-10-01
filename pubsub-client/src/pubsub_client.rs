@@ -835,7 +835,7 @@ impl PubsubClient {
             // Send ping if the interval has passed
             if last_ping_time.elapsed() >= ping_interval {
                 if let Err(err) = socket.write().unwrap().send(Message::Ping(vec![])) {
-                    info!("Error sending ping: {:?}", err);
+                    info!("Error sending ping: {err:?}");
                     break;
                 }
 
@@ -844,10 +844,7 @@ impl PubsubClient {
 
                 // Check if max_failed_pings has been exceeded
                 if pings > max_failed_pings {
-                    info!(
-                        "No pong received after {} pings. Closing connection...",
-                        max_failed_pings
-                    );
+                    info!("No pong received after {max_failed_pings} pings. Closing connection...",);
 
                     let _ = socket.write().unwrap().close(None);
                     break;
@@ -860,7 +857,7 @@ impl PubsubClient {
             // We can only set a read time out safely if it's a plain TCP connection
             if let MaybeTlsStream::Plain(tcp_stream) = maybe_tls_stream {
                 if let Err(e) = tcp_stream.set_read_timeout(Some(Duration::from_millis(500))) {
-                    info!("Failed to set read timeout on TcpStream: {:?}", e);
+                    info!("Failed to set read timeout on TcpStream: {e:?}");
                 }
             }
 
