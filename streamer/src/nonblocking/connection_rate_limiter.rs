@@ -15,12 +15,16 @@ const CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD: usize = 100_000;
 
 impl ConnectionRateLimiter {
     /// Create a new rate limiter per IpAddr. The rate is specified as the count per minute to allow for
-    /// less frequent connections.
+    /// less frequent connections. Higher limit also allows higher bursts.
     pub fn new(limit_per_minute: u64) -> Self {
         Self {
             limiter: KeyedRateLimiter::new(
                 CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD,
-                TokenBucket::new(3, 3, limit_per_minute as f64 / 60.0),
+                TokenBucket::new(
+                    limit_per_minute,
+                    limit_per_minute,
+                    limit_per_minute as f64 / 60.0,
+                ),
                 8,
             ),
         }
@@ -31,6 +35,7 @@ impl ConnectionRateLimiter {
     /// since we should only modify server state once source IP is verifired
     pub fn is_allowed(&self, ip: &IpAddr) -> bool {
         // Check if we have records in the rate limiter for the given IP address
+        dbg!(self.limiter.current_tokens(ip));
         match self.limiter.current_tokens(ip) {
             Some(r) => r > 0, // we have a record, and rate is not exceeded
             None => true,     // if we have not seen IP, allow connection request
