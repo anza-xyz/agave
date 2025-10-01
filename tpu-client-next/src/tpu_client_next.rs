@@ -201,20 +201,26 @@ pub type ReportFn = Box<
 >;
 
 impl Client {
-    pub async fn send_transactions_in_batch(
+    pub async fn send_transactions_in_batch<T>(
         &self,
-        wire_transactions: Vec<Vec<u8>>,
-    ) -> Result<(), ClientError> {
+        wire_transactions: Vec<T>,
+    ) -> Result<(), ClientError>
+    where
+        T: AsRef<[u8]> + Send + 'static,
+    {
         self.sender
             .send(TransactionBatch::new(wire_transactions))
             .await
             .map_err(ClientError::SendError)
     }
 
-    pub fn try_send_transactions_in_batch(
+    pub fn try_send_transactions_in_batch<T>(
         &self,
-        wire_transactions: Vec<Vec<u8>>,
-    ) -> Result<(), ClientError> {
+        wire_transactions: Vec<T>,
+    ) -> Result<(), ClientError>
+    where
+        T: AsRef<[u8]> + Send + 'static,
+    {
         self.sender
             .try_send(TransactionBatch::new(wire_transactions))
             .map_err(ClientError::TrySendError)
