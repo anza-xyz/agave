@@ -262,6 +262,10 @@ strip = true
 name = "bpf_loader"
 
 [patch.crates-io]
+# for details, see https://github.com/anza-xyz/agave/issues/8262
+quinn = { git = "https://github.com/anza-xyz/quinn", rev = "fc4decb0cf79b1b210603294e96849d67e9c22e2" }
+quinn-proto = { git = "https://github.com/anza-xyz/quinn", rev = "fc4decb0cf79b1b210603294e96849d67e9c22e2" }
+
 # We include the following crates as our dependencies from crates.io:
 #
 #  * spl-associated-token-account-interface
