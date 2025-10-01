@@ -252,11 +252,13 @@ pub enum PubsubClientError {
 
 impl PubsubClientError {
     pub fn is_timeout(&self) -> bool {
-        matches!(
-            self,
-            PubsubClientError::WsError(tungstenite::Error::Io(ref err))
-                if err.kind() == std::io::ErrorKind::WouldBlock
-        )
+        match self {
+            PubsubClientError::WsError(err) => match err.as_ref() {
+                tungstenite::Error::Io(ref err) => err.kind() == std::io::ErrorKind::WouldBlock,
+                _ => false,
+            },
+            _ => false,
+        }
     }
 }
 
