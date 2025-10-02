@@ -102,12 +102,7 @@ pub(crate) const DELTA_BLOCK: Duration = Duration::from_millis(400);
 pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 
 /// Timeout for standstill detection mechanism.
-#[cfg(not(test))]
 pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
-
-/// Shorter timeout for standstill detection mechanism during tests.
-#[cfg(test)]
-pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10);
 
 /// Returns the Duration for when the `SkipTimer` should be set for for the given slot in the leader window.
 #[inline]
