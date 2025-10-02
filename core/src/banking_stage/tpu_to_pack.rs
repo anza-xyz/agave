@@ -247,7 +247,58 @@ unsafe fn setup(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, std::net::Ipv4Addr};
+
+    #[test]
+    fn test_copy_packet_and_populate_message() {
+        let packet_bytes = vec![1, 2, 3, 4, 5];
+        let src_ip = Ipv4Addr::new(192, 168, 1, 1);
+        let packet_meta = solana_packet::Meta {
+            size: packet_bytes.len(),
+            addr: IpAddr::V4(src_ip),
+            port: 1,
+            flags: PacketFlags::all(),
+        };
+
+        // Buffer to simulate allocated memory
+        let mut buffer = [0u8; 256];
+        let mut tpu_to_pack_message = TpuToPackMessage {
+            transaction: SharableTransactionRegion {
+                offset: 0,
+                length: 0,
+            },
+            flags: 0,
+            src_addr: [0; 16],
+        };
+        const DUMMY_OFFSET: usize = 42;
+
+        unsafe {
+            copy_packet_and_populate_message(
+                packet_bytes.as_slice(),
+                &packet_meta,
+                NonNull::new(buffer.as_mut_ptr()).unwrap(),
+                DUMMY_OFFSET,
+                NonNull::new(&mut tpu_to_pack_message as *mut TpuToPackMessage).unwrap(),
+            );
+        }
+
+        assert_eq!(&buffer[..packet_bytes.len()], packet_bytes.as_slice());
+        assert_eq!(tpu_to_pack_message.transaction.offset, DUMMY_OFFSET);
+        assert_eq!(
+            tpu_to_pack_message.transaction.length,
+            packet_bytes.len() as u32
+        );
+        assert_eq!(
+            tpu_to_pack_message.flags,
+            tpu_message_flags::IS_SIMPLE_VOTE
+                | tpu_message_flags::FORWARDED
+                | tpu_message_flags::FROM_STAKED_NODE
+        );
+        assert_eq!(
+            tpu_to_pack_message.src_addr,
+            src_ip.to_ipv6_mapped().octets()
+        );
+    }
 
     #[test]
     fn test_flags_from_meta() {
