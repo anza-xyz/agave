@@ -96,7 +96,8 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             }
 
             // If necessary, get a new bank to consume against.
-            let (bank_usable, update_bank_us) = measure_us!(self.update_bank(&mut bank));
+            let (bank_usable, update_bank_us) =
+                measure_us!(self.update_working_bank_if_necessary(&mut bank));
             if !bank_usable {
                 self.metrics
                     .timing_metrics
@@ -165,7 +166,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 
     /// Update the bank if it has changed.
     /// Returns true if the bank is updated or still usable.
-    fn update_bank(&self, bank: &mut Arc<Bank>) -> bool {
+    fn update_working_bank_if_necessary(&self, bank: &mut Arc<Bank>) -> bool {
         if let Some(working_bank) = self.shared_working_bank.load_ref().as_ref() {
             if !Arc::ptr_eq(working_bank, bank) {
                 // If we've loaded a new bank, update to it.
