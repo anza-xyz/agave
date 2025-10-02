@@ -173,18 +173,22 @@ impl VoteHistoryStorage for FileVoteHistoryStorage {
 
 #[cfg(test)]
 mod test {
-    use {super::*, solana_keypair::Keypair, solana_votor_messages::vote::Vote};
+    use {super::*, solana_keypair::Keypair, solana_votor_messages::vote::Vote, tempfile::TempDir};
 
     #[test]
     fn test_file_vote_history_storage() {
         solana_logger::setup();
-        let tmp_dir = std::env::temp_dir();
-        let storage = FileVoteHistoryStorage::new(tmp_dir.clone());
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
         let keypair = Keypair::new();
         let pubkey = keypair.pubkey();
         assert_eq!(
             storage.filename(&pubkey),
-            PathBuf::from(format!("{}/vote_history-{}.bin", tmp_dir.display(), pubkey))
+            PathBuf::from(format!(
+                "{}/vote_history-{}.bin",
+                tmp_dir.path().display(),
+                pubkey
+            ))
         );
 
         let mut vote_history = VoteHistory::new(pubkey, 0);

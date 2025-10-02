@@ -2688,6 +2688,7 @@ impl Bank {
     }
 
     /// Forget all signatures. Useful for benchmarking.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn clear_signatures(&self) {
         self.status_cache.write().unwrap().clear();
     }

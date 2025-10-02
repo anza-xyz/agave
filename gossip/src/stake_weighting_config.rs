@@ -78,3 +78,16 @@ pub(crate) fn get_gossip_config_from_account(bank: &Bank) -> Option<WeightingCon
         .0;
     bincode::deserialize::<WeightingConfig>(data.data()).ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn control_pubkey_is_offcurve() {
+        assert!(
+            !weighting_config_control_pubkey::id().is_on_curve(),
+            "weighting_config_control_pubkey must be an off-curve key"
+        );
+    }
+}
