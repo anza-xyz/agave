@@ -223,7 +223,6 @@ pub trait VoteStateHandle {
         self.double_lockouts();
     }
 
-    #[cfg(test)]
     fn credits(&self) -> u64 {
         if self.epoch_credits().is_empty() {
             0
@@ -870,6 +869,20 @@ impl VoteStateHandler {
             }
         };
         Ok(Self { target_state })
+    }
+
+    /// Create a new handler from a VoteStateV3.
+    pub fn from_v3(vote_state: VoteStateV3) -> Self {
+        Self {
+            target_state: TargetVoteState::V3(vote_state),
+        }
+    }
+
+    /// Create a new handler from a VoteStateV4.
+    pub fn from_v4(vote_state: VoteStateV4) -> Self {
+        Self {
+            target_state: TargetVoteState::V4(vote_state),
+        }
     }
 
     pub fn init_vote_account_state(

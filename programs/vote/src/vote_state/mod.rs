@@ -1,11 +1,13 @@
 //! Vote state, vote program
 //! Receive and processes votes from validators
 
-pub(crate) mod handler;
+pub mod handler;
 
-pub use solana_vote_interface::state::{vote_state_versions::*, *};
-use {
+pub use {
     handler::{VoteStateHandle, VoteStateHandler, VoteStateTargetVersion},
+    solana_vote_interface::state::{vote_state_versions::*, *},
+};
+use {
     log::*,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Clock, Epoch, Slot},
