@@ -2746,7 +2746,6 @@ mod tests {
         super::*,
         crate::sleepless_testing,
         assert_matches::assert_matches,
-        crossbeam_channel::TryRecvError,
         solana_clock::{Slot, MAX_PROCESSING_AGE},
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -4537,28 +4536,6 @@ mod tests {
         assert_eq!(bank.transaction_count(), 0);
         assert_eq!(bank.transaction_error_count(), 0);
         DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
-
-        // Join PoH service now to make sure there are no more messages coming in
-        // after we process the task.
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
-
-        // Helper function to just ignore tick entries received from PoH service.
-        // This can happen sporadically because we suck at writing tests.
-        fn try_recv_ignoring_ticks(
-            signal_receiver: &Receiver<WorkingBankEntry>,
-        ) -> std::result::Result<WorkingBankEntry, TryRecvError> {
-            loop {
-                match signal_receiver.try_recv() {
-                    Ok(working_bank_entry) => {
-                        if !working_bank_entry.1 .0.is_tick() {
-                            return Ok(working_bank_entry);
-                        }
-                    }
-                    Err(err) => return Err(err),
-                }
-            }
-        }
 
         if should_succeed_to_record_to_poh {
             if expected_tx_result.is_ok() {
