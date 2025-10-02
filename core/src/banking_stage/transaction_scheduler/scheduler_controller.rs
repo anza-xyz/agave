@@ -35,6 +35,7 @@ use {
     },
 };
 
+#[derive(Clone)]
 pub struct SchedulerConfig {
     pub scheduler_pacing: SchedulerPacing,
 }
