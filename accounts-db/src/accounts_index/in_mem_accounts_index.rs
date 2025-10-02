@@ -26,6 +26,41 @@ use {
     },
 };
 
+/// Statistics for disk flush operations
+#[derive(Debug, Default)]
+struct DiskFlushStats {
+    /// Time spent in flush update operation
+    flush_update_us: u64,
+    /// Time spent checking if entries should be evicted
+    flush_should_evict_us: u64,
+    /// Number of entries successfully written to disk
+    flush_entries_updated_on_disk: u64,
+    /// Time spent growing disk storage
+    flush_grow_us: u64,
+}
+
+impl DiskFlushStats {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn update_to_bucket_map_stats(&self, stats: &BucketMapHolderStats) {
+        Self::update_stat(&stats.flush_update_us, self.flush_update_us);
+        Self::update_stat(&stats.flush_should_evict_us, self.flush_should_evict_us);
+        Self::update_stat(
+            &stats.flush_entries_updated_on_disk,
+            self.flush_entries_updated_on_disk,
+        );
+        Self::update_stat(&stats.flush_grow_us, self.flush_grow_us);
+    }
+
+    fn update_stat(stat: &AtomicU64, value: u64) {
+        if value != 0 {
+            stat.fetch_add(value, Ordering::Relaxed);
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct StartupStats {
     pub copy_data_us: AtomicU64,
@@ -1153,9 +1188,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         if !evictions_age_possible.is_empty() {
             // write to disk outside in-mem map read lock
             let disk = self.bucket.as_ref().unwrap();
-            let mut flush_entries_updated_on_disk = 0;
-            let mut flush_should_evict_us = 0;
-            let mut flush_grow_us = 0;
+            let mut flush_stats = DiskFlushStats::new();
             // we don't care about lock time in this metric - bg threads can wait
             let flush_update_measure = Measure::start("flush_update");
             let evictions_age = evictions_age_possible
@@ -1171,7 +1204,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         ages_flushing_now,
                     );
                     mse.stop();
-                    flush_should_evict_us += mse.as_us();
+                    flush_stats.flush_should_evict_us += mse.as_us();
                     if !should_evict {
                         // not evicting, so don't write, even if dirty
                         return None;
@@ -1212,7 +1245,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                             match disk_resize {
                                 Ok(_) => {
                                     // successfully written to disk
-                                    flush_entries_updated_on_disk += 1;
+                                    flush_stats.flush_entries_updated_on_disk += 1;
                                     // exit disk-resize loop
                                     break;
                                 }
@@ -1220,7 +1253,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                     // disk needs to resize. This item did not get written. Resize and try again.
                                     let m = Measure::start("flush_grow");
                                     disk.grow(err);
-                                    flush_grow_us += m.end_as_us();
+                                    flush_stats.flush_grow_us += m.end_as_us();
                                 }
                             }
                         }
@@ -1228,12 +1261,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     Some(k)
                 })
                 .collect();
-            self.update_flush_stats(
-                flush_update_measure,
-                flush_should_evict_us,
-                flush_entries_updated_on_disk,
-                flush_grow_us,
-            );
+            flush_stats.flush_update_us = flush_update_measure.end_as_us();
+            flush_stats.update_to_bucket_map_stats(self.stats());
 
             let m = Measure::start("flush_evict");
             self.evict_from_cache(evictions_age, current_age, startup, ages_flushing_now);
@@ -1322,23 +1351,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         m.stop();
         let value = m.as_us();
         Self::update_stat(stat, value);
-    }
-
-    fn update_flush_stats(
-        &self,
-        flush_update_measure: Measure,
-        flush_should_evict_us: u64,
-        flush_entries_updated_on_disk: u64,
-        flush_grow_us: u64,
-    ) {
-        let stats = self.stats();
-        Self::update_time_stat(&stats.flush_update_us, flush_update_measure);
-        Self::update_stat(&stats.flush_should_evict_us, flush_should_evict_us);
-        Self::update_stat(
-            &stats.flush_entries_updated_on_disk,
-            flush_entries_updated_on_disk,
-        );
-        Self::update_stat(&stats.flush_grow_us, flush_grow_us);
     }
 
     /// Returns the capacity for this bin's map
