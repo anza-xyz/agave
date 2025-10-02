@@ -218,6 +218,7 @@ impl TransactionContext {
             .ok_or(InstructionError::CallDepth)?;
         Ok(InstructionContext {
             transaction_context: self,
+            index_in_trace,
             nesting_level: instruction.nesting_level,
             program_account_index_in_tx: instruction.program_account_index_in_tx,
             instruction_accounts: &instruction.instruction_accounts,
@@ -516,6 +517,7 @@ pub struct InstructionFrame {
 pub struct InstructionContext<'a> {
     transaction_context: &'a TransactionContext,
     // The rest of the fields are redundant shortcuts
+    index_in_trace: usize,
     nesting_level: usize,
     program_account_index_in_tx: IndexOfAccount,
     instruction_accounts: &'a [InstructionAccount],
@@ -524,6 +526,11 @@ pub struct InstructionContext<'a> {
 }
 
 impl<'a> InstructionContext<'a> {
+    /// How many Instructions were on the trace before this one was pushed
+    pub fn get_index_in_trace(&self) -> usize {
+        self.index_in_trace
+    }
+
     /// How many Instructions were on the stack after this one was pushed
     ///
     /// That is the number of nested parent Instructions plus one (itself).
