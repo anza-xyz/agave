@@ -29,6 +29,7 @@ use {
     solana_cost_model::cost_model::CostModel,
     solana_fee_structure::FeeBudgetLimits,
     solana_measure::measure_us,
+    solana_message::v0::MessageAddressTableLookup,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
@@ -36,7 +37,10 @@ use {
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_transaction::sanitized::{MessageHash, SanitizedTransaction},
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction},
+        versioned::sanitized::SanitizedVersionedTransaction,
+    },
     solana_transaction_error::TransactionError,
     std::{
         sync::{Arc, RwLock},
@@ -260,6 +264,10 @@ impl SanitizedTransactionReceiveAndBuffer {
         let mut error_counts = TransactionErrorMetrics::default();
         for chunk in packets.chunks(CHUNK_SIZE) {
             for packet in chunk {
+                if total_num_locks(packet.transaction()) > transaction_account_lock_limit {
+                    num_dropped_on_lock_validation += 1;
+                    continue;
+                }
                 let Some((tx, deactivation_slot)) = packet.build_sanitized_transaction(
                     vote_only,
                     root_bank.as_ref(),
@@ -480,6 +488,24 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
     }
 }
 
+/// Returns the total number of locks required by the transaction.
+fn total_num_locks(tx: &SanitizedVersionedTransaction) -> usize {
+    let extract_table_key_len = |table: &MessageAddressTableLookup| {
+        table
+            .writable_indexes
+            .len()
+            .wrapping_add(table.readonly_indexes.len())
+    };
+
+    let message = &tx.get_message().message;
+    message.static_account_keys().len().wrapping_add(
+        message
+            .address_table_lookups()
+            .map(|l| l.iter().map(extract_table_key_len).sum())
+            .unwrap_or(0),
+    )
+}
+
 enum PacketHandlingError {
     Sanitization,
     LockValidation,
@@ -667,7 +693,12 @@ impl TransactionViewReceiveAndBuffer {
         transaction_account_lock_limit: usize,
     ) -> Result<TransactionViewState, PacketHandlingError> {
         // Parsing and basic sanitization checks
-        let Ok(view) = SanitizedTransactionView::try_new_sanitized(bytes, working_bank.feature_set.is_active(&agave_feature_set::static_instruction_limit::id())) else {
+        let Ok(view) = SanitizedTransactionView::try_new_sanitized(
+            bytes,
+            working_bank
+                .feature_set
+                .is_active(&agave_feature_set::static_instruction_limit::id()),
+        ) else {
             return Err(PacketHandlingError::Sanitization);
         };
 
@@ -682,6 +713,10 @@ impl TransactionViewReceiveAndBuffer {
         // Discard non-vote packets if in vote-only mode.
         if root_bank.vote_only_bank() && !view.is_simple_vote_transaction() {
             return Err(PacketHandlingError::Sanitization);
+        }
+
+        if usize::from(view.total_num_accounts()) > transaction_account_lock_limit {
+            return Err(PacketHandlingError::LockValidation);
         }
 
         // Load addresses for transaction.
