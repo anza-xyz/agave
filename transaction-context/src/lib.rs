@@ -477,6 +477,14 @@ impl TransactionContext {
             },
         )
     }
+
+    /// Take ownership of the instruction trace
+    pub fn take_instruction_trace(&mut self) -> Vec<InstructionFrame> {
+        // The last frame is a placeholder for the next instruction to be executed, so it
+        // is empty.
+        self.instruction_trace.pop();
+        std::mem::take(&mut self.instruction_trace)
+    }
 }
 
 /// Return data at the end of a transaction
@@ -493,14 +501,14 @@ pub struct TransactionReturnData {
 /// Instruction shared between runtime and programs.
 #[derive(Debug, Clone, Default)]
 pub struct InstructionFrame {
-    nesting_level: usize,
-    program_account_index_in_tx: IndexOfAccount,
-    instruction_accounts: Vec<InstructionAccount>,
+    pub nesting_level: usize,
+    pub program_account_index_in_tx: IndexOfAccount,
+    pub instruction_accounts: Vec<InstructionAccount>,
     /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
     /// Usage: dedup_map[index_in_transaction] = index_in_instruction
     /// This is a vector of u8s to save memory, since many entries may be unused.
     dedup_map: Vec<u8>,
-    instruction_data: Vec<u8>,
+    pub instruction_data: Vec<u8>,
 }
 
 /// View interface to read instructions.
