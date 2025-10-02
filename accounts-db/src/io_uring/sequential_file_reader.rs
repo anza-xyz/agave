@@ -69,8 +69,11 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
         // Let all buffers be submitted for reading at any time
         let max_inflight_ops = (buf_capacity / read_capacity) as u32;
 
-        // Set the submission queue to fit half of ops to amortize `submit` calls
-        // to just 2 per fully read buffer size.
+        // Completions arrive in bursts (batching done by the disk controller and the kernel).
+        // By submitting smaller chunks we decrease the likelihood that we stall on a full completion queue.
+        // Also, in order to keep some operations submitted at all times, we will `submit` them half-way
+        // through the buffer (at the cost of doubling syscalls) to let kernel work on one half while the other
+        // half is read by the user.
         let ring_squeue_size = (max_inflight_ops / 2).max(1);
 
         // agave io_uring uses cqsize to define state slab size, so cqsize == max inflight ops
