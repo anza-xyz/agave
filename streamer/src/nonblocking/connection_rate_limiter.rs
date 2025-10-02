@@ -32,10 +32,9 @@ impl ConnectionRateLimiter {
 
     /// Check if the connection from the said `ip` is allowed.
     /// Here we assume that only IPs with actual confirmed connections are stored in it,
-    /// since we should only modify server state once source IP is verifired
+    /// since we should only modify server state once source IP is verified
     pub fn is_allowed(&self, ip: &IpAddr) -> bool {
         // Check if we have records in the rate limiter for the given IP address
-        dbg!(self.limiter.current_tokens(ip));
         match self.limiter.current_tokens(ip) {
             Some(r) => r > 0, // we have a record, and rate is not exceeded
             None => true,     // if we have not seen IP, allow connection request
