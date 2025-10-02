@@ -336,8 +336,8 @@ prost-types = "0.11.9"
 protobuf-src = "1.1.0"
 qstring = "0.7.2"
 qualifier_attr = { version = "0.2.2", default-features = false }
-quinn = "0.11.8"
-quinn-proto = "0.11.12"
+quinn = "0.11.9"
+quinn-proto = "0.11.13"
 quote = "1.0"
 rand = "0.8.5"
 rand0-7 = { package = "rand", version = "0.7" }
@@ -643,9 +643,6 @@ opt-level = 3
 [patch.crates-io]
 # for details, see https://github.com/anza-xyz/crossbeam/commit/fd279d707025f0e60951e429bf778b4813d1b6bf
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d707025f0e60951e429bf778b4813d1b6bf" }
-# for details, see https://github.com/anza-xyz/agave/issues/8262
-quinn = { git = "https://github.com/anza-xyz/quinn", rev = "fc4decb0cf79b1b210603294e96849d67e9c22e2" }
-quinn-proto = { git = "https://github.com/anza-xyz/quinn", rev = "fc4decb0cf79b1b210603294e96849d67e9c22e2" }
 
 # We include the following crates as our dependencies above from crates.io:
 #
