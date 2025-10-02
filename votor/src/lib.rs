@@ -18,7 +18,7 @@ pub mod vote_history;
 pub mod vote_history_storage;
 mod voting_service;
 mod voting_utils;
-mod votor;
+pub mod votor;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]
