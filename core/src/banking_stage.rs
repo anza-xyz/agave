@@ -78,11 +78,7 @@ conditional_vis_mod!(packet_deserializer, feature = "dev-context-only-utils", pu
 mod packet_receiver;
 mod read_write_account_set;
 conditional_vis_mod!(scheduler_messages, feature = "dev-context-only-utils", pub);
-conditional_vis_mod!(
-    transaction_scheduler,
-    feature = "dev-context-only-utils",
-    pub
-);
+pub mod transaction_scheduler;
 conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub, pub(crate));
 
 /// The maximum number of worker threads that can be spawned by banking stage.
