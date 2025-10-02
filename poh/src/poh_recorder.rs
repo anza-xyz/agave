@@ -951,7 +951,7 @@ fn do_create_test_recorder(
     let (record_sender, record_receiver) = unbounded();
     let transaction_recorder = TransactionRecorder::new(record_sender, exit.clone());
     let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-    let (poh_controller, poh_service_message_receiver) = PohController::new();
+    let (poh_controller, poh_service_message_receiver) = PohController::new_for_test();
     let poh_service = PohService::new(
         poh_recorder.clone(),
         &poh_config,
