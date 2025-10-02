@@ -828,6 +828,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     /// Gets the index's entry for `pubkey` and clones it
     ///
     /// Prefer `get_and_then()` whenever possible.
+    #[cfg(test)]
     pub fn get_cloned(&self, pubkey: &Pubkey) -> Option<Arc<AccountMapEntry<T>>> {
         self.get_bin(pubkey)
             .get_internal_cloned(pubkey, |entry| entry)
