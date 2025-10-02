@@ -42,7 +42,7 @@ pub struct DecisionMaker {
 impl std::fmt::Debug for DecisionMaker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DecisionMaker")
-            .field("shared_working_bank", &self.shared_working_bank.load())
+            .field("shared_working_bank", &self.shared_working_bank.load_full())
             .field("shared_tick_height", &self.shared_tick_height.load())
             .field(
                 "shared_leader_first_tick_height",
@@ -67,7 +67,7 @@ impl DecisionMaker {
 
     pub(crate) fn make_consume_or_forward_decision(&self) -> BufferedPacketsDecision {
         // Check if there is an active working bank.
-        if let Some(bank) = self.shared_working_bank.load() {
+        if let Some(bank) = self.shared_working_bank.load_full() {
             BufferedPacketsDecision::Consume(bank)
         } else if let Some(first_leader_tick_height) = self.shared_leader_first_tick_height.load() {
             let current_tick_height = self.shared_tick_height.load();
