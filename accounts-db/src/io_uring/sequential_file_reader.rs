@@ -21,7 +21,6 @@ use {
 // but peak at 1MiB. Also compare with particular NVME parameters, e.g.
 // 32 pages (Maximum Data Transfer Size) * page size (MPSMIN = Memory Page Size) = 128KiB.
 pub const DEFAULT_READ_SIZE: usize = 1024 * 1024;
-const SQPOLL_IDLE_TIMEOUT: u32 = 50;
 // For large file we don't really use workers as few regularly submitted requests get handled
 // within sqpoll thread. Allow some workers just in case, but limit them.
 const MAX_IOWQ_WORKERS: u32 = 2;
@@ -65,12 +64,23 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
         mut buffer: B,
         read_capacity: usize,
     ) -> io::Result<Self> {
-        // Let submission queue hold half of buffers before we explicitly syscall
-        // to submit them for reading.
-        let ring_qsize = (buffer.as_mut().len() / read_capacity / 2).max(1) as u32;
-        let ring = IoUring::builder()
-            .setup_sqpoll(SQPOLL_IDLE_TIMEOUT)
-            .build(ring_qsize)?;
+        let buf_capacity = buffer.as_mut().len();
+
+        // Let all buffers be submitted for reading at any time
+        let max_inflight_ops = (buf_capacity / read_capacity) as u32;
+
+        // Completions arrive in bursts (batching done by the disk controller and the kernel).
+        // By submitting smaller chunks we decrease the likelihood that we stall on a full completion queue.
+        // Also, in order to keep some operations submitted at all times, we will `submit` them half-way
+        // through the buffer (at the cost of doubling syscalls) to let kernel work on one half while the other
+        // half is read by the user.
+        let ring_squeue_size = (max_inflight_ops / 2).max(1);
+
+        // agave io_uring uses cqsize to define state slab size, so cqsize == max inflight ops
+        let ring = io_uring::IoUring::builder()
+            .setup_cqsize(max_inflight_ops)
+            .build(ring_squeue_size)?;
+
         // Maximum number of spawned [bounded IO, unbounded IO] kernel threads, we don't expect
         // any unbounded work, but limit it to 1 just in case (0 leaves it unlimited).
         ring.submitter()
@@ -348,6 +358,7 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
         .offset(*file_off as u64)
         .ioprio(IO_PRIO_BE_HIGHEST)
         .build()
+        .flags(squeue::Flags::ASYNC)
     }
 
     fn complete(
