@@ -283,9 +283,9 @@ impl FromStr for SchedulerPacing {
     }
 }
 
-impl From<&SchedulerPacing> for Option<Duration> {
-    fn from(pacing: &SchedulerPacing) -> Self {
-        match pacing {
+impl SchedulerPacing {
+    pub fn fill_time(&self) -> Option<Duration> {
+        match self {
             SchedulerPacing::Disabled => None,
             SchedulerPacing::FillTimeMillis(millis) => Some(Duration::from_millis(millis.get())),
         }

@@ -140,7 +140,7 @@ where
 
                     // If pacing_fill_time is greater than the bank's slot time,
                     // adjust the pacing_fill_time to be the slot time, and warn.
-                    let fill_time = Option::<Duration>::from(&self.config.scheduler_pacing);
+                    let fill_time = self.config.scheduler_pacing.fill_time();
                     if let Some(pacing_fill_time) = fill_time.as_ref() {
                         if pacing_fill_time.as_nanos() > b.ns_per_slot {
                             warn!(
