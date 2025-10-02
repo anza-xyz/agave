@@ -693,16 +693,7 @@ impl TransactionViewReceiveAndBuffer {
         transaction_account_lock_limit: usize,
     ) -> Result<TransactionViewState, PacketHandlingError> {
         // Parsing and basic sanitization checks
-<<<<<<< HEAD
         let Ok(view) = SanitizedTransactionView::try_new_sanitized(bytes) else {
-=======
-        let Ok(view) = SanitizedTransactionView::try_new_sanitized(
-            bytes,
-            working_bank
-                .feature_set
-                .is_active(&agave_feature_set::static_instruction_limit::id()),
-        ) else {
->>>>>>> dd950ecdc (ReceiveAndBuffer: earlier lock count validation (#8319))
             return Err(PacketHandlingError::Sanitization);
         };
 
