@@ -7,7 +7,9 @@ pub use {
 use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
-        banking_stage::BankingStage,
+        banking_stage::{
+            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingStage,
+        },
         banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
@@ -331,7 +333,9 @@ impl Tpu {
             tpu_vote_receiver,
             gossip_vote_receiver,
             block_production_num_workers,
-            block_production_scheduler_pacing,
+            SchedulerConfig {
+                scheduler_pacing: block_production_scheduler_pacing,
+            },
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,

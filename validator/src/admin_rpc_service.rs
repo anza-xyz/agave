@@ -11,7 +11,9 @@ use {
     solana_accounts_db::accounts_index::AccountIndex,
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
-        banking_stage::BankingStage,
+        banking_stage::{
+            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingStage,
+        },
         consensus::{tower_storage::TowerStorage, Tower},
         repair::repair_service,
         validator::{
@@ -784,7 +786,7 @@ impl AdminRpc for AdminRpcImpl {
                     transaction_struct,
                     block_production_method,
                     num_workers,
-                    scheduler_pacing,
+                    SchedulerConfig { scheduler_pacing },
                 )
                 .map_err(|err| {
                     error!("Failed to spawn new non-vote threads: {err:?}");

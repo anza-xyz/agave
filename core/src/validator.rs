@@ -4,7 +4,9 @@ pub use solana_perf::report_target_features;
 use {
     crate::{
         admin_rpc_post_init::{AdminRpcRequestMetadataPostInit, KeyUpdaterType, KeyUpdaters},
-        banking_stage::BankingStage,
+        banking_stage::{
+            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingStage,
+        },
         banking_trace::{self, BankingTracer, TraceError},
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
@@ -260,12 +262,6 @@ pub enum SchedulerPacing {
     FillTimeMillis(NonZeroU64),
 }
 
-impl Default for SchedulerPacing {
-    fn default() -> Self {
-        Self::FillTimeMillis(BankingStage::default_fill_time_millis())
-    }
-}
-
 impl FromStr for SchedulerPacing {
     type Err = String;
 
@@ -438,7 +434,7 @@ impl ValidatorConfig {
             block_verification_method: BlockVerificationMethod::default(),
             block_production_method: BlockProductionMethod::default(),
             block_production_num_workers: BankingStage::default_num_workers(),
-            block_production_pacing_fill_time_millis: SchedulerPacing::default(),
+            block_production_pacing_fill_time_millis: SchedulerConfig::default().scheduler_pacing,
             transaction_struct: TransactionStructure::default(),
             // enable forwarding by default for tests
             enable_block_production_forwarding: true,

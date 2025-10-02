@@ -35,9 +35,18 @@ use {
     },
 };
 
-#[derive(Default)]
 pub struct SchedulerConfig {
     pub scheduler_pacing: SchedulerPacing,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            scheduler_pacing: SchedulerPacing::FillTimeMillis(
+                DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS,
+            ),
+        }
+    }
 }
 
 pub(crate) const DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS: NonZeroU64 =

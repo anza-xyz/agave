@@ -9,7 +9,10 @@ use {
     rayon::prelude::*,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_core::{
-        banking_stage::{update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage},
+        banking_stage::{
+            transaction_scheduler::scheduler_controller::SchedulerConfig,
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage,
+        },
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
         validator::{BlockProductionMethod, SchedulerPacing, TransactionStructure},
     },
@@ -468,7 +471,9 @@ fn main() {
         tpu_vote_receiver,
         gossip_vote_receiver,
         block_production_num_workers,
-        SchedulerPacing::Disabled,
+        SchedulerConfig {
+            scheduler_pacing: SchedulerPacing::Disabled,
+        },
         None,
         replay_vote_sender,
         None,

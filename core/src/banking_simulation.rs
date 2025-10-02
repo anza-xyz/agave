@@ -2,13 +2,14 @@
 use {
     crate::{
         banking_stage::{
+            transaction_scheduler::scheduler_controller::SchedulerConfig,
             update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage, LikeClusterInfo,
         },
         banking_trace::{
             BankingTracer, ChannelLabel, Channels, TimedTracedEvent, TracedEvent, TracedSender,
             TracerThread, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT, BASENAME,
         },
-        validator::{BlockProductionMethod, SchedulerPacing, TransactionStructure},
+        validator::{BlockProductionMethod, TransactionStructure},
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
     assert_matches::assert_matches,
@@ -832,7 +833,7 @@ impl BankingSimulator {
             tpu_vote_receiver,
             gossip_vote_receiver,
             BankingStage::default_num_workers(),
-            SchedulerPacing::default(),
+            SchedulerConfig::default(),
             None,
             replay_vote_sender,
             None,

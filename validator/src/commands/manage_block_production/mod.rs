@@ -118,7 +118,11 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::num::NonZeroU64};
+    use {
+        super::*,
+        solana_core::banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
+        std::num::NonZeroU64,
+    };
 
     #[test]
     fn verify_args_struct_by_command_manage_block_production_default() {
@@ -133,7 +137,7 @@ mod tests {
                 block_production_method: BlockProductionMethod::default(),
                 transaction_structure: TransactionStructure::default(),
                 num_workers: BankingStage::default_num_workers(),
-                pacing_fill_time_millis: SchedulerPacing::default(),
+                pacing_fill_time_millis: SchedulerConfig::default().scheduler_pacing,
             }
         );
     }

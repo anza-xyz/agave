@@ -4,6 +4,7 @@
 use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
     solana_core::{
+        banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
         banking_trace::Channels,
         validator::{BlockProductionMethod, SchedulerPacing, TransactionStructure},
     },
@@ -244,7 +245,9 @@ fn bench_banking(
         tpu_vote_receiver,
         gossip_vote_receiver,
         num_threads,
-        SchedulerPacing::Disabled,
+        SchedulerConfig {
+            scheduler_pacing: SchedulerPacing::Disabled,
+        },
         None,
         s,
         None,
