@@ -283,11 +283,11 @@ impl FromStr for SchedulerPacing {
     }
 }
 
-impl From<SchedulerPacing> for Option<NonZeroU64> {
-    fn from(pacing: SchedulerPacing) -> Self {
+impl From<&SchedulerPacing> for Option<Duration> {
+    fn from(pacing: &SchedulerPacing) -> Self {
         match pacing {
             SchedulerPacing::Disabled => None,
-            SchedulerPacing::FillTimeMillis(millis) => Some(millis),
+            SchedulerPacing::FillTimeMillis(millis) => Some(Duration::from_millis(millis.get())),
         }
     }
 }

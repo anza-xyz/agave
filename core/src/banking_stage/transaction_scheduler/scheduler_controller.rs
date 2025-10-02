@@ -8,14 +8,17 @@ use {
         scheduler_error::SchedulerError,
         scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics, SchedulingDetails},
     },
-    crate::banking_stage::{
-        consume_worker::ConsumeWorkerMetrics,
-        consumer::Consumer,
-        decision_maker::{BufferedPacketsDecision, DecisionMaker},
-        transaction_scheduler::{
-            receive_and_buffer::ReceivingStats, transaction_state_container::StateContainer,
+    crate::{
+        banking_stage::{
+            consume_worker::ConsumeWorkerMetrics,
+            consumer::Consumer,
+            decision_maker::{BufferedPacketsDecision, DecisionMaker},
+            transaction_scheduler::{
+                receive_and_buffer::ReceivingStats, transaction_state_container::StateContainer,
+            },
+            TOTAL_BUFFERED_PACKETS,
         },
-        TOTAL_BUFFERED_PACKETS,
+        validator::SchedulerPacing,
     },
     solana_clock::MAX_PROCESSING_AGE,
     solana_cost_model::cost_tracker::SharedBlockCost,
@@ -32,22 +35,13 @@ use {
     },
 };
 
+#[derive(Default)]
 pub struct SchedulerConfig {
-    pub pacing_fill_time: Option<Duration>,
+    pub scheduler_pacing: SchedulerPacing,
 }
 
 pub(crate) const DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS: NonZeroU64 =
     NonZeroU64::new(350).unwrap();
-
-impl Default for SchedulerConfig {
-    fn default() -> Self {
-        Self {
-            pacing_fill_time: Some(Duration::from_millis(
-                DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS.get(),
-            )),
-        }
-    }
-}
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
 pub(crate) struct SchedulerController<R, S>
@@ -146,14 +140,18 @@ where
 
                     // If pacing_fill_time is greater than the bank's slot time,
                     // adjust the pacing_fill_time to be the slot time, and warn.
-                    if let Some(pacing_fill_time) = &mut self.config.pacing_fill_time {
+                    let fill_time = Option::<Duration>::from(&self.config.scheduler_pacing);
+                    if let Some(pacing_fill_time) = fill_time.as_ref() {
                         if pacing_fill_time.as_nanos() > b.ns_per_slot {
                             warn!(
                                 "scheduler pacing config pacing_fill_time {:?} is greater than \
                                  the bank's slot time {}, setting to slot time",
                                 pacing_fill_time, b.ns_per_slot,
                             );
-                            *pacing_fill_time = Duration::from_nanos(b.ns_per_slot as u64);
+                            self.config.scheduler_pacing = SchedulerPacing::FillTimeMillis(
+                                NonZeroU64::new(b.ns_per_slot as u64 / 1_000_000)
+                                    .unwrap_or(NonZeroU64::new(1).unwrap()),
+                            );
                         }
                     }
 
@@ -161,7 +159,7 @@ where
                         block_limit,
                         shared_block_cost,
                         detection_time: now,
-                        fill_time: self.config.pacing_fill_time,
+                        fill_time,
                     }
                 });
             }

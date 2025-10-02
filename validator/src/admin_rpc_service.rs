@@ -784,7 +784,7 @@ impl AdminRpc for AdminRpcImpl {
                     transaction_struct,
                     block_production_method,
                     num_workers,
-                    scheduler_pacing.into(),
+                    scheduler_pacing,
                 )
                 .map_err(|err| {
                     error!("Failed to spawn new non-vote threads: {err:?}");

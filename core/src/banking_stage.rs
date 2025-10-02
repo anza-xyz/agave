@@ -21,7 +21,7 @@ use {
                 scheduler_error::SchedulerError,
             },
         },
-        validator::{BlockProductionMethod, TransactionStructure},
+        validator::{BlockProductionMethod, SchedulerPacing, TransactionStructure},
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     conditional_mod::conditional_vis_mod,
@@ -374,7 +374,7 @@ impl BankingStage {
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
         num_workers: NonZeroUsize,
-        pacing_fill_time_millis: Option<NonZeroU64>,
+        scheduler_pacing: SchedulerPacing,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
@@ -413,7 +413,7 @@ impl BankingStage {
             transaction_struct,
             use_greedy_scheduler,
             num_workers,
-            pacing_fill_time_millis,
+            scheduler_pacing,
             &context,
         );
 
@@ -428,7 +428,7 @@ impl BankingStage {
         transaction_struct: TransactionStructure,
         block_production_method: BlockProductionMethod,
         num_workers: NonZeroUsize,
-        pacing_fill_time_millis: Option<NonZeroU64>,
+        scheduler_pacing: SchedulerPacing,
     ) -> thread::Result<()> {
         if let Some(context) = self.context.as_ref() {
             info!("Shutting down banking stage threads");
@@ -452,7 +452,7 @@ impl BankingStage {
                     BlockProductionMethod::CentralSchedulerGreedy
                 ),
                 num_workers,
-                pacing_fill_time_millis,
+                scheduler_pacing,
                 context,
             )
         }
@@ -465,7 +465,7 @@ impl BankingStage {
         transaction_struct: TransactionStructure,
         use_greedy_scheduler: bool,
         num_workers: NonZeroUsize,
-        pacing_fill_time_millis: Option<NonZeroU64>,
+        scheduler_pacing: SchedulerPacing,
         context: &BankingStageContext,
     ) {
         match transaction_struct {
@@ -479,7 +479,7 @@ impl BankingStage {
                     receive_and_buffer,
                     use_greedy_scheduler,
                     num_workers,
-                    pacing_fill_time_millis,
+                    scheduler_pacing,
                     context,
                 )
             }
@@ -493,7 +493,7 @@ impl BankingStage {
                     receive_and_buffer,
                     use_greedy_scheduler,
                     num_workers,
-                    pacing_fill_time_millis,
+                    scheduler_pacing,
                     context,
                 )
             }
@@ -505,7 +505,7 @@ impl BankingStage {
         receive_and_buffer: R,
         use_greedy_scheduler: bool,
         num_workers: NonZeroUsize,
-        pacing_fill_time_millis: Option<NonZeroU64>,
+        scheduler_pacing: SchedulerPacing,
         context: &BankingStageContext,
     ) {
         assert!(num_workers <= BankingStage::max_num_workers());
@@ -561,10 +561,7 @@ impl BankingStage {
                         .spawn(move || {
                             let scheduler_controller = SchedulerController::new(
                                 exit,
-                                SchedulerConfig {
-                                    pacing_fill_time: pacing_fill_time_millis
-                                        .map(|millis| Duration::from_millis(millis.get())),
-                                },
+                                SchedulerConfig { scheduler_pacing },
                                 decision_maker,
                                 receive_and_buffer,
                                 bank_forks,
@@ -773,7 +770,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             DEFAULT_NUM_WORKERS,
-            None,
+            SchedulerPacing::Disabled,
             None,
             replay_vote_sender,
             None,
@@ -836,7 +833,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             DEFAULT_NUM_WORKERS,
-            None,
+            SchedulerPacing::Disabled,
             None,
             replay_vote_sender,
             None,
@@ -908,7 +905,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             DEFAULT_NUM_WORKERS,
-            None,
+            SchedulerPacing::Disabled,
             None,
             replay_vote_sender,
             None,
@@ -1066,7 +1063,7 @@ mod tests {
                 tpu_vote_receiver,
                 gossip_vote_receiver,
                 DEFAULT_NUM_WORKERS,
-                None,
+                SchedulerPacing::Disabled,
                 None,
                 replay_vote_sender,
                 None,
@@ -1260,7 +1257,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_receiver,
             DEFAULT_NUM_WORKERS,
-            None,
+            SchedulerPacing::Disabled,
             None,
             replay_vote_sender,
             None,

@@ -11,7 +11,7 @@ use {
     solana_core::{
         banking_stage::{update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage},
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
-        validator::{BlockProductionMethod, TransactionStructure},
+        validator::{BlockProductionMethod, SchedulerPacing, TransactionStructure},
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -468,7 +468,7 @@ fn main() {
         tpu_vote_receiver,
         gossip_vote_receiver,
         block_production_num_workers,
-        None,
+        SchedulerPacing::Disabled,
         None,
         replay_vote_sender,
         None,
