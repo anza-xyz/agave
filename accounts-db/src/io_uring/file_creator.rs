@@ -138,7 +138,7 @@ impl<B> FileCreator for IoUringFileCreator<'_, B> {
         parent_dir_handle: Arc<File>,
         contents: &mut dyn Read,
     ) -> io::Result<()> {
-        let file_key = self.open(path, mode, Some(parent_dir_handle))?;
+        let file_key = self.open(path, mode, parent_dir_handle)?;
         self.write_and_close(contents, file_key)
     }
 
@@ -157,14 +157,9 @@ impl<B> IoUringFileCreator<'_, B> {
     /// Schedule opening file at `path` with `mode` permissions.
     ///
     /// Returns key that can be used for scheduling writes for it.
-    fn open(
-        &mut self,
-        path: PathBuf,
-        mode: u32,
-        dir_handle: Option<Arc<File>>,
-    ) -> io::Result<usize> {
+    fn open(&mut self, path: PathBuf, mode: u32, dir_handle: Arc<File>) -> io::Result<usize> {
         let file = PendingFile::from_path(path);
-        let path_cstring = Pin::new(file.path_cstring(dir_handle.is_some()));
+        let path_cstring = Pin::new(file.path_cstring());
 
         let file_key = self.wait_add_file(file)?;
 
@@ -347,7 +342,7 @@ impl FileCreatorStats {
 
 #[derive(Debug)]
 struct OpenOp {
-    dir_handle: Option<Arc<File>>,
+    dir_handle: Arc<File>,
     path_cstring: Pin<CString>,
     mode: libc::mode_t,
     file_key: usize,
@@ -355,12 +350,7 @@ struct OpenOp {
 
 impl OpenOp {
     fn entry(&mut self) -> squeue::Entry {
-        let at_dir_fd = types::Fd(
-            self.dir_handle
-                .as_ref()
-                .map(AsRawFd::as_raw_fd)
-                .unwrap_or(libc::AT_FDCWD),
-        );
+        let at_dir_fd = types::Fd(self.dir_handle.as_raw_fd());
         opcode::OpenAt::new(at_dir_fd, self.path_cstring.as_ptr() as _)
             .flags(O_CREAT | O_TRUNC | O_NOFOLLOW | O_WRONLY | O_NOATIME)
             .mode(self.mode)
@@ -564,12 +554,8 @@ impl PendingFile {
         }
     }
 
-    fn path_cstring(&self, only_filename: bool) -> CString {
-        let os_str = if only_filename {
-            self.path.file_name().expect("path must contain filename")
-        } else {
-            self.path.as_os_str()
-        };
+    fn path_cstring(&self) -> CString {
+        let os_str = self.path.file_name().expect("path must contain filename");
         CString::new(os_str.as_encoded_bytes()).expect("path mustn't contain interior NULs")
     }
 
