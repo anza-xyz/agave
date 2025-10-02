@@ -40,20 +40,6 @@ impl ConsensusPoolServiceStats {
         }
     }
 
-    fn reset(&mut self) {
-        self.add_message_failed = Saturating(0);
-        self.certificates_sent = Saturating(0);
-        self.certificates_dropped = Saturating(0);
-        self.new_finalized_slot = Saturating(0);
-        self.parent_ready_missed_window = Saturating(0);
-        self.parent_ready_produce_window = Saturating(0);
-        self.received_votes = Saturating(0);
-        self.received_certificates = Saturating(0);
-        self.standstill = false;
-        self.prune_old_state_called = Saturating(0);
-        self.last_request_time = Instant::now();
-    }
-
     fn report(&self) {
         let &Self {
             add_message_failed: Saturating(add_message_failed),
@@ -95,7 +81,7 @@ impl ConsensusPoolServiceStats {
     pub fn maybe_report(&mut self) {
         if self.last_request_time.elapsed() >= STATS_REPORT_INTERVAL {
             self.report();
-            self.reset();
+            *self = Self::new();
         }
     }
 }

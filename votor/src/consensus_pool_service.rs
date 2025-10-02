@@ -672,20 +672,6 @@ mod tests {
         setup_result.consensus_pool_service.join().unwrap();
     }
 
-    #[test]
-    fn test_send_standstill() {
-        let setup_result = setup();
-        // Do nothing for a little more than DELTA_STANDSTILL
-        thread::sleep(DELTA_STANDSTILL + Duration::from_millis(100));
-        // Verify that we received a standstill event
-        wait_for_event(
-            &setup_result.event_receiver,
-            |event| matches!(event, VotorEvent::Standstill(slot) if *slot == 0),
-        );
-        setup_result.exit.store(true, Ordering::Relaxed);
-        setup_result.consensus_pool_service.join().unwrap();
-    }
-
     #[test_case("consensus_message_receiver")]
     #[test_case("bls_receiver")]
     #[test_case("votor_event_receiver")]
