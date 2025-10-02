@@ -7132,6 +7132,7 @@ dependencies = [
  "test-case",
  "thiserror 2.0.17",
  "tikv-jemallocator",
+ "zstd",
 ]
 
 [[package]]
@@ -8440,6 +8441,7 @@ name = "solana-download-utils"
 version = "3.1.0"
 dependencies = [
  "log",
+ "solana-accounts-db",
  "solana-clock",
  "solana-file-download",
  "solana-genesis-config",

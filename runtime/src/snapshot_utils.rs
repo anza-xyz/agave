@@ -28,6 +28,7 @@ use {
         account_storage_reader::AccountStorageReader,
         accounts_db::{AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId},
         accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
+        archive_format::{ArchiveFormat, ArchiveFormatDecompressor},
         hardened_unpack::{self, UnpackError},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
     },
@@ -53,10 +54,9 @@ use {
     thiserror::Error,
 };
 
-mod archive_format;
 mod snapshot_interval;
 pub mod snapshot_storage_rebuilder;
-pub use {archive_format::*, snapshot_interval::SnapshotInterval};
+pub use snapshot_interval::SnapshotInterval;
 
 pub const SNAPSHOT_STATUS_CACHE_FILENAME: &str = "status_cache";
 pub const SNAPSHOT_VERSION_FILENAME: &str = "version";
@@ -2558,6 +2558,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         bincode::{deserialize_from, serialize_into},
+        solana_accounts_db::archive_format::ZstdConfig,
         std::{convert::TryFrom, mem::size_of},
         tempfile::NamedTempFile,
     };

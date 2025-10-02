@@ -102,9 +102,11 @@ solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true, optional = true }
 spl-generic-token = { workspace = true }
 static_assertions = { workspace = true }
+strum = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
+zstd = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 agave-io-uring = { workspace = true }

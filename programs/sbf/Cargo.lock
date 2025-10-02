@@ -5853,9 +5853,11 @@ dependencies = [
  "solana-vote-program",
  "spl-generic-token",
  "static_assertions",
+ "strum",
  "tar",
  "tempfile",
  "thiserror 2.0.17",
+ "zstd",
 ]
 
 [[package]]
@@ -6649,6 +6651,7 @@ name = "solana-download-utils"
 version = "3.1.0"
 dependencies = [
  "log",
+ "solana-accounts-db",
  "solana-clock",
  "solana-file-download",
  "solana-genesis-config",

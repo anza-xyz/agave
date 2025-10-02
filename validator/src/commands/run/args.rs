@@ -5,7 +5,9 @@ use {
         commands::{FromClapArgMatches, Result},
     },
     clap::{values_t, App, Arg, ArgMatches},
-    solana_accounts_db::utils::create_and_canonicalize_directory,
+    solana_accounts_db::{
+        archive_format::SUPPORTED_ARCHIVE_COMPRESSION, utils::create_and_canonicalize_directory,
+    },
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::keypair_of,
@@ -25,7 +27,7 @@ use {
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_pubkey::Pubkey,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
-    solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
+    solana_runtime::snapshot_utils::SnapshotVersion,
     solana_send_transaction_service::send_transaction_service::{
         Config as SendTransactionServiceConfig, MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
     },

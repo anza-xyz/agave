@@ -18,6 +18,7 @@ name = "solana_download_utils"
 
 [dependencies]
 log = { workspace = true }
+solana-accounts-db = { workspace = true }
 solana-clock = { workspace = true }
 solana-file-download = { workspace = true }
 solana-genesis-config = { workspace = true }

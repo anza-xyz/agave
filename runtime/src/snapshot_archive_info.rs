@@ -3,8 +3,9 @@
 use {
     crate::{
         snapshot_hash::SnapshotHash,
-        snapshot_utils::{self, ArchiveFormat, Result},
+        snapshot_utils::{self, Result},
     },
+    solana_accounts_db::archive_format::ArchiveFormat,
     solana_clock::Slot,
     std::{cmp::Ordering, path::PathBuf},
 };

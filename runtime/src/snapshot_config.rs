@@ -1,5 +1,6 @@
 use {
-    crate::snapshot_utils::{self, ArchiveFormat, SnapshotInterval, SnapshotVersion, ZstdConfig},
+    crate::snapshot_utils::{self, SnapshotInterval, SnapshotVersion},
+    solana_accounts_db::archive_format::{ArchiveFormat, ZstdConfig},
     std::{num::NonZeroUsize, path::PathBuf},
 };
 
