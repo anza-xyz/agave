@@ -587,6 +587,12 @@ impl Validator {
         tpu_config: ValidatorTpuConfig,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
     ) -> Result<Self> {
+        #[cfg(debug_assertions)]
+        const DEBUG_ASSERTION_STATUS: &str = "enabled";
+        #[cfg(not(debug_assertions))]
+        const DEBUG_ASSERTION_STATUS: &str = "disabled";
+        info!("debug-assertion status: {DEBUG_ASSERTION_STATUS}");
+
         let ValidatorTpuConfig {
             use_quic,
             vote_use_quic,
