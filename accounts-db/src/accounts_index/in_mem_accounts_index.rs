@@ -1157,7 +1157,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             let mut flush_should_evict_us = 0;
             let mut flush_grow_us = 0;
             // we don't care about lock time in this metric - bg threads can wait
-            let m = Measure::start("flush_update");
+            let flush_update_measure = Measure::start("flush_update");
             let evictions_age = evictions_age_possible
                 .into_iter()
                 .filter_map(|(k, v)| {
@@ -1229,7 +1229,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 })
                 .collect();
             self.update_flush_stats(
-                m,
+                flush_update_measure,
                 flush_should_evict_us,
                 flush_entries_updated_on_disk,
                 flush_grow_us,
