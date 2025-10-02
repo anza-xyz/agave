@@ -496,7 +496,7 @@ mod shuttle_tests {
                 receiver.restart(current_slot);
                 let mut receives = 0;
                 while receives < ITERATIONS_PER_RUN {
-                    if receiver.is_shutdown() && receiver.is_safe_to_shutdown() {
+                    if receiver.is_shutdown() && receiver.is_safe_to_restart() {
                         current_slot += 1;
                         receiver.restart(current_slot);
                     }
