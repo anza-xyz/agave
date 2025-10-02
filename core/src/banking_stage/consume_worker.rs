@@ -72,7 +72,8 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 
     fn consume_loop(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
-        let (maybe_consume_bank, get_bank_us) = measure_us!(self.working_bank_with_timeout());
+        let (maybe_consume_bank, get_bank_us) =
+            measure_us!(self.new_working_bank_with_timeout(None));
         let Some(mut bank) = maybe_consume_bank else {
             self.metrics
                 .timing_metrics
@@ -93,27 +94,22 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             if self.exit.load(Ordering::Relaxed) {
                 return Ok(());
             }
-            if bank.is_complete() || {
-                // if working bank has changed, then try to get a new bank.
-                self.working_bank()
-                    .map(|working_bank| Arc::ptr_eq(&working_bank, &bank))
-                    .unwrap_or(true)
-            } {
-                let (maybe_new_bank, get_bank_us) = measure_us!(self.working_bank_with_timeout());
-                if let Some(new_bank) = maybe_new_bank {
-                    self.metrics
-                        .timing_metrics
-                        .wait_for_bank_success_us
-                        .fetch_add(get_bank_us, Ordering::Relaxed);
-                    bank = new_bank;
-                } else {
-                    self.metrics
-                        .timing_metrics
-                        .wait_for_bank_failure_us
-                        .fetch_add(get_bank_us, Ordering::Relaxed);
-                    return self.retry_drain(work);
-                }
+
+            // If necessary, get a new bank to consume against.
+            let (bank_usable, update_bank_us) =
+                measure_us!(self.update_working_bank_if_necessary(&mut bank));
+            if !bank_usable {
+                self.metrics
+                    .timing_metrics
+                    .wait_for_bank_failure_us
+                    .fetch_add(update_bank_us, Ordering::Relaxed);
+                return self.retry_drain(work);
             }
+
+            self.metrics
+                .timing_metrics
+                .wait_for_bank_success_us
+                .fetch_add(update_bank_us, Ordering::Relaxed);
             self.metrics
                 .count_metrics
                 .num_messages_processed
@@ -150,21 +146,47 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
 
     /// Get the current poh working bank with a timeout - if the Bank is
     /// not available within the timeout, return None.
-    fn working_bank_with_timeout(&self) -> Option<Arc<Bank>> {
+    fn new_working_bank_with_timeout(&self, current_bank: Option<&Arc<Bank>>) -> Option<Arc<Bank>> {
         const TIMEOUT: Duration = Duration::from_millis(50);
         let now = Instant::now();
         while now.elapsed() < TIMEOUT {
-            if let Some(bank) = self.working_bank() {
-                return Some(bank);
+            if let Some(new_bank) = self.shared_working_bank.load_ref().as_ref() {
+                match current_bank {
+                    Some(current_bank) if Arc::ptr_eq(new_bank, current_bank) => {}
+                    // If we don't currently have a bank OR we have a new bank, return it.
+                    _ => {
+                        return Some(Arc::clone(new_bank));
+                    }
+                }
             }
         }
 
         None
     }
 
-    /// Get the current poh working bank without a timeout.
-    fn working_bank(&self) -> Option<Arc<Bank>> {
-        self.shared_working_bank.load()
+    /// Update the bank if it has changed.
+    /// Returns true if the bank is updated or still usable.
+    fn update_working_bank_if_necessary(&self, bank: &mut Arc<Bank>) -> bool {
+        if let Some(working_bank) = self.shared_working_bank.load_ref().as_ref() {
+            if !Arc::ptr_eq(working_bank, bank) {
+                // If we've loaded a new bank, update to it.
+                *bank = Arc::clone(working_bank);
+            }
+
+            // If the bank, whether new or old, is still not complete, return true.
+            if !bank.is_complete() {
+                return true;
+            }
+        }
+
+        // If `working_bank` is None or the bank is complete, we try to get the next bank.
+        // If this is the last leader slot in our rotation, we will timeout.
+        if let Some(new_bank) = self.new_working_bank_with_timeout(Some(bank)) {
+            *bank = new_bank;
+            return true;
+        }
+
+        false
     }
 
     /// Retry current batch and all outstanding batches.
