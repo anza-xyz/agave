@@ -2,6 +2,7 @@
 use {
     crate::{
         banking_stage::{
+            transaction_scheduler::scheduler_controller::SchedulerConfig,
             update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage, LikeClusterInfo,
         },
         banking_trace::{
@@ -832,6 +833,7 @@ impl BankingSimulator {
             tpu_vote_receiver,
             gossip_vote_receiver,
             BankingStage::default_num_workers(),
+            SchedulerConfig::default(),
             None,
             replay_vote_sender,
             None,

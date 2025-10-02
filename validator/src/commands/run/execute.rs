@@ -25,6 +25,7 @@ use {
     },
     solana_clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
     solana_core::{
+        banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
         repair::repair_handler::RepairHandlerType,
@@ -32,7 +33,7 @@ use {
         system_monitor_service::SystemMonitorService,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
-            TransactionStructure, Validator, ValidatorConfig, ValidatorError,
+            SchedulerPacing, TransactionStructure, Validator, ValidatorConfig, ValidatorError,
             ValidatorStartProgress, ValidatorTpuConfig,
         },
     },
@@ -611,6 +612,13 @@ pub fn execute(
             BlockProductionMethod
         ),
         block_production_num_workers,
+        block_production_scheduler_config: SchedulerConfig {
+            scheduler_pacing: value_t_or_exit!(
+                matches,
+                "block_production_pacing_fill_time_millis",
+                SchedulerPacing
+            ),
+        },
         transaction_struct: value_t_or_exit!(matches, "transaction_struct", TransactionStructure),
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         banking_trace_dir_byte_limit: parse_banking_trace_dir_byte_limit(matches),

@@ -11,10 +11,14 @@ use {
     solana_accounts_db::accounts_index::AccountIndex,
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
-        banking_stage::BankingStage,
+        banking_stage::{
+            transaction_scheduler::scheduler_controller::SchedulerConfig, BankingStage,
+        },
         consensus::{tower_storage::TowerStorage, Tower},
         repair::repair_service,
-        validator::{BlockProductionMethod, TransactionStructure, ValidatorStartProgress},
+        validator::{
+            BlockProductionMethod, SchedulerPacing, TransactionStructure, ValidatorStartProgress,
+        },
     },
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
@@ -269,6 +273,7 @@ pub trait AdminRpc {
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
         num_workers: NonZeroUsize,
+        scheduler_pacing: SchedulerPacing,
     ) -> Result<()>;
 }
 
@@ -757,6 +762,7 @@ impl AdminRpc for AdminRpcImpl {
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
         num_workers: NonZeroUsize,
+        scheduler_pacing: SchedulerPacing,
     ) -> Result<()> {
         debug!("manage_block_production rpc request received");
 
@@ -776,7 +782,12 @@ impl AdminRpc for AdminRpcImpl {
             };
 
             banking_stage
-                .spawn_threads(transaction_struct, block_production_method, num_workers)
+                .spawn_threads(
+                    transaction_struct,
+                    block_production_method,
+                    num_workers,
+                    SchedulerConfig { scheduler_pacing },
+                )
                 .map_err(|err| {
                     error!("Failed to spawn new non-vote threads: {err:?}");
                     jsonrpc_core::error::Error::internal_error()
