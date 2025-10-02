@@ -211,6 +211,21 @@ impl SnapshotPackagerService {
             start.elapsed(),
         );
 
+        info!("Saving obsolete accounts...");
+        let start = Instant::now();
+        let result = snapshot_utils::serialize_obsolete_accounts(
+            &bank_snapshot_dir,
+            state.snapshot_slot,
+            &state.snapshot_storages,
+        );
+        if let Err(err) = result {
+            warn!("Failed to serialize obsolete accounts: {err}");
+            // If serializing the obsolete accounts failed, we do *NOT* want to mark the bank snapshot
+            // as loadable so return early.
+            return;
+        }
+        info!("Saving obsolete accounts... Done in {:?}", start.elapsed(),);
+
         let result = snapshot_utils::mark_bank_snapshot_as_loadable(&bank_snapshot_dir);
         if let Err(err) = result {
             warn!("Failed to mark bank snapshot as loadable: {err}");

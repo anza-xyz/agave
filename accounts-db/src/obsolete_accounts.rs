@@ -1,6 +1,6 @@
 use {crate::account_info::Offset, solana_clock::Slot};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct ObsoleteAccountItem {
     /// Offset of the account in the account storage entry
     offset: Offset,
@@ -10,7 +10,7 @@ struct ObsoleteAccountItem {
     slot: Slot,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ObsoleteAccounts {
     accounts: Vec<ObsoleteAccountItem>,
 }
@@ -44,6 +44,19 @@ impl ObsoleteAccounts {
             .iter()
             .filter(move |obsolete_account| slot.is_none_or(|s| obsolete_account.slot <= s))
             .map(|obsolete_account| (obsolete_account.offset, obsolete_account.data_len))
+    }
+
+    pub fn serialize_obsolete_accounts(&self, slot: Slot) -> ObsoleteAccounts {
+        let filtered_accounts = self
+            .accounts
+            .iter()
+            .filter(|account| account.slot <= slot)
+            .cloned()
+            .collect();
+
+        ObsoleteAccounts {
+            accounts: filtered_accounts,
+        }
     }
 }
 #[cfg(test)]
