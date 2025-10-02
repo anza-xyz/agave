@@ -102,7 +102,7 @@ solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true, optional = true }
 spl-generic-token = { workspace = true }
 static_assertions = { workspace = true }
-strum = { workspace = true }
+strum = { workspace = true, features = ["derive"] }
 tar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
