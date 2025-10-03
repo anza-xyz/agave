@@ -2875,7 +2875,7 @@ fn test_delete_dependencies() {
     for key in [&key0, &key1, &key2] {
         let index_entry = accounts_index.get_cloned(key).unwrap();
         let rooted_entries =
-            accounts_index.get_rooted_entries(index_entry.slot_list_read_lock().as_slice(), None);
+            accounts_index.get_rooted_entries(&index_entry.slot_list_read_lock(), None);
         let ref_count = index_entry.ref_count();
         let index = accounts_index.bin_calculator.bin_from_pubkey(key);
         let candidates_bin = &mut candidates[index];
@@ -6447,7 +6447,7 @@ fn test_clean_old_storages_with_reclaims_rooted() {
     let slot_list = accounts_db
         .accounts_index
         .get_bin(&pubkey)
-        .slot_list_mut(&pubkey, |slot_list| slot_list.clone())
+        .slot_list_mut(&pubkey, |slot_list| slot_list.cloned_list())
         .unwrap();
     assert_eq!(slot_list.len(), slots.len());
     assert!(slot_list.iter().map(|(slot, _)| slot).eq(slots.iter()));
@@ -6460,7 +6460,7 @@ fn test_clean_old_storages_with_reclaims_rooted() {
     let slot_list = accounts_db
         .accounts_index
         .get_bin(&pubkey)
-        .slot_list_mut(&pubkey, |slot_list| slot_list.clone())
+        .slot_list_mut(&pubkey, |slot_list| slot_list.cloned_list())
         .unwrap();
     assert_eq!(slot_list.len(), 1);
     assert!(slot_list
@@ -6506,7 +6506,7 @@ fn test_clean_old_storages_with_reclaims_unrooted() {
     let slot_list = accounts_db
         .accounts_index
         .get_bin(&pubkey)
-        .slot_list_mut(&pubkey, |slot_list| slot_list.clone())
+        .slot_list_mut(&pubkey, |slot_list| slot_list.cloned_list())
         .unwrap();
     assert_eq!(slot_list.len(), slots.len());
     assert!(slot_list.iter().map(|(slot, _)| slot).eq(slots.iter()));
@@ -6518,7 +6518,7 @@ fn test_clean_old_storages_with_reclaims_unrooted() {
     let slot_list = accounts_db
         .accounts_index
         .get_bin(&pubkey)
-        .slot_list_mut(&pubkey, |slot_list| slot_list.clone())
+        .slot_list_mut(&pubkey, |slot_list| slot_list.cloned_list())
         .unwrap();
     assert_eq!(slot_list.len(), slots.len());
     assert!(slot_list.iter().map(|(slot, _)| slot).eq(slots.iter()));
