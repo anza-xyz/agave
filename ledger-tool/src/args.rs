@@ -160,23 +160,13 @@ pub fn snapshot_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .value_name("DIR")
             .takes_value(true)
             .global(true)
-            .help("Use DIR as full snapshot archives location [default: --snapshots value]")
-            .long_help(
-                "Use DIR as full snapshot archives location. This DIR applies to *only* full \
-                 snapshot archives. Refer to --incremental-snapshot-archive-path to specify \
-                 location for incremental snapshot archives. [default: --snapshots value]",
-            ),
+            .help("Use DIR as full snapshot archives location [default: --snapshots value]"),
         Arg::with_name("incremental_snapshot_archive_path")
             .long("incremental-snapshot-archive-path")
             .value_name("DIR")
             .takes_value(true)
             .global(true)
-            .help("Use DIR as incremental snapshot archives location [default: --snapshots value]")
-            .long_help(
-                "Use DIR as incremental snapshot archives location. This DIR applies to *only* \
-                 incremental snapshot archives. Refer to --full-snapshot-archive-path to specify \
-                 location for full snapshot archives. [default: --snapshots value]",
-            ),
+            .help("Use DIR as incremental snapshot archives location [default: --snapshots value]"),
         Arg::with_name(use_snapshot_archives_at_startup::cli::NAME)
             .long(use_snapshot_archives_at_startup::cli::LONG_ARG)
             .takes_value(true)
