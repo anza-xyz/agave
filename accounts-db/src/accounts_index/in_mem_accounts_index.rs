@@ -330,25 +330,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     ) -> RT {
         // SAFETY: The entry Arc is not passed to `callback`, so
         // it cannot live beyond this function call.
-        self.get_internal(pubkey, |entry| callback(entry.map(Arc::as_ref)))
-    }
-
-    /// lookup 'pubkey' in index (in_mem or disk).
-    /// call 'callback' whether found or not
-    ///
-    /// # Safety
-    ///
-    /// If the item is on-disk (and not in-mem), add if the item is/could be made dirty
-    /// *after* `callback` finishes (e.g. the entry Arc is cloned and saved by the caller),
-    /// then the disk entry *must* also be added to the in-mem cache.
-    ///
-    /// Prefer `get_internal_inner()` or `get_internal_cloned()` for safe alternatives.
-    fn get_internal<RT>(
-        &self,
-        pubkey: &Pubkey,
-        // return true if item should be added to in_mem cache
-        callback: impl for<'a> FnOnce(Option<&Arc<AccountMapEntry<T>>>) -> (bool, RT),
-    ) -> RT {
         self.get_only_in_mem(pubkey, true, |entry| {
             if let Some(entry) = entry {
                 callback(Some(entry)).1
@@ -366,7 +347,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 let retval = match entry {
                     Entry::Occupied(occupied) => callback(Some(occupied.get())).1,
                     Entry::Vacant(vacant) => {
-                        let disk_entry = Arc::new(disk_entry);
                         debug_assert!(!disk_entry.dirty());
                         let (add_to_cache, rt) = callback(Some(&disk_entry));
                         // We are holding a write lock to the in-memory map.
@@ -374,7 +354,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // If the entry is now dirty, then it must be put in the cache or the modifications will be lost.
                         if add_to_cache || disk_entry.dirty() {
                             stats.inc_mem_count();
-                            vacant.insert(disk_entry);
+                            vacant.insert(Arc::new(disk_entry));
                         }
                         rt
                     }
