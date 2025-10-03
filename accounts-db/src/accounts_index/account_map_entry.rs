@@ -32,12 +32,12 @@ pub struct AccountMapEntry<T: Copy> {
 
 impl<T: IndexValue> AccountMapEntry<T> {
     pub fn new(slot_list: SlotList<T>, ref_count: RefCount, meta: AccountMapEntryMeta) -> Self {
-        let (is_singleton, slot_list_repr) = SlotListRepr::from_list(slot_list);
+        let (is_single, slot_list_repr) = SlotListRepr::from_list(slot_list);
         Self {
             slot_list: RwLock::new(slot_list_repr),
             ref_count: AtomicRefCount::new(ref_count),
             meta: AccountMapEntryMeta {
-                is_singleton: AtomicBool::new(is_singleton),
+                is_single: AtomicBool::new(is_single),
                 ..meta
             },
         }
@@ -117,14 +117,14 @@ impl<T: IndexValue> AccountMapEntry<T> {
     /// This function might need to acquire a read lock on the slot list, so it should not be called
     /// while any slot list accessor is active (since they hold the lock).
     pub fn slot_list_lock_read_len(&self) -> usize {
-        if !self.meta.is_singleton.load(Ordering::Acquire) {
+        if !self.meta.is_single.load(Ordering::Acquire) {
             let slot_list_repr = self.slot_list.read().unwrap();
-            if !self.meta.is_singleton.load(Ordering::Acquire) {
-                // Safety: `is_singleton` confirmed to be false while holding the lock
-                return unsafe { slot_list_repr.list.len() };
+            if !self.meta.is_single.load(Ordering::Acquire) {
+                // Safety: `is_single` confirmed to be false while holding the lock
+                return unsafe { slot_list_repr.multiple.len() };
             }
         }
-        1 // singleton list
+        1 // single list
     }
 
     /// Acquire a read lock on the slot list and return accessor for interpreting its representation
@@ -134,7 +134,7 @@ impl<T: IndexValue> AccountMapEntry<T> {
         let repr_guard = self.slot_list.read().unwrap();
         SlotListReadGuard {
             repr_guard,
-            is_singleton: self.meta.is_singleton.load(Ordering::Acquire),
+            is_single: self.meta.is_single.load(Ordering::Acquire),
         }
     }
 
@@ -161,11 +161,11 @@ impl<T: IndexValue> Debug for AccountMapEntry<T> {
 
 impl<T: Copy> Drop for AccountMapEntry<T> {
     fn drop(&mut self) {
-        if !self.meta.is_singleton.load(Ordering::Acquire) {
+        if !self.meta.is_single.load(Ordering::Acquire) {
             // Make drop panic-resistant
             if let Ok(mut slot_list) = self.slot_list.write() {
-                // Safety: we operate on &mut self, so is_singleton==false won't change since above check
-                unsafe { ManuallyDrop::drop(&mut slot_list.list) }
+                // Safety: we operate on &mut self, so is_single==false won't change since above check
+                unsafe { ManuallyDrop::drop(&mut slot_list.multiple) }
             }
         }
     }
@@ -173,37 +173,37 @@ impl<T: Copy> Drop for AccountMapEntry<T> {
 
 /// Dynamic representation of a slot list with denominator stored in entry metadata to minimize memory usage
 union SlotListRepr<T: Copy> {
-    /// This variant is used when entry's metadata `is_singleton` loads as `true` while holding the lock
-    singleton: (Slot, T),
-    /// Slot list with potentially different number of elements than 1, used when `is_singleton` loads as `false`
+    /// This variant is used when entry's metadata `is_single` loads as `true` while holding the lock
+    single: (Slot, T),
+    /// Slot list with potentially different number of elements than 1, used when `is_single` loads as `false`
     // Vec holds data on heap, however its inline size is impacted by len and capacity fields, so it needs to
     // be wrapped in a Box to minimize the size of the union.
     #[allow(clippy::box_collection)]
-    list: ManuallyDrop<Box<Vec<(Slot, T)>>>,
+    multiple: ManuallyDrop<Box<Vec<(Slot, T)>>>,
 }
 
 impl<T: Copy> SlotListRepr<T> {
     fn from_list(slot_list: SlotList<T>) -> (bool, Self) {
-        let is_singleton = slot_list.len() == 1;
-        let this = if is_singleton {
+        let is_single = slot_list.len() == 1;
+        let this = if is_single {
             Self {
-                singleton: slot_list[0],
+                single: slot_list[0],
             }
         } else {
             Self {
-                list: ManuallyDrop::new(Box::new(slot_list.to_vec())),
+                multiple: ManuallyDrop::new(Box::new(slot_list.to_vec())),
             }
         };
-        (is_singleton, this)
+        (is_single, this)
     }
 
-    // Safety: `is_singleton` needs to match current representation mode, thus this function is unsafe
-    unsafe fn as_slice(&self, is_singleton: bool) -> &[(Slot, T)] {
+    // Safety: `is_single` needs to match current representation mode, thus this function is unsafe
+    unsafe fn as_slice(&self, is_single: bool) -> &[(Slot, T)] {
         unsafe {
-            if is_singleton {
-                std::slice::from_ref(&self.singleton)
+            if is_single {
+                std::slice::from_ref(&self.single)
             } else {
-                &self.list
+                &self.multiple
             }
         }
     }
@@ -212,14 +212,14 @@ impl<T: Copy> SlotListRepr<T> {
 /// Holds slot list lock for reading and provides read access interpreting its representation.
 pub struct SlotListReadGuard<'a, T: Copy> {
     repr_guard: RwLockReadGuard<'a, SlotListRepr<T>>,
-    is_singleton: bool,
+    is_single: bool,
 }
 
 impl<T: Copy> Deref for SlotListReadGuard<'_, T> {
     type Target = [(Slot, T)];
 
     fn deref(&self) -> &Self::Target {
-        unsafe { SlotListRepr::as_slice(&self.repr_guard, self.is_singleton) }
+        unsafe { SlotListRepr::as_slice(&self.repr_guard, self.is_single) }
     }
 }
 
@@ -231,8 +231,8 @@ impl<T: Copy + Debug> Debug for SlotListReadGuard<'_, T> {
 
 /// Holds slot list lock for writing and provides mutable API translating changes to the representation.
 ///
-/// Note: the adjustment of representation happens on-demand when transitioning from singleton to list
-/// and on `Drop` to check possible transition from list to singleton.
+/// Note: the adjustment of representation happens on-demand when transitioning from single to multiple
+/// and on `Drop` to check possible transition from list to single.
 pub struct SlotListWriteGuard<'a, T: Copy> {
     repr_guard: RwLockWriteGuard<'a, SlotListRepr<T>>,
     meta: &'a AccountMapEntryMeta,
@@ -241,7 +241,7 @@ pub struct SlotListWriteGuard<'a, T: Copy> {
 impl<T: Copy> SlotListWriteGuard<'_, T> {
     /// Append element to the end of slot list
     pub fn push(&mut self, item: (Slot, T)) {
-        self.change_to_list().push(item);
+        self.change_to_multiple().push(item);
     }
 
     /// Retains only the elements specified by the predicate, passing a mutable reference to it.
@@ -249,61 +249,61 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
     where
         F: FnMut(&mut (Slot, T)) -> bool,
     {
-        if self.meta.is_singleton.load(Ordering::Acquire) {
-            let single_mut = &mut unsafe { self.repr_guard.singleton };
+        if self.meta.is_single.load(Ordering::Acquire) {
+            let single_mut = &mut unsafe { self.repr_guard.single };
             if !f(single_mut) {
                 self.clear();
             }
         } else {
-            unsafe { self.repr_guard.list.retain_mut(f) };
+            unsafe { self.repr_guard.multiple.retain_mut(f) };
         }
     }
 
     /// Removes and returns the element at position `index` within the list, shifting all elements after it to the left.
     pub fn remove_at(&mut self, index: usize) -> (Slot, T) {
-        self.change_to_list().remove(index)
+        self.change_to_multiple().remove(index)
     }
 
     /// Replaces the element at position `index` within the list returning the previous element stored there.
     pub fn replace_at(&mut self, index: usize, item: (Slot, T)) -> (Slot, T) {
-        let stored_item_mut = if self.meta.is_singleton.load(Ordering::Acquire) {
+        let stored_item_mut = if self.meta.is_single.load(Ordering::Acquire) {
             debug_assert_eq!(index, 0);
-            unsafe { &mut self.repr_guard.singleton }
+            unsafe { &mut self.repr_guard.single }
         } else {
-            unsafe { &mut self.repr_guard.list[index] }
+            unsafe { &mut self.repr_guard.multiple[index] }
         };
         mem::replace(stored_item_mut, item)
     }
 
     /// Clears the list, removing all elements.
     pub fn clear(&mut self) {
-        self.change_to_list().clear();
+        self.change_to_multiple().clear();
     }
 
-    fn change_to_list(&mut self) -> &mut Vec<(Slot, T)> {
-        if self.meta.is_singleton.swap(false, Ordering::AcqRel) {
-            let single = unsafe { self.repr_guard.singleton };
-            self.repr_guard.list = ManuallyDrop::new(Box::new(vec![single]));
+    fn change_to_multiple(&mut self) -> &mut Vec<(Slot, T)> {
+        if self.meta.is_single.swap(false, Ordering::AcqRel) {
+            let single = unsafe { self.repr_guard.single };
+            self.repr_guard.multiple = ManuallyDrop::new(Box::new(vec![single]));
         }
-        unsafe { self.repr_guard.list.as_mut() }
+        unsafe { self.repr_guard.multiple.as_mut() }
     }
 
-    fn try_change_to_singleton(&mut self) {
-        if !self.meta.is_singleton.load(Ordering::Acquire) {
-            let list = unsafe { &mut self.repr_guard.list };
+    fn try_change_to_single(&mut self) {
+        if !self.meta.is_single.load(Ordering::Acquire) {
+            let list = unsafe { &mut self.repr_guard.multiple };
             if list.len() == 1 {
                 assert_eq!(list.len(), 1);
                 let item = list.pop().unwrap();
                 unsafe { ManuallyDrop::drop(list) };
-                self.repr_guard.singleton = item;
-                self.meta.is_singleton.store(true, Ordering::Release);
+                self.repr_guard.single = item;
+                self.meta.is_single.store(true, Ordering::Release);
             }
         }
     }
 
     #[cfg(test)]
     pub fn assign(&mut self, value: impl IntoIterator<Item = (Slot, T)>) {
-        *self.change_to_list() = value.into_iter().collect();
+        *self.change_to_multiple() = value.into_iter().collect();
     }
 
     #[cfg(test)]
@@ -314,7 +314,7 @@ impl<T: Copy> SlotListWriteGuard<'_, T> {
 
 impl<T: Copy> Drop for SlotListWriteGuard<'_, T> {
     fn drop(&mut self) {
-        self.try_change_to_singleton();
+        self.try_change_to_single();
     }
 }
 
@@ -322,8 +322,8 @@ impl<T: Copy> Deref for SlotListWriteGuard<'_, T> {
     type Target = [(Slot, T)];
 
     fn deref(&self) -> &Self::Target {
-        let is_singleton = self.meta.is_singleton.load(Ordering::Acquire);
-        unsafe { SlotListRepr::as_slice(&self.repr_guard, is_singleton) }
+        let is_single = self.meta.is_single.load(Ordering::Acquire);
+        unsafe { SlotListRepr::as_slice(&self.repr_guard, is_single) }
     }
 }
 
@@ -341,11 +341,11 @@ pub struct AccountMapEntryMeta {
     dirty: AtomicBool,
     /// 'age' at which this entry should be purged from the cache (implements lru)
     age: AtomicAge,
-    /// Marker for intepreting `SlotListRepr` as either a singleton or a list.
+    /// Marker for intepreting `SlotListRepr` as either a single or a multiple.
     ///
     /// It is updated when write access to the slot list is released and the size of the slot
     /// list changes between 1 and != 1.
-    is_singleton: AtomicBool,
+    is_single: AtomicBool,
 }
 
 impl AccountMapEntryMeta {
@@ -353,7 +353,7 @@ impl AccountMapEntryMeta {
         AccountMapEntryMeta {
             dirty: AtomicBool::new(dirty),
             age: AtomicAge::new(age),
-            is_singleton: AtomicBool::default(), // overwritten when passed to create entry
+            is_single: AtomicBool::default(), // overwritten when passed to create entry
         }
     }
 
