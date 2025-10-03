@@ -28,7 +28,7 @@ source scripts/generate-target-triple.sh
 
 TARGET="$BUILD_TARGET_TRIPLE"
 
-if [[ -n $TARGET && $TARGET == *windows* ]]; then
+if [[ $TARGET == *windows* ]]; then
   (
     set -x
     git --version
