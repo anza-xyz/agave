@@ -333,19 +333,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         self.get_internal(pubkey, |entry| callback(entry.map(Arc::as_ref)))
     }
 
-    /// lookup 'pubkey' in the index (in_mem or disk).
-    /// call 'callback' whether found or not
-    #[cfg(test)]
-    pub(super) fn get_internal_cloned<RT>(
-        &self,
-        pubkey: &Pubkey,
-        callback: impl for<'a> FnOnce(Option<Arc<AccountMapEntry<T>>>) -> RT,
-    ) -> RT {
-        // SAFETY: Since we're passing the entry Arc clone to `callback`, we must
-        // also add the entry to the in-mem cache.
-        self.get_internal(pubkey, |entry| (true, callback(entry.cloned())))
-    }
-
     /// lookup 'pubkey' in index (in_mem or disk).
     /// call 'callback' whether found or not
     ///

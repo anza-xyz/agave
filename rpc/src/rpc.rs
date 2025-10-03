@@ -82,7 +82,7 @@ use {
         sanitized::{MessageHash, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
         versioned::VersionedTransaction,
     },
-    solana_transaction_context::transaction_accounts::TransactionAccount,
+    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_transaction_error::TransactionError,
     solana_transaction_status::{
         map_inner_instructions, BlockEncodingOptions, ConfirmedBlock,
@@ -310,7 +310,7 @@ impl JsonRpcRequestProcessor {
         program_id: &Pubkey,
         filters: Vec<RpcFilterType>,
         sort_results: bool,
-    ) -> ScanResult<Vec<TransactionAccount>> {
+    ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         let scan_order = if sort_results {
             ScanOrder::Sorted
         } else {

@@ -14,7 +14,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
     solana_slot_hashes::{SlotHashes, MAX_ENTRIES},
-    solana_transaction_context::transaction_accounts::TransactionAccount,
+    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_vote_program::{
         vote_instruction::VoteInstruction,
         vote_state::{
@@ -25,7 +25,12 @@ use {
     test::Bencher,
 };
 
-fn create_accounts() -> (Slot, SlotHashes, Vec<TransactionAccount>, Vec<AccountMeta>) {
+fn create_accounts() -> (
+    Slot,
+    SlotHashes,
+    Vec<KeyedAccountSharedData>,
+    Vec<AccountMeta>,
+) {
     // vote accounts are usually almost full of votes in normal operation
     let num_initial_votes = MAX_LOCKOUT_HISTORY as Slot;
 
@@ -98,7 +103,7 @@ fn create_accounts() -> (Slot, SlotHashes, Vec<TransactionAccount>, Vec<AccountM
 
 fn bench_process_deprecated_vote_instruction(
     bencher: &mut Bencher,
-    transaction_accounts: Vec<TransactionAccount>,
+    transaction_accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     instruction_data: Vec<u8>,
 ) {
@@ -122,7 +127,7 @@ fn bench_process_deprecated_vote_instruction(
 
 fn bench_process_vote_instruction(
     bencher: &mut Bencher,
-    transaction_accounts: Vec<TransactionAccount>,
+    transaction_accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     instruction_data: Vec<u8>,
 ) {

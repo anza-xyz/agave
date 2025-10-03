@@ -23,7 +23,6 @@ use {
     ahash::AHashMap,
     assert_matches::assert_matches,
     crossbeam_channel::{bounded, unbounded},
-    dashmap::DashMap,
     ed25519_dalek::ed25519::signature::Signer as EdSigner,
     itertools::Itertools,
     rand::Rng,

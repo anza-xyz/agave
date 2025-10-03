@@ -14,7 +14,7 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::{sysvar, vote::id},
     solana_slot_hashes::{SlotHashes, MAX_ENTRIES},
-    solana_transaction_context::transaction_accounts::TransactionAccount,
+    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_vote_program::{
         vote_instruction::VoteInstruction,
         vote_processor::Entrypoint,
@@ -34,7 +34,12 @@ fn create_default_clock_account() -> AccountSharedData {
     account::create_account_shared_data_for_test(&Clock::default())
 }
 
-fn create_accounts() -> (Slot, SlotHashes, Vec<TransactionAccount>, Vec<AccountMeta>) {
+fn create_accounts() -> (
+    Slot,
+    SlotHashes,
+    Vec<KeyedAccountSharedData>,
+    Vec<AccountMeta>,
+) {
     // vote accounts are usually almost full of votes in normal operation
     let num_initial_votes = MAX_LOCKOUT_HISTORY as Slot;
 

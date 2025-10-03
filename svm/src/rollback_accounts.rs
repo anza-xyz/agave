@@ -3,7 +3,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_transaction_context::transaction_accounts::TransactionAccount,
+    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
 };
 
 /// Captured account state used to rollback account state for nonce and fee
@@ -11,14 +11,14 @@ use {
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum RollbackAccounts {
     FeePayerOnly {
-        fee_payer: TransactionAccount,
+        fee_payer: KeyedAccountSharedData,
     },
     SameNonceAndFeePayer {
-        nonce: TransactionAccount,
+        nonce: KeyedAccountSharedData,
     },
     SeparateNonceAndFeePayer {
-        nonce: TransactionAccount,
-        fee_payer: TransactionAccount,
+        nonce: KeyedAccountSharedData,
+        fee_payer: KeyedAccountSharedData,
     },
 }
 
@@ -26,7 +26,7 @@ pub enum RollbackAccounts {
 impl Default for RollbackAccounts {
     fn default() -> Self {
         Self::FeePayerOnly {
-            fee_payer: TransactionAccount::default(),
+            fee_payer: KeyedAccountSharedData::default(),
         }
     }
 }
@@ -34,12 +34,12 @@ impl Default for RollbackAccounts {
 /// Rollback accounts iterator.
 /// This struct is created by the `RollbackAccounts::iter`.
 pub struct RollbackAccountsIter<'a> {
-    fee_payer: Option<&'a TransactionAccount>,
-    nonce: Option<&'a TransactionAccount>,
+    fee_payer: Option<&'a KeyedAccountSharedData>,
+    nonce: Option<&'a KeyedAccountSharedData>,
 }
 
 impl<'a> Iterator for RollbackAccountsIter<'a> {
-    type Item = &'a TransactionAccount;
+    type Item = &'a KeyedAccountSharedData;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(fee_payer) = self.fee_payer.take() {
@@ -53,7 +53,7 @@ impl<'a> Iterator for RollbackAccountsIter<'a> {
 }
 
 impl<'a> IntoIterator for &'a RollbackAccounts {
-    type Item = &'a TransactionAccount;
+    type Item = &'a KeyedAccountSharedData;
     type IntoIter = RollbackAccountsIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -100,7 +100,7 @@ impl RollbackAccounts {
     }
 
     /// Return a reference to the fee payer account.
-    pub fn fee_payer(&self) -> &TransactionAccount {
+    pub fn fee_payer(&self) -> &KeyedAccountSharedData {
         match self {
             Self::FeePayerOnly { fee_payer } => fee_payer,
             Self::SameNonceAndFeePayer { nonce } => nonce,

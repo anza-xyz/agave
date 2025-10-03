@@ -24,7 +24,7 @@ use {
         message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
     },
     solana_transaction::sanitized::SanitizedTransaction,
-    solana_transaction_context::transaction_accounts::TransactionAccount,
+    solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_transaction_error::TransactionResult as Result,
     std::{
         cmp::Reverse,
@@ -242,7 +242,7 @@ impl Accounts {
         &self,
         slot: Slot,
         program_id: Option<&Pubkey>,
-    ) -> Vec<TransactionAccount> {
+    ) -> Vec<KeyedAccountSharedData> {
         self.scan_slot(slot, |stored_account| {
             program_id
                 .map(|program_id| program_id == stored_account.owner())
@@ -307,7 +307,7 @@ impl Accounts {
     }
 
     fn load_while_filtering<F: Fn(&AccountSharedData) -> bool>(
-        collector: &mut Vec<TransactionAccount>,
+        collector: &mut Vec<KeyedAccountSharedData>,
         some_account_tuple: Option<(&Pubkey, AccountSharedData, Slot)>,
         filter: F,
     ) {
@@ -325,7 +325,7 @@ impl Accounts {
         bank_id: BankId,
         program_id: &Pubkey,
         config: &ScanConfig,
-    ) -> ScanResult<Vec<TransactionAccount>> {
+    ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         let mut collector = Vec::new();
         self.accounts_db
             .scan_accounts(
@@ -348,7 +348,7 @@ impl Accounts {
         program_id: &Pubkey,
         filter: F,
         config: &ScanConfig,
-    ) -> ScanResult<Vec<TransactionAccount>> {
+    ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         let mut collector = Vec::new();
         self.accounts_db
             .scan_accounts(
@@ -388,9 +388,9 @@ impl Accounts {
     }
 
     fn maybe_abort_scan(
-        result: ScanResult<Vec<TransactionAccount>>,
+        result: ScanResult<Vec<KeyedAccountSharedData>>,
         config: &ScanConfig,
-    ) -> ScanResult<Vec<TransactionAccount>> {
+    ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         if config.is_aborted() {
             ScanResult::Err(ScanError::Aborted(
                 "The accumulated scan results exceeded the limit".to_string(),
@@ -408,7 +408,7 @@ impl Accounts {
         filter: F,
         config: &ScanConfig,
         byte_limit_for_scan: Option<usize>,
-    ) -> ScanResult<Vec<TransactionAccount>> {
+    ) -> ScanResult<Vec<KeyedAccountSharedData>> {
         let sum = AtomicUsize::default();
         let config = config.recreate_with_abort();
         let mut collector = Vec::new();
