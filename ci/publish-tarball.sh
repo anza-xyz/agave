@@ -59,36 +59,10 @@ RELEASE_BASENAME="${RELEASE_BASENAME:=solana-release}"
 TARBALL_BASENAME="${TARBALL_BASENAME:="$RELEASE_BASENAME"}"
 
 echo --- Creating release tarball
-(
-  set -x
-  rm -rf "${RELEASE_BASENAME:?}"/
-  mkdir "${RELEASE_BASENAME}"/
-
-  COMMIT="$(git rev-parse HEAD)"
-
-  (
-    echo "channel: $CHANNEL_OR_TAG"
-    echo "commit: $COMMIT"
-    echo "target: $TARGET"
-  ) > "${RELEASE_BASENAME}"/version.yml
-
-  # Make CHANNEL available to include in the software version information
-  export CHANNEL
-
-  source ci/rust-version.sh stable
-  scripts/cargo-install-all.sh stable "${RELEASE_BASENAME}"
-
-  source scripts/agave-build-lists.sh
-  tmp_excludes=$(mktemp)
-  for bin in "${AGAVE_BINS_VAL_OP[@]}"; do
-    find "${RELEASE_BASENAME}" -type f -name "$bin" -print -quit >> "$tmp_excludes"
-  done
-
-  tar -I bzip2 -X "$tmp_excludes" -cvf "${TARBALL_BASENAME}"-"$TARGET".tar.bz2 "${RELEASE_BASENAME}"
-
-  cp "${RELEASE_BASENAME}"/bin/agave-install-init agave-install-init-"$TARGET"
-  cp "${RELEASE_BASENAME}"/version.yml "${TARBALL_BASENAME}"-"$TARGET".yml
-)
+scripts/create-release-tarball.sh --build-dir "$RELEASE_BASENAME" \
+                                  --channel-or-tag "$TAG" \
+                                  --target "$TARGET" \
+                                  --tarball-basename "$TARBALL_BASENAME"
 
 # Maybe tarballs are platform agnostic, only publish them from the Linux build
 MAYBE_TARBALLS=
