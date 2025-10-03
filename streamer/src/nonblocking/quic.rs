@@ -703,13 +703,10 @@ async fn setup_connection(
                 // now that we have observed the handshake we can be certain
                 // that the initiator owns an IP address, we can update rate
                 // limiters on the server
-                if overall_connection_rate_limiter.consume_tokens(1).is_err() {
-                    debug!(
-                        "Reject connection from {:?} -- total rate limiting exceeded",
-                        from.ip()
-                    );
+                if !rate_limiter.register_connection(&from.ip()) {
+                    debug!("Reject connection from {from:?} -- rate limiting exceeded");
                     stats
-                        .connection_rate_limited_across_all
+                        .connection_rate_limited_per_ipaddr
                         .fetch_add(1, Ordering::Relaxed);
                     new_connection.close(
                         CONNECTION_CLOSE_CODE_DISALLOWED.into(),
@@ -717,10 +714,13 @@ async fn setup_connection(
                     );
                     return;
                 }
-                if !rate_limiter.register_connection(&from.ip()) {
-                    debug!("Reject connection from {from:?} -- rate limiting exceeded");
+                if overall_connection_rate_limiter.consume_tokens(1).is_err() {
+                    debug!(
+                        "Reject connection from {:?} -- total rate limiting exceeded",
+                        from.ip()
+                    );
                     stats
-                        .connection_rate_limited_per_ipaddr
+                        .connection_rate_limited_across_all
                         .fetch_add(1, Ordering::Relaxed);
                     new_connection.close(
                         CONNECTION_CLOSE_CODE_DISALLOWED.into(),
