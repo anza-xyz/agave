@@ -222,8 +222,10 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
     append_vec.accounts.write_accounts(&storable_accounts, 0);
     assert!(!db.accounts_index.contains(&pubkey));
     let result = db.generate_index(None, false);
-    let entry = db.accounts_index.get_cloned(&pubkey).unwrap();
-    assert_eq!(entry.slot_list_lock_read_len(), 1);
+    let slot_list_len = db.accounts_index.get_and_then(&pubkey, |entry| {
+        (false, entry.unwrap().slot_list_lock_read_len())
+    });
+    assert_eq!(slot_list_len, 1);
     assert_eq!(append_vec.alive_bytes(), aligned_stored_size(0));
     assert_eq!(append_vec.accounts_count(), 1);
     assert_eq!(append_vec.count(), 1);
@@ -1834,8 +1836,9 @@ fn test_accounts_db_purge_keep_live() {
 
     // The earlier entry for pubkey in the account index is purged,
     let (slot_list_len, index_slot) = {
-        let account_entry = accounts.accounts_index.get_cloned(&pubkey).unwrap();
-        let slot_list = account_entry.slot_list_read_lock();
+        let slot_list = accounts.accounts_index.get_and_then(&pubkey, |entry| {
+            (false, entry.unwrap().slot_list_read_lock().clone())
+        });
         (slot_list.len(), slot_list[0].0)
     };
     assert_eq!(slot_list_len, 1);
@@ -2873,10 +2876,11 @@ fn test_delete_dependencies() {
         .take(num_bins)
         .collect();
     for key in [&key0, &key1, &key2] {
-        let index_entry = accounts_index.get_cloned(key).unwrap();
-        let rooted_entries =
-            accounts_index.get_rooted_entries(index_entry.slot_list_read_lock().as_slice(), None);
-        let ref_count = index_entry.ref_count();
+        let (rooted_entries, ref_count) = accounts_index.get_and_then(key, |entry| {
+            let slot_list_lock = entry.unwrap().slot_list_read_lock();
+            let rooted = accounts_index.get_rooted_entries(slot_list_lock.as_ref(), None);
+            (false, (rooted, entry.unwrap().ref_count()))
+        });
         let index = accounts_index.bin_calculator.bin_from_pubkey(key);
         let candidates_bin = &mut candidates[index];
         candidates_bin.insert(
@@ -3689,11 +3693,10 @@ define_accounts_db_test!(test_alive_bytes, |accounts_db| {
             let before_size = storage0.alive_bytes();
             let account_info = accounts_db
                 .accounts_index
-                .get_cloned(account.pubkey())
-                .unwrap()
-                .slot_list_read_lock()
-                // Should only be one entry per key, since every key was only stored to slot 0
-                [0];
+                .get_and_then(account.pubkey(), |entry| {
+                    // Should only be one entry per key, since every key was only stored to slot 0
+                    (false, entry.unwrap().slot_list_read_lock()[0])
+                });
             assert_eq!(account_info.0, slot);
             let reclaims = [account_info];
             num_obsolete_accounts += reclaims.len();
