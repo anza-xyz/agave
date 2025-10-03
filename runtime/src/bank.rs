@@ -56,6 +56,7 @@ use {
         status_cache::{SlotDelta, StatusCache},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
+    accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
     agave_feature_set::{self as feature_set, raise_cpi_nesting_limit_to_8, FeatureSet},
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
@@ -63,6 +64,7 @@ use {
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
     ahash::AHashSet,
+    dashmap::DashMap,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
     rayon::{ThreadPool, ThreadPoolBuilder},
@@ -547,6 +549,8 @@ impl PartialEq for Bank {
             compute_budget: _,
             transaction_account_lock_limit: _,
             fee_structure: _,
+            cache_for_accounts_lt_hash: _,
+            stats_for_accounts_lt_hash: _,
             block_id,
             bank_hash_stats: _,
             epoch_rewards_calculation_cache: _,
@@ -869,7 +873,21 @@ pub struct Bank {
     hash_overrides: Arc<Mutex<HashOverrides>>,
 
     /// The lattice hash of all accounts
+    ///
+    /// The value is only meaningful after freezing.
     accounts_lt_hash: Mutex<AccountsLtHash>,
+
+    /// A cache of *the initial state* of accounts modified in this slot
+    ///
+    /// The accounts lt hash needs both the initial and final state of each
+    /// account that was modified in this slot.  Cache the initial state here.
+    ///
+    /// Note: The initial state must be strictly from an ancestor,
+    /// and not an intermediate state within this slot.
+    cache_for_accounts_lt_hash: DashMap<Pubkey, AccountsLtHashCacheValue, ahash::RandomState>,
+
+    /// Stats related to the accounts lt hash
+    stats_for_accounts_lt_hash: AccountsLtHashStats,
 
     /// The unique identifier for the corresponding block for this bank.
     /// None for banks that have not yet completed replay or for leader banks as we cannot populate block_id
@@ -1074,6 +1092,8 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash::identity())),
+            cache_for_accounts_lt_hash: DashMap::default(),
+            stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
@@ -1319,6 +1339,8 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: parent.hash_overrides.clone(),
             accounts_lt_hash: Mutex::new(parent.accounts_lt_hash.lock().unwrap().clone()),
+            cache_for_accounts_lt_hash: DashMap::default(),
+            stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
             epoch_rewards_calculation_cache: parent.epoch_rewards_calculation_cache.clone(),
@@ -1365,11 +1387,32 @@ impl Bank {
             .transaction_processor
             .fill_missing_sysvar_cache_entries(&new));
 
+        let (num_accounts_modified_this_slot, populate_cache_for_accounts_lt_hash_us) =
+            measure_us!({
+                // The cache for accounts lt hash needs to be made aware of accounts modified
+                // before transaction processing begins.  Otherwise we may calculate the wrong
+                // accounts lt hash due to having the wrong initial state of the account.  The
+                // lt hash cache's initial state must always be from an ancestor, and cannot be
+                // an intermediate state within this Bank's slot.  If the lt hash cache has the
+                // wrong initial account state, we'll mix out the wrong lt hash value, and thus
+                // have the wrong overall accounts lt hash, and diverge.
+                let accounts_modified_this_slot =
+                    new.rc.accounts.accounts_db.get_pubkeys_for_slot(slot);
+                let num_accounts_modified_this_slot = accounts_modified_this_slot.len();
+                for pubkey in accounts_modified_this_slot {
+                    new.cache_for_accounts_lt_hash
+                        .entry(pubkey)
+                        .or_insert(AccountsLtHashCacheValue::BankNew);
+                }
+                num_accounts_modified_this_slot
+            });
+
         time.stop();
         report_new_bank_metrics(
             slot,
             parent.slot(),
             new.block_height,
+            num_accounts_modified_this_slot,
             NewBankTimings {
                 bank_rc_creation_time_us,
                 total_elapsed_time_us: time.as_us(),
@@ -1388,6 +1431,7 @@ impl Bank {
                 cache_preparation_time_us,
                 update_sysvars_time_us,
                 fill_sysvar_cache_time_us,
+                populate_cache_for_accounts_lt_hash_us,
             },
         );
 
@@ -1735,6 +1779,8 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(fields.accounts_lt_hash),
+            cache_for_accounts_lt_hash: DashMap::default(),
+            stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
             epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
@@ -2408,6 +2454,9 @@ impl Bank {
 
             // freeze is a one-way trip, idempotent
             self.freeze_started.store(true, Relaxed);
+            // updating the accounts lt hash must happen *outside* of hash_internal_state() so
+            // that rehash() can be called and *not* modify self.accounts_lt_hash.
+            self.update_accounts_lt_hash();
             *hash = self.hash_internal_state();
             self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
         }
@@ -3506,10 +3555,12 @@ impl Bank {
             );
 
             let to_store = (self.slot(), accounts_to_store.as_slice());
-            self._store_accounts(
-                to_store,
-                StoreAccountsCaller::Inline(transactions.as_deref()),
-            );
+            self.update_bank_hash_stats(&to_store);
+            // See https://github.com/solana-labs/solana/pull/31455 for discussion
+            // on *not* updating the index within a threadpool.
+            self.rc
+                .accounts
+                .store_accounts_seq(to_store, transactions.as_deref());
         });
 
         // Cached vote and stake accounts are synchronized with accounts-db
@@ -3882,7 +3933,8 @@ impl Bank {
                 )
             })
         });
-        self._store_accounts(accounts, StoreAccountsCaller::OutOfBand);
+        self.update_bank_hash_stats(&accounts);
+        self.rc.accounts.store_accounts_par(accounts, None);
         m.stop();
         self.rc
             .accounts
@@ -3890,39 +3942,6 @@ impl Bank {
             .stats
             .stakes_cache_check_and_store_us
             .fetch_add(m.as_us(), Relaxed);
-    }
-
-    /// Stores `accounts`
-    ///
-    /// This fn handles the common tasks when storing accounts, such as
-    /// updating the bank hash stats, and updating the accounts lt hash.
-    ///
-    /// The two callers are:
-    /// 1. inline with transaction processing, when committing transactions
-    /// 2. out-of-band, e.g. updating sysvars, the incinerator, epoch rewards, etc
-    fn _store_accounts<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        caller: StoreAccountsCaller<'a>,
-    ) {
-        self.update_bank_hash_stats(&accounts);
-
-        // Updating the accounts lt hash *must* be done before storing the accounts.
-        // Otherwise, when loading the old account versions, we end up finding the
-        // *new* account versions that we just stored!  This would result in mixing
-        // out the wrong values, leading to an incorrect accounts lt hash.
-        self.update_accounts_lt_hash(&accounts);
-
-        match caller {
-            StoreAccountsCaller::Inline(transactions) => {
-                // See https://github.com/solana-labs/solana/pull/31455 for discussion
-                // on *not* updating the index within a threadpool.
-                self.rc.accounts.store_accounts_seq(accounts, transactions);
-            }
-            StoreAccountsCaller::OutOfBand => {
-                self.rc.accounts.store_accounts_par(accounts, None);
-            }
-        }
     }
 
     pub fn force_flush_accounts_cache(&self) {
@@ -5624,14 +5643,6 @@ impl Bank {
     }
 }
 
-/// Indicates who is calling `_store_accounts()`
-enum StoreAccountsCaller<'a> {
-    /// The caller is inline with transaction processing, e.g. commit_transactions()
-    Inline(Option<&'a [&'a SanitizedTransaction]>),
-    /// The caller is not inline with transaction processing, e.g. updating sysvars
-    OutOfBand,
-}
-
 impl InvokeContextCallback for Bank {
     fn get_epoch_stake(&self) -> u64 {
         self.get_current_epoch_total_stake()
@@ -5674,8 +5685,8 @@ impl TransactionProcessingCallback for Bank {
             .load_with_fixed_root(&self.ancestors, pubkey)
     }
 
-    fn inspect_account(&self, _address: &Pubkey, _account_state: AccountState, _is_writable: bool) {
-        // nothing to do here
+    fn inspect_account(&self, address: &Pubkey, account_state: AccountState, is_writable: bool) {
+        self.inspect_account_for_accounts_lt_hash(address, &account_state, is_writable);
     }
 }
 
