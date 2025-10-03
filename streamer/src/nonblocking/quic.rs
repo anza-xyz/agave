@@ -72,12 +72,16 @@ const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
 const CONNECTION_CLOSE_CODE_INVALID_STREAM: u32 = 5;
 const CONNECTION_CLOSE_REASON_INVALID_STREAM: &[u8] = b"invalid_stream";
 
-/// Target bitrate for an unstaked connection
-const TARGET_UNSTAKED_KBPS: u64 = 5000; // about 200 TPS
+/// Target max bitrate for an unstaked connection
+/// This is max raw network bitrare, actual TPS will be enforced
+/// by the throttling logic
+const TARGET_UNSTAKED_KBPS: u64 = 2000; // about 600 TPS with mean TX size of 400 bytes
 
-/// Target bitrate for a staked connection with maximum
+/// Target max bitrate for a staked connection with maximum
 /// stake amount through the cluster
-const TARGET_MAX_STAKED_KBPS: u64 = TARGET_UNSTAKED_KBPS * 20; // about 4000 TPS
+/// This is max raw network bitrare, actual TPS will be enforced
+/// by the throttling logic
+const TARGET_MAX_STAKED_KBPS: u64 = TARGET_UNSTAKED_KBPS * 20; // about 12000 TPS
 
 /// Maximal allowed RTT for SWQOS calculations (to limit abuse)
 const MAX_ALLOWED_RTT_MS: u64 = 300;
@@ -635,10 +639,12 @@ fn compute_max_receive_rate_kbps(max_stake: u64, peer: ConnectionPeerType) -> u6
     let stake = match peer {
         ConnectionPeerType::Unstaked => 0,
         ConnectionPeerType::Staked(peer_stake) => peer_stake,
-    };
+    }
+    .min(max_stake);
 
-    if stake >= max_stake {
-        return TARGET_MAX_STAKED_KBPS;
+    // real cluster always has staked nodes, but unittests may have 100% unstaked
+    if max_stake == 0 {
+        return TARGET_UNSTAKED_KBPS;
     }
 
     let max_rate = TARGET_MAX_STAKED_KBPS;
@@ -653,9 +659,8 @@ fn compute_receive_window_bdp(max_receive_rate_kbps: u64, rtt: Duration) -> VarI
     // max(1) is needed on localhost to avoid zero result
     // truncate here is safe since u64 millis is an eternity
     let millis = (rtt.as_millis() as u64).clamp(1, MAX_ALLOWED_RTT_MS);
-    // Compute the receive window in bytes as max_rx_rate * rtt * 1.2 / 8,
-    // here 1.2 is a margin to account for ack coalescing and network blips
-    let receive_window = (max_receive_rate_kbps * millis) * 12 / 10 / 8;
+    // Compute the receive window in bytes as max_rx_rate * rtt / 8,
+    let receive_window = (max_receive_rate_kbps * millis) / 8;
     // hard constraint the RX window to avoid excess memory use
     let receive_window = receive_window.min(MAX_ALLOWED_RX_WINDOW as u64) as u32;
     VarInt::from_u32(receive_window)
@@ -2405,7 +2410,7 @@ pub mod test {
 
         let client_connection = make_client_endpoint(&server_address, None).await;
 
-        // unstaked connection can handle up to 100tps, so we should send in ~1s.
+        // unstaked connection can handle > 100tps, so we should send in <1s.
         let expected_num_txs = 100;
         let start_time = tokio::time::Instant::now();
         for i in 0..expected_num_txs {
