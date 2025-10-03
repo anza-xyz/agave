@@ -39,7 +39,10 @@ use {
 };
 
 pub mod thread_args;
-use thread_args::{thread_args, DefaultThreadArgs};
+use {
+    solana_core::banking_stage::BankingStage,
+    thread_args::{thread_args, DefaultThreadArgs},
+};
 
 // The default minimal snapshot download speed (bytes/second)
 const DEFAULT_MIN_SNAPSHOT_DOWNLOAD_SPEED: u64 = 10485760;
@@ -73,7 +76,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::staked_nodes_overrides::command())
         .subcommand(commands::wait_for_restart_window::command())
         .subcommand(commands::set_public_address::command())
-        .subcommand(commands::manage_block_production::command());
+        .subcommand(commands::manage_block_production::command(default_args));
 
     commands::run::add_args(app, default_args)
         .args(&thread_args(&default_args.thread_args))
@@ -312,6 +315,7 @@ pub struct DefaultArgs {
     pub vote_use_quic: String,
 
     pub banking_trace_dir_byte_limit: String,
+    pub block_production_pacing_fill_time_millis: String,
 
     pub wen_restart_path: String,
 
@@ -399,6 +403,8 @@ impl DefaultArgs {
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
             rpc_max_request_body_size: MAX_REQUEST_BODY_SIZE.to_string(),
             banking_trace_dir_byte_limit: BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT.to_string(),
+            block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis()
+                .to_string(),
             wen_restart_path: "wen_restart_progress.proto".to_string(),
             thread_args: DefaultThreadArgs::default(),
         }

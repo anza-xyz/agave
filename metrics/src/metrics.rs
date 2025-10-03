@@ -407,6 +407,10 @@ pub fn set_host_id(host_id: String) {
     *HOST_ID.write().unwrap() = host_id;
 }
 
+pub fn get_host_id() -> String {
+    HOST_ID.read().unwrap().clone()
+}
+
 /// Submits a new point from any thread.  Note that points are internally queued
 /// and transmitted periodically in batches.
 pub fn submit(point: DataPoint, level: log::Level) {
@@ -738,5 +742,12 @@ mod test {
             .add_field_i64("random_int", rand::random::<u8>() as i64)
             .to_owned();
         agent.submit(point, Level::Info);
+    }
+
+    #[test]
+    fn test_host_id() {
+        let test_host_id = "test_host_123".to_string();
+        set_host_id(test_host_id.clone());
+        assert_eq!(get_host_id(), test_host_id);
     }
 }

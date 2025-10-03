@@ -47,6 +47,7 @@ frozen-abi = [
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
+shuttle-test = ["dep:shuttle"]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -89,6 +90,7 @@ serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
+shuttle = { workspace = true, optional = true }
 solana-account = { workspace = true }
 solana-account-info = { workspace = true }
 solana-accounts-db = { workspace = true }

@@ -3111,7 +3111,7 @@ fn setup_transfer_scan_threads(
                 }
                 if let Some(total_scan_balance) = client
                     .rpc_client()
-                    .get_program_accounts_with_config(
+                    .get_program_ui_accounts_with_config(
                         &system_program::id(),
                         scan_commitment_config.clone(),
                     )

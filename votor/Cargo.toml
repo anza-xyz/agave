@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [features]
 agave-unstable-api = []
+default = ["agave-unstable-api"]
 dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]
 frozen-abi = [
     "dep:solana-frozen-abi",
@@ -82,6 +83,7 @@ solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
+tempfile = { workspace = true }
 test-case = { workspace = true }
 tokio-util = { workspace = true }
 

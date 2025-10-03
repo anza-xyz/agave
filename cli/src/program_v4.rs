@@ -12,7 +12,7 @@ use {
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
     solana_account::Account,
-    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
+    solana_account_decoder::{UiAccount, UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit},
         input_parsers::{pubkey_of, pubkey_of_signer, signer_of},
@@ -1410,8 +1410,8 @@ fn get_accounts_with_filter(
     _config: &CliConfig,
     filters: Vec<RpcFilterType>,
     length: usize,
-) -> Result<Vec<(Pubkey, Account)>, Box<dyn std::error::Error>> {
-    let results = rpc_client.get_program_accounts_with_config(
+) -> Result<Vec<(Pubkey, UiAccount)>, Box<dyn std::error::Error>> {
+    let results = rpc_client.get_program_ui_accounts_with_config(
         &loader_v4::id(),
         RpcProgramAccountsConfig {
             filters: Some(filters),
@@ -1451,7 +1451,11 @@ fn get_programs(
 
     let mut programs = vec![];
     for (program, account) in results.iter() {
-        if let Ok(state) = solana_loader_v4_program::get_state(&account.data) {
+        let data_bytes = account.data.decode().expect(
+            "It should be impossible at this point for the account data not to be decodable. \
+             Ensure that the account was fetched using a binary encoding.",
+        );
+        if let Ok(state) = solana_loader_v4_program::get_state(data_bytes.as_slice()) {
             let status = match state.status {
                 LoaderV4Status::Retracted => "retracted",
                 LoaderV4Status::Deployed => "deployed",
@@ -1463,8 +1467,7 @@ fn get_programs(
                 authority: state.authority_address_or_next_version.to_string(),
                 last_deploy_slot: state.slot,
                 status: status.to_string(),
-                data_len: account
-                    .data
+                data_len: data_bytes
                     .len()
                     .saturating_sub(LoaderV4State::program_data_offset()),
             });

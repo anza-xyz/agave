@@ -1830,7 +1830,6 @@ mod tests {
             .set_syscall_context(SyscallContext {
                 allocator: BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
                 accounts_metadata: vec![account_metadata],
-                trace_log: Vec::new(),
             })
             .unwrap();
 

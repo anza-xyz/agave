@@ -13,13 +13,13 @@ use {
     smallvec::SmallVec,
     std::{
         collections::VecDeque,
+        ffi::CString,
         fs::File,
         io::{self, Read},
         mem,
-        os::{fd::AsRawFd, unix::ffi::OsStrExt as _},
+        os::fd::AsRawFd,
         path::PathBuf,
         pin::Pin,
-        ptr,
         sync::Arc,
         time::Duration,
     },
@@ -138,7 +138,7 @@ impl<B> FileCreator for IoUringFileCreator<'_, B> {
         parent_dir_handle: Arc<File>,
         contents: &mut dyn Read,
     ) -> io::Result<()> {
-        let file_key = self.open(path, mode, Some(parent_dir_handle))?;
+        let file_key = self.open(path, mode, parent_dir_handle)?;
         self.write_and_close(contents, file_key)
     }
 
@@ -157,20 +157,15 @@ impl<B> IoUringFileCreator<'_, B> {
     /// Schedule opening file at `path` with `mode` permissions.
     ///
     /// Returns key that can be used for scheduling writes for it.
-    fn open(
-        &mut self,
-        path: PathBuf,
-        mode: u32,
-        dir_handle: Option<Arc<File>>,
-    ) -> io::Result<usize> {
+    fn open(&mut self, path: PathBuf, mode: u32, dir_handle: Arc<File>) -> io::Result<usize> {
         let file = PendingFile::from_path(path);
-        let path_bytes = Pin::new(file.zero_terminated_path_bytes(dir_handle.is_some()));
+        let path_cstring = Pin::new(file.path_cstring());
 
         let file_key = self.wait_add_file(file)?;
 
         let op = FileCreatorOp::Open(OpenOp {
             dir_handle,
-            path_bytes,
+            path_cstring,
             mode,
             file_key,
         });
@@ -347,21 +342,16 @@ impl FileCreatorStats {
 
 #[derive(Debug)]
 struct OpenOp {
-    dir_handle: Option<Arc<File>>,
-    path_bytes: Pin<Vec<u8>>,
+    dir_handle: Arc<File>,
+    path_cstring: Pin<CString>,
     mode: libc::mode_t,
     file_key: usize,
 }
 
 impl OpenOp {
     fn entry(&mut self) -> squeue::Entry {
-        let at_dir_fd = types::Fd(
-            self.dir_handle
-                .as_ref()
-                .map(AsRawFd::as_raw_fd)
-                .unwrap_or(libc::AT_FDCWD),
-        );
-        opcode::OpenAt::new(at_dir_fd, self.path_bytes.as_ptr() as _)
+        let at_dir_fd = types::Fd(self.dir_handle.as_raw_fd());
+        opcode::OpenAt::new(at_dir_fd, self.path_cstring.as_ptr() as _)
             .flags(O_CREAT | O_TRUNC | O_NOFOLLOW | O_WRONLY | O_NOATIME)
             .mode(self.mode)
             .file_index(Some(
@@ -564,24 +554,9 @@ impl PendingFile {
         }
     }
 
-    fn zero_terminated_path_bytes(&self, only_filename: bool) -> Vec<u8> {
-        let mut path_bytes = Vec::with_capacity(libc::PATH_MAX as usize);
-        let buf_ptr = path_bytes.as_mut_ptr();
-        let bytes = if only_filename {
-            self.path.file_name().unwrap_or_default().as_bytes()
-        } else {
-            self.path.as_os_str().as_bytes()
-        };
-        assert!(bytes.len() < path_bytes.capacity());
-        // Safety:
-        // We know that the buffer is large enough to hold the copy and the
-        // pointers don't overlap.
-        unsafe {
-            ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr, bytes.len());
-            buf_ptr.add(bytes.len()).write(0);
-            path_bytes.set_len(bytes.len() + 1);
-        }
-        path_bytes
+    fn path_cstring(&self) -> CString {
+        let os_str = self.path.file_name().expect("path must contain filename");
+        CString::new(os_str.as_encoded_bytes()).expect("path mustn't contain interior NULs")
     }
 
     fn is_completed(&self) -> bool {
