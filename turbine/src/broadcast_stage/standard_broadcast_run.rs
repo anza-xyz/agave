@@ -384,7 +384,10 @@ impl StandardBroadcastRun {
         quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
         trace!("Broadcasting {:?} shreds", shreds.len());
-        let mut transmit_stats = TransmitShredsStats::default();
+        let mut transmit_stats = TransmitShredsStats {
+            is_xdp: matches!(sock, BroadcastSocket::Xdp(_)),
+            ..Default::default()
+        };
         // Broadcast the shreds
         let mut transmit_time = Measure::start("broadcast_shreds");
 

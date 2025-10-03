@@ -120,6 +120,7 @@ impl RetransmitStats {
         working_bank: &Bank,
         cluster_info: &ClusterInfo,
         cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
+        is_xdp: bool,
     ) {
         const SUBMIT_CADENCE: Duration = Duration::from_secs(2);
         if self.since.elapsed() < SUBMIT_CADENCE {
@@ -130,6 +131,7 @@ impl RetransmitStats {
             .submit_metrics("cluster_nodes_retransmit", timestamp());
         datapoint_info!(
             "retransmit-stage",
+            "is_xdp" => is_xdp.to_string(),
             ("total_time", self.total_time, i64),
             ("epoch_fetch", self.epoch_fetch, i64),
             ("epoch_cache_update", self.epoch_cache_update, i64),
@@ -383,7 +385,13 @@ fn retransmit(
     );
     timer_start.stop();
     stats.total_time += timer_start.as_us();
-    stats.maybe_submit(&root_bank, &working_bank, cluster_info, cluster_nodes_cache);
+    stats.maybe_submit(
+        &root_bank,
+        &working_bank,
+        cluster_info,
+        cluster_nodes_cache,
+        xdp_sender.is_some(),
+    );
     Ok(())
 }
 
