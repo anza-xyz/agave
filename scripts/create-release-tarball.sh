@@ -35,44 +35,40 @@ commit="$(git rev-parse HEAD)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build-dir)
-      if [[ -n "$2" ]]; then
-        build_dir="$2"
-        shift 2
-      else
+      if [[ $# -lt 2 ]] || [[ "$2" == --* ]]; then
         echo "Error: --build-dir requires a value"
         print_usage
         exit 1
       fi
+      build_dir="$2"
+      shift 2
       ;;
     --channel-or-tag)
-      if [[ -n "$2" ]]; then
-        channel_or_tag="$2"
-        shift 2
-      else
+      if [[ $# -lt 2 ]] || [[ "$2" == --* ]]; then
         echo "Error: --channel-or-tag requires a value"
         print_usage
         exit 1
       fi
+      channel_or_tag="$2"
+      shift 2
       ;;
     --target)
-      if [[ -n "$2" ]]; then
-        target="$2"
-        shift 2
-      else
+      if [[ $# -lt 2 ]] || [[ "$2" == --* ]]; then
         echo "Error: --target requires a value"
         print_usage
         exit 1
       fi
+      target="$2"
+      shift 2
       ;;
     --tarball-basename)
-      if [[ -n "$2" ]]; then
-        tarball_basename="$2"
-        shift 2
-      else
+      if [[ $# -lt 2 ]] || [[ "$2" == --* ]]; then
         echo "Error: --tarball-basename requires a value"
         print_usage
         exit 1
       fi
+      tarball_basename="$2"
+      shift 2
       ;;
     --include-val-bins)
       include_val_bins=1
@@ -108,20 +104,23 @@ target: ${target}
 EOF
 
 source ci/rust-version.sh stable
+
 scripts/cargo-install-all.sh stable "${build_dir}"
 
 source scripts/agave-build-lists.sh
+
 tmp_excludes="$(mktemp)"
 trap 'rm -f "$tmp_excludes"' EXIT
 
 if [[ "$include_val_bins" -eq 0 ]]; then
   for bin in "${AGAVE_BINS_VAL_OP[@]}"; do
-    find "${build_dir}" -type f -name "$bin" -print -quit >> "$tmp_excludes"
+    find "${build_dir}" -type f -name "$bin" -print -quit >> "$tmp_excludes" || true
   done
 fi
 
 output_tar="${tarball_basename}-${target}.tar.bz2"
-echo --- Creating tarball
-tar -I bzip2 -X "$tmp_excludes" -cvf "$output_tar" "${build_dir}"
+echo "--- Creating tarball"
+
+tar -cjvf "$output_tar" -X "$tmp_excludes" "${build_dir}"
 
 echo "Done. Output: $(pwd)/$output_tar"
