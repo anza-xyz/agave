@@ -20,7 +20,7 @@ use {
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_file::{InternalsForArchive, StorageAccess, StoredAccountsInfo},
         buffered_reader::{
-            BufReaderWithOverflow, BufferedReader, FileBufRead as _, RequiredLenBufFileRead,
+            BufReaderWithOverflow, BufferedReader, FileBufRead, RequiredLenBufFileRead,
             RequiredLenBufRead as _, Stack,
         },
         file_io::{read_into_buffer, write_buffer_to_file},
@@ -942,6 +942,14 @@ impl AppendVec {
         self.path.as_path()
     }
 
+    /// Returns the `&File` and its size if data is backed as file-io
+    pub fn file_io_info(&self) -> Option<(&File, usize)> {
+        match self.backing {
+            AppendVecFileBacking::File(ref file) => Some((file, self.file_size as usize)),
+            AppendVecFileBacking::Mmap(_) => None,
+        }
+    }
+
     /// help with the math of offsets when navigating the on-disk layout in an AppendVec.
     /// data is at the end of each account and is variable sized
     /// the next account is then aligned on a 64 bit boundary.
@@ -994,7 +1002,7 @@ impl AppendVec {
     /// as it can potentially read less and be faster.
     pub(crate) fn scan_accounts<'a>(
         &'a self,
-        reader: &mut impl RequiredLenBufFileRead<'a>,
+        reader: &mut dyn RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
     ) -> Result<()> {
         self.scan_accounts_stored_meta(reader, |stored_account_meta| {
@@ -1018,7 +1026,7 @@ impl AppendVec {
     #[allow(clippy::blocks_in_conditions)]
     pub(crate) fn scan_accounts_stored_meta<'a>(
         &'a self,
-        reader: &mut impl RequiredLenBufFileRead<'a>,
+        reader: &mut dyn RequiredLenBufFileRead<'a>,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
     ) -> Result<()> {
         match &self.backing {
@@ -1039,7 +1047,7 @@ impl AppendVec {
                 {}
             }
             AppendVecFileBacking::File(file) => {
-                reader.set_file(file, self.len())?;
+                reader.activate_file(file, self.len())?;
 
                 let mut min_buf_len = STORE_META_OVERHEAD;
                 loop {
@@ -1322,18 +1330,51 @@ impl AppendVec {
     }
 }
 
+/// Ratio of number of small files to large files fetched in chunks when scanning accounts.
+pub const SCAN_ACCOUNTS_SMALL_TO_LARGE_FILE_RATIO: (usize, usize) = (7, 1);
+
 /// Create a reusable buffered reader tuned for scanning storages with account data.
-pub(crate) fn new_scan_accounts_reader<'a>() -> impl RequiredLenBufFileRead<'a> {
+///
+/// Providing memlock budget enables use of io_uring reader optimized for batched reads of
+/// large/multiple storage files.
+pub(crate) fn new_scan_accounts_reader<'a>(
+    memlock_budget_size: usize,
+) -> impl RequiredLenBufFileRead<'a> {
     // 128KiB covers a reasonably large distribution of typical account sizes.
     // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
     const MIN_CAPACITY: usize = 1024 * 128;
     const MAX_CAPACITY: usize = STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
+
+    #[cfg(target_os = "linux")]
+    {
+        use crate::io_uring::sequential_file_reader::SequentialFileReaderBuilder;
+
+        // Small files will each use one `READ_SIZE` buffer, large files get to around 8-10MB,
+        // try to pick buffer that can hold two `SCAN_ACCOUNTS_SMALL_TO_LARGE_FILE_RATIO` cycles.
+        const SCAN_ACCOUNTS_BUFFER_SIZE: usize = 32 * 1024 * 1024;
+        // Vast majority of files are small - compromise between buffer use and faster large reads.
+        const READ_SIZE: usize = 512 * 1024;
+        let buf_size = SCAN_ACCOUNTS_BUFFER_SIZE.min(memlock_budget_size);
+        if buf_size > READ_SIZE {
+            // scan accounts implementations will submit operations to kernel using
+            // FileBufRead::add_files_to_prefetch - large submission queue avoids stalls when adding ops.
+            let ring_qsize = (buf_size.div_ceil(READ_SIZE)) as u32;
+            let file_reader: Box<dyn FileBufRead<'a>> = Box::new(
+                SequentialFileReaderBuilder::new()
+                    .max_iowq_workers(1)
+                    .read_size(READ_SIZE)
+                    .ring_squeue_size(ring_qsize)
+                    .build(buf_size)
+                    .unwrap(),
+            );
+            return BufReaderWithOverflow::new(file_reader, MIN_CAPACITY, MAX_CAPACITY);
+        }
+    }
+    let _ = memlock_budget_size;
     const BUFFER_SIZE: usize = PAGE_SIZE * 8;
-    BufReaderWithOverflow::new(
-        BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(),
-        MIN_CAPACITY,
-        MAX_CAPACITY,
-    )
+    let file_reader: Box<dyn FileBufRead<'a>> =
+        Box::new(BufferedReader::<Stack<BUFFER_SIZE>>::new_stack());
+    BufReaderWithOverflow::new(file_reader, MIN_CAPACITY, MAX_CAPACITY)
 }
 
 /// The per-account hash, stored in the AppendVec.
@@ -1351,6 +1392,7 @@ impl ObsoleteAccountHash {
 pub mod tests {
     use {
         super::{test_utils::*, *},
+        crate::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         assert_matches::assert_matches,
         memoffset::offset_of,
         rand::{thread_rng, Rng},
@@ -1662,7 +1704,8 @@ pub mod tests {
         let av_file = AppendVec::new_from_file(&path.path, av_mmap.len(), StorageAccess::File)
             .unwrap()
             .0;
-        let mut reader = new_scan_accounts_reader();
+        let mut reader =
+            new_scan_accounts_reader(ACCOUNTS_DB_CONFIG_FOR_TESTING.memlock_budget_size);
         for av in [&av_mmap, &av_file] {
             let mut index = 0;
             av.scan_accounts_stored_meta(&mut reader, |v| {
@@ -1713,7 +1756,8 @@ pub mod tests {
         assert_eq!(indexes[0], 0);
         assert_eq!(av.accounts_count(), size);
 
-        let mut reader = new_scan_accounts_reader();
+        let mut reader =
+            new_scan_accounts_reader(ACCOUNTS_DB_CONFIG_FOR_TESTING.memlock_budget_size);
 
         let mut sample = 0;
         let now = Instant::now();

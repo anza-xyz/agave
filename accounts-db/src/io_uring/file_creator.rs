@@ -46,6 +46,7 @@ const MAX_OPEN_FILES: usize = 512;
 // (on open, since in accounts-db most files land in a single dir).
 const MAX_IOWQ_WORKERS: u32 = 4;
 
+const SQPOLL_IDLE_TIMEOUT: u32 = 50;
 const CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT: Option<Duration> = Some(Duration::from_millis(10));
 
 /// Multiple files creator with `io_uring` queue for open -> write -> close
@@ -84,11 +85,18 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
         write_capacity: usize,
         file_complete: F,
     ) -> io::Result<Self> {
-        // Let submission queue hold half of buffers before we explicitly syscall
-        // to submit them for writing (lets kernel start processing before we run out of buffers,
-        // but also amortizes number of `submit` syscalls made).
-        let ring_qsize = (buffer.as_mut().len() / write_capacity / 2).max(1) as u32;
-        let ring = IoUring::builder().build(ring_qsize)?;
+        // Let as many inflight operations as number of buffers (in practice some ops
+        // use buffers, some only update metadata, but those usually block some buffer(s)
+        // in backlog).
+        let ring_qsize = (buffer.as_mut().len() / write_capacity).max(1) as u32;
+        // Enable sqpoll since:
+        // - we push a lot of operations, many of them are fast
+        // - file open ops block buffers stored in backlog, so delaying those is costly
+        // - there seem to be interference of reads landing in the same kernel worker submitted
+        //   by reader not using sqpoll, but running on the same user thread
+        let ring = IoUring::builder()
+            .setup_sqpoll(SQPOLL_IDLE_TIMEOUT)
+            .build(ring_qsize)?;
         // Maximum number of spawned [bounded IO, unbounded IO] kernel threads, we don't expect
         // any unbounded work, but limit it to 1 just in case (0 leaves it unlimited).
         ring.submitter()
@@ -198,7 +206,8 @@ impl<B> IoUringFileCreator<'_, B> {
             // Safety: the buffer points to the valid memory backed by `self._backing_buffer`.
             // It's obtained from the queue of free buffers and is written to exclusively
             // here before being handled to the kernel or backlog in `file`.
-            let mut_slice = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len()) };
+            let mut_slice =
+                unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len() as usize) };
             let len = src.read(mut_slice)?;
 
             if len == 0 {

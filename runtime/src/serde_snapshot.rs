@@ -1010,6 +1010,7 @@ fn reconstruct_accountsdb_from_fields<E>(
 where
     E: SerializableStorage + std::marker::Sync,
 {
+    let accounts_db_memlock_budget_size = accounts_db_config.memlock_budget_size;
     let mut accounts_db = AccountsDb::new_with_config(
         account_paths.to_vec(),
         accounts_db_config,
@@ -1063,7 +1064,11 @@ where
     let IndexGenerationInfo {
         accounts_data_len,
         calculated_accounts_lt_hash,
-    } = accounts_db.generate_index(limit_load_slot_count_from_snapshot, verify_index);
+    } = accounts_db.generate_index(
+        limit_load_slot_count_from_snapshot,
+        accounts_db_memlock_budget_size,
+        verify_index,
+    );
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
     Ok((
