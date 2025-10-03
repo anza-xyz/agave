@@ -17,7 +17,6 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
     fn schedule<S: StateContainer<Tx>>(
         &mut self,
         container: &mut S,
-        budget: u64,
         pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
         pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError>;
