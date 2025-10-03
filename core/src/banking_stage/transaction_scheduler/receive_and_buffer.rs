@@ -1396,6 +1396,91 @@ mod tests {
         verify_container(&mut container, TEST_CONTAINER_CAPACITY);
     }
 
+    #[test_case(setup_sanitized_transaction_receive_and_buffer; "testcase-sdk")]
+    #[test_case(setup_transaction_view_receive_and_buffer; "testcase-view")]
+    fn test_receive_and_buffer_too_many_keys<R: ReceiveAndBuffer>(
+        setup_receive_and_buffer: impl FnOnce(
+            Receiver<BankingPacketBatch>,
+            Arc<RwLock<BankForks>>,
+        ) -> (R, R::Container),
+    ) {
+        fn create_tx_with_n_keys(payer: &Keypair, n: usize) -> VersionedTransaction {
+            let alt_keys = (0..n - 2).map(|_| Pubkey::new_unique()).collect::<Vec<_>>();
+            VersionedTransaction::try_new(
+                VersionedMessage::V0(
+                    v0::Message::try_compile(
+                        &payer.pubkey(),
+                        &[Instruction::new_with_bytes(
+                            Pubkey::new_unique(),
+                            &[],
+                            alt_keys
+                                .iter()
+                                .map(|k| AccountMeta::new(*k, false))
+                                .collect::<Vec<_>>(),
+                        )],
+                        &[AddressLookupTableAccount {
+                            key: Pubkey::new_unique(),
+                            addresses: alt_keys,
+                        }],
+                        Hash::new_unique(),
+                    )
+                    .unwrap(),
+                ),
+                &[payer],
+            )
+            .unwrap()
+        }
+
+        let (sender, receiver) = unbounded();
+        let (bank_forks, mint_keypair) = test_bank_forks();
+        let (mut receive_and_buffer, mut container) =
+            setup_receive_and_buffer(receiver, bank_forks.clone());
+
+        let transaction_account_lock_limit = bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .get_transaction_account_lock_limit();
+
+        // ALTs do not actually exist in the bank for this transaction - sanitization would cause failure if
+        // lock validation was not done first.
+        let bad_tx = create_tx_with_n_keys(&mint_keypair, transaction_account_lock_limit + 1);
+        let transactions = [bad_tx];
+
+        let packet_batches = Arc::new(to_packet_batches(&transactions, 17));
+        sender.send(packet_batches).unwrap();
+
+        let ReceivingStats {
+            num_received,
+            num_dropped_without_parsing,
+            num_dropped_on_parsing_and_sanitization,
+            num_dropped_on_lock_validation,
+            num_dropped_on_compute_budget,
+            num_dropped_on_age,
+            num_dropped_on_already_processed,
+            num_dropped_on_fee_payer,
+            num_dropped_on_capacity,
+            num_buffered,
+            receive_time_us: _,
+            buffer_time_us: _,
+        } = receive_and_buffer
+            .receive_and_buffer_packets(&mut container, &BufferedPacketsDecision::Hold)
+            .unwrap();
+
+        assert_eq!(num_received, 1);
+        assert_eq!(num_dropped_without_parsing, 0);
+        assert_eq!(num_dropped_on_parsing_and_sanitization, 0);
+        assert_eq!(num_dropped_on_lock_validation, 1);
+        assert_eq!(num_dropped_on_compute_budget, 0);
+        assert_eq!(num_dropped_on_age, 0);
+        assert_eq!(num_dropped_on_already_processed, 0);
+        assert_eq!(num_dropped_on_fee_payer, 0);
+        assert_eq!(num_dropped_on_capacity, 0);
+        assert_eq!(num_buffered, 0);
+
+        verify_container(&mut container, 0);
+    }
+
     #[test]
     fn test_total_num_locks() {
         let transaction = transfer(
@@ -1405,7 +1490,8 @@ mod tests {
             Hash::new_unique(),
         );
         let total_locks = transaction.message.account_keys.len();
-        let svt = SanitizedVersionedTransaction::try_new(transaction.into()).unwrap();
+        let svt = SanitizedVersionedTransaction::try_new(VersionedTransaction::from(transaction))
+            .unwrap();
         assert_eq!(total_num_locks(&svt), total_locks);
 
         // with ALTs
