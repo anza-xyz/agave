@@ -21,6 +21,7 @@ solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-transaction-context = { workspace = true }
 
 [dev-dependencies]
 # See order-crates-for-publishing.py for using this unusual `path = "."`

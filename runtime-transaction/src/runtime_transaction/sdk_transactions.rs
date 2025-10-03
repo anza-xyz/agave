@@ -80,7 +80,14 @@ impl RuntimeTransaction<SanitizedTransaction> {
         is_simple_vote_tx: Option<bool>,
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
+        enable_static_instruction_limit: bool,
     ) -> Result<Self> {
+        if enable_static_instruction_limit
+            && tx.message.instructions().len()
+                > solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH
+        {
+            return Err(solana_transaction_error::TransactionError::SanitizeFailure);
+        }
         let statically_loaded_runtime_tx =
             RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
                 SanitizedVersionedTransaction::try_from(tx)?,
@@ -142,12 +149,14 @@ impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
 impl RuntimeTransaction<SanitizedTransaction> {
     pub fn from_transaction_for_tests(transaction: solana_transaction::Transaction) -> Self {
         let versioned_transaction = VersionedTransaction::from(transaction);
+        let enable_static_instruction_limit = true;
         Self::try_create(
             versioned_transaction,
             MessageHash::Compute,
             None,
             solana_message::SimpleAddressLoader::Disabled,
             &HashSet::new(),
+            enable_static_instruction_limit,
         )
         .expect("failed to create RuntimeTransaction from Transaction")
     }

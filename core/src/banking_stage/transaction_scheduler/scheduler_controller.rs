@@ -8,27 +8,50 @@ use {
         scheduler_error::SchedulerError,
         scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics, SchedulingDetails},
     },
-    crate::banking_stage::{
-        consume_worker::ConsumeWorkerMetrics,
-        consumer::Consumer,
-        decision_maker::{BufferedPacketsDecision, DecisionMaker},
-        transaction_scheduler::{
-            receive_and_buffer::ReceivingStats, transaction_state_container::StateContainer,
+    crate::{
+        banking_stage::{
+            consume_worker::ConsumeWorkerMetrics,
+            consumer::Consumer,
+            decision_maker::{BufferedPacketsDecision, DecisionMaker},
+            transaction_scheduler::{
+                receive_and_buffer::ReceivingStats, transaction_state_container::StateContainer,
+            },
+            TOTAL_BUFFERED_PACKETS,
         },
-        TOTAL_BUFFERED_PACKETS,
+        validator::SchedulerPacing,
     },
     solana_clock::MAX_PROCESSING_AGE,
+    solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
-        num::Saturating,
+        num::{NonZeroU64, Saturating},
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
         },
+        time::{Duration, Instant},
     },
 };
+
+#[derive(Clone)]
+pub struct SchedulerConfig {
+    pub scheduler_pacing: SchedulerPacing,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            scheduler_pacing: SchedulerPacing::FillTimeMillis(
+                DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS,
+            ),
+        }
+    }
+}
+
+pub(crate) const DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS: NonZeroU64 =
+    NonZeroU64::new(350).unwrap();
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
 pub(crate) struct SchedulerController<R, S>
@@ -38,6 +61,7 @@ where
 {
     /// Exit signal for the scheduler thread.
     exit: Arc<AtomicBool>,
+    config: SchedulerConfig,
     /// Decision maker for determining what should be done with transactions.
     decision_maker: DecisionMaker,
     receive_and_buffer: R,
@@ -66,6 +90,7 @@ where
 {
     pub fn new(
         exit: Arc<AtomicBool>,
+        config: SchedulerConfig,
         decision_maker: DecisionMaker,
         receive_and_buffer: R,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -74,6 +99,7 @@ where
     ) -> Self {
         Self {
             exit,
+            config,
             decision_maker,
             receive_and_buffer,
             bank_forks,
@@ -87,8 +113,11 @@ where
     }
 
     pub fn run(mut self) -> Result<(), SchedulerError> {
-        let mut last_slot = None;
+        let mut most_recent_leader_slot = None;
+        let mut cost_pacer = None;
+
         while !self.exit.load(Ordering::Relaxed) {
+            let now = Instant::now();
             // BufferedPacketsDecision is shared with legacy BankingStage, which will forward
             // packets. Initially, not renaming these decision variants but the actions taken
             // are different, since new BankingStage will not forward packets.
@@ -110,12 +139,43 @@ where
             self.timing_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
 
-            self.receive_completed()?;
-            if last_slot != new_leader_slot {
+            if most_recent_leader_slot != new_leader_slot {
                 self.container.flush_held_transactions();
-                last_slot = new_leader_slot;
+                most_recent_leader_slot = new_leader_slot;
+                cost_pacer = decision.bank().map(|b| {
+                    let cost_tracker = b.read_cost_tracker().unwrap();
+                    let block_limit = cost_tracker.get_block_limit();
+                    let shared_block_cost = cost_tracker.shared_block_cost();
+                    drop(cost_tracker);
+
+                    // If pacing_fill_time is greater than the bank's slot time,
+                    // adjust the pacing_fill_time to be the slot time, and warn.
+                    let fill_time = self.config.scheduler_pacing.fill_time();
+                    if let Some(pacing_fill_time) = fill_time.as_ref() {
+                        if pacing_fill_time.as_nanos() > b.ns_per_slot {
+                            warn!(
+                                "scheduler pacing config pacing_fill_time {:?} is greater than \
+                                 the bank's slot time {}, setting to slot time",
+                                pacing_fill_time, b.ns_per_slot,
+                            );
+                            self.config.scheduler_pacing = SchedulerPacing::FillTimeMillis(
+                                NonZeroU64::new(b.ns_per_slot as u64 / 1_000_000)
+                                    .unwrap_or(NonZeroU64::new(1).unwrap()),
+                            );
+                        }
+                    }
+
+                    CostPacer {
+                        block_limit,
+                        shared_block_cost,
+                        detection_time: now,
+                        fill_time,
+                    }
+                });
             }
-            self.process_transactions(&decision)?;
+
+            self.receive_completed()?;
+            self.process_transactions(&decision, cost_pacer.as_ref(), &now)?;
             if self.receive_and_buffer_packets(&decision).is_err() {
                 break;
             }
@@ -143,11 +203,17 @@ where
     fn process_transactions(
         &mut self,
         decision: &BufferedPacketsDecision,
+        cost_pacer: Option<&CostPacer>,
+        now: &Instant,
     ) -> Result<(), SchedulerError> {
         match decision {
             BufferedPacketsDecision::Consume(bank) => {
+                let scheduling_budget = cost_pacer
+                    .expect("cost pacer must be set for Consume")
+                    .scheduling_budget(now);
                 let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
                     &mut self.container,
+                    scheduling_budget,
                     |txs, results| {
                         Self::pre_graph_filter(txs, results, bank, MAX_PROCESSING_AGE)
                     },
@@ -353,6 +419,33 @@ where
     }
 }
 
+struct CostPacer {
+    block_limit: u64,
+    shared_block_cost: SharedBlockCost,
+    detection_time: Instant,
+    fill_time: Option<Duration>,
+}
+
+impl CostPacer {
+    fn scheduling_budget(&self, current_time: &Instant) -> u64 {
+        let target = if let Some(fill_time) = &self.fill_time {
+            let time_since = current_time.saturating_duration_since(self.detection_time);
+            if time_since >= *fill_time {
+                self.block_limit
+            } else {
+                // on millisecond granularity, pace the cost linearly.
+                let allocation_per_milli = self.block_limit / fill_time.as_millis() as u64;
+                let millis_since_detection = time_since.as_millis() as u64;
+                allocation_per_milli * millis_since_detection
+            }
+        } else {
+            self.block_limit
+        };
+
+        target.saturating_sub(self.shared_block_cost.load())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -473,6 +566,7 @@ mod tests {
         let exit = Arc::new(AtomicBool::new(false));
         let scheduler_controller = SchedulerController::new(
             exit,
+            SchedulerConfig::default(),
             decision_maker,
             receive_and_buffer,
             bank_forks,
@@ -538,7 +632,19 @@ mod tests {
             .map(|n| n.num_received > 0)
             .unwrap_or_default()
         {}
-        assert!(scheduler_controller.process_transactions(&decision).is_ok());
+        let now = Instant::now();
+        assert!(scheduler_controller
+            .process_transactions(
+                &decision,
+                Some(&CostPacer {
+                    block_limit: u64::MAX,
+                    shared_block_cost: SharedBlockCost::new(0),
+                    detection_time: now.checked_sub(Duration::from_millis(400)).unwrap(),
+                    fill_time: Some(Duration::from_millis(300)),
+                }),
+                &now
+            )
+            .is_ok());
     }
 
     #[test_case(test_create_sanitized_transaction_receive_and_buffer; "Sdk")]

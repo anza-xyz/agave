@@ -1576,6 +1576,17 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(TransactionStructure::cli_message()),
     )
     .arg(
+        Arg::with_name("block_production_pacing_fill_time_millis")
+            .long("block-production-pacing-fill-time-millis")
+            .value_name("MILLIS")
+            .takes_value(true)
+            .default_value(&default_args.block_production_pacing_fill_time_millis)
+            .help(
+                "Pacing fill time in milliseconds for the central-scheduler block production \
+                 method",
+            ),
+    )
+    .arg(
         Arg::with_name("unified_scheduler_handler_threads")
             .long("unified-scheduler-handler-threads")
             .value_name("COUNT")

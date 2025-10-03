@@ -1,7 +1,6 @@
 [package]
 name = "solana-measure"
 documentation = "https://docs.rs/solana-measure"
-readme = "../README.md"
 version = { workspace = true }
 authors = { workspace = true }
 description = { workspace = true }

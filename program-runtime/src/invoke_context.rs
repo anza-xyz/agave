@@ -16,6 +16,7 @@ use {
     solana_pubkey::Pubkey,
     solana_sbpf::{
         ebpf::MM_HEAP_START,
+        elf::Executable as GenericExecutable,
         error::{EbpfError, ProgramResult},
         memory_region::MemoryMapping,
         program::{BuiltinFunction, SBPFVersion},
@@ -32,8 +33,8 @@ use {
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_context::{
-        transaction_accounts::TransactionAccount, IndexOfAccount, InstructionAccount,
-        TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
+        transaction_accounts::KeyedAccountSharedData, IndexOfAccount, InstructionAccount,
+        InstructionContext, TransactionContext, MAX_ACCOUNTS_PER_TRANSACTION,
     },
     std::{
         alloc::Layout,
@@ -44,6 +45,8 @@ use {
 };
 
 pub type BuiltinFunctionWithContext = BuiltinFunction<InvokeContext<'static>>;
+pub type Executable = GenericExecutable<InvokeContext<'static>>;
+pub type RegisterTrace<'a> = &'a [[u64; 12]];
 
 /// Adapter so we can unify the interfaces of built-in programs and syscalls
 #[macro_export]
@@ -84,16 +87,6 @@ macro_rules! declare_process_instruction {
 }
 
 impl ContextObject for InvokeContext<'_> {
-    fn trace(&mut self, state: [u64; 12]) {
-        self.syscall_context
-            .last_mut()
-            .unwrap()
-            .as_mut()
-            .unwrap()
-            .trace_log
-            .push(state);
-    }
-
     fn consume(&mut self, amount: u64) {
         // 1 to 1 instruction to compute unit mapping
         // ignore overflow, Ebpf will bail if exceeded
@@ -170,7 +163,6 @@ impl<'a> EnvironmentConfig<'a> {
 pub struct SyscallContext {
     pub allocator: BpfAllocator,
     pub accounts_metadata: Vec<SerializedAccountMetadata>,
-    pub trace_log: Vec<[u64; 12]>,
 }
 
 #[derive(Debug, Clone)]
@@ -202,7 +194,8 @@ pub struct InvokeContext<'a> {
     pub execute_time: Option<Measure>,
     pub timings: ExecuteDetailsTimings,
     pub syscall_context: Vec<Option<SyscallContext>>,
-    traces: Vec<Vec<[u64; 12]>>,
+    /// Pairs of index in TX instruction trace and VM register trace
+    register_traces: Vec<(usize, Vec<[u64; 12]>)>,
 }
 
 impl<'a> InvokeContext<'a> {
@@ -226,7 +219,7 @@ impl<'a> InvokeContext<'a> {
             execute_time: None,
             timings: ExecuteDetailsTimings::default(),
             syscall_context: Vec::new(),
-            traces: Vec::new(),
+            register_traces: Vec::new(),
         }
     }
 
@@ -278,9 +271,7 @@ impl<'a> InvokeContext<'a> {
 
     /// Pop a stack frame from the invocation stack
     fn pop(&mut self) -> Result<(), InstructionError> {
-        if let Some(Some(syscall_context)) = self.syscall_context.pop() {
-            self.traces.push(syscall_context.trace_log);
-        }
+        self.syscall_context.pop();
         self.transaction_context.pop()
     }
 
@@ -296,7 +287,7 @@ impl<'a> InvokeContext<'a> {
         instruction: Instruction,
         signers: &[Pubkey],
     ) -> Result<(), InstructionError> {
-        self.prepare_next_instruction(&instruction, signers)?;
+        self.prepare_next_instruction(instruction, signers)?;
         let mut compute_units_consumed = 0;
         self.process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())?;
         Ok(())
@@ -306,7 +297,7 @@ impl<'a> InvokeContext<'a> {
     /// and depends on `AccountMeta`s
     pub fn prepare_next_instruction(
         &mut self,
-        instruction: &Instruction,
+        instruction: Instruction,
         signers: &[Pubkey],
     ) -> Result<(), InstructionError> {
         // We reference accounts by an u8 index, so we have a total of 256 accounts.
@@ -443,7 +434,7 @@ impl<'a> InvokeContext<'a> {
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
-            &instruction.data,
+            instruction.data,
         )?;
         Ok(())
     }
@@ -488,7 +479,7 @@ impl<'a> InvokeContext<'a> {
             program_account_index,
             instruction_accounts,
             transaction_callee_map,
-            instruction.data,
+            instruction.data.to_vec(),
         )?;
         Ok(())
     }
@@ -737,9 +728,42 @@ impl<'a> InvokeContext<'a> {
             .ok_or(InstructionError::CallDepth)
     }
 
-    /// Return a references to traces
-    pub fn get_traces(&self) -> &Vec<Vec<[u64; 12]>> {
-        &self.traces
+    /// Insert a VM register trace
+    pub fn insert_register_trace(&mut self, register_trace: Vec<[u64; 12]>) {
+        if register_trace.is_empty() {
+            return;
+        }
+        let Ok(instruction_context) = self.transaction_context.get_current_instruction_context()
+        else {
+            return;
+        };
+        self.register_traces
+            .push((instruction_context.get_index_in_trace(), register_trace));
+    }
+
+    /// Iterates over all VM register traces (including CPI)
+    pub fn iterate_vm_traces(
+        &self,
+        callback: &dyn Fn(InstructionContext, &Executable, RegisterTrace),
+    ) {
+        for (index_in_trace, register_trace) in &self.register_traces {
+            let Ok(instruction_context) = self
+                .transaction_context
+                .get_instruction_context_at_index_in_trace(*index_in_trace)
+            else {
+                continue;
+            };
+            let Ok(program_id) = instruction_context.get_program_key() else {
+                continue;
+            };
+            let Some(entry) = self.program_cache_for_tx_batch.find(program_id) else {
+                continue;
+            };
+            let ProgramCacheEntryType::Loaded(ref executable) = entry.program else {
+                continue;
+            };
+            callback(instruction_context, executable, register_trace.as_slice());
+        }
     }
 }
 
@@ -838,7 +862,7 @@ pub fn mock_process_instruction_with_feature_set<
     loader_id: &Pubkey,
     program_index: Option<IndexOfAccount>,
     instruction_data: &[u8],
-    mut transaction_accounts: Vec<TransactionAccount>,
+    mut transaction_accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
     builtin_function: BuiltinFunctionWithContext,
@@ -895,7 +919,11 @@ pub fn mock_process_instruction_with_feature_set<
     pre_adjustments(&mut invoke_context);
     invoke_context
         .transaction_context
-        .configure_next_instruction_for_tests(program_index, instruction_accounts, instruction_data)
+        .configure_next_instruction_for_tests(
+            program_index,
+            instruction_accounts,
+            instruction_data.to_vec(),
+        )
         .unwrap();
     let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
     assert_eq!(result, expected_result);
@@ -912,7 +940,7 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
     loader_id: &Pubkey,
     program_index: Option<IndexOfAccount>,
     instruction_data: &[u8],
-    transaction_accounts: Vec<TransactionAccount>,
+    transaction_accounts: Vec<KeyedAccountSharedData>,
     instruction_account_metas: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
     builtin_function: BuiltinFunctionWithContext,
@@ -1031,7 +1059,7 @@ mod tests {
                         );
                         invoke_context
                             .transaction_context
-                            .configure_next_instruction_for_tests(3, instruction_accounts, &[])
+                            .configure_next_instruction_for_tests(3, instruction_accounts, vec![])
                             .unwrap();
                         let result = invoke_context.push();
                         assert_eq!(result, Err(InstructionError::UnbalancedInstruction));
@@ -1106,7 +1134,7 @@ mod tests {
                 .configure_next_instruction_for_tests(
                     one_more_than_max_depth.saturating_add(depth_reached) as IndexOfAccount,
                     instruction_accounts.clone(),
-                    &[],
+                    vec![],
                 )
                 .unwrap();
             if Err(InstructionError::CallDepth) == invoke_context.push() {
@@ -1136,7 +1164,7 @@ mod tests {
                 .configure_next_instruction_for_tests(
                     0,
                     vec![InstructionAccount::new(0, false, false)],
-                    &[],
+                    vec![],
                 )
                 .unwrap();
             transaction_context.pop().unwrap();
@@ -1197,7 +1225,7 @@ mod tests {
         // Account modification tests
         invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(4, instruction_accounts, &[])
+            .configure_next_instruction_for_tests(4, instruction_accounts, vec![])
             .unwrap();
         invoke_context.push().unwrap();
         let inner_instruction =
@@ -1253,7 +1281,7 @@ mod tests {
         let compute_units_to_consume = 10;
         invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(4, instruction_accounts, &[])
+            .configure_next_instruction_for_tests(4, instruction_accounts, vec![])
             .unwrap();
         invoke_context.push().unwrap();
         let inner_instruction = Instruction::new_with_bincode(
@@ -1265,7 +1293,7 @@ mod tests {
             metas.clone(),
         );
         invoke_context
-            .prepare_next_instruction(&inner_instruction, &[])
+            .prepare_next_instruction(inner_instruction, &[])
             .unwrap();
 
         let mut compute_units_consumed = 0;
@@ -1298,7 +1326,7 @@ mod tests {
 
         invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(0, vec![], &[])
+            .configure_next_instruction_for_tests(0, vec![], vec![])
             .unwrap();
         invoke_context.push().unwrap();
         assert_eq!(*invoke_context.get_compute_budget(), execution_budget);
@@ -1338,7 +1366,7 @@ mod tests {
 
         invoke_context
             .transaction_context
-            .configure_next_instruction_for_tests(2, instruction_accounts, &instruction_data)
+            .configure_next_instruction_for_tests(2, instruction_accounts, instruction_data)
             .unwrap();
         let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
 
@@ -1351,7 +1379,7 @@ mod tests {
 
     #[test]
     fn test_prepare_instruction_maximum_accounts() {
-        let mut transaction_accounts: Vec<TransactionAccount> =
+        let mut transaction_accounts: Vec<KeyedAccountSharedData> =
             Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
         let mut account_metas: Vec<AccountMeta> = Vec::with_capacity(MAX_ACCOUNTS_PER_INSTRUCTION);
 
@@ -1452,20 +1480,20 @@ mod tests {
 
         invoke_context.transaction_context.push().unwrap();
         invoke_context
-            .prepare_next_instruction(&instruction_1, &[fee_payer.pubkey()])
+            .prepare_next_instruction(instruction_1, &[fee_payer.pubkey()])
             .unwrap();
         test_case_1(&invoke_context);
 
         invoke_context.transaction_context.push().unwrap();
         invoke_context
-            .prepare_next_instruction(&instruction_2, &[fee_payer.pubkey()])
+            .prepare_next_instruction(instruction_2, &[fee_payer.pubkey()])
             .unwrap();
         test_case_2(&invoke_context);
     }
 
     #[test]
     fn test_duplicated_accounts() {
-        let mut transaction_accounts: Vec<TransactionAccount> =
+        let mut transaction_accounts: Vec<KeyedAccountSharedData> =
             Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
         let mut account_metas: Vec<AccountMeta> =
             Vec::with_capacity(MAX_ACCOUNTS_PER_INSTRUCTION.saturating_sub(1));
@@ -1538,7 +1566,7 @@ mod tests {
         );
 
         invoke_context
-            .prepare_next_instruction(&instruction, &[fee_payer.pubkey()])
+            .prepare_next_instruction(instruction, &[fee_payer.pubkey()])
             .unwrap();
         let instruction_context = invoke_context
             .transaction_context

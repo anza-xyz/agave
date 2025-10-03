@@ -1,6 +1,6 @@
 use {
     crate::{
-        commitment::AlpenglowCommitmentError,
+        commitment::CommitmentError,
         common::{
             certificate_limits_and_vote_types, conflicting_types, vote_to_certificate_ids, Stake,
             VoteType, MAX_ENTRIES_PER_PUBKEY_FOR_NOTARIZE_LITE,
@@ -70,8 +70,8 @@ pub enum AddVoteError {
     InvalidRank(u16),
 }
 
-impl From<AlpenglowCommitmentError> for AddVoteError {
-    fn from(_: AlpenglowCommitmentError) -> Self {
+impl From<CommitmentError> for AddVoteError {
+    fn from(_: CommitmentError) -> Self {
         AddVoteError::ChannelDisconnected("CommitmentSender".to_string())
     }
 }

@@ -3783,7 +3783,7 @@ pub mod tests {
             // Assert ref_counts before unref.
             db.accounts_index.scan(
                 shrink_collect.pubkeys_to_unref.iter().cloned(),
-                |k, slot_refs, _entry| {
+                |k, slot_refs| {
                     assert_eq!(
                         expected_ref_counts_before_unref.remove(k).unwrap(),
                         slot_refs.unwrap().1
@@ -3791,7 +3791,6 @@ pub mod tests {
                     AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
                 },
                 None,
-                false,
                 ScanFilter::All,
             );
             assert!(expected_ref_counts_before_unref.is_empty());
@@ -3802,7 +3801,7 @@ pub mod tests {
             // Assert ref_counts after unref
             db.accounts_index.scan(
                 shrink_collect.pubkeys_to_unref.iter().cloned(),
-                |k, slot_refs, _entry| {
+                |k, slot_refs| {
                     assert_eq!(
                         expected_ref_counts_after_unref.remove(k).unwrap(),
                         slot_refs.unwrap().1
@@ -3810,7 +3809,6 @@ pub mod tests {
                     AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
                 },
                 None,
-                false,
                 ScanFilter::All,
             );
             // should have removed all of them

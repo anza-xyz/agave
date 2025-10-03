@@ -1013,8 +1013,12 @@ pub fn create_test_recorder_with_index_tracking(
 pub struct SharedWorkingBank(Arc<ArcSwapOption<Bank>>);
 
 impl SharedWorkingBank {
-    pub fn load(&self) -> Option<Arc<Bank>> {
+    pub fn load_full(&self) -> Option<Arc<Bank>> {
         self.0.load_full()
+    }
+
+    pub fn load_ref(&self) -> arc_swap::Guard<Option<Arc<Bank>>> {
+        self.0.load()
     }
 
     // Mutable access not needed for this function.
